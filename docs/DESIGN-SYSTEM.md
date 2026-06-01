@@ -1,0 +1,241 @@
+# Design system
+
+This document specifies Costroid's visual language and TUI/CLI UX in enough detail to implement: the brand, the braille rendering primitive, each component's dot math and states, the two screens, the accessibility fallbacks, and the voice. The render-mode plumbing (`Braille` / `Ascii` / `Plain`, capability detection, terminal restore) is in [ARCHITECTURE.md](ARCHITECTURE.md); this document defines what gets drawn.
+
+One thing to internalize up front, because it shapes every component: **a terminal cell has a single foreground color.** Braille gives sub-cell *shape and texture* (2×4 dots per character) but not sub-cell *color*. So in the terminal, "used vs remaining" is expressed as **bright vs dim cells**, and fills advance at cell granularity (use more cells for finer reads). The "solid dot vs hollow ring" look from the design mockups is only achievable in **raster/SVG** surfaces (the Phase 3 tray icon, the website, marketing) — there it's allowed; in the terminal, ring → dim dot.
+
+## Brand basics
+
+- **Mark.** A pixel `C` beside the braille cell `⠉` (dots 1 and 4 — the two top dots, i.e. a meter at full). The mark reads `C⠉`.
+- **Wordmark.** `costroid`, lowercase, with `cost` in the strong weight/primary color and `roid` muted. Carry this split into the UI: dollar figures and the active metric use the strong weight; labels and context are muted.
+- **Palette.** Monochrome — black / grey / white, adapting to the terminal theme via foreground/dim. A **single amber accent**, reserved exclusively for the warning/near-limit state. No other colors. (Critical/over-limit may use red as an intensification of the warning state; still always paired with a non-color cue.)
+- **Font.** JetBrains Mono. Braille glyphs render in any monospace with braille coverage (JetBrains Mono, Cascadia Code, DejaVu); the ASCII fallback covers terminals without it.
+- **Tone of the visuals.** Sparse and precise. Dots are the accent and the data; keep surrounding typography clean. Don't drown the screen in braille.
+
+## The braille rendering primitive
+
+Unicode braille (block `U+2800`–`U+28FF`) packs **2 columns × 4 rows = 8 dots** per character — the densest graphics a monospace terminal offers. Costroid draws its meters, bars, sparklines, spinner, and statusline glyph in these dots.
+
+**Compute glyphs from the codepoint, not from library constants.** (Ratatui v0.30 changed some `symbols::braille` constants; computing directly is stable.) Each dot has a bit value; the cell layout and bits are:
+
+```
+dot layout      bit values
+ 1  4           1   8
+ 2  5           2   16
+ 3  6           4   32
+ 7  8           64  128
+
+glyph = char::from_u32(0x2800 + bitmask)
+```
+
+Examples: `⠉` (dots 1,4) = `0x2800 + 1 + 8`; full cell `⣿` = `0x2800 + 255`; left column `⡇` (dots 1,2,3,7) = `0x2800 + 71`.
+
+**Two realization techniques:**
+
+1. **Styled glyph runs** — for horizontal meters and bars. Compose a row of braille cells, color the run. Simple, exact, no canvas. Used for meters, cost bars, the statusline glyph.
+2. **`Canvas` with `Marker::Braille`** — for 2D plots needing vertical resolution (the sparkline). Ratatui rasterizes points into braille for you:
+
+```rust
+use ratatui::symbols::Marker;
+use ratatui::widgets::canvas::{Canvas, Points};
+
+Canvas::default()
+    .marker(Marker::Braille)         // 2x4 dots/cell; Ascii mode → Marker::Dot or Marker::Bar
+    .x_bounds([0.0, n as f64])
+    .y_bounds([0.0, max])
+    .paint(|ctx| { ctx.draw(&Points { coords: &pts, color: used }); });
+```
+
+In `RenderMode::Ascii`, swap the marker to `Marker::Dot`/`Marker::Bar`. In `RenderMode::Plain`, don't draw a canvas at all — emit the plain-text substitute (see Accessibility). (Ratatui v0.30 also offers `Marker::Octant` — denser, fewer gaps — as an alternative; Braille stays the default for widest support.)
+
+## Components
+
+For every component below: bright dots/cells = used/spent (primary fg), dim = remaining (a muted gray), amber = the warning state — and amber is **always** accompanied by a non-color cue.
+
+### Limit meter (5-hour and weekly)
+
+A horizontal run of `W` braille cells (default `W = 12`; configurable). Given a usage `fraction f ∈ [0, 1+]`:
+
+```
+used_cells = clamp(round(f * W), if f > 0 { 1 } else { 0 }, W)
+```
+
+- Render `used_cells` as full `⣿` in the used color; the remaining `W - used_cells` as full `⣿` in dim gray (the track).
+- Optional half-cell precision: if the fractional remainder ≥ 0.5, render the boundary cell as left-column `⡇` in the used color.
+- **Thresholds** (defaults, configurable): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber and a `!` cue is appended after the percentage. At ≥ critical (or `f ≥ 1.0`, over limit), used color = red and the cue is `!!` (and `OVER` when `f ≥ 1.0`). The cue is what makes the state readable without color.
+- Always show the percentage and reset countdown beside the meter: `⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀ 78%  resets 2h 14m`.
+
+**Reset-countdown format** — compact, two largest non-zero units:
+
+```
+>= 1 day:  "{d}d {h}h"      e.g. "3d 4h"   (or "{d}d" if h == 0)
+>= 1 hour: "{h}h {m}m"      e.g. "2h 14m"  (or "{h}h" if m == 0)
+<  1 hour: "{m}m"           e.g. "46m"
+<  1 min:  "<1m"
+```
+
+Each provider shows two meters (5-hour and weekly), labeled, stacked.
+
+### Spend sparkline
+
+A `Canvas`/`Marker::Braille` plot of bucketed spend over the period — **ink only** (draw the data dots, no track). For `n` buckets with values `vᵢ` and `max = max(vᵢ)` (or a fixed ceiling), each bucket's height in dot-rows is:
+
+```
+h_i = clamp(round((v_i / max) * H), if v_i > 0 { 1 } else { 0 }, H)
+```
+
+where `H` is the vertical dot resolution (default `H = 8`, i.e. 2 cells tall). Draw points at the bucket's x for rows `0..h_i` (bottom-up), in the primary color. Label the axis sparsely (period markers like `mon … sun`, `w1 … w4`, `jan … dec`). Linear scale by default. Bucket granularity follows the selected period.
+
+### API cost bar
+
+One horizontal dot bar per model, sorted by cost descending. With `W` cells and `max = max(cost)`:
+
+```
+filled = clamp(round((cost / max) * W), if cost > 0 { 1 } else { 0 }, W)
+```
+
+Bright `⣿` for `filled`, dim `⣿` for the rest. The model name sits left in the strong weight; the dollar figure right-aligned in the strong weight (`Intl`-style, e.g. `$24.10`, `$1,840.00`). Cost bars never go amber — amber is for limits, not spend. Each row: `claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $24.10`.
+
+### Statusline glyph (`costroid statusline`)
+
+A single line, no newline, fast, side-effect-free — for shell prompts, tmux, Starship. It shows the current-period spend and the **most-constrained** limit as a short meter. Format is a template of tokens:
+
+```
+tokens:  {mark} {spend} {meter} {pct} {reset} {tool}
+default: "{mark} {spend}  {meter} {pct} {reset}"
+        → "C⠉ $4.18  ⣿⣿⣿⣀ 78% ⟳2h14m"     (meter+pct turn amber with a ! when near limit)
+compact: "{mark} {spend} {pct}"
+        → "C⠉ $4.18 78%"
+minimal: "{spend}"
+        → "$4.18"
+```
+
+The inline `{meter}` is a short run (default 4 cells) using the same fill rules as the limit meter. Honors `NO_COLOR`/`--plain` (ASCII variant below). Provide `--format <template>` and the three presets.
+
+### Spinner
+
+The classic braille spinner for indeterminate waits (discovery, parsing):
+
+```
+frames: ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏     cadence: ~80ms/frame
+```
+
+Used only briefly; never for steady-state. ASCII fallback: `| / - \`.
+
+### Tray icon (Phase 3 — raster, so rings are allowed)
+
+The tray/menu-bar icon is a rendered image, not terminal text, so it uses the **solid-dot vs hollow-ring** look from the mockups. The icon is the mark's braille cell, filled bottom-up by the most-constrained limit:
+
+```
+filled_dots = clamp(round(f * DOTS_IN_CELL), if f > 0 { 1 } else { 0 }, DOTS_IN_CELL)
+```
+
+Solid dots = used, hollow rings = remaining. Color: monochrome under `warn`, amber at ≥ `warn`, red at ≥ `critical`/over — with the icon shape itself changing enough (more filled dots, plus the color) that state is legible without relying on color. A provider **incident** overlays a small badge.
+
+- **Per-provider mode:** one tray item per provider, each its own filling cell.
+- **Merge-icon mode:** one tray item showing the worst current state across providers, with a dropdown listing each provider's meters.
+
+Built and tested on the host OS (not WSL).
+
+## The two screens
+
+### now
+
+```
+C⠉ costroid                                   this week  $42.18
+────────────────────────────────────────────────────────────────
+limits
+  claude code   5h   ⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀  68%   resets 41m
+                wk   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀  78%   resets 2d 6h
+  cursor        wk   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀  92% ! resets Sun     ← amber + ! cue
+────────────────────────────────────────────────────────────────
+api costs (this week)
+  claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $24.10
+  gpt-5.5           ⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀   $11.30
+  sonnet 4.6        ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀   $6.78
+────────────────────────────────────────────────────────────────
+◆ opus drove most of your api spend this week. (estimated)
+```
+
+Live limit meters (5-hour and weekly, with reset countdowns) on top; current API spend by model below; one colleague insight line at the bottom. Subscription limits and API costs are visually parallel but clearly separate sections — limits carry no dollars.
+
+### trends
+
+```
+C⠉ costroid                                   this month  $168.00
+  [day] [week] (month) [year]            group: (model) app total
+────────────────────────────────────────────────────────────────
+  spend / week
+  ⢀⣀⣠⣶⣿⣷⣄⡀ …                                   (braille sparkline)
+  w1      w2      w3      w4
+────────────────────────────────────────────────────────────────
+  claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $96.00
+  gpt-5.5           ⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀   $45.00
+  sonnet 4.6        ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀   $27.00
+────────────────────────────────────────────────────────────────
+◆ press a to ask why opus spend rose this month
+```
+
+A period sparkline, then the breakdown cost bars, then an insight line.
+
+### Controls / keybindings
+
+```
+d / w / m / y   set period (day / week / month / year)        [trends]
+g               cycle group (model → app → total)             [trends]
+tab             switch screen (now ↔ trends)
+f  or  /        filter (fuzzy select model / app)
+a               ask — hand the loaded context to the insight/recommendation engine (Phase 4)
+r               refresh now
+q / Ctrl-C      quit (always restores the terminal)
+?               help
+```
+
+`--live` enables auto-refresh on a tick.
+
+### States
+
+- **Loading:** the braille spinner with a short label.
+- **Empty:** no providers detected → a plain-language line on what Costroid looked for and how to point it at the data (incl. the WSL/Windows path note), not an error.
+- **Partial:** some providers missing or incomplete (e.g. Cursor) → show what's available and label the gap explicitly; never fabricate.
+- **Per-provider error:** shown inline next to that provider, non-fatal; the rest of the screen still renders.
+- **Warning:** amber + cue on near/over-limit meters.
+
+## Accessibility
+
+`--plain` produces no color, no braille, plain ASCII, in a linear top-to-bottom reading order with every value labeled and carrying its unit and context — built to be read aloud by a screen reader. Mode selection (the `--plain` flag, TTY detection, `NO_COLOR`, and a braille-capability check) is in ARCHITECTURE.md.
+
+**The no-color-only rule:** the amber/red warning state is **always** paired with a textual cue (`!`, `!!`, `OVER`, or a word like `near limit`), so it survives `NO_COLOR`, color-blindness, and `--plain`.
+
+**ASCII substitutes per component:**
+
+```
+limit meter   "[##########--] 78% (near limit) resets 2h 14m"   # '#' used, '-' remaining
+sparkline     prefer a labeled numeric list; or an ASCII height ramp .:-=+*#
+cost bar      "claude opus 4.8   $24.10   (57%)"                 # no bar, or "####"
+statusline    "costroid $4.18  78% used, resets in 2h14m"
+spinner       "| / - \"  or  "working..."
+tray icon     n/a (raster surface; provides an accessible tooltip/label)
+```
+
+**Font/terminal fallback:** if braille isn't supported (replacement-char risk) Costroid downshifts automatically — `Marker::Dot`/block for canvas, ASCII for meters/bars — without the user asking. Piped/non-TTY output is always plain.
+
+## Voice & copy
+
+The insight line is where Costroid sounds like a colleague: proactive, plain, specific, brief. State the fact, then the so-what, then (optionally) a next step. Never alarmist, never chatty, never an LLM chat box.
+
+**Rules:**
+- Cost is an estimate — hedge accordingly (`~`, "estimated", "about"). Never claim certainty about money you inferred.
+- Recommendations (Phase 4) are advisory and **sourced**, and attach only to API-cost lines — never to subscription limits.
+- One insight at a time. Quiet by default. Never block the user or demand a response.
+- Sentence case, no emoji, no exclamation spam, no fake urgency, no greetings ("Hey there!").
+
+**Good:**
+- "You're pacing toward ~$58 this week — Opus drove most of it. (estimated)"
+- "Weekly Claude limit at 92%, resets Sunday. Codex still has headroom."
+- (Phase 4) "Sonnet could cover ~40% of these tasks at about ⅓ the cost. Advisory — sources: SWE-bench, CursorBench (vendor)."
+
+**Avoid:**
+- "🚨 WARNING!! You are SPENDING TOO MUCH!!!"
+- "This will save you exactly $19.42." (false precision on an estimate)
+- "Hi friend! Want to chat about your costs?" (chatbot register)
