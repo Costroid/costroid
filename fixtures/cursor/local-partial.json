@@ -1,0 +1,22 @@
+{
+  "provider": "cursor",
+  "root": "/home/example/.config/Cursor",
+  "usage_events": [
+    {
+      "timestamp": "2026-01-01T12:00:00Z",
+      "model": "example-cursor-model",
+      "input_tokens": 900,
+      "output_tokens": 250,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "project": "/home/example/project"
+    }
+  ],
+  "limits": {
+    "weekly": {
+      "used_fraction": null,
+      "resets_at": null,
+      "status": "unavailable"
+    }
+  }
+}

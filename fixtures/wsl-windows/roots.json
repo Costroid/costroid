@@ -1,0 +1,12 @@
+{
+  "host": "wsl",
+  "linux_home": "/home/example",
+  "windows_home": "/mnt/c/Users/example",
+  "candidate_roots": [
+    "/home/example/.claude",
+    "/home/example/.codex",
+    "/mnt/c/Users/example/.claude",
+    "/mnt/c/Users/example/.codex",
+    "/mnt/c/Users/example/AppData/Roaming/Cursor"
+  ]
+}

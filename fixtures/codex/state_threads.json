@@ -1,0 +1,15 @@
+{
+  "threads": [
+    {
+      "id": "synthetic-thread",
+      "rollout_path": "/home/example/.codex/sessions/2026/01/01/rollout.jsonl",
+      "created_at": 1767261600,
+      "updated_at": 1767261720,
+      "source": "cli",
+      "model_provider": "example-provider",
+      "model": "example-model",
+      "cwd": "/home/example/project",
+      "tokens_used": 2025
+    }
+  ]
+}

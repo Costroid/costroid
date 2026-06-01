@@ -1,0 +1,11 @@
+{
+  "provider": "claude-code",
+  "root": "/home/example/.claude",
+  "state_files": [
+    ".credentials.json",
+    ".last-cleanup",
+    "ide/example.lock"
+  ],
+  "sessions": [],
+  "expected_status": "usage-unavailable"
+}

@@ -1,0 +1,15 @@
+[package]
+name = "costroid-providers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+costroid-focus.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
