@@ -1,19 +1,25 @@
-//! Costroid data pipeline interfaces.
-//!
-//! Milestone 2 provides a non-aggregating path from local provider logs to
-//! FOCUS-shaped export rows. Trend aggregation and UI-facing summaries are
-//! intentionally deferred.
+//! Costroid data pipeline and aggregation interfaces.
 
-use chrono::{DateTime, Utc};
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Utc};
 use costroid_focus::{
     to_csv_string, to_json_string, FocusAccessPath, FocusError, FocusRecord, TokenType,
-    UnpricedUsage, DEFAULT_BILLING_CURRENCY,
+    UnpricedUsage, DEFAULT_BILLING_CURRENCY, PRICING_STATUS_MISSING_PRICE,
 };
 use costroid_providers::{
-    default_providers, AccessPath, HostEnv, LimitWindow, ProviderId, UsageEvent,
+    default_providers, AccessPath, HostEnv, LimitKind, LimitWindow, Provider, ProviderId,
+    UsageEvent,
 };
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+const PRICING_STATUS_PRICED: &str = "priced";
+const PRICING_STATUS_UNKNOWN_MODEL: &str = "unknown_model";
+const UNKNOWN_GROUP_VALUE: &str = "unknown";
+const TOTAL_GROUP_VALUE: &str = "total";
 
 pub fn bundled_pricing_json() -> &'static str {
     include_str!("../../../pricing/pricing.v1.json")
@@ -23,27 +29,15 @@ pub fn bundled_pricing_value() -> Result<serde_json::Value, CoreError> {
     serde_json::from_str(bundled_pricing_json()).map_err(CoreError::from)
 }
 
+pub fn collect_local_snapshot(env: &HostEnv) -> Result<EngineSnapshot, CoreError> {
+    collect_snapshot_from_providers(env, default_providers(), Utc::now())
+}
+
+/// Compatibility wrapper for the Milestone 2 API.
 pub fn local_snapshot(env: &HostEnv) -> Snapshot {
-    let mut usage_events = Vec::new();
-    let mut limit_windows = Vec::new();
-
-    for provider in default_providers() {
-        let location = match provider.discover(env) {
-            Ok(Some(location)) => location,
-            Ok(None) | Err(_) => continue,
-        };
-        if let Ok(mut usage) = provider.parse_usage(&location) {
-            usage_events.append(&mut usage);
-        }
-        if let Ok(mut limits) = provider.parse_limits(&location) {
-            limit_windows.append(&mut limits);
-        }
-    }
-
-    Snapshot {
-        generated_at: Utc::now(),
-        usage_events,
-        limit_windows,
+    match collect_local_snapshot(env) {
+        Ok(snapshot) => snapshot,
+        Err(_) => EngineSnapshot::empty(Utc::now()),
     }
 }
 
@@ -56,8 +50,7 @@ pub fn focus_records_from_usage(events: &[UsageEvent]) -> Result<Vec<FocusRecord
 }
 
 pub fn focus_records_from_local_logs(env: &HostEnv) -> Result<Vec<FocusRecord>, CoreError> {
-    let snapshot = local_snapshot(env);
-    focus_records_from_usage(&snapshot.usage_events)
+    Ok(collect_local_snapshot(env)?.focus_rows)
 }
 
 pub fn export_focus_json(rows: Vec<FocusRecord>) -> Result<String, CoreError> {
@@ -66,6 +59,168 @@ pub fn export_focus_json(rows: Vec<FocusRecord>) -> Result<String, CoreError> {
 
 pub fn export_focus_csv(rows: &[FocusRecord]) -> Result<String, CoreError> {
     to_csv_string(rows).map_err(CoreError::from)
+}
+
+pub fn now_summary(snapshot: &EngineSnapshot, options: NowOptions) -> NowSummary {
+    let cost_period = period_range_for(options.cost_period, snapshot.generated_at);
+    let current_costs = summarize_rows(
+        snapshot
+            .focus_rows
+            .iter()
+            .filter(|row| cost_period.contains(row.charge_period_start)),
+        options.group_by,
+    );
+    let limits = snapshot
+        .limit_windows
+        .iter()
+        .map(|limit| limit_summary(limit, snapshot.generated_at))
+        .collect();
+
+    NowSummary {
+        generated_at: snapshot.generated_at,
+        cost_period,
+        group_by: options.group_by,
+        limits,
+        current_costs,
+        providers: snapshot.providers.clone(),
+    }
+}
+
+pub fn trends_summary(snapshot: &EngineSnapshot, options: TrendsOptions) -> TrendsSummary {
+    let mut buckets = BTreeMap::<(PeriodRange, CostLane, GroupKey), AggregateTotals>::new();
+
+    for row in &snapshot.focus_rows {
+        let range = period_range_for(options.period, row.charge_period_start);
+        let lane = CostLane::from_access_path(&row.x_access_path);
+        let group = group_key(row, options.group_by);
+        buckets
+            .entry((range, lane, group))
+            .or_default()
+            .add_row(row);
+    }
+
+    let buckets = buckets
+        .into_iter()
+        .map(|((period, lane, group), totals)| TrendBucket {
+            period,
+            group,
+            lane,
+            totals,
+        })
+        .collect();
+
+    TrendsSummary {
+        generated_at: snapshot.generated_at,
+        period: options.period,
+        group_by: options.group_by,
+        buckets,
+        totals: summarize_rows(snapshot.focus_rows.iter(), options.group_by),
+        providers: snapshot.providers.clone(),
+    }
+}
+
+pub fn period_range_for(period: Period, anchor: DateTime<Utc>) -> PeriodRange {
+    let local_anchor = anchor.with_timezone(&Local);
+    let local_start = start_of_period_local(period, local_anchor);
+    let local_end = add_period_local(period, local_start);
+
+    PeriodRange {
+        start: local_start.with_timezone(&Utc),
+        end: local_end.with_timezone(&Utc),
+    }
+}
+
+fn collect_snapshot_from_providers(
+    env: &HostEnv,
+    providers: Vec<Box<dyn Provider>>,
+    generated_at: DateTime<Utc>,
+) -> Result<EngineSnapshot, CoreError> {
+    let mut snapshot = EngineSnapshot::empty(generated_at);
+
+    for provider in providers {
+        let provider_id = provider.id();
+        let location = match provider.discover(env) {
+            Ok(Some(location)) => location,
+            Ok(None) => {
+                snapshot.providers.push(ProviderStatus {
+                    provider: provider_id,
+                    status: ProviderStatusKind::Missing,
+                    files: 0,
+                    usage_events: 0,
+                    focus_rows: 0,
+                    limit_windows: 0,
+                    message: Some("no local data found".to_string()),
+                });
+                continue;
+            }
+            Err(err) => {
+                snapshot.providers.push(ProviderStatus {
+                    provider: provider_id,
+                    status: ProviderStatusKind::Error,
+                    files: 0,
+                    usage_events: 0,
+                    focus_rows: 0,
+                    limit_windows: 0,
+                    message: Some(err.to_string()),
+                });
+                continue;
+            }
+        };
+
+        let files = location.files.len();
+        let mut messages = Vec::new();
+        let mut usage_events = Vec::new();
+        let mut limit_windows = Vec::new();
+        let mut usage_ok = true;
+        let mut limits_ok = true;
+
+        match provider.parse_usage(&location) {
+            Ok(events) => usage_events = events,
+            Err(err) => {
+                usage_ok = false;
+                messages.push(err.to_string());
+            }
+        }
+
+        match provider.parse_limits(&location) {
+            Ok(limits) => limit_windows = limits,
+            Err(err) => {
+                limits_ok = false;
+                messages.push(err.to_string());
+            }
+        }
+
+        let focus_rows = focus_records_from_usage(&usage_events)?;
+        let status = provider_status_kind(usage_ok, limits_ok);
+        let message = if messages.is_empty() {
+            None
+        } else {
+            Some(messages.join("; "))
+        };
+
+        snapshot.providers.push(ProviderStatus {
+            provider: provider_id,
+            status,
+            files,
+            usage_events: usage_events.len(),
+            focus_rows: focus_rows.len(),
+            limit_windows: limit_windows.len(),
+            message,
+        });
+        snapshot.usage_events.append(&mut usage_events);
+        snapshot.limit_windows.append(&mut limit_windows);
+        snapshot.focus_rows.extend(focus_rows);
+    }
+
+    Ok(snapshot)
+}
+
+fn provider_status_kind(usage_ok: bool, limits_ok: bool) -> ProviderStatusKind {
+    match (usage_ok, limits_ok) {
+        (true, true) => ProviderStatusKind::Available,
+        (false, false) => ProviderStatusKind::Error,
+        (true, false) | (false, true) => ProviderStatusKind::Partial,
+    }
 }
 
 fn push_meter_records(event: &UsageEvent, records: &mut Vec<FocusRecord>) -> Result<(), CoreError> {
@@ -123,7 +278,240 @@ fn vendor_name(provider: ProviderId) -> &'static str {
     }
 }
 
+fn summarize_rows<'a, I>(rows: I, group_by: GroupBy) -> Vec<CostLaneSummary>
+where
+    I: IntoIterator<Item = &'a FocusRecord>,
+{
+    let mut summaries = BTreeMap::<(CostLane, GroupKey), AggregateTotals>::new();
+    for row in rows {
+        let lane = CostLane::from_access_path(&row.x_access_path);
+        let group = group_key(row, group_by);
+        summaries.entry((lane, group)).or_default().add_row(row);
+    }
+
+    summaries
+        .into_iter()
+        .map(|((lane, group), totals)| CostLaneSummary {
+            group,
+            lane,
+            totals,
+        })
+        .collect()
+}
+
+fn group_key(row: &FocusRecord, group_by: GroupBy) -> GroupKey {
+    let value = match group_by {
+        GroupBy::Model => non_empty_value(&row.x_model),
+        GroupBy::App => row
+            .x_project
+            .as_deref()
+            .map(non_empty_value)
+            .unwrap_or_else(|| UNKNOWN_GROUP_VALUE.to_string()),
+        GroupBy::Total => TOTAL_GROUP_VALUE.to_string(),
+    };
+
+    GroupKey {
+        kind: group_by,
+        value,
+    }
+}
+
+fn non_empty_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        UNKNOWN_GROUP_VALUE.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn limit_summary(limit: &LimitWindow, generated_at: DateTime<Utc>) -> LimitSummary {
+    LimitSummary {
+        tool: limit.tool,
+        plan: limit.plan.clone(),
+        kind: limit.kind,
+        label: limit.label.clone(),
+        availability: limit_availability(limit, generated_at),
+    }
+}
+
+fn limit_availability(limit: &LimitWindow, generated_at: DateTime<Utc>) -> LimitAvailability {
+    let reset_in_seconds = limit
+        .resets_at
+        .map(|resets_at| clamp_reset_seconds(resets_at, generated_at));
+    let is_stale = limit
+        .resets_at
+        .map(|resets_at| resets_at < generated_at)
+        .unwrap_or(false);
+
+    match (limit.used_fraction, limit.resets_at, is_stale) {
+        (Some(used_fraction), Some(resets_at), false) => LimitAvailability::Available {
+            used_fraction,
+            resets_at,
+            reset_in_seconds: reset_in_seconds.unwrap_or(0),
+        },
+        (None, None, _) => LimitAvailability::Unavailable {
+            reason: limit
+                .label
+                .clone()
+                .unwrap_or_else(|| "limit data unavailable from local logs".to_string()),
+        },
+        _ => LimitAvailability::Partial {
+            used_fraction: limit.used_fraction,
+            resets_at: limit.resets_at,
+            reset_in_seconds,
+            reason: if is_stale {
+                "data may be stale".to_string()
+            } else {
+                "limit data incomplete".to_string()
+            },
+        },
+    }
+}
+
+fn clamp_reset_seconds(resets_at: DateTime<Utc>, generated_at: DateTime<Utc>) -> i64 {
+    resets_at
+        .signed_duration_since(generated_at)
+        .num_seconds()
+        .max(0)
+}
+
+fn start_of_period_local(period: Period, anchor: DateTime<Local>) -> DateTime<Local> {
+    match period {
+        Period::Day => local_start_of_day(anchor.date_naive(), anchor),
+        Period::Week => {
+            let days_from_monday = i64::from(anchor.weekday().num_days_from_monday());
+            let date = match anchor
+                .date_naive()
+                .checked_sub_signed(Duration::days(days_from_monday))
+            {
+                Some(value) => value,
+                None => anchor.date_naive(),
+            };
+            local_start_of_day(date, anchor)
+        }
+        Period::Month => local_start_for_ymd(anchor.year(), anchor.month(), 1, anchor),
+        Period::Year => local_start_for_ymd(anchor.year(), 1, 1, anchor),
+    }
+}
+
+fn add_period_local(period: Period, start: DateTime<Local>) -> DateTime<Local> {
+    match period {
+        Period::Day => add_days_local(start, 1),
+        Period::Week => add_days_local(start, 7),
+        Period::Month => {
+            let (year, month) = if start.month() == 12 {
+                match start.year().checked_add(1) {
+                    Some(year) => (year, 1),
+                    None => return add_days_local(start, 31),
+                }
+            } else {
+                (start.year(), start.month() + 1)
+            };
+            local_start_for_ymd(year, month, 1, add_days_local(start, 31))
+        }
+        Period::Year => match start.year().checked_add(1) {
+            Some(year) => local_start_for_ymd(year, 1, 1, add_days_local(start, 366)),
+            None => add_days_local(start, 366),
+        },
+    }
+}
+
+fn add_days_local(start: DateTime<Local>, days: i64) -> DateTime<Local> {
+    let fallback = start + Duration::days(days);
+    match start.date_naive().checked_add_signed(Duration::days(days)) {
+        Some(date) => local_start_of_day(date, fallback),
+        None => fallback,
+    }
+}
+
+fn local_start_for_ymd(
+    year: i32,
+    month: u32,
+    day: u32,
+    fallback: DateTime<Local>,
+) -> DateTime<Local> {
+    match NaiveDate::from_ymd_opt(year, month, day) {
+        Some(date) => local_start_of_day(date, fallback),
+        None => fallback,
+    }
+}
+
+fn local_start_of_day(date: NaiveDate, fallback: DateTime<Local>) -> DateTime<Local> {
+    let midnight = match date.and_hms_opt(0, 0, 0) {
+        Some(value) => value,
+        None => return fallback,
+    };
+
+    match Local.from_local_datetime(&midnight) {
+        LocalResult::Single(value) => value,
+        LocalResult::Ambiguous(first, _) => first,
+        LocalResult::None => first_valid_local_after(midnight, fallback),
+    }
+}
+
+fn first_valid_local_after(
+    start: chrono::NaiveDateTime,
+    fallback: DateTime<Local>,
+) -> DateTime<Local> {
+    for minutes_after in 1_i64..=180 {
+        let candidate = match start.checked_add_signed(Duration::minutes(minutes_after)) {
+            Some(value) => value,
+            None => return fallback,
+        };
+        match Local.from_local_datetime(&candidate) {
+            LocalResult::Single(value) => return value,
+            LocalResult::Ambiguous(first, _) => return first,
+            LocalResult::None => {}
+        }
+    }
+    fallback
+}
+
+pub type Snapshot = EngineSnapshot;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EngineSnapshot {
+    pub generated_at: DateTime<Utc>,
+    pub usage_events: Vec<UsageEvent>,
+    pub focus_rows: Vec<FocusRecord>,
+    pub limit_windows: Vec<LimitWindow>,
+    pub providers: Vec<ProviderStatus>,
+}
+
+impl EngineSnapshot {
+    fn empty(generated_at: DateTime<Utc>) -> Self {
+        Self {
+            generated_at,
+            usage_events: Vec::new(),
+            focus_rows: Vec::new(),
+            limit_windows: Vec::new(),
+            providers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderStatus {
+    pub provider: ProviderId,
+    pub status: ProviderStatusKind,
+    pub files: usize,
+    pub usage_events: usize,
+    pub focus_rows: usize,
+    pub limit_windows: usize,
+    pub message: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderStatusKind {
+    Available,
+    Partial,
+    Missing,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Period {
     Day,
@@ -132,7 +520,7 @@ pub enum Period {
     Year,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GroupBy {
     Model,
@@ -140,11 +528,201 @@ pub enum GroupBy {
     Total,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostLane {
+    Api,
+    SubscriptionEstimate,
+    UnknownAccess,
+}
+
+impl CostLane {
+    fn from_access_path(value: &str) -> Self {
+        match value {
+            "api" => Self::Api,
+            "subscription" => Self::SubscriptionEstimate,
+            _ => Self::UnknownAccess,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PeriodRange {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+impl PeriodRange {
+    pub fn contains(&self, timestamp: DateTime<Utc>) -> bool {
+        timestamp >= self.start && timestamp < self.end
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GroupKey {
+    pub kind: GroupBy,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenTotals {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+impl TokenTotals {
+    pub fn total(&self) -> u64 {
+        self.input + self.output + self.cache_read + self.cache_write
+    }
+
+    fn add(&mut self, token_type: &str, tokens: u64) {
+        match token_type {
+            "input" => self.input += tokens,
+            "output" => self.output += tokens,
+            "cache_read" => self.cache_read += tokens,
+            "cache_write" => self.cache_write += tokens,
+            _ => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PricingCoverage {
+    pub priced_rows: usize,
+    pub missing_price_rows: usize,
+    pub unknown_model_rows: usize,
+}
+
+impl PricingCoverage {
+    fn add(&mut self, status: &str) {
+        match status {
+            PRICING_STATUS_PRICED => self.priced_rows += 1,
+            PRICING_STATUS_UNKNOWN_MODEL => self.unknown_model_rows += 1,
+            PRICING_STATUS_MISSING_PRICE => self.missing_price_rows += 1,
+            _ => self.missing_price_rows += 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregateTotals {
+    pub row_count: usize,
+    pub billed_cost: Decimal,
+    pub effective_cost: Decimal,
+    pub currency: Option<String>,
+    pub multiple_currencies: bool,
+    pub tokens: TokenTotals,
+    pub pricing_coverage: PricingCoverage,
+    pub estimated_rows: usize,
+}
+
+impl AggregateTotals {
+    fn add_row(&mut self, row: &FocusRecord) {
+        self.row_count += 1;
+        self.billed_cost += row.billed_cost;
+        self.effective_cost += row.effective_cost;
+        self.add_currency(&row.billing_currency);
+        self.tokens
+            .add(&row.x_token_type, decimal_to_u64(row.consumed_quantity));
+        self.pricing_coverage.add(&row.x_pricing_status);
+        if row.x_estimated {
+            self.estimated_rows += 1;
+        }
+    }
+
+    fn add_currency(&mut self, currency: &str) {
+        match &self.currency {
+            None => self.currency = Some(currency.to_string()),
+            Some(current) if current == currency => {}
+            Some(_) => self.multiple_currencies = true,
+        }
+    }
+}
+
+impl Default for AggregateTotals {
+    fn default() -> Self {
+        Self {
+            row_count: 0,
+            billed_cost: Decimal::from(0),
+            effective_cost: Decimal::from(0),
+            currency: None,
+            multiple_currencies: false,
+            tokens: TokenTotals::default(),
+            pricing_coverage: PricingCoverage::default(),
+            estimated_rows: 0,
+        }
+    }
+}
+
+fn decimal_to_u64(value: Decimal) -> u64 {
+    value.to_u64().unwrap_or_default()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CostLaneSummary {
+    pub group: GroupKey,
+    pub lane: CostLane,
+    pub totals: AggregateTotals,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Snapshot {
-    pub generated_at: DateTime<Utc>,
-    pub usage_events: Vec<UsageEvent>,
-    pub limit_windows: Vec<LimitWindow>,
+pub struct LimitSummary {
+    pub tool: ProviderId,
+    pub plan: Option<String>,
+    pub kind: LimitKind,
+    pub label: Option<String>,
+    pub availability: LimitAvailability,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitAvailability {
+    Available {
+        used_fraction: f64,
+        resets_at: DateTime<Utc>,
+        reset_in_seconds: i64,
+    },
+    Partial {
+        used_fraction: Option<f64>,
+        resets_at: Option<DateTime<Utc>>,
+        reset_in_seconds: Option<i64>,
+        reason: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NowOptions {
+    pub cost_period: Period,
+    pub group_by: GroupBy,
+}
+
+impl Default for NowOptions {
+    fn default() -> Self {
+        Self {
+            cost_period: Period::Week,
+            group_by: GroupBy::Model,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrendsOptions {
+    pub period: Period,
+    pub group_by: GroupBy,
+}
+
+impl Default for TrendsOptions {
+    fn default() -> Self {
+        Self {
+            period: Period::Week,
+            group_by: GroupBy::Model,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,6 +740,34 @@ impl Default for EngineOptions {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NowSummary {
+    pub generated_at: DateTime<Utc>,
+    pub cost_period: PeriodRange,
+    pub group_by: GroupBy,
+    pub limits: Vec<LimitSummary>,
+    pub current_costs: Vec<CostLaneSummary>,
+    pub providers: Vec<ProviderStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrendsSummary {
+    pub generated_at: DateTime<Utc>,
+    pub period: Period,
+    pub group_by: GroupBy,
+    pub buckets: Vec<TrendBucket>,
+    pub totals: Vec<CostLaneSummary>,
+    pub providers: Vec<ProviderStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrendBucket {
+    pub period: PeriodRange,
+    pub group: GroupKey,
+    pub lane: CostLane,
+    pub totals: AggregateTotals,
+}
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("bundled pricing JSON is invalid: {0}")]
@@ -174,15 +780,87 @@ pub enum CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{LocalResult, TimeZone};
+    use chrono::{LocalResult, TimeZone, Timelike, Weekday};
     use costroid_focus::{PRICING_CATEGORY_STANDARD, PRICING_STATUS_MISSING_PRICE};
+    use costroid_providers::{DataLocation, ProviderError};
+    use std::path::PathBuf;
 
     fn timestamp() -> DateTime<Utc> {
-        match Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0) {
+        utc_datetime(2026, 1, 1, 10, 0, 0)
+    }
+
+    fn utc_datetime(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+    ) -> DateTime<Utc> {
+        match Utc.with_ymd_and_hms(year, month, day, hour, minute, second) {
             LocalResult::Single(value) => value,
             LocalResult::Ambiguous(_, _) | LocalResult::None => {
                 panic!("test timestamp should be valid")
             }
+        }
+    }
+
+    fn usage_event(
+        tool: ProviderId,
+        access_path: AccessPath,
+        timestamp: DateTime<Utc>,
+    ) -> UsageEvent {
+        UsageEvent {
+            tool,
+            model: "example-model".to_string(),
+            timestamp,
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 30,
+            cache_write_tokens: 0,
+            project: Some("/work/project".to_string()),
+            access_path,
+        }
+    }
+
+    fn record(
+        access_path: FocusAccessPath,
+        timestamp: DateTime<Utc>,
+        model: &str,
+        project: Option<&str>,
+        token_type: TokenType,
+        token_count: u64,
+    ) -> FocusRecord {
+        match FocusRecord::unpriced_usage(UnpricedUsage {
+            timestamp,
+            tool: "codex".to_string(),
+            model: model.to_string(),
+            token_type,
+            token_count,
+            project: project.map(ToString::to_string),
+            access_path,
+            service_name: "Codex".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            host_provider_name: "OpenAI".to_string(),
+            invoice_issuer_name: "OpenAI".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        }) {
+            Ok(value) => value,
+            Err(err) => panic!("record should build: {err}"),
+        }
+    }
+
+    fn snapshot_with_rows(
+        generated_at: DateTime<Utc>,
+        focus_rows: Vec<FocusRecord>,
+        limit_windows: Vec<LimitWindow>,
+    ) -> EngineSnapshot {
+        EngineSnapshot {
+            generated_at,
+            usage_events: Vec::new(),
+            focus_rows,
+            limit_windows,
+            providers: Vec::new(),
         }
     }
 
@@ -194,24 +872,20 @@ mod tests {
     #[test]
     fn default_options_match_now_screen_defaults() {
         let options = EngineOptions::default();
+        let now_options = NowOptions::default();
+        let trends_options = TrendsOptions::default();
 
         assert_eq!(options.period, Period::Week);
         assert_eq!(options.group_by, GroupBy::Model);
+        assert_eq!(now_options.cost_period, Period::Week);
+        assert_eq!(now_options.group_by, GroupBy::Model);
+        assert_eq!(trends_options.period, Period::Week);
+        assert_eq!(trends_options.group_by, GroupBy::Model);
     }
 
     #[test]
     fn usage_events_convert_to_one_record_per_nonzero_meter() {
-        let event = UsageEvent {
-            tool: ProviderId::Codex,
-            model: "example-model".to_string(),
-            timestamp: timestamp(),
-            input_tokens: 10,
-            output_tokens: 20,
-            cache_read_tokens: 30,
-            cache_write_tokens: 0,
-            project: Some("/work/project".to_string()),
-            access_path: AccessPath::Subscription,
-        };
+        let event = usage_event(ProviderId::Codex, AccessPath::Subscription, timestamp());
         let rows = match focus_records_from_usage(&[event]) {
             Ok(value) => value,
             Err(err) => panic!("conversion should succeed: {err}"),
@@ -229,17 +903,11 @@ mod tests {
 
     #[test]
     fn export_helpers_emit_json_and_csv() {
-        let rows = match focus_records_from_usage(&[UsageEvent {
-            tool: ProviderId::ClaudeCode,
-            model: "example-model".to_string(),
-            timestamp: timestamp(),
-            input_tokens: 1,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            project: None,
-            access_path: AccessPath::Unknown,
-        }]) {
+        let rows = match focus_records_from_usage(&[usage_event(
+            ProviderId::ClaudeCode,
+            AccessPath::Unknown,
+            timestamp(),
+        )]) {
             Ok(value) => value,
             Err(err) => panic!("conversion should succeed: {err}"),
         };
@@ -254,5 +922,640 @@ mod tests {
 
         assert!(json.contains("\"focusVersion\": \"1.3\""));
         assert!(csv.starts_with("BilledCost,EffectiveCost,ListCost,ContractedCost"));
+    }
+
+    #[test]
+    fn now_summary_keeps_access_path_lanes_separate() {
+        let generated_at = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let rows = vec![
+            record(
+                FocusAccessPath::Api,
+                generated_at,
+                "shared-model",
+                Some("/work/a"),
+                TokenType::Input,
+                10,
+            ),
+            record(
+                FocusAccessPath::Subscription,
+                generated_at,
+                "shared-model",
+                Some("/work/a"),
+                TokenType::Output,
+                20,
+            ),
+            record(
+                FocusAccessPath::Unknown,
+                generated_at,
+                "shared-model",
+                Some("/work/a"),
+                TokenType::CacheRead,
+                30,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(generated_at, rows, Vec::new());
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+
+        assert_eq!(summary.current_costs.len(), 3);
+        assert!(summary
+            .current_costs
+            .iter()
+            .any(|summary| summary.lane == CostLane::Api && summary.totals.tokens.input == 10));
+        assert!(summary.current_costs.iter().any(|summary| {
+            summary.lane == CostLane::SubscriptionEstimate && summary.totals.tokens.output == 20
+        }));
+        assert!(summary.current_costs.iter().any(|summary| {
+            summary.lane == CostLane::UnknownAccess && summary.totals.tokens.cache_read == 30
+        }));
+    }
+
+    #[test]
+    fn now_summary_uses_configurable_cost_period() {
+        let generated_at = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let previous_week = utc_datetime(2026, 1, 2, 12, 0, 0);
+        let previous_month = utc_datetime(2025, 12, 31, 12, 0, 0);
+        let rows = vec![
+            record(
+                FocusAccessPath::Api,
+                previous_week,
+                "old-model",
+                Some("/work/a"),
+                TokenType::Input,
+                10,
+            ),
+            record(
+                FocusAccessPath::Api,
+                generated_at,
+                "new-model",
+                Some("/work/a"),
+                TokenType::Input,
+                20,
+            ),
+            record(
+                FocusAccessPath::Api,
+                previous_month,
+                "last-month-model",
+                Some("/work/a"),
+                TokenType::Input,
+                30,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(generated_at, rows, Vec::new());
+
+        let week = now_summary(&snapshot, NowOptions::default());
+        let month = now_summary(
+            &snapshot,
+            NowOptions {
+                cost_period: Period::Month,
+                group_by: GroupBy::Model,
+            },
+        );
+
+        assert_eq!(week.current_costs.len(), 1);
+        assert_eq!(week.current_costs[0].totals.tokens.input, 20);
+        assert_eq!(month.current_costs.len(), 2);
+        assert_eq!(
+            month
+                .current_costs
+                .iter()
+                .map(|summary| summary.totals.tokens.input)
+                .sum::<u64>(),
+            30
+        );
+        assert!(!month
+            .current_costs
+            .iter()
+            .any(|summary| summary.group.value == "last-month-model"));
+    }
+
+    #[test]
+    fn trends_group_by_model_app_and_total() {
+        let generated_at = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let rows = vec![
+            record(
+                FocusAccessPath::Api,
+                generated_at,
+                "model-a",
+                Some("/work/a"),
+                TokenType::Input,
+                10,
+            ),
+            record(
+                FocusAccessPath::Api,
+                generated_at,
+                "model-b",
+                Some("/work/b"),
+                TokenType::Input,
+                20,
+            ),
+            record(
+                FocusAccessPath::Api,
+                generated_at,
+                "model-b",
+                None,
+                TokenType::Input,
+                30,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(generated_at, rows, Vec::new());
+
+        let by_model = trends_summary(
+            &snapshot,
+            TrendsOptions {
+                period: Period::Week,
+                group_by: GroupBy::Model,
+            },
+        );
+        let by_app = trends_summary(
+            &snapshot,
+            TrendsOptions {
+                period: Period::Week,
+                group_by: GroupBy::App,
+            },
+        );
+        let total = trends_summary(
+            &snapshot,
+            TrendsOptions {
+                period: Period::Week,
+                group_by: GroupBy::Total,
+            },
+        );
+
+        assert_eq!(by_model.totals.len(), 2);
+        assert!(by_model
+            .totals
+            .iter()
+            .any(|summary| summary.group.value == "model-a"));
+        assert_eq!(by_app.totals.len(), 3);
+        assert!(by_app
+            .totals
+            .iter()
+            .any(|summary| summary.group.value == UNKNOWN_GROUP_VALUE));
+        assert_eq!(total.totals.len(), 1);
+        assert_eq!(total.totals[0].group.value, TOTAL_GROUP_VALUE);
+        assert_eq!(total.totals[0].totals.tokens.input, 60);
+    }
+
+    #[test]
+    fn trends_buckets_by_selected_local_periods() {
+        let monday_local = local_datetime(2026, 1, 5, 12, 0, 0);
+        let sunday_local = local_datetime(2026, 1, 11, 12, 0, 0);
+        let next_monday_local = local_datetime(2026, 1, 12, 12, 0, 0);
+        let rows = vec![
+            record(
+                FocusAccessPath::Api,
+                monday_local.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                10,
+            ),
+            record(
+                FocusAccessPath::Api,
+                sunday_local.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                20,
+            ),
+            record(
+                FocusAccessPath::Api,
+                next_monday_local.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                30,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(monday_local.with_timezone(&Utc), rows, Vec::new());
+
+        let week = trends_summary(
+            &snapshot,
+            TrendsOptions {
+                period: Period::Week,
+                group_by: GroupBy::Total,
+            },
+        );
+
+        assert_eq!(week.buckets.len(), 2);
+        assert_eq!(
+            week.buckets[0].period.start.with_timezone(&Local).weekday(),
+            Weekday::Mon
+        );
+        assert_eq!(
+            week.buckets[1].period.start.with_timezone(&Local).weekday(),
+            Weekday::Mon
+        );
+        assert_ne!(week.buckets[0].period.start, week.buckets[1].period.start);
+        assert_eq!(week.buckets[0].totals.tokens.input, 30);
+        assert_eq!(week.buckets[1].totals.tokens.input, 30);
+    }
+
+    #[test]
+    fn trends_day_buckets_split_at_local_midnight() {
+        let before_midnight = local_datetime(2026, 1, 5, 23, 59, 59);
+        let after_midnight = local_datetime(2026, 1, 6, 0, 0, 0);
+        let rows = vec![
+            record(
+                FocusAccessPath::Api,
+                before_midnight.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                10,
+            ),
+            record(
+                FocusAccessPath::Api,
+                after_midnight.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                20,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(after_midnight.with_timezone(&Utc), rows, Vec::new());
+
+        let day = trends_summary(
+            &snapshot,
+            TrendsOptions {
+                period: Period::Day,
+                group_by: GroupBy::Total,
+            },
+        );
+
+        assert_eq!(day.buckets.len(), 2);
+        assert_ne!(day.buckets[0].period.start, day.buckets[1].period.start);
+        assert_eq!(day.buckets[0].totals.row_count, 1);
+        assert_eq!(day.buckets[0].totals.tokens.input, 10);
+        assert_eq!(day.buckets[1].totals.row_count, 1);
+        assert_eq!(day.buckets[1].totals.tokens.input, 20);
+    }
+
+    #[test]
+    fn trends_month_buckets_split_by_local_month() {
+        let january = local_datetime(2025, 1, 31, 12, 0, 0);
+        let february = local_datetime(2025, 2, 1, 12, 0, 0);
+        let rows = vec![
+            record(
+                FocusAccessPath::Api,
+                january.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                10,
+            ),
+            record(
+                FocusAccessPath::Api,
+                february.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                20,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(february.with_timezone(&Utc), rows, Vec::new());
+
+        let month = trends_summary(
+            &snapshot,
+            TrendsOptions {
+                period: Period::Month,
+                group_by: GroupBy::Total,
+            },
+        );
+
+        assert_eq!(month.buckets.len(), 2);
+        assert_eq!(
+            month.buckets[0].period.start.with_timezone(&Local).month(),
+            1
+        );
+        assert_eq!(month.buckets[0].totals.row_count, 1);
+        assert_eq!(month.buckets[0].totals.tokens.input, 10);
+        assert_eq!(
+            month.buckets[1].period.start.with_timezone(&Local).month(),
+            2
+        );
+        assert_eq!(month.buckets[1].totals.row_count, 1);
+        assert_eq!(month.buckets[1].totals.tokens.input, 20);
+    }
+
+    #[test]
+    fn trends_year_buckets_split_by_local_year() {
+        let current_year = local_datetime(2025, 12, 31, 12, 0, 0);
+        let next_year = local_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = vec![
+            record(
+                FocusAccessPath::Api,
+                current_year.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                10,
+            ),
+            record(
+                FocusAccessPath::Api,
+                next_year.with_timezone(&Utc),
+                "model",
+                Some("/work/a"),
+                TokenType::Input,
+                30,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(next_year.with_timezone(&Utc), rows, Vec::new());
+
+        let year = trends_summary(
+            &snapshot,
+            TrendsOptions {
+                period: Period::Year,
+                group_by: GroupBy::Total,
+            },
+        );
+
+        assert_eq!(year.buckets.len(), 2);
+        assert_eq!(
+            year.buckets[0].period.start.with_timezone(&Local).year(),
+            2025
+        );
+        assert_eq!(year.buckets[0].totals.row_count, 1);
+        assert_eq!(year.buckets[0].totals.tokens.input, 10);
+        assert_eq!(
+            year.buckets[1].period.start.with_timezone(&Local).year(),
+            2026
+        );
+        assert_eq!(year.buckets[1].totals.row_count, 1);
+        assert_eq!(year.buckets[1].totals.tokens.input, 30);
+    }
+
+    #[test]
+    fn local_period_boundaries_start_at_local_midnight() {
+        let local = local_datetime(2026, 1, 15, 0, 30, 0);
+
+        let day = period_range_for(Period::Day, local.with_timezone(&Utc));
+        let month = period_range_for(Period::Month, local.with_timezone(&Utc));
+        let year = period_range_for(Period::Year, local.with_timezone(&Utc));
+
+        assert_eq!(day.start.with_timezone(&Local).hour(), 0);
+        assert_eq!(day.start.with_timezone(&Local).minute(), 0);
+        assert_eq!(month.start.with_timezone(&Local).day(), 1);
+        assert_eq!(year.start.with_timezone(&Local).month(), 1);
+        assert_eq!(year.start.with_timezone(&Local).day(), 1);
+    }
+
+    #[test]
+    fn placeholder_pricing_reports_missing_price_and_tokens() {
+        let generated_at = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let rows = vec![record(
+            FocusAccessPath::Api,
+            generated_at,
+            "model",
+            Some("/work/a"),
+            TokenType::Input,
+            10,
+        )];
+        let snapshot = snapshot_with_rows(generated_at, rows, Vec::new());
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        let totals = &summary.current_costs[0].totals;
+
+        assert_eq!(totals.billed_cost, Decimal::from(0));
+        assert_eq!(totals.effective_cost, Decimal::from(0));
+        assert_eq!(totals.tokens.input, 10);
+        assert_eq!(totals.pricing_coverage.missing_price_rows, 1);
+        assert_eq!(totals.estimated_rows, 1);
+    }
+
+    #[test]
+    fn pricing_coverage_tracks_unknown_models_separately() {
+        let generated_at = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let mut row = record(
+            FocusAccessPath::Api,
+            generated_at,
+            "model",
+            Some("/work/a"),
+            TokenType::Input,
+            10,
+        );
+        row.x_pricing_status = PRICING_STATUS_UNKNOWN_MODEL.to_string();
+        let snapshot = snapshot_with_rows(generated_at, vec![row], Vec::new());
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+
+        assert_eq!(
+            summary.current_costs[0]
+                .totals
+                .pricing_coverage
+                .unknown_model_rows,
+            1
+        );
+    }
+
+    #[test]
+    fn limit_availability_distinguishes_unavailable_available_partial_and_stale() {
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let limits = vec![
+            LimitWindow {
+                tool: ProviderId::ClaudeCode,
+                plan: None,
+                kind: LimitKind::FiveHour,
+                used_fraction: None,
+                resets_at: None,
+                label: Some("unavailable".to_string()),
+            },
+            LimitWindow {
+                tool: ProviderId::Codex,
+                plan: Some("plus".to_string()),
+                kind: LimitKind::FiveHour,
+                used_fraction: Some(0.5),
+                resets_at: Some(now + Duration::minutes(30)),
+                label: None,
+            },
+            LimitWindow {
+                tool: ProviderId::Codex,
+                plan: Some("plus".to_string()),
+                kind: LimitKind::Weekly,
+                used_fraction: Some(0.6),
+                resets_at: None,
+                label: None,
+            },
+            LimitWindow {
+                tool: ProviderId::Codex,
+                plan: Some("plus".to_string()),
+                kind: LimitKind::Weekly,
+                used_fraction: Some(0.7),
+                resets_at: Some(now - Duration::minutes(5)),
+                label: None,
+            },
+        ];
+        let snapshot = snapshot_with_rows(now, Vec::new(), limits);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+
+        assert!(matches!(
+            summary.limits[0].availability,
+            LimitAvailability::Unavailable { .. }
+        ));
+        assert!(matches!(
+            summary.limits[1].availability,
+            LimitAvailability::Available {
+                reset_in_seconds: 1800,
+                ..
+            }
+        ));
+        assert!(matches!(
+            summary.limits[2].availability,
+            LimitAvailability::Partial { .. }
+        ));
+        match &summary.limits[3].availability {
+            LimitAvailability::Partial {
+                reset_in_seconds,
+                reason,
+                ..
+            } => {
+                assert_eq!(*reset_in_seconds, Some(0));
+                assert!(reason.contains("stale"));
+            }
+            _ => panic!("expired reset should be partial stale data"),
+        }
+    }
+
+    #[test]
+    fn snapshot_collection_degrades_provider_errors() {
+        let env = HostEnv::new(PathBuf::from("/home/example"), None, false);
+        let now = timestamp();
+        let providers: Vec<Box<dyn Provider>> = vec![
+            Box::new(FakeProvider::missing(ProviderId::ClaudeCode)),
+            Box::new(FakeProvider::failing_usage(ProviderId::Cursor)),
+            Box::new(FakeProvider::available(
+                ProviderId::Codex,
+                vec![usage_event(
+                    ProviderId::Codex,
+                    AccessPath::Subscription,
+                    now,
+                )],
+                vec![LimitWindow {
+                    tool: ProviderId::Codex,
+                    plan: Some("plus".to_string()),
+                    kind: LimitKind::FiveHour,
+                    used_fraction: Some(0.4),
+                    resets_at: Some(now + Duration::hours(1)),
+                    label: None,
+                }],
+            )),
+        ];
+
+        let snapshot = match collect_snapshot_from_providers(&env, providers, now) {
+            Ok(value) => value,
+            Err(err) => panic!("snapshot should collect with non-fatal provider errors: {err}"),
+        };
+
+        assert_eq!(snapshot.providers.len(), 3);
+        assert!(snapshot.providers.iter().any(|status| {
+            status.provider == ProviderId::ClaudeCode
+                && status.status == ProviderStatusKind::Missing
+        }));
+        assert!(snapshot.providers.iter().any(|status| {
+            status.provider == ProviderId::Cursor && status.status == ProviderStatusKind::Partial
+        }));
+        assert!(snapshot.providers.iter().any(|status| {
+            status.provider == ProviderId::Codex
+                && status.status == ProviderStatusKind::Available
+                && status.focus_rows == 3
+        }));
+        assert_eq!(snapshot.focus_rows.len(), 3);
+        assert_eq!(snapshot.limit_windows.len(), 1);
+    }
+
+    fn local_datetime(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+    ) -> DateTime<Local> {
+        match Local.with_ymd_and_hms(year, month, day, hour, minute, second) {
+            LocalResult::Single(value) => value,
+            LocalResult::Ambiguous(first, _) => first,
+            LocalResult::None => {
+                panic!("test local timestamp should be valid in the host timezone")
+            }
+        }
+    }
+
+    struct FakeProvider {
+        provider: ProviderId,
+        discoverable: bool,
+        usage_error: bool,
+        usage: Vec<UsageEvent>,
+        limits: Vec<LimitWindow>,
+    }
+
+    impl FakeProvider {
+        fn missing(provider: ProviderId) -> Self {
+            Self {
+                provider,
+                discoverable: false,
+                usage_error: false,
+                usage: Vec::new(),
+                limits: Vec::new(),
+            }
+        }
+
+        fn failing_usage(provider: ProviderId) -> Self {
+            Self {
+                provider,
+                discoverable: true,
+                usage_error: true,
+                usage: Vec::new(),
+                limits: Vec::new(),
+            }
+        }
+
+        fn available(
+            provider: ProviderId,
+            usage: Vec<UsageEvent>,
+            limits: Vec<LimitWindow>,
+        ) -> Self {
+            Self {
+                provider,
+                discoverable: true,
+                usage_error: false,
+                usage,
+                limits,
+            }
+        }
+    }
+
+    impl Provider for FakeProvider {
+        fn id(&self) -> ProviderId {
+            self.provider
+        }
+
+        fn discover(&self, _env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
+            if self.discoverable {
+                Ok(Some(DataLocation {
+                    provider: self.provider,
+                    root: PathBuf::from("/fake"),
+                    files: vec![PathBuf::from("/fake/data.jsonl")],
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn parse_usage(&self, _loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError> {
+            if self.usage_error {
+                Err(ProviderError::DataUnavailable {
+                    provider: self.provider,
+                    message: "synthetic usage failure".to_string(),
+                })
+            } else {
+                Ok(self.usage.clone())
+            }
+        }
+
+        fn parse_limits(&self, _loc: &DataLocation) -> Result<Vec<LimitWindow>, ProviderError> {
+            Ok(self.limits.clone())
+        }
     }
 }
