@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use costroid_providers::HostEnv;
 
 #[derive(Debug, Parser)]
 #[command(name = "costroid", version, about = "Local AI coding cost visibility")]
@@ -59,22 +60,34 @@ enum ExportFormat {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let command_name = match &cli.command {
+    match &cli.command {
         Some(Command::Trends(args)) => {
             let _selected = (args.period, args.group);
-            "trends"
+            println!("costroid skeleton: trends");
         }
-        Some(Command::Statusline) => "statusline",
+        Some(Command::Statusline) => {
+            println!("costroid skeleton: statusline");
+        }
         Some(Command::Export(args)) => {
-            let _selected = args.format;
-            "export"
+            run_export(args.format)?;
         }
-        None => "now",
-    };
+        None => {
+            println!("costroid skeleton: now");
+        }
+    }
     let _render_mode = (cli.plain, cli.live);
-    let _pricing_bytes = costroid_core::bundled_pricing_json().len();
 
-    println!("costroid skeleton: {command_name}");
+    Ok(())
+}
+
+fn run_export(format: ExportFormat) -> Result<()> {
+    let env = HostEnv::detect();
+    let rows = costroid_core::focus_records_from_local_logs(&env)?;
+    let output = match format {
+        ExportFormat::Json => costroid_core::export_focus_json(rows)?,
+        ExportFormat::Csv => costroid_core::export_focus_csv(&rows)?,
+    };
+    print!("{output}");
     Ok(())
 }
 
