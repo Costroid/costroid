@@ -95,15 +95,17 @@ npx costroid
 ### Usage
 
 ```bash
-costroid                         # "now": live limits + current API costs
-costroid trends                  # spend over time
+costroid                         # interactive "now": live limits + current API costs
+costroid trends                  # interactive spend-over-time view
 costroid trends --period week    # day | week | month | year
 costroid trends --group model    # model | app | total
-costroid --live                  # auto-refreshing view
+costroid --live                  # auto-refresh the interactive view
 costroid statusline              # compact one-line status for shell / tmux / Starship
 costroid export --format json    # FOCUS export (--format json | csv)
-costroid --plain                 # ASCII fallback, no color (accessible, pipe-friendly)
+costroid --plain                 # one-shot ASCII, no color (screen-reader & pipe friendly)
 ```
+
+On an interactive terminal, `costroid` and `costroid trends` open a navigable view (press `?` for keys, `q` to quit); when the output is piped or `--plain` is set, they render once and exit. `statusline` and `export` are always one-shot.
 
 ## Security & privacy
 

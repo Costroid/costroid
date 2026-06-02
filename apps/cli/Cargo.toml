@@ -15,9 +15,12 @@ chrono.workspace = true
 clap.workspace = true
 costroid-core.workspace = true
 costroid-providers.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
 rust_decimal.workspace = true
 
 [dev-dependencies]
+costroid-focus.workspace = true
 insta = { version = "=1.47.2", default-features = false }
 
 [lints]

@@ -12,6 +12,7 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
 const COST_BAR_WIDTH: usize = 12;
+const DEFAULT_RENDER_WIDTH: usize = 64;
 const LIMIT_BAR_WIDTH: usize = 12;
 const STATUS_BAR_WIDTH: usize = 4;
 const WARN_FRACTION: f64 = 0.80;
@@ -28,10 +29,12 @@ pub(crate) enum RenderMode {
 pub(crate) struct RenderOptions {
     pub mode: RenderMode,
     pub ansi: bool,
+    pub width: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Style {
+pub(crate) enum SemanticStyle {
+    Plain,
     Strong,
     Warn,
     Critical,
@@ -50,7 +53,13 @@ impl RenderOptions {
         Self {
             mode: RenderMode::Plain,
             ansi: false,
+            width: DEFAULT_RENDER_WIDTH,
         }
+    }
+
+    pub(crate) fn with_width(mut self, width: usize) -> Self {
+        self.width = width.max(1);
+        self
     }
 
     #[cfg(test)]
@@ -58,6 +67,7 @@ impl RenderOptions {
         Self {
             mode: RenderMode::Braille,
             ansi,
+            width: DEFAULT_RENDER_WIDTH,
         }
     }
 
@@ -66,7 +76,104 @@ impl RenderOptions {
         Self {
             mode: RenderMode::Ascii,
             ansi,
+            width: DEFAULT_RENDER_WIDTH,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StyledDocument {
+    pub(crate) lines: Vec<StyledLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StyledLine {
+    pub(crate) spans: Vec<StyledSpan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StyledSpan {
+    pub(crate) content: String,
+    pub(crate) style: SemanticStyle,
+}
+
+impl StyledDocument {
+    pub(crate) fn new() -> Self {
+        Self { lines: Vec::new() }
+    }
+
+    pub(crate) fn push(&mut self, line: StyledLine) {
+        self.lines.push(line);
+    }
+
+    pub(crate) fn render(&self, options: RenderOptions) -> String {
+        let mut out = String::new();
+        for line in &self.lines {
+            out.push_str(&line.render(options));
+            out.push('\n');
+        }
+        out
+    }
+}
+
+impl StyledLine {
+    pub(crate) fn new() -> Self {
+        Self { spans: Vec::new() }
+    }
+
+    pub(crate) fn plain(content: impl Into<String>) -> Self {
+        Self {
+            spans: vec![StyledSpan::plain(content)],
+        }
+    }
+
+    pub(crate) fn push_plain(&mut self, content: impl Into<String>) {
+        self.spans.push(StyledSpan::plain(content));
+    }
+
+    pub(crate) fn push_styled(&mut self, content: impl Into<String>, style: SemanticStyle) {
+        self.spans.push(StyledSpan {
+            content: content.into(),
+            style,
+        });
+    }
+
+    pub(crate) fn render(&self, options: RenderOptions) -> String {
+        let mut out = String::new();
+        for span in &self.spans {
+            out.push_str(&span.render(options));
+        }
+        out
+    }
+}
+
+impl StyledSpan {
+    pub(crate) fn plain(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            style: SemanticStyle::Plain,
+        }
+    }
+
+    fn styled(content: impl Into<String>, style: SemanticStyle) -> Self {
+        Self {
+            content: content.into(),
+            style,
+        }
+    }
+
+    fn render(&self, options: RenderOptions) -> String {
+        if !options.ansi || options.mode == RenderMode::Plain || self.style == SemanticStyle::Plain
+        {
+            return self.content.clone();
+        }
+        let code = match self.style {
+            SemanticStyle::Plain => return self.content.clone(),
+            SemanticStyle::Strong => "1",
+            SemanticStyle::Warn => "33;1",
+            SemanticStyle::Critical => "31;1",
+        };
+        format!("\x1b[{code}m{}\x1b[0m", self.content)
     }
 }
 
@@ -114,6 +221,7 @@ fn select_render_options(plain: bool, stdout_is_tty: bool, env: &EnvSnapshot) ->
     RenderOptions {
         mode,
         ansi: !no_color,
+        width: DEFAULT_RENDER_WIDTH,
     }
 }
 
@@ -147,20 +255,35 @@ fn locale_value(env: &EnvSnapshot) -> Option<&str> {
 }
 
 pub(crate) fn render_now(summary: &NowSummary, options: RenderOptions) -> String {
-    match options.mode {
-        RenderMode::Plain => render_now_plain(summary),
-        RenderMode::Braille | RenderMode::Ascii => render_now_visual(summary, options),
-    }
+    render_now_document(summary, options).render(options)
 }
 
 pub(crate) fn render_trends(summary: &TrendsSummary, options: RenderOptions) -> String {
-    match options.mode {
-        RenderMode::Plain => render_trends_plain(summary),
-        RenderMode::Braille | RenderMode::Ascii => render_trends_visual(summary, options),
-    }
+    render_trends_document(summary, options).render(options)
 }
 
 pub(crate) fn render_statusline(summary: &NowSummary, options: RenderOptions) -> String {
+    render_statusline_line(summary, options).render(options)
+}
+
+pub(crate) fn render_now_document(summary: &NowSummary, options: RenderOptions) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_now_plain_document(summary),
+        RenderMode::Braille | RenderMode::Ascii => render_now_visual_document(summary, options),
+    }
+}
+
+pub(crate) fn render_trends_document(
+    summary: &TrendsSummary,
+    options: RenderOptions,
+) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_trends_plain_document(summary),
+        RenderMode::Braille | RenderMode::Ascii => render_trends_visual_document(summary, options),
+    }
+}
+
+fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> StyledLine {
     let api = sorted_lane_rows(&summary.current_costs, CostLane::Api);
     let api_total = sum_costs(&api);
     let spend = format_money(&api_total, Some("USD"), true);
@@ -168,62 +291,58 @@ pub(crate) fn render_statusline(summary: &NowSummary, options: RenderOptions) ->
 
     match options.mode {
         RenderMode::Plain => match most_constrained_limit(&summary.limits) {
-            Some(limit) => format!(
+            Some(limit) => StyledLine::plain(format!(
                 "costroid {spend},{} {}",
                 if api.is_empty() { " no API usage," } else { "" },
                 plain_limit_phrase(limit)
-            ),
-            None => format!(
+            )),
+            None => StyledLine::plain(format!(
                 "costroid {spend}{}",
                 if api.is_empty() { ", no API usage" } else { "" }
-            ),
+            )),
         },
         RenderMode::Braille | RenderMode::Ascii => match most_constrained_limit(&summary.limits) {
             Some(limit) => {
                 let (fraction, reset) = limit_fraction_and_reset(limit);
-                let meter = limit_meter(fraction, STATUS_BAR_WIDTH, options);
                 let pct = percent(fraction);
                 let cue = state_cue(limit_state(fraction));
                 let reset = reset
                     .map(|seconds| format!(" {}", compact_reset(seconds)))
                     .unwrap_or_default();
-                format!(
-                    "{} {spend}{api_state}  {meter} {pct}{cue}{reset}",
-                    mark(options)
-                )
+                let mut line = StyledLine::new();
+                line.push_plain(format!("{} {spend}{api_state}  ", mark(options)));
+                line.spans
+                    .push(limit_meter_span(fraction, STATUS_BAR_WIDTH, options));
+                line.push_plain(format!(" {pct}{cue}{reset}"));
+                line
             }
-            None => format!("{} {spend}{api_state}", mark(options)),
+            None => StyledLine::plain(format!("{} {spend}{api_state}", mark(options))),
         },
     }
 }
 
-fn render_now_visual(summary: &NowSummary, options: RenderOptions) -> String {
-    let mut out = String::new();
+fn render_now_visual_document(summary: &NowSummary, options: RenderOptions) -> StyledDocument {
+    let mut out = StyledDocument::new();
     let api = sorted_lane_rows(&summary.current_costs, CostLane::Api);
     let api_total = sum_costs(&api);
 
-    push_line(
+    push_header_line(
         &mut out,
-        &format!(
-            "{} costroid                                   this week  {}",
-            mark(options),
-            style(
-                &format_money(&api_total, Some("USD"), true),
-                Style::Strong,
-                options
-            )
-        ),
+        mark(options),
+        "this week",
+        format_money(&api_total, Some("USD"), true),
+        options,
     );
-    push_rule(&mut out);
+    push_rule(&mut out, options);
     push_line(&mut out, "limits");
     if summary.limits.is_empty() {
         push_line(&mut out, "  no local limit data found");
     } else {
         for limit in &summary.limits {
-            push_line(&mut out, &render_limit_line(limit, options));
+            out.push(render_limit_line(limit, options));
         }
     }
-    push_rule(&mut out);
+    push_rule(&mut out, options);
     push_line(&mut out, "api costs (this week)");
     if api.is_empty() {
         push_line(&mut out, "  no API usage in this period");
@@ -231,14 +350,15 @@ fn render_now_visual(summary: &NowSummary, options: RenderOptions) -> String {
         push_cost_rows(&mut out, &api, options);
     }
     push_non_api_sections(&mut out, &summary.current_costs, options);
-    push_rule(&mut out);
+    push_rule(&mut out, options);
     push_line(&mut out, &insight_line(&api, &summary.limits));
     push_provider_notes(&mut out, &summary.providers);
+    push_empty_provider_guidance(&mut out, &summary.providers);
     out
 }
 
-fn render_now_plain(summary: &NowSummary) -> String {
-    let mut out = String::new();
+fn render_now_plain_document(summary: &NowSummary) -> StyledDocument {
+    let mut out = StyledDocument::new();
     let api = sorted_lane_rows(&summary.current_costs, CostLane::Api);
     let api_total = sum_costs(&api);
 
@@ -269,26 +389,24 @@ fn render_now_plain(summary: &NowSummary) -> String {
     push_plain_non_api_sections(&mut out, &summary.current_costs);
     push_line(&mut out, &plain_insight_line(&api, &summary.limits));
     push_provider_notes(&mut out, &summary.providers);
+    push_empty_provider_guidance(&mut out, &summary.providers);
     out
 }
 
-fn render_trends_visual(summary: &TrendsSummary, options: RenderOptions) -> String {
-    let mut out = String::new();
+fn render_trends_visual_document(
+    summary: &TrendsSummary,
+    options: RenderOptions,
+) -> StyledDocument {
+    let mut out = StyledDocument::new();
     let api = sorted_lane_rows(&summary.totals, CostLane::Api);
     let api_total = sum_costs(&api);
 
-    push_line(
+    push_header_line(
         &mut out,
-        &format!(
-            "{} costroid                                   {}  {}",
-            mark(options),
-            period_scope(summary.period),
-            style(
-                &format_money(&api_total, Some("USD"), true),
-                Style::Strong,
-                options
-            )
-        ),
+        mark(options),
+        period_scope(summary.period),
+        format_money(&api_total, Some("USD"), true),
+        options,
     );
     push_line(
         &mut out,
@@ -298,7 +416,7 @@ fn render_trends_visual(summary: &TrendsSummary, options: RenderOptions) -> Stri
             group_tabs(summary.group_by)
         ),
     );
-    push_rule(&mut out);
+    push_rule(&mut out, options);
     push_line(
         &mut out,
         &format!("  api spend / {}", period_bucket_label(summary.period)),
@@ -313,7 +431,7 @@ fn render_trends_visual(summary: &TrendsSummary, options: RenderOptions) -> Stri
             &format!("  {}", sparkline_labels(summary.period, values.len())),
         );
     }
-    push_rule(&mut out);
+    push_rule(&mut out, options);
     push_line(&mut out, "breakdown");
     if api.is_empty() {
         push_line(&mut out, "  no API usage in this period");
@@ -321,14 +439,15 @@ fn render_trends_visual(summary: &TrendsSummary, options: RenderOptions) -> Stri
         push_cost_rows(&mut out, &api, options);
     }
     push_non_api_sections(&mut out, &summary.totals, options);
-    push_rule(&mut out);
+    push_rule(&mut out, options);
     push_line(&mut out, &insight_line(&api, &[]));
     push_provider_notes(&mut out, &summary.providers);
+    push_empty_provider_guidance(&mut out, &summary.providers);
     out
 }
 
-fn render_trends_plain(summary: &TrendsSummary) -> String {
-    let mut out = String::new();
+fn render_trends_plain_document(summary: &TrendsSummary) -> StyledDocument {
+    let mut out = StyledDocument::new();
     let api = sorted_lane_rows(&summary.totals, CostLane::Api);
     let api_total = sum_costs(&api);
 
@@ -368,13 +487,18 @@ fn render_trends_plain(summary: &TrendsSummary) -> String {
     push_plain_non_api_sections(&mut out, &summary.totals);
     push_line(&mut out, &plain_insight_line(&api, &[]));
     push_provider_notes(&mut out, &summary.providers);
+    push_empty_provider_guidance(&mut out, &summary.providers);
     out
 }
 
-fn push_non_api_sections(out: &mut String, rows: &[CostLaneSummary], options: RenderOptions) {
+fn push_non_api_sections(
+    out: &mut StyledDocument,
+    rows: &[CostLaneSummary],
+    options: RenderOptions,
+) {
     let subscription = sorted_lane_rows(rows, CostLane::SubscriptionEstimate);
     if !subscription.is_empty() {
-        push_rule(out);
+        push_rule(out, options);
         push_line(
             out,
             "subscription API-equivalent value (estimate, not bill)",
@@ -384,13 +508,13 @@ fn push_non_api_sections(out: &mut String, rows: &[CostLaneSummary], options: Re
 
     let unknown = sorted_lane_rows(rows, CostLane::UnknownAccess);
     if !unknown.is_empty() {
-        push_rule(out);
+        push_rule(out, options);
         push_line(out, "unknown-access usage (partial)");
         push_cost_rows(out, &unknown, options);
     }
 }
 
-fn push_plain_non_api_sections(out: &mut String, rows: &[CostLaneSummary]) {
+fn push_plain_non_api_sections(out: &mut StyledDocument, rows: &[CostLaneSummary]) {
     let subscription = sorted_lane_rows(rows, CostLane::SubscriptionEstimate);
     if !subscription.is_empty() {
         push_line(out, "subscription API-equivalent value, estimate not bill:");
@@ -408,34 +532,37 @@ fn push_plain_non_api_sections(out: &mut String, rows: &[CostLaneSummary]) {
     }
 }
 
-fn push_cost_rows(out: &mut String, rows: &[CostLaneSummary], options: RenderOptions) {
+fn push_cost_rows(out: &mut StyledDocument, rows: &[CostLaneSummary], options: RenderOptions) {
     let max = rows
         .iter()
         .map(|row| row.totals.billed_cost)
         .max()
         .unwrap_or_default();
     for row in rows {
-        let bar = cost_bar(row.totals.billed_cost, max, COST_BAR_WIDTH, options);
-        let money = style(
-            &format_money(
-                &row.totals.billed_cost,
-                row.totals.currency.as_deref(),
-                row.totals.estimated_rows > 0,
-            ),
-            Style::Strong,
-            options,
+        let money = format_money(
+            &row.totals.billed_cost,
+            row.totals.currency.as_deref(),
+            row.totals.estimated_rows > 0,
         );
+        let rendered_money_len = StyledSpan::styled(money.clone(), SemanticStyle::Strong)
+            .render(options)
+            .len();
         let badge = pricing_badge(&row.totals);
-        push_line(
-            out,
-            &format!(
-                "  {:<18}  {}  {:>12}{}",
-                display_group(&row.group.value),
-                bar,
-                money,
-                badge
-            ),
-        );
+        let mut line = StyledLine::new();
+        line.push_plain(format!("  {:<18}  ", display_group(&row.group.value)));
+        line.spans.push(cost_bar_span(
+            row.totals.billed_cost,
+            max,
+            cost_bar_width(options),
+            options,
+        ));
+        line.push_plain(format!(
+            "  {}",
+            " ".repeat(12_usize.saturating_sub(rendered_money_len))
+        ));
+        line.push_styled(money, SemanticStyle::Strong);
+        line.push_plain(badge);
+        out.push(line);
     }
 }
 
@@ -474,7 +601,7 @@ fn sum_costs(rows: &[CostLaneSummary]) -> Decimal {
         .fold(Decimal::ZERO, |total, row| total + row.totals.billed_cost)
 }
 
-fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> String {
+fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> StyledLine {
     let tool = provider_name(limit.tool);
     let kind = limit_kind(limit.kind);
     match &limit.availability {
@@ -483,17 +610,18 @@ fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> String {
             reset_in_seconds,
             ..
         } => {
-            let meter = limit_meter(*used_fraction, LIMIT_BAR_WIDTH, options);
             let cue = state_cue(limit_state(*used_fraction));
-            format!(
-                "  {:<12} {:<3} {}  {}{}  resets {}",
-                tool,
-                kind,
-                meter,
+            let mut line = StyledLine::new();
+            line.push_plain(format!("  {tool:<12} {kind:<3} "));
+            line.spans
+                .push(limit_meter_span(*used_fraction, LIMIT_BAR_WIDTH, options));
+            line.push_plain(format!(
+                "  {}{}  resets {}",
                 percent(*used_fraction),
                 cue,
                 reset_countdown(*reset_in_seconds)
-            )
+            ));
+            line
         }
         LimitAvailability::Partial {
             used_fraction,
@@ -502,27 +630,28 @@ fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> String {
             ..
         } => match used_fraction {
             Some(fraction) => {
-                let meter = limit_meter(*fraction, LIMIT_BAR_WIDTH, options);
                 let cue = state_cue(limit_state(*fraction));
                 let reset = reset_in_seconds
                     .map(reset_countdown)
                     .map(|value| format!(" resets {value}"))
                     .unwrap_or_default();
-                format!(
-                    "  {:<12} {:<3} {}  {}{}  partial: {}{}",
-                    tool,
-                    kind,
-                    meter,
+                let mut line = StyledLine::new();
+                line.push_plain(format!("  {tool:<12} {kind:<3} "));
+                line.spans
+                    .push(limit_meter_span(*fraction, LIMIT_BAR_WIDTH, options));
+                line.push_plain(format!(
+                    "  {}{}  partial: {}{}",
                     percent(*fraction),
                     cue,
                     reason,
                     reset
-                )
+                ));
+                line
             }
-            None => format!("  {:<12} {:<3} partial: {}", tool, kind, reason),
+            None => StyledLine::plain(format!("  {tool:<12} {kind:<3} partial: {reason}")),
         },
         LimitAvailability::Unavailable { reason } => {
-            format!("  {:<12} {:<3} unavailable: {}", tool, kind, reason)
+            StyledLine::plain(format!("  {tool:<12} {kind:<3} unavailable: {reason}"))
         }
     }
 }
@@ -677,31 +806,39 @@ fn plain_state_phrase(state: LimitState) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn limit_meter(fraction: f64, width: usize, options: RenderOptions) -> String {
-    let state = limit_state(fraction);
-    let styled = match state {
-        LimitState::Normal => Style::Strong,
-        LimitState::Warn => Style::Warn,
-        LimitState::Critical | LimitState::Over => Style::Critical,
-    };
-    positional_meter(fraction, width, options, styled)
+    limit_meter_span(fraction, width, options).render(options)
 }
 
-fn cost_bar(amount: Decimal, max: Decimal, width: usize, options: RenderOptions) -> String {
+fn limit_meter_span(fraction: f64, width: usize, options: RenderOptions) -> StyledSpan {
+    let state = limit_state(fraction);
+    let styled = match state {
+        LimitState::Normal => SemanticStyle::Strong,
+        LimitState::Warn => SemanticStyle::Warn,
+        LimitState::Critical | LimitState::Over => SemanticStyle::Critical,
+    };
+    StyledSpan::styled(positional_meter_text(fraction, width, options), styled)
+}
+
+fn cost_bar_span(
+    amount: Decimal,
+    max: Decimal,
+    width: usize,
+    options: RenderOptions,
+) -> StyledSpan {
     let fraction = if max > Decimal::ZERO {
         (amount / max).to_f64().unwrap_or(0.0)
     } else {
         0.0
     };
-    positional_meter(fraction, width, options, Style::Strong)
+    StyledSpan::styled(
+        positional_meter_text(fraction, width, options),
+        SemanticStyle::Strong,
+    )
 }
 
-fn positional_meter(
-    fraction: f64,
-    width: usize,
-    options: RenderOptions,
-    used_style: Style,
-) -> String {
+fn positional_meter_text(fraction: f64, width: usize, options: RenderOptions) -> String {
     let segments = meter_segments(fraction, width);
     match options.mode {
         RenderMode::Plain => String::new(),
@@ -714,7 +851,7 @@ fn positional_meter(
             }
             meter.extend(std::iter::repeat_n('-', segments.remaining));
             meter.push(']');
-            style(&meter, used_style, options)
+            meter
         }
         RenderMode::Braille => {
             let mut meter = String::with_capacity(width);
@@ -723,7 +860,7 @@ fn positional_meter(
                 meter.push(braille_left_column());
             }
             meter.extend(std::iter::repeat_n(braille_light(), segments.remaining));
-            style(&meter, used_style, options)
+            meter
         }
     }
 }
@@ -894,31 +1031,52 @@ fn braille_bar_height(height: u8) -> char {
     }
 }
 
-fn style(value: &str, style: Style, options: RenderOptions) -> String {
-    if !options.ansi || options.mode == RenderMode::Plain {
-        return value.to_string();
+fn push_line(out: &mut StyledDocument, line: &str) {
+    out.push(StyledLine::plain(line));
+}
+
+fn push_rule(out: &mut StyledDocument, options: RenderOptions) {
+    push_line(out, &"─".repeat(options.width.max(1)));
+}
+
+fn push_header_line(
+    out: &mut StyledDocument,
+    mark: &str,
+    scope: &str,
+    money: String,
+    options: RenderOptions,
+) {
+    let mut line = StyledLine::new();
+    if options.width == DEFAULT_RENDER_WIDTH {
+        line.push_plain(format!(
+            "{mark} costroid                                   {scope}  "
+        ));
+    } else {
+        let left = format!("{mark} costroid");
+        let right = format!("{scope}  ");
+        let spacing = options
+            .width
+            .saturating_sub(visible_width(&left) + visible_width(&right) + visible_width(&money))
+            .max(1);
+        line.push_plain(format!("{left}{}{right}", " ".repeat(spacing)));
     }
-    let code = match style {
-        Style::Strong => "1",
-        Style::Warn => "33;1",
-        Style::Critical => "31;1",
-    };
-    format!("\x1b[{code}m{value}\x1b[0m")
+    line.push_styled(money, SemanticStyle::Strong);
+    out.push(line);
 }
 
-fn push_line(out: &mut String, line: &str) {
-    out.push_str(line);
-    out.push('\n');
+fn visible_width(value: &str) -> usize {
+    value.chars().count()
 }
 
-fn push_rule(out: &mut String) {
-    push_line(
-        out,
-        "────────────────────────────────────────────────────────────────",
-    );
+fn cost_bar_width(options: RenderOptions) -> usize {
+    if options.width <= DEFAULT_RENDER_WIDTH {
+        COST_BAR_WIDTH
+    } else {
+        (COST_BAR_WIDTH + (options.width - DEFAULT_RENDER_WIDTH) / 4).min(32)
+    }
 }
 
-fn push_provider_notes(out: &mut String, providers: &[costroid_core::ProviderStatus]) {
+fn push_provider_notes(out: &mut StyledDocument, providers: &[costroid_core::ProviderStatus]) {
     for provider in providers
         .iter()
         .filter(|provider| provider.status != ProviderStatusKind::Available)
@@ -937,6 +1095,32 @@ fn push_provider_notes(out: &mut String, providers: &[costroid_core::ProviderSta
             ),
         );
     }
+}
+
+fn push_empty_provider_guidance(
+    out: &mut StyledDocument,
+    providers: &[costroid_core::ProviderStatus],
+) {
+    if providers
+        .iter()
+        .any(|provider| provider.status == ProviderStatusKind::Available)
+    {
+        return;
+    }
+
+    push_line(out, "no providers detected");
+    push_line(
+        out,
+        "looked for Claude Code, Codex, and Cursor local logs under the usual home/config dirs.",
+    );
+    push_line(
+        out,
+        "under WSL, Costroid also checks Windows paths like /mnt/c/Users/<you>/...",
+    );
+    push_line(
+        out,
+        "set CLAUDE_CONFIG_DIR or CODEX_HOME if your logs live elsewhere.",
+    );
 }
 
 fn insight_line(api: &[CostLaneSummary], limits: &[LimitSummary]) -> String {

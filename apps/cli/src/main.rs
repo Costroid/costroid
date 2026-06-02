@@ -1,10 +1,11 @@
 mod render;
+mod tui;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use costroid_core::{GroupBy, NowOptions, Period, TrendsOptions};
 use costroid_providers::HostEnv;
-use render::{detect_render_options, render_now, render_statusline, render_trends};
+use render::{detect_render_options, render_now, render_statusline, render_trends, RenderMode};
 
 #[derive(Debug, Parser)]
 #[command(name = "costroid", version, about = "Local AI coding cost visibility")]
@@ -64,14 +65,21 @@ enum ExportFormat {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    if cli.live {
-        bail!("--live is not implemented in M4; static rendering prints once and exits");
-    }
     let render_options = detect_render_options(cli.plain);
 
     match &cli.command {
         Some(Command::Trends(args)) => {
-            run_trends(args, render_options)?;
+            if render_options.mode == RenderMode::Plain {
+                run_trends(args, render_options)?;
+            } else {
+                tui::run(
+                    tui::StartScreen::Trends,
+                    args.period.into(),
+                    args.group.into(),
+                    cli.live,
+                    render_options,
+                )?;
+            }
         }
         Some(Command::Statusline) => {
             run_statusline(render_options)?;
@@ -80,7 +88,17 @@ fn main() -> Result<()> {
             run_export(args.format)?;
         }
         None => {
-            run_now(render_options)?;
+            if render_options.mode == RenderMode::Plain {
+                run_now(render_options)?;
+            } else {
+                tui::run(
+                    tui::StartScreen::Now,
+                    Period::Week,
+                    GroupBy::Model,
+                    cli.live,
+                    render_options,
+                )?;
+            }
         }
     }
 

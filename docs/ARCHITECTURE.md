@@ -118,34 +118,25 @@ The renderer lives in `apps/cli` on top of **Ratatui** (v0.30) with the **crosst
 ```rust
 enum RenderMode {
     Braille, // default: dot-rendered charts/meters, color
-    Ascii,   // braille unsupported by term/font: dot/bar markers, color
+    Ascii,   // braille unsupported by term/font: ASCII markers, color
     Plain,   // --plain: no TUI chrome, plain text, no color, screen-reader friendly
 }
 ```
 
 Mode is chosen from: the explicit `--plain` flag, TTY detection (non-tty ⇒ Plain, for pipes/CI), the `NO_COLOR` env var (disables color), and a terminal/font braille-capability check that automatically selects `Ascii` when braille isn't supported. `Ascii` is an internal fallback, not a user-facing flag — the only mode flag is `--plain`. Color is never the only signal — the amber warning state always carries a second cue (a marker/word), so `NO_COLOR` and `--plain` lose no information.
 
-**Rendering techniques.** Meters and cost bars are drawn as **styled braille glyph runs** (e.g. `⣿`); the **sparkline** uses Ratatui's `Canvas` with the braille marker. See [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) for the exact dot math and the per-component rules.
+**Output mode (interactive vs one-shot).** Separate from `RenderMode`, the binary chooses between the interactive TUI and a single printed render. On an interactive TTY, `costroid` and `costroid trends` launch the navigable Ratatui TUI; when stdout is piped/redirected, when `--plain` is passed, or for `costroid statusline` and `costroid export`, the output is **one-shot** (render once and exit). `--plain` always bypasses the TUI — an alternate-screen application is unusable for a screen reader.
 
-```rust
-use ratatui::symbols::Marker;
-use ratatui::widgets::canvas::Canvas;
+**One source of visual truth.** The renderer produces a neutral **styled document** — lines of styled spans carrying *semantic* styles (strong, dim, warn, critical, plain), not raw escape codes. Two adapters consume the same document: the one-shot path serializes it to an ANSI (or plain) `String`, and the TUI path maps it to Ratatui `Text`/`Style`. This keeps the one-shot output and the interactive TUI identical in content and look, and lets the one-shot serializer be snapshot-tested as the compatibility contract.
 
-Canvas::default()
-    .marker(Marker::Braille)        // 2x4 sub-cell dots; Ascii mode swaps to Marker::Dot/Bar
-    .x_bounds([0.0, n])
-    .y_bounds([0.0, max])
-    .paint(|ctx| { /* plot spend buckets as points (the sparkline) */ });
-```
-
-In `RenderMode::Ascii` the canvas swaps to `Marker::Dot`/`Marker::Bar` and the glyph runs fall back to ASCII; in `RenderMode::Plain` charts degrade to plain numeric rows (no canvas). (Ratatui v0.30 also offers `Marker::Octant` as a denser alternative to Braille; Braille remains the default and most widely supported.)
+**Braille is computed, not borrowed.** Meters, cost bars, and the sparkline are all drawn by computing braille codepoints directly (`U+2800` + an 8-dot bitmask), *not* via Ratatui's `symbols::braille` constants or its `Canvas` widget — those constants changed across versions, so computing from the codepoint is stable and keeps the look identical on both the one-shot and TUI paths. Fill is **positional** — the glyph itself distinguishes used / partial-boundary / remaining cells — with color/intensity only a secondary cue, so meters stay legible under `NO_COLOR`, color-blindness, and `--plain`. In `RenderMode::Ascii` the runs fall back to ASCII markers (`[####--]`, an ASCII height ramp); in `RenderMode::Plain` charts degrade to labeled numeric rows. See [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) for the exact dot math and the per-component rules.
 
 **Screens.** Two top-level views, selected by subcommand/state:
 
 - **now** — live 5-hour and weekly limit meters with reset countdowns, plus current API spend by model. Driven by `parse_limits` (Phase 1) / `live_limits` (Phase 2) and the cost aggregation.
 - **trends** — a spend chart over `--period day|week|month|year`, grouped by `--group model|app|total`, with a breakdown list.
 
-**Live loop (`--live`).** Enter raw mode + alternate screen; run a crossterm event loop that redraws on a tick interval and on input; `q` / `Ctrl-C` exit cleanly and **always restore the terminal** (raw mode off, leave alternate screen) via a guard so a panic can't leave the terminal wedged. Works over SSH and inside tmux.
+**Interactive loop.** On a TTY the now/trends screens run as a navigable Ratatui app (keybindings per DESIGN-SYSTEM: `tab`, `d`/`w`/`m`/`y`, `g`, `f` or `/`, `r`, `?`, `q`; `a` is a Phase-4 stub). It enters raw mode + the alternate screen and runs a crossterm event loop (`poll` with a tick deadline, so it never busy-spins) that redraws on input, on resize (regenerating the styled document at the new width), and on a tick. **`--live`** turns the tick into a periodic data re-collect (about every 2s); without it the screen is a snapshot refreshed manually with `r`. The terminal is **always restored** — raw mode off, alternate screen left, cursor shown — on `q`/`Ctrl-C`, on error, and on panic, via a restore guard plus a panic hook that leaves the alternate screen, chains the default panic handler so the message stays visible, and exits with status 101 (so a panic can leave neither the terminal wedged nor the process hung). Works over SSH and inside tmux.
 
 **Statusline (`costroid statusline`).** A non-interactive subcommand that prints a single compact line to stdout and exits — for shell prompts, tmux, and Starship. It consumes the same core data, renders a braille glyph plus key figures, honors `RenderMode` (ASCII/plain variants), and supports a configurable format string. It must be fast and side-effect-free.
 
