@@ -22,7 +22,7 @@ Preferred channel — **GitHub private vulnerability reporting:**
 2. Open **Advisories** and click **Report a vulnerability**.
 3. Fill in the private report form. The maintainers are notified, and the discussion and any fix happen privately within GitHub until an advisory is published.
 
-If that button isn't available, or you'd rather use email, contact **`<SECURITY_EMAIL>`** *(placeholder — replace with the project's real security contact; optional PGP key: `<PGP_KEY>`)*.
+If that button isn't available, or you'd rather use email, contact **costroid@protonmail.com**.
 
 **Please include**, where you can: the affected version or commit, a clear description, step-by-step reproduction, the impact, any proof-of-concept, and a suggested fix if you have one.
 
