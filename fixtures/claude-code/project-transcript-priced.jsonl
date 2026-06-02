@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-01-01T11:59:00.000Z","cwd":"/home/example/priced","message":{"role":"user","content":"synthetic priced prompt placeholder"}}
+{"type":"assistant","timestamp":"2026-01-01T12:00:00.000Z","cwd":"/home/example/priced","message":{"role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":1234567,"output_tokens":20,"cache_read_input_tokens":30,"cache_creation_input_tokens":40,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":40},"service_tier":"standard"}}}

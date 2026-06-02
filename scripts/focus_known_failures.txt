@@ -1,25 +1,32 @@
 # Known, documented focus-validator (FOCUS 1.3) failures for Costroid's export.
 #
 # This is the allowlist consumed by scripts/check_focus_conformance.py. It is
-# validated against the export of the committed fixtures (which are unpriced —
-# their models are not in the bundled pricing table — so they also exercise the
-# SkuPriceId-null row rules). CI fails on any failing rule NOT listed here.
+# validated against the export of the committed fixtures, which include BOTH a
+# priced row (claude-sonnet-4-6, in the pricing table) and unpriced rows (models
+# not in the table) — so the arithmetic checks AND the SkuPriceId-null row rules
+# are both exercised. CI fails on any failing rule NOT listed here.
 #
-# Two categories, both expected:
+# As of Milestone 6b, the only remaining failures are genuine validator-ruleset
+# defects that no conformant producer can satisfy. (Milestone 6a's deferred items
+# — PricingUnit UnitFormat and nulling Consumed/Pricing quantities + PricingCategory
+# on SkuPriceId-null rows — are now FIXED and no longer appear here.)
 #
-# 1) Milestone 6b — cost-calculator conformance (deferred, fixable, NOT accepted
-#    as permanent deviations). These need the pricing-unit representation rework
-#    (PricingQuantity in token units / per-token prices), arithmetic-precision
-#    alignment, and nulling Consumed/Pricing quantities on SkuPriceId-null rows.
-CAU-PricingUnit-C-003-O                  # PricingUnit "1M tokens" not in FOCUS UnitFormat
-CAU-ConsumedQuantity-C-009-C             # ConsumedQuantity MUST be null when SkuPriceId is null
-CAU-PricingQuantity-C-011-C              # PricingQuantity MUST be null when SkuPriceId is null
-CAU-PricingCategory-C-012-C              # PricingCategory MUST be null when SkuPriceId is null
-# (On priced rows, the arithmetic checks below replace the three above:)
-CAU-ListCost-C-011-C                     # ListCost = ListUnitPrice * PricingQuantity (float precision)
-CAU-ListUnitPrice-C-014-C                # ListCost = ListUnitPrice * PricingQuantity (float precision)
-CAU-ContractedCost-C-011-C               # ContractedCost = ContractedUnitPrice * PricingQuantity
-CAU-ContractedUnitPrice-C-013-C          # ContractedCost = ContractedUnitPrice * PricingQuantity
+# 1) The cost = unit-price x quantity arithmetic checks. The FOCUS spec defines
+#    these as EXACT equality ("ListCost MUST equal the product of ListUnitPrice and
+#    PricingQuantity"), which Costroid satisfies exactly in rust_decimal
+#    (e.g. 0.000015 * 20 = 0.000300 = ListCost). But the validator loads the CSV
+#    numeric columns as float64 (Polars -> DuckDB DOUBLE) and tests
+#    `(UnitPrice * Quantity) <> Cost` in float64 with ZERO tolerance, so a 1-ULP
+#    float product (0.00030000000000000003 != 0.0003) is flagged as a violation.
+#    No exact-decimal producer can satisfy a bit-exact float64 equality for
+#    arbitrary token counts, and rounding/nulling to dodge it would corrupt correct
+#    data — so this is a validator defect, not a producer bug. To be reported
+#    upstream as a third defect (alongside #142/#143); replace 144 once filed.
+#    Upstream: https://github.com/finopsfoundation/focus_validator/issues/144
+CAU-ListCost-C-011-C                     # float64 (UnitPrice * Quantity) != Cost; decimal product is exact
+CAU-ListUnitPrice-C-014-C                # same check, ListUnitPrice side
+CAU-ContractedCost-C-011-C               # float64 (ContractedUnitPrice * Quantity) != ContractedCost
+CAU-ContractedUnitPrice-C-013-C          # same check, ContractedUnitPrice side
 #
 # 2) Defects in the shipped validator ruleset (model-1.3.0.1.json) that no
 #    conformant producer can satisfy. Costroid's values are spec-correct (null);

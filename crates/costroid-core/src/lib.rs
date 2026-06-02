@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Utc};
 use costroid_focus::{
     to_csv_string, to_json_string, FocusAccessPath, FocusError, FocusRecord, TokenType,
-    UnpricedUsage, DEFAULT_BILLING_CURRENCY, PRICING_STATUS_MISSING_PRICE,
+    UnpricedUsage, DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD,
+    PRICING_STATUS_MISSING_PRICE, PRICING_UNIT_TOKENS,
 };
 use costroid_providers::{
     default_providers, AccessPath, HostEnv, LimitKind, LimitWindow, Provider, ProviderId,
@@ -277,19 +278,31 @@ fn push_meter_records(
 }
 
 fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate, pricing: &PricingCatalog) {
-    let cost = row.pricing_quantity * rate.price;
+    // Per-token representation (FOCUS UnitFormat): PricingQuantity is the token
+    // count, the unit-price columns are per-token (the per-1M catalog rate ÷
+    // 1_000_000). Cost is invariant: per_token × tokens == tokens × rate ÷ 1e6,
+    // identical to the previous (tokens / 1e6) × rate and exact in Decimal for
+    // every catalog rate (each price has ≤2 dp, so ÷1e6 terminates at ≤8 dp).
+    let per_token = rate.price / Decimal::from(1_000_000_u64);
+    let quantity = row.x_consumed_tokens;
+    let cost = per_token * quantity;
     row.billed_cost = cost;
     row.effective_cost = cost;
     row.list_cost = cost;
     row.contracted_cost = cost;
+    // A priced SKU exists: populate the columns nulled on unpriced rows.
+    row.consumed_quantity = Some(quantity);
+    row.pricing_quantity = Some(quantity);
+    row.pricing_category = Some(PRICING_CATEGORY_STANDARD.to_string());
+    row.pricing_unit = Some(PRICING_UNIT_TOKENS.to_string());
     row.sku_price_id = Some(pricing.sku_price_id(rate));
-    row.list_unit_price = Some(rate.price);
-    row.contracted_unit_price = Some(rate.price);
+    row.list_unit_price = Some(per_token);
+    row.contracted_unit_price = Some(per_token);
     // PricingCurrency == BillingCurrency for Costroid, so the pricing-currency
     // columns mirror their billing-currency counterparts.
     row.pricing_currency_effective_cost = cost;
-    row.pricing_currency_list_unit_price = Some(rate.price);
-    row.pricing_currency_contracted_unit_price = Some(rate.price);
+    row.pricing_currency_list_unit_price = Some(per_token);
+    row.pricing_currency_contracted_unit_price = Some(per_token);
     row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
 }
 
@@ -360,9 +373,12 @@ impl PricingCatalog {
     }
 
     fn sku_price_id(&self, rate: &CatalogRate) -> String {
+        // Opaque, stable per-rate identifier. The unit component reflects the
+        // FOCUS-facing per-token basis (consistent with PricingUnit / ListUnitPrice),
+        // not the catalog's per-1M rate basis — no stale "1M_tokens" in the id.
         format!(
             "{}:{}:{}:{}:{}",
-            rate.provider, rate.model, rate.meter, rate.unit, self.as_of
+            rate.provider, rate.model, rate.meter, PRICING_UNIT_TOKENS, self.as_of
         )
     }
 
@@ -817,8 +833,10 @@ impl AggregateTotals {
         self.billed_cost += row.billed_cost;
         self.effective_cost += row.effective_cost;
         self.add_currency(&row.billing_currency);
+        // Token totals come from x_ConsumedTokens (always populated), not
+        // ConsumedQuantity, which is null on unpriced rows per FOCUS 1.3.
         self.tokens
-            .add(&row.x_token_type, decimal_to_u64(row.consumed_quantity));
+            .add(&row.x_token_type, decimal_to_u64(row.x_consumed_tokens));
         self.pricing_coverage.add(&row.x_pricing_status);
         if row.x_estimated {
             self.estimated_rows += 1;
@@ -1088,7 +1106,7 @@ mod tests {
         assert_eq!(catalog.currency, "USD");
         assert_eq!(
             catalog.sku_price_id(rate),
-            "openai:gpt-5.5:input:1M_tokens:2026-06-02"
+            "openai:gpt-5.5:input:tokens:2026-06-02"
         );
     }
 
@@ -1118,7 +1136,7 @@ mod tests {
         assert!(rows.iter().all(|row| row.x_estimated));
         assert!(rows
             .iter()
-            .all(|row| row.pricing_category == PRICING_CATEGORY_STANDARD));
+            .all(|row| row.pricing_category.as_deref() == Some(PRICING_CATEGORY_STANDARD)));
         assert!(rows
             .iter()
             .all(|row| row.x_pricing_status == PRICING_STATUS_PRICED));
@@ -1156,15 +1174,25 @@ mod tests {
             None => panic!("cache_read row should exist"),
         };
 
-        assert_eq!(input.pricing_quantity, Decimal::new(10, 6));
-        assert_eq!(input.list_unit_price, Some(Decimal::new(500, 2)));
+        // Per-token representation: PricingQuantity is the token count, PricingUnit
+        // is "tokens", and ListUnitPrice is per-token (5.00 / 1M = 0.000005).
+        assert_eq!(input.pricing_quantity, Some(Decimal::from(10)));
+        assert_eq!(input.consumed_quantity, Some(Decimal::from(10)));
+        assert_eq!(input.pricing_unit.as_deref(), Some("tokens"));
+        assert_eq!(
+            input.pricing_category.as_deref(),
+            Some(PRICING_CATEGORY_STANDARD)
+        );
+        assert_eq!(input.list_unit_price, Some(Decimal::new(5, 6)));
+        assert_eq!(input.contracted_unit_price, Some(Decimal::new(5, 6)));
+        // Cost is unchanged from M4.5: 10 tokens x $5.00/1M = $0.00005.
         assert_eq!(input.billed_cost, Decimal::new(5, 5));
         assert_eq!(input.effective_cost, input.billed_cost);
         assert_eq!(input.list_cost, input.billed_cost);
         assert_eq!(input.contracted_cost, input.billed_cost);
         assert_eq!(
             input.sku_price_id.as_deref(),
-            Some("openai:gpt-5.5:input:1M_tokens:2026-06-02")
+            Some("openai:gpt-5.5:input:tokens:2026-06-02")
         );
         assert_eq!(input.service_name, "OpenAI API");
         assert_eq!(input.billing_currency, "USD");
@@ -1172,6 +1200,51 @@ mod tests {
 
         assert_eq!(output.billed_cost, Decimal::new(6, 4));
         assert_eq!(cache_read.billed_cost, Decimal::new(15, 6));
+    }
+
+    #[test]
+    fn cost_equals_per_token_price_times_quantity_and_matches_legacy_formula() {
+        let event = UsageEvent {
+            tool: ProviderId::Codex,
+            model: "gpt-5.5".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_234_567,
+            output_tokens: 20,
+            cache_read_tokens: 30,
+            cache_write_tokens: 0,
+            project: None,
+            access_path: AccessPath::Api,
+        };
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        let million = Decimal::from(1_000_000_u64);
+        let legacy =
+            |tokens: u64, per_million: Decimal| (Decimal::from(tokens) / million) * per_million;
+        for row in &rows {
+            let unit = match row.list_unit_price {
+                Some(value) => value,
+                None => panic!("priced row should have a unit price"),
+            };
+            let quantity = match row.pricing_quantity {
+                Some(value) => value,
+                None => panic!("priced row should have a pricing quantity"),
+            };
+            // FOCUS invariant, exact in Decimal: ListCost == ListUnitPrice x PricingQuantity.
+            assert_eq!(row.list_cost, unit * quantity);
+            assert_eq!(row.billed_cost, row.list_cost);
+        }
+        // Bit-for-bit identical to the pre-M6b (tokens / 1e6) x rate formula.
+        assert_eq!(
+            cost_for(&rows, "input"),
+            legacy(1_234_567, Decimal::new(500, 2))
+        );
+        assert_eq!(cost_for(&rows, "output"), legacy(20, Decimal::new(3000, 2)));
+        assert_eq!(
+            cost_for(&rows, "cache_read"),
+            legacy(30, Decimal::new(50, 2))
+        );
     }
 
     #[test]
@@ -1230,7 +1303,12 @@ mod tests {
         assert_eq!(row.list_unit_price, None);
         assert_eq!(row.contracted_unit_price, None);
         assert_eq!(row.sku_price_id, None);
-        assert_eq!(row.pricing_category, PRICING_CATEGORY_STANDARD);
+        // FOCUS 1.3: null when SkuPriceId is null. Token count survives on x_.
+        assert_eq!(row.pricing_category, None);
+        assert_eq!(row.pricing_quantity, None);
+        assert_eq!(row.pricing_unit, None);
+        assert_eq!(row.consumed_quantity, None);
+        assert_eq!(row.x_consumed_tokens, Decimal::from(1_000_000));
         assert_eq!(row.service_name, "OpenAI API");
         assert_eq!(row.billing_currency, "USD");
     }
@@ -1260,7 +1338,12 @@ mod tests {
         assert_eq!(row.list_unit_price, None);
         assert_eq!(row.contracted_unit_price, None);
         assert_eq!(row.sku_price_id, None);
-        assert_eq!(row.pricing_category, PRICING_CATEGORY_STANDARD);
+        // FOCUS 1.3: null when SkuPriceId is null. Token count survives on x_.
+        assert_eq!(row.pricing_category, None);
+        assert_eq!(row.pricing_quantity, None);
+        assert_eq!(row.pricing_unit, None);
+        assert_eq!(row.consumed_quantity, None);
+        assert_eq!(row.x_consumed_tokens, Decimal::from(1_000_000));
         assert_eq!(row.service_name, "Cursor");
         assert_eq!(row.billing_currency, DEFAULT_BILLING_CURRENCY);
     }
@@ -1389,6 +1472,35 @@ mod tests {
         assert!(summary.current_costs.iter().any(|summary| {
             summary.lane == CostLane::UnknownAccess && summary.totals.tokens.cache_read == 30
         }));
+    }
+
+    #[test]
+    fn engine_totals_tokens_from_unpriced_rows_via_x_consumed_tokens() {
+        // Unpriced rows null ConsumedQuantity (FOCUS 1.3), so the engine must read
+        // token totals from x_ConsumedTokens — else unpriced usage would vanish.
+        let generated_at = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let row = record(
+            FocusAccessPath::Api,
+            generated_at,
+            "unpriced-model",
+            Some("/work/a"),
+            TokenType::Input,
+            4_242,
+        );
+        assert_eq!(
+            row.consumed_quantity, None,
+            "unpriced row nulls ConsumedQuantity"
+        );
+        assert_eq!(row.x_consumed_tokens, Decimal::from(4_242));
+        let snapshot = snapshot_with_rows(generated_at, vec![row], Vec::new());
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        let total: u64 = summary
+            .current_costs
+            .iter()
+            .map(|summary| summary.totals.tokens.input)
+            .sum();
+        assert_eq!(total, 4_242);
     }
 
     #[test]

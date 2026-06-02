@@ -9,11 +9,19 @@
 //!
 //! Numeric columns serialize as genuine numbers in JSON and as decimal-pointed
 //! values in CSV (so the validator's DECIMAL/DOUBLE/FLOAT type checks pass even
-//! when every value in a column is whole). Three known deviations remain, scoped
-//! to Milestone 6b (a cost-calculator-conformance follow-up): the `PricingUnit`
-//! UnitFormat, the `ListCost`/`ContractedCost` = unit-price × quantity arithmetic
-//! checks, and nulling `Consumed`/`Pricing` quantities on rows whose `SkuPriceId`
-//! is null. They are not accepted deviations; they are deferred.
+//! when every value in a column is whole).
+//!
+//! As of Milestone 6b, pricing is represented per token: `PricingUnit = "tokens"`,
+//! `PricingQuantity` is the token count, and the unit-price columns are per-token
+//! rates (the per-1M catalog rate ÷ 1_000_000). Cost is unchanged — `cost = tokens
+//! × rate` is invariant — only the representation changed. On rows with no priced
+//! SKU (`SkuPriceId` null), FOCUS 1.3 requires `ConsumedQuantity` / `PricingQuantity`
+//! / `PricingUnit` / `PricingCategory` to be null, so they are; the raw token count
+//! still travels on the always-populated `x_ConsumedTokens` custom column for the
+//! aggregation engine. One genuine validator-ruleset defect remains documented (the
+//! `ListCost`/`ContractedCost` = unit-price × quantity check, which the validator
+//! evaluates in zero-tolerance float64 even though Costroid's decimal arithmetic is
+//! exact); see `scripts/focus_known_failures.txt`.
 
 use std::cell::Cell;
 
@@ -28,6 +36,9 @@ pub const DEFAULT_BILLING_CURRENCY: &str = "USD";
 pub const CHARGE_CATEGORY_USAGE: &str = "Usage";
 pub const CHARGE_FREQUENCY_USAGE_BASED: &str = "Usage-Based";
 pub const PRICING_CATEGORY_STANDARD: &str = "Standard";
+/// FOCUS `PricingUnit` / `ConsumedUnit` for per-token AI usage. Singular count
+/// unit (no numeric multiplier) so it conforms to the FOCUS UnitFormat.
+pub const PRICING_UNIT_TOKENS: &str = "tokens";
 pub const SERVICE_CATEGORY_AI: &str = "AI and Machine Learning";
 /// Valid FOCUS `ServiceSubcategory` paired with `ServiceCategory = "AI and Machine
 /// Learning"`. Costroid's three providers are LLM coding tools, so this is the
@@ -255,11 +266,13 @@ pub struct FocusRecord {
     pub sku_price_id: Option<String>,
     pub sku_meter: Option<String>,
     pub sku_price_details: Option<String>,
-    pub pricing_category: String,
+    // PricingCategory / PricingQuantity / PricingUnit are null on rows with no
+    // priced SKU (SkuPriceId null) per FOCUS 1.3; populated on priced rows.
+    pub pricing_category: Option<String>,
     pub pricing_currency: String,
-    #[serde(serialize_with = "serialize_decimal")]
-    pub pricing_quantity: Decimal,
-    pub pricing_unit: String,
+    #[serde(serialize_with = "serialize_decimal_opt")]
+    pub pricing_quantity: Option<Decimal>,
+    pub pricing_unit: Option<String>,
     #[serde(serialize_with = "serialize_decimal_opt")]
     pub list_unit_price: Option<Decimal>,
     #[serde(serialize_with = "serialize_decimal_opt")]
@@ -271,9 +284,10 @@ pub struct FocusRecord {
     #[serde(serialize_with = "serialize_decimal")]
     pub pricing_currency_effective_cost: Decimal,
 
-    // Consumption.
-    #[serde(serialize_with = "serialize_decimal")]
-    pub consumed_quantity: Decimal,
+    // Consumption. ConsumedQuantity is null on rows with no priced SKU
+    // (SkuPriceId null) per FOCUS 1.3; the raw count lives on x_ConsumedTokens.
+    #[serde(serialize_with = "serialize_decimal_opt")]
+    pub consumed_quantity: Option<Decimal>,
     pub consumed_unit: String,
 
     // FOCUS columns Costroid cannot derive from local logs (emitted null).
@@ -319,6 +333,11 @@ pub struct FocusRecord {
     pub x_project: Option<String>,
     #[serde(rename = "x_PricingStatus")]
     pub x_pricing_status: String,
+    /// Raw token count for this meter row, always populated (even on unpriced
+    /// rows where `ConsumedQuantity` must be null). The aggregation engine reads
+    /// this for token totals so nulling `ConsumedQuantity` never drops usage.
+    #[serde(rename = "x_ConsumedTokens", serialize_with = "serialize_decimal")]
+    pub x_consumed_tokens: Decimal,
 }
 
 impl FocusRecord {
@@ -336,8 +355,7 @@ impl FocusRecord {
             .ok_or(FocusError::InvalidTimestamp)?;
         let token_type = input.token_type.as_str();
         let cost = Decimal::from(0);
-        let consumed_quantity = Decimal::from(input.token_count);
-        let pricing_quantity = consumed_quantity / Decimal::from(1_000_000_u64);
+        let consumed_tokens = Decimal::from(input.token_count);
 
         Ok(Self {
             billed_cost: cost,
@@ -369,17 +387,25 @@ impl FocusRecord {
             sku_price_id: None,
             sku_meter: Some(token_type.to_string()),
             sku_price_details: None,
-            pricing_category: PRICING_CATEGORY_STANDARD.to_string(),
+            // No priced SKU yet: FOCUS 1.3 requires PricingCategory / PricingQuantity
+            // / PricingUnit / ConsumedQuantity to be null when SkuPriceId is null.
+            // `apply_pricing` (costroid-core) populates them when a rate is found.
+            //
+            // NOTE: the "MUST NOT be null when Usage" sibling rules don't conflict
+            // only because Costroid leaves ChargeClass and CommitmentDiscountStatus
+            // null — populating either on an unpriced row would reintroduce the
+            // conflict. See docs/DATA-MODEL.md (unpriced-row convention).
+            pricing_category: None,
             pricing_currency: input.billing_currency,
-            pricing_quantity,
-            pricing_unit: "1M tokens".to_string(),
+            pricing_quantity: None,
+            pricing_unit: None,
             list_unit_price: None,
             contracted_unit_price: None,
             pricing_currency_list_unit_price: None,
             pricing_currency_contracted_unit_price: None,
             pricing_currency_effective_cost: cost,
-            consumed_quantity,
-            consumed_unit: "tokens".to_string(),
+            consumed_quantity: None,
+            consumed_unit: PRICING_UNIT_TOKENS.to_string(),
             commitment_discount_category: None,
             commitment_discount_id: None,
             commitment_discount_name: None,
@@ -412,6 +438,7 @@ impl FocusRecord {
             x_tool: input.tool,
             x_project: input.project,
             x_pricing_status: PRICING_STATUS_MISSING_PRICE.to_string(),
+            x_consumed_tokens: consumed_tokens,
         })
     }
 }
@@ -502,11 +529,17 @@ mod tests {
         assert_eq!(record.effective_cost, Decimal::from(0));
         assert_eq!(record.list_cost, Decimal::from(0));
         assert_eq!(record.contracted_cost, Decimal::from(0));
-        assert_eq!(record.pricing_category, PRICING_CATEGORY_STANDARD);
+        // No priced SKU: FOCUS 1.3 requires these null when SkuPriceId is null.
+        assert_eq!(record.sku_price_id, None);
+        assert_eq!(record.pricing_category, None);
+        assert_eq!(record.pricing_quantity, None);
+        assert_eq!(record.pricing_unit, None);
+        assert_eq!(record.consumed_quantity, None);
         assert_eq!(record.list_unit_price, None);
         assert_eq!(record.contracted_unit_price, None);
         assert_eq!(record.pricing_currency_list_unit_price, None);
-        assert_eq!(record.sku_price_id, None);
+        // The raw token count still travels for the aggregation engine.
+        assert_eq!(record.x_consumed_tokens, Decimal::from(1_500));
         assert_eq!(record.x_pricing_status, PRICING_STATUS_MISSING_PRICE);
     }
 
@@ -602,20 +635,20 @@ mod tests {
         assert_eq!(value["focusVersion"], FOCUS_VERSION);
         assert!(value["rows"].is_array());
         let row = &value["rows"][0];
-        // Numeric columns are JSON numbers, not quoted strings.
+        // Cost columns are JSON numbers, not quoted strings.
         assert!(row["BilledCost"].is_number(), "BilledCost must be a number");
-        assert!(
-            row["PricingQuantity"].is_number(),
-            "PricingQuantity must be a number"
-        );
-        assert!(
-            row["ConsumedQuantity"].is_number(),
-            "ConsumedQuantity must be a number"
-        );
-        // Unpriced unit price stays null (not 0).
+        // Unpriced row: pricing/consumed quantity columns and unit price are null.
         assert!(row["ListUnitPrice"].is_null());
-        // Token count survives exactly (1500), with a decimal point.
-        assert_eq!(row["ConsumedQuantity"].as_f64(), Some(1500.0));
+        assert!(row["PricingQuantity"].is_null());
+        assert!(row["ConsumedQuantity"].is_null());
+        assert!(row["PricingUnit"].is_null());
+        assert!(row["PricingCategory"].is_null());
+        // The raw token count is carried as a number on x_ConsumedTokens (1500).
+        assert!(
+            row["x_ConsumedTokens"].is_number(),
+            "x_ConsumedTokens must be a number"
+        );
+        assert_eq!(row["x_ConsumedTokens"].as_f64(), Some(1500.0));
     }
 
     #[test]
@@ -644,9 +677,55 @@ mod tests {
         // Whole-valued numeric columns still carry a decimal point so the
         // validator infers a decimal/float type, not integer.
         assert_eq!(field("BilledCost"), "0.0");
-        assert_eq!(field("ConsumedQuantity"), "1500.0");
-        // Null option columns are empty fields.
+        assert_eq!(field("x_ConsumedTokens"), "1500.0");
+        // Null option columns are empty fields (unpriced row).
         assert_eq!(field("ListUnitPrice"), "");
+        assert_eq!(field("ConsumedQuantity"), "");
+        assert_eq!(field("PricingQuantity"), "");
+        assert_eq!(field("PricingUnit"), "");
+        assert_eq!(field("PricingCategory"), "");
+    }
+
+    #[test]
+    fn priced_shape_serializes_token_unit_and_per_token_price() {
+        // Simulate the shape `apply_pricing` (costroid-core) produces: token-count
+        // PricingQuantity, "tokens" unit, and a tiny per-token unit price.
+        let mut record = record();
+        record.pricing_unit = Some(PRICING_UNIT_TOKENS.to_string());
+        record.pricing_category = Some(PRICING_CATEGORY_STANDARD.to_string());
+        record.pricing_quantity = Some(Decimal::from(1_500));
+        record.consumed_quantity = Some(Decimal::from(1_500));
+        // 0.30 per 1M tokens -> 0.0000003 per token (a tiny decimal).
+        record.list_unit_price = Some(Decimal::new(3, 7));
+
+        let csv = match to_csv_string(&[record]) {
+            Ok(value) => value,
+            Err(err) => panic!("csv should serialize: {err}"),
+        };
+        let header = match csv.lines().next() {
+            Some(value) => value,
+            None => panic!("csv should have a header"),
+        };
+        let data = match csv.lines().nth(1) {
+            Some(value) => value,
+            None => panic!("csv should have a data row"),
+        };
+        let columns: Vec<&str> = header.split(',').collect();
+        let values: Vec<&str> = data.split(',').collect();
+        let field = |name: &str| -> &str {
+            match columns.iter().position(|c| *c == name) {
+                Some(index) => values[index],
+                None => panic!("column {name} should exist"),
+            }
+        };
+
+        assert_eq!(field("PricingUnit"), "tokens");
+        assert_eq!(field("PricingCategory"), "Standard");
+        // Token-count quantities serialize with a decimal point (validator type check).
+        assert_eq!(field("PricingQuantity"), "1500.0");
+        assert_eq!(field("ConsumedQuantity"), "1500.0");
+        // Tiny per-token price renders plainly (no scientific notation).
+        assert_eq!(field("ListUnitPrice"), "0.0000003");
     }
 
     #[test]
@@ -675,7 +754,7 @@ mod tests {
             assert!(fields.contains(&required), "missing column {required}");
         }
         assert!(header.ends_with(
-            "x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus"
+            "x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens"
         ));
     }
 }

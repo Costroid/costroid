@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Check a focus-validator console report against Costroid's known-failure allowlist.
 
-Costroid's FOCUS export is structurally conformant with FOCUS 1.3 (Milestone 6a):
-all mandatory column-presence, type, allowed-value, provider, and account checks
-pass. A small set of rules is expected to still fail, for two reasons:
+Costroid's FOCUS export is conformant with FOCUS 1.3 (Milestone 6b): all
+mandatory column-presence, type, allowed-value, nullability, provider, and
+account checks pass, including the per-token PricingUnit/quantity representation
+and the SkuPriceId-null row nulling. The only rules still expected to fail are
+genuine defects in the shipped validator ruleset (model-1.3.0.1.json) that no
+conformant producer can satisfy — most notably the cost = unit-price x quantity
+checks, which the validator evaluates in zero-tolerance float64 even though
+Costroid's decimal arithmetic is exact. They are reported upstream.
 
-  * Milestone 6b (cost-calculator conformance, not yet done): the
-    ListCost/ContractedCost arithmetic checks, the PricingUnit UnitFormat, and
-    the SkuPriceId-null row quantity-nulling.
-  * Defects in the shipped validator ruleset (model-1.3.0.1.json) that no
-    conformant producer can satisfy.
-
-Both are enumerated in scripts/focus_known_failures.txt. This checker fails only
+These are enumerated in scripts/focus_known_failures.txt. This checker fails only
 on *new* (unexpected) rule failures, so it guards against conformance
 regressions (e.g. a dropped mandatory column) while tolerating the documented,
 deferred items.

@@ -21,9 +21,15 @@ cargo build -q -p costroid
 bin="$repo_root/target/debug/costroid"
 
 echo "==> Exporting FOCUS CSV from committed fixtures"
+# Export priced AND unpriced rows in one CSV: the unpriced fixtures (models not in
+# the pricing table) exercise the SkuPriceId-null nullability rules, while the
+# priced fixture (claude-sonnet-4-6) exercises the per-token PricingUnit/quantity
+# representation and the (allowlisted, defective) cost = unit-price x quantity check.
 home="$workdir/home"
-mkdir -p "$home/.claude/projects/fixture" "$home/.codex/sessions/fixture"
+mkdir -p "$home/.claude/projects/fixture" "$home/.claude/projects/fixture-priced" \
+  "$home/.codex/sessions/fixture"
 cp "$repo_root/fixtures/claude-code/project-transcript.jsonl" "$home/.claude/projects/fixture/"
+cp "$repo_root/fixtures/claude-code/project-transcript-priced.jsonl" "$home/.claude/projects/fixture-priced/"
 cp "$repo_root/fixtures/codex/rollout.jsonl" "$home/.codex/sessions/fixture/"
 export_csv="$workdir/focus.csv"
 HOME="$home" USERPROFILE="" CLAUDE_CONFIG_DIR="" ANTHROPIC_API_KEY="" \
