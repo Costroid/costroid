@@ -1,6 +1,10 @@
-use anyhow::Result;
+mod render;
+
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use costroid_core::{GroupBy, NowOptions, Period, TrendsOptions};
 use costroid_providers::HostEnv;
+use render::{detect_render_options, render_now, render_statusline, render_trends};
 
 #[derive(Debug, Parser)]
 #[command(name = "costroid", version, about = "Local AI coding cost visibility")]
@@ -60,23 +64,56 @@ enum ExportFormat {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.live {
+        bail!("--live is not implemented in M4; static rendering prints once and exits");
+    }
+    let render_options = detect_render_options(cli.plain);
+
     match &cli.command {
         Some(Command::Trends(args)) => {
-            let _selected = (args.period, args.group);
-            println!("costroid skeleton: trends");
+            run_trends(args, render_options)?;
         }
         Some(Command::Statusline) => {
-            println!("costroid skeleton: statusline");
+            run_statusline(render_options)?;
         }
         Some(Command::Export(args)) => {
             run_export(args.format)?;
         }
         None => {
-            println!("costroid skeleton: now");
+            run_now(render_options)?;
         }
     }
-    let _render_mode = (cli.plain, cli.live);
 
+    Ok(())
+}
+
+fn run_now(render_options: render::RenderOptions) -> Result<()> {
+    let env = HostEnv::detect();
+    let snapshot = costroid_core::collect_local_snapshot(&env)?;
+    let summary = costroid_core::now_summary(&snapshot, NowOptions::default());
+    print!("{}", render_now(&summary, render_options));
+    Ok(())
+}
+
+fn run_trends(args: &TrendsArgs, render_options: render::RenderOptions) -> Result<()> {
+    let env = HostEnv::detect();
+    let snapshot = costroid_core::collect_local_snapshot(&env)?;
+    let summary = costroid_core::trends_summary(
+        &snapshot,
+        TrendsOptions {
+            period: args.period.into(),
+            group_by: args.group.into(),
+        },
+    );
+    print!("{}", render_trends(&summary, render_options));
+    Ok(())
+}
+
+fn run_statusline(render_options: render::RenderOptions) -> Result<()> {
+    let env = HostEnv::detect();
+    let snapshot = costroid_core::collect_local_snapshot(&env)?;
+    let summary = costroid_core::now_summary(&snapshot, NowOptions::default());
+    print!("{}", render_statusline(&summary, render_options));
     Ok(())
 }
 
@@ -89,6 +126,27 @@ fn run_export(format: ExportFormat) -> Result<()> {
     };
     print!("{output}");
     Ok(())
+}
+
+impl From<PeriodArg> for Period {
+    fn from(value: PeriodArg) -> Self {
+        match value {
+            PeriodArg::Day => Self::Day,
+            PeriodArg::Week => Self::Week,
+            PeriodArg::Month => Self::Month,
+            PeriodArg::Year => Self::Year,
+        }
+    }
+}
+
+impl From<GroupArg> for GroupBy {
+    fn from(value: GroupArg) -> Self {
+        match value {
+            GroupArg::Model => Self::Model,
+            GroupArg::App => Self::App,
+            GroupArg::Total => Self::Total,
+        }
+    }
 }
 
 #[cfg(test)]

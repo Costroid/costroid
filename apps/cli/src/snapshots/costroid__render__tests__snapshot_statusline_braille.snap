@@ -1,0 +1,5 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_statusline(&priced_now(), RenderOptions::braille(false))"
+---
+C⠉ ~$42.18  ⣿⣿⣿⡇ 97% !!

@@ -1,0 +1,21 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_trends(&priced_trends(), RenderOptions::braille(false))"
+---
+C⠉ costroid                                   this month  ~$168.00
+  [day] [week] (month) [year]            group: (model) app total
+────────────────────────────────────────────────────────────────
+  api spend / month
+  ⣿⣤
+  w1   w2
+────────────────────────────────────────────────────────────────
+breakdown
+  claude opus 4.7     ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ~$96.00
+  gpt 5.5             ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀       ~$45.00
+  sonnet 4.6          ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀       ~$27.00
+────────────────────────────────────────────────────────────────
+subscription/local usage (not API bill)
+  gpt 5.5             ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unpriced/partial]
+────────────────────────────────────────────────────────────────
+◆ claude opus 4.7 drove most of your API spend in this period. (estimated)
+provider cursor missing: no local data found
