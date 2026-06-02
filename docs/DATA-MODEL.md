@@ -48,13 +48,13 @@ Custom (`x_`) columns Costroid adds:
 - **x_TokenType** — `"input" | "output" | "cache_read" | "cache_write"`.
 - **x_AccessPath** — `"api" | "subscription" | "unknown"` (see next section).
 - **x_Estimated** — `true` when the cost was computed locally from token × price (the default for all Phase 1 rows).
-- **x_PricingStatus** — `"priced" | "missing_price" | "unknown_model"`: whether a rate was found in the pricing table. While the table is the empty placeholder, every row is `"missing_price"`.
+- **x_PricingStatus** — `"priced" | "missing_price" | "unknown_model"`: whether a rate was found in the bundled pricing table — `priced` when the `(model, meter)` join succeeds, `missing_price` for a known model that lacks that meter's rate, and `unknown_model` when the model isn't in the table at all.
 - **x_Tool** — `"claude-code" | "codex" | "cursor"` (the tool that produced the log).
 - **x_Project** — the derived project/workspace (see Grouping).
 
 ## Subscription limits are modeled separately
 
-This is the most important modeling rule. **Subscription limits are not FOCUS cost rows.** A subscription is a flat monthly fee; its "usage" is a quota percentage against a window with a reset time, with **no per-token dollar amount**. Summing it into a bill would be wrong. So limits live in their own type, never in the FOCUS table:
+This is the most important modeling rule, and it concerns the quota **limits** specifically. A subscription *limit* is a quota percentage against a window with a reset time, carrying **no per-token dollar amount** — summing it into a bill would be wrong — so limits live in their own type, never in the FOCUS table. (Subscription token *usage* is a separate matter: it **does** produce FOCUS rows, valued at API-equivalent rates and clearly labeled as an estimate — see access path below. Only the quota windows here are non-dollar.)
 
 ```rust
 /// A subscription quota window. NOT a FOCUS charge row — carries no summable cost.
@@ -70,11 +70,11 @@ pub struct LimitWindow {
 pub enum LimitKind { FiveHour, Weekly }
 ```
 
-**A model used both ways** appears in both places, distinguished by access path: its API traffic produces FOCUS rows with `x_AccessPath = "api"`, while its subscription consumption shows up as a `LimitWindow` in the now-screen's limits section. The two are never conflated, and recommendations (Phase 4) attach **only** to `x_AccessPath = "api"` rows, because only there does changing models change a bill.
+**A model used both ways** is distinguished by access path. Its API traffic produces FOCUS rows with `x_AccessPath = "api"` and a real pay-as-you-go cost estimate; its subscription traffic produces FOCUS rows with `x_AccessPath = "subscription"` carrying an *estimated equivalent value* (what that usage would cost at API rates), while its quota status shows up separately as `LimitWindow`s in the now-screen's limits section. The lanes are never summed together, and recommendations (Phase 4) attach **only** to `x_AccessPath = "api"` rows, because only there does changing models change a real bill.
 
 **Detecting access path (never guess).** Set `x_AccessPath` from evidence, not assumption. For **Codex**, the presence of `rate_limits` windows in the rollout is a subscription signal → `subscription`. For **Claude Code**, derive from auth mode (subscription/OAuth login vs `ANTHROPIC_API_KEY`) using non-secret *presence* signals only — never read credential values. Use `api` only on a clear pay-as-you-go / API-key signal, and `unknown` only when no signal exists. Subscription-access rows carry their dollar figure as an estimate (`x_Estimated = true`), never a bill, and never feed Phase-4 recommendations.
 
-(Forward-looking, optional: the future "is my subscription worth it?" feature may emit FOCUS rows for subscription usage with `EffectiveCost` derived as an *effective* estimate — what that usage would have cost at API rates — marked `x_AccessPath = "subscription"` and `x_Estimated = true`. This is out of Phase 1 scope and must never be summed with real API costs without clear labeling.)
+**Subscription usage is valued in Phase 1.** Costroid emits FOCUS rows for subscription token usage with `BilledCost`/`EffectiveCost` derived as an *estimated equivalent value* — what that usage would have cost at API rates — marked `x_AccessPath = "subscription"` and `x_Estimated = true`. This lane must be labeled unmistakably as estimated equivalent value, never presented as a bill or actual spend, never summed with the API lane, and never fed to recommendations. (The fuller "is my subscription worth it?" comparison — weighing this estimated value against the flat fee — remains a later feature; Phase 1 only produces and labels the valued rows.)
 
 ## Internal Rust shapes
 
