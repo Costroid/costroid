@@ -18,6 +18,8 @@ use thiserror::Error;
 
 const PRICING_STATUS_PRICED: &str = "priced";
 const PRICING_STATUS_UNKNOWN_MODEL: &str = "unknown_model";
+const PRICING_SCHEMA_VERSION: &str = "1";
+const PRICING_UNIT_1M_TOKENS: &str = "1M_tokens";
 const UNKNOWN_GROUP_VALUE: &str = "unknown";
 const TOTAL_GROUP_VALUE: &str = "total";
 
@@ -42,9 +44,10 @@ pub fn local_snapshot(env: &HostEnv) -> Snapshot {
 }
 
 pub fn focus_records_from_usage(events: &[UsageEvent]) -> Result<Vec<FocusRecord>, CoreError> {
+    let pricing = PricingCatalog::bundled()?;
     let mut records = Vec::new();
     for event in events {
-        push_meter_records(event, &mut records)?;
+        push_meter_records(event, &pricing, &mut records)?;
     }
     Ok(records)
 }
@@ -223,19 +226,24 @@ fn provider_status_kind(usage_ok: bool, limits_ok: bool) -> ProviderStatusKind {
     }
 }
 
-fn push_meter_records(event: &UsageEvent, records: &mut Vec<FocusRecord>) -> Result<(), CoreError> {
+fn push_meter_records(
+    event: &UsageEvent,
+    pricing: &PricingCatalog,
+    records: &mut Vec<FocusRecord>,
+) -> Result<(), CoreError> {
     let meters = [
         (TokenType::Input, event.input_tokens),
         (TokenType::Output, event.output_tokens),
         (TokenType::CacheRead, event.cache_read_tokens),
         (TokenType::CacheWrite, event.cache_write_tokens),
     ];
+    let model = pricing.model(&event.model);
 
     for (token_type, token_count) in meters {
         if token_count == 0 {
             continue;
         }
-        records.push(FocusRecord::unpriced_usage(UnpricedUsage {
+        let mut row = FocusRecord::unpriced_usage(UnpricedUsage {
             timestamp: event.timestamp,
             tool: event.tool.to_string(),
             model: event.model.clone(),
@@ -243,15 +251,195 @@ fn push_meter_records(event: &UsageEvent, records: &mut Vec<FocusRecord>) -> Res
             token_count,
             project: event.project.clone(),
             access_path: focus_access_path(event.access_path),
-            service_name: service_name(event.tool).to_string(),
+            service_name: model
+                .map(|model| model.service_name.clone())
+                .unwrap_or_else(|| service_name(event.tool).to_string()),
             service_provider_name: vendor_name(event.tool).to_string(),
             host_provider_name: vendor_name(event.tool).to_string(),
             invoice_issuer_name: vendor_name(event.tool).to_string(),
-            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
-        })?);
+            billing_currency: model
+                .map(|_| pricing.currency.clone())
+                .unwrap_or_else(|| DEFAULT_BILLING_CURRENCY.to_string()),
+        })?;
+
+        match pricing.rate(&event.model, token_type) {
+            Some(rate) => apply_pricing(&mut row, rate, pricing),
+            None if model.is_none() => {
+                row.x_pricing_status = PRICING_STATUS_UNKNOWN_MODEL.to_string();
+            }
+            None => {}
+        }
+
+        records.push(row);
     }
 
     Ok(())
+}
+
+fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate, pricing: &PricingCatalog) {
+    let cost = row.pricing_quantity * rate.price;
+    row.billed_cost = cost;
+    row.effective_cost = cost;
+    row.list_cost = cost;
+    row.contracted_cost = cost;
+    row.sku_price_id = Some(pricing.sku_price_id(rate));
+    row.list_unit_price = Some(rate.price);
+    row.contracted_unit_price = Some(rate.price);
+    row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+}
+
+#[derive(Debug, Deserialize)]
+struct PricingTable {
+    schema_version: String,
+    as_of: String,
+    currency: String,
+    #[serde(default)]
+    models: Vec<PricingModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PricingModel {
+    provider: String,
+    model: String,
+    service_name: String,
+    #[serde(default)]
+    rates: Vec<PricingRate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PricingRate {
+    meter: String,
+    unit: String,
+    price: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PricingModelInfo {
+    service_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CatalogRate {
+    provider: String,
+    model: String,
+    meter: String,
+    unit: String,
+    price: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PricingCatalog {
+    as_of: String,
+    currency: String,
+    models: BTreeMap<String, PricingModelInfo>,
+    rates: BTreeMap<(String, String), CatalogRate>,
+}
+
+impl PricingCatalog {
+    fn bundled() -> Result<Self, CoreError> {
+        Self::from_json(bundled_pricing_json())
+    }
+
+    fn from_json(value: &str) -> Result<Self, CoreError> {
+        let table = serde_json::from_str::<PricingTable>(value)?;
+        Self::from_table(table)
+    }
+
+    fn model(&self, model: &str) -> Option<&PricingModelInfo> {
+        self.models.get(model)
+    }
+
+    fn rate(&self, model: &str, token_type: TokenType) -> Option<&CatalogRate> {
+        self.rates
+            .get(&(model.to_string(), token_type.as_str().to_string()))
+    }
+
+    fn sku_price_id(&self, rate: &CatalogRate) -> String {
+        format!(
+            "{}:{}:{}:{}:{}",
+            rate.provider, rate.model, rate.meter, rate.unit, self.as_of
+        )
+    }
+
+    fn from_table(table: PricingTable) -> Result<Self, CoreError> {
+        if table.schema_version != PRICING_SCHEMA_VERSION {
+            return Err(CoreError::PricingValidation(format!(
+                "unsupported schema_version {}; expected {}",
+                table.schema_version, PRICING_SCHEMA_VERSION
+            )));
+        }
+        if table.currency != DEFAULT_BILLING_CURRENCY {
+            return Err(CoreError::PricingValidation(format!(
+                "unsupported currency {}; expected {}",
+                table.currency, DEFAULT_BILLING_CURRENCY
+            )));
+        }
+
+        let mut catalog = Self {
+            as_of: table.as_of,
+            currency: table.currency,
+            models: BTreeMap::new(),
+            rates: BTreeMap::new(),
+        };
+
+        for model in table.models {
+            if catalog
+                .models
+                .insert(
+                    model.model.clone(),
+                    PricingModelInfo {
+                        service_name: model.service_name.clone(),
+                    },
+                )
+                .is_some()
+            {
+                return Err(CoreError::PricingValidation(format!(
+                    "duplicate pricing model {}",
+                    model.model
+                )));
+            }
+
+            for rate in model.rates {
+                if rate.unit != PRICING_UNIT_1M_TOKENS {
+                    return Err(CoreError::PricingValidation(format!(
+                        "unsupported pricing unit {} for {}:{}",
+                        rate.unit, model.model, rate.meter
+                    )));
+                }
+                if !is_supported_meter(&rate.meter) {
+                    return Err(CoreError::PricingValidation(format!(
+                        "unsupported pricing meter {} for {}",
+                        rate.meter, model.model
+                    )));
+                }
+
+                let key = (model.model.clone(), rate.meter.clone());
+                if catalog.rates.contains_key(&key) {
+                    return Err(CoreError::PricingValidation(format!(
+                        "duplicate pricing rate {}:{}",
+                        model.model, rate.meter
+                    )));
+                }
+
+                catalog.rates.insert(
+                    key,
+                    CatalogRate {
+                        provider: model.provider.clone(),
+                        model: model.model.clone(),
+                        meter: rate.meter,
+                        unit: rate.unit,
+                        price: rate.price,
+                    },
+                );
+            }
+        }
+
+        Ok(catalog)
+    }
+}
+
+fn is_supported_meter(value: &str) -> bool {
+    matches!(value, "input" | "output" | "cache_read" | "cache_write")
 }
 
 fn focus_access_path(access_path: AccessPath) -> FocusAccessPath {
@@ -773,6 +961,9 @@ pub enum CoreError {
     #[error("bundled pricing JSON is invalid: {0}")]
     PricingJson(#[from] serde_json::Error),
 
+    #[error("bundled pricing table is invalid: {0}")]
+    PricingValidation(String),
+
     #[error("FOCUS export failed: {0}")]
     Focus(#[from] FocusError),
 }
@@ -812,7 +1003,7 @@ mod tests {
     ) -> UsageEvent {
         UsageEvent {
             tool,
-            model: "example-model".to_string(),
+            model: "gpt-5.5".to_string(),
             timestamp,
             input_tokens: 10,
             output_tokens: 20,
@@ -864,9 +1055,36 @@ mod tests {
         }
     }
 
+    fn cost_for(rows: &[FocusRecord], token_type: &str) -> Decimal {
+        match rows.iter().find(|row| row.x_token_type == token_type) {
+            Some(row) => row.billed_cost,
+            None => panic!("{token_type} row should exist"),
+        }
+    }
+
     #[test]
-    fn bundled_pricing_placeholder_is_valid_json() {
+    fn bundled_pricing_is_valid_json() {
         assert!(bundled_pricing_value().is_ok());
+    }
+
+    #[test]
+    fn bundled_pricing_deserializes_decimal_string_rates() {
+        let catalog = match PricingCatalog::bundled() {
+            Ok(value) => value,
+            Err(err) => panic!("bundled pricing should parse: {err}"),
+        };
+
+        let rate = match catalog.rate("gpt-5.5", TokenType::Input) {
+            Some(value) => value,
+            None => panic!("gpt-5.5 input rate should exist"),
+        };
+
+        assert_eq!(rate.price, Decimal::new(500, 2));
+        assert_eq!(catalog.currency, "USD");
+        assert_eq!(
+            catalog.sku_price_id(rate),
+            "openai:gpt-5.5:input:1M_tokens:2026-06-02"
+        );
     }
 
     #[test]
@@ -898,7 +1116,205 @@ mod tests {
             .all(|row| row.pricing_category == PRICING_CATEGORY_STANDARD));
         assert!(rows
             .iter()
-            .all(|row| row.x_pricing_status == PRICING_STATUS_MISSING_PRICE));
+            .all(|row| row.x_pricing_status == PRICING_STATUS_PRICED));
+    }
+
+    #[test]
+    fn priced_usage_applies_costs_per_model_meter() {
+        let event = UsageEvent {
+            tool: ProviderId::Codex,
+            model: "gpt-5.5".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 30,
+            cache_write_tokens: 0,
+            project: Some("/work/project".to_string()),
+            access_path: AccessPath::Api,
+        };
+
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+
+        let input = match rows.iter().find(|row| row.x_token_type == "input") {
+            Some(value) => value,
+            None => panic!("input row should exist"),
+        };
+        let output = match rows.iter().find(|row| row.x_token_type == "output") {
+            Some(value) => value,
+            None => panic!("output row should exist"),
+        };
+        let cache_read = match rows.iter().find(|row| row.x_token_type == "cache_read") {
+            Some(value) => value,
+            None => panic!("cache_read row should exist"),
+        };
+
+        assert_eq!(input.pricing_quantity, Decimal::new(10, 6));
+        assert_eq!(input.list_unit_price, Some(Decimal::new(500, 2)));
+        assert_eq!(input.billed_cost, Decimal::new(5, 5));
+        assert_eq!(input.effective_cost, input.billed_cost);
+        assert_eq!(input.list_cost, input.billed_cost);
+        assert_eq!(input.contracted_cost, input.billed_cost);
+        assert_eq!(
+            input.sku_price_id.as_deref(),
+            Some("openai:gpt-5.5:input:1M_tokens:2026-06-02")
+        );
+        assert_eq!(input.service_name, "OpenAI API");
+        assert_eq!(input.billing_currency, "USD");
+        assert_eq!(input.x_pricing_status, PRICING_STATUS_PRICED);
+
+        assert_eq!(output.billed_cost, Decimal::new(6, 4));
+        assert_eq!(cache_read.billed_cost, Decimal::new(15, 6));
+    }
+
+    #[test]
+    fn claude_sonnet_prices_all_token_meters() {
+        let event = UsageEvent {
+            tool: ProviderId::ClaudeCode,
+            model: "claude-sonnet-4-6".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+            cache_write_tokens: 1_000_000,
+            project: None,
+            access_path: AccessPath::Subscription,
+        };
+
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+
+        assert_eq!(rows.len(), 4);
+        assert!(rows
+            .iter()
+            .all(|row| row.x_pricing_status == PRICING_STATUS_PRICED));
+        assert!(rows.iter().all(|row| row.x_estimated));
+        assert!(rows.iter().all(|row| row.x_access_path == "subscription"));
+        assert_eq!(cost_for(&rows, "input"), Decimal::new(3, 0));
+        assert_eq!(cost_for(&rows, "output"), Decimal::new(15, 0));
+        assert_eq!(cost_for(&rows, "cache_read"), Decimal::new(30, 2));
+        assert_eq!(cost_for(&rows, "cache_write"), Decimal::new(375, 2));
+    }
+
+    #[test]
+    fn known_model_missing_meter_keeps_unpriced_convention() {
+        let event = UsageEvent {
+            tool: ProviderId::Codex,
+            model: "gpt-5.5".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 1_000_000,
+            project: None,
+            access_path: AccessPath::Api,
+        };
+
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        let row = &rows[0];
+
+        assert_eq!(row.x_pricing_status, PRICING_STATUS_MISSING_PRICE);
+        assert_eq!(row.billed_cost, Decimal::from(0));
+        assert_eq!(row.list_unit_price, None);
+        assert_eq!(row.contracted_unit_price, None);
+        assert_eq!(row.sku_price_id, None);
+        assert_eq!(row.pricing_category, PRICING_CATEGORY_STANDARD);
+        assert_eq!(row.service_name, "OpenAI API");
+        assert_eq!(row.billing_currency, "USD");
+    }
+
+    #[test]
+    fn unknown_model_keeps_unpriced_convention_with_unknown_status() {
+        let event = UsageEvent {
+            tool: ProviderId::Cursor,
+            model: "mystery-model".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            project: None,
+            access_path: AccessPath::Unknown,
+        };
+
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        let row = &rows[0];
+
+        assert_eq!(row.x_pricing_status, PRICING_STATUS_UNKNOWN_MODEL);
+        assert_eq!(row.billed_cost, Decimal::from(0));
+        assert_eq!(row.list_unit_price, None);
+        assert_eq!(row.contracted_unit_price, None);
+        assert_eq!(row.sku_price_id, None);
+        assert_eq!(row.pricing_category, PRICING_CATEGORY_STANDARD);
+        assert_eq!(row.service_name, "Cursor");
+        assert_eq!(row.billing_currency, DEFAULT_BILLING_CURRENCY);
+    }
+
+    #[test]
+    fn api_and_subscription_priced_rows_stay_in_separate_lanes() {
+        let rows = match focus_records_from_usage(&[
+            UsageEvent {
+                tool: ProviderId::Codex,
+                model: "gpt-5.5".to_string(),
+                timestamp: timestamp(),
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                project: None,
+                access_path: AccessPath::Api,
+            },
+            UsageEvent {
+                tool: ProviderId::Codex,
+                model: "gpt-5.5".to_string(),
+                timestamp: timestamp(),
+                input_tokens: 0,
+                output_tokens: 1_000_000,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                project: None,
+                access_path: AccessPath::Subscription,
+            },
+        ]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        let snapshot = snapshot_with_rows(timestamp(), rows, Vec::new());
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        let api = match summary
+            .current_costs
+            .iter()
+            .find(|summary| summary.lane == CostLane::Api)
+        {
+            Some(value) => value,
+            None => panic!("api lane should exist"),
+        };
+        let subscription = match summary
+            .current_costs
+            .iter()
+            .find(|summary| summary.lane == CostLane::SubscriptionEstimate)
+        {
+            Some(value) => value,
+            None => panic!("subscription lane should exist"),
+        };
+
+        assert_eq!(api.totals.billed_cost, Decimal::new(5, 0));
+        assert_eq!(subscription.totals.billed_cost, Decimal::new(30, 0));
+        assert_eq!(api.totals.pricing_coverage.priced_rows, 1);
+        assert_eq!(subscription.totals.pricing_coverage.priced_rows, 1);
+        assert_eq!(api.totals.estimated_rows, 1);
+        assert_eq!(subscription.totals.estimated_rows, 1);
     }
 
     #[test]

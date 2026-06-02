@@ -14,7 +14,7 @@ breakdown
   gpt 5.5             [#####+------]       ~$45.00
   sonnet 4.6          [###---------]       ~$27.00
 ────────────────────────────────────────────────────────────────
-subscription/local usage (not API bill)
+subscription API-equivalent value (estimate, not bill)
   gpt 5.5             [------------]        ~$0.00  [unpriced/partial]
 ────────────────────────────────────────────────────────────────
 ◆ claude opus 4.7 drove most of your API spend in this period. (estimated)

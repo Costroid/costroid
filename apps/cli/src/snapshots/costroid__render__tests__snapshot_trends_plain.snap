@@ -11,7 +11,7 @@ breakdown:
   claude opus 4.7: ~$96.00, 60 tokens
   gpt 5.5: ~$45.00, 60 tokens
   sonnet 4.6: ~$27.00, 60 tokens
-subscription/local usage, not API bill:
+subscription API-equivalent value, estimate not bill:
   gpt 5.5: ~$0.00, 60 tokens, unpriced/partial
 insight: claude opus 4.7 drove most of your API spend in this period. (estimated)
 provider cursor missing: no local data found

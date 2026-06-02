@@ -13,7 +13,7 @@ api costs this week:
   claude opus 4.7: ~$24.10, 60 tokens
   gpt 5.5: ~$11.30, 60 tokens
   sonnet 4.6: ~$6.78, 60 tokens
-subscription/local usage, not API bill:
+subscription API-equivalent value, estimate not bill:
   gpt 5.5: ~$0.00, 60 tokens, unpriced/partial
 unknown-access usage, partial:
   mystery model: ~$0.00, 60 tokens, unknown model/unpriced

@@ -375,7 +375,10 @@ fn push_non_api_sections(out: &mut String, rows: &[CostLaneSummary], options: Re
     let subscription = sorted_lane_rows(rows, CostLane::SubscriptionEstimate);
     if !subscription.is_empty() {
         push_rule(out);
-        push_line(out, "subscription/local usage (not API bill)");
+        push_line(
+            out,
+            "subscription API-equivalent value (estimate, not bill)",
+        );
         push_cost_rows(out, &subscription, options);
     }
 
@@ -390,7 +393,7 @@ fn push_non_api_sections(out: &mut String, rows: &[CostLaneSummary], options: Re
 fn push_plain_non_api_sections(out: &mut String, rows: &[CostLaneSummary]) {
     let subscription = sorted_lane_rows(rows, CostLane::SubscriptionEstimate);
     if !subscription.is_empty() {
-        push_line(out, "subscription/local usage, not API bill:");
+        push_line(out, "subscription API-equivalent value, estimate not bill:");
         for row in &subscription {
             push_line(out, &plain_cost_line(row));
         }
