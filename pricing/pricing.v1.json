@@ -1,7 +1,66 @@
 {
   "schema_version": "1",
-  "as_of": "YYYY-MM-DD",
+  "as_of": "2026-06-02",
   "currency": "USD",
-  "sources": [],
-  "models": []
+  "sources": [
+    "https://claude.com/pricing",
+    "https://platform.claude.com/docs/en/about-claude/pricing",
+    "https://openai.com/api/pricing/"
+  ],
+  "notes": "Standard (non-batch) per-million-token list prices. Anthropic cache_write uses the 5-minute cache rate (1.25x input); cache_read is 0.1x input. OpenAI has no separate cache-write charge; cache_read is its cached-input rate. Re-source from the official pages each release. Model ids must match the strings that appear in the provider logs.",
+  "models": [
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "service_name": "Anthropic API",
+      "rates": [
+        { "meter": "input",       "unit": "1M_tokens", "price": "3.00" },
+        { "meter": "output",      "unit": "1M_tokens", "price": "15.00" },
+        { "meter": "cache_read",  "unit": "1M_tokens", "price": "0.30" },
+        { "meter": "cache_write", "unit": "1M_tokens", "price": "3.75" }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.5",
+      "service_name": "OpenAI API",
+      "rates": [
+        { "meter": "input",      "unit": "1M_tokens", "price": "5.00" },
+        { "meter": "output",     "unit": "1M_tokens", "price": "30.00" },
+        { "meter": "cache_read", "unit": "1M_tokens", "price": "0.50" }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-4-7",
+      "service_name": "Anthropic API",
+      "rates": [
+        { "meter": "input",       "unit": "1M_tokens", "price": "5.00" },
+        { "meter": "output",      "unit": "1M_tokens", "price": "25.00" },
+        { "meter": "cache_read",  "unit": "1M_tokens", "price": "0.50" },
+        { "meter": "cache_write", "unit": "1M_tokens", "price": "6.25" }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "service_name": "Anthropic API",
+      "rates": [
+        { "meter": "input",       "unit": "1M_tokens", "price": "1.00" },
+        { "meter": "output",      "unit": "1M_tokens", "price": "5.00" },
+        { "meter": "cache_read",  "unit": "1M_tokens", "price": "0.10" },
+        { "meter": "cache_write", "unit": "1M_tokens", "price": "1.25" }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "service_name": "OpenAI API",
+      "rates": [
+        { "meter": "input",      "unit": "1M_tokens", "price": "2.50" },
+        { "meter": "output",     "unit": "1M_tokens", "price": "15.00" },
+        { "meter": "cache_read", "unit": "1M_tokens", "price": "0.25" }
+      ]
+    }
+  ]
 }
