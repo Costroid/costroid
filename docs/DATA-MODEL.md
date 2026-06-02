@@ -10,9 +10,25 @@ FOCUS (FinOps Open Cost and Usage Specification) is an open standard for billing
 
 Costroid emits the subset of FOCUS columns that a per-token AI usage charge can populate from local data. It does not attempt the Contract Commitment dataset (no contract data exists locally) and leaves columns it cannot derive null where the spec permits.
 
-## Conformance status (Phase 1, in progress)
+## Conformance status (Phase 1)
 
-As of the Milestone 2 data foundation, the export is a **FOCUS-shaped subset**, not yet validator-conformant. It emits the AI-usage columns plus the four mandatory cost columns, and `FocusRecord` is deliberately a clean prefix of the full schema so the remaining columns can be added **additively**. Known deferred mandatory columns include `BillingAccountId` and `BillingAccountName` (local transcripts expose no billing-account identity); the *full* gap must be enumerated from the **FOCUS validator** output, not hand-listed, in the later Phase-1 conformance milestone. That milestone also: runs the validator; decides whether costs serialize as JSON **numbers vs strings** (today `rust_decimal`'s default serde emits strings, e.g. `"0"`); and confirms whether `ChargePeriodEnd = ChargePeriodStart + 1s` (the convention for instantaneous turns) is accepted or needs period alignment. Until that lands, do not label Costroid's export "FOCUS-conformant."
+The export is validated against the official **`finopsfoundation/focus_validator`** at **FOCUS 1.3**, run locally/offline (Costroid itself makes no network calls). Run it with [`scripts/focus_conformance.sh`](../scripts/focus_conformance.sh); CI runs the same check and fails on any failure outside the documented allowlist ([`scripts/focus_known_failures.txt`](../scripts/focus_known_failures.txt)).
+
+**Milestone 6a (done) — structural conformance.** `FocusRecord` carries the **full FOCUS 1.3 Cost and Usage column set** (65 FOCUS columns + the `x_` custom columns). The validator's conditional dependency checks only resolve when the columns are present, so columns Costroid cannot derive from local data are emitted **null** where the spec permits. The validator passes all mandatory column-presence, type, allowed-value, nullability, provider, and account checks. Specifics:
+
+- **Numeric format.** Cost/quantity/price columns serialize as genuine numbers in JSON (unquoted, exact, via `serde_json::value::RawValue`) and as **decimal-pointed** values in CSV (e.g. `0.0`, `1500.0`) so the validator infers DECIMAL/DOUBLE/FLOAT rather than INTEGER even when a whole column is integer-valued. CSV and JSON diverge by design; a thread-local mode in `costroid-focus` selects the encoding.
+- **Billing identity (documented deviations).** Costroid is a local estimator with no billing account. `BillingAccountId` (which the spec requires non-null) uses the obviously-non-billing placeholder `costroid-local-estimate`; `BillingAccountName` uses `Costroid local estimate`; `BillingAccountType` (forced non-null because the id is non-null) uses `Local estimate`. Costroid never fabricates realistic-looking account or invoice identifiers.
+- **Deprecated columns.** The 1.3 validator still requires `ProviderName` and `PublisherName` present; they are emitted as mirrors of `ServiceProviderName` / `InvoiceIssuerName`.
+- **Correct categorical values (not deviations).** `ServiceSubcategory = "Generative AI"`, `SkuMeter` = the token meter, `PricingCurrency = "USD"`, and the `PricingCurrency*` cost/price columns mirror their billing-currency counterparts (Costroid prices and bills in the same currency).
+- **Period columns confirmed.** `ChargePeriodStart` is truncated to whole seconds; `ChargePeriodEnd = ChargePeriodStart + 1s` (inclusive start / exclusive end) and the month-aligned `BillingPeriodStart/End` both validate.
+
+**Milestone 6b (deferred — cost-calculator conformance, not accepted deviations).** Three checks still fail and are scoped to a focused follow-up that touches the cost calculator / engine: (1) `PricingUnit` `"1M tokens"` does not match FOCUS UnitFormat; (2) `ListCost`/`ContractedCost` = unit-price × `PricingQuantity` fails on float precision because the `1M tokens` unit makes `PricingQuantity` tiny; (3) on `SkuPriceId`-null (unpriced) rows the spec requires `ConsumedQuantity`/`PricingQuantity`/`PricingCategory` to be null, but Costroid retains them (the aggregation engine reads `ConsumedQuantity`). M6b reworks the pricing-unit representation (token-unit `PricingQuantity` with per-token prices), aligns the arithmetic, and nulls unpriced-row quantities.
+
+**Two validator-ruleset defects (reported upstream, not Costroid failures).** Costroid's values for both are **spec-correct (null)**; the failures are defects in the shipped `model-1.3.0.1.json`, reported to the validator project:
+- `CapacityReservationStatus-C-003-C/-C-004-C` encode their `Condition` as a bare `{"AND": …}` with no top-level `CheckFunction` (the only two such rules in the ruleset); the validator drops the condition, so "not null when CapacityReservationId is not null" fires unconditionally. Reported: [focus_validator#142](https://github.com/finopsfoundation/focus_validator/issues/142).
+- `PricingCurrencyContractedUnitPrice-C-012-C` uses `CheckValue` (`SkuPriceId == null`) where it should use `CheckNotValue` (as its correct sibling `PricingCurrencyListUnitPrice-C-012-C` does), so it duplicates `C-011-C`'s condition with the opposite requirement — unsatisfiable on `SkuPriceId`-null rows. Reported: [focus_validator#143](https://github.com/finopsfoundation/focus_validator/issues/143).
+
+Only the rule that actually fails is allowlisted ([`scripts/focus_known_failures.txt`](../scripts/focus_known_failures.txt)); the correctly-behaving siblings are not, so a future regression in them is still caught.
 
 ## The FOCUS columns Costroid emits
 
@@ -26,7 +42,7 @@ Mapping (FOCUS column → how Costroid fills it for an AI usage charge):
 - **ContractedCost** — equal to ListCost when no negotiated rate is known locally.
 - **BillingCurrency** — the provider's pricing currency, e.g. `"USD"` (from the pricing table).
 - **BillingPeriodStart / BillingPeriodEnd** — the provider's billing month containing the charge.
-- **ChargePeriodStart / ChargePeriodEnd** — the usage event's time (RFC 3339, UTC). For an instantaneous transcript turn, `ChargePeriodEnd = ChargePeriodStart + 1s` (pending validator confirmation; see Conformance status).
+- **ChargePeriodStart / ChargePeriodEnd** — the usage event's time (RFC 3339, UTC, whole seconds). For an instantaneous transcript turn, `ChargePeriodEnd = ChargePeriodStart + 1s` (inclusive start / exclusive end; validated — see Conformance status).
 - **ChargeCategory** — `"Usage"`.
 - **ChargeClass** — null normally; `"Correction"` only if reconciling an adjustment.
 - **ChargeDescription** — a human string, e.g. `"<model> output tokens"`.
@@ -99,7 +115,7 @@ pub struct UsageEvent {
 pub enum AccessPath { Api, Subscription, Unknown }
 ```
 
-FOCUS record (in `costroid-focus`; column names match the spec exactly via serde):
+FOCUS record (in `costroid-focus`; column names match the spec exactly via serde). `FocusRecord` now declares the **full FOCUS 1.3 Cost and Usage column set** (see [crates/costroid-focus/src/lib.rs](../crates/costroid-focus/src/lib.rs) for the authoritative, complete field list); the excerpt below shows the AI-usage core. Cost/quantity/price `Decimal` fields use a custom serializer (`#[serde(serialize_with = …)]`) that emits JSON numbers and CSV decimal-pointed values — see Conformance status:
 
 ```rust
 use serde::{Serialize, Deserialize};
@@ -161,8 +177,8 @@ pub struct FocusRecord {
 
 `costroid export` serializes FOCUS rows. Two formats, identical data:
 
-- **JSON** (`--format json`): a JSON object wrapping the rows — `{ "focusVersion": "1.3", "rows": [ ... ] }` — where each element of `rows` is a `FocusRecord` keyed by FOCUS column name (PascalCase, with `x_` custom columns). This wrapper is the canonical shape (it carries the FOCUS version for forward-compatibility); a top-level `currency` field may be added if trivial. Do not emit a bare array.
-- **CSV** (`--format csv`): the first row is the exact FOCUS column-name header (PascalCase, `x_` columns appended); one row per charge; decimals formatted plainly; timestamps RFC 3339.
+- **JSON** (`--format json`): a JSON object wrapping the rows — `{ "focusVersion": "1.3", "rows": [ ... ] }` — where each element of `rows` is a `FocusRecord` keyed by FOCUS column name (PascalCase, with `x_` custom columns). Numeric columns are **unquoted JSON numbers** with exact decimal precision (no floats, no scientific notation). This wrapper is the canonical shape (it carries the FOCUS version for forward-compatibility). Do not emit a bare array.
+- **CSV** (`--format csv`): the first row is the exact FOCUS column-name header (PascalCase, `x_` columns appended); one row per charge; numeric columns carry a decimal point (e.g. `0.0`); null columns are empty fields; timestamps RFC 3339 (`…Z`, whole seconds).
 
 Limits are **not** part of the FOCUS export (they are not charges). If a limits dump is needed, export `LimitWindow`s to a separate file/stream, clearly distinct from the cost data.
 
@@ -212,7 +228,7 @@ Schema (values shown as placeholders; fill at build time):
 
 The cost calculator joins each `UsageEvent` token meter to the matching `model` + `meter` rate to produce `ListUnitPrice`, `PricingQuantity`, and the cost columns.
 
-**Unpriced rows (no matching rate, including while the table is the empty placeholder):** FOCUS requires the cost columns to be present and non-null, so set `BilledCost`, `EffectiveCost`, `ListCost`, and `ContractedCost` to `0`; set `ListUnitPrice`, `ContractedUnitPrice`, and `SkuPriceId` to `null`; keep `PricingCategory = "Standard"` and the token quantities populated; and flag the row with `x_PricingStatus = "missing_price"` (or `"unknown_model"` when the model is absent from the table entirely). Never substitute a guessed price.
+**Unpriced rows (no matching rate, including while the table is the empty placeholder):** FOCUS requires the cost columns to be present and non-null, so set `BilledCost`, `EffectiveCost`, `ListCost`, and `ContractedCost` to `0`; set `ListUnitPrice`, `ContractedUnitPrice`, and `SkuPriceId` to `null`; keep `PricingCategory = "Standard"` and the token quantities populated; and flag the row with `x_PricingStatus = "missing_price"` (or `"unknown_model"` when the model is absent from the table entirely). Never substitute a guessed price. (FOCUS additionally requires `ConsumedQuantity`/`PricingQuantity`/`PricingCategory` to be **null** when `SkuPriceId` is null; Costroid retains them today because the aggregation engine reads `ConsumedQuantity`, and nulls them in Milestone 6b — see Conformance status.)
 
 ## Grouping dimensions
 

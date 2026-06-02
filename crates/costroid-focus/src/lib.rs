@@ -1,13 +1,26 @@
-//! FOCUS-shaped export primitives for Costroid.
+//! FOCUS 1.3 Cost and Usage export primitives for Costroid.
 //!
-//! Milestone 2 intentionally implements Costroid's AI-usage subset as an
-//! append-friendly prefix of the FOCUS 1.3 Cost and Usage schema. The output is
-//! not yet claimed to be validator-conformant; remaining mandatory columns are
-//! added in a later Phase 1 milestone.
+//! As of Milestone 6a, `FocusRecord` carries the full FOCUS 1.3 Cost and Usage
+//! column set so the official validator's conditional dependency checks resolve.
+//! Columns Costroid cannot derive from local data are emitted null where the spec
+//! permits; the few that a not-null cascade forces are populated with the
+//! spec-correct categorical value or, for billing-source identifiers with no local
+//! value, a clearly-non-billing placeholder (documented as a deviation).
+//!
+//! Numeric columns serialize as genuine numbers in JSON and as decimal-pointed
+//! values in CSV (so the validator's DECIMAL/DOUBLE/FLOAT type checks pass even
+//! when every value in a column is whole). Three known deviations remain, scoped
+//! to Milestone 6b (a cost-calculator-conformance follow-up): the `PricingUnit`
+//! UnitFormat, the `ListCost`/`ContractedCost` = unit-price × quantity arithmetic
+//! checks, and nulling `Consumed`/`Pricing` quantities on rows whose `SkuPriceId`
+//! is null. They are not accepted deviations; they are deferred.
 
-use chrono::{DateTime, Datelike, Duration, LocalResult, TimeZone, Utc};
+use std::cell::Cell;
+
+use chrono::{DateTime, Datelike, Duration, LocalResult, TimeZone, Timelike, Utc};
 use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
+use serde_json::value::RawValue;
 use thiserror::Error;
 
 pub const FOCUS_VERSION: &str = "1.3";
@@ -16,7 +29,23 @@ pub const CHARGE_CATEGORY_USAGE: &str = "Usage";
 pub const CHARGE_FREQUENCY_USAGE_BASED: &str = "Usage-Based";
 pub const PRICING_CATEGORY_STANDARD: &str = "Standard";
 pub const SERVICE_CATEGORY_AI: &str = "AI and Machine Learning";
+/// Valid FOCUS `ServiceSubcategory` paired with `ServiceCategory = "AI and Machine
+/// Learning"`. Costroid's three providers are LLM coding tools, so this is the
+/// correct classification — not a deviation.
+pub const SERVICE_SUBCATEGORY_GENERATIVE_AI: &str = "Generative AI";
 pub const PRICING_STATUS_MISSING_PRICE: &str = "missing_price";
+
+/// Placeholder `BillingAccountId`. FOCUS requires `BillingAccountId` to be
+/// non-null, but Costroid is a local estimator with no billing-account identity.
+/// This obviously-non-billing sentinel is a documented deviation; Costroid never
+/// fabricates realistic-looking account identifiers.
+pub const BILLING_ACCOUNT_ID_LOCAL: &str = "costroid-local-estimate";
+/// Placeholder `BillingAccountName`, paired with [`BILLING_ACCOUNT_ID_LOCAL`].
+pub const BILLING_ACCOUNT_NAME_LOCAL: &str = "Costroid local estimate";
+/// Placeholder `BillingAccountType`. FOCUS forces this non-null whenever
+/// `BillingAccountId` is non-null; since our account id is itself a placeholder,
+/// the type is too (documented deviation).
+pub const BILLING_ACCOUNT_TYPE_LOCAL: &str = "Local estimate";
 
 pub type FocusTimestamp = DateTime<Utc>;
 
@@ -36,6 +65,70 @@ pub enum FocusError {
 
     #[error("failed to convert FOCUS CSV to UTF-8: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
+}
+
+// --- Numeric serialization mode ---------------------------------------------
+//
+// FOCUS numeric columns must be real numbers. JSON emits them as unquoted number
+// tokens (via `RawValue`); CSV emits them as decimal-pointed strings so the
+// validator's column type inference reads DOUBLE rather than INTEGER even when a
+// whole column is integer-valued (e.g. all-zero unpriced costs, token counts).
+// The two encodings diverge, so a thread-local selects which one the shared
+// `serialize_with` hooks produce. `to_json_string` / `to_csv_string` set it.
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SerMode {
+    Json,
+    Csv,
+}
+
+thread_local! {
+    static SER_MODE: Cell<SerMode> = const { Cell::new(SerMode::Json) };
+}
+
+struct SerModeGuard(SerMode);
+
+impl SerModeGuard {
+    fn new(mode: SerMode) -> Self {
+        SerModeGuard(SER_MODE.with(|m| m.replace(mode)))
+    }
+}
+
+impl Drop for SerModeGuard {
+    fn drop(&mut self) {
+        SER_MODE.with(|m| m.set(self.0));
+    }
+}
+
+/// Render a decimal so it is unambiguously a decimal value: always carries a
+/// `.`-separated fractional part. `rust_decimal` never uses scientific notation,
+/// so this is safe for both JSON numbers and CSV.
+fn decimal_with_point(value: &Decimal) -> String {
+    let rendered = value.to_string();
+    if rendered.contains('.') {
+        rendered
+    } else {
+        format!("{rendered}.0")
+    }
+}
+
+fn serialize_decimal<S: Serializer>(value: &Decimal, serializer: S) -> Result<S::Ok, S::Error> {
+    match SER_MODE.with(Cell::get) {
+        SerMode::Csv => serializer.serialize_str(&decimal_with_point(value)),
+        SerMode::Json => RawValue::from_string(decimal_with_point(value))
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer),
+    }
+}
+
+fn serialize_decimal_opt<S: Serializer>(
+    value: &Option<Decimal>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(value) => serialize_decimal(value, serializer),
+        None => serializer.serialize_none(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,47 +201,110 @@ pub struct UnpricedUsage {
     pub billing_currency: String,
 }
 
-/// Costroid's current AI-usage subset of the FOCUS 1.3 Cost and Usage schema.
+/// A FOCUS 1.3 Cost and Usage charge row.
 ///
-/// Field order is intentional: FOCUS columns first in an append-friendly order,
-/// custom `x_` columns last. Future full-conformance columns should be added
-/// before the `x_` block.
+/// Field order is the serialized column order. The full FOCUS 1.3 column set
+/// comes first (PascalCase via serde), Costroid's custom `x_` columns last.
+/// Numeric columns use [`serialize_decimal`] / [`serialize_decimal_opt`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct FocusRecord {
+    // Costs (BillingCurrency).
+    #[serde(serialize_with = "serialize_decimal")]
     pub billed_cost: Decimal,
+    #[serde(serialize_with = "serialize_decimal")]
     pub effective_cost: Decimal,
+    #[serde(serialize_with = "serialize_decimal")]
     pub list_cost: Decimal,
+    #[serde(serialize_with = "serialize_decimal")]
     pub contracted_cost: Decimal,
+
+    // Billing account (no local billing identity — documented placeholders).
+    pub billing_account_id: String,
+    pub billing_account_name: String,
+    pub billing_account_type: Option<String>,
     pub billing_currency: String,
 
+    // Time.
     pub billing_period_start: DateTime<Utc>,
     pub billing_period_end: DateTime<Utc>,
     pub charge_period_start: DateTime<Utc>,
     pub charge_period_end: DateTime<Utc>,
 
+    // Charge classification.
     pub charge_category: String,
     pub charge_class: Option<String>,
     pub charge_description: String,
     pub charge_frequency: String,
 
+    // Service & provider. ProviderName/PublisherName are deprecated in 1.3 but
+    // the validator still requires them present; they mirror the active
+    // participating-entity columns.
     pub service_name: String,
     pub service_category: String,
+    pub service_subcategory: Option<String>,
     pub service_provider_name: String,
     pub host_provider_name: String,
     pub invoice_issuer_name: String,
+    pub provider_name: String,
+    pub publisher_name: String,
+    pub invoice_id: Option<String>,
 
+    // SKU / pricing.
     pub sku_id: Option<String>,
     pub sku_price_id: Option<String>,
+    pub sku_meter: Option<String>,
+    pub sku_price_details: Option<String>,
     pub pricing_category: String,
+    pub pricing_currency: String,
+    #[serde(serialize_with = "serialize_decimal")]
     pub pricing_quantity: Decimal,
     pub pricing_unit: String,
+    #[serde(serialize_with = "serialize_decimal_opt")]
     pub list_unit_price: Option<Decimal>,
+    #[serde(serialize_with = "serialize_decimal_opt")]
     pub contracted_unit_price: Option<Decimal>,
+    #[serde(serialize_with = "serialize_decimal_opt")]
+    pub pricing_currency_list_unit_price: Option<Decimal>,
+    #[serde(serialize_with = "serialize_decimal_opt")]
+    pub pricing_currency_contracted_unit_price: Option<Decimal>,
+    #[serde(serialize_with = "serialize_decimal")]
+    pub pricing_currency_effective_cost: Decimal,
 
+    // Consumption.
+    #[serde(serialize_with = "serialize_decimal")]
     pub consumed_quantity: Decimal,
     pub consumed_unit: String,
 
+    // FOCUS columns Costroid cannot derive from local logs (emitted null).
+    pub commitment_discount_category: Option<String>,
+    pub commitment_discount_id: Option<String>,
+    pub commitment_discount_name: Option<String>,
+    #[serde(serialize_with = "serialize_decimal_opt")]
+    pub commitment_discount_quantity: Option<Decimal>,
+    pub commitment_discount_status: Option<String>,
+    pub commitment_discount_type: Option<String>,
+    pub commitment_discount_unit: Option<String>,
+    pub capacity_reservation_id: Option<String>,
+    pub capacity_reservation_status: Option<String>,
+    pub region_id: Option<String>,
+    pub region_name: Option<String>,
+    pub availability_zone: Option<String>,
+    pub resource_id: Option<String>,
+    pub resource_name: Option<String>,
+    pub resource_type: Option<String>,
+    pub sub_account_id: Option<String>,
+    pub sub_account_name: Option<String>,
+    pub sub_account_type: Option<String>,
+    pub tags: Option<String>,
+    pub contract_applied: Option<String>,
+    pub allocated_method_id: Option<String>,
+    pub allocated_method_details: Option<String>,
+    pub allocated_resource_id: Option<String>,
+    pub allocated_resource_name: Option<String>,
+    pub allocated_tags: Option<String>,
+
+    // Custom (x_ prefix per FOCUS).
     #[serde(rename = "x_Model")]
     pub x_model: String,
     #[serde(rename = "x_TokenType")]
@@ -167,9 +323,15 @@ pub struct FocusRecord {
 
 impl FocusRecord {
     pub fn unpriced_usage(input: UnpricedUsage) -> Result<Self, FocusError> {
-        let (billing_period_start, billing_period_end) = billing_period(input.timestamp)?;
-        let charge_period_end = input
+        // Instantaneous transcript turns are point-in-time. FOCUS uses an
+        // inclusive start / exclusive end, so end = start + 1s. Truncate to whole
+        // seconds (FOCUS DateTimeFormat is second-granular).
+        let charge_period_start = input
             .timestamp
+            .with_nanosecond(0)
+            .unwrap_or(input.timestamp);
+        let (billing_period_start, billing_period_end) = billing_period(charge_period_start)?;
+        let charge_period_end = charge_period_start
             .checked_add_signed(Duration::seconds(1))
             .ok_or(FocusError::InvalidTimestamp)?;
         let token_type = input.token_type.as_str();
@@ -182,10 +344,13 @@ impl FocusRecord {
             effective_cost: cost,
             list_cost: cost,
             contracted_cost: cost,
-            billing_currency: input.billing_currency,
+            billing_account_id: BILLING_ACCOUNT_ID_LOCAL.to_string(),
+            billing_account_name: BILLING_ACCOUNT_NAME_LOCAL.to_string(),
+            billing_account_type: Some(BILLING_ACCOUNT_TYPE_LOCAL.to_string()),
+            billing_currency: input.billing_currency.clone(),
             billing_period_start,
             billing_period_end,
-            charge_period_start: input.timestamp,
+            charge_period_start,
             charge_period_end,
             charge_category: CHARGE_CATEGORY_USAGE.to_string(),
             charge_class: None,
@@ -193,18 +358,53 @@ impl FocusRecord {
             charge_frequency: CHARGE_FREQUENCY_USAGE_BASED.to_string(),
             service_name: input.service_name,
             service_category: SERVICE_CATEGORY_AI.to_string(),
-            service_provider_name: input.service_provider_name,
+            service_subcategory: Some(SERVICE_SUBCATEGORY_GENERATIVE_AI.to_string()),
+            service_provider_name: input.service_provider_name.clone(),
             host_provider_name: input.host_provider_name,
-            invoice_issuer_name: input.invoice_issuer_name,
+            invoice_issuer_name: input.invoice_issuer_name.clone(),
+            provider_name: input.service_provider_name,
+            publisher_name: input.invoice_issuer_name,
+            invoice_id: None,
             sku_id: Some(format!("{}:{token_type}", input.model)),
             sku_price_id: None,
+            sku_meter: Some(token_type.to_string()),
+            sku_price_details: None,
             pricing_category: PRICING_CATEGORY_STANDARD.to_string(),
+            pricing_currency: input.billing_currency,
             pricing_quantity,
             pricing_unit: "1M tokens".to_string(),
             list_unit_price: None,
             contracted_unit_price: None,
+            pricing_currency_list_unit_price: None,
+            pricing_currency_contracted_unit_price: None,
+            pricing_currency_effective_cost: cost,
             consumed_quantity,
             consumed_unit: "tokens".to_string(),
+            commitment_discount_category: None,
+            commitment_discount_id: None,
+            commitment_discount_name: None,
+            commitment_discount_quantity: None,
+            commitment_discount_status: None,
+            commitment_discount_type: None,
+            commitment_discount_unit: None,
+            capacity_reservation_id: None,
+            capacity_reservation_status: None,
+            region_id: None,
+            region_name: None,
+            availability_zone: None,
+            resource_id: None,
+            resource_name: None,
+            resource_type: None,
+            sub_account_id: None,
+            sub_account_name: None,
+            sub_account_type: None,
+            tags: None,
+            contract_applied: None,
+            allocated_method_id: None,
+            allocated_method_details: None,
+            allocated_resource_id: None,
+            allocated_resource_name: None,
+            allocated_tags: None,
             x_model: input.model,
             x_token_type: token_type.to_string(),
             x_access_path: input.access_path.as_str().to_string(),
@@ -217,11 +417,13 @@ impl FocusRecord {
 }
 
 pub fn to_json_string(rows: Vec<FocusRecord>) -> Result<String, FocusError> {
+    let _guard = SerModeGuard::new(SerMode::Json);
     let envelope = FocusExportEnvelope::new(rows);
     serde_json::to_string_pretty(&envelope).map_err(FocusError::from)
 }
 
 pub fn to_csv_string(rows: &[FocusRecord]) -> Result<String, FocusError> {
+    let _guard = SerModeGuard::new(SerMode::Csv);
     let mut writer = csv::Writer::from_writer(Vec::new());
     for row in rows {
         writer.serialize(row)?;
@@ -303,8 +505,38 @@ mod tests {
         assert_eq!(record.pricing_category, PRICING_CATEGORY_STANDARD);
         assert_eq!(record.list_unit_price, None);
         assert_eq!(record.contracted_unit_price, None);
+        assert_eq!(record.pricing_currency_list_unit_price, None);
         assert_eq!(record.sku_price_id, None);
         assert_eq!(record.x_pricing_status, PRICING_STATUS_MISSING_PRICE);
+    }
+
+    #[test]
+    fn unpriced_usage_populates_mandatory_focus_columns() {
+        let record = record();
+
+        // Billing identity has no honest local value: documented placeholders.
+        assert_eq!(record.billing_account_id, BILLING_ACCOUNT_ID_LOCAL);
+        assert_eq!(record.billing_account_name, BILLING_ACCOUNT_NAME_LOCAL);
+        assert_eq!(
+            record.billing_account_type.as_deref(),
+            Some(BILLING_ACCOUNT_TYPE_LOCAL)
+        );
+        // Deprecated participating-entity columns mirror the active ones.
+        assert_eq!(record.provider_name, "OpenAI");
+        assert_eq!(record.publisher_name, "OpenAI");
+        // Correct categorical classification (not a deviation).
+        assert_eq!(
+            record.service_subcategory.as_deref(),
+            Some(SERVICE_SUBCATEGORY_GENERATIVE_AI)
+        );
+        // SkuMeter accompanies the SkuId; pricing currency mirrors billing currency.
+        assert_eq!(record.sku_meter.as_deref(), Some("input"));
+        assert_eq!(record.pricing_currency, DEFAULT_BILLING_CURRENCY);
+        assert_eq!(record.pricing_currency_effective_cost, Decimal::from(0));
+        // Columns with no local value stay null.
+        assert_eq!(record.region_id, None);
+        assert_eq!(record.commitment_discount_id, None);
+        assert_eq!(record.tags, None);
     }
 
     #[test]
@@ -324,7 +556,40 @@ mod tests {
     }
 
     #[test]
-    fn json_export_uses_wrapper_not_bare_array() {
+    fn charge_period_start_is_truncated_to_whole_seconds() {
+        let mut input = UnpricedUsage {
+            timestamp: timestamp(),
+            tool: "codex".to_string(),
+            model: "m".to_string(),
+            token_type: TokenType::Input,
+            token_count: 10,
+            project: None,
+            access_path: FocusAccessPath::Api,
+            service_name: "s".to_string(),
+            service_provider_name: "p".to_string(),
+            host_provider_name: "p".to_string(),
+            invoice_issuer_name: "p".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        };
+        input.timestamp = match timestamp().with_nanosecond(123_456_789) {
+            Some(value) => value,
+            None => panic!("nanosecond should be valid"),
+        };
+
+        let record = match FocusRecord::unpriced_usage(input) {
+            Ok(value) => value,
+            Err(err) => panic!("record should build: {err}"),
+        };
+
+        assert_eq!(record.charge_period_start.nanosecond(), 0);
+        assert_eq!(
+            record.charge_period_end,
+            record.charge_period_start + Duration::seconds(1)
+        );
+    }
+
+    #[test]
+    fn json_export_emits_numbers_not_quoted_decimals() {
         let json = match to_json_string(vec![record()]) {
             Ok(value) => value,
             Err(err) => panic!("json should serialize: {err}"),
@@ -336,10 +601,25 @@ mod tests {
 
         assert_eq!(value["focusVersion"], FOCUS_VERSION);
         assert!(value["rows"].is_array());
+        let row = &value["rows"][0];
+        // Numeric columns are JSON numbers, not quoted strings.
+        assert!(row["BilledCost"].is_number(), "BilledCost must be a number");
+        assert!(
+            row["PricingQuantity"].is_number(),
+            "PricingQuantity must be a number"
+        );
+        assert!(
+            row["ConsumedQuantity"].is_number(),
+            "ConsumedQuantity must be a number"
+        );
+        // Unpriced unit price stays null (not 0).
+        assert!(row["ListUnitPrice"].is_null());
+        // Token count survives exactly (1500), with a decimal point.
+        assert_eq!(row["ConsumedQuantity"].as_f64(), Some(1500.0));
     }
 
     #[test]
-    fn csv_export_has_stable_append_friendly_header() {
+    fn csv_export_renders_numerics_with_decimal_point() {
         let csv = match to_csv_string(&[record()]) {
             Ok(value) => value,
             Err(err) => panic!("csv should serialize: {err}"),
@@ -348,14 +628,54 @@ mod tests {
             Some(value) => value,
             None => panic!("csv should have a header"),
         };
+        let data = match csv.lines().nth(1) {
+            Some(value) => value,
+            None => panic!("csv should have a data row"),
+        };
+        let columns: Vec<&str> = header.split(',').collect();
+        let values: Vec<&str> = data.split(',').collect();
+        let field = |name: &str| -> &str {
+            match columns.iter().position(|c| *c == name) {
+                Some(index) => values[index],
+                None => panic!("column {name} should exist"),
+            }
+        };
+
+        // Whole-valued numeric columns still carry a decimal point so the
+        // validator infers a decimal/float type, not integer.
+        assert_eq!(field("BilledCost"), "0.0");
+        assert_eq!(field("ConsumedQuantity"), "1500.0");
+        // Null option columns are empty fields.
+        assert_eq!(field("ListUnitPrice"), "");
+    }
+
+    #[test]
+    fn csv_header_carries_full_focus_column_set_then_custom_columns() {
+        let csv = match to_csv_string(&[record()]) {
+            Ok(value) => value,
+            Err(err) => panic!("csv should serialize: {err}"),
+        };
+        let header = match csv.lines().next() {
+            Some(value) => value,
+            None => panic!("csv should have a header"),
+        };
+        let fields: Vec<&str> = header.split(',').collect();
 
         assert!(header.starts_with("BilledCost,EffectiveCost,ListCost,ContractedCost"));
-        assert!(header.contains("ServiceProviderName,HostProviderName,InvoiceIssuerName"));
+        for required in [
+            "BillingAccountId",
+            "BillingAccountName",
+            "BillingAccountType",
+            "ProviderName",
+            "PublisherName",
+            "ServiceSubcategory",
+            "SkuMeter",
+            "PricingCurrency",
+        ] {
+            assert!(fields.contains(&required), "missing column {required}");
+        }
         assert!(header.ends_with(
             "x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus"
         ));
-        let fields: Vec<&str> = header.split(',').collect();
-        assert!(!fields.contains(&"ProviderName"));
-        assert!(!fields.contains(&"PublisherName"));
     }
 }

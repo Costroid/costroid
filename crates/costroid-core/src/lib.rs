@@ -285,6 +285,11 @@ fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate, pricing: &PricingCat
     row.sku_price_id = Some(pricing.sku_price_id(rate));
     row.list_unit_price = Some(rate.price);
     row.contracted_unit_price = Some(rate.price);
+    // PricingCurrency == BillingCurrency for Costroid, so the pricing-currency
+    // columns mirror their billing-currency counterparts.
+    row.pricing_currency_effective_cost = cost;
+    row.pricing_currency_list_unit_price = Some(rate.price);
+    row.pricing_currency_contracted_unit_price = Some(rate.price);
     row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
 }
 
