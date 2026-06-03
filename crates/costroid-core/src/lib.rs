@@ -238,7 +238,13 @@ fn push_meter_records(
         (TokenType::CacheRead, event.cache_read_tokens),
         (TokenType::CacheWrite, event.cache_write_tokens),
     ];
-    let model = pricing.model(&event.model);
+    // Resolve the raw log model id to a catalog key ONCE: exact match wins
+    // (preserving exactness; an explicit dated entry would override the fallback),
+    // else a base id with a strict date-snapshot suffix stripped, iff that base is
+    // in the table. Both the model-info and rate lookups use the same resolved key,
+    // so model-presence and rate-presence can never disagree.
+    let resolved = pricing.resolve_key(&event.model);
+    let model = resolved.and_then(|key| pricing.model(key));
 
     for (token_type, token_count) in meters {
         if token_count == 0 {
@@ -263,7 +269,7 @@ fn push_meter_records(
                 .unwrap_or_else(|| DEFAULT_BILLING_CURRENCY.to_string()),
         })?;
 
-        match pricing.rate(&event.model, token_type) {
+        match resolved.and_then(|key| pricing.rate(key, token_type)) {
             Some(rate) => apply_pricing(&mut row, rate, pricing),
             None if model.is_none() => {
                 row.x_pricing_status = PRICING_STATUS_UNKNOWN_MODEL.to_string();
@@ -304,6 +310,40 @@ fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate, pricing: &PricingCat
     row.pricing_currency_list_unit_price = Some(per_token);
     row.pricing_currency_contracted_unit_price = Some(per_token);
     row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+}
+
+/// If `model` ends in a strict dated-snapshot suffix, return the base id with the
+/// suffix removed; otherwise `None`.
+///
+/// Recognizes ONLY the two shapes providers actually mint: `-YYYYMMDD` (Anthropic
+/// snapshots, e.g. `claude-haiku-4-5-20251001`) and `-YYYY-MM-DD` (OpenAI
+/// snapshots, e.g. `gpt-5.5-2025-10-01`). A version component like `-8` (one digit)
+/// matches neither, so a genuinely new version (`claude-opus-4-8`) is never
+/// mistaken for a dated snapshot. A suffix that would leave an empty base is
+/// rejected. Pure, ASCII, never panics.
+fn strip_date_suffix(model: &str) -> Option<&str> {
+    strip_dashed_date(model).or_else(|| strip_compact_date(model))
+}
+
+/// `<base>-YYYY-MM-DD` → `<base>` (OpenAI dated-snapshot form).
+fn strip_dashed_date(model: &str) -> Option<&str> {
+    let head = model.get(..model.len().checked_sub(11)?)?;
+    let tail = model.get(head.len()..)?.as_bytes();
+    let ok = tail[0] == b'-'
+        && tail[1..5].iter().all(u8::is_ascii_digit)
+        && tail[5] == b'-'
+        && tail[6..8].iter().all(u8::is_ascii_digit)
+        && tail[8] == b'-'
+        && tail[9..11].iter().all(u8::is_ascii_digit);
+    (ok && !head.is_empty()).then_some(head)
+}
+
+/// `<base>-YYYYMMDD` → `<base>` (Anthropic dated-snapshot form, exactly 8 digits).
+fn strip_compact_date(model: &str) -> Option<&str> {
+    let head = model.get(..model.len().checked_sub(9)?)?;
+    let tail = model.get(head.len()..)?.as_bytes();
+    let ok = tail[0] == b'-' && tail[1..].iter().all(u8::is_ascii_digit);
+    (ok && !head.is_empty()).then_some(head)
 }
 
 #[derive(Debug, Deserialize)]
@@ -370,6 +410,26 @@ impl PricingCatalog {
     fn rate(&self, model: &str, token_type: TokenType) -> Option<&CatalogRate> {
         self.rates
             .get(&(model.to_string(), token_type.as_str().to_string()))
+    }
+
+    /// Resolve a raw log model id to the catalog key whose info/rates apply.
+    ///
+    /// 1. Exact match wins — preserves prior behavior and lets a curated explicit
+    ///    dated entry override the base-alias fallback (the escape hatch when a
+    ///    snapshot is ever repriced away from its base).
+    /// 2. Else strip a strict date-snapshot suffix and use the bare base **iff that
+    ///    base already exists in the catalog** — so we never invent a mapping, and a
+    ///    version bump (`claude-opus-4-8`) is never folded onto a different version.
+    /// 3. Else `None` (genuinely unknown model → `unknown_model`).
+    fn resolve_key<'a>(&'a self, model: &'a str) -> Option<&'a str> {
+        if self.models.contains_key(model) {
+            return Some(model);
+        }
+        let base = strip_date_suffix(model)?;
+        if self.models.contains_key(base) {
+            return Some(base);
+        }
+        None
     }
 
     fn sku_price_id(&self, rate: &CatalogRate) -> String {
@@ -1346,6 +1406,326 @@ mod tests {
         assert_eq!(row.x_consumed_tokens, Decimal::from(1_000_000));
         assert_eq!(row.service_name, "Cursor");
         assert_eq!(row.billing_currency, DEFAULT_BILLING_CURRENCY);
+    }
+
+    #[test]
+    fn exact_match_priced_costs_are_invariant_under_resolution() {
+        // Cardinal rule: adding suffix-tolerant routing must not move any
+        // already-priced model's cost. Exact matches take the same path as before.
+        let events = vec![
+            UsageEvent {
+                tool: ProviderId::Codex,
+                model: "gpt-5.5".to_string(),
+                timestamp: timestamp(),
+                input_tokens: 1_000_000,
+                output_tokens: 1_000_000,
+                cache_read_tokens: 1_000_000,
+                cache_write_tokens: 0,
+                project: None,
+                access_path: AccessPath::Api,
+            },
+            UsageEvent {
+                tool: ProviderId::ClaudeCode,
+                model: "claude-sonnet-4-6".to_string(),
+                timestamp: timestamp(),
+                input_tokens: 1_000_000,
+                output_tokens: 1_000_000,
+                cache_read_tokens: 1_000_000,
+                cache_write_tokens: 1_000_000,
+                project: None,
+                access_path: AccessPath::Subscription,
+            },
+        ];
+        let rows = match focus_records_from_usage(&events) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        let cost_of = |model: &str, meter: &str| -> Decimal {
+            match rows
+                .iter()
+                .find(|r| r.x_model == model && r.x_token_type == meter)
+            {
+                Some(r) => r.billed_cost,
+                None => panic!("missing row for {model}/{meter}"),
+            }
+        };
+        // gpt-5.5 per-1M: input 5.00, output 30.00, cache_read 0.50 (no cache_write).
+        assert_eq!(cost_of("gpt-5.5", "input"), Decimal::new(5, 0));
+        assert_eq!(cost_of("gpt-5.5", "output"), Decimal::new(30, 0));
+        assert_eq!(cost_of("gpt-5.5", "cache_read"), Decimal::new(50, 2));
+        // claude-sonnet-4-6 per-1M: 3.00 / 15.00 / 0.30 / 3.75.
+        assert_eq!(cost_of("claude-sonnet-4-6", "input"), Decimal::new(3, 0));
+        assert_eq!(cost_of("claude-sonnet-4-6", "output"), Decimal::new(15, 0));
+        assert_eq!(
+            cost_of("claude-sonnet-4-6", "cache_read"),
+            Decimal::new(30, 2)
+        );
+        assert_eq!(
+            cost_of("claude-sonnet-4-6", "cache_write"),
+            Decimal::new(375, 2)
+        );
+        // Exact matches route to their own rate: SkuPriceId embeds the model id.
+        for row in rows
+            .iter()
+            .filter(|r| r.x_pricing_status == PRICING_STATUS_PRICED)
+        {
+            let sku_price_id = match &row.sku_price_id {
+                Some(value) => value,
+                None => panic!("priced row should carry a SkuPriceId"),
+            };
+            assert!(
+                sku_price_id.contains(&row.x_model),
+                "exact-match SkuPriceId should embed the model id: {sku_price_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn dated_haiku_snapshot_resolves_to_base_rate_with_honest_ids() {
+        // The real heavy-usage case: claude-haiku-4-5-20251001 is the dated snapshot
+        // of the in-table base claude-haiku-4-5. It must price at the base rate,
+        // while x_Model + SkuId keep the ACTUAL dated id and SkuPriceId points at the
+        // base rate that priced it.
+        let event = UsageEvent {
+            tool: ProviderId::ClaudeCode,
+            model: "claude-haiku-4-5-20251001".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+            cache_write_tokens: 1_000_000,
+            project: None,
+            access_path: AccessPath::Subscription,
+        };
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        assert_eq!(rows.len(), 4);
+        assert!(rows
+            .iter()
+            .all(|r| r.x_pricing_status == PRICING_STATUS_PRICED));
+        let cost_of = |meter: &str| -> Decimal {
+            match rows.iter().find(|r| r.x_token_type == meter) {
+                Some(r) => r.billed_cost,
+                None => panic!("missing meter {meter}"),
+            }
+        };
+        // base claude-haiku-4-5 per-1M: 1.00 / 5.00 / 0.10 / 1.25.
+        assert_eq!(cost_of("input"), Decimal::new(1, 0));
+        assert_eq!(cost_of("output"), Decimal::new(5, 0));
+        assert_eq!(cost_of("cache_read"), Decimal::new(10, 2));
+        assert_eq!(cost_of("cache_write"), Decimal::new(125, 2));
+        for row in &rows {
+            // Honesty: the report shows what actually ran...
+            assert_eq!(row.x_model, "claude-haiku-4-5-20251001");
+            let expected_sku_id = format!("claude-haiku-4-5-20251001:{}", row.x_token_type);
+            assert_eq!(row.sku_id.as_deref(), Some(expected_sku_id.as_str()));
+            // ...while the price id references the BASE rate that priced it.
+            let sku_price_id = match &row.sku_price_id {
+                Some(value) => value,
+                None => panic!("priced row should carry a SkuPriceId"),
+            };
+            assert!(
+                sku_price_id.starts_with("anthropic:claude-haiku-4-5:"),
+                "SkuPriceId should reference the base rate: {sku_price_id}"
+            );
+            assert!(
+                !sku_price_id.contains("20251001"),
+                "SkuPriceId must not embed the dated id: {sku_price_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn openai_dashed_date_snapshot_resolves_to_base() {
+        // OpenAI snapshots use -YYYY-MM-DD; gpt-5.5-2025-10-01 must price at gpt-5.5.
+        let event = UsageEvent {
+            tool: ProviderId::Codex,
+            model: "gpt-5.5-2025-10-01".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            project: None,
+            access_path: AccessPath::Api,
+        };
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.x_pricing_status, PRICING_STATUS_PRICED);
+        assert_eq!(row.billed_cost, Decimal::new(5, 0));
+        assert_eq!(row.x_model, "gpt-5.5-2025-10-01");
+        let sku_price_id = match &row.sku_price_id {
+            Some(value) => value,
+            None => panic!("priced row should carry a SkuPriceId"),
+        };
+        assert!(
+            sku_price_id.starts_with("openai:gpt-5.5:"),
+            "{sku_price_id}"
+        );
+    }
+
+    #[test]
+    fn genuinely_new_or_fake_models_stay_unknown_not_missing_price() {
+        // The "not too loose" guard: a version bump absent from the table
+        // (claude-opus-4-9), a date-shaped id whose base is absent
+        // (made-up-model-20251001), and a plain fake must all flag unknown_model
+        // (NOT missing_price), with no cost and a null SkuPriceId.
+        for model in [
+            "claude-opus-4-9",
+            "made-up-model-20251001",
+            "totally-fake-xyz",
+        ] {
+            let event = UsageEvent {
+                tool: ProviderId::ClaudeCode,
+                model: model.to_string(),
+                timestamp: timestamp(),
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                project: None,
+                access_path: AccessPath::Subscription,
+            };
+            let rows = match focus_records_from_usage(&[event]) {
+                Ok(value) => value,
+                Err(err) => panic!("conversion should succeed: {err}"),
+            };
+            assert_eq!(rows.len(), 1);
+            let row = &rows[0];
+            assert_eq!(
+                row.x_pricing_status, PRICING_STATUS_UNKNOWN_MODEL,
+                "{model} must be unknown_model, not missing_price"
+            );
+            assert_eq!(row.billed_cost, Decimal::from(0));
+            assert_eq!(row.sku_price_id, None);
+            assert_eq!(row.pricing_quantity, None);
+        }
+    }
+
+    #[test]
+    fn opus_4_8_prices_at_published_rates() {
+        // Step 2 (table refresh): once the curated claude-opus-4-8 entry exists, the
+        // genuinely-new model flips unknown_model -> priced at its own exact rate.
+        let event = UsageEvent {
+            tool: ProviderId::ClaudeCode,
+            model: "claude-opus-4-8".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+            cache_write_tokens: 1_000_000,
+            project: None,
+            access_path: AccessPath::Subscription,
+        };
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        assert_eq!(rows.len(), 4);
+        assert!(rows
+            .iter()
+            .all(|r| r.x_pricing_status == PRICING_STATUS_PRICED));
+        let cost_of = |meter: &str| -> Decimal {
+            match rows.iter().find(|r| r.x_token_type == meter) {
+                Some(r) => r.billed_cost,
+                None => panic!("missing meter {meter}"),
+            }
+        };
+        // published claude-opus-4-8 per-1M: 5.00 / 25.00 / 0.50 / 6.25.
+        assert_eq!(cost_of("input"), Decimal::new(5, 0));
+        assert_eq!(cost_of("output"), Decimal::new(25, 0));
+        assert_eq!(cost_of("cache_read"), Decimal::new(50, 2));
+        assert_eq!(cost_of("cache_write"), Decimal::new(625, 2));
+        for row in &rows {
+            // Exact match: SkuPriceId references opus-4-8 itself, not an aliased base.
+            let sku_price_id = match &row.sku_price_id {
+                Some(value) => value,
+                None => panic!("priced row should carry a SkuPriceId"),
+            };
+            assert!(
+                sku_price_id.starts_with("anthropic:claude-opus-4-8:"),
+                "{sku_price_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_date_suffix_only_strips_real_snapshots() {
+        // Version components / base ids are never treated as dates.
+        assert_eq!(strip_date_suffix("claude-opus-4-8"), None);
+        assert_eq!(strip_date_suffix("gpt-5.5"), None);
+        assert_eq!(strip_date_suffix("gpt-5.4"), None);
+        assert_eq!(strip_date_suffix("claude-haiku-4-5"), None);
+        assert_eq!(strip_date_suffix("mystery-model"), None);
+        // Anthropic compact 8-digit date.
+        assert_eq!(
+            strip_date_suffix("claude-haiku-4-5-20251001"),
+            Some("claude-haiku-4-5")
+        );
+        assert_eq!(
+            strip_date_suffix("claude-3-5-sonnet-20241022"),
+            Some("claude-3-5-sonnet")
+        );
+        // OpenAI dashed date.
+        assert_eq!(strip_date_suffix("gpt-5.5-2025-10-01"), Some("gpt-5.5"));
+        assert_eq!(strip_date_suffix("gpt-4o-2024-08-06"), Some("gpt-4o"));
+        // Wrong digit counts / malformed are left unmatched (conservative).
+        assert_eq!(strip_date_suffix("claude-haiku-4-5-2025100"), None); // 7 digits
+        assert_eq!(strip_date_suffix("claude-haiku-4-5-202510011"), None); // 9 digits
+        assert_eq!(strip_date_suffix("claude-haiku-4-5-2025"), None); // 4 digits
+                                                                      // Empty base rejected; no panic on degenerate inputs.
+        assert_eq!(strip_date_suffix("-20251001"), None);
+        assert_eq!(strip_date_suffix("20251001"), None);
+        assert_eq!(strip_date_suffix(""), None);
+    }
+
+    #[test]
+    fn resolve_key_treats_absent_version_as_unknown_until_an_entry_exists() {
+        // Demonstrates the step-1 -> step-2 transition independently of the bundled
+        // table: a version bump is unknown (resolve_key None, not a missing meter)
+        // while absent, and resolves exactly once an entry is added.
+        let without = r#"{"schema_version":"1","as_of":"2026-06-02","currency":"USD","models":[{"provider":"anthropic","model":"claude-opus-4-7","service_name":"Anthropic API","rates":[{"meter":"input","unit":"1M_tokens","price":"5.00"}]}]}"#;
+        let with = r#"{"schema_version":"1","as_of":"2026-06-02","currency":"USD","models":[{"provider":"anthropic","model":"claude-opus-4-7","service_name":"Anthropic API","rates":[{"meter":"input","unit":"1M_tokens","price":"5.00"}]},{"provider":"anthropic","model":"claude-opus-4-8","service_name":"Anthropic API","rates":[{"meter":"input","unit":"1M_tokens","price":"5.00"}]}]}"#;
+        let absent = match PricingCatalog::from_json(without) {
+            Ok(value) => value,
+            Err(err) => panic!("parse should succeed: {err}"),
+        };
+        let present = match PricingCatalog::from_json(with) {
+            Ok(value) => value,
+            Err(err) => panic!("parse should succeed: {err}"),
+        };
+        // A version bump is not a date suffix, so it never folds onto opus-4-7.
+        assert_eq!(absent.resolve_key("claude-opus-4-8"), None);
+        assert_eq!(
+            present.resolve_key("claude-opus-4-8"),
+            Some("claude-opus-4-8")
+        );
+    }
+
+    #[test]
+    fn explicit_dated_entry_overrides_base_alias_fallback() {
+        // Escape hatch: an exact dated entry wins over the date-stripped base, so a
+        // repriced snapshot can be pinned without code changes.
+        let json = r#"{"schema_version":"1","as_of":"2026-06-02","currency":"USD","models":[{"provider":"anthropic","model":"claude-haiku-4-5","service_name":"Anthropic API","rates":[{"meter":"input","unit":"1M_tokens","price":"1.00"}]},{"provider":"anthropic","model":"claude-haiku-4-5-20251001","service_name":"Anthropic API","rates":[{"meter":"input","unit":"1M_tokens","price":"9.99"}]}]}"#;
+        let catalog = match PricingCatalog::from_json(json) {
+            Ok(value) => value,
+            Err(err) => panic!("parse should succeed: {err}"),
+        };
+        assert_eq!(
+            catalog.resolve_key("claude-haiku-4-5-20251001"),
+            Some("claude-haiku-4-5-20251001")
+        );
+        let rate = match catalog.rate("claude-haiku-4-5-20251001", TokenType::Input) {
+            Some(value) => value,
+            None => panic!("explicit dated entry should have a rate"),
+        };
+        assert_eq!(rate.price, Decimal::new(999, 2));
     }
 
     #[test]
