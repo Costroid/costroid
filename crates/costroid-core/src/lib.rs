@@ -25,7 +25,9 @@ const UNKNOWN_GROUP_VALUE: &str = "unknown";
 const TOTAL_GROUP_VALUE: &str = "total";
 
 pub fn bundled_pricing_json() -> &'static str {
-    include_str!("../../../pricing/pricing.v1.json")
+    // Bundled inside this crate (not the workspace root) so `cargo package`
+    // includes it and the crate publishes standalone to crates.io.
+    include_str!("../pricing/pricing.v1.json")
 }
 
 pub fn bundled_pricing_value() -> Result<serde_json::Value, CoreError> {
