@@ -1,0 +1,2 @@
+{"type":"assistant","timestamp":"2026-05-01T11:00:00.000Z","cwd":"/home/example/keyless","message":{"role":"assistant","id":"msg_K","model":"claude-sonnet-4-6","usage":{"input_tokens":7,"output_tokens":11,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+{"type":"assistant","timestamp":"2026-05-01T11:00:01.000Z","cwd":"/home/example/keyless","message":{"role":"assistant","id":"msg_K","model":"claude-sonnet-4-6","usage":{"input_tokens":7,"output_tokens":11,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}

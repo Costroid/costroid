@@ -1,6 +1,6 @@
 //! Provider-facing interfaces and local parsers for AI-tool usage data.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fmt;
 use std::fs::{self, File};
@@ -179,11 +179,41 @@ impl Provider for ClaudeCodeProvider {
 
     fn parse_usage(&self, loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError> {
         let access_path = claude_access_path(&loc.root);
-        let mut events = Vec::new();
+        // Claude transcripts duplicate the same assistant turn two ways: (1) resumed
+        // or branched sessions copy finalized messages verbatim into new files, and
+        // (2) a streaming/multi-block turn writes several lines that share one
+        // (message.id, requestId) while output_tokens grows toward the final count
+        // (input/cache stay fixed). Both must collapse to ONE record keyed on
+        // (message.id, requestId), or the same usage is counted 2-3x. We keep the
+        // occurrence with the largest output_tokens — i.e. the completed message —
+        // wholesale (its full token set, not per-field maxima). This deliberately
+        // diverges from ccusage's keep-first, which would keep a streaming partial
+        // and undercount output; Costroid therefore reads very slightly ABOVE
+        // ccusage on Claude output, which is correct, not a regression.
+        //
+        // Entries without BOTH ids are keyless and are NEVER collapsed (a real entry
+        // missing requestId, and every Codex/Cursor event, must pass through as-is).
+        let mut events: Vec<UsageEvent> = Vec::new();
+        let mut seen: HashMap<(String, String), usize> = HashMap::new();
         for file in &loc.files {
             for value in read_jsonl_values(ProviderId::ClaudeCode, file)? {
                 if let Some(event) = parse_claude_usage(&value, access_path) {
-                    events.push(event);
+                    match claude_dedupe_key(&value) {
+                        None => events.push(event),
+                        Some(key) => match seen.get(&key) {
+                            None => {
+                                seen.insert(key, events.len());
+                                events.push(event);
+                            }
+                            Some(&index) => {
+                                if let Some(slot) = events.get_mut(index) {
+                                    if event.output_tokens > slot.output_tokens {
+                                        *slot = event;
+                                    }
+                                }
+                            }
+                        },
+                    }
                 }
             }
         }
@@ -458,6 +488,20 @@ fn parse_claude_usage(value: &Value, access_path: AccessPath) -> Option<UsageEve
         access_path,
     };
     has_any_tokens(&event).then_some(event)
+}
+
+/// De-duplication key for a Claude transcript entry: `(message.id, requestId)`.
+///
+/// Returns `Some` only when BOTH are present and non-empty — matching ccusage's
+/// rule of only de-duping when a full key exists. Any entry missing either id is
+/// keyless and must never be collapsed with another. Pure; never panics.
+fn claude_dedupe_key(value: &Value) -> Option<(String, String)> {
+    let message_id = value.pointer("/message/id").and_then(Value::as_str)?;
+    let request_id = value.get("requestId").and_then(Value::as_str)?;
+    if message_id.is_empty() || request_id.is_empty() {
+        return None;
+    }
+    Some((message_id.to_string(), request_id.to_string()))
 }
 
 fn claude_access_path(root: &Path) -> AccessPath {
@@ -805,6 +849,115 @@ mod tests {
         assert_eq!(usage[0].access_path, AccessPath::Unknown);
         assert_eq!(limits.len(), 1);
         assert_eq!(limits[0].label.as_deref(), Some("unavailable"));
+    }
+
+    fn find_event(events: &[UsageEvent], message_marker: u64) -> &UsageEvent {
+        match events.iter().find(|e| e.input_tokens == message_marker) {
+            Some(event) => event,
+            None => panic!("expected an event with input_tokens == {message_marker}"),
+        }
+    }
+
+    #[test]
+    fn claude_dedupes_streaming_and_cross_file_duplicates() {
+        // golden-a holds entry X streamed three times (output 1 -> 20000 -> 40000,
+        // same input/cache) and entry Y once; golden-b copies both finalized
+        // messages verbatim (resume-style). Six assistant lines, two real turns.
+        let provider = ClaudeCodeProvider;
+        let loc = DataLocation {
+            provider: ProviderId::ClaudeCode,
+            root: fixture_path(&["claude-code"]),
+            files: vec![
+                fixture_path(&["claude-code", "dedup-golden-a.jsonl"]),
+                fixture_path(&["claude-code", "dedup-golden-b.jsonl"]),
+            ],
+        };
+
+        let usage = match provider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("dedup fixtures should parse: {err}"),
+        };
+
+        // Collapses 6 occurrences -> 2 unique (message.id, requestId) turns.
+        assert_eq!(usage.len(), 2);
+        // Streaming entry X (input 100000) keeps the COMPLETE output (40000), not a
+        // partial (1 / 20000) — the max-output occurrence wins, kept wholesale.
+        let x = find_event(&usage, 100_000);
+        assert_eq!(x.output_tokens, 40_000);
+        assert_eq!(x.cache_read_tokens, 1_000_000);
+        assert_eq!(x.cache_write_tokens, 40_000);
+        // Cross-file entry Y (input 200000) appears in both files -> counted once.
+        let y = find_event(&usage, 200_000);
+        assert_eq!(y.output_tokens, 60_000);
+        assert_eq!(
+            usage.iter().filter(|e| e.input_tokens == 200_000).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn claude_never_collapses_keyless_entries() {
+        // Two entries with the same message.id but NO requestId -> keyless (no full
+        // (message.id, requestId) key) -> must NEVER merge, even though they are
+        // otherwise identical. Guards keyless Codex/Cursor events too.
+        let provider = ClaudeCodeProvider;
+        let loc = DataLocation {
+            provider: ProviderId::ClaudeCode,
+            root: fixture_path(&["claude-code"]),
+            files: vec![fixture_path(&["claude-code", "dedup-keyless.jsonl"])],
+        };
+
+        let usage = match provider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("keyless fixture should parse: {err}"),
+        };
+
+        assert_eq!(usage.len(), 2);
+    }
+
+    #[test]
+    fn codex_usage_is_never_deduped() {
+        // Codex events carry no (message.id, requestId), so even identical events
+        // must all be counted — Codex totals must not change from de-dup.
+        let provider = CodexProvider;
+        let loc = DataLocation {
+            provider: ProviderId::Codex,
+            root: fixture_path(&["codex"]),
+            files: vec![
+                fixture_path(&["codex", "rollout.jsonl"]),
+                fixture_path(&["codex", "rollout.jsonl"]),
+            ],
+        };
+
+        let usage = match provider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("codex fixture should parse: {err}"),
+        };
+
+        // rollout.jsonl yields one usage event; reading it twice yields two.
+        assert_eq!(usage.len(), 2);
+    }
+
+    #[test]
+    fn claude_dedupe_key_requires_both_ids() {
+        let full = serde_json::json!({"requestId":"req_1","message":{"id":"msg_1"}});
+        assert_eq!(
+            claude_dedupe_key(&full),
+            Some(("msg_1".to_string(), "req_1".to_string()))
+        );
+        // Missing requestId, missing id, or empty strings -> keyless.
+        assert_eq!(
+            claude_dedupe_key(&serde_json::json!({"message":{"id":"msg_1"}})),
+            None
+        );
+        assert_eq!(
+            claude_dedupe_key(&serde_json::json!({"requestId":"req_1","message":{}})),
+            None
+        );
+        assert_eq!(
+            claude_dedupe_key(&serde_json::json!({"requestId":"","message":{"id":"msg_1"}})),
+            None
+        );
     }
 
     fn close_to(value: Option<f64>, expected: f64) -> bool {
