@@ -43,6 +43,17 @@
     },
     {
       "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "service_name": "Anthropic API",
+      "rates": [
+        { "meter": "input",       "unit": "1M_tokens", "price": "5.00" },
+        { "meter": "output",      "unit": "1M_tokens", "price": "25.00" },
+        { "meter": "cache_read",  "unit": "1M_tokens", "price": "0.50" },
+        { "meter": "cache_write", "unit": "1M_tokens", "price": "6.25" }
+      ]
+    },
+    {
+      "provider": "anthropic",
       "model": "claude-haiku-4-5",
       "service_name": "Anthropic API",
       "rates": [
