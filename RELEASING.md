@@ -37,7 +37,9 @@ the first real release, or release-time jobs will fail.
 
 1. **GitHub repos under the `Costroid` org:**
    - `Costroid/costroid` (this repo).
-   - `Costroid/homebrew-tap` — an (empty) repo cargo-dist pushes the generated formula into.
+   - `Costroid/homebrew-tap` — a repo **initialized with a README (not completely empty)**, into
+     which cargo-dist pushes the generated formula. A *completely* empty repo breaks the
+     `publish-homebrew-formula` checkout.
 2. **GitHub Actions secrets** (repo → Settings → Secrets and variables → Actions):
    - `HOMEBREW_TAP_TOKEN` — a token with write access to `Costroid/homebrew-tap` (the default
      `GITHUB_TOKEN` cannot push cross-repo). Required by the `publish-homebrew-formula` job.
@@ -72,6 +74,18 @@ the first real release, or release-time jobs will fail.
    npm package. The shell/PowerShell/cargo-binstall installers resolve from the GitHub Release.
 
 To release a fix, bump the version and push the new `vX.Y.Z` tag.
+
+### Release mechanics to know
+
+- **The tag version must match the manifest exactly.** cargo-dist requires the pushed `vX.Y.Z` tag
+  to equal `[workspace.package].version` in [Cargo.toml](Cargo.toml). To rehearse the pipeline with
+  a release candidate, bump the version on a throwaway branch and tag `vX.Y.Z-rc.N` from it. The
+  Homebrew and npm publish jobs are **skipped on prereleases**, so an rc exercises build + attest +
+  checksum + GitHub Release only — not the publish legs.
+- **A version bump must also refresh `Cargo.lock`** (the workspace crates' entries change) — commit
+  both `Cargo.toml` and `Cargo.lock`.
+- **Tag and `cargo publish` from the same commit.** Cut the GitHub Release tag and publish to
+  crates.io (below) from the *same* commit, so the release binary and the crates.io source agree.
 
 ---
 

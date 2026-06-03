@@ -4,11 +4,11 @@ Costroid is a local-first, secure-by-design tool, and we take security seriously
 
 ## Supported versions
 
-Costroid is in **early development and has not shipped a release yet**, so there are no released versions to support today. Once releases begin, only the **latest release line** will receive security fixes; older lines will not be patched unless stated otherwise.
+Costroid's current release line is **0.1.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
 
 | Version | Security fixes |
 | --- | --- |
-| Latest release (once releases begin) | Yes |
+| Latest release line (0.1.x) | Yes |
 | Older releases | No (upgrade to the latest) |
 | Unreleased `main` | Best-effort |
 
@@ -76,7 +76,7 @@ Releases are produced by an automated GitHub Actions pipeline. Every artifact is
 
 > **Note on OS code-signing.** v0.1.0 binaries are **not** OS-code-signed: there is no Apple Developer ID notarization (macOS) or Authenticode signature (Windows) yet, so first run may show an "unidentified developer" (macOS) or SmartScreen (Windows) prompt. Notarization and Authenticode are planned for a later release; provenance attestations and checksums are the integrity mechanism today.
 
-Once releases exist, you can verify a downloaded artifact by checking its published checksum and verifying its attestation with the GitHub CLI:
+You can verify a downloaded artifact by checking its published checksum and verifying its attestation with the GitHub CLI:
 
 ```bash
 gh attestation verify <downloaded-file> --repo Costroid/costroid

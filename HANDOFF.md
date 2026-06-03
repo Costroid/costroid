@@ -15,7 +15,7 @@ We do not build stage two here. We build the foundation that makes stage two eas
 
 ## Principles
 
-- **Local-first and secure.** No telemetry by default. Data never leaves the device. Secrets live only in the OS keychain. Releases are signed.
+- **Local-first and secure.** No telemetry by default. Data never leaves the device. Secrets live only in the OS keychain. Releases carry build-provenance attestations + SHA-256 checksums (not OS-code-signed yet).
 - **FOCUS-native.** Costs are normalized into the open [FOCUS](https://focus.finops.org) standard from day one. The data model is both the product's integrity and the bridge to the platform.
 - **Vendor-neutral recommendations.** Model suggestions draw on multiple benchmarks; CursorBench is included only as one clearly-labeled vendor input, never the sole basis. Every recommendation is transparent and advisory.
 - **A colleague, not a chatbot.** Costroid surfaces proactive, plain-language, well-timed insight. It embeds no conversational LLM interface.
@@ -93,4 +93,4 @@ The **platform is a separate repo, licensed later** — proprietary or a source-
 
 ## Status
 
-Early development. **Phase 1 is in progress; nothing has been released yet.** Build from source per the README; packaged installers arrive with the first tagged release.
+Phase 1 is **complete and shipped as v0.1.0.** Packaged installers (shell, PowerShell, Homebrew, npm) and crates.io (`cargo install costroid` / `cargo binstall costroid`) are all live, and build-from-source still works (see the README). Next milestone is **Phase 2**, which has not started.
