@@ -27,9 +27,14 @@ echo "==> Exporting FOCUS CSV from committed fixtures"
 # representation and the (allowlisted, defective) cost = unit-price x quantity check.
 home="$workdir/home"
 mkdir -p "$home/.claude/projects/fixture" "$home/.claude/projects/fixture-priced" \
-  "$home/.codex/sessions/fixture"
+  "$home/.claude/projects/fixture-dated" "$home/.codex/sessions/fixture"
 cp "$repo_root/fixtures/claude-code/project-transcript.jsonl" "$home/.claude/projects/fixture/"
 cp "$repo_root/fixtures/claude-code/project-transcript-priced.jsonl" "$home/.claude/projects/fixture-priced/"
+# Dated snapshot (claude-haiku-4-5-20251001): priced via the suffix-tolerant base
+# alias, so its priced FOCUS columns (non-null SkuPriceId referencing the base,
+# PricingQuantity, per-token unit price) are validated end-to-end. x_Model stays
+# the dated id; SkuPriceId references the base claude-haiku-4-5 rate.
+cp "$repo_root/fixtures/claude-code/project-transcript-dated.jsonl" "$home/.claude/projects/fixture-dated/"
 cp "$repo_root/fixtures/codex/rollout.jsonl" "$home/.codex/sessions/fixture/"
 export_csv="$workdir/focus.csv"
 HOME="$home" USERPROFILE="" CLAUDE_CONFIG_DIR="" ANTHROPIC_API_KEY="" \

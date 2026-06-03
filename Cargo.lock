@@ -366,6 +366,7 @@ dependencies = [
  "insta",
  "ratatui",
  "rust_decimal",
+ "serde_json",
 ]
 
 [[package]]

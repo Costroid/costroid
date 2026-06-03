@@ -51,3 +51,42 @@ jobs:
         env:
           FOCUS_VALIDATOR_PYTHON: python
         run: bash scripts/focus_conformance.sh
+
+  license:
+    name: license + supply-chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Enforces the Apache-2.0 / no-copyleft policy and the "rustls, never
+      # OpenSSL" rule from deny.toml. licenses + bans are fully offline (no
+      # RustSec advisory-DB fetch), keeping the gate network-free.
+      - name: cargo-deny (licenses + bans)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans
+
+  offline-acceptance:
+    name: offline acceptance (Phase-1 capstone)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # strace is the authoritative network-isolation mechanism; script/unshare
+      # (util-linux) and python3 are preinstalled on ubuntu runners.
+      - name: Install strace
+        run: sudo apt-get update && sudo apt-get install -y strace
+
+      # Static proof: no networking/telemetry crate is even linked.
+      - name: Static no-network/no-telemetry dependency proof
+        run: cargo test -p costroid --test offline -- --nocapture
+
+      # Dynamic proof: run every command with networking fully disabled against
+      # committed fixtures, asserting no outbound IP traffic is attempted.
+      - name: Offline acceptance harness (networking disabled)
+        run: bash scripts/offline_acceptance.sh

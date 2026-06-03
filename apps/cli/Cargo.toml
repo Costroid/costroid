@@ -2,8 +2,13 @@
 name = "costroid"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+description = "Local-first, FOCUS-native cost and limit visibility for your AI coding tools, right in your terminal."
+keywords = ["finops", "cost", "tui", "cli", "ai"]
+categories = ["command-line-utilities", "visualization"]
 
 [[bin]]
 name = "costroid"
@@ -22,6 +27,7 @@ rust_decimal.workspace = true
 [dev-dependencies]
 costroid-focus.workspace = true
 insta = { version = "=1.47.2", default-features = false }
+serde_json.workspace = true
 
 [lints]
 workspace = true

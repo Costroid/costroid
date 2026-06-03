@@ -1,0 +1,70 @@
+# cargo-deny policy — license + supply-chain lockdown for Costroid.
+#
+# Costroid is Apache-2.0 and must not ship any copyleft (GPL/AGPL/LGPL/SSPL)
+# dependency. This file encodes that as an allow-list (anything not listed is
+# denied) and enforces the "rustls, never OpenSSL" rule.
+#
+# The license + bans checks are fully OFFLINE (they inspect the local graph and
+# the committed Cargo.lock), so CI runs `cargo deny check licenses bans` with no
+# network. The advisories check needs the RustSec DB (network) and is therefore
+# left out of the offline gate; run `cargo deny check advisories` manually when
+# online.
+
+[graph]
+# Evaluate only the platforms we actually ship. This excludes target-gated crates
+# such as `r-efi` (compiled only for `target_os = "uefi"`, where it carries an
+# LGPL option) from the graph entirely, so the LGPL branch never appears.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = false
+
+[licenses]
+# Allow-list mode: only these SPDX licenses are permitted; everything else (incl.
+# every copyleft license) is denied by omission. cargo-deny evaluates SPDX `OR`
+# expressions and selects a permitted branch, so dual/triple-licensed crates like
+# `ryu` (Apache-2.0 OR BSL-1.0) resolve to the permissive option automatically.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "CC0-1.0",
+    "WTFPL",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Warn (don't fail) on duplicate versions — informational only.
+multiple-versions = "warn"
+wildcards = "allow"
+# Enforce the project rule: TLS, if/when added, is rustls — never OpenSSL.
+# (Phase 1 has no TLS at all; the comprehensive no-network/no-telemetry proof
+# lives in apps/cli/tests/offline.rs.)
+deny = [
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+]
+
+[advisories]
+# Not part of the offline gate (needs the RustSec DB). Configured here so a
+# manual `cargo deny check advisories` works when online.
+yanked = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

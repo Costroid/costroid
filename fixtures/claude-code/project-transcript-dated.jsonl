@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-01-01T13:59:00.000Z","cwd":"/home/example/dated","message":{"role":"user","content":"synthetic dated-snapshot prompt placeholder"}}
+{"type":"assistant","timestamp":"2026-01-01T14:00:00.000Z","cwd":"/home/example/dated","message":{"role":"assistant","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":1000000,"output_tokens":500000,"cache_read_input_tokens":2000000,"cache_creation_input_tokens":100000,"cache_creation":{"ephemeral_5m_input_tokens":100000,"ephemeral_1h_input_tokens":0},"service_tier":"standard"}}}

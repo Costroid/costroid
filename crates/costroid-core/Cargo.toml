@@ -2,8 +2,14 @@
 name = "costroid-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+description = "Costroid data pipeline and aggregation engine: normalizes local AI-tool usage into estimated FOCUS cost records."
+documentation = "https://docs.rs/costroid-core"
+keywords = ["finops", "cost", "focus", "aggregation", "ai"]
+categories = ["finance", "command-line-utilities"]
 
 [dependencies]
 chrono.workspace = true
