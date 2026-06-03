@@ -58,13 +58,13 @@ These are the commitments Costroid is designed around. They follow directly from
 - **Secrets live only in the OS keychain.** When optional login arrives (Phase 2), tokens are stored solely via the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). They are **never** written to disk, configuration files, or logs.
 - **No backend.** Credentials flow strictly between your device and the provider. **There is no Costroid server** in this product, and nothing is proxied through one.
 - **Authentication tiers.** Phase 1 uses local logs only (no credentials). Phase 2 adds reuse of an existing local session and an optional OAuth login (keychain-stored). Reading browser cookies, if ever offered, is a clearly-disclosed, off-by-default last resort.
-- **Signed, verifiable releases.** Release artifacts are signed and published with checksums and build attestations (see below).
+- **Verifiable releases.** Release artifacts are published with SHA-256 checksums and keyless GitHub build-provenance attestations, so you can verify their origin and integrity (see below). OS code-signing (macOS notarization, Windows Authenticode) is not yet in place — planned for a later release.
 - **Dependency hygiene.** Costroid is Apache-2.0 and uses permissively-licensed dependencies only (no copyleft), with dependency advisory scanning in CI.
 - **Untrusted input.** Provider log files are treated as untrusted input and parsed defensively; malformed data should be handled gracefully, never crash unsafely or execute anything.
 
 ## Threat model
 
-**What Costroid protects:** the confidentiality of your usage and cost data and your credentials — both stay on your machine — and the integrity and authenticity of official release binaries (via signing and attestations).
+**What Costroid protects:** the confidentiality of your usage and cost data and your credentials — both stay on your machine — and the integrity and provenance of official release binaries (via checksums and build attestations).
 
 **What Costroid does not protect against:** a compromised host. If your machine, OS user, or account is already compromised, an attacker may be able to read the same local files and keychain entries Costroid does; that is outside what this tool can defend. We also cannot vouch for the upstream AI tools whose logs Costroid reads — we parse their output defensively, but we don't control it.
 
@@ -72,11 +72,9 @@ These are the commitments Costroid is designed around. They follow directly from
 
 ## Build and release integrity
 
-Releases are produced by an automated, signed pipeline:
+Releases are produced by an automated GitHub Actions pipeline. Every artifact is published with a SHA-256 checksum and a keyless GitHub build-provenance attestation (Actions OIDC — no private signing keys), establishing that it was built by Costroid's CI from this repository.
 
-- **macOS** builds are signed with an Apple Developer ID and notarized.
-- **Windows** builds are signed with Authenticode.
-- **All artifacts** are published with checksums and GitHub build attestations.
+> **Note on OS code-signing.** v0.1.0 binaries are **not** OS-code-signed: there is no Apple Developer ID notarization (macOS) or Authenticode signature (Windows) yet, so first run may show an "unidentified developer" (macOS) or SmartScreen (Windows) prompt. Notarization and Authenticode are planned for a later release; provenance attestations and checksums are the integrity mechanism today.
 
 Once releases exist, you can verify a downloaded artifact by checking its published checksum and verifying its attestation with the GitHub CLI:
 
