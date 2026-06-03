@@ -47,7 +47,7 @@ Phases are built in order. The full, checkable acceptance criteria and Definitio
 
 **Phase 1 — buildable core (CLI + TUI, local logs only).**
 Goal: a useful, shippable local tool with zero network access.
-Deliverables: both screens from local data; FOCUS export (JSON/CSV); `statusline`; `--live`; `--plain` ASCII fallback; bundled pricing; shipped via cargo-dist + `cargo binstall` (crates.io publish deferred to a later release).
+Deliverables: both screens from local data; FOCUS export (JSON/CSV); `statusline`; `--live`; `--plain` ASCII fallback; bundled pricing; shipped via cargo-dist (installers) and crates.io (`cargo install costroid` / `cargo binstall costroid`).
 Acceptance (summary): on a machine with real provider logs and **networking disabled**, the now/trends screens, FOCUS export, and `--plain` all produce correct output.
 
 **Phase 2 — live quota, optional login, alerts.**

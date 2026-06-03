@@ -19,13 +19,14 @@ human-triggered action and is intentionally not automated to run on a normal pus
 
 - **Targets:** `x86_64`/`aarch64` Linux (gnu) · `x86_64` Linux (musl, fully static) ·
   `x86_64`/`aarch64` macOS · `x86_64` Windows.
-- **Installers:** shell (`curl | sh`), PowerShell (`irm | iex`), Homebrew (tap), npm. Plus
-  `cargo binstall costroid` for free off the GitHub Release.
+- **Installers:** shell (`curl | sh`), PowerShell (`irm | iex`), Homebrew (tap), npm, plus
+  crates.io — `cargo install costroid` (from source) and `cargo binstall costroid` (prebuilt,
+  pulled off the GitHub Release; resolves via the crates.io index).
 - **Integrity & provenance:** every artifact gets a SHA-256 checksum and a keyless GitHub
   build-provenance attestation (Actions OIDC — no certificates, no secrets).
 
-**Not in v0.1.0** (deferred, see below): crates.io publish, macOS notarization / Windows
-Authenticode code-signing, Scoop, MSI, the `costroid-mcp` crate (Phase 4).
+**Not in v0.1.0** (deferred): macOS notarization / Windows Authenticode code-signing, Scoop, MSI,
+the `costroid-mcp` crate (Phase 4).
 
 ---
 
@@ -45,7 +46,8 @@ the first real release, or release-time jobs will fail.
 3. **Actions permissions:** the release workflow declares `contents: write`, `id-token: write`,
    and `attestations: write`. Ensure the repo's Actions settings permit them (attestations and
    OIDC are on by default for public repos).
-4. **crates.io is deferred for v0.1.0** — no `CARGO_REGISTRY_TOKEN` is needed yet. See below.
+4. **crates.io publishing:** a `CARGO_REGISTRY_TOKEN` (crates.io API token) on an account with a
+   **verified email**, used by the manual `cargo publish` steps — see the crates.io section below.
 
 ---
 
@@ -73,45 +75,35 @@ To release a fix, bump the version and push the new `vX.Y.Z` tag.
 
 ---
 
-## crates.io publish (deferred — do later, not for v0.1.0)
+## crates.io publish
 
-We ship v0.1.0 via installers + `cargo binstall` and defer crates.io so the library APIs aren't
-frozen prematurely. The manifests are already publish-ready (each crate has `description`,
-`license`, `repository`, and the internal deps carry a `version`), so enabling it later is a
-small, well-defined step.
+v0.1.0 is published to crates.io — all four crates (`costroid-focus`, `costroid-providers`,
+`costroid-core`, `costroid`) — so `cargo install costroid` and `cargo binstall costroid` both work.
 
-**Publish order** (dependency DAG — each crate must be on crates.io before its dependents):
+Publish future versions in **dependency order** (each crate must be on crates.io before its
+dependents), with `CARGO_REGISTRY_TOKEN` configured:
 
 ```
 costroid-focus  →  costroid-providers  →  costroid-core  →  costroid (cli)
 ```
 
-**Validate packaging without publishing** (safe to run anytime):
-
-```bash
-cargo package -p costroid-focus --list        # files that would be included
-cargo package -p costroid-focus               # full package + verify build (leaf: works pre-publish)
-cargo package -p costroid-providers --list    # non-leaves: --list / --no-verify only, since their
-cargo package -p costroid-core --list         #   sibling deps aren't on crates.io yet
-cargo package -p costroid --list
-```
-
-> A full `cargo package` / `cargo publish --dry-run` of a non-leaf crate fails *before publish*
-> because it resolves its sibling's `version` against crates.io, where it doesn't exist yet — that
-> is expected, not a packaging defect. Use `--list` (or `cargo package --no-verify`) to validate
-> non-leaves pre-publish; full verification becomes possible once the sibling is published.
-
-**When ready to actually publish** (deliberate, with `CARGO_REGISTRY_TOKEN` configured):
-
 ```bash
 cargo publish -p costroid-focus
-# wait for it to index, then:
-cargo publish -p costroid-providers
+cargo publish -p costroid-providers   # recent cargo waits for the index between each
 cargo publish -p costroid-core
 cargo publish -p costroid
 ```
 
-After this, add `cargo install costroid` back to the README install list.
+Gotchas (learned shipping v0.1.0):
+- **A verified email** on the crates.io account is required before the first publish.
+- **Bundled assets must live inside the crate.** `costroid-core` `include_str!`s its pricing JSON;
+  it lives at `crates/costroid-core/pricing/pricing.v1.json` (not the workspace root) — cargo only
+  packages files under the crate dir, so a standalone verify build fails otherwise. Keep any new
+  bundled data inside its crate.
+- **Validate before publishing:** `cargo package -p <crate> --list` (any crate), and
+  `cargo publish --dry-run -p <crate>` (full verify — works once the crate's siblings are already
+  on crates.io).
+- Versions are permanent (yank-only) — publish deliberately, in order.
 
 **`costroid-mcp`** does not exist yet (Phase 4). Its crates.io name is intentionally left
 unclaimed; we do not publish a placeholder.

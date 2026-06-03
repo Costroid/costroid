@@ -13,7 +13,7 @@ It's the kind of tool that should be free and open, so it is.
 
 ## Status
 
-**Early development — Phase 1.** Costroid is being built in the open and has **not shipped a release yet**. You can build it from source today (see [Quickstart](#quickstart)); the packaged installers listed below will work once the first release is tagged. The commands and flags shown here reflect the planned v1 interface and may change during development. Nothing in the [Roadmap](#roadmap) section exists yet.
+**Early development — Phase 1.** Costroid's first release, **v0.1.0**, is published. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). The Phase-1 interface is in place; commands and flags may still evolve. Nothing in the [Roadmap](#roadmap) section (Phases 2–4) exists yet.
 
 ## What Costroid does
 
@@ -51,9 +51,9 @@ cd costroid
 cargo install --path apps/cli
 ```
 
-### Packaged installers (once the first release ships)
+### Packaged installers
 
-> ⚠ **Not yet published.** These are the install commands for the first release; they resolve only after `v0.1.0` is tagged. The release pipeline uses [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
+> **v0.1.0 is published** — all commands below work today. Built and released by [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries carry build-provenance attestations + checksums but are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
 
 macOS / Linux (shell):
 
@@ -79,13 +79,17 @@ npm:
 npx costroid
 ```
 
-Prebuilt binary via [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (downloads the attested release binary on any platform, no compile):
+Prebuilt binary via [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (downloads the attested release binary from GitHub, no compile):
 
 ```bash
 cargo binstall costroid
 ```
 
-> `cargo install costroid` (from crates.io) is planned for a later release. For now, build from source as above or use `cargo binstall`.
+From crates.io (compiles from source):
+
+```bash
+cargo install costroid
+```
 
 ### Usage
 
