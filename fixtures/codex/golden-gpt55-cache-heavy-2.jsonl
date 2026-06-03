@@ -1,0 +1,2 @@
+{"timestamp":"2026-05-01T11:00:00.000Z","type":"session_meta","payload":{"id":"golden-gpt55-cache-heavy-2","cwd":"/home/example/project","model_provider":"openai","model":"gpt-5.5","timezone":"UTC"}}
+{"timestamp":"2026-05-01T11:01:00.000Z","type":"response_item","payload":{"model":"gpt-5.5","model_provider":"openai","cwd":"/home/example/project","info":{"last_token_usage":{"input_tokens":31415108,"cached_input_tokens":30006656,"output_tokens":145142,"reasoning_output_tokens":0,"total_tokens":31560250}}}}

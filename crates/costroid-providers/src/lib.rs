@@ -544,15 +544,23 @@ fn parse_codex_usage(
                 .and_then(Value::as_str)
                 .and_then(parse_rfc3339)
         })?;
+    // OpenAI/Codex `input_tokens` is the FULL prompt size and INCLUDES
+    // `cached_input_tokens` (a subset of it). We price each meter once at its own
+    // rate, so the input bucket must be the *uncached* remainder — otherwise the
+    // cached tokens are billed twice (input rate + cache-read rate). Subtract with
+    // `saturating_sub` so a malformed log where cached > input clamps to 0 rather
+    // than panicking. NOTE: Anthropic `input_tokens` is cache-EXCLUSIVE, so the
+    // Claude parser must NOT do this subtraction.
+    let cached = number_u64(usage.get("cached_input_tokens"));
     let event = UsageEvent {
         tool: ProviderId::Codex,
         model: current_model
             .clone()
             .unwrap_or_else(|| "unknown".to_string()),
         timestamp,
-        input_tokens: number_u64(usage.get("input_tokens")),
+        input_tokens: number_u64(usage.get("input_tokens")).saturating_sub(cached),
         output_tokens: number_u64(usage.get("output_tokens")),
-        cache_read_tokens: number_u64(usage.get("cached_input_tokens")),
+        cache_read_tokens: cached,
         cache_write_tokens: 0,
         project: current_cwd.clone(),
         access_path,
@@ -722,6 +730,11 @@ mod tests {
 
         assert_eq!(usage.len(), 1);
         assert_eq!(usage[0].model, "claude-sonnet-example");
+        // Anthropic `input_tokens` is cache-EXCLUSIVE: cache_read_input_tokens and
+        // cache_creation_input_tokens are separate, additive fields. So the Claude
+        // parser stores input_tokens verbatim and does NOT subtract cache — the
+        // mirror of the Codex fix would over-correct here. This asserts input stays
+        // the raw exclusive value (10) and cache stays separate (30 read / 40 write).
         assert_eq!(usage[0].input_tokens, 10);
         assert_eq!(usage[0].output_tokens, 20);
         assert_eq!(usage[0].cache_read_tokens, 30);
@@ -752,6 +765,11 @@ mod tests {
         assert_eq!(usage.len(), 1);
         assert_eq!(usage[0].model, "example-model");
         assert_eq!(usage[0].access_path, AccessPath::Subscription);
+        // Codex `input_tokens` (1200) INCLUDES the cached subset (300); the parser
+        // subtracts so the input bucket is the uncached remainder, billed once at
+        // the input rate while the 300 cached tokens are billed once at the
+        // cache-read rate. Regression guard for the cache-read double-count.
+        assert_eq!(usage[0].input_tokens, 900);
         assert_eq!(usage[0].cache_read_tokens, 300);
         assert_eq!(limits.len(), 2);
         assert!(
