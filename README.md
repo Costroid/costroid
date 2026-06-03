@@ -53,9 +53,9 @@ cargo install --path apps/cli
 
 ### Packaged installers (once the first release ships)
 
-> ⚠ **Not yet published.** These are the planned install commands and will resolve only after the first release is tagged. The release pipeline uses [cargo-dist](https://github.com/axodotdev/cargo-dist); installer asset names follow its defaults and may be adjusted.
+> ⚠ **Not yet published.** These are the install commands for the first release; they resolve only after `v0.1.0` is tagged. The release pipeline uses [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
 
-macOS / Linux:
+macOS / Linux (shell):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Costroid/costroid/releases/latest/download/costroid-installer.sh | sh
@@ -73,24 +73,19 @@ Homebrew:
 brew install Costroid/tap/costroid
 ```
 
-Scoop (Windows):
-
-```bash
-scoop bucket add costroid https://github.com/Costroid/scoop-bucket
-scoop install costroid
-```
-
-crates.io:
-
-```bash
-cargo install costroid
-```
-
 npm:
 
 ```bash
 npx costroid
 ```
+
+Prebuilt binary via [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (downloads the attested release binary on any platform, no compile):
+
+```bash
+cargo binstall costroid
+```
+
+> `cargo install costroid` (from crates.io) is planned for a later release. For now, build from source as above or use `cargo binstall`.
 
 ### Usage
 
@@ -112,7 +107,7 @@ On an interactive terminal, `costroid` and `costroid trends` open a navigable vi
 - **No telemetry, by default.** Any update check is opt-in and clearly disclosed.
 - **Your data stays on your machine.** Phase 1 reads local logs only; nothing is uploaded.
 - **Secrets live in your OS keychain.** When optional login arrives (Phase 2), tokens are stored via the system keychain and used only between your device and the provider — never routed through any Costroid server.
-- **Signed releases.**
+- **Attested releases.** Release binaries carry keyless [GitHub build-provenance attestations](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) and SHA-256 checksums — verify with `gh attestation verify <file> --repo Costroid/costroid`. OS code-signing (macOS notarization, Windows Authenticode) is not yet in place, so first run may show an unidentified-developer / SmartScreen prompt.
 - Local cost figures are **estimates** (your tokens × current prices). Costroid is built to reconcile them against your actual provider invoices, which are the source of truth.
 
 ## Standards

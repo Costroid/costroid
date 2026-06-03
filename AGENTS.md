@@ -61,8 +61,9 @@ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warni
 cargo install cargo-dist                 # provides the `dist` binary
 dist init                                 # one-time: writes dist config + the GitHub Actions release workflow
 dist build                                # build installers/archives locally to verify
-# Releases are then cut by pushing a version tag; CI builds and publishes installers,
-# the Homebrew tap, the Scoop bucket, the npm wrapper, and the crates.io publish.
+# Releases are then cut by pushing a version tag; CI builds and publishes the installers,
+# the Homebrew tap, and the npm wrapper, each artifact checksummed + build-provenance-attested.
+# (Scoop is not supported by cargo-dist; the crates.io publish is deferred — see RELEASING.md.)
 ```
 
 CI runs the pre-PR gate (fmt + clippy + test) on every push and PR.
@@ -145,7 +146,7 @@ Work through phases in order. Do not start a phase until the previous one meets 
 - [ ] Pricing comes from bundled curated JSON; the tool works fully offline; all cost figures are labeled estimates.
 - [ ] Subscription limits and API costs are modeled separately (limits are not summable dollars); a model used both ways appears in both, marked by access path.
 - [ ] Zero telemetry; zero network calls anywhere in Phase 1.
-- [ ] Ships via cargo-dist (installers + Homebrew tap + Scoop bucket + npm wrapper) and `cargo install costroid`; release runs in CI.
+- [ ] Ships via cargo-dist: shell + PowerShell installers + Homebrew tap + npm wrapper, plus `cargo binstall costroid`, each artifact checksummed and build-provenance-attested; tag-triggered release runs in CI. (Scoop unsupported by cargo-dist; crates.io publish + `cargo install costroid` deferred to a later release — see RELEASING.md.)
 - [ ] CI green: fmt + clippy + test.
 
 **Acceptance test:** on a machine with real Claude Code / Codex / Cursor logs and **networking disabled**, `costroid`, `costroid trends --period month --group model`, `costroid export --format json`, and `costroid --plain` all produce correct output.
