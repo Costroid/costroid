@@ -164,17 +164,7 @@ impl Provider for ClaudeCodeProvider {
     }
 
     fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
-        for root in env.claude_roots() {
-            let files = collect_jsonl_files(ProviderId::ClaudeCode, &root.join("projects"))?;
-            if !files.is_empty() {
-                return Ok(Some(DataLocation {
-                    provider: ProviderId::ClaudeCode,
-                    root,
-                    files,
-                }));
-            }
-        }
-        Ok(None)
+        discover_claude_location(env.claude_roots())
     }
 
     fn parse_usage(&self, loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError> {
@@ -502,6 +492,43 @@ fn claude_dedupe_key(value: &Value) -> Option<(String, String)> {
         return None;
     }
     Some((message_id.to_string(), request_id.to_string()))
+}
+
+/// Build one [`DataLocation`] from **every** Claude root that holds data, not just
+/// the first. Claude transcripts can be split across `~/.claude/projects` and
+/// `~/.config/claude/projects` (`CLAUDE_CONFIG_DIR`), plus a WSL Linux-vs-Windows
+/// split — stopping at the first non-empty root silently under-counts the rest.
+///
+/// Files from all roots are merged into one `files` list; `dedupe_paths` removes
+/// any lexically-identical path. Content that genuinely appears in two roots (the
+/// same session copied across them) is collapsed later by the
+/// `(message.id, requestId)` de-dup in [`ClaudeCodeProvider::parse_usage`], so
+/// merging here cannot double-count.
+///
+/// `root` is set to the FIRST root that has data, in `claude_roots()` priority
+/// order — exactly the root the old early-return would have picked — so
+/// `claude_access_path` classification is unchanged on single-root machines and
+/// deterministic across the merged set. Taking `roots` as a parameter makes this
+/// testable with injected fixture roots, independent of the host environment.
+fn discover_claude_location(roots: Vec<PathBuf>) -> Result<Option<DataLocation>, ProviderError> {
+    let mut chosen_root: Option<PathBuf> = None;
+    let mut files: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let root_files = collect_jsonl_files(ProviderId::ClaudeCode, &root.join("projects"))?;
+        if root_files.is_empty() {
+            continue;
+        }
+        if chosen_root.is_none() {
+            chosen_root = Some(root);
+        }
+        files.extend(root_files);
+    }
+    let files = dedupe_paths(files);
+    Ok(chosen_root.map(|root| DataLocation {
+        provider: ProviderId::ClaudeCode,
+        root,
+        files,
+    }))
 }
 
 fn claude_access_path(root: &Path) -> AccessPath {
@@ -958,6 +985,80 @@ mod tests {
             claude_dedupe_key(&serde_json::json!({"requestId":"","message":{"id":"msg_1"}})),
             None
         );
+    }
+
+    #[test]
+    fn discover_reads_all_roots_not_just_first() {
+        // Two roots each hold one transcript file: root-a has entry P (input 111),
+        // root-b has entry R (input 333). The old early-return stopped at root-a and
+        // never saw R; the merge must read BOTH files and surface BOTH events.
+        let root_a = fixture_path(&["discovery", "root-a"]);
+        let root_b = fixture_path(&["discovery", "root-b"]);
+        let loc = match discover_claude_location(vec![root_a.clone(), root_b]) {
+            Ok(Some(loc)) => loc,
+            Ok(None) => panic!("expected merged discovery to find data"),
+            Err(err) => panic!("discovery should not error: {err}"),
+        };
+
+        // Both files merged (session-a.jsonl + session-b.jsonl).
+        assert_eq!(loc.files.len(), 2);
+        // root is the FIRST root with data — the deterministic pick that drives
+        // access-path classification across the whole merged set.
+        assert_eq!(loc.root, root_a);
+
+        let usage = match ClaudeCodeProvider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("merged location should parse: {err}"),
+        };
+        // P lives only in root-a, R only in root-b: both present iff both roots read.
+        assert_eq!(find_event(&usage, 111).model, "claude-sonnet-4-6");
+        assert_eq!(find_event(&usage, 333).model, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn discover_dedupes_sessions_present_in_two_roots() {
+        // Entry Q (input 222) is copied verbatim into BOTH roots. Merge yields two
+        // files containing it, but the (message.id, requestId) de-dup in parse_usage
+        // must collapse it to a single event — merging cannot double-count.
+        let loc = match discover_claude_location(vec![
+            fixture_path(&["discovery", "root-a"]),
+            fixture_path(&["discovery", "root-b"]),
+        ]) {
+            Ok(Some(loc)) => loc,
+            Ok(None) => panic!("expected merged discovery to find data"),
+            Err(err) => panic!("discovery should not error: {err}"),
+        };
+
+        let usage = match ClaudeCodeProvider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("merged location should parse: {err}"),
+        };
+        // P (once) + Q (deduped across roots) + R (once) = 3 unique turns.
+        assert_eq!(usage.len(), 3);
+        assert_eq!(usage.iter().filter(|e| e.input_tokens == 222).count(), 1);
+    }
+
+    #[test]
+    fn discover_single_root_regression() {
+        // A single root with data plus a non-existent second root behaves exactly as
+        // before: only the present root's files, that root reported. collect_jsonl_files
+        // tolerates the missing root (empty, no error).
+        let root_a = fixture_path(&["discovery", "root-a"]);
+        let absent = fixture_path(&["discovery", "does-not-exist"]);
+        let loc = match discover_claude_location(vec![root_a.clone(), absent]) {
+            Ok(Some(loc)) => loc,
+            Ok(None) => panic!("expected single-root discovery to find data"),
+            Err(err) => panic!("discovery should not error: {err}"),
+        };
+
+        assert_eq!(loc.root, root_a);
+        assert_eq!(loc.files.len(), 1);
+        let usage = match ClaudeCodeProvider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("single-root location should parse: {err}"),
+        };
+        // session-a.jsonl holds P and Q (distinct keys) -> two events.
+        assert_eq!(usage.len(), 2);
     }
 
     fn close_to(value: Option<f64>, expected: f64) -> bool {
