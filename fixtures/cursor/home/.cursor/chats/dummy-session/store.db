@@ -1,0 +1,2 @@
+placeholder — Costroid must NEVER open or enumerate the Cursor chat stores (§8).
+This is plain text, not a SQLite DB; discovery only ever names cli-config.json.

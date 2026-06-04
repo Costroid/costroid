@@ -25,7 +25,7 @@ The frontier is jagged: the cheapest model is sometimes a trap, the priciest oft
 
 ## 3. Scope (v1)
 
-- **Providers:** Claude Code + Codex (validated), Cursor (beta until its parser is solid).
+- **Providers:** Claude Code + Codex (validated), Cursor (v1: **detection only** — present + selected model, labeled beta; its usage/quota are live-only, so Cursor cost/quota land in Phase 2).
 - **Cost:** subscription quota (%) *and* API cost ($); filter by provider. Cross-provider totals are **per-lane** (see §6 — API spend, subscription-equivalent value, and quota % shown distinctly), never one merged number.
 - **Trends dimensions:** aggregate by period (`day` / `week` / `month` / `year`) and group (`model` / `app` / `total`).
 - **Export:** FOCUS records to JSON and CSV.
@@ -42,7 +42,7 @@ The frontier is jagged: the cheapest model is sometimes a trap, the priciest oft
 - **Config:** TOML at the XDG path (`~/.config/costroid/config.toml`) with sensible zero-config defaults. **Secrets never go in config — keychain only.**
 - crates.io: **iterate the existing names** (`costroid`, `costroid-core`, `costroid-focus`, `costroid-providers`) to 0.2.0 — don't orphan or rename them. npm: `costroid`.
 - **Brand:** monochrome (black/grey/white, adapting to the terminal theme) + a **single amber accent reserved for the warning/near-limit state** (red only as an intensification, always with a non-color cue); JetBrains Mono; braille glyphs (U+2800 + bitmask); **mandatory `--plain` ASCII fallback**. Mark `C⠉` (a pixel `C` beside the braille cell `⠉`); wordmark `costroid` with `cost` in the strong weight and `roid` muted — carry the split into the UI: **dollar figures and the active metric use the strong weight; labels and context are muted.** (Dot math + component specs in DESIGN-SYSTEM.)
-- **Log discovery (WSL-aware):** Claude Code = `~/.claude/projects/**/*.jsonl` + `~/.config/claude/projects/**/*.jsonl`; Codex = `~/.codex/sessions/**/*.jsonl`; Cursor = a local state DB (study ccusage). **Honor `CLAUDE_CONFIG_DIR` (comma-separated roots) and `CODEX_HOME` before the defaults; merge all roots.** Detect WSL via `/proc/sys/kernel/osrelease` (contains `microsoft`/`WSL`); under WSL also resolve the Windows profile (`/mnt/c/Users/<user>/...`). Native roots are XDG / `~/Library` / `%APPDATA%`. Never assume a single fixed path. Claude Code has **no quota in local logs** → its subscription limits are *unavailable* in Phase 1 (they arrive via Phase 2 live data); Codex exposes rate-limit windows locally (5h = 300 min, weekly = 10080 min).
+- **Log discovery (WSL-aware):** Claude Code = `~/.claude/projects/**/*.jsonl` + `~/.config/claude/projects/**/*.jsonl`; Codex = `~/.codex/sessions/**/*.jsonl`; Cursor = **no local usage/quota** — the CLI fetches both live from `api2.cursor.sh`, so Phase 1 only **detects presence + selected model** from the `~/.cursor` config (honor `CURSOR_DATA_DIR`), never chat content. **Honor `CLAUDE_CONFIG_DIR` (comma-separated roots) and `CODEX_HOME` before the defaults; merge all roots.** Detect WSL via `/proc/sys/kernel/osrelease` (contains `microsoft`/`WSL`); under WSL, **scan `/mnt/c/Users/*` for the profile(s) that actually hold the logs** (so a WSL user ≠ Windows profile, e.g. `eren`/`ereno`, still resolves), with `USERPROFILE` (if set) and the legacy `$USER` path as fallbacks. Native roots are XDG / `~/Library` / `%APPDATA%`. Never assume a single fixed path. Claude Code has **no quota in local logs** → its subscription limits are *unavailable* in Phase 1 (they arrive via Phase 2 live data); Codex exposes rate-limit windows locally (5h = 300 min, weekly = 10080 min).
 
 ## 5. Workspace architecture
 
@@ -113,10 +113,10 @@ The whole trust story depends on this.
 
 *Throughout, **Phase 1 / Phase 2** denote data tiers — Phase 1 = local-only (the v1 product, built in the steps below); Phase 2 = live quota via session reuse / OAuth, a later capability — not these build steps.*
 
-*Status (post-`v0.1.0`): steps 1–3 are shipped. **Step 1's cost core is verified to the cent against ccusage on real logs**, and its one gap (Codex `CODEX_HOME`) is closed. Step 4 is the remaining build — and per its own note it waits until the shipped core has users. Near-term polish around it: the WSL Windows-root auto-detect (§12) and solidifying the Cursor parser.*
+*Status (post-`v0.1.0`): steps 1–3 are shipped. **Step 1's cost core is verified to the cent against ccusage on real logs**, and its one gap (Codex `CODEX_HOME`) is closed. Step 4 is the remaining build — and per its own note it waits until the shipped core has users. Near-term polish around it: the WSL Windows-root auto-detect (§12) and the Cursor detect-and-defer (§12).*
 
 1. **Core + workspace.** Port `costroid-core`/`-focus`/`-providers` (Claude + Codex) into the clean structure; **re-verify to the cent vs ccusage.** Fast — it's porting, not inventing. The trust foundation.
-2. **TUI + full cost picture.** now/trends, subscription + API, filter, the per-lane totals, export, config; Cursor parser (beta) and subscription quota (graceful). Ship it — **getting this adopted is the validation.**
+2. **TUI + full cost picture.** now/trends, subscription + API, filter, the per-lane totals, export, config; Cursor detection (beta) and subscription quota (graceful). Ship it — **getting this adopted is the validation.**
 3. **Status-line mode.** `costroid statusline` → tmux / Starship / Claude Code `statusLine`. Cheap table-stakes + a distribution channel; ship as its own small post. Call it a status-line integration, not a "cross-platform terminal toolbar" — Windows Terminal, Ghostty, and Apple Terminal have no toolbar to host.
 4. **Frontier / recommendation view.** The `bench` module: frontier + your-position, scoped to what the data honestly supports. Added once the core has users, kept small, cut if it doesn't land.
 
@@ -133,13 +133,14 @@ The whole trust story depends on this.
 - Don't literally rewrite from zero — **port** the validated cost core; it's the trust asset and the bug-trap you already escaped.
 - Tray is cut for v1; "cross-platform terminal toolbar" means the status-line integration (most terminals have no toolbar). Revisit the tray only on real demand.
 - Pricing lives inside `costroid-core`, never a top-level directory — cargo won't package it otherwise.
-- Cursor parser + subscription endpoints are your two fragility risks; isolate behind the trait with graceful "unavailable."
+- The subscription endpoints (and Cursor's Phase-2 live fetch) are your fragility risks; isolate behind the trait with graceful "unavailable."
 - Recommendation = frontier + your position, not per-task prescriptions; DeepSWE over CursorBench on neutrality.
 - The "bigger picture total" is per-lane (API $ / subscription-equivalent $ / quota %), never one merged number.
 - Sparkline is hand-rasterized (no Ratatui `Canvas`) — one styling path feeds both the TUI and `--plain`; `NO_COLOR` falls back to ASCII meters/bars (never color alone). Both **settled** (mechanics in §7).
 - Iterate the existing crates (0.2.0); don't orphan the claimed names.
 - **Opus real-log quirk:** costroid runs ~0.08% under ccusage on opus totals — isolated to re-logged sub-agent (sidechain) cache-read de-dup; mainline matches to the cent. Benign methodology difference, Claude parser unchanged (§9.1); the invoice is ground truth (Phase 2+).
-- **WSL username-mismatch gap:** when the WSL user ≠ the Windows profile and `USERPROFILE` is unset, costroid silently misses Windows-side logs; `CLAUDE_CONFIG_DIR`/`CODEX_HOME` are the workaround. Auto-detect is a queued follow-up.
+- **WSL Windows-root discovery (fixed):** under WSL with `USERPROFILE` unset, costroid scans `/mnt/c/Users/*` for profiles holding `.claude`/`.config/claude`/`.codex` and merges them — and Codex discovery now merges all roots (was first-root-wins), with session-level cross-root dedup. Residual behaviors to know: a *set* `USERPROFILE` (even empty) is explicit → no scan; the scan is `/mnt/c` only (other drives need the env knobs); it's evidence-based, so it includes *any* Windows profile with logs (e.g. a sandbox profile).
+- **Cursor is detection-only in v1:** its CLI keeps no usage/quota on disk (both are live RPC to `api2.cursor.sh`), so Phase 1 shows Cursor present + selected model, **beta**, with usage/quota *"unavailable — live (Phase 2)."* Phase-2 items: live Cursor cost/quota, and a `LimitKind::Daily` (Cursor's quota is daily; the enum has only `FiveHour`/`Weekly` today).
 
 ## 13. Document status
 

@@ -9,8 +9,8 @@ use costroid_focus::{
     PRICING_STATUS_MISSING_PRICE, PRICING_UNIT_TOKENS,
 };
 use costroid_providers::{
-    default_providers, AccessPath, HostEnv, LimitKind, LimitWindow, Provider, ProviderId,
-    UsageEvent,
+    default_providers, read_cursor_config, AccessPath, CursorConfig, HostEnv, LimitKind,
+    LimitWindow, Provider, ProviderId, UsageEvent,
 };
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -197,11 +197,24 @@ fn collect_snapshot_from_providers(
         }
 
         let focus_rows = focus_records_from_usage(&usage_events)?;
-        let status = provider_status_kind(usage_ok, limits_ok);
-        let message = if messages.is_empty() {
-            None
+        // Cursor is detect-and-defer: it keeps no token usage or quota on disk
+        // (both are live server RPCs; ARCHITECTURE.md §4), so it produces zero
+        // events/limits and is reported as `Detected` with the selected model,
+        // logged-in flag, and the Phase-2 deferral carried in `message`. Every other
+        // provider keeps the generic usage/limits-derived status.
+        let (status, message) = if provider_id == ProviderId::Cursor {
+            (
+                ProviderStatusKind::Detected,
+                Some(cursor_detected_message(&read_cursor_config(&location))),
+            )
         } else {
-            Some(messages.join("; "))
+            let status = provider_status_kind(usage_ok, limits_ok);
+            let message = if messages.is_empty() {
+                None
+            } else {
+                Some(messages.join("; "))
+            };
+            (status, message)
         };
 
         snapshot.providers.push(ProviderStatus {
@@ -227,6 +240,28 @@ fn provider_status_kind(usage_ok: bool, limits_ok: bool) -> ProviderStatusKind {
         (false, false) => ProviderStatusKind::Error,
         (true, false) | (false, true) => ProviderStatusKind::Partial,
     }
+}
+
+/// The detected-status line for Cursor: the selected model, the logged-in flag, and
+/// the explicit "usage/quota live (Phase 2)" deferral. Honest about what is locally
+/// knowable (presence + model) versus what is not (cost + quota). Never includes the
+/// account email/userId — only whether a session exists.
+fn cursor_detected_message(config: &CursorConfig) -> String {
+    let model = match (&config.display_name, &config.model_id) {
+        (Some(display), Some(id)) => format!("model {display} ({id})"),
+        (Some(display), None) => format!("model {display}"),
+        (None, Some(id)) => format!("model {id}"),
+        (None, None) => "model unknown".to_string(),
+    };
+    let login = if config.logged_in {
+        "logged in"
+    } else {
+        "login unknown"
+    };
+    format!(
+        "BETA — {model}, {login}; usage unavailable — live (Phase 2); \
+         quota unavailable — live (Phase 2)"
+    )
 }
 
 fn push_meter_records(
@@ -777,6 +812,11 @@ pub struct ProviderStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ProviderStatusKind {
     Available,
+    /// Installed and healthy, but with no local cost/quota data by design — the
+    /// detect-and-defer case (Cursor, whose usage and quota are live server RPCs,
+    /// not local files). Distinct from `Missing` ("not installed") and `Available`
+    /// ("local usage parsed"); the deferral detail rides `ProviderStatus.message`.
+    Detected,
     Partial,
     Missing,
     Error,
@@ -1058,8 +1098,19 @@ mod tests {
     use super::*;
     use chrono::{LocalResult, TimeZone, Timelike, Weekday};
     use costroid_focus::{PRICING_CATEGORY_STANDARD, PRICING_STATUS_MISSING_PRICE};
-    use costroid_providers::{DataLocation, ProviderError};
+    use costroid_providers::{CursorProvider, DataLocation, ProviderError};
     use std::path::PathBuf;
+
+    fn fixture_path(parts: &[&str]) -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("..");
+        path.push("fixtures");
+        for part in parts {
+            path.push(part);
+        }
+        path
+    }
 
     fn timestamp() -> DateTime<Utc> {
         utc_datetime(2026, 1, 1, 10, 0, 0)
@@ -2337,9 +2388,13 @@ mod tests {
     fn snapshot_collection_degrades_provider_errors() {
         let env = HostEnv::new(PathBuf::from("/home/example"), Vec::new(), false);
         let now = timestamp();
+        // Cursor plays the "missing" role here: it now has dedicated detect-and-defer
+        // semantics (any discovered Cursor → `Detected`), so the generic error path is
+        // exercised with Claude instead. Cursor's discovered path is covered by
+        // `cursor_detected_status_defers_usage_and_quota`.
         let providers: Vec<Box<dyn Provider>> = vec![
-            Box::new(FakeProvider::missing(ProviderId::ClaudeCode)),
-            Box::new(FakeProvider::failing_usage(ProviderId::Cursor)),
+            Box::new(FakeProvider::failing_usage(ProviderId::ClaudeCode)),
+            Box::new(FakeProvider::missing(ProviderId::Cursor)),
             Box::new(FakeProvider::available(
                 ProviderId::Codex,
                 vec![usage_event(
@@ -2366,10 +2421,10 @@ mod tests {
         assert_eq!(snapshot.providers.len(), 3);
         assert!(snapshot.providers.iter().any(|status| {
             status.provider == ProviderId::ClaudeCode
-                && status.status == ProviderStatusKind::Missing
+                && status.status == ProviderStatusKind::Partial
         }));
         assert!(snapshot.providers.iter().any(|status| {
-            status.provider == ProviderId::Cursor && status.status == ProviderStatusKind::Partial
+            status.provider == ProviderId::Cursor && status.status == ProviderStatusKind::Missing
         }));
         assert!(snapshot.providers.iter().any(|status| {
             status.provider == ProviderId::Codex
@@ -2378,6 +2433,47 @@ mod tests {
         }));
         assert_eq!(snapshot.focus_rows.len(), 3);
         assert_eq!(snapshot.limit_windows.len(), 1);
+    }
+
+    #[test]
+    fn cursor_detected_status_defers_usage_and_quota() {
+        // The real CursorProvider against the fake `.cursor` fixture tree: the install
+        // is detected with its selected model + logged-in flag, but usage and quota are
+        // deferred to Phase 2 (zero events, zero limits, zero FOCUS rows).
+        let env = HostEnv::new(fixture_path(&["cursor", "home"]), Vec::new(), false);
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(CursorProvider)];
+
+        let snapshot = match collect_snapshot_from_providers(&env, providers, timestamp()) {
+            Ok(value) => value,
+            Err(err) => panic!("cursor detect-and-defer should collect: {err}"),
+        };
+
+        assert_eq!(snapshot.providers.len(), 1);
+        let status = &snapshot.providers[0];
+        assert_eq!(status.provider, ProviderId::Cursor);
+        assert_eq!(status.status, ProviderStatusKind::Detected);
+        assert_eq!(status.usage_events, 0);
+        assert_eq!(status.focus_rows, 0);
+        assert_eq!(status.limit_windows, 0);
+
+        let message = status.message.as_deref().unwrap_or_default();
+        for needle in [
+            "BETA",
+            "composer-2.5",
+            "Composer 2.5 Fast",
+            "logged in",
+            "live (Phase 2)",
+        ] {
+            assert!(
+                message.contains(needle),
+                "detected message {message:?} should contain {needle:?}"
+            );
+        }
+
+        assert!(snapshot.focus_rows.is_empty());
+        assert!(snapshot.limit_windows.is_empty());
+        // Cursor contributes no dollars: there is nothing for cost math to touch.
+        assert!(snapshot.usage_events.is_empty());
     }
 
     fn local_datetime(

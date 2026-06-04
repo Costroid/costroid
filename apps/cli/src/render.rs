@@ -1101,10 +1101,12 @@ fn push_empty_provider_guidance(
     out: &mut StyledDocument,
     providers: &[costroid_core::ProviderStatus],
 ) {
-    if providers
-        .iter()
-        .any(|provider| provider.status == ProviderStatusKind::Available)
-    {
+    if providers.iter().any(|provider| {
+        matches!(
+            provider.status,
+            ProviderStatusKind::Available | ProviderStatusKind::Detected
+        )
+    }) {
         return;
     }
 
@@ -1279,6 +1281,7 @@ fn provider_name(provider: ProviderId) -> &'static str {
 fn provider_status(status: ProviderStatusKind) -> &'static str {
     match status {
         ProviderStatusKind::Available => "available",
+        ProviderStatusKind::Detected => "detected",
         ProviderStatusKind::Partial => "partial",
         ProviderStatusKind::Missing => "missing",
         ProviderStatusKind::Error => "error",
@@ -1702,6 +1705,42 @@ mod tests {
     #[test]
     fn snapshot_now_plain() {
         insta::assert_snapshot!(render_now(&priced_now(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn plain_now_renders_cursor_detected_note_without_color() {
+        // Pins the Cursor detect-and-defer note in `--plain` output: the BETA / model /
+        // deferred-live wording must render as plain text against drift (§9.7), and —
+        // because accessibility forbids relying on color — carry NO ANSI escapes. The
+        // message string mirrors what `costroid-core` builds for a detected Cursor.
+        let mut summary = priced_now();
+        summary.providers = vec![ProviderStatus {
+            provider: ProviderId::Cursor,
+            status: ProviderStatusKind::Detected,
+            files: 1,
+            usage_events: 0,
+            focus_rows: 0,
+            limit_windows: 0,
+            message: Some(
+                "BETA — model Composer 2.5 Fast (composer-2.5), logged in; \
+                 usage unavailable — live (Phase 2); quota unavailable — live (Phase 2)"
+                    .to_string(),
+            ),
+        }];
+
+        let output = render_now(&summary, RenderOptions::plain());
+        assert!(
+            output.contains(
+                "provider cursor detected: BETA — model Composer 2.5 Fast (composer-2.5), logged in"
+            ),
+            "plain now should render the cursor detected note: {output}"
+        );
+        assert!(output.contains("usage unavailable — live (Phase 2)"));
+        assert!(output.contains("quota unavailable — live (Phase 2)"));
+        assert!(
+            !output.contains('\u{1b}'),
+            "plain output must not contain ANSI escapes"
+        );
     }
 
     #[test]

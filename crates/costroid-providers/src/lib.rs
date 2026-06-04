@@ -94,6 +94,27 @@ impl HostEnv {
         }
         dedupe_paths(roots)
     }
+
+    pub fn cursor_roots(&self) -> Vec<PathBuf> {
+        self.cursor_roots_from(cursor_data_dir_root(env::var_os("CURSOR_DATA_DIR")))
+    }
+
+    /// Cursor data roots, with the `CURSOR_DATA_DIR` override (if any) taking
+    /// priority over the `~/.cursor` default and the WSL Windows `.cursor`, then
+    /// deduped — mirroring [`HostEnv::codex_roots_from`]. The Cursor CLI keeps its
+    /// data under `~/.cursor`; Costroid only ever reads `cli-config.json` from a
+    /// root (see [`discover_cursor_location`]), never the chat stores or credentials.
+    /// Takes the override as a parameter so the ordering is testable without
+    /// mutating the process environment.
+    fn cursor_roots_from(&self, cursor_data_dir: Option<PathBuf>) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        roots.extend(cursor_data_dir);
+        roots.push(self.home_dir.join(".cursor"));
+        for windows_home in &self.windows_home_dirs {
+            roots.push(windows_home.join(".cursor"));
+        }
+        dedupe_paths(roots)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,34 +301,28 @@ impl Provider for CursorProvider {
         ProviderId::Cursor
     }
 
-    fn discover(&self, _env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
-        Ok(None)
+    fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
+        discover_cursor_location(env.cursor_roots())
     }
 
-    fn parse_usage(&self, loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError> {
-        let mut events = Vec::new();
-        for file in &loc.files {
-            let contents = read_to_string(ProviderId::Cursor, file)?;
-            let value: Value = match serde_json::from_str(&contents) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            if let Some(items) = value.get("usage_events").and_then(Value::as_array) {
-                for item in items {
-                    if let Some(event) = parse_cursor_usage(item) {
-                        events.push(event);
-                    }
-                }
-            }
-        }
-        Ok(events)
+    /// Cursor keeps **no** token usage on disk — usage is a live server RPC
+    /// (`GetAggregatedUsage`; ARCHITECTURE.md §4), and the only local numbers are
+    /// chat content (off-limits, §8) and a context-window size snapshot (not spend).
+    /// So there are no local usage events to produce: the now/trends/export screens
+    /// carry no Cursor rows, and `costroid-core` reports Cursor as *detected* with
+    /// usage deferred to Phase 2 (the live-data phase).
+    fn parse_usage(&self, _loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError> {
+        Ok(Vec::new())
     }
 
+    /// Cursor's free-plan quota is a **daily** token window fetched live from the
+    /// server (`GetUsageLimitStatusAndActiveGrants`), not stored locally, and
+    /// [`LimitKind`] has no `Daily` variant — so Phase 1 emits no limit rather than
+    /// mislabel it `Weekly`. The quota's "live (Phase 2)" status is surfaced in the
+    /// provider's detected-status message in `costroid-core`. Adding `LimitKind::Daily`
+    /// plus the live fetch is Phase-2 work.
     fn parse_limits(&self, _loc: &DataLocation) -> Result<Vec<LimitWindow>, ProviderError> {
-        Ok(vec![unavailable_limit(
-            ProviderId::Cursor,
-            LimitKind::Weekly,
-        )])
+        Ok(Vec::new())
     }
 }
 
@@ -398,13 +413,16 @@ fn windows_profiles_with_logs(users_dir: &Path) -> Vec<PathBuf> {
     profiles
 }
 
-/// Whether a Windows user profile directory holds any Claude Code or Codex logs —
-/// the same root subdirectories [`HostEnv::claude_roots`] and [`HostEnv::codex_roots`]
-/// read (`.claude`, `.config/claude`, `.codex`).
+/// Whether a Windows user profile directory holds any Claude Code, Codex, or Cursor
+/// data — the same root subdirectories [`HostEnv::claude_roots`],
+/// [`HostEnv::codex_roots`], and [`HostEnv::cursor_roots`] read (`.claude`,
+/// `.config/claude`, `.codex`, `.cursor`). The `.cursor` arm lets the WSL scan
+/// surface a Windows profile that has only Cursor installed.
 fn profile_has_logs(profile: &Path) -> bool {
     profile.join(".claude").is_dir()
         || profile.join(".config").join("claude").is_dir()
         || profile.join(".codex").is_dir()
+        || profile.join(".cursor").is_dir()
 }
 
 fn windows_profile_to_wsl_path(path: &Path) -> Option<PathBuf> {
@@ -438,6 +456,16 @@ fn claude_config_dir_roots() -> Vec<PathBuf> {
 /// exactly one path (an unset or empty value yields `None`). Pure; takes the raw
 /// env value as an argument so it is testable without touching the environment.
 fn codex_home_root(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+/// `CURSOR_DATA_DIR` override for the Cursor data root. Like Codex's `CODEX_HOME`,
+/// the Cursor CLI's convention is a single directory, so this honors exactly one
+/// path (an unset or empty value yields `None`). Pure; takes the raw env value as an
+/// argument so it is testable without touching the environment.
+fn cursor_data_dir_root(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
     value
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
@@ -517,14 +545,6 @@ fn read_jsonl_values(provider: ProviderId, path: &Path) -> Result<Vec<Value>, Pr
         }
     }
     Ok(values)
-}
-
-fn read_to_string(provider: ProviderId, path: &Path) -> Result<String, ProviderError> {
-    fs::read_to_string(path).map_err(|source| ProviderError::Io {
-        provider,
-        path: path.to_path_buf(),
-        source,
-    })
 }
 
 fn parse_claude_usage(value: &Value, access_path: AccessPath) -> Option<UsageEvent> {
@@ -666,6 +686,87 @@ fn discover_codex_location(roots: Vec<PathBuf>) -> Result<Option<DataLocation>, 
         root,
         files,
     }))
+}
+
+/// Detect the Cursor CLI by **presence only** — Cursor keeps no token usage or
+/// quota on disk (those are live server RPCs; ARCHITECTURE.md §4), so there is
+/// nothing local to parse for cost. "Present" is the first `cursor_roots()` root
+/// that is an existing directory, in priority order.
+///
+/// Unlike the Claude/Codex discoverers this NEVER enumerates the data tree: it only
+/// ever names `cli-config.json` (the selected-model + logged-in signal read by
+/// [`read_cursor_config`]). It deliberately does not touch `chats/`, `projects/`, or
+/// `auth.json`, so chat content and credentials are never read — the metadata-only
+/// guarantee (§8) enforced at the discovery layer. `files` holds `cli-config.json`
+/// iff it exists, else is empty (the install is still "present"). Takes `roots` as a
+/// parameter so it is testable with injected fixture roots; degrades to `Ok(None)`
+/// when no root directory exists.
+fn discover_cursor_location(roots: Vec<PathBuf>) -> Result<Option<DataLocation>, ProviderError> {
+    for root in roots {
+        if !root.is_dir() {
+            continue;
+        }
+        let config = root.join("cli-config.json");
+        let files = if config.is_file() {
+            vec![config]
+        } else {
+            Vec::new()
+        };
+        return Ok(Some(DataLocation {
+            provider: ProviderId::Cursor,
+            root,
+            files,
+        }));
+    }
+    Ok(None)
+}
+
+/// What Costroid reads from a Cursor `cli-config.json` for its detected-status line:
+/// the selected model and whether a session is logged in. Deliberately minimal —
+/// never the auth token, email, or user id (PII), and never chat content.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CursorConfig {
+    pub model_id: Option<String>,
+    pub display_name: Option<String>,
+    pub logged_in: bool,
+}
+
+/// Read the Cursor selected model and logged-in flag from the `cli-config.json` in
+/// `loc.files`, if present. Pure metadata only: it reads `selectedModel.modelId` /
+/// `model.modelId` / `model.displayName` and detects the *presence* of an `authInfo`
+/// object (the logged-in signal) — it NEVER reads `auth.json`, never surfaces the
+/// email/userId inside `authInfo`, and never touches chat content. Degrades
+/// gracefully (§9.2): a missing or unreadable file, or malformed JSON, yields the
+/// default (`model_id` `None`, not logged in) — "present, model unknown", never an
+/// error.
+pub fn read_cursor_config(loc: &DataLocation) -> CursorConfig {
+    let Some(path) = loc.files.iter().find(|path| {
+        path.file_name()
+            .is_some_and(|name| name == "cli-config.json")
+    }) else {
+        return CursorConfig::default();
+    };
+    let Ok(contents) = fs::read_to_string(path) else {
+        return CursorConfig::default();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&contents) else {
+        return CursorConfig::default();
+    };
+    let model_id = value
+        .pointer("/selectedModel/modelId")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/model/modelId").and_then(Value::as_str))
+        .map(ToString::to_string);
+    let display_name = value
+        .pointer("/model/displayName")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let logged_in = value.get("authInfo").and_then(Value::as_object).is_some();
+    CursorConfig {
+        model_id,
+        display_name,
+        logged_in,
+    }
 }
 
 fn claude_access_path(root: &Path) -> AccessPath {
@@ -826,25 +927,6 @@ fn codex_has_rate_limits(loc: &DataLocation) -> Result<bool, ProviderError> {
     Ok(false)
 }
 
-fn parse_cursor_usage(value: &Value) -> Option<UsageEvent> {
-    let timestamp = parse_rfc3339(value.get("timestamp").and_then(Value::as_str)?)?;
-    let event = UsageEvent {
-        tool: ProviderId::Cursor,
-        model: value.get("model").and_then(Value::as_str)?.to_string(),
-        timestamp,
-        input_tokens: number_u64(value.get("input_tokens")),
-        output_tokens: number_u64(value.get("output_tokens")),
-        cache_read_tokens: number_u64(value.get("cache_read_tokens")),
-        cache_write_tokens: number_u64(value.get("cache_write_tokens")),
-        project: value
-            .get("project")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        access_path: AccessPath::Unknown,
-    };
-    has_any_tokens(&event).then_some(event)
-}
-
 fn unavailable_limit(provider: ProviderId, kind: LimitKind) -> LimitWindow {
     LimitWindow {
         tool: provider,
@@ -912,11 +994,14 @@ mod tests {
         );
         let claude_roots = env.claude_roots();
         let codex_roots = env.codex_roots();
+        let cursor_roots = env.cursor_roots();
 
         assert!(claude_roots.contains(&PathBuf::from("/home/example/.config/claude")));
         assert!(claude_roots.contains(&PathBuf::from("/mnt/c/Users/example/.claude")));
         assert!(codex_roots.contains(&PathBuf::from("/home/example/.codex")));
         assert!(codex_roots.contains(&PathBuf::from("/mnt/c/Users/example/.codex")));
+        assert!(cursor_roots.contains(&PathBuf::from("/home/example/.cursor")));
+        assert!(cursor_roots.contains(&PathBuf::from("/mnt/c/Users/example/.cursor")));
     }
 
     #[test]
@@ -950,13 +1035,15 @@ mod tests {
         assert!(!roots.contains(&PathBuf::from("/custom/codex")));
     }
 
-    // The three log-bearing Windows-profile fixtures, in the sorted order the scan
-    // must return them (excludes `no-logs` and the stray `desktop.ini` file).
+    // The log-bearing Windows-profile fixtures, in the sorted order the scan must
+    // return them (excludes `no-logs` and the stray `desktop.ini` file). `with-cursor`
+    // holds only `.cursor`, exercising the Cursor arm of `profile_has_logs`.
     fn expected_scanned_profiles(users_dir: &Path) -> Vec<PathBuf> {
         vec![
             users_dir.join("with-claude"),
             users_dir.join("with-codex"),
             users_dir.join("with-config-claude"),
+            users_dir.join("with-cursor"),
         ]
     }
 
@@ -1120,27 +1207,105 @@ mod tests {
     }
 
     #[test]
-    fn cursor_fixture_parses_partial_usage_only() {
+    fn cursor_fixture_discovers_present_and_defers() {
+        // The Cursor CLI keeps no usage or quota locally, so discovery detects the
+        // install (naming ONLY cli-config.json — never the chat store next to it) and
+        // both parsers return empty: zero events, zero limits.
         let provider = CursorProvider;
-        let loc = DataLocation {
-            provider: ProviderId::Cursor,
-            root: fixture_path(&["cursor"]),
-            files: vec![fixture_path(&["cursor", "local-partial.json"])],
+        let root = fixture_path(&["cursor", "home", ".cursor"]);
+        let loc = match discover_cursor_location(vec![root.clone()]) {
+            Ok(Some(loc)) => loc,
+            other => panic!("present .cursor should discover Some: {other:?}"),
         };
+
+        assert_eq!(loc.provider, ProviderId::Cursor);
+        assert_eq!(loc.root, root);
+        assert_eq!(loc.files, vec![root.join("cli-config.json")]);
+        // Never enumerate the chat store (no store.db path leaks into files).
+        assert!(loc
+            .files
+            .iter()
+            .all(|f| f.file_name().is_some_and(|n| n == "cli-config.json")));
 
         let usage = match provider.parse_usage(&loc) {
             Ok(value) => value,
-            Err(err) => panic!("cursor fixture should parse: {err}"),
+            Err(err) => panic!("cursor usage should parse: {err}"),
         };
         let limits = match provider.parse_limits(&loc) {
             Ok(value) => value,
             Err(err) => panic!("cursor limits should parse: {err}"),
         };
+        assert!(usage.is_empty(), "Cursor has no local usage events");
+        assert!(limits.is_empty(), "Cursor has no local limit windows");
+    }
 
-        assert_eq!(usage.len(), 1);
-        assert_eq!(usage[0].access_path, AccessPath::Unknown);
-        assert_eq!(limits.len(), 1);
-        assert_eq!(limits[0].label.as_deref(), Some("unavailable"));
+    #[test]
+    fn cursor_fixture_reads_selected_model_and_login() {
+        let root = fixture_path(&["cursor", "home", ".cursor"]);
+        let loc = match discover_cursor_location(vec![root]) {
+            Ok(Some(loc)) => loc,
+            other => panic!("present .cursor should discover Some: {other:?}"),
+        };
+        let config = read_cursor_config(&loc);
+        assert_eq!(config.model_id.as_deref(), Some("composer-2.5"));
+        assert_eq!(config.display_name.as_deref(), Some("Composer 2.5 Fast"));
+        assert!(config.logged_in, "authInfo present ⇒ logged in");
+    }
+
+    #[test]
+    fn cursor_fixture_missing_dir_is_graceful_noop() {
+        // §9.2: a non-existent root degrades to "not present", never an error.
+        let missing = fixture_path(&["cursor", "does-not-exist"]);
+        match discover_cursor_location(vec![missing]) {
+            Ok(None) => {}
+            other => panic!("missing .cursor should be Ok(None): {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cursor_fixture_garbled_config_present_with_no_model() {
+        // Present install, unreadable config: still detected, but model unknown and
+        // not logged in — never guessed, never an error.
+        let root = fixture_path(&["cursor", "garbled", ".cursor"]);
+        let loc = match discover_cursor_location(vec![root]) {
+            Ok(Some(loc)) => loc,
+            other => panic!("garbled .cursor should still discover Some: {other:?}"),
+        };
+        let config = read_cursor_config(&loc);
+        assert_eq!(config.model_id, None);
+        assert_eq!(config.display_name, None);
+        assert!(!config.logged_in);
+    }
+
+    #[test]
+    fn cursor_data_dir_root_honors_single_path_and_ignores_empty() {
+        assert_eq!(
+            cursor_data_dir_root(Some(OsString::from("/custom/cursor"))),
+            Some(PathBuf::from("/custom/cursor")),
+        );
+        assert_eq!(cursor_data_dir_root(Some(OsString::from(""))), None);
+        assert_eq!(cursor_data_dir_root(None), None);
+    }
+
+    #[test]
+    fn cursor_roots_honor_data_dir_override_then_defaults() {
+        let env = HostEnv::new(
+            PathBuf::from("/home/example"),
+            vec![PathBuf::from("/mnt/c/Users/example")],
+            true,
+        );
+
+        // CURSOR_DATA_DIR comes first, ahead of ~/.cursor and the WSL Windows .cursor;
+        // the defaults are still present (merged, not replaced).
+        let roots = env.cursor_roots_from(Some(PathBuf::from("/custom/cursor")));
+        assert_eq!(roots.first(), Some(&PathBuf::from("/custom/cursor")));
+        assert!(roots.contains(&PathBuf::from("/home/example/.cursor")));
+        assert!(roots.contains(&PathBuf::from("/mnt/c/Users/example/.cursor")));
+
+        // With no override, the default ordering is unchanged.
+        let roots = env.cursor_roots_from(None);
+        assert_eq!(roots.first(), Some(&PathBuf::from("/home/example/.cursor")));
+        assert!(!roots.contains(&PathBuf::from("/custom/cursor")));
     }
 
     fn find_event(events: &[UsageEvent], message_marker: u64) -> &UsageEvent {

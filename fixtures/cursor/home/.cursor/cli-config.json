@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "selectedModel": {
+    "modelId": "composer-2.5",
+    "parameters": [{ "id": "fast", "value": "true" }]
+  },
+  "model": {
+    "modelId": "composer-2.5",
+    "displayName": "Composer 2.5 Fast",
+    "displayNameShort": "Composer 2.5 Fast",
+    "maxMode": false
+  },
+  "authInfo": {
+    "email": "user@example.com",
+    "displayName": "Example User",
+    "userId": "fixture-user-id",
+    "authId": "fixture-auth-id"
+  },
+  "approvalMode": "allowlist"
+}
