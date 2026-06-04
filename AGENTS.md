@@ -1,4 +1,4 @@
-# AGENTS.md — Costroid agent operating manual
+# Costroid agent operating manual
 
 Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — both subscription limits (Claude Code, Codex, Cursor session and weekly caps, with reset countdowns) and real API-bill dollars by model — entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace. This file is the operating manual for any coding agent (and human contributor) working in this repo: read it before doing anything. For the full plan and phase sequencing see [HANDOFF.md](HANDOFF.md); for technical detail see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DATA-MODEL.md](docs/DATA-MODEL.md), and [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md). Read the relevant `docs/` file before implementing the area it covers.
 

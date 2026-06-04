@@ -1,174 +1,147 @@
-# Architecture
+# Costroid — Architecture & Build Spec (canonical)
 
-This document describes how Costroid is built: the workspace, how data flows through it, the provider abstraction, the security boundary, the rendering layer, the MCP server, the release pipeline, and cross-cutting concerns. It is implementation-oriented. For the cost data shapes see [DATA-MODEL.md](DATA-MODEL.md); for the dot-rendering rules see [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md); for build rules and per-phase acceptance criteria see [../AGENTS.md](../AGENTS.md).
+The single source of truth for the build. This lives in the repo as `ARCHITECTURE.md` and governs every decision below it. It supersedes the earlier strategy docs for build purposes; launch/marketing material (the validation post) stays separate. Code-shaped notes describe intent and naming, not frozen signatures. Detailed companion specs (DATA-MODEL.md, DESIGN-SYSTEM.md) are referenced where they own the granular truth.
 
-Code sketches below illustrate intent and naming; they are not frozen signatures.
+---
 
-## Workspace layout
+## 1. What Costroid is (and is not)
 
-Costroid is a single Cargo workspace (Rust edition 2021; track the latest stable, document the MSRV in CI).
+**Position:** the local, private FinOps tool for AI coding assistants — the one that *also* sees the subscription limits the platforms can't.
 
-```
-costroid/
-├─ Cargo.toml              # [workspace] — shared deps, lints, profiles
-├─ crates/
-│  ├─ costroid-core/       # Engine: orchestration, cost calc, recommendations (Phase 4).
-│  ├─ costroid-focus/      # FOCUS schema types + serde. No business logic.
-│  ├─ costroid-providers/  # Provider trait + Claude Code/Codex/Cursor adapters + log discovery.
-│  └─ costroid-mcp/        # MCP server exposing core data + recommendations (Phase 4).
-├─ apps/
-│  ├─ cli/                 # package `costroid`, binary `costroid`: clap CLI + Ratatui TUI + statusline + --live
-│  └─ bar/                 # Tauri 2 tray app (Phase 3)
-├─ pricing/                # bundled curated pricing JSON (embedded at build; see DATA-MODEL.md)
-├─ fixtures/               # sample provider logs for tests — never real user data
-└─ .github/workflows/      # CI (fmt + clippy + test) + cargo-dist release
-```
+**It is NOT:** a platform, observability, enterprise FinOps, a proxy/gateway, a chatbot or conversational-LLM interface, or anything that processes prompt/completion content. **Metadata only.** (Any web platform is a separate, separately-licensed repo — never built here.)
 
-Responsibilities:
+**Competitive frame:** measured against **ccusage** and the status-bar tools — not Finout, OpenCost, or Vantage. The two load-bearing differentiators, because no billing-based competitor can do them: **subscription-quota awareness** (no invoice exists for it) and **local-first / no content / zero integration**.
 
-- **`costroid-core`** — the engine. Orchestrates providers, normalizes their output into FOCUS records via `costroid-focus`, computes estimated cost from the bundled pricing table, aggregates by period and group, and (Phase 4) houses the recommendation engine. No terminal/UI code.
-- **`costroid-focus`** — the FOCUS record types and their (de)serialization to JSON and CSV. Pure data; no internal dependencies. This is the crate most likely to be extracted later (as `focus-rs`) and reused by the platform.
-- **`costroid-providers`** — the `Provider` trait, one adapter per provider, and WSL-aware discovery of each provider's local data. Depends only on `costroid-focus`.
-- **`costroid-mcp`** — wraps `costroid-core` as an MCP server (Phase 4).
-- **`apps/cli`** — the `costroid` binary: argument parsing, the TUI, the statusline emitter, `--live`, and all rendering, including the `--plain` path. Depends on `costroid-core`.
-- **`apps/bar`** — the tray app (Phase 3). Depends on `costroid-core`.
+**Audience:** individual developers, for now.
 
-**Dependency direction (no cycles):**
+## 2. The intellectual core: the cost–quality frontier
 
-```
-apps/cli ─┐
-          ├─► costroid-core ─► costroid-providers ─► costroid-focus
-apps/bar ─┘                └─► costroid-focus
-costroid-mcp ─► costroid-core
-```
+Price and quality don't track each other, and that gap is why this product exists.
 
-`costroid-focus` sits at the bottom and depends on nothing internal. Nothing depends on the apps.
+- DeepSWE: gpt-5.5 = 70% @ $6.61/task vs claude-opus-4.8 = 58% @ $12.58 (cheaper *and* better); claude-sonnet-4.6 = 32% @ $5.52 (far below Opus on hard tasks).
+- CursorBench: Composer 2.5 = 63.2% @ $0.55 vs Opus 4.7 Max = 64.8% @ $11.02 (matched at ~1/20th the cost); gpt-5.5 = 64.3% @ $4.37.
 
-## Data flow
+The frontier is jagged: the cheapest model is sometimes a trap, the priciest often isn't best. So the product **shows the frontier, plots where the user's spend sits on it, and lets them judge** — never "use the cheapest." It stays honest that it sees spend and benchmarks but *not* task difficulty, so it informs rather than prescribes. That honesty is what makes it trustable, and this principle governs the whole UI — not just one screen.
 
-The Phase 1 pipeline is entirely local and makes no network calls:
+## 3. Scope (v1)
 
-```
-local logs ─► provider.discover() ─► provider.parse_usage()/parse_limits()
-           ─► core: normalize to FOCUS (costroid-focus) + cost calc (pricing JSON)
-           ─► core: aggregate (period, group)
-           ─► render (TUI / statusline) ── or ── export (JSON / CSV)
-```
+- **Providers:** Claude Code + Codex (validated), Cursor (beta until its parser is solid).
+- **Cost:** subscription quota (%) *and* API cost ($); filter by provider. Cross-provider totals are **per-lane** (see §6 — API spend, subscription-equivalent value, and quota % shown distinctly), never one merged number.
+- **Trends dimensions:** aggregate by period (`day` / `week` / `month` / `year`) and group (`model` / `app` / `total`).
+- **Export:** FOCUS records to JSON and CSV.
+- **Surfaces:** the TUI (`now` / `trends`, with the recommendation/frontier surface reached via the `a` ask key + the insight line) and a `costroid statusline` mode (tmux, Starship, Claude Code's `statusLine`). The cross-platform taskbar/tray is **deferred/cut**.
+- **Recommendation:** a frontier view from **DeepSWE (primary)** + **CursorBench (corroborating)**, as a bundled snapshot.
 
-1. **Discover.** Each provider locates its local data (WSL-aware; see below). Missing providers are skipped, not fatal.
-2. **Parse.** Adapters read the raw logs and emit normalized intermediate records — usage events (tokens, model, timestamp, project) and limit windows (quota %, window kind, reset time).
-3. **Normalize + cost.** `costroid-core` maps usage events into FOCUS records via `costroid-focus`, attaching an **estimated** cost computed from the embedded pricing table. Subscription limits are kept as a **separate** quota-window type — they are not FOCUS cost rows and are never summed into dollars (see DATA-MODEL.md).
-4. **Aggregate.** The engine rolls records up by period (`day`/`week`/`month`/`year`) and group (`model`/`app`/`total`).
-5. **Sink.** The aggregated data is handed to a renderer (the now/trends screens, the statusline) or to an exporter (FOCUS JSON/CSV). Renderers and exporters are pure consumers of the same in-memory model.
+## 4. Technical canon (constraints the build inherits)
 
-## Provider abstraction
+- Rust; single Cargo workspace; edition 2021; **MSRV 1.88** (documented in CI); workspace crates versioned **in lockstep** (`[workspace.package].version`); commit `Cargo.lock`. **CI gate (green = releasable):** `rustfmt` + `clippy -D warnings` + `cargo test` + FOCUS-conformance + `cargo deny` (license + advisories) + offline-acceptance (no-network).
+- `thiserror` in libs (`ProviderError`/`FocusError`/`CoreError`), `anyhow` in the binary. **No `unwrap`/`expect`/`panic` in libs** (tests use the `match … panic!` idiom).
+- `tracing` with an env filter, **local diagnostics only, never networked**; quiet by default, `-v`/`-vv` to stderr. **No telemetry.** License **Apache-2.0**; dependencies must be **permissively licensed** (MIT / Apache-2.0 / BSD / ISC / Zlib / Unicode) — **no copyleft** (GPL / AGPL / LGPL / SSPL); verify before adding (the CI gate runs `cargo deny`).
+- Standards: FinOps Foundation + **FOCUS 1.3** (validator `finopsfoundation/focus_validator`, run offline against the bundled ruleset; 3 known validator-ruleset defects allowlisted with upstream refs — only the rules that fire, never their passing siblings). Treat the FOCUS spec, not the docs, as the authority on column semantics.
+- Pricing **bundled inside `costroid-core` via `include_str!`** at `crates/costroid-core/pricing/pricing.vN.json` — **cargo packages only files under the crate dir, so all bundled data must live inside its crate** (a workspace-root location breaks `cargo publish`). Sourced current at build time and refreshed deliberately — never hardcoded figures that drift; works fully offline. Records `as_of` + `sources`; rates per meter (input/output/cache_read/cache_write) **per 1M tokens**; the calculator derives the **per-token** unit price (rate ÷ 1e6). Catalog key = model id (e.g. `claude-sonnet-4-6`), not display name. Cost is always labeled an **estimate**; reconciliation against the real invoice is Phase 2+.
+- **Config:** TOML at the XDG path (`~/.config/costroid/config.toml`) with sensible zero-config defaults. **Secrets never go in config — keychain only.**
+- crates.io: **iterate the existing names** (`costroid`, `costroid-core`, `costroid-focus`, `costroid-providers`) to 0.2.0 — don't orphan or rename them. npm: `costroid`.
+- **Brand:** monochrome (black/grey/white, adapting to the terminal theme) + a **single amber accent reserved for the warning/near-limit state** (red only as an intensification, always with a non-color cue); JetBrains Mono; braille glyphs (U+2800 + bitmask); **mandatory `--plain` ASCII fallback**. Mark `C⠉` (a pixel `C` beside the braille cell `⠉`); wordmark `costroid` with `cost` in the strong weight and `roid` muted — carry the split into the UI: **dollar figures and the active metric use the strong weight; labels and context are muted.** (Dot math + component specs in DESIGN-SYSTEM.)
+- **Log discovery (WSL-aware):** Claude Code = `~/.claude/projects/**/*.jsonl` + `~/.config/claude/projects/**/*.jsonl`; Codex = `~/.codex/sessions/**/*.jsonl`; Cursor = a local state DB (study ccusage). **Honor `CLAUDE_CONFIG_DIR` (comma-separated roots) and `CODEX_HOME` before the defaults; merge all roots.** Detect WSL via `/proc/sys/kernel/osrelease` (contains `microsoft`/`WSL`); under WSL also resolve the Windows profile (`/mnt/c/Users/<user>/...`). Native roots are XDG / `~/Library` / `%APPDATA%`. Never assume a single fixed path. Claude Code has **no quota in local logs** → its subscription limits are *unavailable* in Phase 1 (they arrive via Phase 2 live data); Codex exposes rate-limit windows locally (5h = 300 min, weekly = 10080 min).
 
-Providers are pluggable from day one so adding one later is mechanical — but the set is fixed at three (Claude Code, Codex, Cursor) unless explicitly expanded.
+## 5. Workspace architecture
 
-```rust
-/// A source of local AI-tool usage data. One implementation per provider.
-pub trait Provider: Send + Sync {
-    /// Stable id, e.g. "claude-code", "codex", "cursor".
-    fn id(&self) -> &'static str;
+- **`costroid-core`** — cost calc + FOCUS normalization orchestration + bundled pricing + a **`bench`/`recommend` module** (the DeepSWE/CursorBench snapshot, the reconciliation rule, the frontier computation). No terminal/UI code. *Ported and test-guarded.* The trust foundation. Promote `bench` to its own crate only if it grows.
+- **`costroid-focus`** — the FOCUS record types and their (de)serialization (JSON/CSV). Pure data, **no internal dependencies**; the crate most likely extracted/reused later. *Ported.*
+- **`costroid-providers`** — the provider trait + one adapter per provider + WSL-aware discovery. Depends only on `costroid-focus`. Claude + Codex *ported/validated*; Cursor *new (beta)*; subscription-quota fetchers *new* (reuse stored credentials, codexbar-style, always graceful).
+- The binary crate is **`costroid`** (the `cargo install costroid` / `npx costroid` name) — clap CLI + the Ratatui TUI + the statusline + `--live` + the `--plain` path. Its directory location is a layout detail.
+- `fixtures/` holds committed sample provider logs for tests — **never real user data**.
+- No `costroid-mcp`, no tray app in this scope.
 
-    /// Locate this provider's local data, honoring WSL→Windows paths.
-    /// Ok(None) means "not installed / no data" — not an error.
-    fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError>;
+**Dependency direction (no cycles):** `costroid-focus` sits at the bottom and depends on nothing internal; `costroid-providers → costroid-focus`; `costroid-core → providers + focus`; the `costroid` binary → core; nothing depends on the binary.
 
-    /// Parse local logs into normalized usage events (Phase 1).
-    fn parse_usage(&self, loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError>;
+**Data flow (entirely local, no network in Phase 1):** `discover()` → `parse` usage + limits → normalize to FOCUS + estimate cost → aggregate (period, group) → render (now/trends/statusline) **or** export (JSON/CSV). Renderers and exporters are pure consumers of the same in-memory model.
 
-    /// Parse subscription limit windows from local data, where available (Phase 1).
-    fn parse_limits(&self, loc: &DataLocation) -> Result<Vec<LimitWindow>, ProviderError>;
+**Provider trait semantics:** `discover()` returns "no data" (not an error) when a provider isn't installed — missing providers are skipped, not fatal. `costroid-core` holds a registry of providers; the CLI runs all detected or a subset via flags. Adding a provider should require **no changes outside `costroid-providers`** (the test of the abstraction). Limits come from local data in Phase 1 and from a live, already-stored session in Phase 2.
 
-    /// Phase 2: live quota via an existing local session — no new login.
-    fn live_limits(&self, _session: &Session) -> Result<Vec<LimitWindow>, ProviderError> {
-        Ok(Vec::new())
-    }
-}
-```
+## 6. Data model (summary — full spec in DATA-MODEL.md)
 
-**Registry.** `costroid-core` holds a registry of boxed `Provider`s and iterates them; the CLI selects all detected providers or a subset via flags.
+- **FOCUS output.** Each unit of API usage is emitted as FOCUS 1.3 Cost & Usage rows with `ChargeCategory = "Usage"`. Input / output / cache-read / cache-write each become a **separate row** (distinct `SkuId`/`SkuPriceId` + `x_TokenType`) so quantities and unit prices stay coherent. Use the active 1.3 participating-entity columns **`ServiceProviderName` / `HostProviderName` / `InvoiceIssuerName`**; do **not** emit the deprecated `ProviderName` / `PublisherName` (removed in 1.4). `ServiceCategory = "AI and Machine Learning"`. Unit prices are **per token**; `PricingUnit = "tokens"`.
+- **Custom `x_` columns:** `x_Model`, `x_TokenType` (input|output|cache_read|cache_write), `x_AccessPath` (api|subscription|unknown), `x_Estimated`, `x_PricingStatus` (priced|missing_price|unknown_model), `x_Tool` (claude-code|codex|cursor), `x_Project`, and **`x_ConsumedTokens`** — the raw token count, **always populated** (the aggregation engine totals from this).
+- **Subscription limits are a separate type, not FOCUS rows.** A `LimitWindow` carries `tool`, optional `plan`, `kind` (`FiveHour` | `Weekly`), `used_fraction` (0–1), and `resets_at` — **no dollars**, never summed into a bill.
+- **Three lanes, never summed across each other:** (1) **API usage** → FOCUS rows, real cost estimate, `x_AccessPath = "api"`; (2) **subscription usage** → FOCUS rows valued at **API-equivalent** (`x_Estimated = true`, `x_AccessPath = "subscription"`) — labeled estimated value, **never a bill**; (3) **subscription quota** → `LimitWindow`s (%). The cross-provider "total" is therefore **per-lane** (API spend, subscription-equivalent value, quota % shown distinctly). Recommendations attach **only** to `x_AccessPath = "api"` rows.
+- **Access path is detected from evidence, never guessed.** Codex: `rate_limits` windows present ⇒ subscription. Claude Code: from auth mode via non-secret **presence** signals only (never read credential values). `unknown` when there's no signal.
+- **Unpriced rows** (no matching rate, or empty pricing table): the four cost columns stay present and `0`, `SkuPriceId` is null, and the FOCUS-required pricing/consumption columns go null accordingly — but `x_ConsumedTokens` still carries the count, so unpriced usage is **never dropped** from totals; flag `x_PricingStatus`. **Never substitute a guessed price.**
+- **Export contract:** JSON is a wrapper `{ "focusVersion": "1.3", "rows": [...] }` (never a bare array); CSV uses the exact FOCUS PascalCase header (`x_` columns appended). `LimitWindow`s export **separately**, never mixed into the cost data.
+- **Grouping:** by `x_Model`, by `x_Project` (bucket `"unknown"` when undeterminable), or `total`; period buckets by `ChargePeriodStart` in the user's local time zone. Never sum `LimitWindow` data.
 
-**Adding a provider** (when authorized): implement `Provider` in `costroid-providers`, add discovery paths, map its log format to `UsageEvent`/`LimitWindow`, register it, and add a fixture under `fixtures/`. No changes outside `costroid-providers` should be required — that is the test of whether the abstraction is right.
+DATA-MODEL.md remains authoritative for the column-by-column mapping, the `UsageEvent`/`FocusRecord`/`LimitWindow` Rust shapes, per-provider field paths, the pricing JSON schema, and the FOCUS-validator nullability/defect mechanics.
 
-**WSL-aware path discovery.** `HostEnv` captures whether we're under WSL and resolves candidate roots accordingly:
+## 7. Rendering & UX (mechanics here; dot math + mockups in DESIGN-SYSTEM)
 
-- Native (Linux/macOS/Windows): the provider's standard config/data dirs (XDG / `~/Library` / `%APPDATA%`).
-- Under WSL: check both the WSL home (`~`) **and** the Windows user profile as mounted (`/mnt/c/Users/<user>/...`), because the AI tools may run on Windows while Costroid runs in WSL. Detect WSL via `/proc/sys/kernel/osrelease` (contains `microsoft`/`WSL`) and resolve the Windows user via the mounted profile.
+- **Ratatui + crossterm.** Braille is computed directly from `U+2800` + an 8-dot bitmask — **not** Ratatui's braille constants or `Canvas` (those drift across versions, and `Canvas` is TUI-only). The **sparkline is hand-rasterized to braille** like every other component, so the one-shot and TUI paths stay identical (see the styled-document rule below).
+- **Fill = bright vs dim cells.** A terminal cell has a single foreground color, so braille gives sub-cell *shape* but not sub-cell *color*: used vs remaining is **bright vs dim cells** at cell granularity (the solid-dot/hollow-ring look from the mockups is raster-only — website/marketing). **When color is unavailable (`NO_COLOR`), meters and bars fall back to the ASCII `[####--]` rendering** so used/remaining stay distinguishable.
+- **Warning thresholds:** `warn = 0.80`, `critical = 0.95` (defaults, configurable). The warning state turns amber (red at critical/over) **and always carries a textual cue** — `!`, `!!`, `OVER`, or "near limit" — so it survives `NO_COLOR`, color-blindness, and `--plain`. Cost bars never go amber (amber is for limits, not spend).
+- **`RenderMode`:** `Braille` (default) / `Ascii` (automatic fallback when braille is unsupported — internal, not a user flag) / `Plain` (`--plain`: no TUI chrome, screen-reader friendly). Mode is chosen from `--plain`, TTY detection (non-tty ⇒ Plain), `NO_COLOR`, and a braille-capability check. The only user-facing mode flag is `--plain`.
+- **Interactive vs one-shot:** on a TTY, `now`/`trends` run as a navigable TUI; piped output, `--plain`, `statusline`, and `export` render once and exit.
+- **One styled document, two adapters:** the renderer emits a neutral styled document (semantic styles: strong/dim/warn/critical/plain). A one-shot adapter serializes it to an ANSI/plain string; the TUI adapter maps it to Ratatui — keeping both identical. The one-shot serializer is snapshot-tested as the compatibility contract.
+- **Terminal is always restored** (raw mode off, alternate screen left, cursor shown) on quit, error, and panic — via a restore guard plus a panic hook that leaves the alternate screen, chains the default handler, and exits 101. Works over SSH and inside tmux.
+- **`--live`** re-collects data periodically (~2s); without it the screen is a snapshot refreshed manually (`r`).
+- **`costroid statusline`** prints a single compact line (shell prompts, tmux, Starship) from the same core data, honors `RenderMode`, takes a configurable format string (presets: default / compact / minimal), and is fast and side-effect-free.
+- **Screens.** `now` = stacked 5-hour + weekly **limit meters with reset countdowns**, then **API spend by model** (cost bars), then one insight line; limits and costs are visually parallel but clearly separate (limits carry no dollars). `trends` = a period **sparkline**, then the **breakdown cost bars**, then one insight line.
+- **Keybindings:** `d`/`w`/`m`/`y` set period; `g` cycles group; `tab` switches screen; `f` or `/` filters (fuzzy model/app); `a` asks (hands context to the recommendation view, §10 step 4); `r` refreshes; `q`/`Ctrl-C` quits (always restoring the terminal); `?` help.
+- **States:** *loading* = braille spinner + short label; *empty* = plain-language note on what Costroid looked for and how to point it at the data (incl. the WSL/Windows path note), never an error; *partial* = show what's available and **label the gap explicitly, never fabricate** (e.g. Cursor); *per-provider error* = inline, non-fatal, the rest still renders.
 
-Discovery returns a `DataLocation` describing the files found; parsing never assumes a single fixed path.
+## 8. Security boundary & credentials
 
-## Authentication tiers and the security boundary
+The whole trust story depends on this.
 
-The hard rule: **secrets live only in the OS keychain, and credentials flow only between the device and the provider — never through any Costroid server.** There is no Costroid backend in this product.
+- **Secrets live only in the OS keychain** (`keyring` crate: macOS Keychain / Windows Credential Manager / Linux Secret Service). **Never written to disk, config, or logs.**
+- **Credentials flow only between the device and the provider** — there is no Costroid backend or server.
+- **Three tiers:** (T1) **local logs** — Phase 1 default, no login, no credentials, no network; (T2) **reuse the existing local session** — Phase 2, query the provider's own quota endpoint for live limits, no new login; (T3) **optional OAuth** — Phase 2, system browser + loopback redirect with PKCE (`oauth2`), token stored to the keychain only. **No browser-cookie reading** — dropped for v1; T2/T3 cover live quota.
+- TLS via **rustls** (no OpenSSL). Network access is confined to provider endpoints the user explicitly authorized.
+- **Provider logs are untrusted input** — parsed defensively; malformed data yields a clean error or "unavailable", never a crash, and the parser never executes or evaluates anything from log content.
+- A **connections view** (Phase 2) lists what's linked and supports instant disconnect/revoke.
 
-- **Tier 1 — local logs (Phase 1, default).** No login. Read what the tools already wrote to disk. This is the entire Phase 1 surface and involves no credentials and no network.
-- **Tier 2 — reuse existing session (Phase 2).** Detect the token/session the official CLI already stored and use it to query the provider's own quota endpoint for live limits. No new login.
-- **Tier 3 — OAuth login (Phase 2).** Optional. System browser + loopback redirect with PKCE (`oauth2` crate + a short-lived local listener). The resulting token is stored **only** in the OS keychain via the `keyring` crate (macOS Keychain, Windows Credential Manager, Linux Secret Service / libsecret).
+## 9. Non-negotiable principles (trust + don't over-engineer)
 
-Browser-cookie reading, if ever implemented, is a clearly-disclosed, off-by-default last resort. Tokens, sessions, and cookies are **never** written to disk, config, or logs. A connections view (Phase 2) lists what is linked and supports instant disconnect/revoke. TLS uses `rustls` (no OpenSSL). All network access is confined to provider endpoints the user explicitly authorized.
+1. **The cost core is sacred.** Golden tests vs. ccusage gate every change; if a refactor moves a number, the build fails.
+2. **Fragile parts degrade, never crash.** Cursor's format and the subscription endpoints are undocumented and will break on vendor updates. Each returns data *or* a clean "unavailable" state. Showing nothing is correct; showing a wrong or stale number is fatal.
+3. **Benchmarks are a bundled, dated, cited snapshot — not a live fetch.** DeepSWE primary (a neutral data company), CursorBench corroborating (Cursor's own, showcases its Composer model). Where they disagree or lack a model, show both and recommend only what's supported — never invent a number. Surface the source and date in the UI.
+4. **Quota (%) and dollars ($) are different types.** The cross-provider total sums dollars only, per lane; quota shows alongside.
+5. **Local, no content, no telemetry.** The brand and the trust both depend on it.
+6. **The recommendation is a frontier view, not a prescriber.** It plots the published cost-vs-quality frontier and overlays the user's actual model mix and spend; it never claims "this task should have used X." It applies **only to API-cost rows** (model choice only changes the API bill), never subscription rows, and each recommendation carries its reasoning, its sources, and a projected dollar delta. All output is advisory.
+7. **Tested against fixtures, not the network.** Unit tests per crate; integration tests driven by committed `fixtures/` logs (never real user data); `insta` snapshot tests for rendered output, especially `--plain`; and a no-network acceptance test that enforces the no-network rule. (CI gate is in §4.)
+8. **Speak like a colleague.** The insight line states the fact, then the so-what, then optionally a next step — proactive, plain, specific, brief. **Hedge estimated costs** (`~`, "estimated", "about") — never false precision on inferred money. One insight at a time, quiet by default, never blocking. Sentence case; no emoji, no fake urgency, no greetings, no chatbot register.
 
-## Rendering layer
+## 10. Build sequence (let shipping be the validation)
 
-The renderer lives in `apps/cli` on top of **Ratatui** (v0.30) with the **crossterm** backend. Braille is the rendering primitive; the exact dot math, thresholds, and component specs are in [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md). This section covers the mechanics.
+*Throughout, **Phase 1 / Phase 2** denote data tiers — Phase 1 = local-only (the v1 product, built in the steps below); Phase 2 = live quota via session reuse / OAuth, a later capability — not these build steps.*
 
-**Render mode.** A single enum threads through all drawing:
+1. **Core + workspace.** Port `costroid-core`/`-focus`/`-providers` (Claude + Codex) into the clean structure; **re-verify to the cent vs ccusage.** Fast — it's porting, not inventing. The trust foundation.
+2. **TUI + full cost picture.** now/trends, subscription + API, filter, the per-lane totals, export, config; Cursor parser (beta) and subscription quota (graceful). Ship it — **getting this adopted is the validation.**
+3. **Status-line mode.** `costroid statusline` → tmux / Starship / Claude Code `statusLine`. Cheap table-stakes + a distribution channel; ship as its own small post. Call it a status-line integration, not a "cross-platform terminal toolbar" — Windows Terminal, Ghostty, and Apple Terminal have no toolbar to host.
+4. **Frontier / recommendation view.** The `bench` module: frontier + your-position, scoped to what the data honestly supports. Added once the core has users, kept small, cut if it doesn't land.
 
-```rust
-enum RenderMode {
-    Braille, // default: dot-rendered charts/meters, color
-    Ascii,   // braille unsupported by term/font: ASCII markers, color
-    Plain,   // --plain: no TUI chrome, plain text, no color, screen-reader friendly
-}
-```
+**Deferred or cut:** the cross-platform taskbar/tray — the most expensive surface, already shipped by codexbar and remigius42, and still only shows a number the TUI and status-line already show. Revisit only on real demand.
 
-Mode is chosen from: the explicit `--plain` flag, TTY detection (non-tty ⇒ Plain, for pipes/CI), the `NO_COLOR` env var (disables color), and a terminal/font braille-capability check that automatically selects `Ascii` when braille isn't supported. `Ascii` is an internal fallback, not a user-facing flag — the only mode flag is `--plain`. Color is never the only signal — the amber warning state always carries a second cue (a marker/word), so `NO_COLOR` and `--plain` lose no information.
+## 11. Distribution & release
 
-**Output mode (interactive vs one-shot).** Separate from `RenderMode`, the binary chooses between the interactive TUI and a single printed render. On an interactive TTY, `costroid` and `costroid trends` launch the navigable Ratatui TUI; when stdout is piped/redirected, when `--plain` is passed, or for `costroid statusline` and `costroid export`, the output is **one-shot** (render once and exit). `--plain` always bypasses the TUI — an alternate-screen application is unusable for a screen reader.
+- **cargo-dist** (the installed binary is `dist`; invoke as `dist …` / `cargo dist …`); `dist init` writes the config + GitHub Actions workflow. **Nothing publishes on a normal push** — only a pushed `vX.Y.Z` tag (which must equal `[workspace.package].version`) triggers CI to build and publish; PRs run `dist plan` only. **Targets (6):** Linux gnu x86_64/aarch64, Linux musl x86_64 (static), macOS x86_64/aarch64, Windows x86_64. (cargo-dist is actively maintained — v0.32.0 — by axodotdev; if it ever stalls, fall back to hand-written installers + `cargo-binstall`, or `release-plz`.)
+- Channels: shell + PowerShell installers on GitHub Releases (`releases/latest/download/costroid-installer.sh | sh`); the Homebrew tap (`Costroid/homebrew-tap`, auto-generated by cargo-dist); the npm wrapper (`npx costroid` runs the native binary, no JS runtime); crates.io — **published separately via `cargo publish` in dependency order: `costroid-focus` → `costroid-providers` → `costroid-core` → `costroid`** (see RELEASING.md), `cargo install costroid` / `cargo binstall costroid`. The `costroid-mcp` name is intentionally left unclaimed (no placeholder). **No Scoop bucket** (cargo-dist doesn't support it) — Windows users use the PowerShell installer or `cargo binstall`; a hand-maintained bucket is a later, only-on-demand item.
+- **Signing:** releases are **not OS-code-signed**; each artifact ships **keyless GitHub build-provenance attestations + SHA-256 checksums** instead (verify with `gh attestation verify <file> --repo Costroid/costroid`). The trade-off: first run shows a macOS "unidentified developer" / Windows SmartScreen prompt. To enable signing later (paid, and just config toggles on the existing pipeline): macOS notarization (Apple Developer ID, ~$99/yr) + Windows Authenticode (EV cert with HSM/cloud signing, ~$200–300/yr), then cargo-dist's signing config + the matching secrets. Revisit only if those prompts become a real adoption problem.
 
-**One source of visual truth.** The renderer produces a neutral **styled document** — lines of styled spans carrying *semantic* styles (strong, dim, warn, critical, plain), not raw escape codes. Two adapters consume the same document: the one-shot path serializes it to an ANSI (or plain) `String`, and the TUI path maps it to Ratatui `Text`/`Style`. This keeps the one-shot output and the interactive TUI identical in content and look, and lets the one-shot serializer be snapshot-tested as the compatibility contract.
+## 12. The honest flags, in one place
 
-**Braille is computed, not borrowed.** Meters, cost bars, and the sparkline are all drawn by computing braille codepoints directly (`U+2800` + an 8-dot bitmask), *not* via Ratatui's `symbols::braille` constants or its `Canvas` widget — those constants changed across versions, so computing from the codepoint is stable and keeps the look identical on both the one-shot and TUI paths. Fill is **positional** — the glyph itself distinguishes used / partial-boundary / remaining cells — with color/intensity only a secondary cue, so meters stay legible under `NO_COLOR`, color-blindness, and `--plain`. In `RenderMode::Ascii` the runs fall back to ASCII markers (`[####--]`, an ASCII height ramp); in `RenderMode::Plain` charts degrade to labeled numeric rows. See [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) for the exact dot math and the per-component rules.
+- Don't literally rewrite from zero — **port** the validated cost core; it's the trust asset and the bug-trap you already escaped.
+- Tray is cut for v1; "cross-platform terminal toolbar" means the status-line integration (most terminals have no toolbar). Revisit the tray only on real demand.
+- Pricing lives inside `costroid-core`, never a top-level directory — cargo won't package it otherwise.
+- Cursor parser + subscription endpoints are your two fragility risks; isolate behind the trait with graceful "unavailable."
+- Recommendation = frontier + your position, not per-task prescriptions; DeepSWE over CursorBench on neutrality.
+- The "bigger picture total" is per-lane (API $ / subscription-equivalent $ / quota %), never one merged number.
+- Sparkline is hand-rasterized (no Ratatui `Canvas`) — one styling path feeds both the TUI and `--plain`; `NO_COLOR` falls back to ASCII meters/bars (never color alone). Both **settled** (mechanics in §7).
+- Iterate the existing crates (0.2.0); don't orphan the claimed names.
 
-**Screens.** Two top-level views, selected by subcommand/state:
+## 13. Document status
 
-- **now** — live 5-hour and weekly limit meters with reset countdowns, plus current API spend by model. Driven by `parse_limits` (Phase 1) / `live_limits` (Phase 2) and the cost aggregation.
-- **trends** — a spend chart over `--period day|week|month|year`, grouped by `--group model|app|total`, with a breakdown list.
-
-**Interactive loop.** On a TTY the now/trends screens run as a navigable Ratatui app (keybindings per DESIGN-SYSTEM: `tab`, `d`/`w`/`m`/`y`, `g`, `f` or `/`, `r`, `?`, `q`; `a` is a Phase-4 stub). It enters raw mode + the alternate screen and runs a crossterm event loop (`poll` with a tick deadline, so it never busy-spins) that redraws on input, on resize (regenerating the styled document at the new width), and on a tick. **`--live`** turns the tick into a periodic data re-collect (about every 2s); without it the screen is a snapshot refreshed manually with `r`. The terminal is **always restored** — raw mode off, alternate screen left, cursor shown — on `q`/`Ctrl-C`, on error, and on panic, via a restore guard plus a panic hook that leaves the alternate screen, chains the default panic handler so the message stays visible, and exits with status 101 (so a panic can leave neither the terminal wedged nor the process hung). Works over SSH and inside tmux.
-
-**Statusline (`costroid statusline`).** A non-interactive subcommand that prints a single compact line to stdout and exits — for shell prompts, tmux, and Starship. It consumes the same core data, renders a braille glyph plus key figures, honors `RenderMode` (ASCII/plain variants), and supports a configurable format string. It must be fast and side-effect-free.
-
-## MCP server and recommendation engine (Phase 4)
-
-**Recommendation engine.** Lives in `costroid-core` as a `recommend` module that consumes the FOCUS records plus bundled, build-time-sourced pricing and benchmark data. It is vendor-neutral and multi-benchmark; **CursorBench is one clearly-labeled vendor input, never the sole basis**. Recommendations apply **only** to API-cost rows (where model choice changes the bill), never to subscription rows, and each carries its reasoning, its sources, and a projected dollar delta. All output is advisory.
-
-**MCP server.** `costroid-mcp` wraps the engine and aggregation using the `rmcp` crate, exposed via `costroid mcp` over stdio so an MCP client (e.g. a coding agent) can call it. It surfaces read-only tools/resources such as querying spend (by period/group), reading current limits, and requesting a recommendation. It honors the same security rules — local data only, no telemetry.
-
-## Distribution and release
-
-Releases are produced by **cargo-dist** (the installed binary is `dist`; invoke as `dist …` or `cargo dist …`). `dist init` writes the dist config and the GitHub Actions release workflow; tagging a version triggers CI to build and publish.
-
-Outputs and channels:
-
-- **Shell + PowerShell installers** hosted on GitHub Releases (the `releases/latest/download/costroid-installer.sh | sh` and `… .ps1 | iex` pattern).
-- **Homebrew formula** published to `Costroid/homebrew-tap`, and a **Scoop manifest** published to `Costroid/scoop-bucket` — both generated by dist, not hand-maintained.
-- **npm wrapper** so `npx costroid` runs the native binary (no JS runtime dependency at runtime).
-- **crates.io**: `cargo install costroid`.
-- **Checksums and attestations** on each release artifact.
-
-**Signing.** macOS builds are signed with an Apple Developer ID and notarized; Windows builds use Authenticode (an EV cert avoids SmartScreen reputation prompts). Signing is non-negotiable for a security-branded tool — unsigned binaries trigger OS warnings that undercut trust.
-
-**Tray app (Phase 3).** Built with the Tauri 2 bundler (`.dmg`/`.app`, `.msi`, `.AppImage`/`.deb`) and updated via `tauri-plugin-updater`, which serves a static signed update JSON from GitHub Releases (the updater **requires** a signature — keep the private signing key safe and out of the repo). The tray uses `tauri::tray::TrayIconBuilder` (with the `tray-icon` feature) and `WebviewWindow` for any popover. **Build and test the tray on the host OS, not in WSL** — WSL has no real system tray and GUI apps need WSLg. The CLI/TUI build and run fine in WSL.
-
-A tooling caveat: cargo-dist is now community-maintained and its binary was renamed to `dist`; it still works and receives fixes. If it stalls, fall back to hand-written installers plus `cargo-binstall`, or `release-plz` for release automation.
-
-## Cross-cutting concerns
-
-- **Errors.** `thiserror` for typed errors in library crates (`ProviderError`, `FocusError`, `CoreError`); `anyhow` only in the binaries. **No `unwrap`/`expect`/`panic!` in library code** — propagate. The TUI additionally wraps execution in a terminal-restoring guard so even an unexpected panic restores the terminal.
-- **Config.** A TOML file under the XDG config dir (e.g. `~/.config/costroid/config.toml`), with sensible zero-config defaults. **Secrets never go in config** — keychain only.
-- **No telemetry.** Phase 1 makes no network calls at all. Any update check (later) is opt-in, disclosed, and individually disableable; nothing else phones home.
-- **Tracing.** `tracing` with an env filter for local diagnostics only — never networked. Quiet by default; `-v`/`-vv` raise verbosity to stderr.
-- **Pricing data.** A curated JSON table embedded at build time (see DATA-MODEL.md). It must be **sourced current at build time**, never hardcoded with figures that drift, and the tool works fully offline against it. Cost is always labeled an estimate.
-- **Testing.** Unit tests per crate; integration tests in `apps/cli` driven by committed `fixtures/` logs (never real user data); snapshot tests (e.g. `insta`) for rendered output, especially the `--plain` path; and a Phase 1 acceptance test run with networking disabled to enforce the no-network rule. CI gate: `cargo fmt --all -- --check` + `cargo clippy --workspace --all-targets -- -D warnings` + `cargo test --workspace`.
+- **This doc** = canonical build spec / source of truth (ships in the repo as `ARCHITECTURE.md`, replacing the old one).
+- **Companion specs (kept):** DATA-MODEL.md (full FOCUS column mapping, Rust shapes, per-provider field paths, pricing JSON, validator mechanics — summarized in §6) and DESIGN-SYSTEM.md (component dot math, screen mockups, ASCII substitutes, spinner, voice examples — summarized in §4/§7/§9; drop its tray-icon section).
+- **Agent operating manual (kept):** AGENTS.md / CLAUDE.md — golden rules, canonical commands, Definition of Done, decide-vs-ask. Distinct from this spec; **true it up to current decisions** (drop the tray and MCP phases, align its phase plan with §10, remove `costroid-mcp`/`apps/bar` from its tree) and point its `docs/` references at this file.
+- **HANDOFF.md (superseded — safe to delete):** its vision, scope, and product model are folded into §§1–7, its signing/Scoop facts into §11, and its phase plan is replaced by §10; `ARCHITECTURE.md` + README.md now serve the "start here" role.
+- **The validation/launch post** (`costroid-recommendation-validation.md`) = marketing, kept separate; reframe it as the launch post for the shipped core.
+- **The earlier validation kit and next-move plan** = superseded for build purposes; their useful discipline (commit-what's-done first, the honest framing, the sequencing) is folded in here.

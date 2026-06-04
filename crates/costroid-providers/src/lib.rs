@@ -76,7 +76,19 @@ impl HostEnv {
     }
 
     pub fn codex_roots(&self) -> Vec<PathBuf> {
-        let mut roots = vec![self.home_dir.join(".codex")];
+        self.codex_roots_from(codex_home_root(env::var_os("CODEX_HOME")))
+    }
+
+    /// Codex log roots, with the `CODEX_HOME` override (if any) taking priority
+    /// over the `~/.codex` default and the WSL Windows `.codex`, then deduped.
+    /// `CODEX_HOME` is honored before the defaults — mirroring `CLAUDE_CONFIG_DIR`
+    /// for Claude — so a relocated Codex home is never silently under-counted.
+    /// Takes the override as a parameter so the ordering is testable without
+    /// mutating the process environment.
+    fn codex_roots_from(&self, codex_home: Option<PathBuf>) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        roots.extend(codex_home);
+        roots.push(self.home_dir.join(".codex"));
         if let Some(windows_home) = &self.windows_home_dir {
             roots.push(windows_home.join(".codex"));
         }
@@ -369,6 +381,16 @@ fn claude_config_dir_roots() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// `CODEX_HOME` override for the Codex log root. Unlike Claude's comma-separated
+/// `CLAUDE_CONFIG_DIR`, Codex's convention is a single directory, so this honors
+/// exactly one path (an unset or empty value yields `None`). Pure; takes the raw
+/// env value as an argument so it is testable without touching the environment.
+fn codex_home_root(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
 fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut seen = BTreeSet::new();
     let mut deduped = Vec::new();
@@ -485,6 +507,16 @@ fn parse_claude_usage(value: &Value, access_path: AccessPath) -> Option<UsageEve
 /// Returns `Some` only when BOTH are present and non-empty — matching ccusage's
 /// rule of only de-duping when a full key exists. Any entry missing either id is
 /// keyless and must never be collapsed with another. Pure; never panics.
+///
+/// Real-log reconciliation note (verified vs ccusage on real logs, 2026-06):
+/// mainline usage matches ccusage to the cent for every model. The only residual
+/// is `claude-opus-4-8` landing ~0.08% under ccusage, located *entirely* in how
+/// much sub-agent (sidechain) cache-read each tool retains after this de-dup —
+/// both collapse re-logged subagent transcripts, just by slightly different
+/// amounts. It is a known, benign methodology difference, not an under-count of
+/// distinct billable turns; the provider invoice is the real ground truth
+/// (Phase 2+). Do not rework this de-dup to chase ccusage parity — the cost core
+/// is sacred (ARCHITECTURE.md §9.1).
 fn claude_dedupe_key(value: &Value) -> Option<(String, String)> {
     let message_id = value.pointer("/message/id").and_then(Value::as_str)?;
     let request_id = value.get("requestId").and_then(Value::as_str)?;
@@ -779,6 +811,37 @@ mod tests {
         assert!(claude_roots.contains(&PathBuf::from("/mnt/c/Users/example/.claude")));
         assert!(codex_roots.contains(&PathBuf::from("/home/example/.codex")));
         assert!(codex_roots.contains(&PathBuf::from("/mnt/c/Users/example/.codex")));
+    }
+
+    #[test]
+    fn codex_home_root_honors_single_path_and_ignores_empty() {
+        assert_eq!(
+            codex_home_root(Some(std::ffi::OsString::from("/custom/codex"))),
+            Some(PathBuf::from("/custom/codex")),
+        );
+        assert_eq!(codex_home_root(Some(std::ffi::OsString::from(""))), None);
+        assert_eq!(codex_home_root(None), None);
+    }
+
+    #[test]
+    fn codex_home_root_takes_priority_over_default_codex_dir() {
+        let env = HostEnv::new(
+            PathBuf::from("/home/example"),
+            Some(PathBuf::from("/mnt/c/Users/example")),
+            true,
+        );
+
+        // CODEX_HOME comes first, ahead of the ~/.codex default and the WSL
+        // Windows .codex; the defaults are still present (merged, not replaced).
+        let roots = env.codex_roots_from(Some(PathBuf::from("/custom/codex")));
+        assert_eq!(roots.first(), Some(&PathBuf::from("/custom/codex")));
+        assert!(roots.contains(&PathBuf::from("/home/example/.codex")));
+        assert!(roots.contains(&PathBuf::from("/mnt/c/Users/example/.codex")));
+
+        // With no override, the default ordering is unchanged.
+        let roots = env.codex_roots_from(None);
+        assert_eq!(roots.first(), Some(&PathBuf::from("/home/example/.codex")));
+        assert!(!roots.contains(&PathBuf::from("/custom/codex")));
     }
 
     #[test]
