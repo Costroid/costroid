@@ -688,7 +688,7 @@ mod tests {
     }
 
     fn test_env() -> HostEnv {
-        HostEnv::new(PathBuf::from("/tmp/costroid-test"), None, false)
+        HostEnv::new(PathBuf::from("/tmp/costroid-test"), Vec::new(), false)
     }
 
     fn sample_record(model: &str, cents: i64, project: &str) -> FocusRecord {

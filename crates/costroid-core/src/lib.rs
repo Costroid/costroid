@@ -2335,7 +2335,7 @@ mod tests {
 
     #[test]
     fn snapshot_collection_degrades_provider_errors() {
-        let env = HostEnv::new(PathBuf::from("/home/example"), None, false);
+        let env = HostEnv::new(PathBuf::from("/home/example"), Vec::new(), false);
         let now = timestamp();
         let providers: Vec<Box<dyn Provider>> = vec![
             Box::new(FakeProvider::missing(ProviderId::ClaudeCode)),

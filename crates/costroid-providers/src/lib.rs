@@ -34,15 +34,15 @@ impl fmt::Display for ProviderId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostEnv {
     pub home_dir: PathBuf,
-    pub windows_home_dir: Option<PathBuf>,
+    pub windows_home_dirs: Vec<PathBuf>,
     pub is_wsl: bool,
 }
 
 impl HostEnv {
-    pub fn new(home_dir: PathBuf, windows_home_dir: Option<PathBuf>, is_wsl: bool) -> Self {
+    pub fn new(home_dir: PathBuf, windows_home_dirs: Vec<PathBuf>, is_wsl: bool) -> Self {
         Self {
             home_dir,
-            windows_home_dir,
+            windows_home_dirs,
             is_wsl,
         }
     }
@@ -58,9 +58,9 @@ impl HostEnv {
                 value.contains("microsoft") || value.contains("wsl")
             })
             .unwrap_or(false);
-        let windows_home_dir = detect_windows_home(is_wsl);
+        let windows_home_dirs = detect_windows_homes(is_wsl);
 
-        Self::new(home_dir, windows_home_dir, is_wsl)
+        Self::new(home_dir, windows_home_dirs, is_wsl)
     }
 
     pub fn claude_roots(&self) -> Vec<PathBuf> {
@@ -68,7 +68,7 @@ impl HostEnv {
         roots.extend(claude_config_dir_roots());
         roots.push(self.home_dir.join(".config").join("claude"));
         roots.push(self.home_dir.join(".claude"));
-        if let Some(windows_home) = &self.windows_home_dir {
+        for windows_home in &self.windows_home_dirs {
             roots.push(windows_home.join(".config").join("claude"));
             roots.push(windows_home.join(".claude"));
         }
@@ -89,7 +89,7 @@ impl HostEnv {
         let mut roots = Vec::new();
         roots.extend(codex_home);
         roots.push(self.home_dir.join(".codex"));
-        if let Some(windows_home) = &self.windows_home_dir {
+        for windows_home in &self.windows_home_dirs {
             roots.push(windows_home.join(".codex"));
         }
         dedupe_paths(roots)
@@ -239,17 +239,7 @@ impl Provider for CodexProvider {
     }
 
     fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
-        for root in env.codex_roots() {
-            let files = collect_jsonl_files(ProviderId::Codex, &root.join("sessions"))?;
-            if !files.is_empty() {
-                return Ok(Some(DataLocation {
-                    provider: ProviderId::Codex,
-                    root,
-                    files,
-                }));
-            }
-        }
-        Ok(None)
+        discover_codex_location(env.codex_roots())
     }
 
     fn parse_usage(&self, loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError> {
@@ -342,17 +332,79 @@ pub fn default_providers() -> Vec<Box<dyn Provider>> {
     ]
 }
 
-fn detect_windows_home(is_wsl: bool) -> Option<PathBuf> {
-    if let Some(profile) = env::var_os("USERPROFILE") {
-        let path = windows_profile_to_wsl_path(&PathBuf::from(profile));
-        if path.is_some() {
-            return path;
-        }
+fn detect_windows_homes(is_wsl: bool) -> Vec<PathBuf> {
+    resolve_windows_homes(
+        env::var_os("USERPROFILE"),
+        is_wsl,
+        Path::new("/mnt/c/Users"),
+        env::var_os("USER"),
+    )
+}
+
+/// Resolve the Windows-side home root(s) seen from WSL. Arg-injected (the raw
+/// `USERPROFILE` and `USER` values, plus the Windows users directory) so the
+/// *dispatch itself* — including the unset-vs-empty `USERPROFILE` rule below — is
+/// unit-testable without mutating the process environment, mirroring how
+/// [`codex_home_root`] takes its env value as a parameter.
+fn resolve_windows_homes(
+    userprofile: Option<std::ffi::OsString>,
+    is_wsl: bool,
+    users_dir: &Path,
+    user: Option<std::ffi::OsString>,
+) -> Vec<PathBuf> {
+    // EXPLICIT MODE — `USERPROFILE` is *present*, even if it is empty.
+    // A set `USERPROFILE` means "use exactly this Windows home, or none"; we never
+    // auto-scan in that case. The unset-vs-empty distinction is load-bearing:
+    //   * unset (`None`)        → real zero-config WSL → AUTO MODE below (scan).
+    //   * set-but-empty (`""`)  → explicit "no Windows home" → returns empty, NO scan.
+    // This is also what keeps `scripts/offline_acceptance.sh` hermetic: it runs every
+    // command with `USERPROFILE=""`, so the scan never touches the real `/mnt/c` — the
+    // harness's neutralizer doubles as the auto-detect off-switch, with no script edit
+    // and no new env surface. A real WSL user leaves `USERPROFILE` unset, so they scan.
+    if let Some(profile) = userprofile {
+        return windows_profile_to_wsl_path(&PathBuf::from(profile))
+            .into_iter()
+            .collect();
     }
+    // AUTO MODE — `USERPROFILE` unset.
     if !is_wsl {
-        return None;
+        return Vec::new();
     }
-    env::var_os("USER").map(|user| PathBuf::from("/mnt/c/Users").join(user))
+    let mut homes = windows_profiles_with_logs(users_dir);
+    if homes.is_empty() {
+        // Strict superset of the old behavior: fall back to the legacy same-username
+        // guess so we never resolve *fewer* roots than before (harmless if absent).
+        homes.extend(user.map(|user| users_dir.join(user)));
+    }
+    homes
+}
+
+/// Windows user profiles under `users_dir` that actually hold AI-tool logs — the
+/// evidence-based fix for WSL hosts where the Linux username differs from the Windows
+/// profile name and `USERPROFILE` is unset. Pure and arg-injected so it is testable
+/// against a fixture directory rather than the real `/mnt/c`. Degrades gracefully
+/// (§9.2): an unreadable directory or entry is skipped, never an error or panic.
+/// Sorted for deterministic ordering.
+fn windows_profiles_with_logs(users_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(users_dir) else {
+        return Vec::new();
+    };
+    let mut profiles: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && profile_has_logs(path))
+        .collect();
+    profiles.sort();
+    profiles
+}
+
+/// Whether a Windows user profile directory holds any Claude Code or Codex logs —
+/// the same root subdirectories [`HostEnv::claude_roots`] and [`HostEnv::codex_roots`]
+/// read (`.claude`, `.config/claude`, `.codex`).
+fn profile_has_logs(profile: &Path) -> bool {
+    profile.join(".claude").is_dir()
+        || profile.join(".config").join("claude").is_dir()
+        || profile.join(".codex").is_dir()
 }
 
 fn windows_profile_to_wsl_path(path: &Path) -> Option<PathBuf> {
@@ -558,6 +610,59 @@ fn discover_claude_location(roots: Vec<PathBuf>) -> Result<Option<DataLocation>,
     let files = dedupe_paths(files);
     Ok(chosen_root.map(|root| DataLocation {
         provider: ProviderId::ClaudeCode,
+        root,
+        files,
+    }))
+}
+
+/// Build one [`DataLocation`] from **every** Codex root that holds data, not just
+/// the first. Codex sessions can be split across `~/.codex`, a `CODEX_HOME`
+/// override, and (under WSL) one or more Windows-profile `.codex` roots discovered
+/// by [`windows_profiles_with_logs`]. Stopping at the first non-empty root silently
+/// dropped the rest — the WSL Windows-side gap this fixes — and contradicted
+/// ARCHITECTURE.md §4's "merge all roots"; merging brings Codex into line with
+/// [`discover_claude_location`], which already does this.
+///
+/// Cross-root de-dup is *session-level*. One rollout file is one session, named
+/// `rollout-<timestamp>-<uuid>.jsonl` with a globally-unique session id, so the
+/// file name identifies the session. Genuinely distinct sessions — the normal
+/// case, e.g. a Linux machine's logs vs a Windows machine's — have distinct names
+/// and are additive. The SAME session reached through two roots (a symlink or a
+/// double-mount) has the identical file name under different absolute paths, which
+/// `dedupe_paths` (lexical full-path) would NOT collapse; keying on the file name
+/// counts that session exactly once. De-dup deliberately lives here, not in
+/// [`CodexProvider::parse_usage`], which must keep counting every event it is
+/// handed (see the `codex_usage_is_never_deduped` test).
+///
+/// `root` is the FIRST root with data, in `codex_roots()` priority order — the same
+/// root the old early-return picked — kept for deterministic metadata. Takes
+/// `roots` as a parameter so it is testable with injected fixture roots.
+fn discover_codex_location(roots: Vec<PathBuf>) -> Result<Option<DataLocation>, ProviderError> {
+    let mut chosen_root: Option<PathBuf> = None;
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut seen_sessions: BTreeSet<std::ffi::OsString> = BTreeSet::new();
+    for root in roots {
+        let root_files = collect_jsonl_files(ProviderId::Codex, &root.join("sessions"))?;
+        if root_files.is_empty() {
+            continue;
+        }
+        if chosen_root.is_none() {
+            chosen_root = Some(root);
+        }
+        for file in root_files {
+            // New session iff its file name has not been seen via an earlier root.
+            // A file with no name (unexpected) is kept rather than silently dropped.
+            let is_new_session = match file.file_name() {
+                Some(name) => seen_sessions.insert(name.to_os_string()),
+                None => true,
+            };
+            if is_new_session {
+                files.push(file);
+            }
+        }
+    }
+    Ok(chosen_root.map(|root| DataLocation {
+        provider: ProviderId::Codex,
         root,
         files,
     }))
@@ -778,6 +883,7 @@ fn has_any_tokens(event: &UsageEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
 
     fn fixture_path(parts: &[&str]) -> PathBuf {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -801,7 +907,7 @@ mod tests {
     fn wsl_roots_include_linux_and_windows_candidates() {
         let env = HostEnv::new(
             PathBuf::from("/home/example"),
-            Some(PathBuf::from("/mnt/c/Users/example")),
+            vec![PathBuf::from("/mnt/c/Users/example")],
             true,
         );
         let claude_roots = env.claude_roots();
@@ -827,7 +933,7 @@ mod tests {
     fn codex_home_root_takes_priority_over_default_codex_dir() {
         let env = HostEnv::new(
             PathBuf::from("/home/example"),
-            Some(PathBuf::from("/mnt/c/Users/example")),
+            vec![PathBuf::from("/mnt/c/Users/example")],
             true,
         );
 
@@ -842,6 +948,102 @@ mod tests {
         let roots = env.codex_roots_from(None);
         assert_eq!(roots.first(), Some(&PathBuf::from("/home/example/.codex")));
         assert!(!roots.contains(&PathBuf::from("/custom/codex")));
+    }
+
+    // The three log-bearing Windows-profile fixtures, in the sorted order the scan
+    // must return them (excludes `no-logs` and the stray `desktop.ini` file).
+    fn expected_scanned_profiles(users_dir: &Path) -> Vec<PathBuf> {
+        vec![
+            users_dir.join("with-claude"),
+            users_dir.join("with-codex"),
+            users_dir.join("with-config-claude"),
+        ]
+    }
+
+    #[test]
+    fn windows_scan_finds_only_profiles_with_logs() {
+        // The username-mismatch core case: scan a Windows users dir and surface exactly
+        // the profiles that actually hold .claude / .config/claude / .codex — sorted,
+        // with non-log profiles (`no-logs`) and non-directory entries (`desktop.ini`)
+        // excluded. This is what makes discovery work when the WSL username differs
+        // from the Windows profile name and USERPROFILE is unset.
+        let users_dir = fixture_path(&["discovery", "windows-users"]);
+        let found = windows_profiles_with_logs(&users_dir);
+        assert_eq!(found, expected_scanned_profiles(&users_dir));
+    }
+
+    #[test]
+    fn windows_scan_missing_dir_is_graceful_noop() {
+        // §9.2: scanning a directory that does not exist must degrade to empty, never
+        // error or panic.
+        let found = windows_profiles_with_logs(&fixture_path(&["discovery", "does-not-exist"]));
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn resolve_empty_userprofile_suppresses_scan() {
+        // A set-but-empty USERPROFILE is explicit "no Windows home": it must NOT scan,
+        // even when pointed at a directory full of scannable profiles. This is the
+        // behavior `scripts/offline_acceptance.sh` (USERPROFILE="") leans on to stay
+        // hermetic — pinned here so it can't silently regress.
+        let users_dir = fixture_path(&["discovery", "windows-users"]);
+        let homes = resolve_windows_homes(
+            Some(OsString::from("")),
+            true,
+            &users_dir,
+            Some(OsString::from("eren")),
+        );
+        assert!(
+            homes.is_empty(),
+            "set-but-empty USERPROFILE must never scan"
+        );
+    }
+
+    #[test]
+    fn resolve_unset_userprofile_on_wsl_scans() {
+        // Real zero-config WSL: USERPROFILE unset → scan the users dir and merge the
+        // profiles that hold logs. Because the scan is non-empty, the legacy same-name
+        // $USER guess is NOT appended.
+        let users_dir = fixture_path(&["discovery", "windows-users"]);
+        let homes = resolve_windows_homes(None, true, &users_dir, Some(OsString::from("eren")));
+        assert_eq!(homes, expected_scanned_profiles(&users_dir));
+        assert!(!homes.contains(&users_dir.join("eren")));
+    }
+
+    #[test]
+    fn resolve_unset_userprofile_empty_dir_falls_back_to_user_guess() {
+        // WSL, USERPROFILE unset, but the scan finds nothing (dir absent): fall back to
+        // the legacy `/mnt/c/Users/$USER` guess so behavior is a strict superset of the
+        // old code — never fewer roots than before.
+        let users_dir = fixture_path(&["discovery", "does-not-exist"]);
+        let homes = resolve_windows_homes(None, true, &users_dir, Some(OsString::from("eren")));
+        assert_eq!(homes, vec![users_dir.join("eren")]);
+    }
+
+    #[test]
+    fn resolve_set_userprofile_uses_it_and_skips_scan() {
+        // USERPROFILE set to a real Windows path resolves to its /mnt mapping and never
+        // scans — the no-regression case for hosts that already set USERPROFILE.
+        let users_dir = fixture_path(&["discovery", "windows-users"]);
+        let homes = resolve_windows_homes(
+            Some(OsString::from("C:\\Users\\foo")),
+            true,
+            &users_dir,
+            Some(OsString::from("eren")),
+        );
+        assert_eq!(homes, vec![PathBuf::from("/mnt/c/Users/foo")]);
+    }
+
+    #[test]
+    fn resolve_unset_userprofile_not_wsl_is_empty() {
+        // Not WSL and no USERPROFILE: there is no Windows side to find.
+        let homes = resolve_windows_homes(
+            None,
+            false,
+            &fixture_path(&["discovery", "windows-users"]),
+            Some(OsString::from("eren")),
+        );
+        assert!(homes.is_empty());
     }
 
     #[test]
@@ -1122,6 +1324,74 @@ mod tests {
         };
         // session-a.jsonl holds P and Q (distinct keys) -> two events.
         assert_eq!(usage.len(), 2);
+    }
+
+    #[test]
+    fn codex_discover_reads_all_roots_not_just_first() {
+        // The Codex analogue of the Claude all-roots merge — the WSL Windows-side fix.
+        // codex-root-a holds session A (input 111), codex-root-b holds session B
+        // (input 333). The old first-root-wins stopped at root-a and never saw B; the
+        // merge must read BOTH roots' sessions/ and surface BOTH events.
+        let root_a = fixture_path(&["discovery", "codex-root-a"]);
+        let root_b = fixture_path(&["discovery", "codex-root-b"]);
+        let loc = match discover_codex_location(vec![root_a.clone(), root_b]) {
+            Ok(Some(loc)) => loc,
+            Ok(None) => panic!("expected merged codex discovery to find data"),
+            Err(err) => panic!("codex discovery should not error: {err}"),
+        };
+
+        // root is the FIRST root with data, exactly as the old early-return picked.
+        assert_eq!(loc.root, root_a);
+
+        let usage = match CodexProvider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("merged codex location should parse: {err}"),
+        };
+        // A lives only in root-a, B only in root-b: both present iff both roots read.
+        assert_eq!(usage.iter().filter(|e| e.input_tokens == 111).count(), 1);
+        assert_eq!(usage.iter().filter(|e| e.input_tokens == 333).count(), 1);
+    }
+
+    #[test]
+    fn codex_discover_dedupes_same_session_across_roots() {
+        // `rollout-shared.jsonl` (input 222) is the SAME session reached via both
+        // roots — identical file name under different absolute paths, the symlink /
+        // double-mount case. Session-level de-dup keys on the file name, so it is
+        // surfaced once; A and B (distinct names) remain additive. Three files, three
+        // events — not four.
+        let root_a = fixture_path(&["discovery", "codex-root-a"]);
+        let root_b = fixture_path(&["discovery", "codex-root-b"]);
+        let loc = match discover_codex_location(vec![root_a, root_b]) {
+            Ok(Some(loc)) => loc,
+            Ok(None) => panic!("expected merged codex discovery to find data"),
+            Err(err) => panic!("codex discovery should not error: {err}"),
+        };
+        assert_eq!(loc.files.len(), 3);
+
+        let usage = match CodexProvider.parse_usage(&loc) {
+            Ok(value) => value,
+            Err(err) => panic!("merged codex location should parse: {err}"),
+        };
+        // A (once) + shared (deduped across roots) + B (once) = 3 unique sessions.
+        assert_eq!(usage.len(), 3);
+        assert_eq!(usage.iter().filter(|e| e.input_tokens == 222).count(), 1);
+    }
+
+    #[test]
+    fn codex_discover_single_root_regression() {
+        // A single root with data plus a non-existent second root behaves as before:
+        // only the present root's session files, that root reported. collect_jsonl_files
+        // tolerates the missing root (empty, no error).
+        let root_a = fixture_path(&["discovery", "codex-root-a"]);
+        let absent = fixture_path(&["discovery", "does-not-exist"]);
+        let loc = match discover_codex_location(vec![root_a.clone(), absent]) {
+            Ok(Some(loc)) => loc,
+            Ok(None) => panic!("expected single-root codex discovery to find data"),
+            Err(err) => panic!("codex discovery should not error: {err}"),
+        };
+        assert_eq!(loc.root, root_a);
+        // codex-root-a holds two sessions (rollout-a + rollout-shared).
+        assert_eq!(loc.files.len(), 2);
     }
 
     fn close_to(value: Option<f64>, expected: f64) -> bool {

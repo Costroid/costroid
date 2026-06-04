@@ -1,0 +1,2 @@
+# Fixture: a Windows user profile that holds Claude Code logs (~/.claude).
+# Used by windows_profiles_with_logs scan tests; this profile must be DISCOVERED.
