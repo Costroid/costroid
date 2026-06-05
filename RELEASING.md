@@ -26,7 +26,15 @@ human-triggered action and is intentionally not automated to run on a normal pus
   build-provenance attestation (Actions OIDC — no certificates, no secrets).
 
 **Not in v0.1.0** (deferred): macOS notarization / Windows Authenticode code-signing, Scoop, MSI,
-the `costroid-mcp` crate (deferred/speculative — see ARCHITECTURE §10).
+the `costroid-mcp` crate (deferred/speculative — see `docs/PRODUCT-PLAN.md`,
+which governs scope and build sequencing).
+
+**Planned later** (per the production plan — *not yet in the workspace, not yet published*): two new
+members join the build and the crates.io publish order at their roadmap steps — `costroid-connect`
+(library; all network + credential code, feature-gated and off by default; published after
+`costroid-core`) and `costroid-bar` (the egui taskbar app, binary `costroid-bar`; depends only on
+`costroid-core`, the last surface). See `docs/PRODUCT-PLAN.md` for the
+sequencing; the crates.io order below grows to accommodate them when they land.
 
 ---
 
@@ -108,6 +116,10 @@ cargo publish -p costroid-core
 cargo publish -p costroid
 ```
 
+> When the planned members land (per `docs/PRODUCT-PLAN.md`), the order grows:
+> `costroid-connect` publishes after `costroid-core` (the CLI then depends on it), and the
+> `costroid-bar` binary publishes alongside `costroid` (both depend only on `costroid-core`).
+
 Gotchas (learned shipping v0.1.0):
 - **A verified email** on the crates.io account is required before the first publish.
 - **Bundled assets must live inside the crate.** `costroid-core` `include_str!`s its pricing JSON;
@@ -119,7 +131,8 @@ Gotchas (learned shipping v0.1.0):
   on crates.io).
 - Versions are permanent (yank-only) — publish deliberately, in order.
 
-**`costroid-mcp`** does not exist yet (deferred/speculative — ARCHITECTURE §10). Its crates.io name
+**`costroid-mcp`** does not exist yet (deferred/speculative — see
+`docs/PRODUCT-PLAN.md`, which governs scope and sequencing). Its crates.io name
 is intentionally left unclaimed; we do not publish a placeholder.
 
 ---

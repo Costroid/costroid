@@ -394,7 +394,7 @@ impl FocusRecord {
             // NOTE: the "MUST NOT be null when Usage" sibling rules don't conflict
             // only because Costroid leaves ChargeClass and CommitmentDiscountStatus
             // null — populating either on an unpriced row would reintroduce the
-            // conflict. See docs/DATA-MODEL.md (unpriced-row convention).
+            // conflict. See the unpriced-row convention.
             pricing_category: None,
             pricing_currency: input.billing_currency,
             pricing_quantity: None,

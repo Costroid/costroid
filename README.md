@@ -7,7 +7,7 @@
 ![status](https://img.shields.io/badge/status-early_development-orange)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-Costroid shows you — right in your terminal — what your AI coding tools actually cost. It tracks both the subscription limits you're burning through (Claude Code, Codex, and Cursor session and weekly caps, with reset countdowns) and the real dollars on your API bill, broken down by model. Everything runs locally: it reads the logs those tools already write to your machine, sends nothing anywhere, and normalizes the data into the open [FOCUS](https://focus.finops.org) standard so your cost data is portable, auditable, and ready for whatever you plug it into next.
+Costroid shows you — right in your terminal — what your AI coding tools actually cost. It tracks both the subscription limits you're burning through (your Claude Code and Codex 5-hour and weekly caps, with reset countdowns) and the real dollars on your API bill, broken down by model. Everything runs locally: it reads the logs those tools already write to your machine, sends nothing anywhere, and normalizes the data into the open [FOCUS](https://focus.finops.org) standard so your cost data is portable, auditable, and ready for whatever you plug it into next.
 
 It's the kind of tool that should be free and open, so it is.
 
@@ -17,12 +17,12 @@ It's the kind of tool that should be free and open, so it is.
 
 ## What Costroid does
 
-Phase 1 (v1) scope:
+Shipping today (v0.1.0):
 
 - **Two views in one tool.**
-  - `now` — live 5-hour and weekly subscription limits with reset countdowns, plus your current API spend by model.
+  - `now` — your Codex 5-hour and weekly limits with reset countdowns today (live Claude quota lands next release), plus your current API spend by model.
   - `trends` — spend over day / week / month / year, grouped or filtered by model or app.
-- **Local logs only.** Reads what Claude Code, Codex, and Cursor already write to disk. No API keys, no login, nothing leaves your machine.
+- **Local logs only.** Reads what Claude Code, Codex, and Cursor already write to disk. Today's release needs no API keys and no login, and nothing leaves your machine. (Optional, opt-in connections — your own API key, or a sanctioned login — are on the roadmap; the local-only path always stays the default.)
 - **FOCUS-conformant export** (JSON / CSV) so your cost data is standard and portable.
 - **Statusline mode** for your shell, tmux, or Starship.
 - **`--live`** auto-refreshing view and a **`--plain`** ASCII mode for accessibility and pipes.
@@ -36,11 +36,12 @@ Where Costroid is headed:
 
 - **Live Claude quota (next release).** Claude Code's `statusLine` hook hands Costroid your real 5-hour and weekly limits locally — no login, no token reuse. A `costroid setup-statusline` command wires it up.
 - **Cost-vs-quality frontier** (`costroid frontier`) — built; lands next release. Plots the published cost-vs-quality frontier and where your own spend sits on it; advisory and sourced, never "just use the cheapest."
-- **Live Cursor quota** — Cursor keeps no local data, so its live usage/quota is an **opt-in, off-by-default** fetch (your existing session, or an OAuth login; tokens stored only in your OS keychain, used strictly between your device and the provider). Plus threshold alerts.
-- **Maybe later, on demand** — a tray / menu-bar app and an MCP server (query your costs from inside your AI agent) are possible future surfaces, not committed.
+- **Connections (your own key, opt-in).** Optional, default-off, feature-gated connections fetch live numbers no local log carries — your own Anthropic / OpenAI / Gemini usage-API key first, a sanctioned OAuth login where one exists, and (for Cursor, which keeps no local data) opt-in reuse of your existing session. Tokens live only in your OS keychain and are used strictly between your device and the provider. `costroid connect`/`disconnect` plus a revocable Connections view manage it. Cursor's live quota and threshold alerts ride on this.
+- **Taskbar / menu-bar app** — a planned `costroid-bar` surface built in egui (no webview), the richest and last surface; everything it shows the core already computes.
+- **Maybe later** — an MCP server (query your costs from inside your AI agent) remains a speculative, uncommitted future surface.
 - A separate, team-oriented **web platform** for company-wide cost management is planned as its own project.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [AGENTS.md](AGENTS.md) for the full build spec and scope.
+See [AGENTS.md](AGENTS.md) for the build scope and the rules that AI coding agents follow. (Costroid's detailed design specs — architecture, data model, product plan — are kept local to the maintainer's working tree, not in this repository.)
 
 ## Quickstart
 
@@ -110,7 +111,7 @@ On an interactive terminal, `costroid` and `costroid trends` open a navigable vi
 ## Security & privacy
 
 - **No telemetry, by default.** Any update check is opt-in and clearly disclosed.
-- **Your data stays on your machine.** Phase 1 reads local logs only; nothing is uploaded.
+- **Your data stays on your machine.** The default, local-only build reads local logs only and makes no network calls — enforced by an offline-acceptance test. Network access happens only through the opt-in, feature-gated connections path, and only to a provider endpoint you explicitly authorized; nothing is uploaded to Costroid.
 - **Secrets live in your OS keychain.** When optional login arrives, tokens are stored via the system keychain and used only between your device and the provider — never routed through any Costroid server.
 - **Attested releases.** Release binaries carry keyless [GitHub build-provenance attestations](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) and SHA-256 checksums — verify with `gh attestation verify <file> --repo Costroid/costroid`. OS code-signing (macOS notarization, Windows Authenticode) is not yet in place, so first run may show an unidentified-developer / SmartScreen prompt.
 - Local cost figures are **estimates** (your tokens × current prices). Costroid is built to reconcile them against your actual provider invoices, which are the source of truth.
@@ -121,7 +122,7 @@ Costroid follows [FinOps Foundation](https://www.finops.org) practice and emits 
 
 ## Project status & contributing
 
-- Build spec and architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Detailed design specs (architecture, data model, product plan): kept local to the working tree, not in this repository
 - Building Costroid, and the rules that AI coding agents must follow: [AGENTS.md](AGENTS.md)
 - Contributions are welcome — please read [AGENTS.md](AGENTS.md) first.
 
