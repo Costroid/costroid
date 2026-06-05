@@ -279,7 +279,7 @@ Per instruction, the data model is generalized to *fit* these, but **no adapter 
 
 *The intended workflow: hand **one step (or sub-unit) at a time** to an autonomous Claude Code session at high reasoning effort with multi-agent workflows. The agent reads the step below + the files it names + the Definition of Done (§7), builds, runs the full gate, and stays within the step. This works — with three rules the numbered list alone doesn't make obvious.*
 
-> **Repo setup (important for the agent):** the `docs/` specs — this plan, the statusline brief, and the ARCHITECTURE / DATA-MODEL / DESIGN-SYSTEM specs — are **tracked in the repository**; read them from disk and edit them freely as the plan evolves (those edits commit alongside the task). A fresh clone and committed worktrees contain `docs/`; only *uncommitted* doc edits are invisible to a freshly-spawned worktree-isolated workflow agent — so when fanning out before committing, have the orchestrator pass spec content into sub-agent prompts rather than assume they see the latest unsaved state.
+> **Repo setup (important for the agent):** the `docs/` specs — this plan, the statusline brief, and the ARCHITECTURE / DATA-MODEL / DESIGN-SYSTEM specs — are **tracked in the repository**; read them from disk and edit them freely as the plan evolves (those edits commit alongside the task). Local git worktrees off this working copy contain `docs/` (the docs commit is in your local history); a clone or CI checkout from GitHub will too **once you push it** (if you've kept the docs commit local, a GitHub clone won't have them yet). Within a session, only *uncommitted* doc edits are invisible to a freshly-spawned worktree-isolated workflow agent — so when fanning out before committing, have the orchestrator pass spec content into sub-agent prompts rather than assume they see the latest unsaved state.
 
 **Rule 1 — follow the dependency order, not the step numbers.** The steps are not a flat list:
 - **Step 3 (generalize the quota model) is the lynchpin** — land it *with* Step 2 (the brief already folds its `captured_at`/`LimitStatus` half in) and *before* Steps 4, 5, and 6, which won't compile without its `LimitMeasure` / `Capability` types.
@@ -321,7 +321,7 @@ Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6 → 7.
 2. **Answer its 📌 PIN decisions** (one line each) before starting — otherwise the agent guesses.
 3. **Start a fresh agent**, paste **§12.0 (the standard header) + that task's §12 body block** (resolve its 📌 first). Use **ultracode-xhigh + workflows** for tasks marked **L/XL**.
 4. **Run to green.** The agent implements, runs the gate (§11.3), iterates until it passes, then reports the gate output + a ≤5-line summary + the "Next" confirmation. It does **not** commit.
-5. **Verify + commit.** Skim the diff, run the gate yourself once, commit one focused commit per task (or a `step-N` branch if you want review). `docs/` is tracked now, so any plan/ledger edits the agent made are part of that diff — include them in the commit.
+5. **Verify + commit.** Skim the diff, run the gate yourself once, commit one focused commit per task (or a `step-N` branch if you want review). `docs/` is tracked now, so any plan/ledger edits the agent made — including its ticked §11.4 Progress box — are part of that diff; confirm the tick is right and include them in the commit.
 6. **At a ⛔ HUMAN GATE** (release · secrets/keychain · network · public CLI/export surface · ToS text) the agent stops for your decision — by design (CLAUDE.md "decide vs ask").
 7. Repeat in a brand-new agent.
 
@@ -345,6 +345,18 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 *Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T7 are turnkey now**; **T8+ are a backlog** that gets expanded into full cards when its Prereq lands — their detail depends on decisions not yet made, and speccing them now would fabricate.*
 
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
+
+**Progress — the version-controlled "where are we"** (every fresh agent and you read this; the finishing agent ticks its own box as part of its doc edits, you confirm on commit):
+- [ ] **T1** Release v0.2.0
+- [ ] **T2** Quota data-model foundation *(lynchpin)*
+- [ ] **T3** Capability descriptor
+- [ ] **T4** Claude statusLine capture — cache + cross-check
+- [ ] **T5** `setup-statusline` + `--capture-only`
+- [ ] **T6** Render new limit states + Spend windows
+- [ ] **T7** `costroid-connect` infra + CI re-scope
+- T8+ — backlog (carded when its Prereq lands)
+
+**T2 + T4 + T6 ticked = the 0.3.0 milestone** (Claude live quota + generalized model).
 
 **T1 — Release v0.2.0** · ⛔ · S · Prereq: none (independent of the build tasks)
 - **Goal:** ship the already-built cost lane (frontier, Cursor-detect, WSL fix).
@@ -459,8 +471,10 @@ Rules:
 - KEEP THE PLAN CURRENT: if you deviate from the card, affect a later task, or hit a new
   decision/limitation, EDIT the affected prompt in docs/PRODUCT-PLAN.md §12 and log it in
   §11.5 (edit on disk; the change commits with the task).
-- Do NOT commit. End by reporting: the gate output, a ≤5-line summary, any PRODUCT-PLAN.md
-  edits you made, and confirmation the card's "Next" prerequisite now holds.
+- Do NOT commit — but DO keep the plan current on disk so the next fresh agent stays on track:
+  tick this task's box in §11.4 Progress, plus any §12/§11.5 edits the rules above call for.
+- End by reporting: the gate output, a ≤5-line summary, the PRODUCT-PLAN.md edits you made
+  (incl. the ticked box), and confirmation the card's "Next" prerequisite now holds.
 ```
 
 ### 12.1 — T1 · Release v0.2.0 · ⛔ · S · Prereq: none
