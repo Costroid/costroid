@@ -41,7 +41,7 @@ Where Costroid is headed:
 - **Maybe later** — an MCP server (query your costs from inside your AI agent) remains a speculative, uncommitted future surface.
 - A separate, team-oriented **web platform** for company-wide cost management is planned as its own project.
 
-See [CLAUDE.md](CLAUDE.md) for the build scope and the rules that AI coding agents follow. (Costroid's detailed design specs — architecture, data model, product plan — are kept local to the maintainer's working tree, not in this repository.)
+See [CLAUDE.md](CLAUDE.md) for the build scope and the rules that AI coding agents follow. (Costroid's detailed design specs — architecture, data model, product plan — live in [docs/](docs/).)
 
 ## Quickstart
 
@@ -122,7 +122,7 @@ Costroid follows [FinOps Foundation](https://www.finops.org) practice and emits 
 
 ## Project status & contributing
 
-- Detailed design specs (architecture, data model, product plan): kept local to the working tree, not in this repository
+- Detailed design specs (architecture, data model, product plan): [docs/](docs/)
 - Building Costroid, and the rules that AI coding agents must follow: [CLAUDE.md](CLAUDE.md)
 - Contributions are welcome — please read [CLAUDE.md](CLAUDE.md) first.
 

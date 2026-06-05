@@ -2,6 +2,3 @@
 
 # validator run artifacts
 *.log
-
-# design / planning docs — kept local to the working tree, not published to the repo
-docs/

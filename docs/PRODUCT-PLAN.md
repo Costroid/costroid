@@ -1,0 +1,673 @@
+# Costroid — Production Plan
+
+*The single, executable build plan for Costroid as a cross-tool cost-and-quota cockpit — a terminal tool **and** an egui taskbar app, built on one shared core. Hand it to a build agent: it carries the current status (§0), the step-by-step sequence (§3), the auth model (§5), and the hard invariants (§6).*
+
+> **Authority & relationship to canon.** This plan is the going-forward source of truth for *scope and sequencing*, and the canon is reconciled to it: [ARCHITECTURE.md](ARCHITECTURE.md) is the **technical** source of truth, and it plus [../CLAUDE.md](../CLAUDE.md) (the operating manual) defer scope/sequencing here. The **hard invariants in §6 are not superseded by anything** — they bind every step.
+>
+> **GUI choice:** the taskbar app is built in **egui / eframe (+ `tray-icon`)**, *not* Tauri — Rust-native, no webview, permissive licenses, shares `costroid-core` directly.
+>
+> **Deferred by instruction:** the Antigravity and GitHub Copilot **discovery checks and adapters are explicitly later** (§8) — the data model is generalized to *fit* them, but no adapter is built until a live-install discovery confirms its real shape.
+
+---
+
+## 0. Where we are today (v0.1.0) — ground truth
+
+Verified against the v0.1.0 code, not the docs.
+
+**By lane** (the §1 spine — three lanes, never summed):
+
+| Lane | State today | Evidence |
+|---|---|---|
+| **API cost ($) by model** | ✅ **Done** | FOCUS 1.3-conformant records, exact-Decimal `tokens × price`, bundled dated pricing (6 models), dedup verified to the cent vs ccusage |
+| **Subscription quota (windows)** | 🟡 **One-third live** | Codex 5h + weekly parsed for real; **Claude is a stub** (returns `unavailable`); **Cursor returns empty** by design |
+| **Model quality (frontier)** | ✅ **Done** | `bench.rs`: DeepSWE + CursorBench, Pareto dominance, API-cost-only re-pricing overlay |
+
+**Solid foundation the rest builds on:** three-crate engine (`apps → core → {providers, focus}`, no cycles, no `unwrap`/`expect`/`panic!` in libs); a working 4-method `Provider` trait (`id` / `discover` / `parse_usage` / `parse_limits`); WSL-aware multi-root discovery; three render modes (braille / ASCII / **plain**) with non-color cues; `--live`; the statusline emitter; FOCUS export; and **enforced** invariants — a strace-based offline-acceptance CI job, a 64-crate forbidden-crates test, `cargo-deny` (no copyleft, openssl banned), attested releases. **108 tests, 17 render snapshots, green CI gate.** The cost lane is `cargo install`-able and correct today.
+
+**Not built yet:** Claude live quota; any auth/connections (no keychain, no API-key entry, no OAuth); the generalized quota shape; the capability-descriptor layer; 5 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs); alerts; the taskbar; Antigravity & Copilot.
+---
+
+## 1. The product in one picture
+
+Costroid is the one local-first place a developer sees, across **every** AI coding tool they use, both halves of the picture: **how much quota is left** on their subscriptions (daily / 5-hour / weekly / monthly caps that have no invoice) and **how many real dollars** their API usage costs by model — plus proactive, sourced model-choice nudges (API-cost usage only). Used the way people use ccusage: a quick `costroid` check, or parked always-on in a pane / statusline / taskbar, with opt-in alerts.
+
+**Three lanes, never summed** (a quota % is not dollars; an estimate is not a bill):
+1. **API cost ($)** — pay-as-you-go spend per model, estimated `tokens × price`, reconcilable against a usage API when a key is connected. *The only lane recommendations attach to.*
+2. **Subscription quota (windows)** — used measure (token-fraction **or** spend-$/credits) against a window with a reset; **no dollars summed**. Generalized so Claude, Codex, Cursor, Copilot, Antigravity all fit one shape.
+3. **Model quality** — the bundled, dated, sourced cost-vs-quality frontier (DeepSWE + CursorBench).
+
+**Three surfaces, one core.** `costroid-core` is the only brain; every surface is a thin consumer:
+- **Statusline** — a compact line for any shell / tmux / Starship / VS Code terminal.
+- **CLI / TUI** — the navigable tabs; `--live`; `--plain`; export. The primary surface.
+- **Taskbar (egui)** — a cross-platform tray/menu-bar app for glanceability outside a terminal. Richest and most expensive, so it's last; everything it shows, the core already computes.
+
+---
+
+## 2. Architecture additions the build needs
+
+Three new capabilities, introduced in dependency order. Crate layout after this plan:
+
+```
+costroid/
+├─ crates/
+│  ├─ costroid-focus/        FOCUS types (unchanged)
+│  ├─ costroid-providers/    Provider trait + adapters + discovery  (+ capability descriptor, generalized LimitWindow)
+│  ├─ costroid-core/         engine: orchestration, cost, bench     (+ generalized LimitAvailability, budget/forecast/anomaly logic)
+│  └─ costroid-connect/      NEW — ALL network + credential code, feature-gated, off by default   (Step 4)
+├─ apps/
+│  ├─ cli/                   package `costroid` — CLI + TUI + statusline   (unchanged crate, new tabs/commands)
+│  └─ bar/                   NEW — package `costroid-bar` — egui/eframe taskbar app   (Step 7)
+```
+
+Dependency direction stays acyclic: `apps/cli → core → {providers, focus}`; `apps/bar → core → …`; `core → connect` (optional, feature-gated); `connect → focus`. **No crate except `costroid-connect` ever links a network or keychain dependency.**
+
+### 2a. Generalize the quota window — the hard prerequisite (Step 3)
+
+Today `LimitKind = {FiveHour, Weekly}`, the measure is token-fraction only (`used_fraction: Option<f64>`), and `LimitWindow` has no freshness/confidence. To fit Cursor/Copilot/Antigravity:
+
+```rust
+// costroid-providers
+pub enum LimitKind { FiveHour, Weekly, Daily, Monthly, BillingCycle }   // + 3
+
+pub enum LimitMeasure {
+    TokenFraction(f64),                                   // 0.0..=1.0 — Claude / Codex / Antigravity
+    Spend { used_usd: Decimal, included_usd: Option<Decimal> }, // Cursor & Copilot dollar credit pools
+    // RequestCount is the LEGACY pre-June-2026 Copilot model — do NOT implement it.
+}
+
+pub enum LimitStatus { Verified, Unverified, Unavailable }   // from the statusLine brief
+
+pub struct LimitWindow {
+    pub tool: ProviderId,
+    pub plan: Option<String>,
+    pub kind: LimitKind,
+    pub measure: Option<LimitMeasure>,        // replaces bare used_fraction
+    pub resets_at: Option<DateTime<Utc>>,
+    pub captured_at: DateTime<Utc>,           // NEW — every reading carries freshness
+    pub status: LimitStatus,                  // NEW — every reading carries confidence
+    pub label: Option<String>,
+}
+```
+
+Core's `LimitAvailability` gains an `Estimated` variant alongside `Available / Partial / Unavailable`. **`Estimated` lives at the core availability/render layer, never on the provider `LimitWindow` (which carries the 3-value `LimitStatus`)** — getting this layering right is a documented gotcha from the brief.
+
+> **Priority note from the provider review:** Cursor (paid) **and** Copilot (post-June-2026) both converged on the *same* shape — a **monthly dollar-denominated credit pool + usage-based overage**. So `Spend` + `Monthly`/`BillingCycle` is the high-value addition that covers two providers at once; `RequestCount` is a deprecated model and is intentionally cut.
+
+The Claude statusLine brief (Step 2) already specs the `captured_at` + `LimitStatus` half — **landing Step 2 does part of Step 3's work**, so they can overlap.
+
+### 2b. Capability descriptor on `Provider` (Step 3)
+
+Adapters are bare structs today; capability is implicit. Add a declarative descriptor so adding a provider is "fill in the descriptor + adapter," no core/UI change:
+
+```rust
+pub struct Capability {
+    pub api_cost: DataSource,           // local_artifact | sanctioned_hook | sanctioned_oauth | api_key | opt_in_session | unavailable
+    pub subscription_quota: DataSource,
+    pub model_mix: DataSource,
+    pub auth: AuthMethod,               // none | oauth | api_key | opt_in_session
+    pub quota_kinds: &'static [LimitKind],
+}
+fn capability(&self) -> Capability;     // new trait method
+```
+
+This is what lets the Providers tab honestly render *what's unavailable and why*, and what keeps Antigravity/Copilot a descriptor-and-adapter away.
+
+### 2c. The connections subsystem — `costroid-connect` (Step 4)
+
+The first network and credential code. **Isolated in one feature-gated crate** so the default build stays provably local-only:
+- **HTTP:** `ureq` (blocking, `rustls` TLS, no async runtime) — leanest permissive option; avoids pulling `tokio`.
+- **Secrets:** the `keyring` crate → OS keychain only. Never disk/config/logs.
+- **Gating:** `costroid-connect` is behind a Cargo feature (e.g. `connect`); the local-only path never compiles it in. Network happens **only** on an explicit, user-initiated `costroid connect …` action against a provider endpoint the user authorized.
+
+### 2d. The egui taskbar — `apps/bar` (Step 7)
+
+`eframe` + `egui` + `tray-icon` (all MIT/Apache-2.0). Shares `costroid-core` verbatim. Detail in §4.
+
+---
+
+## 3. Build steps — the spine
+
+Ordered, each independently shippable. Each step lists **Goal / Deliverables / Acceptance / Invariant checks**. Target version in the heading.
+
+### Step 0 — Reconcile canon + close loose ends · ✅ *done*
+The canon (ARCHITECTURE.md, CLAUDE.md, README, SECURITY, RELEASING, DATA-MODEL, DESIGN-SYSTEM) is reconciled to this plan — tray un-cut (egui), the tab set + auth ladder widened, the never-reuse-a-subscription-token boundary pinned, the `LimitKind` generalization marked planned — and [STATUSLINE-CAPTURE-BRIEF.md](STATUSLINE-CAPTURE-BRIEF.md) is committed as the Step 2 spec.
+
+### Step 1 — Release **0.2.0**: ship what's built · *the cost lane*
+- **Goal:** get the already-built frontier + Cursor-detect + WSL fix into users' hands.
+- **Deliverables:** version bump, changelog, tag → cargo-dist release (shell/PS/Homebrew/npm + crates.io); README "next release" → "shipped."
+- **Acceptance:** `cargo install costroid` / `cargo binstall costroid` gives a working binary with `frontier`; full pre-PR gate green.
+- **Invariants:** unchanged — still zero network.
+
+### Step 2 — **0.3.0**: Claude statusLine capture *(flagship)* · *quota half becomes real*
+- **Goal:** Claude live 5h/7d quota from the sanctioned `statusLine` `rate_limits` push — zero token reuse, zero API tokens, local only.
+- **Deliverables:** implement [STATUSLINE-CAPTURE-BRIEF.md](STATUSLINE-CAPTURE-BRIEF.md) end to end — the `setup-statusline` command, `statusline --capture-only`, the no-secret cache, sanitize + cross-check + age-out, `captured_at` + `LimitStatus` on `LimitWindow`, the always-on "as of HH:MM" freshness stamp + claude.ai-chat under-report caveat. Codex windows adopt the same `captured_at`/age-out (status always `Verified`).
+- **Open item:** `UNVERIFIED_TOKEN_FLOOR` — confirm against a live install whether the false-100% bug (#31820) fires on the shipped binary; build the cross-check guard either way.
+- **Acceptance:** on a Pro/Max machine, `costroid` shows real Claude 5h + 7d with reset countdowns; degrades to "unavailable"/"unverified" never a confident wrong number; **still no network calls** (offline-acceptance test unchanged and green).
+- **Invariants:** the cache holds only two percentages + two reset stamps + a capture time — no token/prompt/credential.
+
+### Step 3 — Generalize the quota model · *folds partly into 0.3.0*
+- **Goal:** the data-model prerequisite for every remaining provider (§2a, §2b).
+- **Deliverables:** extend `LimitKind`, introduce `LimitMeasure` (token-fraction + spend-$/credits; no request-count), add the `Capability` descriptor, add the `Estimated` availability variant at the core layer. Migrate Claude/Codex to the new shape (still token-fraction). Render `Spend`-measure windows in the limit-line + statusline (dollar pool used/included, not a fabricated %).
+- **Acceptance:** a synthetic Cursor/Copilot-shaped `Spend` window renders correctly in all three render modes; existing token-fraction windows unchanged; full gate green.
+
+### Step 4 — **0.4.0**: Connections — the safe, friendly login · *first network code*
+- **Goal:** the API-cost half users connect — paste-your-key for the official usage/billing APIs — built on the §2c isolation.
+- **Deliverables:** `costroid-connect` crate (ureq + rustls + keyring, feature-gated); `costroid connect <anthropic|openai|gemini>` (paste key → keychain → pull real API usage/cost to reconcile against the local estimate); a **Connections view** listing what's linked; `costroid disconnect <provider>` with instant revoke. The auth source-ladder (§5) enforced in code: a datum with no clean source is **unavailable, never fetched**.
+- **Acceptance test** (mirrors the canon's Phase-2 test): a user enters a key, sees reconciled API cost, revokes it, and **confirms no secret was written to disk/config/logs** (inspect keychain + filesystem). With the `connect` feature **off**, the binary still passes the offline-acceptance test.
+- **Invariant changes — handle explicitly:** unban `rustls` + `ureq` + `keyring` in `costroid-connect` only (update `deny.toml` + the forbidden-crates test to scope the ban to the local path); **re-scope the strace offline-acceptance test** to assert the *default/local* path makes zero network calls, and add a test asserting network occurs only on an explicit `connect` action to an authorized host. Install the deferred keychain deps (`libdbus-1-dev`, `libsecret-1-dev`) in CI. **No telemetry — still, ever.**
+
+### Step 5 — **0.5.0**: Analytical tabs + alerts
+- **Goal:** the navigable cockpit. Build the tabs users ask for; ship the cheap re-cuts first, the new analytics next.
+- **Deliverables (in order):**
+  1. **Providers** tab — per-tool quota windows, API spend, connection status, and *what's unavailable and why* (driven by the §2b `Capability`).
+  2. **Models** tab — spend/usage by model, each plotted on the frontier (promote the existing overlay).
+  3. **History** tab — the full record; FOCUS export lives here (promote `export`).
+  4. **Budget** — user-set monthly $ targets per tool/total vs actual API/overage spend; quota pace vs each window's cap. **Never invent a $ budget for a flat-fee subscription.**
+  5. **Forecast** — "you'll hit your weekly Claude limit ~Friday"; "~$210 projected API spend this month." Always hedged as an estimate.
+  6. **Anomalies** — spend spikes / unusual model mix / quota burn-rate jumps vs *your own* history. Proactive, never alarmist.
+  7. **Alerts** — opt-in, quiet by default: quota ("weekly at 90%, resets Sunday"), budget ("80% of your $200 API budget"), and the model nudge — **API-cost usage only** as dollar-savings; for subscriptions, framed as **quota-extension** ("move heavy Opus tasks to Sonnet to buy weekly headroom"), never "save money."
+- **Acceptance:** every tab has a complete `--plain` rendering and relies on no color alone; budget/forecast/anomaly logic is unit-tested against fixtures; alerts default off.
+
+### Step 6 — **0.6.0**: Cursor live quota *(opt-in, disclosed, default-off)*
+- **Goal:** the one grey-zone path, done safely.
+- **Deliverables:** reuse an existing local Cursor session to fetch live quota/spend via its own RPC, behind a **one-time disclosure** naming the host and the undocumented/ToS risk; default-off; always degrades to "unavailable." Renders as a `Monthly`/`BillingCycle` `Spend` window (the §3 shape). Optional first-party OAuth (system browser + loopback + PKCE; keychain only) as the documented upgrade.
+- **Acceptance:** with the path off (default), Cursor stays detect-only; enabling it shows live Cursor spend and revokes cleanly; no secret leaves the keychain.
+
+### Step 7 — **0.7.0**: The egui taskbar app · *the last surface*
+- See §4. Ships after the CLI/TUI is feature-complete, because everything it shows the core already computes.
+
+### → **1.0**: feature-complete across the three surfaces, after the deferred adapters (§8) land.
+
+---
+
+## 4. The taskbar app (egui) — detail · Step 7
+
+- **Stack:** `eframe` (egui's app framework) + `egui` + `tray-icon`. All **MIT/Apache-2.0** — no copyleft, no webview, no Tauri. Package `apps/bar` (binary `costroid-bar`), depending only on `costroid-core` (+ `costroid-connect` behind the same feature gate as the CLI).
+- **What it shows:** a tray/menu-bar icon rendering the most-constrained quota meter at a glance; click opens a compact egui window mirroring the **Overview** plus the same tabs as the TUI (Providers / Models / Budget / Forecast / Anomalies / History / Trends). Same normalized data, same estimate labeling, same lanes-never-summed rule.
+- **Cross-platform:** macOS menu-bar extra, Windows system tray, Linux tray via StatusNotifierItem/AppIndicator (note the Linux-tray fragility across desktops — document supported environments).
+- **Accessibility (required, not optional):** egui ships **AccessKit** screen-reader support — wire it on. `--plain` has no meaning in a GUI, but the equivalent obligation holds: **never rely on color alone** — the amber warning state needs a second non-color cue (icon/badge/text), exactly as in the terminal.
+- **Constraints:** the taskbar is a *consumer* of the core, never a second brain; it adds **no** new data path, no new network call beyond what `costroid-connect` already authorizes, and no telemetry.
+
+---
+
+## 5. The auth model — maximally friendly, completely ToS-safe *(the spine)*
+
+**The rule that makes "friendly" and "safe" compatible:** for each provider and each datum, use the highest-safety source that exists. **If the only path would violate the provider's terms, the datum is `unavailable` — never fetched.**
+
+Source ladder (use the first that applies):
+0. **Local artifacts** — logs the tool already writes. *The only tier built today.*
+1. **Sanctioned push/hook** — a vendor-built third-party extension point (Claude Code's `statusLine` `rate_limits`). *Step 2.*
+2. **Sanctioned OAuth** — the provider's own first-class third-party OAuth (GitHub). *Deferred with Copilot (§8).*
+3. **Your own API key** — official usage/billing API, your key, your data. *Step 4.*
+4. **Opt-in session reuse** — last resort, only where nothing above exists *and* terms allow; default-off, one-time disclosure, revocable. *Cursor, Step 6.*
+5. **Never** — reusing a *subscription* OAuth token against a non-sanctioned/internal endpoint. **This is the account-ban path (Anthropic enforces it).** Where it's the only route, the datum is **unavailable**. A "log into Claude for quota" button must never exist.
+
+### Per-provider classification — *corrected to current facts (June 2026)*
+
+| Provider | API $ source | Quota source | Login | Quota shape | Status |
+|---|---|---|---|---|---|
+| **Claude Code** | local transcripts (+ optional Anthropic usage API w/ key) | **statusLine sanctioned push** | none (`setup-statusline`) | 5h + 7d, token-% | cost ✅ · quota = Step 2 |
+| **Codex** | local rollout logs (+ optional OpenAI usage API w/ key) | local rollout logs | none | 5h + weekly, token-% | ✅ both |
+| **Cursor** | live RPC only (opt-in) | opt-in session reuse — else unavailable | opt-in, default-off | **monthly billing-cycle $-credit pool + overage; daily token rate-limit on free tier** | detect-only → Step 6 |
+| **GitHub Copilot** | — (credit-based, not per-token) | sanctioned GitHub OAuth — **per-user *AI-credit* usage** | OAuth (**exact scope/accessibility = discovery item #1**) | **monthly AI-credit pool ($) + overage** *(premium-requests is the legacy pre-June-2026 model)* | **deferred (§8)** |
+| **Antigravity CLI** | Gemini API w/ key (if routed) | local logs *if it writes them* — else unavailable | none if local; API key for Gemini | **5h + weekly, metered in "compute effort"** (+ credit overage) | **deferred (§8)** |
+
+**Provider-fact notes** (the easy-to-get-wrong ones — don't regress these):
+- **Cursor** is *not* "daily, spend-$." Paid plans (the real users) are a **monthly dollar credit pool**; the daily *token* window is a free-tier rate-limit. Don't invert them.
+- **Copilot** is *not* "request-count." As of **June 1, 2026** GitHub replaced premium requests with **AI Credits** (dollar-denominated monthly pool + overage). The per-user endpoints exist (`/users/{username}/settings/billing/ai_credit/usage`), and the **user-billed-only boundary is real and confirmed** ("not included in user-level endpoints" when org/enterprise-billed) — but the **OAuth scope/third-party accessibility is undocumented** and must be confirmed before Copilot is promised as a one-click login.
+- **Antigravity** quota is metered in **"compute effort,"** so its denominator may not be clean token-%; confirm on a live install.
+
+---
+
+## 6. Hard invariants — never trade these away *(bind every step)*
+
+- **Completely ToS-safe.** Never reuse a subscription OAuth token against a non-sanctioned endpoint. No clean source → unavailable, never fetched.
+- **Local-first; no content leaves the device.** Nothing leaves except calls to provider endpoints the user explicitly authorized. **The default build makes zero network calls** (enforced by the re-scoped offline-acceptance test).
+- **No telemetry. Ever, by default.** Any update check is opt-in, disclosed, individually disableable, off by default.
+- **Secrets in the OS keychain only** — never disk/config/logs; device↔provider; revocable. All such code lives only in `costroid-connect`.
+- **Lanes never mix.** Quota % ≠ dollars; estimated value ≠ a bill.
+- **Cost & forecast are labeled estimates** — no false precision; recommendations advisory, sourced, **API-cost usage only**; every quota reading carries freshness + confidence and degrades to "unavailable"/"unverified" rather than show a confident wrong number.
+- **Permissive licenses only** (MIT / Apache-2.0 / BSD / ISC / Zlib / Unicode). No copyleft. `rustls`, never OpenSSL. Verify before adding.
+- **Accessibility is required.** Every CLI visual has a `--plain` ASCII equivalent; the egui app wires AccessKit; **never rely on color alone** — the amber state always carries a second non-color cue.
+- **No `unwrap`/`expect`/`panic!` in library crates.** `thiserror` in libs, `anyhow` only in `apps/`.
+- **Provider logs are untrusted input** — parse defensively, never crash or execute.
+
+---
+
+## 7. Definition of Done — apply to every change
+
+- [ ] `cargo build` clean; `cargo test --workspace` passes; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt --all -- --check` clean.
+- [ ] No `unwrap`/`expect`/`panic!` introduced in library code.
+- [ ] New behavior covered by tests against **fixtures, never real user data**.
+- [ ] Every new CLI visual has a `--plain` path; every egui visual is AccessKit-labeled; no color-alone.
+- [ ] New dependency licenses verified permissive; `cargo-deny` green.
+- [ ] No telemetry; no network call outside an explicit, user-authorized `connect` action; default build still passes offline-acceptance.
+- [ ] Secrets (if any) touch only the keychain, only in `costroid-connect`.
+- [ ] Docs ([ARCHITECTURE.md](ARCHITECTURE.md) / [../CLAUDE.md](../CLAUDE.md) / this plan / READMEs) updated in the same change when behavior or interface shifts.
+
+---
+
+## 8. Deferred — discovery-gated, explicitly later
+
+Per instruction, the data model is generalized to *fit* these, but **no adapter is built until a live-install discovery confirms its real shape** (same discipline as the Claude statusLine capture):
+
+- **Antigravity CLI adapter** — discovery: does its CLI write local usage logs, and in what shape, or is quota server-only? How is "compute effort" denominated? It routes to Gemini *and* Claude models — decide model-mix attribution. No local source + no sanctioned hook → quota unavailable until one exists; Gemini API cost via the user's own key.
+- **GitHub Copilot adapter + sanctioned OAuth (ladder tier 2)** — discovery #1: confirm whether an individual user can read their own `ai_credit/usage` via a third-party OAuth grant, and the exact scope/permission; scope to individually-billed users; render "unavailable (enterprise-billed)" otherwise.
+- **MCP server** (`costroid-mcp`) — still speculative; the recommendation engine it would expose is already built into the frontier view. Not built; name intentionally unclaimed.
+
+---
+
+## 9. The map at a glance
+
+| Step | Version | Surface(s) | First network? | Net-new risk |
+|---|---|---|---|---|
+| 0 — canon reconcile | — | docs | no | ✅ done |
+| 1 — ship built | **0.2.0** | CLI/TUI | no | release mechanics |
+| 2 — Claude capture | **0.3.0** | CLI/TUI + statusline | no | sanitize/cross-check correctness |
+| 3 — generalize quota | (with 0.3.0) | core/providers | no | data-model migration |
+| 4 — connections | **0.4.0** | CLI/TUI | **yes (gated)** | keychain + re-scoping the no-network guarantee |
+| 5 — tabs + alerts | **0.5.0** | CLI/TUI | no (uses Step 4) | analytics correctness, alert restraint |
+| 6 — Cursor live quota | **0.6.0** | CLI/TUI | yes (opt-in) | ToS grey-zone, disclosure |
+| 7 — taskbar (egui) | **0.7.0** | **Taskbar** | no new | cross-platform tray, AccessKit |
+| later — Antigravity/Copilot | → **1.0** | all | varies | discovery-gated |
+
+*Step 0 (canon reconcile) is done and the cost lane is built; Step 1 is a release away. The next build is **Step 2 — the Claude `statusLine` capture**.*
+
+---
+
+## 10. Executing this plan with an autonomous agent
+
+*The intended workflow: hand **one step (or sub-unit) at a time** to an autonomous Claude Code session at high reasoning effort with multi-agent workflows. The agent reads the step below + the files it names + the Definition of Done (§7), builds, runs the full gate, and stays within the step. This works — with three rules the numbered list alone doesn't make obvious.*
+
+> **Repo setup (important for the agent):** the `docs/` specs — this plan, the statusline brief, and the ARCHITECTURE / DATA-MODEL / DESIGN-SYSTEM specs — are **tracked in the repository**; read them from disk and edit them freely as the plan evolves (those edits commit alongside the task). A fresh clone and committed worktrees contain `docs/`; only *uncommitted* doc edits are invisible to a freshly-spawned worktree-isolated workflow agent — so when fanning out before committing, have the orchestrator pass spec content into sub-agent prompts rather than assume they see the latest unsaved state.
+
+**Rule 1 — follow the dependency order, not the step numbers.** The steps are not a flat list:
+- **Step 3 (generalize the quota model) is the lynchpin** — land it *with* Step 2 (the brief already folds its `captured_at`/`LimitStatus` half in) and *before* Steps 4, 5, and 6, which won't compile without its `LimitMeasure` / `Capability` types.
+- **Step 4's `costroid-connect` crate gates Step 6** (all network + keychain code lives there).
+- **Step 7 needs Steps 2–6 done** — it mirrors tabs that don't exist yet.
+Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6 → 7.
+
+**Rule 2 — the human checkpoints are by design, not a failure.** The golden rules (CLAUDE.md "decide vs ask") require the agent to **stop and ask** before: touching the keychain/secrets, making any network call, changing the public CLI surface, releasing/tagging, or shipping the Cursor ToS-disclosure text. A well-behaved Auto-Mode agent *pauses* at these — that's the safety net. So **Steps 1, 4, 5, 6, 7 each carry a human gate**; **Steps 2 and 3 are the closest to "hand it cold."** Don't expect to walk away from 4 / 6 / 7.
+
+**Rule 3 — split the L/XL steps; let the workflow fan out inside each.** "One step → one session" is too coarse for the big steps; the fan-out shape is in the table (a gating prerequisite, then parallel sub-units) — this is where the workflows earn their keep.
+
+**Pin these open decisions *before* the handoff** (else the agent guesses):
+- **Step 2:** `UNVERIFIED_TOKEN_FLOOR` (N), the cache path, the freshness-stamp threshold (brief §12).
+- **Step 4:** which provider usage-API endpoints + auth schemes; the `costroid connect` CLI UX; how reconciliation renders.
+- **Step 5:** forecast algorithm, anomaly baseline, budget persistence (config schema), alert thresholds + copy.
+- **Step 6:** the Cursor RPC wire format, the disclosure wording, the feature-gate name.
+
+| Step | Autonomous fit | Size | Blocked by | Human gate | Internal fan-out |
+|---|---|---|---|---|---|
+| 1 — release 0.2.0 | conditional | M | — | **yes** — tag/publish is outward-facing | serial: local prep → human approves → human tags |
+| 2 — Claude `statusLine` capture | **strong (best first handoff)** — the brief is a near-executable spec | L | — (folds in §3's data-model half) | the new `setup-statusline` CLI surface | A data-model → {B provider+cache · C render+fixtures · D setup cmd} |
+| 3 — generalize quota | strong | M | — | layering review (`Estimated` core-only) | A enums+migrate → B `Capability` → C core `Estimated` → D `Spend` render |
+| 4 — connections | **poor** | XL | **Step 3** | **yes ×4** — keychain, network, CI re-scope, CLI | 4a infra+CI re-scope → 4b keychain+http → 4c keys+CLI |
+| 5 — tabs + alerts | conditional | L | **Step 3** (`Capability`) | CLI surface; alert/forecast/budget policy | Capability prereq → cheap re-cuts → analytics → alerts |
+| 6 — Cursor live quota | **poor** | L | **Steps 3 + 4** | **yes ×3** — keychain, ToS text, undocumented RPC | serial, after 3 + 4 clear |
+| 7 — egui taskbar | **poor** | XL | **Steps 2–6** | release; GUI/UX design (none exists yet) | scaffold → per-tab fan-out → AccessKit → cross-platform |
+
+**Bottom line:** the model executes successfully if you (a) go in dependency order with **3 riding alongside 2**, (b) accept the human gates on 1 / 4 / 5 / 6 / 7 as checkpoints rather than fighting them, and (c) split the L/XL steps into the sub-units above. **Start with Step 2 + §3's data-model half** — the highest-fit, highest-value first handoff.
+
+---
+
+## 11. Driving the plan — fresh agent per task
+
+*You run each task in a **fresh agent** (new context) for context hygiene. So every task is self-contained, ends with the repo **green and the next task unblocked**, and fits one context. §11.1–11.3 are the loop; §11.4 is the ledger you paste from. `docs/` (this plan included) is tracked in the repo — edit it on disk as you go; the changes commit with the task.*
+
+### 11.1 The loop
+
+1. **Pick the next task** in §11.4 whose **Prereq** is met. Don't skip prerequisites.
+2. **Answer its 📌 PIN decisions** (one line each) before starting — otherwise the agent guesses.
+3. **Start a fresh agent**, paste **§12.0 (the standard header) + that task's §12 body block** (resolve its 📌 first). Use **ultracode-xhigh + workflows** for tasks marked **L/XL**.
+4. **Run to green.** The agent implements, runs the gate (§11.3), iterates until it passes, then reports the gate output + a ≤5-line summary + the "Next" confirmation. It does **not** commit.
+5. **Verify + commit.** Skim the diff, run the gate yourself once, commit one focused commit per task (or a `step-N` branch if you want review). `docs/` is tracked now, so any plan/ledger edits the agent made are part of that diff — include them in the commit.
+6. **At a ⛔ HUMAN GATE** (release · secrets/keychain · network · public CLI/export surface · ToS text) the agent stops for your decision — by design (CLAUDE.md "decide vs ask").
+7. Repeat in a brand-new agent.
+
+A task that can't reach green isn't done: the agent stops and reports the blocker, never commits red.
+
+### 11.2 The handoff prompt → use §12.0
+
+The paste-ready prompt is **§12.0 (the standard header) + the task's §12.x body block** — that is the
+single source of truth for what an agent receives. It already tells the agent to read §11.5 (where the
+D1 type/behavior/render boundary + the pinned defaults live), to stay in the Scope fence, to finish on
+the four-command green gate, to STOP on un-pinned decisions and ⛔ gates, to keep the plan current, and
+not to commit. Fill in the task's 📌 answers, paste both blocks into a fresh ultracode-xhigh agent
+(add "use workflows" for L/XL tasks), and go.
+
+### 11.3 Universal Done-When (every task)
+
+Done only when **all** hold: (1) the four-command gate above is **green**; (2) the card's **Done-when** is met **with a test that proves it**; (3) the tree is clean (`docs/` untouched) and the card's **Next** is satisfied; (4) §6 invariants held (no telemetry; no network outside `costroid-connect`; secrets keychain-only; `--plain`/no-color-alone on new visuals). A surface/secret/network/release task stops at its ⛔ for your approval before finalizing.
+
+### 11.4 The task ledger
+
+*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T7 are turnkey now**; **T8+ are a backlog** that gets expanded into full cards when its Prereq lands — their detail depends on decisions not yet made, and speccing them now would fabricate.*
+
+> These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
+
+**T1 — Release v0.2.0** · ⛔ · S · Prereq: none (independent of the build tasks)
+- **Goal:** ship the already-built cost lane (frontier, Cursor-detect, WSL fix).
+- **Agent does:** confirm the gate is green on `main`; run `dist plan` + `dist build --artifacts=local` (dry-run, report only); draft the version bump in `Cargo.toml` + refresh `Cargo.lock`; add a CHANGELOG entry; flip README "next release" → "shipped." Report; **do not tag/push.**
+- **⛔ You do:** review, then `git tag v0.2.0 && git push origin v0.2.0`; verify `cargo install costroid` post-release.
+- **Done when:** gate green; `dist plan` clean; version + lockfile bumped; (after your tag) release CI succeeds.
+- **Next:** independent — blocks nothing, but **tag v0.2.0 before T2+ work reaches `main`** (or branch T2–T6) so 0.2.0 ships only the built cost lane, not half-finished 0.3.0 quota work.
+
+**T2 — Quota data-model foundation** · M · Prereq: none — *do this first of the build work*
+- **Files:** `crates/costroid-providers/src/lib.rs` (`LimitKind`, `LimitWindow`, the 3 `parse_limits`); `crates/costroid-core/src/lib.rs` (`LimitAvailability`, `limit_availability`).
+- **Goal:** generalize the quota types so every later provider/feature fits one shape (§2a).
+- **Scope fence:** types + migration only. No statusline capture, no rendering beyond compiling, no new providers, **no `RequestCount`**.
+- **Deliverables:** `LimitKind += Daily, Monthly, BillingCycle`; `enum LimitMeasure { TokenFraction(f64), Spend { used_usd: Decimal, included_usd: Option<Decimal> } }`; `enum LimitStatus { Verified, Unverified, Unavailable }`; on `LimitWindow` add `captured_at: DateTime<Utc>` + `status: LimitStatus` and replace `used_fraction` with `measure: Option<LimitMeasure>`; reshape core `LimitAvailability` so its arms carry the `measure` and add `Unverified` + `Estimated` (5 variants, availability layer only — never on `LimitWindow`); add minimal placeholder render arms to stay green (T6 does the real rendering). Migrate Codex (stays `Verified` `TokenFraction`), Claude (`Unavailable` for now), Cursor (empty) + every constructor + every existing test. (Full shape in §11.5 D1 / §12.2.)
+- **Done when:** gate green; existing limit tests updated and passing.
+- **Next:** the new types exist → T3, T4, T6 (and later the Providers tab) build on them.
+
+**T3 — Capability descriptor** · S · Prereq: T2
+- **Files:** `crates/costroid-providers/src/lib.rs` (the `Provider` trait + 3 adapters).
+- **Goal:** make each provider *declare* its data sources / auth / quota shape (§2b) so unavailability renders honestly and new providers slot in by descriptor.
+- **Scope fence:** the descriptor + its impls only; no UI yet.
+- **Deliverables:** `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey, OptInSession, Unavailable }`; `enum AuthMethod { None, Oauth, ApiKey, OptInSession }`; `struct Capability { api_cost: DataSource, subscription_quota: DataSource, model_mix: DataSource, auth: AuthMethod, quota_kinds: &'static [LimitKind] }`; `fn capability(&self) -> Capability` on the trait, implemented for Claude/Codex/Cursor with today's honest values.
+- **Done when:** gate green; a test asserts each provider's descriptor.
+- **Next:** Providers tab (T11) + the deferred adapters can rely on `Capability`.
+
+**T4 — Claude statusLine capture: cache + parse_limits** · L · Prereq: T2 · 📌
+- **Spec:** `docs/STATUSLINE-CAPTURE-BRIEF.md` — read it fully; it IS the design. **Files:** Claude adapter in `costroid-providers`; the cross-check helper in `costroid-core`.
+- **📌 PIN before start:** `UNVERIFIED_TOKEN_FLOOR` (brief proposes `5_000`) · cache path (brief proposes `${XDG_STATE_HOME:-~/.local/state}/costroid/claude-rate-limits.json`) · `LIMIT_FRESHNESS_STAMP_MINUTES` (brief proposes `10`).
+- **Goal:** read the sanctioned `rate_limits` cache, sanitize + cross-check against local volume, map to a `LimitWindow` with the right `LimitStatus`.
+- **Scope fence:** the cache read + `parse_limits` + cross-check only. `setup-statusline` is T5; rendering is T6.
+- **Deliverables (per the brief):** cache read; sanitize (`>100` / `==resets_at` → no data); cross-check (high % + trivial local volume → `Unverified`); `captured_at`; epoch + RFC3339 `resets_at` parsing; the `window_token_volume` helper in core; bad-data fixtures (poisoned / 900% / false-100 / absent / stale / iso / happy).
+- **Done when:** gate green; fixtures prove each degrade path (never a confident wrong number).
+- **Next:** Claude windows carry real status → T5/T6 can surface them.
+
+**T5 — `setup-statusline` + `--capture-only`** · M · ⛔ (public CLI surface) · Prereq: T4 · 📌
+- **Spec:** the brief's setup section. **Files:** `apps/cli/src/main.rs` (Command enum) + a new setup module.
+- **📌 PIN:** the idempotency sentinel (brief: `# costroid:statusline-capture v1`).
+- **Goal:** `costroid setup-statusline` wires Claude Code's `settings.json` to tee `rate_limits` into the cache (snippet-into-existing, or be-the-statusline) + a `statusline --capture-only` flag.
+- **Scope fence:** the command + flag + idempotent settings.json editing (backup/undo) only.
+- **⛔ Human gate:** new public CLI surface — stop for approval before finalizing flags/UX.
+- **Done when:** gate green; idempotent re-run tested; malformed/absent settings.json handled; capture parse-failure exits 0.
+- **Next:** end-to-end Claude live quota works on a Pro/Max machine.
+
+**T6 — Render new limit states + Spend windows** · M · Prereq: T2 (+ T4 for live data)
+- **Files:** `apps/cli/src/render.rs` (`render_limit_line` / `plain_limit_line` / `state_cue`) + snapshots.
+- **Goal:** render `Available / Partial / Unavailable / Unverified / Estimated` and `Spend` windows (dollar pool used/included, never a fabricated %), with the always-on "as of HH:MM" stamp + the claude.ai-chat under-report caveat (brief §8).
+- **Scope fence:** rendering + snapshots only.
+- **Done when:** gate green; snapshot tests cover every availability arm in braille/ASCII/plain; plain asserts no ANSI.
+- **Next:** the **0.3.0 milestone** (Claude live quota + generalized model) is complete.
+
+**T7 — `costroid-connect` infra + CI re-scope** · L · ⛔ · Prereq: T3
+- **Files:** new `crates/costroid-connect/`; root `Cargo.toml` (member + feature); `deny.toml`; `apps/cli/tests/offline.rs`; `scripts/offline_acceptance.sh`.
+- **Goal:** create the feature-gated network/credential crate **with no behavior yet**, and re-scope the no-network guarantees so the default build still *proves* zero network.
+- **Scope fence:** crate skeleton + feature gate + test re-scoping only. **No keychain, no HTTP yet** (T8/T9).
+- **⛔ Human gate:** changing offline-acceptance + forbidden-crates is a guarantee redefinition — stop for approval on the re-scoped assertions.
+- **Deliverables:** `costroid-connect` behind feature `connect` (off by default); `deny.toml` + forbidden-crates scoped so `ureq`/`rustls`/`keyring` are allowed only in `costroid-connect`; offline-acceptance asserts the default build makes zero calls; a new test asserts network happens only with the feature on + an explicit action (stub).
+- **Done when:** default `cargo build`/`test` green AND offline-acceptance still passes; `--features connect` builds.
+- **Next:** keychain (T8) and HTTP (T9) have a home.
+
+**Backlog — carded when its Prereq lands (📌 must be pinned first):**
+- **T8 — keychain + API-key entry** · ⛔📌 · Prereq T7
+- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes
+- **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display → **0.4.0**
+- **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
+- **T14 Budget 📌 · T15 Forecast 📌 · T16 Anomalies 📌 · T17 Alerts ⛔📌** — 📌 budget persistence schema · forecast algorithm · anomaly baseline · alert thresholds + copy → **0.5.0**
+- **T18 — Cursor live quota** · ⛔📌📌📌 · Prereq T2,T7,T8 — 📌 Cursor RPC wire format (needs a live-install discovery) · disclosure text · feature-gate name → **0.6.0**
+- **T19+ — egui taskbar** · ⛔ · Prereq T2–T6 (CLI feature-complete) — greenfield: needs a GUI design first, then per-tab fan-out → **0.7.0**
+
+When you reach a backlogged task, pin its 📌 and have a planning agent expand it into a full T1–T7-style card before you hand it to a build agent.
+
+### 11.5 Decisions & limitations (living log)
+
+*New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**D1 — Type / behavior / render split (T2 ↔ T4 ↔ T6).** Keeps the three tasks non-overlapping so fresh agents don't collide on the same types:
+- **T2 owns all TYPES + the pure map + migration** — `LimitKind`(+Daily/Monthly/BillingCycle), `LimitMeasure { TokenFraction(f64), Spend { used_usd, included_usd } }`, `LimitStatus { Verified, Unverified, Unavailable }`; `LimitWindow` gains `captured_at` + `status` and swaps `used_fraction`→`measure`. **`LimitAvailability` is reshaped so its arms carry the `LimitMeasure`, not a bare `f64`** — this is the hinge that lets T6 render a `Spend` window *without ever touching a type* (the render layer consumes `LimitSummary.availability`, never `LimitWindow`, so dollars must live in the availability arm). Target shape — **still 5 variants**: `Available { measure: LimitMeasure, resets_at, reset_in_seconds }`, `Partial { measure: Option<LimitMeasure>, resets_at, reset_in_seconds, reason }`, **new** `Unverified { measure: LimitMeasure, resets_at: Option<DateTime<Utc>>, reset_in_seconds: Option<i64> }`, **new** `Estimated { volume_tokens: u64, estimated_usd: Option<Decimal> }`, `Unavailable { reason }` (unchanged). `limit_availability()` becomes a **pure map** (status + measure + staleness → arm). Reshaping the enum makes the existing `render_limit_line`/`plain_limit_line` `match`es non-exhaustive, so **T2 also adds minimal placeholder render arms (a basic line — no `todo!()`/panic) purely to keep `cargo build`/`test` green; the real measure-aware rendering, the `Spend` formatting, and the snapshots are T6's.** Add `rust_decimal.workspace = true` to `costroid-providers/Cargo.toml` (the `Spend` measure needs `Decimal`; it is already a vetted permissive workspace dep that core uses — **not** a new-dependency "stop and ask"). Migrate Codex=`Verified` `TokenFraction`, Claude=`Unavailable`, Cursor=empty, all constructors + tests.
+- **T4 owns BEHAVIOR only (defines no new types)** — Claude `parse_limits` (cache read + sanitize + provisional status); the core cross-check finalize (`window_token_volume` + demote `Verified`→`Unverified` on high-%-trivial-volume; stale age-out; estimate fallback); fixtures.
+- **T6 owns RENDER only** — the 5 availability arms + `Spend` windows + the "as of HH:MM" stamp + the claude.ai caveat + snapshots.
+
+**Pinned defaults** (accept or override before the task): `UNVERIFIED_TOKEN_FLOOR = 5_000` · cache path `${XDG_STATE_HOME:-~/.local/state}/costroid/claude-rate-limits.json` · `LIMIT_FRESHNESS_STAMP_MINUTES = 10` · setup sentinel `# costroid:statusline-capture v1`.
+
+**Repo facts confirmed by grounding** (so an agent isn't surprised): no `CHANGELOG.md` exists yet → T1 creates it at root · `Statusline` is currently a **bare** `Command` variant with no args → T5 refactors it to `Statusline(StatuslineArgs)` · `LimitAvailability` today has exactly 3 variants (`Available`/`Partial`/`Unavailable`), each token-fraction-shaped (`used_fraction: f64`) → T2 reshapes them to carry `LimitMeasure` and adds the 2 new (`Unverified`/`Estimated`) · the render layer consumes `LimitSummary.availability` (built by `limit_summary` ~L649), **never `LimitWindow` directly** → a `Spend` window's dollars must live in the availability arm or T6 can't render them · `LimitAvailability`/`LimitSummary` are **not** emitted as any user-facing JSON/export output today (only the FOCUS cost rows are) → reshaping them is an internal change, **no export-schema ⛔ gate** · `rust_decimal` (`=1.42.0`, `serde`) is a workspace dep used by core but **not yet in costroid-providers** → T2 adds `rust_decimal.workspace = true` there · `deny.toml` bans openssl/native-tls globally and `apps/cli/tests/offline.rs` forbids ureq/rustls/keyring globally → T7 re-scopes ureq/rustls/keyring to `costroid-connect` only.
+
+---
+
+## 12. Ready-to-paste task prompts (T1–T7)
+
+*To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T8+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
+
+### 12.0 — Standard header (prepend to every body)
+
+```
+You are a fresh agent implementing ONE task in the Costroid repo (/home/eren/costroid).
+First read CLAUDE.md (golden rules + decide-vs-ask) and docs/PRODUCT-PLAN.md §3, §6, §11.5.
+docs/ is tracked in the repo — read it on disk; edit the plan there as needed (your edits commit with the task).
+
+Do ONLY the task below — nothing else:
+[[ paste the task body block here ]]
+
+Rules:
+- Stay inside the Scope fence: no next-task work, no unrelated refactors.
+- Library crates: no unwrap/expect/panic; new deps must be permissive (MIT/Apache-2.0/BSD/
+  ISC/Zlib/Unicode), never copyleft; rustls not openssl.
+- Any new visual needs a --plain path and must never rely on color alone.
+- Finish GREEN — run and pass all four, iterating until they do:
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo build --workspace
+    cargo test --workspace
+  Add tests against fixtures (never real user data) that prove the Done-when.
+- If a decision isn't pinned in the card, STOP and ask the human — do not guess.
+- ⛔ markers = stop for human approval before finalizing.
+- KEEP THE PLAN CURRENT: if you deviate from the card, affect a later task, or hit a new
+  decision/limitation, EDIT the affected prompt in docs/PRODUCT-PLAN.md §12 and log it in
+  §11.5 (edit on disk; the change commits with the task).
+- Do NOT commit. End by reporting: the gate output, a ≤5-line summary, any PRODUCT-PLAN.md
+  edits you made, and confirmation the card's "Next" prerequisite now holds.
+```
+
+### 12.1 — T1 · Release v0.2.0 · ⛔ · S · Prereq: none
+
+```
+**Goal:** ship the already-built cost lane (frontier, Cursor-detect, WSL fix) as v0.2.0.
+**Files:** Cargo.toml ([workspace.package].version, currently 0.1.0); Cargo.lock (refresh);
+  README.md (Status §); create CHANGELOG.md at repo root (none exists). RELEASING.md = runbook ref.
+**Scope fence:** version bump + lockfile refresh + CHANGELOG + README status wording only. NO
+  code changes in apps/ or crates/; NO edits to .github/ or dist-workspace.toml. Do NOT tag/push/publish.
+**Deliverables:** bump version 0.1.0→0.2.0; `cargo update --workspace` to refresh Cargo.lock;
+  create CHANGELOG.md with a 0.2.0 entry (frontier view; Cursor detect-and-defer; WSL Windows-root
+  auto-detect); in README Status change "frontier … lands in the next release" → "shipped in v0.2.0";
+  run `dist plan` and `dist build --artifacts=local` (dry-run, report only — no publish).
+**Done when:** gate green; `dist plan` lists 0.2.0 across the 6 targets cleanly; version + lockfile
+  bumped; CHANGELOG + README updated; tree otherwise clean.
+**⛔ You (human) then:** review, `git tag v0.2.0 && git push origin v0.2.0` (triggers release CI),
+  verify `cargo install costroid` post-release.
+**Sequencing caveat:** 0.2.0 = "ship only what's built." Development of T2+ can run in parallel, but
+  **tag v0.2.0 from a commit that does NOT yet contain T2+ build work** — either finish + tag T1 before
+  merging T2+ to `main`, or keep T2–T6 on a branch until after the tag. Otherwise the 0.2.0 release
+  ships half-finished 0.3.0 quota generalization.
+**Next:** independent — blocks nothing (modulo the tag-point caveat above).
+```
+
+### 12.2 — T2 · Quota data-model foundation · M · Prereq: none — *the lynchpin; do first*
+
+```
+**Goal:** generalize the quota types so every later provider/feature fits ONE shape (§2a). Pure
+  structural change + migration — no behavior, no rendering.
+**Files:** crates/costroid-providers/src/lib.rs (LimitKind ~L150, LimitWindow ~L156, the 3
+  parse_limits at ~L246/L280/L324, helpers unavailable_limit ~L930/limit_has_data ~L338);
+  crates/costroid-providers/Cargo.toml (add the Decimal dep — see below);
+  crates/costroid-core/src/lib.rs (LimitAvailability ~L1009, limit_availability ~L659,
+  limit_summary ~L649); apps/cli/src/render.rs (compile-fix placeholder arms ONLY — see scope fence).
+  (Line numbers are approximate anchors — grep by symbol; they shift as you edit.)
+**Scope fence:** TYPES + the pure availability map + migration ONLY. NO cache/capture (T4), NO
+  cross-check (T4), NO new providers, **NO RequestCount**. Rendering belongs to T6 — but because
+  reshaping LimitAvailability makes render's `match`es non-exhaustive, you MUST add **minimal
+  placeholder render arms** (a basic line, never `todo!()`/panic) so `cargo build`/`test` stay green;
+  do NOT do the real Spend/Unverified/Estimated formatting or snapshots (that is T6).
+**Deliverables — providers:** add `rust_decimal.workspace = true` to costroid-providers/Cargo.toml
+  (the `Spend` measure needs `Decimal`; it is already a permissive workspace dep core uses — add it,
+  do NOT treat it as a new-dependency stop-and-ask). `enum LimitKind { FiveHour, Weekly, Daily,
+  Monthly, BillingCycle }`; `enum LimitMeasure { TokenFraction(f64), Spend { used_usd: Decimal,
+  included_usd: Option<Decimal> } }`; `enum LimitStatus { Verified, Unverified, Unavailable }`; on
+  `LimitWindow` add `captured_at: DateTime<Utc>` + `status: LimitStatus`, replace
+  `used_fraction: Option<f64>` with `measure: Option<LimitMeasure>`; update
+  `unavailable_limit`/`limit_has_data`; migrate the 3 parse_limits (Codex → `TokenFraction` +
+  `status: Verified` + `captured_at` from the latest rollout entry; Claude → `Unavailable`;
+  Cursor → empty).
+**Deliverables — core:** **reshape `LimitAvailability` so its arms carry the measure, not a bare
+  `f64`** (this is what lets T6 render Spend without touching a type — see §11.5 D1). 5 variants:
+  `Available { measure: LimitMeasure, resets_at, reset_in_seconds }`, `Partial { measure:
+  Option<LimitMeasure>, resets_at, reset_in_seconds, reason }`, **new** `Unverified { measure:
+  LimitMeasure, resets_at: Option<DateTime<Utc>>, reset_in_seconds: Option<i64> }`, **new**
+  `Estimated { volume_tokens: u64, estimated_usd: Option<Decimal> }`, `Unavailable { reason }`
+  (unchanged). Make `limit_availability(&LimitWindow, generated_at) -> LimitAvailability` a PURE map
+  (Verified + measure + not-stale → Available; status Unverified → Unverified; missing/stale →
+  Partial; status Unavailable / no measure → Unavailable; the Estimated arm exists, wired later by
+  T4/T6). Update `limit_summary` and migrate every reader of `used_fraction` to `measure`. Add the
+  minimal placeholder render arms in apps/cli/src/render.rs needed to keep the build green (T6 does
+  the real rendering).
+**Done when:** gate green; all existing limit tests migrated and passing; a test asserts each
+  provider's window shape.
+**Next:** the new types exist → T3, T4, T6 build on `LimitKind`/`LimitMeasure`/`LimitStatus`/the 5
+  `LimitAvailability` variants.
+```
+
+### 12.3 — T3 · Capability descriptor · S · Prereq: T2
+
+```
+**Goal:** make each provider DECLARE its data sources / auth / quota shape (§2b) so unavailability
+  renders honestly and future adapters slot in by descriptor.
+**Files:** crates/costroid-providers/src/lib.rs (Provider trait ~L181; the 3 adapter structs).
+**Scope fence:** the enums + struct + trait method + 3 impls + 1 test ONLY. No rendering (Providers
+  tab is T11). Do NOT modify LimitWindow/LimitKind/LimitStatus (T2 owns those) — only reference them.
+**Deliverables:** `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey,
+  OptInSession, Unavailable }`; `enum AuthMethod { None, Oauth, ApiKey, OptInSession }` (both
+  Serialize/Deserialize for consistency with ProviderId/AccessPath); `struct Capability { api_cost:
+  DataSource, subscription_quota: DataSource, model_mix: DataSource, auth: AuthMethod, quota_kinds:
+  &'static [LimitKind] }`; `fn capability(&self) -> Capability` on the Provider trait. Impls:
+  Claude { api_cost: LocalArtifact, subscription_quota: SanctionedHook, model_mix: LocalArtifact,
+  auth: None, quota_kinds: [FiveHour, Weekly] }; Codex { all LocalArtifact, auth: None, [FiveHour,
+  Weekly] }; Cursor { api_cost/subscription_quota: Unavailable, model_mix: LocalArtifact, auth:
+  OptInSession, quota_kinds: [] }.
+**Done when:** gate green; a test asserts each provider's capability() values.
+**Next:** the Providers tab (T11) + deferred adapters (Copilot/Antigravity) rely on Capability.
+```
+
+### 12.4 — T4 · Claude statusLine capture: cache + cross-check · L · Prereq: T2 · 📌
+
+```
+**Spec:** docs/STATUSLINE-CAPTURE-BRIEF.md — read it fully; it IS the design (§4a provider / §4b
+  core / §5 cross-check / §9 fixtures). **Boundary:** T2 already DEFINED the types — you define NO
+  new types; you POPULATE Claude's windows and ADD the cross-check behavior.
+**Files:** crates/costroid-providers/src/lib.rs (Claude parse_limits ~L246, epoch_seconds ~L947);
+  crates/costroid-core/src/lib.rs (the finalize/cross-check; TokenTotals ~L894); fixtures/claude-code/.
+**📌 Pin before start:** UNVERIFIED_TOKEN_FLOOR = 5_000 · cache path
+  ${XDG_STATE_HOME:-~/.local/state}/costroid/claude-rate-limits.json.
+**Goal:** read the sanctioned rate_limits cache → sanitize → provisional status; then a core
+  cross-check that demotes a high-but-untrustworthy reading to Unverified; estimate fallback.
+**Scope fence:** Claude parse_limits + the core cross-check finalize + fixtures ONLY. NOT
+  setup-statusline (T5), NOT rendering (T6), NO new types (T2), NO network/keychain.
+**Deliverables:** (provider) read cache JSON (five_hour/seven_day → FiveHour/Weekly); sanitize raw
+  used_percentage BEFORE ÷100 (`>100` or `== resets_at` → no data → status Unavailable); parse
+  resets_at as epoch (reuse epoch_seconds) OR RFC3339; set captured_at from cache; provisional status
+  Verified if an in-range value survived, else Unavailable; absent/unreadable cache → two Unavailable
+  windows. (core) `window_token_volume(rows, tool, kind, now) -> TokenTotals` summing FOCUS rows in the
+  trailing window; a finalize pass that demotes a Verified Claude window to Unverified when its % is
+  high but window volume < UNVERIFIED_TOKEN_FLOOR, ages out stale windows (resets_at < generated_at),
+  and sets the Estimated path when only volume is known. (fixtures) poisoned-epoch, impossible-900,
+  false-100 (+ trivial transcript), absent, stale, iso-resets, happy.
+**Done when:** gate green; fixtures prove every degrade path (never a confident wrong number);
+  offline-acceptance still passes (no new network deps).
+**Next:** Claude windows carry real captured_at + status → T6 renders them; 0.3.0 needs T6.
+```
+
+### 12.5 — T5 · `setup-statusline` + `--capture-only` · M · ⛔ (public CLI surface) · Prereq: T4 · 📌
+
+```
+**Spec:** docs/STATUSLINE-CAPTURE-BRIEF.md (the setup-statusline section).
+**Files:** apps/cli/src/main.rs (Command enum ~L26 — currently 4 variants; Statusline is BARE with
+  no args); new apps/cli/src/setup.rs.
+**📌 Pin:** idempotency sentinel = `# costroid:statusline-capture v1`.
+**Goal:** `costroid setup-statusline` wires Claude Code's settings.json to tee rate_limits into the
+  cache (snippet-into-existing, or become-the-statusline) + a `statusline --capture-only` flag.
+**Scope fence:** the command + flag + idempotent settings.json editing (backup/undo) ONLY. Do NOT
+  implement cache read/parse (T4 owns it) or rendering.
+**Deliverables:** add `Command::SetupStatusline(SetupStatuslineArgs { undo: bool })`; refactor the
+  bare `Statusline` variant to `Statusline(StatuslineArgs { capture_only: bool, wrap: Option<String> })`
+  and update dispatch + run_statusline signature; create setup.rs: resolve a single Claude config root
+  (HostEnv::claude_roots()), read settings.json, inject the capture snippet under the sentinel (or set
+  statusLine to "costroid statusline" if none), back up to settings.json.costroid-bak, `--undo`
+  restores; idempotent (detect sentinel, skip on re-run); malformed/absent settings.json handled (no
+  panic). `statusline --capture-only`: read stdin once, extract .rate_limits, write cache atomically
+  (temp+rename), emit nothing, **exit 0 always** (even on bad input).
+**⛔ Human gate:** new public CLI surface — stop for approval on the final flags/UX before finalizing.
+**Done when:** gate green; idempotent re-run is a no-op; bad/absent settings.json handled; capture
+  parse-failure exits 0 with no write (test); offline-acceptance still passes.
+**Next:** end-to-end Claude live quota works on a Pro/Max machine.
+```
+
+### 12.6 — T6 · Render new limit states + Spend windows · M · Prereq: T2 (+T4 for live data)
+
+```
+**Goal:** render the 5 LimitAvailability arms + Spend windows (dollar pool used/included, NEVER a
+  fabricated %), with freshness + the claude.ai caveat. (Brief §6/§8.)
+**Files:** apps/cli/src/render.rs (render_limit_line ~L1065, plain_limit_line ~L1120, state_cue
+  ~L1252, plain_state_phrase ~L1261, meter helpers limit_meter_span ~L1275 / positional_meter_text
+  ~L1302); apps/cli/src/snapshots/.
+**Scope fence:** rendering + snapshots ONLY. Assume T2 already reshaped the 5 LimitAvailability arms
+  to carry `LimitMeasure` and left **minimal placeholder render arms** to keep the build green — your
+  job is to **replace those placeholders** with the real rendering. Read the fraction out of
+  `measure` (TokenFraction) and the dollar pool out of `measure` (Spend); never read a removed
+  `used_fraction`. Do NOT add data-model types (T2) or capture logic (T4).
+**Deliverables:** branch render_limit_line + plain_limit_line on all 5 arms — Available (now reads
+  `measure`: TokenFraction → meter as before, Spend → dollar line), Partial (same, measure-aware),
+  Unavailable (unchanged), **Unverified** (meter + % + a non-color cue like
+  " ? unverified" that survives --plain/NO_COLOR), **Estimated** (no meter; show window token volume +
+  estimated $ value, labeled unavailable-%). For TokenFraction reuse the meter primitives; for Spend
+  render "<tool> <kind>: $<used> / $<included> used" (no meter). Always-on "as of HH:MM" stamp from
+  captured_at (LIMIT_FRESHNESS_STAMP_MINUTES = 10); Codex gets the same stamp. Claude Available/Unverified
+  carry the caveat: "reflects Claude Code's view; claude.ai chat usage may make true usage higher."
+  Update limit_fraction() so Unverified windows can be selected as most-constrained in the statusline
+  (carry the cue). Snapshot tests for all 5 arms × braille/ASCII/plain; plain asserts no ANSI.
+**Done when:** gate green; snapshots cover all 5 arms in 3 modes; plain has no ANSI; Spend formats
+  without a meter; the stamp appears.
+**Next:** the **0.3.0 milestone** (Claude live quota + generalized model) is complete (T2+T4+T6 green).
+```
+
+### 12.7 — T7 · `costroid-connect` infra + CI re-scope · L · ⛔ · Prereq: T3
+
+```
+**Goal:** create the feature-gated network/credential crate with NO behavior yet, and re-scope the
+  no-network guarantees so the default build still PROVES zero network.
+**Files:** new crates/costroid-connect/ (Cargo.toml + src/lib.rs skeleton); root Cargo.toml (member +
+  `connect` feature); deny.toml; apps/cli/tests/offline.rs (FORBIDDEN_CRATES); scripts/offline_acceptance.sh.
+**Scope fence:** crate skeleton + feature gate + test re-scoping ONLY. **NO keychain, NO HTTP** (T8/T9).
+  No new CLI commands, no source changes to core/providers/cli beyond the test.
+**⛔ Human gate:** changing offline-acceptance + forbidden-crates redefines a safety guarantee — stop
+  for approval on the re-scoped assertions before finalizing.
+**Deliverables:** crates/costroid-connect/ (empty lib, documented as the future keychain/HTTP home);
+  root Cargo.toml adds the member + `[features] connect = []` (off by default); deny.toml scopes
+  ureq/rustls/keyring as allowed only when costroid-connect is in the tree (per cargo-deny syntax);
+  offline.rs splits into (1) the default-build check that still forbids ureq/rustls/keyring, (2) a
+  feature-aware check; scripts/offline_acceptance.sh tests the default (feature-off) build offline and
+  adds a clearly-commented STUB section for the feature-on network test (T8/T9 fill it).
+**Done when:** `cargo build/test --workspace` green with feature OFF (default); `--features connect`
+  builds; offline.rs default-build test passes; `bash scripts/offline_acceptance.sh` passes;
+  `cargo deny check licenses bans` passes.
+**Next:** T8 (keychain) and T9 (HTTP clients) have a home → 0.4.0 connections can proceed.
+```
+
+### 12.8 — Backlog tasks (T8+): the pin-then-card prompt
+
+*T8–T19 aren't carded — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
+
+```
+Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
+Your job is to PIN + CARD it, not to build it:
+1. Read CLAUDE.md, docs/PRODUCT-PLAN.md §3/§5/§8/§11.5, and the relevant code/specs.
+2. Propose concrete answers to this task's 📌 (e.g. which provider usage endpoints + auth schemes;
+   the forecast algorithm; the anomaly baseline; the Cursor RPC wire format — needs a live-install
+   discovery; the GUI design). For anything that's an external/ToS or product call, present options +
+   a recommendation and STOP for the human.
+3. Once pinned (with human sign-off where flagged), write a full T1–T7-style body for <ID> into §12
+   and log the pinned decisions in §11.5.
+4. Do NOT implement or commit. Output the proposed card + decisions for review.
+```
