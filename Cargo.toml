@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -30,9 +30,9 @@ thiserror = "=2.0.18"
 # Internal deps carry both `path` (used for local workspace builds) and `version`
 # (required by crates.io: a path-only dependency is rejected on publish). Cargo
 # uses the path locally and records only the version in the published manifest.
-costroid-core = { path = "crates/costroid-core", version = "0.1.0" }
-costroid-focus = { path = "crates/costroid-focus", version = "0.1.0" }
-costroid-providers = { path = "crates/costroid-providers", version = "0.1.0" }
+costroid-core = { path = "crates/costroid-core", version = "0.2.0" }
+costroid-focus = { path = "crates/costroid-focus", version = "0.2.0" }
+costroid-providers = { path = "crates/costroid-providers", version = "0.2.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

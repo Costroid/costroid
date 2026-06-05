@@ -13,15 +13,16 @@ It's the kind of tool that should be free and open, so it is.
 
 ## Status
 
-**Early development.** Costroid's first release, **v0.1.0**, is published — the `now`, `trends`, `statusline`, and `export` commands. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). The cost-vs-quality `frontier` view is built and lands in the next release; live Claude subscription quota (via Claude Code's `statusLine`) is in progress. Commands and flags may still evolve.
+**Early development.** Costroid's **v0.2.0** release ships the full local cost lane — the `now`, `trends`, `statusline`, and `export` commands, plus the cost-vs-quality `frontier` view (shipped in v0.2.0), Cursor detect-and-defer, and WSL Windows-root auto-detection. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). Live Claude subscription quota (via Claude Code's `statusLine`) is in progress. Commands and flags may still evolve.
 
 ## What Costroid does
 
-Shipping today (v0.1.0):
+Shipping today (v0.2.0):
 
 - **Two views in one tool.**
   - `now` — your Codex 5-hour and weekly limits with reset countdowns today (live Claude quota lands next release), plus your current API spend by model.
   - `trends` — spend over day / week / month / year, grouped or filtered by model or app.
+- **Cost-vs-quality frontier** (`frontier`) — the published cost-vs-quality frontier (DeepSWE + CursorBench) and where your own spend sits on it; advisory, sourced, **API-cost rows only**.
 - **Local logs only.** Reads what Claude Code, Codex, and Cursor already write to disk. Today's release needs no API keys and no login, and nothing leaves your machine. (Optional, opt-in connections — your own API key, or a sanctioned login — are on the roadmap; the local-only path always stays the default.)
 - **FOCUS-conformant export** (JSON / CSV) so your cost data is standard and portable.
 - **Statusline mode** for your shell, tmux, or Starship.
@@ -35,7 +36,7 @@ A note on the two views: subscription limits and API costs are deliberately sepa
 Where Costroid is headed:
 
 - **Live Claude quota (next release).** Claude Code's `statusLine` hook hands Costroid your real 5-hour and weekly limits locally — no login, no token reuse. A `costroid setup-statusline` command wires it up.
-- **Cost-vs-quality frontier** (`costroid frontier`) — built; lands next release. Plots the published cost-vs-quality frontier and where your own spend sits on it; advisory and sourced, never "just use the cheapest."
+- **Cost-vs-quality frontier** (`costroid frontier`) — **shipped in v0.2.0.** Plots the published cost-vs-quality frontier and where your own spend sits on it; advisory and sourced, never "just use the cheapest."
 - **Connections (your own key, opt-in).** Optional, default-off, feature-gated connections fetch live numbers no local log carries — your own Anthropic / OpenAI / Gemini usage-API key first, a sanctioned OAuth login where one exists, and (for Cursor, which keeps no local data) opt-in reuse of your existing session. Tokens live only in your OS keychain and are used strictly between your device and the provider. `costroid connect`/`disconnect` plus a revocable Connections view manage it. Cursor's live quota and threshold alerts ride on this.
 - **Taskbar / menu-bar app** — a planned `costroid-bar` surface built in egui (no webview), the richest and last surface; everything it shows the core already computes.
 - **Maybe later** — an MCP server (query your costs from inside your AI agent) remains a speculative, uncommitted future surface.
@@ -55,7 +56,7 @@ cargo install --path apps/cli
 
 ### Packaged installers
 
-> **v0.1.0 is published** — all commands below work today. Built and released by [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries carry build-provenance attestations + checksums but are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
+> **v0.2.0 is published** — all commands below work today. Built and released by [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries carry build-provenance attestations + checksums but are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
 
 macOS / Linux (shell):
 

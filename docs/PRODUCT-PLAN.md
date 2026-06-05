@@ -347,7 +347,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
 
 **Progress — the version-controlled "where are we"** (every fresh agent and you read this; the finishing agent ticks its own box as part of its doc edits, you confirm on commit):
-- [ ] **T1** Release v0.2.0
+- [x] **T1** Release v0.2.0 *(prep done 2026-06-05; awaiting ⛔ human tag `v0.2.0`)*
 - [ ] **T2** Quota data-model foundation *(lynchpin)*
 - [ ] **T3** Capability descriptor
 - [ ] **T4** Claude statusLine capture — cache + cross-check
@@ -430,6 +430,13 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
 
+**T1 — Release v0.2.0 (2026-06-05): version-bump mechanics + dist host limitation.**
+- **Internal dep version constraints bump in lockstep.** All four crates inherit `version.workspace = true`, so bumping `[workspace.package].version` to 0.2.0 makes every package 0.2.0 — which makes the `[workspace.dependencies]` internal constraints `costroid-core/-focus/-providers = { …, version = "0.1.0" }` (a `^0.1.0` req) **unsatisfiable** (`cargo build`/`update` fails to resolve). T1 bumped those three `version =` fields to `"0.2.0"` alongside the package version; this is part of "bump the version," **not** a code change. **Every future X.Y.Z bump must do the same** (§12.1 deliverables updated to say so).
+- **`dist build --artifacts=local` is host-scoped on a non-macOS box.** Run unscoped on Linux it tries all six target triples and cargo-dist refuses to cross-compile to macOS ("a road paved with sadness"). For a local dry-run, scope to the host triple: `dist build --artifacts=local --target x86_64-unknown-linux-gnu` — builds + archives + checksums the host artifact cleanly. The real multi-target build happens per-runner in release CI. (`dist plan` is unaffected — it cleanly lists v0.2.0 across all 6 targets + 4 installers.) RELEASING.md §3 lists the unscoped command for reference; left as-is (out of T1's edit scope) — maintainer note: scope it or rely on CI.
+- **CHANGELOG.md created** at repo root (the §11.4-grounding "no CHANGELOG.md yet → T1 creates it" item is now satisfied); cargo-dist auto-bundles it into every release archive + the npm package. **Verified:** full gate green; `dist plan` lists v0.2.0 across 6 targets; host `dist build` produced a working `costroid 0.2.0` binary.
+- **Tagging gotcha (hit live during the ⛔ handoff).** The agent does **not** commit (card rule), so the prep sat uncommitted; tagging then put `v0.2.0` on the prior `0.1.0`-manifest commit → cargo-dist's tag==version check aborts the release CI. Lesson now baked into §12.1's ⛔ step: **commit the prep before tagging**, push `main` first, then the tag. Also: the tag triggers only the GitHub-Release/installers; **crates.io is a separate manual `cargo publish` ladder** (RELEASING.md) — `cargo install costroid` keeps serving the old version until that runs.
+- **README version mentions reconciled to v0.2.0 (full sweep).** Beyond the literal "Status §": the Roadmap frontier bullet ("built; lands next release"), the "Shipping today (v0.1.0):" feature-list header (→ v0.2.0, with a `frontier` bullet added), and the packaged-installers "v0.1.0 is published" note were all flipped to v0.2.0 so the release ships a self-consistent README (DoD: docs consistent). The Claude-quota "next release" claims were **left** — they're genuinely still next-release (T2–T6 / 0.3.0). *(Status-section + Roadmap done in the initial T1 prep; the feature-list header + installer note reconciled in a follow-up at the human's request.)*
+
 **D1 — Type / behavior / render split (T2 ↔ T4 ↔ T6).** Keeps the three tasks non-overlapping so fresh agents don't collide on the same types:
 - **T2 owns all TYPES + the pure map + migration** — `LimitKind`(+Daily/Monthly/BillingCycle), `LimitMeasure { TokenFraction(f64), Spend { used_usd, included_usd } }`, `LimitStatus { Verified, Unverified, Unavailable }`; `LimitWindow` gains `captured_at` + `status` and swaps `used_fraction`→`measure`. **`LimitAvailability` is reshaped so its arms carry the `LimitMeasure`, not a bare `f64`** — this is the hinge that lets T6 render a `Spend` window *without ever touching a type* (the render layer consumes `LimitSummary.availability`, never `LimitWindow`, so dollars must live in the availability arm). Target shape — **still 5 variants**: `Available { measure: LimitMeasure, resets_at, reset_in_seconds }`, `Partial { measure: Option<LimitMeasure>, resets_at, reset_in_seconds, reason }`, **new** `Unverified { measure: LimitMeasure, resets_at: Option<DateTime<Utc>>, reset_in_seconds: Option<i64> }`, **new** `Estimated { volume_tokens: u64, estimated_usd: Option<Decimal> }`, `Unavailable { reason }` (unchanged). `limit_availability()` becomes a **pure map** (status + measure + staleness → arm). Reshaping the enum makes the existing `render_limit_line`/`plain_limit_line` `match`es non-exhaustive, so **T2 also adds minimal placeholder render arms (a basic line — no `todo!()`/panic) purely to keep `cargo build`/`test` green; the real measure-aware rendering, the `Spend` formatting, and the snapshots are T6's.** Add `rust_decimal.workspace = true` to `costroid-providers/Cargo.toml` (the `Spend` measure needs `Decimal`; it is already a vetted permissive workspace dep that core uses — **not** a new-dependency "stop and ask"). Migrate Codex=`Verified` `TokenFraction`, Claude=`Unavailable`, Cursor=empty, all constructors + tests.
 - **T4 owns BEHAVIOR only (defines no new types)** — Claude `parse_limits` (cache read + sanitize + provisional status); the core cross-check finalize (`window_token_volume` + demote `Verified`→`Unverified` on high-%-trivial-volume; stale age-out; estimate fallback); fixtures.
@@ -485,14 +492,25 @@ Rules:
   README.md (Status §); create CHANGELOG.md at repo root (none exists). RELEASING.md = runbook ref.
 **Scope fence:** version bump + lockfile refresh + CHANGELOG + README status wording only. NO
   code changes in apps/ or crates/; NO edits to .github/ or dist-workspace.toml. Do NOT tag/push/publish.
-**Deliverables:** bump version 0.1.0→0.2.0; `cargo update --workspace` to refresh Cargo.lock;
+**Deliverables:** bump version 0.1.0→0.2.0 — `[workspace.package].version` **and** the three
+  `[workspace.dependencies]` internal constraints (`costroid-core/-focus/-providers = { …, version }`),
+  which bump in lockstep because the crates inherit `version.workspace = true` (a stale `^0.1.0` req
+  won't resolve against 0.2.0); `cargo update --workspace` to refresh Cargo.lock;
   create CHANGELOG.md with a 0.2.0 entry (frontier view; Cursor detect-and-defer; WSL Windows-root
-  auto-detect); in README Status change "frontier … lands in the next release" → "shipped in v0.2.0";
-  run `dist plan` and `dist build --artifacts=local` (dry-run, report only — no publish).
+  auto-detect); in README Status change "frontier … lands in the next release" → "shipped in v0.2.0"
+  (also flip the Roadmap section's matching frontier "lands next release" claim, for consistency);
+  run `dist plan` and `dist build --artifacts=local` (dry-run, report only — no publish; on a non-macOS
+  host scope it to the host triple, e.g. `--target x86_64-unknown-linux-gnu`, since cargo-dist refuses
+  to cross-compile to macOS — CI builds each target natively).
 **Done when:** gate green; `dist plan` lists 0.2.0 across the 6 targets cleanly; version + lockfile
   bumped; CHANGELOG + README updated; tree otherwise clean.
-**⛔ You (human) then:** review, `git tag v0.2.0 && git push origin v0.2.0` (triggers release CI),
-  verify `cargo install costroid` post-release.
+**⛔ You (human) then:** review, **then COMMIT the prep first** (the agent does NOT commit) so the
+  tag lands on a commit whose manifest says `0.2.0` — cargo-dist hard-requires the pushed tag to
+  equal `[workspace.package].version`, so tagging a still-`0.1.0` commit makes the release CI abort.
+  Then `git push origin main && git tag v0.2.0 && git push origin v0.2.0` (triggers the GitHub-Release
+  CI: installers only). **The tag does NOT publish to crates.io** — run the `cargo publish` ladder in
+  RELEASING.md separately (focus → providers → core → cli), or `cargo install costroid` keeps serving
+  the old version. Verify `cargo install costroid` only *after* that crates.io publish.
 **Sequencing caveat:** 0.2.0 = "ship only what's built." Development of T2+ can run in parallel, but
   **tag v0.2.0 from a commit that does NOT yet contain T2+ build work** — either finish + tag T1 before
   merging T2+ to `main`, or keep T2–T6 on a branch until after the tag. Otherwise the 0.2.0 release
