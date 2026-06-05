@@ -37,8 +37,7 @@ If that button isn't available, or you'd rather use email, contact **costroid@pr
 **In scope:**
 
 - The `costroid` CLI and TUI.
-- The library crates: `costroid-core`, `costroid-focus`, `costroid-providers`, `costroid-mcp`.
-- The tray app (`apps/bar`) once it ships.
+- The library crates: `costroid-core`, `costroid-focus`, `costroid-providers`.
 - Release artifacts and installers, including the **integrity of the bundled pricing data** and the release/signing pipeline.
 
 **Out of scope:**
@@ -55,9 +54,9 @@ These are the commitments Costroid is designed around. They follow directly from
 - **Local-first.** Costroid reads data already on your machine. **In Phase 1 it makes no network calls at all.**
 - **No telemetry.** There is no telemetry by default. Any future update check is opt-in, clearly disclosed, and individually disableable.
 - **Your data never leaves your device.** Usage and cost data are processed locally and are not transmitted anywhere.
-- **Secrets live only in the OS keychain.** When optional login arrives (Phase 2), tokens are stored solely via the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). They are **never** written to disk, configuration files, or logs.
+- **Secrets live only in the OS keychain.** When optional login arrives, tokens are stored solely via the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). They are **never** written to disk, configuration files, or logs.
 - **No backend.** Credentials flow strictly between your device and the provider. **There is no Costroid server** in this product, and nothing is proxied through one.
-- **Authentication tiers.** Phase 1 uses local logs only (no credentials). Phase 2 adds reuse of an existing local session and an optional OAuth login (keychain-stored). Reading browser cookies, if ever offered, is a clearly-disclosed, off-by-default last resort.
+- **Authentication tiers.** Phase 1 uses local data only — **no credentials**: provider logs plus Claude Code's sanctioned `statusLine` push (an Anthropic-built extension point that hands Costroid the live `rate_limits` block locally, with zero token reuse and zero API tokens). Reusing a stored credential against a provider's own endpoint is a **disfavored, opt-in, off-by-default last resort, used only for Cursor** (which has no local data or sanctioned hook); an optional OAuth login (keychain-stored) is the documented upgrade. Reading browser cookies, if ever offered, is a clearly-disclosed, off-by-default last resort.
 - **Verifiable releases.** Release artifacts are published with SHA-256 checksums and keyless GitHub build-provenance attestations, so you can verify their origin and integrity (see below). OS code-signing (macOS notarization, Windows Authenticode) is not yet in place — planned for a later release.
 - **Dependency hygiene.** Costroid is Apache-2.0 and uses permissively-licensed dependencies only (no copyleft), with dependency advisory scanning in CI.
 - **Untrusted input.** Provider log files are treated as untrusted input and parsed defensively; malformed data should be handled gracefully, never crash unsafely or execute anything.

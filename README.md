@@ -13,7 +13,7 @@ It's the kind of tool that should be free and open, so it is.
 
 ## Status
 
-**Early development — Phase 1.** Costroid's first release, **v0.1.0**, is published. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). The Phase-1 interface is in place; commands and flags may still evolve. Nothing in the [Roadmap](#roadmap) section (Phases 2–4) exists yet.
+**Early development.** Costroid's first release, **v0.1.0**, is published — the `now`, `trends`, `statusline`, and `export` commands. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). The cost-vs-quality `frontier` view is built and lands in the next release; live Claude subscription quota (via Claude Code's `statusLine`) is in progress. Commands and flags may still evolve.
 
 ## What Costroid does
 
@@ -32,14 +32,15 @@ A note on the two views: subscription limits and API costs are deliberately sepa
 
 ## Roadmap
 
-Not yet built — here's where Costroid is headed:
+Where Costroid is headed:
 
-- **Phase 2** — live quotas via your existing tool sessions, plus optional OAuth login (tokens stored only in your OS keychain, used strictly between your device and the provider). Threshold alerts.
-- **Phase 3** — a cross-platform tray / menu-bar app for Windows, macOS, GNOME, and KDE.
-- **Phase 4** — an MCP server (query your costs from inside your AI agent) and quality-per-dollar model recommendations.
+- **Live Claude quota (next release).** Claude Code's `statusLine` hook hands Costroid your real 5-hour and weekly limits locally — no login, no token reuse. A `costroid setup-statusline` command wires it up.
+- **Cost-vs-quality frontier** (`costroid frontier`) — built; lands next release. Plots the published cost-vs-quality frontier and where your own spend sits on it; advisory and sourced, never "just use the cheapest."
+- **Live Cursor quota** — Cursor keeps no local data, so its live usage/quota is an **opt-in, off-by-default** fetch (your existing session, or an OAuth login; tokens stored only in your OS keychain, used strictly between your device and the provider). Plus threshold alerts.
+- **Maybe later, on demand** — a tray / menu-bar app and an MCP server (query your costs from inside your AI agent) are possible future surfaces, not committed.
 - A separate, team-oriented **web platform** for company-wide cost management is planned as its own project.
 
-See [HANDOFF.md](HANDOFF.md) for the full plan and phase-by-phase acceptance criteria.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [AGENTS.md](AGENTS.md) for the full build spec and scope.
 
 ## Quickstart
 
@@ -110,7 +111,7 @@ On an interactive terminal, `costroid` and `costroid trends` open a navigable vi
 
 - **No telemetry, by default.** Any update check is opt-in and clearly disclosed.
 - **Your data stays on your machine.** Phase 1 reads local logs only; nothing is uploaded.
-- **Secrets live in your OS keychain.** When optional login arrives (Phase 2), tokens are stored via the system keychain and used only between your device and the provider — never routed through any Costroid server.
+- **Secrets live in your OS keychain.** When optional login arrives, tokens are stored via the system keychain and used only between your device and the provider — never routed through any Costroid server.
 - **Attested releases.** Release binaries carry keyless [GitHub build-provenance attestations](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) and SHA-256 checksums — verify with `gh attestation verify <file> --repo Costroid/costroid`. OS code-signing (macOS notarization, Windows Authenticode) is not yet in place, so first run may show an unidentified-developer / SmartScreen prompt.
 - Local cost figures are **estimates** (your tokens × current prices). Costroid is built to reconcile them against your actual provider invoices, which are the source of truth.
 
@@ -120,7 +121,7 @@ Costroid follows [FinOps Foundation](https://www.finops.org) practice and emits 
 
 ## Project status & contributing
 
-- Plan and architecture: [HANDOFF.md](HANDOFF.md)
+- Build spec and architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Building Costroid, and the rules that AI coding agents must follow: [AGENTS.md](AGENTS.md)
 - Contributions are welcome — please read [AGENTS.md](AGENTS.md) first.
 

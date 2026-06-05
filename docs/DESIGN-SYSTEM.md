@@ -2,7 +2,7 @@
 
 This document specifies Costroid's visual language and TUI/CLI UX in enough detail to implement: the brand, the braille rendering primitive, each component's dot math and states, the two screens, the accessibility fallbacks, and the voice. The render-mode plumbing (`Braille` / `Ascii` / `Plain`, capability detection, terminal restore) is in [ARCHITECTURE.md](ARCHITECTURE.md); this document defines what gets drawn.
 
-One thing to internalize up front, because it shapes every component: **a terminal cell has a single foreground color.** Braille gives sub-cell *shape and texture* (2×4 dots per character) but not sub-cell *color*. So in the terminal, "used vs remaining" is expressed as **bright vs dim cells**, and fills advance at cell granularity (use more cells for finer reads). The "solid dot vs hollow ring" look from the design mockups is only achievable in **raster/SVG** surfaces (the Phase 3 tray icon, the website, marketing) — there it's allowed; in the terminal, ring → dim dot.
+One thing to internalize up front, because it shapes every component: **a terminal cell has a single foreground color.** Braille gives sub-cell *shape and texture* (2×4 dots per character) but not sub-cell *color*. So in the terminal, "used vs remaining" is expressed as **bright vs dim cells**, and fills advance at cell granularity (use more cells for finer reads). The "solid dot vs hollow ring" look from the design mockups is only achievable in **raster/SVG** surfaces (the website, marketing) — there it's allowed; in the terminal, ring → dim dot.
 
 ## Brand basics
 
@@ -30,23 +30,12 @@ glyph = char::from_u32(0x2800 + bitmask)
 
 Examples: `⠉` (dots 1,4) = `0x2800 + 1 + 8`; full cell `⣿` = `0x2800 + 255`; left column `⡇` (dots 1,2,3,7) = `0x2800 + 71`.
 
-**Two realization techniques:**
+**Everything is hand-rasterized** — Costroid computes braille cells directly from the codepoint (above), **never** via Ratatui's `Canvas` or `symbols::braille` constants (`Canvas` is TUI-only and drifts across versions, which would break one-shot / `--plain` parity — ARCHITECTURE §7/§12). Two patterns over the same primitive:
 
 1. **Styled glyph runs** — for horizontal meters and bars. Compose a row of braille cells, color the run. Simple, exact, no canvas. Used for meters, cost bars, the statusline glyph.
-2. **`Canvas` with `Marker::Braille`** — for 2D plots needing vertical resolution (the sparkline). Ratatui rasterizes points into braille for you:
+2. **Hand-rasterized 2D plot** — for the sparkline, which needs vertical resolution. Bucket the values, compute each column's dot-height, set the bottom-up dot bits in each cell's bitmask, and emit the glyph run (dot math under Spend sparkline). Because it's the same primitive as the meters, the **one styled document feeds the TUI and the one-shot/`--plain` adapters identically**.
 
-```rust
-use ratatui::symbols::Marker;
-use ratatui::widgets::canvas::{Canvas, Points};
-
-Canvas::default()
-    .marker(Marker::Braille)         // 2x4 dots/cell; Ascii mode → Marker::Dot or Marker::Bar
-    .x_bounds([0.0, n as f64])
-    .y_bounds([0.0, max])
-    .paint(|ctx| { ctx.draw(&Points { coords: &pts, color: used }); });
-```
-
-In `RenderMode::Ascii`, swap the marker to `Marker::Dot`/`Marker::Bar`. In `RenderMode::Plain`, don't draw a canvas at all — emit the plain-text substitute (see Accessibility). (Ratatui v0.30 also offers `Marker::Octant` — denser, fewer gaps — as an alternative; Braille stays the default for widest support.)
+In `RenderMode::Ascii` (braille unsupported), the same rasterizer emits a block / `.:-=+*#` ramp instead of braille; in `RenderMode::Plain`, no plot is drawn — emit the plain-text substitute (see Accessibility).
 
 ## Components
 
@@ -78,7 +67,7 @@ Each provider shows two meters (5-hour and weekly), labeled, stacked.
 
 ### Spend sparkline
 
-A `Canvas`/`Marker::Braille` plot of bucketed spend over the period — **ink only** (draw the data dots, no track). For `n` buckets with values `vᵢ` and `max = max(vᵢ)` (or a fixed ceiling), each bucket's height in dot-rows is:
+A **hand-rasterized braille** plot of bucketed spend over the period — **ink only** (draw the data dots, no track), computed directly from the codepoint (no Ratatui `Canvas`; ARCHITECTURE §7). For `n` buckets with values `vᵢ` and `max = max(vᵢ)` (or a fixed ceiling), each bucket's height in dot-rows is:
 
 ```
 h_i = clamp(round((v_i / max) * H), if v_i > 0 { 1 } else { 0 }, H)
@@ -121,21 +110,6 @@ frames: ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏     cadence: ~80ms/frame
 ```
 
 Used only briefly; never for steady-state. ASCII fallback: `| / - \`.
-
-### Tray icon (Phase 3 — raster, so rings are allowed)
-
-The tray/menu-bar icon is a rendered image, not terminal text, so it uses the **solid-dot vs hollow-ring** look from the mockups. The icon is the mark's braille cell, filled bottom-up by the most-constrained limit:
-
-```
-filled_dots = clamp(round(f * DOTS_IN_CELL), if f > 0 { 1 } else { 0 }, DOTS_IN_CELL)
-```
-
-Solid dots = used, hollow rings = remaining. Color: monochrome under `warn`, amber at ≥ `warn`, red at ≥ `critical`/over — with the icon shape itself changing enough (more filled dots, plus the color) that state is legible without relying on color. A provider **incident** overlays a small badge.
-
-- **Per-provider mode:** one tray item per provider, each its own filling cell.
-- **Merge-icon mode:** one tray item showing the worst current state across providers, with a dropdown listing each provider's meters.
-
-Built and tested on the host OS (not WSL).
 
 ## The two screens
 
@@ -185,7 +159,7 @@ d / w / m / y   set period (day / week / month / year)        [trends]
 g               cycle group (model → app → total)             [trends]
 tab             switch screen (now ↔ trends)
 f  or  /        filter (fuzzy select model / app)
-a               ask — hand the loaded context to the insight/recommendation engine (Phase 4)
+a               ask — hand the loaded context to the insight/recommendation (frontier) view
 r               refresh now
 q / Ctrl-C      quit (always restores the terminal)
 ?               help
@@ -215,10 +189,9 @@ sparkline     prefer a labeled numeric list; or an ASCII height ramp .:-=+*#
 cost bar      "claude opus 4.8   $24.10   (57%)"                 # no bar, or "####"
 statusline    "costroid $4.18  78% used, resets in 2h14m"
 spinner       "| / - \"  or  "working..."
-tray icon     n/a (raster surface; provides an accessible tooltip/label)
 ```
 
-**Font/terminal fallback:** if braille isn't supported (replacement-char risk) Costroid downshifts automatically — `Marker::Dot`/block for canvas, ASCII for meters/bars — without the user asking. Piped/non-TTY output is always plain.
+**Font/terminal fallback:** if braille isn't supported (replacement-char risk) Costroid downshifts automatically — a block / `.:-=+*#` ramp for the sparkline, ASCII `[####--]` for meters/bars — without the user asking. Piped/non-TTY output is always plain.
 
 ## Voice & copy
 
@@ -226,14 +199,14 @@ The insight line is where Costroid sounds like a colleague: proactive, plain, sp
 
 **Rules:**
 - Cost is an estimate — hedge accordingly (`~`, "estimated", "about"). Never claim certainty about money you inferred.
-- Recommendations (Phase 4) are advisory and **sourced**, and attach only to API-cost lines — never to subscription limits.
+- Recommendations are advisory and **sourced**, and attach only to API-cost lines — never to subscription limits.
 - One insight at a time. Quiet by default. Never block the user or demand a response.
 - Sentence case, no emoji, no exclamation spam, no fake urgency, no greetings ("Hey there!").
 
 **Good:**
 - "You're pacing toward ~$58 this week — Opus drove most of it. (estimated)"
 - "Weekly Claude limit at 92%, resets Sunday. Codex still has headroom."
-- (Phase 4) "Sonnet could cover ~40% of these tasks at about ⅓ the cost. Advisory — sources: SWE-bench, CursorBench (vendor)."
+- "Sonnet could cover ~40% of these tasks at about ⅓ the cost. Advisory — sources: DeepSWE, CursorBench (vendor)."
 
 **Avoid:**
 - "🚨 WARNING!! You are SPENDING TOO MUCH!!!"

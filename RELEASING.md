@@ -26,7 +26,7 @@ human-triggered action and is intentionally not automated to run on a normal pus
   build-provenance attestation (Actions OIDC — no certificates, no secrets).
 
 **Not in v0.1.0** (deferred): macOS notarization / Windows Authenticode code-signing, Scoop, MSI,
-the `costroid-mcp` crate (Phase 4).
+the `costroid-mcp` crate (deferred/speculative — see ARCHITECTURE §10).
 
 ---
 
@@ -119,8 +119,8 @@ Gotchas (learned shipping v0.1.0):
   on crates.io).
 - Versions are permanent (yank-only) — publish deliberately, in order.
 
-**`costroid-mcp`** does not exist yet (Phase 4). Its crates.io name is intentionally left
-unclaimed; we do not publish a placeholder.
+**`costroid-mcp`** does not exist yet (deferred/speculative — ARCHITECTURE §10). Its crates.io name
+is intentionally left unclaimed; we do not publish a placeholder.
 
 ---
 

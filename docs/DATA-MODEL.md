@@ -66,20 +66,40 @@ This is the most important modeling rule, and it concerns the quota **limits** s
 ```rust
 /// A subscription quota window. NOT a FOCUS charge row — carries no summable cost.
 pub struct LimitWindow {
-    pub tool: String,              // "claude-code" | "cursor" | ...
+    pub tool: String,              // "claude-code" | "codex" | "cursor" | ...
     pub plan: Option<String>,      // plan/tier name if known
     pub kind: LimitKind,           // FiveHour | Weekly
-    pub used_fraction: f64,        // 0.0..=1.0
-    pub resets_at: DateTime<Utc>,  // next reset (RFC 3339, UTC)
+    pub used_fraction: f64,        // 0.0..=1.0. Claude's statusLine gives a 0–100
+                                   // `used_percentage`; sanitize the RAW percentage
+                                   // (see `status`) BEFORE dividing by 100.
+    pub resets_at: DateTime<Utc>,  // next reset (UTC). Claude `resets_at` is parsed
+                                   // defensively — seen as epoch seconds AND ISO across versions.
+    pub captured_at: DateTime<Utc>,// when this reading was observed. Push-only sources
+                                   // (Claude's statusLine) are only as fresh as the last
+                                   // turn — used to label "as of HH:MM / stale" and to age
+                                   // a reading out to Unavailable once past `resets_at`.
+    pub status: LimitStatus,       // Verified | Unverified | Unavailable (see below)
     pub label: Option<String>,
 }
 
-pub enum LimitKind { FiveHour, Weekly }
+pub enum LimitKind { FiveHour, Weekly } // Cursor adds a reset-window variant in Phase 2
+                                        // (verify daily vs monthly billing cycle first).
+
+/// Confidence in a limit reading. Claude's `statusLine` `rate_limits` field is buggy
+/// (ARCHITECTURE §9.2): out-of-range / poisoned values (epoch in `used_percentage`, 900%)
+/// are sanitized to `Unavailable`; an in-range-but-wrong value (e.g. a flat 100% with no
+/// throttling) that diverges from Costroid's own local token volume for the window is
+/// demoted to `Unverified` — flagged, never silently trusted *or* suppressed (a high
+/// reading may be legitimately real). The local estimate is a validator when the field
+/// is present, and the fallback when it's absent.
+pub enum LimitStatus { Verified, Unverified, Unavailable }
 ```
 
-**A model used both ways** is distinguished by access path. Its API traffic produces FOCUS rows with `x_AccessPath = "api"` and a real pay-as-you-go cost estimate; its subscription traffic produces FOCUS rows with `x_AccessPath = "subscription"` carrying an *estimated equivalent value* (what that usage would cost at API rates), while its quota status shows up separately as `LimitWindow`s in the now-screen's limits section. The lanes are never summed together, and recommendations (Phase 4) attach **only** to `x_AccessPath = "api"` rows, because only there does changing models change a real bill.
+**The Opus weekly sub-cap is not a `LimitWindow`.** Claude's `statusLine` exposes only the overall `five_hour`/`seven_day` windows — there is no per-model (Opus/Sonnet) quota field. For an Opus-heavy user the Opus weekly may bind first, but its % is unobservable, so do **not** synthesize a `LimitWindow` with a fabricated fraction for it. Lead with the overall 7d % (the measurable number) and show **Opus 7d token volume + estimated value from local logs** alongside — itself a local-log approximation of Anthropic's window, labeled as such — with the cap-relative % marked unavailable (ARCHITECTURE §8).
 
-**Detecting access path (never guess).** Set `x_AccessPath` from evidence, not assumption. For **Codex**, the presence of `rate_limits` windows in the rollout is a subscription signal → `subscription`. For **Claude Code**, derive from auth mode (subscription/OAuth login vs `ANTHROPIC_API_KEY`) using non-secret *presence* signals only — never read credential values. Use `api` only on a clear pay-as-you-go / API-key signal, and `unknown` only when no signal exists. Subscription-access rows carry their dollar figure as an estimate (`x_Estimated = true`), never a bill, and never feed Phase-4 recommendations.
+**A model used both ways** is distinguished by access path. Its API traffic produces FOCUS rows with `x_AccessPath = "api"` and a real pay-as-you-go cost estimate; its subscription traffic produces FOCUS rows with `x_AccessPath = "subscription"` carrying an *estimated equivalent value* (what that usage would cost at API rates), while its quota status shows up separately as `LimitWindow`s in the now-screen's limits section. The lanes are never summed together, and recommendations attach **only** to `x_AccessPath = "api"` rows, because only there does changing models change a real bill.
+
+**Detecting access path (never guess).** Set `x_AccessPath` from evidence, not assumption. For **Codex**, the presence of `rate_limits` windows in the rollout is a subscription signal → `subscription`. For **Claude Code**, derive from auth mode (subscription/OAuth login vs `ANTHROPIC_API_KEY`) using non-secret *presence* signals only — never read credential values. Use `api` only on a clear pay-as-you-go / API-key signal, and `unknown` only when no signal exists. Subscription-access rows carry their dollar figure as an estimate (`x_Estimated = true`), never a bill, and never feed the recommendation (frontier) view.
 
 **Subscription usage is valued in Phase 1.** Costroid emits FOCUS rows for subscription token usage with `BilledCost`/`EffectiveCost` derived as an *estimated equivalent value* — what that usage would have cost at API rates — marked `x_AccessPath = "subscription"` and `x_Estimated = true`. This lane must be labeled unmistakably as estimated equivalent value, never presented as a bill or actual spend, never summed with the API lane, and never fed to recommendations. (The fuller "is my subscription worth it?" comparison — weighing this estimated value against the flat fee — remains a later feature; Phase 1 only produces and labels the valued rows.)
 
@@ -182,9 +202,9 @@ Limits are **not** part of the FOCUS export (they are not charges). If a limits 
 
 Each adapter discovers local data (WSL-aware: also check `/mnt/c/Users/<user>/...` when the tool runs on Windows) and maps it to `UsageEvent`/`LimitWindow`. **Confirm each provider's current local path and log schema during implementation** — these change, and exact formats must be read from a real install plus a committed fixture, not assumed. Notes below are starting points, not guarantees.
 
-- **Claude Code.** *(Confirmed against a real install.)* Usage lives in conversation-transcript JSONL under `projects/`: `~/.claude/projects/<project>/<session>.jsonl`, and (Claude Code v1.0.30+) `~/.config/claude/projects/**/*.jsonl`; honor `CLAUDE_CONFIG_DIR` (a comma-separated root list) before the defaults. Each assistant turn exposes `message.model`, `timestamp`, `cwd`, and `message.usage.{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}`; the **project** is derived from `cwd` / the project directory. Logs are retained ~30 days by default. **No quota/reset fields exist locally** — Claude Code subscription limits are *unavailable* in Phase 1 (they arrive via Phase 2 live data); surface them as partial/unavailable, never guessed. Map each nonzero token meter to its own FOCUS row; cost is estimated from token × price.
+- **Claude Code.** *(Confirmed against a real install.)* Usage lives in conversation-transcript JSONL under `projects/`: `~/.claude/projects/<project>/<session>.jsonl`, and (Claude Code v1.0.30+) `~/.config/claude/projects/**/*.jsonl`; honor `CLAUDE_CONFIG_DIR` (a comma-separated root list) before the defaults. Each assistant turn exposes `message.model`, `timestamp`, `cwd`, and `message.usage.{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}`; the **project** is derived from `cwd` / the project directory. Logs are retained ~30 days by default. **No quota/reset fields exist in the session logs** — but Claude Code's live 5h/7d subscription limits arrive *locally, inside the Phase-1 trust envelope,* through its **`statusLine` hook**: a `rate_limits` block (`five_hour`/`seven_day`, each `used_percentage` 0–100 + `resets_at`; Pro/Max only, after the first API response; zero API tokens), captured by the statusline integration and side-written to a no-secret local cache (ARCHITECTURE §8). That field is **buggy** — absent for API keys, poisoned (epoch in `used_percentage`) at session start, and occasionally false-in-range (a flat 100% with no throttling) — so **sanitize (`>100` / `==resets_at`) and cross-check a high reading against local token volume**, mapping it to a `LimitWindow` with `status` = `Verified` / `Unverified` / `Unavailable` accordingly (ARCHITECTURE §9.2); never guess. The per-model (Opus/Sonnet) weekly sub-cap is **not** exposed (see the Opus note above). Map each nonzero token meter to its own FOCUS row; cost is estimated from token × price.
 - **Codex.** *(Confirmed against a real install.)* Rollout JSONL under `~/.codex/sessions/**/*.jsonl` (honor `CODEX_HOME`; Windows-mounted equivalent under WSL). Token usage is under `payload.info.last_token_usage`; subscription rate limits are under `payload.rate_limits.primary` (5-hour, `window_minutes` 300) and `payload.rate_limits.secondary` (weekly, `window_minutes` 10080), each with `used_percent` and an epoch `resets_at`. Model and `cwd` come from the rollout metadata / turn context. Map usage to FOCUS rows (`x_Tool = "codex"`); map the **latest** rollout entry's rate limits to `LimitWindow`s. Parse the JSONL only — `state_*.sqlite` is not needed.
-- **Cursor.** Cursor's local data is the most partial of the three: some usage is in local app data, but plan, quota, and billing-reset information has historically lived in the account/session rather than purely local logs. In Phase 1, extract whatever usage is available locally and emit what can be derived; full quota/limit fidelity for Cursor is expected to require Tier-2 session reuse in Phase 2. Be explicit in the UI when Cursor data is incomplete rather than guessing.
+- **Cursor.** Cursor keeps **no local usage or quota** — the CLI fetches both live from `api2.cursor.sh`, so there is nothing to parse from local logs (ARCHITECTURE §4). In v1 (Phase 1), Cursor is **detection only**: detect its presence + the selected model from the `~/.cursor` config (honor `CURSOR_DATA_DIR`), label it **beta**, and surface usage/quota as *"unavailable — live (Phase 2)."* Never read chat content; never guess a number. Live Cursor cost/quota — and a new `LimitWindow` kind for its reset window (verify daily vs the monthly billing cycle first) — are the disfavored, opt-in, default-off Phase-2 credential-reuse path.
 
 When a provider isn't installed or no data is found, skip it gracefully — never error the whole run.
 
