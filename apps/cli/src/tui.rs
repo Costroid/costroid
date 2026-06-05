@@ -22,8 +22,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_now_document, render_trends_document, RenderOptions, SemanticStyle, StyledDocument,
-    StyledLine,
+    render_frontier_document, render_now_document, render_trends_document, RenderOptions,
+    SemanticStyle, StyledDocument, StyledLine,
 };
 
 const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -35,12 +35,14 @@ const COLLECT_INTERVAL: Duration = Duration::seconds(2);
 pub(crate) enum StartScreen {
     Now,
     Trends,
+    Frontier,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
     Now,
     Trends,
+    Frontier,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +88,8 @@ struct TuiConfig {
 #[derive(Debug, Clone)]
 struct App {
     screen: Screen,
+    /// Where `a` was pressed from, so `esc`/`n` returns there.
+    previous_screen: Screen,
     period: Period,
     group_by: GroupBy,
     filter: String,
@@ -108,11 +112,14 @@ impl App {
         live: bool,
         render_options: RenderOptions,
     ) -> Self {
+        let screen = match start_screen {
+            StartScreen::Now => Screen::Now,
+            StartScreen::Trends => Screen::Trends,
+            StartScreen::Frontier => Screen::Frontier,
+        };
         Self {
-            screen: match start_screen {
-                StartScreen::Now => Screen::Now,
-                StartScreen::Trends => Screen::Trends,
-            },
+            screen,
+            previous_screen: Screen::Now,
             period,
             group_by,
             filter: String::new(),
@@ -179,6 +186,8 @@ impl App {
                 self.screen = match self.screen {
                     Screen::Now => Screen::Trends,
                     Screen::Trends => Screen::Now,
+                    // Frontier is entered/left via `a`/`esc`, not the Tab cycle.
+                    Screen::Frontier => Screen::Now,
                 };
                 AppAction::Continue
             }
@@ -212,15 +221,22 @@ impl App {
                 self.help_open = !self.help_open;
                 AppAction::Continue
             }
-            KeyCode::Char('a') => {
-                self.status = Some(
-                    "ask/recommendations arrive in Phase 4; no network or LLM call was made"
-                        .to_string(),
-                );
+            KeyCode::Char('a') if self.screen != Screen::Frontier => {
+                self.previous_screen = self.screen;
+                self.screen = Screen::Frontier;
+                self.status = Some("cost-vs-quality frontier; no network or LLM call".to_string());
+                AppAction::Continue
+            }
+            KeyCode::Char('n') if self.screen == Screen::Frontier => {
+                self.screen = self.previous_screen;
                 AppAction::Continue
             }
             KeyCode::Esc => {
-                self.help_open = false;
+                if self.help_open {
+                    self.help_open = false;
+                } else if self.screen == Screen::Frontier {
+                    self.screen = self.previous_screen;
+                }
                 AppAction::Continue
             }
             _ => AppAction::Continue,
@@ -283,6 +299,16 @@ impl App {
                         apply_trends_filter(&mut summary, &self.filter);
                         render_trends_document(&summary, options)
                     }
+                    Screen::Frontier => match costroid_core::bench_view(&snapshot) {
+                        Ok(view) => render_frontier_document(&view, options),
+                        Err(error) => {
+                            let mut doc = StyledDocument::new();
+                            doc.push(StyledLine::plain(format!(
+                                "frontier data unavailable: {error}"
+                            )));
+                            doc
+                        }
+                    },
                 }
             }
             None => loading_document(self, options),
@@ -293,6 +319,7 @@ impl App {
         let left = match self.screen {
             Screen::Now => "now",
             Screen::Trends => "trends",
+            Screen::Frontier => "frontier",
         };
         let live = if self.live { "live" } else { "manual" };
         let filter = if self.filter.trim().is_empty() {
@@ -305,7 +332,11 @@ impl App {
             .as_deref()
             .map(|value| format!(" | {value}"))
             .unwrap_or_default();
-        format!("{left} | {live} | tab switch | r refresh | ? help | q quit{filter}{status}")
+        let nav = match self.screen {
+            Screen::Frontier => "esc back",
+            Screen::Now | Screen::Trends => "tab switch | a frontier",
+        };
+        format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
     }
 }
 
@@ -423,14 +454,15 @@ fn draw_app(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
 }
 
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(74, 12, area);
+    let popup = centered_rect(74, 13, area);
     let lines = vec![
         Line::from("d/w/m/y  set trends period"),
         Line::from("g        cycle trends group"),
         Line::from("tab      switch now/trends"),
+        Line::from("a        cost-vs-quality frontier"),
+        Line::from("esc / n  back from frontier"),
         Line::from("f or /   filter model/app rows"),
         Line::from("r        refresh local logs"),
-        Line::from("a        Phase 4 ask/recommendations note"),
         Line::from("?        close help"),
         Line::from("q/Ctrl-C quit"),
     ];
@@ -866,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_and_phase_four_stub_are_visible_state() {
+    fn filter_and_frontier_navigation_state() {
         let mut app = app_with_snapshot(StartScreen::Trends, RenderMode::Braille);
 
         assert_eq!(app.handle_key(key(KeyCode::Char('/'))), AppAction::Continue);
@@ -877,12 +909,26 @@ mod tests {
         assert_eq!(app.filter, "op");
         assert!(!app.filter_editing);
 
+        // `a` opens the frontier from trends; esc returns there. No network/LLM.
         assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Frontier);
         assert!(app
             .status
             .as_deref()
             .unwrap_or_default()
-            .contains("Phase 4"));
+            .contains("no network"));
+        assert_eq!(app.handle_key(key(KeyCode::Esc)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Trends);
+    }
+
+    #[test]
+    fn a_opens_frontier_and_n_or_esc_returns_to_origin() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Frontier);
+        // `a` is inert once on the frontier (no re-entry).
+        assert_eq!(app.handle_key(key(KeyCode::Char('n'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Now);
     }
 
     #[test]
@@ -975,7 +1021,17 @@ mod tests {
         app.help_open = true;
         let help_frame = frame_to_string(&app, 90, 20);
         assert!(help_frame.contains("help"));
-        assert!(help_frame.contains("Phase 4"));
+        assert!(help_frame.contains("frontier"));
+    }
+
+    #[test]
+    fn frame_snapshot_frontier_surface() {
+        let app = app_with_snapshot(StartScreen::Frontier, RenderMode::Braille);
+        let frame = frame_to_string(&app, 90, 26);
+
+        assert!(frame.contains("cost vs quality"));
+        assert!(frame.contains("DeepSWE"));
+        assert!(frame.contains("dominated by gpt-5.5"));
     }
 
     #[test]

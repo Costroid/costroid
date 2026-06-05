@@ -126,6 +126,9 @@ for p in day week month year; do
   done
 done
 
+# frontier: cost-vs-quality surface from bundled benchmarks, plain
+check "frontier (--plain)" 10 "costroid frontier" -- "$bin" frontier --plain
+
 # statusline, plain
 check "statusline (--plain)" 5 "costroid" -- "$bin" statusline --plain
 

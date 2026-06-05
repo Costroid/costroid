@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "notes": "Bundled, dated, cited cost-vs-quality snapshot. Phase-1: never fetched. cost_per_task_usd is the benchmark's OWN reported avg $/task, used only for the reference-frontier cost axis; the dollar delta and the user's actual spend always use the pricing catalog / Costroid's cache-correct cost, never this. DeepSWE costs are indicative (methodology unpublished, widely reported cache-miss priced); CursorBench costs are cache-aware/sound (its caveat is provenance, not cost). model_id must match the pricing catalog key where a re-pricing rate is wanted; a model_id absent from the catalog (e.g. composer-2.5) is a gap. A null cost = no published figure (plotted by score only, cost 'n/a', never guessed) - not exercised by the seeded data below, but supported.",
+  "benchmarks": [
+    {
+      "name": "DeepSWE",
+      "role": "primary",
+      "source": "https://deepswe.datacurve.ai",
+      "as_of": "2026-05-30",
+      "harness": "mini-swe-agent",
+      "cost_note": "neutral mini-swe-agent harness, not your tool; avg cost/task is cache-miss priced (~5x overstated) - indicative",
+      "points": [
+        { "model_id": "gpt-5.5",           "label": "gpt-5.5",           "score_pct": "70.0", "cost_per_task_usd": "6.61" },
+        { "model_id": "claude-opus-4-7",   "label": "claude-opus-4.7",   "score_pct": "54.0", "cost_per_task_usd": "18.19" },
+        { "model_id": "claude-sonnet-4-6", "label": "claude-sonnet-4.6", "score_pct": "32.0", "cost_per_task_usd": "5.52" }
+      ]
+    },
+    {
+      "name": "CursorBench v3.1",
+      "role": "corroborating",
+      "source": "https://cursor.com/cursorbench",
+      "as_of": "2026-05-18",
+      "harness": null,
+      "cost_note": "vendor benchmark - Cursor's own private, non-reproducible tasks, showcases Composer; cost is cache-aware (each model's published per-token pricing incl. cache reads, applied to tokens used, then averaged) - sound; the caveat is provenance, not cost",
+      "points": [
+        { "model_id": "composer-2.5",    "label": "Composer 2.5",       "score_pct": "63.2", "cost_per_task_usd": "0.55", "note": "Cursor subscription only - no API access" },
+        { "model_id": "claude-opus-4-7", "label": "Opus 4.7 Max",       "score_pct": "64.8", "cost_per_task_usd": "11.02" },
+        { "model_id": "gpt-5.5",         "label": "GPT-5.5 Extra High",  "score_pct": "64.3", "cost_per_task_usd": "4.37" }
+      ]
+    }
+  ]
+}

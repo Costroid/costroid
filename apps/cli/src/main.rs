@@ -5,7 +5,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use costroid_core::{GroupBy, NowOptions, Period, TrendsOptions};
 use costroid_providers::HostEnv;
-use render::{detect_render_options, render_now, render_statusline, render_trends, RenderMode};
+use render::{
+    detect_render_options, render_frontier, render_now, render_statusline, render_trends,
+    RenderMode,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "costroid", version, about = "Local AI coding cost visibility")]
@@ -23,6 +26,8 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Trends(TrendsArgs),
+    /// Cost-vs-quality frontier: where your API-billed models sit against published benchmarks.
+    Frontier,
     Statusline,
     Export(ExportArgs),
 }
@@ -81,6 +86,19 @@ fn main() -> Result<()> {
                 )?;
             }
         }
+        Some(Command::Frontier) => {
+            if render_options.mode == RenderMode::Plain {
+                run_frontier(render_options)?;
+            } else {
+                tui::run(
+                    tui::StartScreen::Frontier,
+                    Period::Week,
+                    GroupBy::Model,
+                    cli.live,
+                    render_options,
+                )?;
+            }
+        }
         Some(Command::Statusline) => {
             run_statusline(render_options)?;
         }
@@ -124,6 +142,14 @@ fn run_trends(args: &TrendsArgs, render_options: render::RenderOptions) -> Resul
         },
     );
     print!("{}", render_trends(&summary, render_options));
+    Ok(())
+}
+
+fn run_frontier(render_options: render::RenderOptions) -> Result<()> {
+    let env = HostEnv::detect();
+    let snapshot = costroid_core::collect_local_snapshot(&env)?;
+    let view = costroid_core::bench_view(&snapshot)?;
+    print!("{}", render_frontier(&view, render_options));
     Ok(())
 }
 

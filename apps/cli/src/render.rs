@@ -4,8 +4,9 @@ use std::io::{self, IsTerminal};
 
 use chrono::{DateTime, Local};
 use costroid_core::{
-    AggregateTotals, CostLane, CostLaneSummary, GroupBy, LimitAvailability, LimitSummary,
-    NowSummary, Period, PeriodRange, ProviderStatusKind, TrendsSummary,
+    AggregateTotals, BenchFrontier, BenchView, CostLane, CostLaneSummary, FrontierPoint,
+    FrontierStanding, GroupBy, LimitAvailability, LimitSummary, NowSummary, OverlayModel, Period,
+    PeriodRange, ProviderStatusKind, RepricingDelta, RepricingStatus, TrendsSummary,
 };
 use costroid_providers::{LimitKind, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
@@ -260,6 +261,466 @@ pub(crate) fn render_now(summary: &NowSummary, options: RenderOptions) -> String
 
 pub(crate) fn render_trends(summary: &TrendsSummary, options: RenderOptions) -> String {
     render_trends_document(summary, options).render(options)
+}
+
+pub(crate) fn render_frontier(view: &BenchView, options: RenderOptions) -> String {
+    render_frontier_document(view, options).render(options)
+}
+
+pub(crate) fn render_frontier_document(view: &BenchView, options: RenderOptions) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_frontier_plain_document(view),
+        RenderMode::Braille | RenderMode::Ascii => render_frontier_visual_document(view, options),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frontier surface — the cost-vs-quality scatter. Monochrome (Plain/Strong only;
+// never Warn — amber is reserved for the near-limit state). Informs, never prescribes.
+// ---------------------------------------------------------------------------
+
+const SCATTER_HEIGHT: usize = 6;
+/// Braille 2x4 dot layout: `[row][col]` → dot number (left col 1,2,3,7; right 4,5,6,8).
+const SCATTER_DOT_AT: [[u8; 2]; 4] = [[1, 4], [2, 5], [3, 6], [7, 8]];
+
+/// A single benchmark point in plot space. The rasterizer is pure geometry — it knows
+/// nothing about models, names, or money.
+struct PlotPoint {
+    x: f64,
+    y: f64,
+    on_frontier: bool,
+}
+
+fn render_frontier_visual_document(view: &BenchView, options: RenderOptions) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_header_line(
+        &mut out,
+        mark(options),
+        "cost vs quality",
+        format_money(&total_overlay_spend(view), Some("USD"), true),
+        options,
+    );
+
+    for frontier in &view.frontiers {
+        push_rule(&mut out, options);
+        push_line(
+            &mut out,
+            &format!(
+                "{} — {}   as of {}",
+                frontier.name,
+                role_label(&frontier.role),
+                frontier.as_of
+            ),
+        );
+        push_line(&mut out, &format!("  {}", frontier.cost_note));
+        push_line(&mut out, &format!("  source: {}", frontier.source));
+        let points = plot_points(frontier);
+        let width = scatter_width(options);
+        for row in scatter_rows(&points, width, SCATTER_HEIGHT, options) {
+            push_line(&mut out, &format!("  {row}"));
+        }
+        push_line(&mut out, "  x: cost/task ->   y: score (high = top)");
+        for point in &frontier.points {
+            push_line(&mut out, &format!("  {}", point_line(point)));
+        }
+    }
+
+    push_rule(&mut out, options);
+    push_line(&mut out, "your models (API-billed):");
+    if view.no_api_usage || view.overlay.is_empty() {
+        push_line(&mut out, "  no API-billed usage to compare");
+    } else {
+        for model in &view.overlay {
+            out.push(overlay_line(model));
+        }
+    }
+
+    push_rule(&mut out, options);
+    push_line(&mut out, &frontier_insight_line(view));
+    push_provider_notes(&mut out, &view.providers);
+    push_empty_provider_guidance(&mut out, &view.providers);
+    out
+}
+
+fn render_frontier_plain_document(view: &BenchView) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid frontier");
+    for frontier in &view.frontiers {
+        push_line(
+            &mut out,
+            &format!(
+                "{} — {}, source {}, as of {}",
+                frontier.name,
+                role_label(&frontier.role),
+                frontier.source,
+                frontier.as_of
+            ),
+        );
+        push_line(&mut out, &format!("  caveat: {}", frontier.cost_note));
+        for point in &frontier.points {
+            push_line(&mut out, &format!("  {}", plain_point_line(point, view)));
+        }
+    }
+    if view.no_api_usage || view.overlay.is_empty() {
+        push_line(&mut out, "your models: no API-billed usage to compare");
+    } else {
+        push_line(&mut out, "your models (API-billed):");
+        for model in &view.overlay {
+            push_line(&mut out, &format!("  {}", plain_overlay_line(model)));
+        }
+    }
+    push_line(&mut out, &plain_frontier_insight_line(view));
+    push_provider_notes(&mut out, &view.providers);
+    push_empty_provider_guidance(&mut out, &view.providers);
+    out
+}
+
+fn total_overlay_spend(view: &BenchView) -> Decimal {
+    view.overlay
+        .iter()
+        .fold(Decimal::ZERO, |total, model| total + model.billed_cost)
+}
+
+fn role_label(role: &str) -> String {
+    match role {
+        "primary" => "primary (neutral)".to_string(),
+        "corroborating" => "corroborating (vendor)".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn plot_points(frontier: &BenchFrontier) -> Vec<PlotPoint> {
+    frontier
+        .points
+        .iter()
+        .filter_map(|point| {
+            let cost = point.cost_per_task_usd?;
+            Some(PlotPoint {
+                x: cost.to_f64().unwrap_or(0.0),
+                y: point.score_pct.to_f64().unwrap_or(0.0),
+                on_frontier: point.standing == FrontierStanding::OnFrontier,
+            })
+        })
+        .collect()
+}
+
+fn point_line(point: &FrontierPoint) -> String {
+    let cost = match point.cost_per_task_usd {
+        Some(value) => format!("@ {}", format_money(&value, Some("USD"), true)),
+        None => "@ cost n/a".to_string(),
+    };
+    let standing = match &point.standing {
+        FrontierStanding::OnFrontier => "on frontier".to_string(),
+        FrontierStanding::Dominated { by } => format!("off (dominated by {by})"),
+        FrontierStanding::CostUnknown => "score only".to_string(),
+    };
+    let note = point
+        .note
+        .as_deref()
+        .map(|note| format!("  — {note}"))
+        .unwrap_or_default();
+    format!(
+        "{}  {}% {}  {}{}",
+        point.label,
+        score_text(point),
+        cost,
+        standing,
+        note
+    )
+}
+
+fn plain_point_line(point: &FrontierPoint, view: &BenchView) -> String {
+    let cost = match point.cost_per_task_usd {
+        Some(value) => format!("{}/task", format_money(&value, Some("USD"), true)),
+        None => "n/a".to_string(),
+    };
+    let standing = match &point.standing {
+        FrontierStanding::OnFrontier => "yes".to_string(),
+        FrontierStanding::Dominated { by } => format!("no (dominated by {by})"),
+        FrontierStanding::CostUnknown => "n/a (no published cost)".to_string(),
+    };
+    let spend = view
+        .overlay
+        .iter()
+        .find(|model| model.model_id == point.model_id)
+        .map(|model| format_money(&model.billed_cost, Some("USD"), true))
+        .unwrap_or_else(|| "none".to_string());
+    let note = point
+        .note
+        .as_deref()
+        .map(|note| format!(" — {note}"))
+        .unwrap_or_default();
+    format!(
+        "{}: score {}%, cost {}, on frontier: {}, your API spend: {}{}",
+        point.label,
+        score_text(point),
+        cost,
+        standing,
+        spend,
+        note
+    )
+}
+
+fn score_text(point: &FrontierPoint) -> String {
+    point.score_pct.normalize().to_string()
+}
+
+fn overlay_line(model: &OverlayModel) -> StyledLine {
+    let mut line = StyledLine::new();
+    line.push_plain(format!("  {}  spent ", model.model_id));
+    line.push_styled(
+        format_money(&model.billed_cost, Some("USD"), true),
+        SemanticStyle::Strong,
+    );
+    if let Some(delta) = best_delta(model) {
+        let phrase = delta_phrase(delta);
+        if !phrase.is_empty() {
+            line.push_plain(phrase);
+        }
+    }
+    line
+}
+
+fn plain_overlay_line(model: &OverlayModel) -> String {
+    let mut line = format!(
+        "{}: spent {}",
+        model.model_id,
+        format_money(&model.billed_cost, Some("USD"), true)
+    );
+    if let Some(delta) = best_delta(model) {
+        line.push_str(&delta_phrase(delta));
+    }
+    line
+}
+
+/// The most-favorable computed re-pricing comparison (largest saving), if any.
+fn best_delta(model: &OverlayModel) -> Option<&RepricingDelta> {
+    model
+        .repricing
+        .iter()
+        .filter(|delta| delta.status == RepricingStatus::Computed)
+        .min_by(|left, right| left.delta_usd.cmp(&right.delta_usd))
+}
+
+/// Cost-only, equal-volume phrasing. INFORM, never PRESCRIBE — states a cost fact,
+/// never "switch to X".
+fn delta_phrase(delta: &RepricingDelta) -> String {
+    let money = format_money(&delta.delta_usd.abs(), Some("USD"), true);
+    if delta.delta_usd < Decimal::ZERO {
+        format!(
+            " · {} costs about {} less at equal volume",
+            delta.target_model_id, money
+        )
+    } else if delta.delta_usd > Decimal::ZERO {
+        format!(
+            " · {} costs about {} more at equal volume",
+            delta.target_model_id, money
+        )
+    } else {
+        String::new()
+    }
+}
+
+fn frontier_insight_line(view: &BenchView) -> String {
+    if view.no_api_usage || view.overlay.is_empty() {
+        return "◆ no API-billed usage to compare against the frontier. (estimated)".to_string();
+    }
+    let top = view
+        .overlay
+        .iter()
+        .max_by(|left, right| left.billed_cost.cmp(&right.billed_cost));
+    match top {
+        Some(model) => {
+            if let Some(delta) = best_delta(model) {
+                if delta.delta_usd < Decimal::ZERO {
+                    return format!(
+                        "◆ {} drove most of your API spend; {} sits cheaper on the frontier at equal volume. (estimated)",
+                        model.model_id, delta.target_model_id
+                    );
+                }
+            }
+            if model
+                .appearances
+                .iter()
+                .any(|appearance| appearance.standing == FrontierStanding::OnFrontier)
+            {
+                format!(
+                    "◆ {} drove most of your API spend and already sits on the frontier. (estimated)",
+                    model.model_id
+                )
+            } else {
+                format!(
+                    "◆ {} drove most of your API spend. (estimated)",
+                    model.model_id
+                )
+            }
+        }
+        None => "◆ no API-billed usage to compare against the frontier. (estimated)".to_string(),
+    }
+}
+
+fn plain_frontier_insight_line(view: &BenchView) -> String {
+    frontier_insight_line(view).replace('◆', "insight:")
+}
+
+fn scatter_width(options: RenderOptions) -> usize {
+    options.width.saturating_sub(4).clamp(20, 40)
+}
+
+fn scatter_rows(
+    points: &[PlotPoint],
+    width: usize,
+    height: usize,
+    options: RenderOptions,
+) -> Vec<String> {
+    match options.mode {
+        RenderMode::Braille => braille_scatter(points, width, height, true),
+        _ => ascii_scatter(points, width, height),
+    }
+}
+
+/// Hand-rasterized braille scatter (no Ratatui `Canvas`, consistent with the sparkline).
+/// A `Vec<u8>` of `w*h` cells, one braille bitmask byte each; points set dots in a
+/// `w*2 × h*4` dot grid (y inverted so high score is at top); frontier points are bold
+/// full cells, optionally joined by a thin connector.
+fn braille_scatter(
+    points: &[PlotPoint],
+    w_cells: usize,
+    h_cells: usize,
+    draw_line: bool,
+) -> Vec<String> {
+    let w = w_cells.max(1);
+    let h = h_cells.max(1);
+    if points.is_empty() {
+        return vec![braille_blank().to_string().repeat(w); h];
+    }
+    let dot_w = w * 2;
+    let dot_h = h * 4;
+    let mut buf = vec![0_u8; w * h];
+    let (x_min, x_max) = min_max(points.iter().map(|point| point.x));
+    let (y_min, y_max) = min_max(points.iter().map(|point| point.y));
+
+    for point in points {
+        let dx = axis_index(point.x, x_min, x_max, dot_w, false);
+        let dy = axis_index(point.y, y_min, y_max, dot_h, true);
+        set_scatter_dot(&mut buf, w, h, dx, dy);
+    }
+
+    let mut frontier_dots: Vec<(usize, usize)> = points
+        .iter()
+        .filter(|point| point.on_frontier)
+        .map(|point| {
+            (
+                axis_index(point.x, x_min, x_max, dot_w, false),
+                axis_index(point.y, y_min, y_max, dot_h, true),
+            )
+        })
+        .collect();
+    frontier_dots.sort_by_key(|&(dx, _)| dx);
+    for &(dx, dy) in &frontier_dots {
+        let cx = (dx / 2).min(w - 1);
+        let cy = (dy / 4).min(h - 1);
+        buf[cy * w + cx] = 0xFF;
+    }
+    if draw_line {
+        for pair in frontier_dots.windows(2) {
+            scatter_line(&mut buf, w, h, pair[0], pair[1]);
+        }
+    }
+
+    (0..h)
+        .map(|cy| {
+            (0..w)
+                .map(|cx| byte_to_braille(buf[cy * w + cx]))
+                .collect::<String>()
+        })
+        .collect()
+}
+
+fn ascii_scatter(points: &[PlotPoint], w_cells: usize, h_cells: usize) -> Vec<String> {
+    let w = w_cells.max(1);
+    let h = h_cells.max(1);
+    let mut grid = vec![vec![' '; w]; h];
+    if !points.is_empty() {
+        let (x_min, x_max) = min_max(points.iter().map(|point| point.x));
+        let (y_min, y_max) = min_max(points.iter().map(|point| point.y));
+        for point in points {
+            let cx = axis_index(point.x, x_min, x_max, w, false);
+            let cy = axis_index(point.y, y_min, y_max, h, true);
+            let glyph = if point.on_frontier { '#' } else { '.' };
+            if !(grid[cy][cx] == '#' && glyph == '.') {
+                grid[cy][cx] = glyph;
+            }
+        }
+    }
+    grid.into_iter()
+        .map(|row| row.into_iter().collect())
+        .collect()
+}
+
+fn set_scatter_dot(buf: &mut [u8], w: usize, h: usize, dx: usize, dy: usize) {
+    let cx = (dx / 2).min(w - 1);
+    let cy = (dy / 4).min(h - 1);
+    let dot = SCATTER_DOT_AT[dy % 4][dx % 2];
+    buf[cy * w + cx] |= bit_for_dot(dot);
+}
+
+fn scatter_line(buf: &mut [u8], w: usize, h: usize, a: (usize, usize), b: (usize, usize)) {
+    let mut x0 = a.0 as isize;
+    let mut y0 = a.1 as isize;
+    let x1 = b.0 as isize;
+    let y1 = b.1 as isize;
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    loop {
+        let px = usize::try_from(x0).unwrap_or(0);
+        let py = usize::try_from(y0).unwrap_or(0);
+        set_scatter_dot(buf, w, h, px, py);
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+fn min_max(values: impl Iterator<Item = f64>) -> (f64, f64) {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for value in values {
+        if value < lo {
+            lo = value;
+        }
+        if value > hi {
+            hi = value;
+        }
+    }
+    if lo.is_finite() && hi.is_finite() {
+        (lo, hi)
+    } else {
+        (0.0, 1.0)
+    }
+}
+
+fn axis_index(value: f64, lo: f64, hi: f64, n: usize, invert: bool) -> usize {
+    let max_index = n.saturating_sub(1) as f64;
+    let fraction = if hi > lo {
+        (value - lo) / (hi - lo)
+    } else {
+        0.5
+    };
+    let fraction = if invert { 1.0 - fraction } else { fraction };
+    (fraction * max_index).round().clamp(0.0, max_index) as usize
 }
 
 pub(crate) fn render_statusline(summary: &NowSummary, options: RenderOptions) -> String {
@@ -987,22 +1448,32 @@ fn mark(options: RenderOptions) -> &'static str {
     }
 }
 
-fn braille_cell(dots: &[u8]) -> char {
-    let mut mask = 0_u32;
-    for dot in dots {
-        mask += match dot {
-            1 => 1,
-            2 => 2,
-            3 => 4,
-            4 => 8,
-            5 => 16,
-            6 => 32,
-            7 => 64,
-            8 => 128,
-            _ => 0,
-        };
+/// Bit for a braille dot number (1-8) in the U+2800 cell mask.
+fn bit_for_dot(dot: u8) -> u8 {
+    match dot {
+        1 => 1,
+        2 => 2,
+        3 => 4,
+        4 => 8,
+        5 => 16,
+        6 => 32,
+        7 => 64,
+        8 => 128,
+        _ => 0,
     }
-    char::from_u32(0x2800 + mask).unwrap_or('\u{2800}')
+}
+
+fn braille_cell(dots: &[u8]) -> char {
+    let mut mask = 0_u8;
+    for dot in dots {
+        mask |= bit_for_dot(*dot);
+    }
+    byte_to_braille(mask)
+}
+
+/// A filled braille cell mask → its glyph (base U+2800 + the 8-bit dot mask).
+fn byte_to_braille(mask: u8) -> char {
+    char::from_u32(0x2800 + u32::from(mask)).unwrap_or('\u{2800}')
 }
 
 fn braille_blank() -> char {
@@ -1812,5 +2283,160 @@ mod tests {
             &subscription_only_now(),
             RenderOptions::plain()
         ));
+    }
+
+    // ----- frontier surface -----
+
+    fn frontier_event(
+        model: &str,
+        access: costroid_providers::AccessPath,
+        input: u64,
+        output: u64,
+    ) -> costroid_providers::UsageEvent {
+        costroid_providers::UsageEvent {
+            tool: costroid_providers::ProviderId::Codex,
+            model: model.to_string(),
+            timestamp: utc(2026, 6, 2, 9, 0),
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            project: Some("/work/proj".to_string()),
+            access_path: access,
+        }
+    }
+
+    fn bench_view_for(events: &[costroid_providers::UsageEvent]) -> BenchView {
+        let focus_rows = match costroid_core::focus_records_from_usage(events) {
+            Ok(rows) => rows,
+            Err(err) => panic!("events should price: {err}"),
+        };
+        let snapshot = costroid_core::EngineSnapshot {
+            generated_at: utc(2026, 6, 2, 9, 0),
+            usage_events: Vec::new(),
+            focus_rows,
+            limit_windows: Vec::new(),
+            providers: Vec::new(),
+        };
+        match costroid_core::bench_view(&snapshot) {
+            Ok(view) => view,
+            Err(err) => panic!("bench view should build: {err}"),
+        }
+    }
+
+    fn used_gpt() -> BenchView {
+        bench_view_for(&[frontier_event(
+            "gpt-5.5",
+            costroid_providers::AccessPath::Api,
+            1_000_000,
+            1_000_000,
+        )])
+    }
+
+    #[test]
+    fn snapshot_frontier_plain() {
+        insta::assert_snapshot!(render_frontier(&used_gpt(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn snapshot_frontier_plain_no_api() {
+        insta::assert_snapshot!(render_frontier(
+            &bench_view_for(&[]),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_frontier_braille() {
+        insta::assert_snapshot!(render_frontier(&used_gpt(), RenderOptions::braille(true)));
+    }
+
+    #[test]
+    fn plain_frontier_has_no_ansi() {
+        let output = render_frontier(&used_gpt(), RenderOptions::plain());
+        assert!(
+            !output.contains('\u{1b}'),
+            "plain frontier must not contain ANSI escapes: {output}"
+        );
+    }
+
+    #[test]
+    fn braille_scatter_maps_known_points() {
+        // Top-left point lands in cell 0 (dot 1 = ⠁); bottom-right in cell 1 (dot 8 = ⢀).
+        let top_left = PlotPoint {
+            x: 0.0,
+            y: 100.0,
+            on_frontier: false,
+        };
+        let bottom_right = PlotPoint {
+            x: 10.0,
+            y: 0.0,
+            on_frontier: false,
+        };
+        assert_eq!(
+            braille_scatter(&[top_left, bottom_right], 2, 1, false),
+            vec!["⠁⢀".to_string()]
+        );
+
+        // A degenerate axis (all same x) must not panic and keeps the grid shape.
+        let same_x = vec![
+            PlotPoint {
+                x: 5.0,
+                y: 1.0,
+                on_frontier: false,
+            },
+            PlotPoint {
+                x: 5.0,
+                y: 2.0,
+                on_frontier: false,
+            },
+        ];
+        let rows = braille_scatter(&same_x, 3, 2, false);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.chars().count() == 3));
+    }
+
+    #[test]
+    fn frontier_document_is_monochrome() {
+        let doc = render_frontier_document(&used_gpt(), RenderOptions::braille(true));
+        for line in &doc.lines {
+            for span in &line.spans {
+                assert!(
+                    !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
+                    "frontier must be monochrome (amber/red are reserved): {span:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn frontier_insight_uses_advisory_voice() {
+        let line = frontier_insight_line(&used_gpt());
+        assert!(
+            line.starts_with('◆'),
+            "insight should use the ◆ marker: {line}"
+        );
+        assert!(
+            line.contains("(estimated)") || line.contains('~'),
+            "insight should hedge: {line}"
+        );
+        let lower = line.to_lowercase();
+        assert!(
+            !lower.contains("switch to"),
+            "insight must not prescribe: {line}"
+        );
+        assert!(
+            !lower.contains("you should"),
+            "insight must not prescribe: {line}"
+        );
+        assert!(plain_frontier_insight_line(&used_gpt()).starts_with("insight:"));
+    }
+
+    #[test]
+    fn frontier_no_api_states_nothing_to_compare() {
+        let output = render_frontier(&bench_view_for(&[]), RenderOptions::plain());
+        assert!(output.contains("no API-billed usage to compare"));
+        // Reference frontier still renders both benchmarks with their dominance verdicts.
+        assert!(output.contains("dominated by gpt-5.5"));
     }
 }

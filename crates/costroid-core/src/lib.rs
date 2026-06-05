@@ -17,6 +17,12 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod bench;
+pub use bench::{
+    bench_view, BenchDisclaimer, BenchFrontier, BenchView, FrontierPoint, FrontierStanding,
+    OverlayAppearance, OverlayModel, RepricingDelta, RepricingStatus,
+};
+
 const PRICING_STATUS_PRICED: &str = "priced";
 const PRICING_STATUS_UNKNOWN_MODEL: &str = "unknown_model";
 const PRICING_SCHEMA_VERSION: &str = "1";
@@ -447,6 +453,15 @@ impl PricingCatalog {
     fn rate(&self, model: &str, token_type: TokenType) -> Option<&CatalogRate> {
         self.rates
             .get(&(model.to_string(), token_type.as_str().to_string()))
+    }
+
+    /// Per-1M-token list price for a `(model, meter)` pair, by the meter's string id
+    /// (`"input"`/`"output"`/`"cache_read"`/`"cache_write"`). Lets `bench` re-price by
+    /// the `x_token_type` string without round-tripping through `TokenType`.
+    fn meter_price(&self, model: &str, meter: &str) -> Option<Decimal> {
+        self.rates
+            .get(&(model.to_string(), meter.to_string()))
+            .map(|rate| rate.price)
     }
 
     /// Resolve a raw log model id to the catalog key whose info/rates apply.
@@ -1088,6 +1103,9 @@ pub enum CoreError {
 
     #[error("bundled pricing table is invalid: {0}")]
     PricingValidation(String),
+
+    #[error("bundled benchmark data is invalid: {0}")]
+    BenchValidation(String),
 
     #[error("FOCUS export failed: {0}")]
     Focus(#[from] FocusError),
