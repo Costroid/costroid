@@ -8,7 +8,7 @@ use costroid_core::{
     FrontierStanding, GroupBy, LimitAvailability, LimitSummary, NowSummary, OverlayModel, Period,
     PeriodRange, ProviderStatusKind, RepricingDelta, RepricingStatus, TrendsSummary,
 };
-use costroid_providers::{LimitKind, ProviderId};
+use costroid_providers::{LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
@@ -1062,36 +1062,55 @@ fn sum_costs(rows: &[CostLaneSummary]) -> Decimal {
         .fold(Decimal::ZERO, |total, row| total + row.totals.billed_cost)
 }
 
+/// The token-fraction carried by a [`LimitMeasure`], if any. `Spend` measures have no
+/// fraction (`None`) and fall to a placeholder line until T6 renders them properly.
+fn measure_fraction(measure: &LimitMeasure) -> Option<f64> {
+    match measure {
+        LimitMeasure::TokenFraction(fraction) => Some(*fraction),
+        LimitMeasure::Spend { .. } => None,
+    }
+}
+
+/// T2 placeholder text for limit shapes T6 will format properly — `Spend` measures and
+/// the new `Unverified`/`Estimated` availability arms. No producer emits these in T2,
+/// so this never reaches a user; it exists only to keep the `match`es exhaustive and
+/// the build green (PRODUCT-PLAN §11.5 D1). Real measure-aware rendering is T6's.
+const LIMIT_RENDER_PENDING: &str = "limit detail pending";
+
 fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> StyledLine {
     let tool = provider_name(limit.tool);
     let kind = limit_kind(limit.kind);
+    let pending = || StyledLine::plain(format!("  {tool:<12} {kind:<3} {LIMIT_RENDER_PENDING}"));
     match &limit.availability {
         LimitAvailability::Available {
-            used_fraction,
+            measure,
             reset_in_seconds,
             ..
-        } => {
-            let cue = state_cue(limit_state(*used_fraction));
-            let mut line = StyledLine::new();
-            line.push_plain(format!("  {tool:<12} {kind:<3} "));
-            line.spans
-                .push(limit_meter_span(*used_fraction, LIMIT_BAR_WIDTH, options));
-            line.push_plain(format!(
-                "  {}{}  resets {}",
-                percent(*used_fraction),
-                cue,
-                reset_countdown(*reset_in_seconds)
-            ));
-            line
-        }
+        } => match measure_fraction(measure) {
+            Some(used_fraction) => {
+                let cue = state_cue(limit_state(used_fraction));
+                let mut line = StyledLine::new();
+                line.push_plain(format!("  {tool:<12} {kind:<3} "));
+                line.spans
+                    .push(limit_meter_span(used_fraction, LIMIT_BAR_WIDTH, options));
+                line.push_plain(format!(
+                    "  {}{}  resets {}",
+                    percent(used_fraction),
+                    cue,
+                    reset_countdown(*reset_in_seconds)
+                ));
+                line
+            }
+            None => pending(),
+        },
         LimitAvailability::Partial {
-            used_fraction,
+            measure,
             reset_in_seconds,
             reason,
             ..
-        } => match used_fraction {
+        } => match measure.as_ref().and_then(measure_fraction) {
             Some(fraction) => {
-                let cue = state_cue(limit_state(*fraction));
+                let cue = state_cue(limit_state(fraction));
                 let reset = reset_in_seconds
                     .map(reset_countdown)
                     .map(|value| format!(" resets {value}"))
@@ -1099,10 +1118,10 @@ fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> StyledLine
                 let mut line = StyledLine::new();
                 line.push_plain(format!("  {tool:<12} {kind:<3} "));
                 line.spans
-                    .push(limit_meter_span(*fraction, LIMIT_BAR_WIDTH, options));
+                    .push(limit_meter_span(fraction, LIMIT_BAR_WIDTH, options));
                 line.push_plain(format!(
                     "  {}{}  partial: {}{}",
-                    percent(*fraction),
+                    percent(fraction),
                     cue,
                     reason,
                     reset
@@ -1111,6 +1130,8 @@ fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> StyledLine
             }
             None => StyledLine::plain(format!("  {tool:<12} {kind:<3} partial: {reason}")),
         },
+        // T6 renders these; T2 keeps the build green with a basic placeholder line.
+        LimitAvailability::Unverified { .. } | LimitAvailability::Estimated { .. } => pending(),
         LimitAvailability::Unavailable { reason } => {
             StyledLine::plain(format!("  {tool:<12} {kind:<3} unavailable: {reason}"))
         }
@@ -1122,24 +1143,29 @@ fn plain_limit_line(limit: &LimitSummary) -> String {
     let kind = limit_kind(limit.kind);
     match &limit.availability {
         LimitAvailability::Available {
-            used_fraction,
+            measure,
             reset_in_seconds,
             ..
-        } => {
-            let cue = plain_state_phrase(limit_state(*used_fraction));
-            format!(
-                "  {tool} {kind}: {} used{cue}, resets in {}",
-                percent(*used_fraction),
-                reset_countdown(*reset_in_seconds)
-            )
-        }
+        } => match measure_fraction(measure) {
+            Some(used_fraction) => {
+                let cue = plain_state_phrase(limit_state(used_fraction));
+                format!(
+                    "  {tool} {kind}: {} used{cue}, resets in {}",
+                    percent(used_fraction),
+                    reset_countdown(*reset_in_seconds)
+                )
+            }
+            None => format!("  {tool} {kind}: {LIMIT_RENDER_PENDING}"),
+        },
         LimitAvailability::Partial {
-            used_fraction,
+            measure,
             reset_in_seconds,
             reason,
             ..
         } => {
-            let usage = used_fraction
+            let usage = measure
+                .as_ref()
+                .and_then(measure_fraction)
                 .map(|fraction| format!("{} used", percent(fraction)))
                 .unwrap_or_else(|| "usage unknown".to_string());
             let reset = reset_in_seconds
@@ -1148,6 +1174,10 @@ fn plain_limit_line(limit: &LimitSummary) -> String {
                 .unwrap_or_default();
             format!("  {tool} {kind}: partial, {usage}{reset}, {reason}")
         }
+        // T6 renders these; T2 keeps the build green with a basic placeholder line.
+        LimitAvailability::Unverified { .. } | LimitAvailability::Estimated { .. } => {
+            format!("  {tool} {kind}: {LIMIT_RENDER_PENDING}")
+        }
         LimitAvailability::Unavailable { reason } => {
             format!("  {tool} {kind}: unavailable, {reason}")
         }
@@ -1155,42 +1185,45 @@ fn plain_limit_line(limit: &LimitSummary) -> String {
 }
 
 fn plain_limit_phrase(limit: &LimitSummary) -> String {
+    let tool = provider_name(limit.tool);
+    let kind = limit_kind(limit.kind);
     match &limit.availability {
         LimitAvailability::Available {
-            used_fraction,
+            measure,
             reset_in_seconds,
             ..
-        } => format!(
-            "{} {} {} used, resets in {}",
-            provider_name(limit.tool),
-            limit_kind(limit.kind),
-            percent(*used_fraction),
-            compact_reset(*reset_in_seconds)
-        ),
+        } => match measure_fraction(measure) {
+            Some(used_fraction) => format!(
+                "{tool} {kind} {} used, resets in {}",
+                percent(used_fraction),
+                compact_reset(*reset_in_seconds)
+            ),
+            None => format!("{tool} {kind} {LIMIT_RENDER_PENDING}"),
+        },
         LimitAvailability::Partial {
-            used_fraction,
+            measure,
             reset_in_seconds,
             reason,
             ..
         } => {
-            let usage = used_fraction
+            let usage = measure
+                .as_ref()
+                .and_then(measure_fraction)
                 .map(percent)
                 .unwrap_or_else(|| "unknown usage".to_string());
             let reset = reset_in_seconds
                 .map(compact_reset)
                 .map(|value| format!(", resets in {value}"))
                 .unwrap_or_default();
-            format!(
-                "{} {} partial, {usage}{reset}, {reason}",
-                provider_name(limit.tool),
-                limit_kind(limit.kind)
-            )
+            format!("{tool} {kind} partial, {usage}{reset}, {reason}")
         }
-        LimitAvailability::Unavailable { reason } => format!(
-            "{} {} unavailable, {reason}",
-            provider_name(limit.tool),
-            limit_kind(limit.kind)
-        ),
+        // T6 renders these; T2 keeps the build green with a basic placeholder phrase.
+        LimitAvailability::Unverified { .. } | LimitAvailability::Estimated { .. } => {
+            format!("{tool} {kind} {LIMIT_RENDER_PENDING}")
+        }
+        LimitAvailability::Unavailable { reason } => {
+            format!("{tool} {kind} unavailable, {reason}")
+        }
     }
 }
 
@@ -1208,15 +1241,16 @@ fn has_fraction(limit: &&LimitSummary) -> bool {
 
 fn limit_fraction(limit: &LimitSummary) -> Option<f64> {
     match &limit.availability {
-        LimitAvailability::Available { used_fraction, .. }
-        | LimitAvailability::Partial {
-            used_fraction: Some(used_fraction),
-            ..
-        } => Some(*used_fraction),
+        LimitAvailability::Available { measure, .. } => measure_fraction(measure),
         LimitAvailability::Partial {
-            used_fraction: None,
+            measure: Some(measure),
             ..
-        }
+        } => measure_fraction(measure),
+        // The new Unverified/Estimated arms don't feed the "most constrained" pick in
+        // T2 (no producer emits them yet); T6 decides how they surface.
+        LimitAvailability::Partial { measure: None, .. }
+        | LimitAvailability::Unverified { .. }
+        | LimitAvailability::Estimated { .. }
         | LimitAvailability::Unavailable { .. } => None,
     }
 }
@@ -1224,16 +1258,24 @@ fn limit_fraction(limit: &LimitSummary) -> Option<f64> {
 fn limit_fraction_and_reset(limit: &LimitSummary) -> (f64, Option<i64>) {
     match &limit.availability {
         LimitAvailability::Available {
-            used_fraction,
+            measure,
             reset_in_seconds,
             ..
-        } => (*used_fraction, Some(*reset_in_seconds)),
+        } => (
+            measure_fraction(measure).unwrap_or(0.0),
+            Some(*reset_in_seconds),
+        ),
         LimitAvailability::Partial {
-            used_fraction,
+            measure,
             reset_in_seconds,
             ..
-        } => (used_fraction.unwrap_or(0.0), *reset_in_seconds),
-        LimitAvailability::Unavailable { .. } => (0.0, None),
+        } => (
+            measure.as_ref().and_then(measure_fraction).unwrap_or(0.0),
+            *reset_in_seconds,
+        ),
+        LimitAvailability::Unverified { .. }
+        | LimitAvailability::Estimated { .. }
+        | LimitAvailability::Unavailable { .. } => (0.0, None),
     }
 }
 
@@ -1760,9 +1802,14 @@ fn provider_status(status: ProviderStatusKind) -> &'static str {
 }
 
 fn limit_kind(kind: LimitKind) -> &'static str {
+    // Short window labels (fit the `{kind:<3}` column). The new kinds get minimal
+    // placeholder abbreviations here so the build stays green; T6 owns any refinement.
     match kind {
         LimitKind::FiveHour => "5h",
         LimitKind::Weekly => "wk",
+        LimitKind::Daily => "1d",
+        LimitKind::Monthly => "mo",
+        LimitKind::BillingCycle => "cyc",
     }
 }
 
@@ -1949,7 +1996,7 @@ mod tests {
                 kind: LimitKind::FiveHour,
                 label: None,
                 availability: LimitAvailability::Available {
-                    used_fraction: 0.78,
+                    measure: LimitMeasure::TokenFraction(0.78),
                     resets_at: now + Duration::minutes(41),
                     reset_in_seconds: 41 * 60,
                 },
@@ -1960,7 +2007,7 @@ mod tests {
                 kind: LimitKind::Weekly,
                 label: None,
                 availability: LimitAvailability::Available {
-                    used_fraction: 0.92,
+                    measure: LimitMeasure::TokenFraction(0.92),
                     resets_at: now + Duration::hours(54),
                     reset_in_seconds: 54 * 60 * 60,
                 },
@@ -1971,7 +2018,7 @@ mod tests {
                 kind: LimitKind::Weekly,
                 label: None,
                 availability: LimitAvailability::Partial {
-                    used_fraction: Some(0.97),
+                    measure: Some(LimitMeasure::TokenFraction(0.97)),
                     resets_at: None,
                     reset_in_seconds: None,
                     reason: "limit data incomplete".to_string(),

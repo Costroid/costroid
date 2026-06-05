@@ -66,24 +66,32 @@ This is the most important modeling rule, and it concerns the quota **limits** s
 ```rust
 /// A subscription quota window. NOT a FOCUS charge row — carries no summable cost.
 pub struct LimitWindow {
-    pub tool: String,              // "claude-code" | "codex" | "cursor" | ...
+    pub tool: ProviderId,          // claude-code | codex | cursor | ...
     pub plan: Option<String>,      // plan/tier name if known
-    pub kind: LimitKind,           // FiveHour | Weekly
-    pub used_fraction: f64,        // 0.0..=1.0. Claude's statusLine gives a 0–100
-                                   // `used_percentage`; sanitize the RAW percentage
-                                   // (see `status`) BEFORE dividing by 100.
-    pub resets_at: DateTime<Utc>,  // next reset (UTC). Claude `resets_at` is parsed
+    pub kind: LimitKind,           // FiveHour | Weekly | Daily | Monthly | BillingCycle
+    pub measure: Option<LimitMeasure>, // the reading; None ⇒ no usable number (maps to Unavailable)
+    pub resets_at: Option<DateTime<Utc>>, // next reset (UTC). Claude `resets_at` is parsed
                                    // defensively — seen as epoch seconds AND ISO across versions.
     pub captured_at: DateTime<Utc>,// when this reading was observed. Push-only sources
                                    // (Claude's statusLine) are only as fresh as the last
                                    // turn — used to label "as of HH:MM / stale" and to age
                                    // a reading out to Unavailable once past `resets_at`.
+                                   // An Unavailable window (no reading) uses the UNIX-epoch sentinel.
     pub status: LimitStatus,       // Verified | Unverified | Unavailable (see below)
     pub label: Option<String>,
 }
 
-pub enum LimitKind { FiveHour, Weekly } // current variants. See the planned-generalization
-                                        // note below for Daily/Monthly/BillingCycle.
+pub enum LimitKind { FiveHour, Weekly, Daily, Monthly, BillingCycle }
+
+/// What a window meters — one shape for every provider/feature. Claude/Codex/Antigravity
+/// report a token-fraction; Cursor (paid) and post-June-2026 Copilot report a dollar credit
+/// pool. The legacy pre-June-2026 Copilot **request-count** measure is intentionally NOT modeled.
+pub enum LimitMeasure {
+    TokenFraction(f64),            // 0.0..=1.0. Claude's statusLine gives a 0–100
+                                   // `used_percentage`; sanitize the RAW percentage
+                                   // (see `status`) BEFORE dividing by 100.
+    Spend { used_usd: Decimal, included_usd: Option<Decimal> }, // dollar credit pool + overage
+}
 
 /// Confidence in a limit reading. Claude's `statusLine` `rate_limits` field is buggy
 /// (ARCHITECTURE §9.2): out-of-range / poisoned values (epoch in `used_percentage`, 900%)
@@ -95,7 +103,7 @@ pub enum LimitKind { FiveHour, Weekly } // current variants. See the planned-gen
 pub enum LimitStatus { Verified, Unverified, Unavailable }
 ```
 
-> **Planned quota generalization (roadmap — see [PRODUCT-PLAN.md](PRODUCT-PLAN.md) §2a, Step 3).** The shapes above describe the **current** (v0.1.0) model. As the prerequisite for the additional providers, the quota model is planned to generalize — *not yet implemented*: `LimitKind` gains `Daily`, `Monthly`, and `BillingCycle` (keeping `FiveHour` and `Weekly`); a new `LimitMeasure` separates a `TokenFraction` from a `Spend { used_usd, included_usd }` (dollar-denominated) window; `captured_at` and `status: LimitStatus` already present on `LimitWindow` stay. A new `Estimated` variant is added to the core `LimitAvailability` type at the **availability/render layer only**, never on the provider `LimitWindow`. The legacy pre-June-2026 Copilot **request-count** measure is intentionally **cut** (not implemented).
+> **Quota generalization — ✅ landed in T2** (see [PRODUCT-PLAN.md](PRODUCT-PLAN.md) §2a / §3 T2). The shapes above are the **shipped** generalized model: `LimitKind` spans `FiveHour`/`Weekly`/`Daily`/`Monthly`/`BillingCycle`; `used_fraction` was replaced by `measure: Option<LimitMeasure>` (`TokenFraction` or dollar-denominated `Spend { used_usd, included_usd }`); `LimitWindow` carries `captured_at` + `status: LimitStatus`. The core `LimitAvailability` type gained `Unverified` + `Estimated` variants at the **availability/render layer only**, never on the provider `LimitWindow`. The legacy pre-June-2026 Copilot **request-count** measure is intentionally **cut** (not implemented). **What T2 emits today:** Codex → `Verified` `TokenFraction` windows (`captured_at` from the rollout line); Claude → `Unavailable` windows (live capture is T4); Cursor → no windows (live-RPC-only). `Spend` producers and the real rendering of `Spend`/`Unverified`/`Estimated` are deferred to **T4/T6** — the placeholder render shows "limit detail pending" until then.
 
 **The Opus weekly sub-cap is not a `LimitWindow`.** Claude's `statusLine` exposes only the overall `five_hour`/`seven_day` windows — there is no per-model (Opus/Sonnet) quota field. For an Opus-heavy user the Opus weekly may bind first, but its % is unobservable, so do **not** synthesize a `LimitWindow` with a fabricated fraction for it. Lead with the overall 7d % (the measurable number) and show **Opus 7d token volume + estimated value from local logs** alongside — itself a local-log approximation of Anthropic's window, labeled as such — with the cap-relative % marked unavailable (ARCHITECTURE §8).
 
@@ -206,7 +214,7 @@ Each adapter discovers local data (WSL-aware: also check `/mnt/c/Users/<user>/..
 
 - **Claude Code.** *(Confirmed against a real install.)* Usage lives in conversation-transcript JSONL under `projects/`: `~/.claude/projects/<project>/<session>.jsonl`, and (Claude Code v1.0.30+) `~/.config/claude/projects/**/*.jsonl`; honor `CLAUDE_CONFIG_DIR` (a comma-separated root list) before the defaults. Each assistant turn exposes `message.model`, `timestamp`, `cwd`, and `message.usage.{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}`; the **project** is derived from `cwd` / the project directory. Logs are retained ~30 days by default. **No quota/reset fields exist in the session logs** — but Claude Code's live 5h/7d subscription limits arrive *locally, inside the Phase-1 trust envelope,* through its **`statusLine` hook**: a `rate_limits` block (`five_hour`/`seven_day`, each `used_percentage` 0–100 + `resets_at`; Pro/Max only, after the first API response; zero API tokens), captured by the statusline integration and side-written to a no-secret local cache (ARCHITECTURE §8). **This capture is planned — PRODUCT-PLAN Step 2 (v0.3.0); today Claude `parse_limits` returns `unavailable`.** That field is **buggy** — absent for API keys, poisoned (epoch in `used_percentage`) at session start, and occasionally false-in-range (a flat 100% with no throttling) — so **sanitize (`>100` / `==resets_at`) and cross-check a high reading against local token volume**, mapping it to a `LimitWindow` with `status` = `Verified` / `Unverified` / `Unavailable` accordingly (ARCHITECTURE §9.2); never guess. The per-model (Opus/Sonnet) weekly sub-cap is **not** exposed (see the Opus note above). Map each nonzero token meter to its own FOCUS row; cost is estimated from token × price.
 - **Codex.** *(Confirmed against a real install.)* Rollout JSONL under `~/.codex/sessions/**/*.jsonl` (honor `CODEX_HOME`; Windows-mounted equivalent under WSL). Token usage is under `payload.info.last_token_usage`; subscription rate limits are under `payload.rate_limits.primary` (5-hour, `window_minutes` 300) and `payload.rate_limits.secondary` (weekly, `window_minutes` 10080), each with `used_percent` and an epoch `resets_at`. Model and `cwd` come from the rollout metadata / turn context. Map usage to FOCUS rows (`x_Tool = "codex"`); map the **latest** rollout entry's rate limits to `LimitWindow`s. Parse the JSONL only — `state_*.sqlite` is not needed.
-- **Cursor.** Cursor keeps **no local usage or quota** — the CLI fetches both live from `api2.cursor.sh`, so there is nothing to parse from local logs (ARCHITECTURE §4). Today Cursor is **detection only**: detect its presence + the selected model from the `~/.cursor` config (honor `CURSOR_DATA_DIR`), label it **beta**, and surface usage/quota as *"unavailable — live."* Never read chat content; never guess a number. Cursor's quota shape is now resolved: paid plans use a **monthly, dollar-denominated credit pool** plus usage-based overage (a billing-cycle, spend-$ window) as the primary limit, with the **daily token window being the free-tier rate-limit**; both map to the planned generalized model (a `BillingCycle`/`Monthly` `Spend` window plus a `Daily` `TokenFraction` window — see the planned-generalization note above). Live Cursor cost/quota is live-RPC-only, so it stays the disfavored, opt-in, **default-off** session-reuse path, landing later (PRODUCT-PLAN §2a / Step 6); it always degrades to "unavailable."
+- **Cursor.** Cursor keeps **no local usage or quota** — the CLI fetches both live from `api2.cursor.sh`, so there is nothing to parse from local logs (ARCHITECTURE §4). Today Cursor is **detection only**: detect its presence + the selected model from the `~/.cursor` config (honor `CURSOR_DATA_DIR`), label it **beta**, and surface usage/quota as *"unavailable — live."* Never read chat content; never guess a number. Cursor's quota shape is now resolved: paid plans use a **monthly, dollar-denominated credit pool** plus usage-based overage (a billing-cycle, spend-$ window) as the primary limit, with the **daily token window being the free-tier rate-limit**; both map to the generalized model (a `BillingCycle`/`Monthly` `Spend` window plus a `Daily` `TokenFraction` window — see the quota-generalization note above; the types landed in T2, Cursor's live fetch is Step 6). Live Cursor cost/quota is live-RPC-only, so it stays the disfavored, opt-in, **default-off** session-reuse path, landing later (PRODUCT-PLAN §2a / Step 6); it always degrades to "unavailable."
 
 When a provider isn't installed or no data is found, skip it gracefully — never error the whole run.
 

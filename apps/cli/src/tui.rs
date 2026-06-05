@@ -696,7 +696,7 @@ mod tests {
     use costroid_focus::{
         FocusAccessPath, FocusRecord, TokenType, UnpricedUsage, DEFAULT_BILLING_CURRENCY,
     };
-    use costroid_providers::{LimitKind, LimitWindow, ProviderId};
+    use costroid_providers::{LimitKind, LimitMeasure, LimitStatus, LimitWindow, ProviderId};
     use ratatui::backend::TestBackend;
 
     use super::*;
@@ -767,8 +767,10 @@ mod tests {
                 tool: ProviderId::Codex,
                 plan: Some("plus".to_string()),
                 kind: LimitKind::Weekly,
-                used_fraction: Some(0.92),
+                measure: Some(LimitMeasure::TokenFraction(0.92)),
                 resets_at: Some(now + Duration::hours(2)),
+                captured_at: now,
+                status: LimitStatus::Verified,
                 label: None,
             }],
             providers: vec![

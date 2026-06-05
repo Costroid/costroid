@@ -84,7 +84,7 @@ costroid/
 │  ├─ costroid-providers/  Provider trait + Claude Code/Codex/Cursor adapters + WSL-aware log discovery
 │  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (Step 4 / v0.4.0)
 ├─ apps/
-│  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline + setup-statusline + --live
+│  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline + --live (`setup-statusline`: planned, Step 2/5)
 │  └─ bar/                 binary `costroid-bar` — egui/eframe + `tray-icon` taskbar app (Step 7 / v0.7.0); depends only on `costroid-core`
 └─ .github/workflows/      CI + cargo-dist release pipeline
 ```
@@ -94,9 +94,9 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at St
 **What belongs where:**
 - `costroid-core` — the engine. Orchestrates providers, normalizes to FOCUS via `costroid-focus`, computes estimated cost, and houses the `bench`/`recommend` (frontier) module. No terminal/UI code.
 - `costroid-focus` — FOCUS record types and (de)serialization only. Pure data; depends on nothing internal.
-- `costroid-providers` — the `Provider` trait (incl. the `Capability` descriptor), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
+- `costroid-providers` — the `Provider` trait (plus the **planned** `Capability` descriptor — Step 3, not yet in code), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
 - `costroid-connect` — **all** network + credential code; feature-gated and **off by default**. HTTP via `ureq` + `rustls` (no async runtime); secrets via `keyring` (OS keychain only). Lands at Step 4 (v0.4.0). Depends on `costroid-core`/`costroid-focus`.
-- `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter, `setup-statusline`, `--live`, and all rendering. Depends on `costroid-core`.
+- `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter, `--live`, and all rendering (`setup-statusline` is planned — Step 2/5). Depends on `costroid-core`.
 - `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 7); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
 
 **Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`; `connect → {core, focus}`. No cycles. `costroid-focus` has no internal dependencies.

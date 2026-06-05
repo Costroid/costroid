@@ -10,7 +10,7 @@ use costroid_focus::{
 };
 use costroid_providers::{
     default_providers, read_cursor_config, AccessPath, CursorConfig, HostEnv, LimitKind,
-    LimitWindow, Provider, ProviderId, UsageEvent,
+    LimitMeasure, LimitStatus, LimitWindow, Provider, ProviderId, UsageEvent,
 };
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -656,6 +656,14 @@ fn limit_summary(limit: &LimitWindow, generated_at: DateTime<Utc>) -> LimitSumma
     }
 }
 
+/// Pure map from a provider [`LimitWindow`] to its render-layer [`LimitAvailability`]
+/// (no I/O, no clock beyond the passed `generated_at`):
+/// * `status == Unavailable` **or** no measure → `Unavailable`;
+/// * `status == Unverified` → `Unverified` (carry the measure through);
+/// * `status == Verified` with a live (present, non-stale) reset → `Available`;
+/// * `status == Verified` but the reset is missing/stale → `Partial`.
+///
+/// The `Estimated` arm has no producer here — it is wired by T4/T6.
 fn limit_availability(limit: &LimitWindow, generated_at: DateTime<Utc>) -> LimitAvailability {
     let reset_in_seconds = limit
         .resets_at
@@ -665,29 +673,53 @@ fn limit_availability(limit: &LimitWindow, generated_at: DateTime<Utc>) -> Limit
         .map(|resets_at| resets_at < generated_at)
         .unwrap_or(false);
 
-    match (limit.used_fraction, limit.resets_at, is_stale) {
-        (Some(used_fraction), Some(resets_at), false) => LimitAvailability::Available {
-            used_fraction,
-            resets_at,
-            reset_in_seconds: reset_in_seconds.unwrap_or(0),
-        },
-        (None, None, _) => LimitAvailability::Unavailable {
-            reason: limit
-                .label
-                .clone()
-                .unwrap_or_else(|| "limit data unavailable from local logs".to_string()),
-        },
-        _ => LimitAvailability::Partial {
-            used_fraction: limit.used_fraction,
+    // No usable reading — an explicit Unavailable status or a missing measure — maps
+    // to Unavailable regardless of anything else.
+    let measure = match (limit.status, limit.measure.clone()) {
+        (LimitStatus::Unavailable, _) | (_, None) => {
+            return LimitAvailability::Unavailable {
+                reason: unavailable_reason(limit),
+            };
+        }
+        (_, Some(measure)) => measure,
+    };
+
+    match limit.status {
+        LimitStatus::Unverified => LimitAvailability::Unverified {
+            measure,
             resets_at: limit.resets_at,
             reset_in_seconds,
-            reason: if is_stale {
-                "data may be stale".to_string()
-            } else {
-                "limit data incomplete".to_string()
+        },
+        LimitStatus::Verified => match (limit.resets_at, is_stale) {
+            (Some(resets_at), false) => LimitAvailability::Available {
+                measure,
+                resets_at,
+                reset_in_seconds: reset_in_seconds.unwrap_or(0),
+            },
+            _ => LimitAvailability::Partial {
+                measure: Some(measure),
+                resets_at: limit.resets_at,
+                reset_in_seconds,
+                reason: if is_stale {
+                    "data may be stale".to_string()
+                } else {
+                    "limit data incomplete".to_string()
+                },
             },
         },
+        // Unreachable: the Unavailable status returns above. Kept as a non-panicking
+        // arm so the match stays exhaustive (no unwrap/panic in library code).
+        LimitStatus::Unavailable => LimitAvailability::Unavailable {
+            reason: unavailable_reason(limit),
+        },
     }
+}
+
+fn unavailable_reason(limit: &LimitWindow) -> String {
+    limit
+        .label
+        .clone()
+        .unwrap_or_else(|| "limit data unavailable from local logs".to_string())
 }
 
 fn clamp_reset_seconds(resets_at: DateTime<Utc>, generated_at: DateTime<Utc>) -> i64 {
@@ -1004,19 +1036,37 @@ pub struct LimitSummary {
     pub availability: LimitAvailability,
 }
 
+/// How usable a single quota reading is at the availability/render layer. Carries
+/// the [`LimitMeasure`] (token-fraction or dollar `Spend`) so the render layer — which
+/// only ever sees `LimitSummary.availability`, never the provider `LimitWindow` — can
+/// format dollars without touching a type (PRODUCT-PLAN §11.5 D1). `Estimated` lives
+/// only here, never on `LimitWindow`; it is wired by T4/T6.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LimitAvailability {
     Available {
-        used_fraction: f64,
+        measure: LimitMeasure,
         resets_at: DateTime<Utc>,
         reset_in_seconds: i64,
     },
     Partial {
-        used_fraction: Option<f64>,
+        measure: Option<LimitMeasure>,
         resets_at: Option<DateTime<Utc>>,
         reset_in_seconds: Option<i64>,
         reason: String,
+    },
+    /// A present reading that failed cross-check (provider `LimitStatus::Unverified`).
+    /// Surfaced honestly rather than as a confident number; wired by T4/T6.
+    Unverified {
+        measure: LimitMeasure,
+        resets_at: Option<DateTime<Utc>>,
+        reset_in_seconds: Option<i64>,
+    },
+    /// No provider reading — Costroid's own volume-based estimate stands in. The arm
+    /// exists for the type to be complete; its producer is wired later (T4/T6).
+    Estimated {
+        volume_tokens: u64,
+        estimated_usd: Option<Decimal>,
     },
     Unavailable {
         reason: String,
@@ -2341,32 +2391,40 @@ mod tests {
                 tool: ProviderId::ClaudeCode,
                 plan: None,
                 kind: LimitKind::FiveHour,
-                used_fraction: None,
+                measure: None,
                 resets_at: None,
+                captured_at: now,
+                status: LimitStatus::Unavailable,
                 label: Some("unavailable".to_string()),
             },
             LimitWindow {
                 tool: ProviderId::Codex,
                 plan: Some("plus".to_string()),
                 kind: LimitKind::FiveHour,
-                used_fraction: Some(0.5),
+                measure: Some(LimitMeasure::TokenFraction(0.5)),
                 resets_at: Some(now + Duration::minutes(30)),
+                captured_at: now,
+                status: LimitStatus::Verified,
                 label: None,
             },
             LimitWindow {
                 tool: ProviderId::Codex,
                 plan: Some("plus".to_string()),
                 kind: LimitKind::Weekly,
-                used_fraction: Some(0.6),
+                measure: Some(LimitMeasure::TokenFraction(0.6)),
                 resets_at: None,
+                captured_at: now,
+                status: LimitStatus::Verified,
                 label: None,
             },
             LimitWindow {
                 tool: ProviderId::Codex,
                 plan: Some("plus".to_string()),
                 kind: LimitKind::Weekly,
-                used_fraction: Some(0.7),
+                measure: Some(LimitMeasure::TokenFraction(0.7)),
                 resets_at: Some(now - Duration::minutes(5)),
+                captured_at: now,
+                status: LimitStatus::Verified,
                 label: None,
             },
         ];
@@ -2403,6 +2461,83 @@ mod tests {
     }
 
     #[test]
+    fn limit_availability_maps_status_and_measure() {
+        // The pure status+measure map (T2): the reshaped arms carry the LimitMeasure,
+        // Unverified surfaces as its own arm, and a measure-less reading — even one not
+        // flagged Unavailable — degrades to Unavailable rather than a fake number.
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let window = |measure, status, resets_at| LimitWindow {
+            tool: ProviderId::ClaudeCode,
+            plan: None,
+            kind: LimitKind::FiveHour,
+            measure,
+            resets_at,
+            captured_at: now,
+            status,
+            label: None,
+        };
+
+        // Verified + measure + live reset → Available, carrying the measure.
+        let available = limit_availability(
+            &window(
+                Some(LimitMeasure::TokenFraction(0.42)),
+                LimitStatus::Verified,
+                Some(now + Duration::minutes(30)),
+            ),
+            now,
+        );
+        assert!(matches!(
+            available,
+            LimitAvailability::Available {
+                measure: LimitMeasure::TokenFraction(f),
+                reset_in_seconds: 1800,
+                ..
+            } if (f - 0.42).abs() < 1e-9
+        ));
+
+        // Unverified status → Unverified arm (never Available), measure preserved.
+        let unverified = limit_availability(
+            &window(
+                Some(LimitMeasure::TokenFraction(0.9)),
+                LimitStatus::Unverified,
+                Some(now + Duration::minutes(30)),
+            ),
+            now,
+        );
+        assert!(matches!(
+            unverified,
+            LimitAvailability::Unverified {
+                measure: LimitMeasure::TokenFraction(_),
+                ..
+            }
+        ));
+
+        // Verified but measure-less → Unavailable, not a fabricated zero.
+        let no_measure = limit_availability(&window(None, LimitStatus::Verified, Some(now)), now);
+        assert!(matches!(no_measure, LimitAvailability::Unavailable { .. }));
+
+        // A Spend measure rides the same arms untouched (renders in T6).
+        let spend = limit_availability(
+            &window(
+                Some(LimitMeasure::Spend {
+                    used_usd: Decimal::new(1250, 2),
+                    included_usd: Some(Decimal::new(2000, 2)),
+                }),
+                LimitStatus::Verified,
+                Some(now + Duration::hours(1)),
+            ),
+            now,
+        );
+        assert!(matches!(
+            spend,
+            LimitAvailability::Available {
+                measure: LimitMeasure::Spend { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn snapshot_collection_degrades_provider_errors() {
         let env = HostEnv::new(PathBuf::from("/home/example"), Vec::new(), false);
         let now = timestamp();
@@ -2424,8 +2559,10 @@ mod tests {
                     tool: ProviderId::Codex,
                     plan: Some("plus".to_string()),
                     kind: LimitKind::FiveHour,
-                    used_fraction: Some(0.4),
+                    measure: Some(LimitMeasure::TokenFraction(0.4)),
                     resets_at: Some(now + Duration::hours(1)),
+                    captured_at: now,
+                    status: LimitStatus::Verified,
                     label: None,
                 }],
             )),

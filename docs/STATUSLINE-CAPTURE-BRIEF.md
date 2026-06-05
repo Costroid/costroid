@@ -16,6 +16,17 @@
 
 ## 1. Data-model changes
 
+> ## ✅ T2 UPDATE — the type layer below has SHIPPED; build T4 behavior on it
+>
+> **T2 (the quota data-model generalization) has landed all of §1's type changes — and went further than this brief's sketch.** §1.1/§1.2 below are kept as historical rationale; the **authoritative shapes are now the shipped code** (PRODUCT-PLAN.md §11.5 D1 / §12.2). Where this brief and the shipped types disagree, **the code wins**. Concretely, what now exists:
+>
+> - **`LimitWindow`** carries `measure: Option<LimitMeasure>` — **not** the `used_fraction: Option<f64>` this brief shows. `LimitMeasure = TokenFraction(f64) | Spend { used_usd: Decimal, included_usd: Option<Decimal> }`. It also has `captured_at: DateTime<Utc>` + `status: LimitStatus { Verified, Unverified, Unavailable }`, and `LimitKind` now spans `FiveHour`/`Weekly`/`Daily`/`Monthly`/`BillingCycle`.
+> - **`unavailable_limit(provider, kind)` kept its 2-arg signature** (NOT the 4-arg form §1.1 proposes); Unavailable windows use a **UNIX-epoch sentinel** for `captured_at` (via `epoch_utc()`), not `generated_at`. **T4 action:** when you wire Claude, overwrite `captured_at` with the real cache/snippet time and set `status` from the sanitize+cross-check.
+> - **Core `LimitAvailability` already has 5 variants**, each carrying the measure: `Available { measure, resets_at, reset_in_seconds }`, `Partial { measure: Option<LimitMeasure>, resets_at, reset_in_seconds, reason }`, `Unverified { measure, resets_at: Option, reset_in_seconds: Option }` (**no `reason` field**, unlike §1.2's draft), `Estimated { volume_tokens: u64, estimated_usd: Option<Decimal> }` (**not** `{ window_tokens: TokenTotals, est_value, reason }`), `Unavailable { reason }`.
+> - **`limit_availability(&LimitWindow, generated_at)` is already a pure map** over `status` + `measure` + staleness (Verified+measure+live-reset → `Available`; `Unverified` status → `Unverified`; missing/stale → `Partial`; `Unavailable`/no-measure → `Unavailable`). It does **not** yet take a `window_volume` param or emit `Estimated`. **T4 still owns** the cross-check finalize (`Verified → Unverified` demotion on high-%-trivial-volume), the stale age-out, and wiring the `Estimated` producer — layered on top of the existing pure map. **T6** owns the real rendering of `Spend`/`Unverified`/`Estimated` (T2 left a `"limit detail pending"` placeholder).
+>
+> So §1.1/§1.2's "add `captured_at`/`status`/`Unverified`/`Estimated`" work is **done**; what remains for the statusline feature is the cache, `setup-statusline`, the sanitize/cross-check behavior, and the fixtures (§2 onward).
+
 ### 1.1 `LimitWindow` (provider layer) — gains two always-present fields
 
 Current ([crates/costroid-providers/src/lib.rs:155-163](../crates/costroid-providers/src/lib.rs#L155-L163)):
@@ -261,8 +272,8 @@ The §1.1 shape change touches **every** existing `LimitWindow` producer. There 
 
 ## 11. Doc-drift to true up when this lands
 
-- [DATA-MODEL.md](DATA-MODEL.md) `LimitWindow`: correct three field types to match the real code (§1.1) — `used_fraction: f64` → `Option<f64>`, `resets_at: DateTime<Utc>` → `Option<DateTime<Utc>>`, and `tool: String` → `tool: ProviderId`. Add the `LimitAvailability` `Unverified`/`Estimated` variants to the doc's rendering notes if the doc enumerates them.
-- [DATA-MODEL.md](DATA-MODEL.md) `LimitKind`: note that the Cursor reset-window variant (Phase 2) would add `Daily` — additive/non-breaking per the research.
+- ✅ **DONE in T2.** [DATA-MODEL.md](DATA-MODEL.md) `LimitWindow` was reconciled to the shipped code: `tool: ProviderId`, `measure: Option<LimitMeasure>` (replacing `used_fraction`), `resets_at: Option<DateTime<Utc>>`, plus `captured_at`/`status`; the `LimitMeasure` enum and the `LimitAvailability` `Unverified`/`Estimated` variants are documented there. (Was: "correct three field types to match the real code.")
+- ✅ **DONE in T2.** [DATA-MODEL.md](DATA-MODEL.md) `LimitKind` now lists `Daily`/`Monthly`/`BillingCycle` alongside `FiveHour`/`Weekly` (the Cursor reset-window variants are in — additive/non-breaking, as the research predicted).
 
 ---
 

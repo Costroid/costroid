@@ -8,6 +8,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, LocalResult, TimeZone, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -150,6 +151,40 @@ pub struct UsageEvent {
 pub enum LimitKind {
     FiveHour,
     Weekly,
+    Daily,
+    Monthly,
+    BillingCycle,
+}
+
+/// What a quota window meters. One generalized shape for every provider/feature
+/// (§2a): Claude/Codex/Antigravity report a token-fraction; Cursor (paid) and
+/// post-June-2026 Copilot report a dollar-denominated credit pool. The legacy
+/// pre-June-2026 Copilot request-count model is intentionally **not** modeled.
+///
+/// Carries `f64`, so it is `PartialEq` but not `Eq` (mirroring [`LimitWindow`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitMeasure {
+    /// Fraction of the window consumed, `0.0..=1.0`.
+    TokenFraction(f64),
+    /// A dollar credit pool: `used_usd` spent against an optional `included_usd`
+    /// allowance (overage runs past it). Producers/rendering land with T4/T6.
+    Spend {
+        used_usd: Decimal,
+        included_usd: Option<Decimal>,
+    },
+}
+
+/// Confidence in a single quota reading (from the statusLine brief). `Verified` =
+/// trusted local/sanctioned data; `Unverified` = present but failed cross-check
+/// (wired by T4); `Unavailable` = no usable reading. Distinct from core's
+/// `LimitAvailability`, whose `Estimated` arm lives only at the availability layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitStatus {
+    Verified,
+    Unverified,
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -157,8 +192,13 @@ pub struct LimitWindow {
     pub tool: ProviderId,
     pub plan: Option<String>,
     pub kind: LimitKind,
-    pub used_fraction: Option<f64>,
+    pub measure: Option<LimitMeasure>,
     pub resets_at: Option<DateTime<Utc>>,
+    /// When this reading was taken — every window carries freshness. An
+    /// `Unavailable` window (no reading) uses the UNIX epoch sentinel; the
+    /// availability map ignores it for that case.
+    pub captured_at: DateTime<Utc>,
+    pub status: LimitStatus,
     pub label: Option<String>,
 }
 
@@ -336,7 +376,7 @@ fn choose_limit(current: Option<LimitWindow>, next: Option<LimitWindow>) -> Opti
 }
 
 fn limit_has_data(limit: &LimitWindow) -> bool {
-    limit.used_fraction.is_some() || limit.resets_at.is_some()
+    limit.measure.is_some() || limit.resets_at.is_some()
 }
 
 pub fn default_providers() -> Vec<Box<dyn Provider>> {
@@ -879,29 +919,51 @@ fn parse_codex_usage(
 
 fn parse_codex_limits(value: &Value) -> Option<(LimitWindow, LimitWindow)> {
     let rate_limits = value.pointer("/payload/rate_limits")?;
+    let plan = rate_limits.get("plan_type").and_then(Value::as_str);
+    // captured_at is the rollout entry that carried these rate_limits; choose_limit
+    // keeps the latest such entry, so the surviving window's freshness is its line's.
+    let captured_at = codex_entry_timestamp(value).unwrap_or_else(epoch_utc);
     let primary = parse_codex_limit(
         rate_limits.get("primary"),
         LimitKind::FiveHour,
-        rate_limits.get("plan_type").and_then(Value::as_str),
+        plan,
+        captured_at,
     )?;
     let secondary = parse_codex_limit(
         rate_limits.get("secondary"),
         LimitKind::Weekly,
-        rate_limits.get("plan_type").and_then(Value::as_str),
+        plan,
+        captured_at,
     )?;
     Some((primary, secondary))
+}
+
+/// Timestamp of a Codex rollout line: the top-level `timestamp`, else
+/// `payload.timestamp`. Pure; `None` when neither is a parseable RFC3339 string.
+fn codex_entry_timestamp(value: &Value) -> Option<DateTime<Utc>> {
+    value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(parse_rfc3339)
+        .or_else(|| {
+            value
+                .pointer("/payload/timestamp")
+                .and_then(Value::as_str)
+                .and_then(parse_rfc3339)
+        })
 }
 
 fn parse_codex_limit(
     value: Option<&Value>,
     kind: LimitKind,
     plan: Option<&str>,
+    captured_at: DateTime<Utc>,
 ) -> Option<LimitWindow> {
     let value = value?;
-    let used_fraction = value
+    let measure = value
         .get("used_percent")
         .and_then(Value::as_f64)
-        .map(|pct| pct / 100.0);
+        .map(|pct| LimitMeasure::TokenFraction(pct / 100.0));
     let resets_at = value
         .get("resets_at")
         .and_then(Value::as_i64)
@@ -910,8 +972,10 @@ fn parse_codex_limit(
         tool: ProviderId::Codex,
         plan: plan.map(ToString::to_string),
         kind,
-        used_fraction,
+        measure,
         resets_at,
+        captured_at,
+        status: LimitStatus::Verified,
         label: None,
     })
 }
@@ -932,10 +996,18 @@ fn unavailable_limit(provider: ProviderId, kind: LimitKind) -> LimitWindow {
         tool: provider,
         plan: None,
         kind,
-        used_fraction: None,
+        measure: None,
         resets_at: None,
+        captured_at: epoch_utc(),
+        status: LimitStatus::Unavailable,
         label: Some("unavailable".to_string()),
     }
+}
+
+/// The UNIX epoch as a `captured_at` sentinel for windows with no real reading
+/// (the `Unavailable` case). Infallible — never a panic in library code.
+fn epoch_utc() -> DateTime<Utc> {
+    Utc.timestamp_nanos(0)
 }
 
 fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
@@ -1163,8 +1235,13 @@ mod tests {
         assert_eq!(usage[0].cache_read_tokens, 30);
         assert_eq!(usage[0].cache_write_tokens, 40);
         assert_eq!(limits.len(), 2);
-        assert!(limits.iter().all(|limit| limit.used_fraction.is_none()));
+        // Claude has no local quota today (Step 2/T4 wires it): every window is
+        // measure-less and explicitly Unavailable, never a confident wrong number.
+        assert!(limits.iter().all(|limit| limit.measure.is_none()));
         assert!(limits.iter().all(|limit| limit.resets_at.is_none()));
+        assert!(limits
+            .iter()
+            .all(|limit| limit.status == LimitStatus::Unavailable));
     }
 
     #[test]
@@ -1195,15 +1272,18 @@ mod tests {
         assert_eq!(usage[0].input_tokens, 900);
         assert_eq!(usage[0].cache_read_tokens, 300);
         assert_eq!(limits.len(), 2);
-        assert!(
-            limits
-                .iter()
-                .any(|limit| limit.kind == LimitKind::FiveHour
-                    && close_to(limit.used_fraction, 0.425))
-        );
+        // Codex windows are Verified TokenFraction readings, each stamped with the
+        // rollout line's captured_at (the rate_limits-bearing entry, not the epoch).
         assert!(limits
             .iter()
-            .any(|limit| limit.kind == LimitKind::Weekly && close_to(limit.used_fraction, 0.1825)));
+            .all(|limit| limit.status == LimitStatus::Verified));
+        assert!(limits.iter().all(|limit| limit.captured_at != epoch_utc()));
+        assert!(limits.iter().any(
+            |limit| limit.kind == LimitKind::FiveHour && close_to(token_fraction(limit), 0.425)
+        ));
+        assert!(limits.iter().any(
+            |limit| limit.kind == LimitKind::Weekly && close_to(token_fraction(limit), 0.1825)
+        ));
     }
 
     #[test]
@@ -1563,5 +1643,59 @@ mod tests {
         value
             .map(|value| (value - expected).abs() < 0.000_001)
             .unwrap_or(false)
+    }
+
+    /// The token-fraction carried by a window's measure, if any (`Spend` → `None`).
+    fn token_fraction(limit: &LimitWindow) -> Option<f64> {
+        match &limit.measure {
+            Some(LimitMeasure::TokenFraction(fraction)) => Some(*fraction),
+            Some(LimitMeasure::Spend { .. }) | None => None,
+        }
+    }
+
+    #[test]
+    fn each_provider_emits_its_expected_window_shape() {
+        // The generalized quota shape, pinned per provider (T2 Done-when): Codex →
+        // Verified TokenFraction windows; Claude → measure-less Unavailable windows;
+        // Cursor → no windows at all (live-RPC-only, deferred to Phase 2).
+        let codex_loc = DataLocation {
+            provider: ProviderId::Codex,
+            root: fixture_path(&["codex"]),
+            files: vec![fixture_path(&["codex", "rollout.jsonl"])],
+        };
+        let codex = match CodexProvider.parse_limits(&codex_loc) {
+            Ok(value) => value,
+            Err(err) => panic!("codex limits should parse: {err}"),
+        };
+        assert!(!codex.is_empty());
+        assert!(codex.iter().all(|limit| {
+            limit.status == LimitStatus::Verified
+                && matches!(limit.measure, Some(LimitMeasure::TokenFraction(_)))
+        }));
+
+        let claude_loc = DataLocation {
+            provider: ProviderId::ClaudeCode,
+            root: fixture_path(&["claude-code"]),
+            files: vec![fixture_path(&["claude-code", "project-transcript.jsonl"])],
+        };
+        let claude = match ClaudeCodeProvider.parse_limits(&claude_loc) {
+            Ok(value) => value,
+            Err(err) => panic!("claude limits should parse: {err}"),
+        };
+        assert!(!claude.is_empty());
+        assert!(claude
+            .iter()
+            .all(|limit| limit.measure.is_none() && limit.status == LimitStatus::Unavailable));
+
+        let cursor_loc = DataLocation {
+            provider: ProviderId::Cursor,
+            root: fixture_path(&["cursor", "home", ".cursor"]),
+            files: Vec::new(),
+        };
+        let cursor = match CursorProvider.parse_limits(&cursor_loc) {
+            Ok(value) => value,
+            Err(err) => panic!("cursor limits should parse: {err}"),
+        };
+        assert!(cursor.is_empty(), "Cursor has no local limit windows");
     }
 }
