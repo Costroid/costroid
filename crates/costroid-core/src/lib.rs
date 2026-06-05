@@ -1166,7 +1166,9 @@ mod tests {
     use super::*;
     use chrono::{LocalResult, TimeZone, Timelike, Weekday};
     use costroid_focus::{PRICING_CATEGORY_STANDARD, PRICING_STATUS_MISSING_PRICE};
-    use costroid_providers::{CursorProvider, DataLocation, ProviderError};
+    use costroid_providers::{
+        AuthMethod, Capability, CursorProvider, DataLocation, DataSource, ProviderError,
+    };
     use std::path::PathBuf;
 
     fn fixture_path(parts: &[&str]) -> PathBuf {
@@ -2695,6 +2697,19 @@ mod tests {
     impl Provider for FakeProvider {
         fn id(&self) -> ProviderId {
             self.provider
+        }
+
+        // A test double declares nothing as available — the honest conservative
+        // descriptor (all `Unavailable`, no login, no quota window). Required only
+        // to satisfy the new `capability()` trait method (T3); no test reads it.
+        fn capability(&self) -> Capability {
+            Capability {
+                api_cost: DataSource::Unavailable,
+                subscription_quota: DataSource::Unavailable,
+                model_mix: DataSource::Unavailable,
+                auth: AuthMethod::None,
+                quota_kinds: &[],
+            }
         }
 
         fn discover(&self, _env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {

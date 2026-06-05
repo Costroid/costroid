@@ -94,7 +94,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at St
 **What belongs where:**
 - `costroid-core` — the engine. Orchestrates providers, normalizes to FOCUS via `costroid-focus`, computes estimated cost, and houses the `bench`/`recommend` (frontier) module. No terminal/UI code.
 - `costroid-focus` — FOCUS record types and (de)serialization only. Pure data; depends on nothing internal.
-- `costroid-providers` — the `Provider` trait (plus the **planned** `Capability` descriptor — Step 3, not yet in code), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
+- `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
 - `costroid-connect` — **all** network + credential code; feature-gated and **off by default**. HTTP via `ureq` + `rustls` (no async runtime); secrets via `keyring` (OS keychain only). Lands at Step 4 (v0.4.0). Depends on `costroid-core`/`costroid-focus`.
 - `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter, `--live`, and all rendering (`setup-statusline` is planned — Step 2/5). Depends on `costroid-core`.
 - `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 7); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.

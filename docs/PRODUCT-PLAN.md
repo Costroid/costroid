@@ -22,9 +22,9 @@ Verified against the v0.2.0 code, not the docs. (v0.2.0 — the cost lane: front
 | **Subscription quota (windows)** | 🟡 **One-third live** | Codex 5h + weekly parsed for real; **Claude is a stub** (returns `unavailable`); **Cursor returns empty** by design |
 | **Model quality (frontier)** | ✅ **Done** | `bench.rs`: DeepSWE + CursorBench, Pareto dominance, API-cost-only re-pricing overlay |
 
-**Solid foundation the rest builds on:** three-crate engine (`apps → core → {providers, focus}`, no cycles, no `unwrap`/`expect`/`panic!` in libs); a working 4-method `Provider` trait (`id` / `discover` / `parse_usage` / `parse_limits`); WSL-aware multi-root discovery; three render modes (braille / ASCII / **plain**) with non-color cues; `--live`; the statusline emitter; FOCUS export; and **enforced** invariants — a strace-based offline-acceptance CI job, a 64-crate forbidden-crates test, `cargo-deny` (no copyleft, openssl banned), attested releases. **108 tests, 17 render snapshots, green CI gate.** The cost lane is `cargo install`-able and correct today.
+**Solid foundation the rest builds on:** three-crate engine (`apps → core → {providers, focus}`, no cycles, no `unwrap`/`expect`/`panic!` in libs); a working 5-method `Provider` trait (`id` / `capability` / `discover` / `parse_usage` / `parse_limits`); WSL-aware multi-root discovery; three render modes (braille / ASCII / **plain**) with non-color cues; `--live`; the statusline emitter; FOCUS export; and **enforced** invariants — a strace-based offline-acceptance CI job, a 64-crate forbidden-crates test, `cargo-deny` (no copyleft, openssl banned), attested releases. **139 tests, 17 render snapshots, green CI gate.** The cost lane is `cargo install`-able and correct today.
 
-**Not built yet:** Claude live quota (T4); any auth/connections (T4/T7 — no keychain, no API-key entry, no OAuth); the capability-descriptor layer (T3); 5 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs); alerts; the taskbar; Antigravity & Copilot. *(The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — is **done**: T2 landed the types + pure availability map + migration; see §3 T2 / §11.5. Its live producers/rendering are still T4/T6.)*
+**Not built yet:** Claude live quota (T4); any auth/connections (T4/T7 — no keychain, no API-key entry, no OAuth); 5 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs); alerts; the taskbar; Antigravity & Copilot. *(The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — is **done**: T2 landed the types + pure availability map + migration; see §3 T2 / §11.5. Its live producers/rendering are still T4/T6. The **`Capability` descriptor** — `DataSource`/`AuthMethod`/`Capability` + the required `capability()` trait method, declared by all three adapters — **landed in T3**; its consumer, the Providers tab (T11), is still future.)*
 ---
 
 ## 1. The product in one picture
@@ -98,6 +98,8 @@ Core's `LimitAvailability` gains an `Estimated` variant alongside `Available / P
 The Claude statusLine brief (Step 2) already specs the `captured_at` + `LimitStatus` half — **landing Step 2 does part of Step 3's work**, so they can overlap.
 
 ### 2b. Capability descriptor on `Provider` (Step 3)
+
+> ✅ **Landed in T3 (0.3.0 line).** The descriptor below is now **shipped** in `costroid-providers`: the `DataSource` + `AuthMethod` enums, the `Capability` struct, and a **required** `capability()` method on the `Provider` trait, implemented for all three adapters with today's honest values (gate green, 139 tests; see §11.5 ✅ T3 DONE). The "bare structs today" sentence below is the pre-T3 motivation, kept for context. What remains is the **consumer** — the Providers tab (T11) that renders *what's unavailable and why* — and the deferred Copilot/Antigravity adapters (§8) that fill in their own descriptor.
 
 Adapters are bare structs today; capability is implicit. Add a declarative descriptor so adding a provider is "fill in the descriptor + adapter," no core/UI change:
 
@@ -351,7 +353,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 **Progress — the version-controlled "where are we"** (every fresh agent and you read this; the finishing agent ticks its own box as part of its doc edits, you confirm on commit):
 - [x] **T1** Release v0.2.0 — ✅ **shipped 2026-06-05** (GitHub Release + Homebrew + npm + crates.io all at 0.2.0; `cargo install costroid` → 0.2.0 verified)
 - [x] **T2** Quota data-model foundation *(lynchpin)* — ✅ types + pure map + migration landed, gate green (see §11.5)
-- [ ] **T3** Capability descriptor
+- [x] **T3** Capability descriptor — ✅ `DataSource`/`AuthMethod` enums + `Capability` struct + `capability()` trait method + 3 impls + test landed, gate green (see §11.5)
 - [ ] **T4** Claude statusLine capture — cache + cross-check
 - [ ] **T5** `setup-statusline` + `--capture-only`
 - [ ] **T6** Render new limit states + Spend windows
@@ -431,6 +433,12 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 ### 11.5 Decisions & limitations (living log)
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**✅ T3 DONE (gate green) — Capability descriptor + one out-of-named-file compile-fix.**
+- **Types landed exactly as the card specs them**, placed just before the `Provider` trait in `costroid-providers/src/lib.rs`: `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey, OptInSession, Unavailable }`, `enum AuthMethod { None, Oauth, ApiKey, OptInSession }` (both `#[serde(rename_all = "snake_case")]` + `Copy` — matching `AccessPath`; the snake_case wire form matches §2b's listed values, e.g. `local_artifact`/`opt_in_session`), and `struct Capability { api_cost, subscription_quota, model_mix: DataSource, auth: AuthMethod, quota_kinds: &'static [LimitKind] }`.
+- **`Capability` is `Copy + PartialEq + Eq` but NOT `Serialize`/`Deserialize`** — only the two enums got serde (per the card). `Deserialize` is impossible anyway: `quota_kinds: &'static [LimitKind]` is a borrowed static slice. When the Providers tab (T11) needs to serialize a descriptor it can derive `Serialize` (slices serialize fine) or project to an owned shape; deferred — no producer/consumer yet.
+- **`capability()` is a REQUIRED trait method (no default).** Rationale: §2b wants each provider to *declare* its shape; a default would let a future adapter (Copilot/Antigravity) silently inherit a descriptor instead of declaring one. Consequence: the method forced a one-method compile-fix on the `FakeProvider` test double in `costroid-core` (`crates/costroid-core/src/lib.rs`, the `mod tests` import + the impl) — **one file outside the card's named providers file**, but a forced mechanical migration exactly like T2's "migrate every test," not scope creep. `FakeProvider` declares the honest conservative descriptor (all `Unavailable`, `auth: None`, empty `quota_kinds`); no test reads it. Card §12.3 Files line annotated to reflect this.
+- **Tests:** providers `each_provider_declares_its_capability` pins all three descriptors (the Done-when). Full gate green — **139 tests** (was 138; +1), incl. the offline forbidden-crates acceptance test (no new crates introduced).
 
 **T1 — Release v0.2.0 (2026-06-05): version-bump mechanics + dist host limitation.**
 - **Internal dep version constraints bump in lockstep.** All four crates inherit `version.workspace = true`, so bumping `[workspace.package].version` to 0.2.0 makes every package 0.2.0 — which makes the `[workspace.dependencies]` internal constraints `costroid-core/-focus/-providers = { …, version = "0.1.0" }` (a `^0.1.0` req) **unsatisfiable** (`cargo build`/`update` fails to resolve). T1 bumped those three `version =` fields to `"0.2.0"` alongside the package version; this is part of "bump the version," **not** a code change. **Every future X.Y.Z bump must do the same** (§12.1 deliverables updated to say so).
@@ -578,6 +586,9 @@ Rules:
 **Goal:** make each provider DECLARE its data sources / auth / quota shape (§2b) so unavailability
   renders honestly and future adapters slot in by descriptor.
 **Files:** crates/costroid-providers/src/lib.rs (Provider trait ~L181; the 3 adapter structs).
+  NOTE (T3 done): because `capability()` is a REQUIRED trait method, the `FakeProvider` test double in
+  crates/costroid-core/src/lib.rs (mod tests) also needed a one-method impl + import — a forced
+  compile-fix, not scope creep (see §11.5 ✅ T3 DONE).
 **Scope fence:** the enums + struct + trait method + 3 impls + 1 test ONLY. No rendering (Providers
   tab is T11). Do NOT modify LimitWindow/LimitKind/LimitStatus (T2 owns those) — only reference them.
 **Deliverables:** `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey,

@@ -218,8 +218,63 @@ pub enum ProviderError {
     },
 }
 
+/// Where a provider sources one lane of data, named on the auth ladder (§5,
+/// most-sanctioned first). A lane with no clean source declares
+/// [`DataSource::Unavailable`] — never a fabricated one — so the Providers view
+/// (T11) can render *what is unavailable and why* (§2b). Serialize/Deserialize for
+/// consistency with [`ProviderId`]/[`AccessPath`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataSource {
+    /// Logs the tool already writes to disk — today's default, no network.
+    LocalArtifact,
+    /// A vendor-built third-party hook (Claude Code's `statusLine` `rate_limits`).
+    SanctionedHook,
+    /// The provider's own first-class third-party OAuth (e.g. GitHub).
+    SanctionedOauth,
+    /// The user's own usage/billing API key.
+    ApiKey,
+    /// Opt-in reuse of an existing local session (Cursor only), default-off.
+    OptInSession,
+    /// No clean source exists for this datum — unavailable, never fetched.
+    Unavailable,
+}
+
+/// How a provider authenticates for the sources it declares. `None` = nothing to
+/// log into (local artifacts only). Serialize/Deserialize for consistency with
+/// [`ProviderId`]/[`AccessPath`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMethod {
+    None,
+    Oauth,
+    ApiKey,
+    OptInSession,
+}
+
+/// A provider's declared data/auth/quota shape (§2b). Each adapter returns one from
+/// [`Provider::capability`]; the Providers view reads it to render each lane's
+/// source and what is unavailable, and a future adapter (Copilot/Antigravity) slots
+/// in by filling this descriptor + the adapter, with no core/UI change.
+/// `quota_kinds` lists the [`LimitKind`]s the provider can report (empty = no local
+/// quota window).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capability {
+    pub api_cost: DataSource,
+    pub subscription_quota: DataSource,
+    pub model_mix: DataSource,
+    pub auth: AuthMethod,
+    pub quota_kinds: &'static [LimitKind],
+}
+
 pub trait Provider: Send + Sync {
     fn id(&self) -> ProviderId;
+
+    /// The provider's declared data/auth/quota shape (§2b) — each lane's source,
+    /// how it authenticates, and which quota windows it can report. Honest by
+    /// construction: a lane with no clean source declares
+    /// [`DataSource::Unavailable`] rather than a fabricated one.
+    fn capability(&self) -> Capability;
 
     fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError>;
 
@@ -234,6 +289,18 @@ pub struct ClaudeCodeProvider;
 impl Provider for ClaudeCodeProvider {
     fn id(&self) -> ProviderId {
         ProviderId::ClaudeCode
+    }
+
+    /// API cost + model mix from local transcripts; subscription quota from the
+    /// sanctioned `statusLine` `rate_limits` push (T4). No login (`setup-statusline`).
+    fn capability(&self) -> Capability {
+        Capability {
+            api_cost: DataSource::LocalArtifact,
+            subscription_quota: DataSource::SanctionedHook,
+            model_mix: DataSource::LocalArtifact,
+            auth: AuthMethod::None,
+            quota_kinds: &[LimitKind::FiveHour, LimitKind::Weekly],
+        }
     }
 
     fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
@@ -299,6 +366,18 @@ impl Provider for CodexProvider {
         ProviderId::Codex
     }
 
+    /// Everything from local rollout logs — API cost, model mix, and the 5h/weekly
+    /// quota windows alike. No login.
+    fn capability(&self) -> Capability {
+        Capability {
+            api_cost: DataSource::LocalArtifact,
+            subscription_quota: DataSource::LocalArtifact,
+            model_mix: DataSource::LocalArtifact,
+            auth: AuthMethod::None,
+            quota_kinds: &[LimitKind::FiveHour, LimitKind::Weekly],
+        }
+    }
+
     fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
         discover_codex_location(env.codex_roots())
     }
@@ -339,6 +418,20 @@ pub struct CursorProvider;
 impl Provider for CursorProvider {
     fn id(&self) -> ProviderId {
         ProviderId::Cursor
+    }
+
+    /// Cost + quota are live server RPCs, reachable only by opt-in session reuse
+    /// (default-off, disclosed; T18) — so both lanes are [`DataSource::Unavailable`]
+    /// today, never fetched. Only the selected model (model mix) is a local artifact
+    /// (`cli-config.json`). No local quota window, so `quota_kinds` is empty.
+    fn capability(&self) -> Capability {
+        Capability {
+            api_cost: DataSource::Unavailable,
+            subscription_quota: DataSource::Unavailable,
+            model_mix: DataSource::LocalArtifact,
+            auth: AuthMethod::OptInSession,
+            quota_kinds: &[],
+        }
     }
 
     fn discover(&self, env: &HostEnv) -> Result<Option<DataLocation>, ProviderError> {
@@ -1697,5 +1790,44 @@ mod tests {
             Err(err) => panic!("cursor limits should parse: {err}"),
         };
         assert!(cursor.is_empty(), "Cursor has no local limit windows");
+    }
+
+    #[test]
+    fn each_provider_declares_its_capability() {
+        // §2b: each adapter DECLARES its data/auth/quota shape so unavailability
+        // renders honestly and future adapters slot in by descriptor. Pins today's
+        // honest values (T3 Done-when): Claude = local cost/mix + sanctioned-hook
+        // quota, no login; Codex = all-local, no login; Cursor = cost/quota
+        // unavailable (live RPC, opt-in only) with only the model a local artifact.
+        assert_eq!(
+            ClaudeCodeProvider.capability(),
+            Capability {
+                api_cost: DataSource::LocalArtifact,
+                subscription_quota: DataSource::SanctionedHook,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: &[LimitKind::FiveHour, LimitKind::Weekly],
+            }
+        );
+        assert_eq!(
+            CodexProvider.capability(),
+            Capability {
+                api_cost: DataSource::LocalArtifact,
+                subscription_quota: DataSource::LocalArtifact,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: &[LimitKind::FiveHour, LimitKind::Weekly],
+            }
+        );
+        assert_eq!(
+            CursorProvider.capability(),
+            Capability {
+                api_cost: DataSource::Unavailable,
+                subscription_quota: DataSource::Unavailable,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::OptInSession,
+                quota_kinds: &[],
+            }
+        );
     }
 }
