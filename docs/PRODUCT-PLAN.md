@@ -10,9 +10,9 @@
 
 ---
 
-## 0. Where we are today (v0.1.0) — ground truth
+## 0. Where we are today (v0.2.0) — ground truth
 
-Verified against the v0.1.0 code, not the docs.
+Verified against the v0.2.0 code, not the docs. (v0.2.0 — the cost lane: frontier + Cursor-detect + WSL fix — shipped 2026-06-05 across GitHub Release, Homebrew, npm, and crates.io; T1 done — see §11.5.)
 
 **By lane** (the §1 spine — three lanes, never summed):
 
@@ -132,7 +132,7 @@ Ordered, each independently shippable. Each step lists **Goal / Deliverables / A
 ### Step 0 — Reconcile canon + close loose ends · ✅ *done*
 The canon (ARCHITECTURE.md, CLAUDE.md, README, SECURITY, RELEASING, DATA-MODEL, DESIGN-SYSTEM) is reconciled to this plan — tray un-cut (egui), the tab set + auth ladder widened, the never-reuse-a-subscription-token boundary pinned, the `LimitKind` generalization marked planned — and [STATUSLINE-CAPTURE-BRIEF.md](STATUSLINE-CAPTURE-BRIEF.md) is committed as the Step 2 spec.
 
-### Step 1 — Release **0.2.0**: ship what's built · *the cost lane*
+### Step 1 — Release **0.2.0**: ship what's built · *the cost lane* · ✅ *done — shipped 2026-06-05*
 - **Goal:** get the already-built frontier + Cursor-detect + WSL fix into users' hands.
 - **Deliverables:** version bump, changelog, tag → cargo-dist release (shell/PS/Homebrew/npm + crates.io); README "next release" → "shipped."
 - **Acceptance:** `cargo install costroid` / `cargo binstall costroid` gives a working binary with `frontier`; full pre-PR gate green.
@@ -347,7 +347,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
 
 **Progress — the version-controlled "where are we"** (every fresh agent and you read this; the finishing agent ticks its own box as part of its doc edits, you confirm on commit):
-- [x] **T1** Release v0.2.0 *(prep done 2026-06-05; awaiting ⛔ human tag `v0.2.0`)*
+- [x] **T1** Release v0.2.0 — ✅ **shipped 2026-06-05** (GitHub Release + Homebrew + npm + crates.io all at 0.2.0; `cargo install costroid` → 0.2.0 verified)
 - [ ] **T2** Quota data-model foundation *(lynchpin)*
 - [ ] **T3** Capability descriptor
 - [ ] **T4** Claude statusLine capture — cache + cross-check
@@ -435,6 +435,7 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 - **`dist build --artifacts=local` is host-scoped on a non-macOS box.** Run unscoped on Linux it tries all six target triples and cargo-dist refuses to cross-compile to macOS ("a road paved with sadness"). For a local dry-run, scope to the host triple: `dist build --artifacts=local --target x86_64-unknown-linux-gnu` — builds + archives + checksums the host artifact cleanly. The real multi-target build happens per-runner in release CI. (`dist plan` is unaffected — it cleanly lists v0.2.0 across all 6 targets + 4 installers.) RELEASING.md §3 lists the unscoped command for reference; left as-is (out of T1's edit scope) — maintainer note: scope it or rely on CI.
 - **CHANGELOG.md created** at repo root (the §11.4-grounding "no CHANGELOG.md yet → T1 creates it" item is now satisfied); cargo-dist auto-bundles it into every release archive + the npm package. **Verified:** full gate green; `dist plan` lists v0.2.0 across 6 targets; host `dist build` produced a working `costroid 0.2.0` binary.
 - **Tagging gotcha (hit live during the ⛔ handoff).** The agent does **not** commit (card rule), so the prep sat uncommitted; tagging then put `v0.2.0` on the prior `0.1.0`-manifest commit → cargo-dist's tag==version check aborts the release CI. Lesson now baked into §12.1's ⛔ step: **commit the prep before tagging**, push `main` first, then the tag. Also: the tag triggers only the GitHub-Release/installers; **crates.io is a separate manual `cargo publish` ladder** (RELEASING.md) — `cargo install costroid` keeps serving the old version until that runs.
+- **✅ RELEASED 2026-06-05 — T1 complete end to end.** Recovery worked: deleted the bad tag, committed the prep as `a2c9d11`, re-pushed `main` + `v0.2.0` (now tag==manifest, cargo-dist `plan` job green). The first corrected Release run was *manually cancelled* mid-build (no GitHub Release was created); a clean re-push of the tag then ran green in 4m31s. Live on **every** channel — GitHub Release (6 targets + checksums + attestations), Homebrew tap, npm (`0.2.0`), and the crates.io ladder (focus→providers→core→cli, all `0.2.0`); `cargo install costroid` → `costroid 0.2.0` verified. **The "tag v0.2.0 before T2+ reaches `main`" sequencing caveat is now moot** — the tag exists, so T2+ build work may merge to `main` freely.
 - **README version mentions reconciled to v0.2.0 (full sweep).** Beyond the literal "Status §": the Roadmap frontier bullet ("built; lands next release"), the "Shipping today (v0.1.0):" feature-list header (→ v0.2.0, with a `frontier` bullet added), and the packaged-installers "v0.1.0 is published" note were all flipped to v0.2.0 so the release ships a self-consistent README (DoD: docs consistent). The Claude-quota "next release" claims were **left** — they're genuinely still next-release (T2–T6 / 0.3.0). *(Status-section + Roadmap done in the initial T1 prep; the feature-list header + installer note reconciled in a follow-up at the human's request.)*
 
 **D1 — Type / behavior / render split (T2 ↔ T4 ↔ T6).** Keeps the three tasks non-overlapping so fresh agents don't collide on the same types:
