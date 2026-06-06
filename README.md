@@ -13,7 +13,7 @@ It's the kind of tool that should be free and open, so it is.
 
 ## Status
 
-**Early development.** Costroid's **v0.2.0** release ships the full local cost lane — the `now`, `trends`, `statusline`, and `export` commands, plus the cost-vs-quality `frontier` view (shipped in v0.2.0), Cursor detect-and-defer, and WSL Windows-root auto-detection. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). Live Claude subscription quota (via Claude Code's `statusLine`) is in progress. Commands and flags may still evolve.
+**Early development.** Costroid's **v0.2.0** release ships the full local cost lane — the `now`, `trends`, `statusline`, and `export` commands, plus the cost-vs-quality `frontier` view (shipped in v0.2.0), Cursor detect-and-defer, and WSL Windows-root auto-detection. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). Live Claude subscription quota (via Claude Code's `statusLine`) is in progress — the local read + sanitize + cross-check landed; the `costroid setup-statusline` writer that captures the data lands next release, so end-to-end Claude limits aren't live yet. Commands and flags may still evolve.
 
 ## What Costroid does
 

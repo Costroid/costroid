@@ -1,6 +1,6 @@
 # Costroid agent operating manual
 
-Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — both subscription limits (Claude Code and Codex 5-hour and weekly caps, with reset countdowns) and real API-bill dollars by model — by default entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace. This file is the operating manual for any coding agent (and human contributor) working in this repo: read it before doing anything. Scope and build sequencing are governed by `docs/PRODUCT-PLAN.md` — the step-by-step production plan and going-forward source of truth for what to build and in what order; `docs/ARCHITECTURE.md` remains the technical source of truth but defers scope/sequencing to PRODUCT-PLAN. For technical detail see `docs/DATA-MODEL.md` and `docs/DESIGN-SYSTEM.md`. Read the relevant `docs/` file before implementing the area it covers. These `docs/` specs are tracked in the repository — read them on disk.
+Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — both subscription limits (Claude Code and Codex 5-hour and weekly caps, with reset countdowns) and real API-bill dollars by model — by default entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace. This file is the operating manual for any coding agent (and human contributor) working in this repo: read it before doing anything. Scope and build sequencing are governed by `docs/PRODUCT-PLAN.md` — the step-by-step production plan and going-forward source of truth for what to build and in what order; `docs/ARCHITECTURE.md` remains the technical source of truth but defers scope/sequencing to PRODUCT-PLAN. See **[Doc map & canon order](#doc-map--canon-order)** below for which doc owns what, and how conflicts resolve — **when a doc disagrees with the code, the code wins.** Read the relevant `docs/` file before implementing the area it covers. These `docs/` specs are tracked in the repository — read them on disk.
 
 ---
 
@@ -19,6 +19,27 @@ These are hard constraints. If a task seems to require breaking one, **stop and 
 - **Keep the core permissive.** This repo is Apache-2.0. Do not add any copyleft (GPL / AGPL / LGPL / SSPL) dependency. Verify a dependency's license is permissive (MIT / Apache-2.0 / BSD / ISC / Zlib / Unicode) before adding it.
 - **Accessibility is required, not optional.** Every visual has a `--plain` ASCII equivalent; never rely on color alone (the amber warning state needs a second, non-color cue); `--plain` output must be screen-reader-friendly.
 - **No `unwrap()`, `expect()`, or `panic!` in library crates.** Propagate errors. (Tests may use them.)
+
+---
+
+## Doc map & canon order
+
+The single source for navigating these docs and resolving conflicts between them. **PRODUCT-PLAN.md §12.0 (the per-task header) references this block — keep the two in sync by editing only here.**
+
+**Doc map — which doc is authoritative for what.** Read the *one* that owns the area you're touching, not all of them: the docs carry planned + historical content, and reading the wrong section breeds wrong assumptions.
+
+- **`docs/PRODUCT-PLAN.md`** — scope, sequencing, the build steps (§3), the hard invariants (§6), the per-task cards (§12), and the decisions/limitations log (§11.5). Owns *what* to build and *in what order*; **§11.5 is the freshest "what actually shipped"** and where new decisions get logged.
+- **`docs/ARCHITECTURE.md`** — the technical canon: crate boundaries + dependency direction (§5), the security/credential boundary + auth ladder (§8), the degrade-never-crash + Claude `rate_limits` sanitize/cross-check rules (§9.2), data flow, render mechanics (§7).
+- **`docs/DATA-MODEL.md`** — the data shapes: FOCUS columns, the Rust structs (`UsageEvent` / `FocusRecord` / `LimitWindow` / `LimitMeasure` / `LimitStatus` / core `LimitAvailability`), per-provider field paths, the bundled pricing JSON schema, export shapes.
+- **`docs/DESIGN-SYSTEM.md`** — rendering/UX detail: braille dot math, the meter/bar/sparkline components, the ASCII/`--plain` substitutes, the always-on non-color cue, voice.
+- **A task's Spec** (named in its §12 card, e.g. `docs/STATUSLINE-CAPTURE-BRIEF.md`) — read it fully when the card says so; it IS that task's design.
+- **User-facing docs** (`README.md`, `SECURITY.md`, `CHANGELOG.md`) are *downstream*, not input canon — update them only when a change shifts user-facing behavior/interface (Definition of Done).
+
+**Canon order — how to resolve any conflict, and the #1 way to avoid hallucinating.**
+
+- For anything **already built, the CODE on disk is canon.** When a doc disagrees with the code, the **code wins**; PRODUCT-PLAN §11.5 records what actually shipped (newer than ARCHITECTURE / DATA-MODEL / the brief).
+- For anything **not yet built, design intent lives in the docs:** PRODUCT-PLAN §3/§6 + the §12 card own scope/sequencing/invariants; ARCHITECTURE owns the technical design; the per-task Spec owns that task's design.
+- Either way, before relying on **any** doc statement about *current* behavior ("X returns unavailable", "Y is not built", or that a type/field/path/flag/function exists), **verify it in the code first** (grep/read it) — never invent or assume a symbol. Fix any drift you find as part of keeping the plan current.
 
 ---
 
@@ -151,7 +172,7 @@ The full step sequence (goals, deliverables, acceptance, and the generalized-quo
 
 - [ ] Workspace builds; `cargo install --path apps/cli` installs a working `costroid` binary.
 - [ ] Detects installed providers (Claude Code, Codex, Cursor) by locating their local data, including WSL→Windows paths; degrades gracefully when a provider is absent.
-- [ ] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` capture — Step 2, not yet built; Codex's from local windows today; Cursor quota is detect-and-defer).
+- [ ] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check); the *writer* (`setup-statusline`, T5) and the *render* (T6) are still pending, so no Claude quota flows to the screen yet; Codex's from local windows today; Cursor quota is detect-and-defer).
 - [ ] `costroid trends`: `--period day|week|month|year` and `--group model|app|total` both work.
 - [ ] `costroid --live`: refreshes in place; `q`/Ctrl-C exits cleanly; works over SSH and inside tmux.
 - [ ] `costroid statusline`: emits a compact one-line status suitable for a shell prompt, tmux, or Starship; `costroid setup-statusline` wires Claude Code's `statusLine` for live quota.

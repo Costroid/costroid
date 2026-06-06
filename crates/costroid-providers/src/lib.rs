@@ -349,11 +349,17 @@ impl Provider for ClaudeCodeProvider {
         Ok(events)
     }
 
+    /// Claude's 5h/weekly quota is not in the transcripts (`_loc`); it arrives only
+    /// through the sanctioned `statusLine` `rate_limits` push, captured into a local
+    /// no-secret cache (ARCHITECTURE §8/§9.2). Read + sanitize that cache into two
+    /// provisional windows; an absent/unreadable cache degrades to two `Unavailable`
+    /// windows. The `Verified`/`Unavailable` status set here is PROVISIONAL — the core
+    /// cross-check (which alone sees usage volume) may demote a high-but-trivial
+    /// `Verified` reading to `Unverified`.
     fn parse_limits(&self, _loc: &DataLocation) -> Result<Vec<LimitWindow>, ProviderError> {
-        Ok(vec![
-            unavailable_limit(ProviderId::ClaudeCode, LimitKind::FiveHour),
-            unavailable_limit(ProviderId::ClaudeCode, LimitKind::Weekly),
-        ])
+        Ok(read_claude_rate_limits(
+            claude_rate_limits_cache_path().as_deref(),
+        ))
     }
 }
 
@@ -1086,6 +1092,112 @@ fn codex_has_rate_limits(loc: &DataLocation) -> Result<bool, ProviderError> {
     Ok(false)
 }
 
+/// Resolve the sanctioned rate-limits cache path
+/// `${XDG_STATE_HOME:-$HOME/.local/state}/costroid/claude-rate-limits.json`. The cache
+/// is Costroid's own no-secret state (written by `setup-statusline`, T5), so it always
+/// lives Linux-side — no Windows-path handling needed. `None` when neither
+/// `XDG_STATE_HOME` nor `HOME` resolves a base directory.
+fn claude_rate_limits_cache_path() -> Option<PathBuf> {
+    let base = env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .or_else(|| {
+            env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state"))
+        })?;
+    Some(base.join("costroid").join("claude-rate-limits.json"))
+}
+
+/// Read + sanitize the sanctioned Claude rate-limits cache (ARCHITECTURE §9.2). The
+/// captured field is UNTRUSTED input: a missing/unreadable/malformed cache degrades to
+/// two `Unavailable` windows — never an error, never a crash. Always returns exactly
+/// two windows (`FiveHour`, `Weekly`). The status set here is PROVISIONAL; the core
+/// cross-check may demote a `Verified` reading to `Unverified`.
+fn read_claude_rate_limits(path: Option<&Path>) -> Vec<LimitWindow> {
+    let cache = path
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    match cache {
+        Some(cache) => {
+            // captured_at is the snippet's write time read from the cache; absent or
+            // unparseable falls back to the epoch sentinel (no observation instant).
+            let captured_at = cache
+                .get("captured_at")
+                .and_then(Value::as_str)
+                .and_then(parse_rfc3339)
+                .unwrap_or_else(epoch_utc);
+            vec![
+                claude_limit_window(cache.get("five_hour"), LimitKind::FiveHour, captured_at),
+                claude_limit_window(cache.get("seven_day"), LimitKind::Weekly, captured_at),
+            ]
+        }
+        None => vec![
+            unavailable_limit(ProviderId::ClaudeCode, LimitKind::FiveHour),
+            unavailable_limit(ProviderId::ClaudeCode, LimitKind::Weekly),
+        ],
+    }
+}
+
+/// Sanitize one window of the cache into a provisional [`LimitWindow`]. ARCHITECTURE
+/// §9.2 — sanitize the RAW `used_percentage` BEFORE ÷100; order matters. Three failure
+/// modes yield no measure and a provisional `Unavailable` (never a confident wrong
+/// number):
+/// * an absent window key,
+/// * an out-of-range percentage (`>100` or `<0` — the 900% bug),
+/// * the poisoned-epoch leak, where `used_percentage` equals the `resets_at` epoch.
+///
+/// Only an in-range reading survives to `Verified` carrying a `TokenFraction`.
+/// `resets_at` is parsed defensively as either an integer epoch or an RFC3339 string
+/// (both appear across Claude Code versions, ARCHITECTURE §12).
+fn claude_limit_window(
+    window: Option<&Value>,
+    kind: LimitKind,
+    captured_at: DateTime<Utc>,
+) -> LimitWindow {
+    let Some(window) = window else {
+        return unavailable_limit(ProviderId::ClaudeCode, kind);
+    };
+    let raw_resets = window.get("resets_at");
+    let resets_at = raw_resets.and_then(parse_reset_stamp);
+    let raw_pct = window.get("used_percentage").and_then(Value::as_f64);
+    // The poisoned-epoch leak surfaces as used_percentage == resets_at (the same large
+    // integer in both fields). Compare the RAW numbers, before any scaling.
+    let poisoned = match (raw_pct, raw_resets.and_then(Value::as_f64)) {
+        (Some(pct), Some(reset)) => pct == reset,
+        _ => false,
+    };
+    let measure = match raw_pct {
+        Some(pct) if !poisoned && (0.0..=100.0).contains(&pct) => {
+            Some(LimitMeasure::TokenFraction(pct / 100.0))
+        }
+        _ => None,
+    };
+    let status = if measure.is_some() {
+        LimitStatus::Verified
+    } else {
+        LimitStatus::Unavailable
+    };
+    LimitWindow {
+        tool: ProviderId::ClaudeCode,
+        plan: None,
+        kind,
+        measure,
+        resets_at,
+        captured_at,
+        status,
+        label: (status == LimitStatus::Unavailable).then(|| "unavailable".to_string()),
+    }
+}
+
+/// Parse a Claude `resets_at` value defensively: an integer epoch (reusing
+/// [`epoch_seconds`]) first, then an RFC3339 string. Both forms appear across Claude
+/// Code versions (ARCHITECTURE §12). `None` when it is neither.
+fn parse_reset_stamp(value: &Value) -> Option<DateTime<Utc>> {
+    if let Some(epoch) = value.as_i64() {
+        return epoch_seconds(epoch);
+    }
+    value.as_str().and_then(parse_rfc3339)
+}
+
 fn unavailable_limit(provider: ProviderId, kind: LimitKind) -> LimitWindow {
     LimitWindow {
         tool: provider,
@@ -1313,10 +1425,6 @@ mod tests {
             Ok(value) => value,
             Err(err) => panic!("claude fixture should parse: {err}"),
         };
-        let limits = match provider.parse_limits(&loc) {
-            Ok(value) => value,
-            Err(err) => panic!("claude limits should parse: {err}"),
-        };
 
         assert_eq!(usage.len(), 1);
         assert_eq!(usage[0].model, "claude-sonnet-example");
@@ -1329,14 +1437,113 @@ mod tests {
         assert_eq!(usage[0].output_tokens, 20);
         assert_eq!(usage[0].cache_read_tokens, 30);
         assert_eq!(usage[0].cache_write_tokens, 40);
-        assert_eq!(limits.len(), 2);
-        // Claude has no local quota today (Step 2/T4 wires it): every window is
-        // measure-less and explicitly Unavailable, never a confident wrong number.
-        assert!(limits.iter().all(|limit| limit.measure.is_none()));
-        assert!(limits.iter().all(|limit| limit.resets_at.is_none()));
-        assert!(limits
-            .iter()
-            .all(|limit| limit.status == LimitStatus::Unavailable));
+
+        // Quota now comes from the sanctioned rate_limits cache, never the
+        // transcripts (`loc`). With no cache present — None and a nonexistent path
+        // alike — both windows degrade to Unavailable, never a confident wrong number.
+        // (Routed through the pure reader, not the env-resolving `parse_limits`, so the
+        // test never reads a developer's real cache — golden rule: no real user data.)
+        for limits in [
+            read_claude_rate_limits(None),
+            read_claude_rate_limits(Some(&fixture_path(&["claude-code", "does-not-exist.json"]))),
+        ] {
+            assert_eq!(limits.len(), 2);
+            assert!(limits.iter().all(|limit| limit.measure.is_none()));
+            assert!(limits.iter().all(|limit| limit.resets_at.is_none()));
+            assert!(limits
+                .iter()
+                .all(|limit| limit.status == LimitStatus::Unavailable));
+            assert!(limits.iter().all(|limit| limit.captured_at == epoch_utc()));
+        }
+    }
+
+    /// Read a Claude rate-limits fixture cache and find the parsed window for `kind`.
+    fn claude_cache_window(fixture: &str, kind: LimitKind) -> LimitWindow {
+        let limits = read_claude_rate_limits(Some(&fixture_path(&["claude-code", fixture])));
+        assert_eq!(limits.len(), 2, "always exactly two windows");
+        match limits.into_iter().find(|limit| limit.kind == kind) {
+            Some(limit) => limit,
+            None => panic!("{kind:?} window should be present"),
+        }
+    }
+
+    #[test]
+    fn claude_cache_happy_path_is_verified_with_fraction() {
+        // The positive path: an in-range reading survives to Verified, carrying the
+        // token fraction, the parsed reset, and the cache's captured_at.
+        let five = claude_cache_window("rate-limits-happy.json", LimitKind::FiveHour);
+        assert_eq!(five.status, LimitStatus::Verified);
+        assert!(close_to(token_fraction(&five), 0.78));
+        assert!(five.resets_at.is_some());
+        assert_ne!(five.captured_at, epoch_utc());
+
+        let weekly = claude_cache_window("rate-limits-happy.json", LimitKind::Weekly);
+        assert_eq!(weekly.status, LimitStatus::Verified);
+        assert!(close_to(token_fraction(&weekly), 0.415));
+    }
+
+    #[test]
+    fn claude_cache_impossible_percentage_is_sanitized_out() {
+        // The 900% bug: a raw percentage > 100 is out of range → no measure, status
+        // Unavailable. Sanitized BEFORE ÷100 so it never becomes a 9.0 fraction.
+        let window = claude_cache_window("rate-limits-impossible-900.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Unavailable);
+        assert!(window.measure.is_none());
+    }
+
+    #[test]
+    fn claude_cache_poisoned_epoch_is_sanitized_out() {
+        // The poisoned-epoch leak: used_percentage == resets_at (the same epoch) →
+        // recognized as a leak → no measure, Unavailable. Never a ~178000000% reading.
+        let window = claude_cache_window("rate-limits-poisoned-epoch.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Unavailable);
+        assert!(window.measure.is_none());
+    }
+
+    #[test]
+    fn claude_cache_false_100_is_provisionally_verified() {
+        // A flat 100% (the #31820 false-in-range) is in range, so the PROVIDER keeps
+        // it Verified with a full fraction — the provider cannot see usage volume.
+        // The core cross-check (which can) demotes it to Unverified; see the core test.
+        let window = claude_cache_window("rate-limits-false-100.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Verified);
+        assert!(close_to(token_fraction(&window), 1.0));
+    }
+
+    #[test]
+    fn claude_cache_absent_window_key_is_unavailable() {
+        // The cache is present and valid but omits five_hour → that window is
+        // Unavailable while the present seven_day window parses to Verified.
+        let five = claude_cache_window("rate-limits-absent.json", LimitKind::FiveHour);
+        assert_eq!(five.status, LimitStatus::Unavailable);
+        assert!(five.measure.is_none());
+
+        let weekly = claude_cache_window("rate-limits-absent.json", LimitKind::Weekly);
+        assert_eq!(weekly.status, LimitStatus::Verified);
+        assert!(close_to(token_fraction(&weekly), 0.22));
+    }
+
+    #[test]
+    fn claude_cache_stale_reset_parses_as_past_epoch() {
+        // resets_at in the past parses fine here (the provider does not judge
+        // staleness — that is the core's age-out against generated_at). The reading is
+        // in range, so it arrives Verified with a past reset for core to age out.
+        let window = claude_cache_window("rate-limits-stale.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Verified);
+        let resets_at = match window.resets_at {
+            Some(value) => value,
+            None => panic!("stale fixture should carry a parseable past reset"),
+        };
+        assert!(resets_at < epoch_seconds(1_800_000_000).unwrap_or_else(epoch_utc));
+    }
+
+    #[test]
+    fn claude_cache_iso_resets_parses_rfc3339() {
+        // resets_at as an ISO-8601 string (some Claude Code versions) parses via the
+        // RFC3339 fallback, not just integer epochs.
+        let window = claude_cache_window("rate-limits-iso-resets.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Verified);
+        assert!(window.resets_at.is_some());
     }
 
     #[test]
@@ -1751,8 +1958,11 @@ mod tests {
     #[test]
     fn each_provider_emits_its_expected_window_shape() {
         // The generalized quota shape, pinned per provider (T2 Done-when): Codex →
-        // Verified TokenFraction windows; Claude → measure-less Unavailable windows;
-        // Cursor → no windows at all (served live server-side, no sanctioned source; discovery-gated).
+        // Verified TokenFraction windows; Claude → measure-less Unavailable windows when
+        // no sanctioned rate_limits cache is present (the cache is global state, not in
+        // `loc`, so this is read via the pure reader with no path — never a developer's
+        // real cache); Cursor → no windows at all (served live server-side, no
+        // sanctioned source; discovery-gated).
         let codex_loc = DataLocation {
             provider: ProviderId::Codex,
             root: fixture_path(&["codex"]),
@@ -1768,16 +1978,8 @@ mod tests {
                 && matches!(limit.measure, Some(LimitMeasure::TokenFraction(_)))
         }));
 
-        let claude_loc = DataLocation {
-            provider: ProviderId::ClaudeCode,
-            root: fixture_path(&["claude-code"]),
-            files: vec![fixture_path(&["claude-code", "project-transcript.jsonl"])],
-        };
-        let claude = match ClaudeCodeProvider.parse_limits(&claude_loc) {
-            Ok(value) => value,
-            Err(err) => panic!("claude limits should parse: {err}"),
-        };
-        assert!(!claude.is_empty());
+        let claude = read_claude_rate_limits(None);
+        assert_eq!(claude.len(), 2);
         assert!(claude
             .iter()
             .all(|limit| limit.measure.is_none() && limit.status == LimitStatus::Unavailable));

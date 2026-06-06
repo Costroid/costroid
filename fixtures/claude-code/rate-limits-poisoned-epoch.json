@@ -1,0 +1,5 @@
+{
+  "captured_at": "2026-06-05T09:50:00Z",
+  "five_hour": { "used_percentage": 1781000000, "resets_at": 1781000000 },
+  "seven_day": { "used_percentage": 41.5, "resets_at": 1800600000 }
+}

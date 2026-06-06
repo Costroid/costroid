@@ -30,6 +30,16 @@ const PRICING_UNIT_1M_TOKENS: &str = "1M_tokens";
 const UNKNOWN_GROUP_VALUE: &str = "unknown";
 const TOTAL_GROUP_VALUE: &str = "total";
 
+/// The cross-check fraction above which a Claude `rate_limits` reading is treated as
+/// "high" (mirrors the render layer's `WARN_FRACTION`; STATUSLINE-CAPTURE-BRIEF §5).
+const HIGH_USAGE_FRACTION: f64 = 0.80;
+/// The absolute summed-token floor below which a *high* Claude reading is implausible
+/// and demoted to `Unverified` (STATUSLINE-CAPTURE-BRIEF §5, the one genuinely-open
+/// number — biased low so it only flags "near-max on almost no usage", never a real
+/// heavy prompt, and only ever demotes; an under-conservative floor would let a
+/// false-100% through, which is the failure being guarded). Tunable.
+const UNVERIFIED_TOKEN_FLOOR: u64 = 5_000;
+
 pub fn bundled_pricing_json() -> &'static str {
     // Bundled inside this crate (not the workspace root) so `cargo package`
     // includes it and the crate publishes standalone to crates.io.
@@ -85,7 +95,7 @@ pub fn now_summary(snapshot: &EngineSnapshot, options: NowOptions) -> NowSummary
     let limits = snapshot
         .limit_windows
         .iter()
-        .map(|limit| limit_summary(limit, snapshot.generated_at))
+        .map(|limit| limit_summary(limit, &snapshot.focus_rows, snapshot.generated_at))
         .collect();
 
     NowSummary {
@@ -648,25 +658,135 @@ fn non_empty_value(value: &str) -> String {
     }
 }
 
-fn limit_summary(limit: &LimitWindow, generated_at: DateTime<Utc>) -> LimitSummary {
+fn limit_summary(
+    limit: &LimitWindow,
+    rows: &[FocusRecord],
+    generated_at: DateTime<Utc>,
+) -> LimitSummary {
+    // The finalize pass (STATUSLINE-CAPTURE-BRIEF §4b): the cross-check needs per-window
+    // usage volume, which exists only here at the core layer (the provider could not see
+    // it). Compute the trailing-window volume + its priced value, then demote a
+    // high-but-trivial Claude reading to Unverified before mapping to the render verdict.
+    let volume = window_token_volume(rows, limit.tool, limit.kind, generated_at);
+    let estimated_usd = window_estimated_usd(rows, limit.tool, limit.kind, generated_at);
+    let finalized = LimitWindow {
+        status: finalize_limit_status(limit, &volume),
+        ..limit.clone()
+    };
     LimitSummary {
         tool: limit.tool,
         plan: limit.plan.clone(),
         kind: limit.kind,
         label: limit.label.clone(),
-        availability: limit_availability(limit, generated_at),
+        availability: limit_availability(&finalized, generated_at, &volume, estimated_usd),
     }
 }
 
-/// Pure map from a provider [`LimitWindow`] to its render-layer [`LimitAvailability`]
-/// (no I/O, no clock beyond the passed `generated_at`):
-/// * `status == Unavailable` **or** no measure → `Unavailable`;
-/// * `status == Unverified` → `Unverified` (carry the measure through);
-/// * `status == Verified` with a live (present, non-stale) reset → `Available`;
-/// * `status == Verified` but the reset is missing/stale → `Partial`.
-///
-/// The `Estimated` arm has no producer here — it is wired by T4/T6.
-fn limit_availability(limit: &LimitWindow, generated_at: DateTime<Utc>) -> LimitAvailability {
+/// The cross-check (STATUSLINE-CAPTURE-BRIEF §4b.6 — the #31820 guard: flag, never
+/// suppress, never rewrite the number). A Claude `rate_limits` reading that is *high*
+/// (`fraction ≥ HIGH_USAGE_FRACTION`) but whose trailing-window token volume is *trivial*
+/// (`< UNVERIFIED_TOKEN_FLOOR`) is implausible — demote `Verified → Unverified` so it
+/// renders flagged, never as a confident near-max meter. One-directional and
+/// conservative: it can only *lower* confidence (a genuinely high reading — shared
+/// claude.ai chat, or one heavy prompt — may be real), so it never asserts a reading is
+/// correct. Applies ONLY to Claude's buggy push; Codex windows come from sanctioned
+/// rollout logs (§7) and are trusted on arrival.
+fn finalize_limit_status(limit: &LimitWindow, volume: &TokenTotals) -> LimitStatus {
+    if limit.tool == ProviderId::ClaudeCode && limit.status == LimitStatus::Verified {
+        if let Some(LimitMeasure::TokenFraction(fraction)) = limit.measure {
+            if fraction >= HIGH_USAGE_FRACTION && volume.total() < UNVERIFIED_TOKEN_FLOOR {
+                return LimitStatus::Unverified;
+            }
+        }
+    }
+    limit.status
+}
+
+/// Per-window local token volume, summed from the snapshot's FOCUS rows in the trailing
+/// window for `kind` (filter by `x_tool` + `charge_period_start` inside the window
+/// ending at `now`). Returns the per-meter [`TokenTotals`] so the `Estimated` render can
+/// show the breakdown; the cross-check uses its scalar `.total()`. Lives in
+/// `costroid-core` — the provider has no access to usage rows (STATUSLINE-CAPTURE-BRIEF
+/// §5).
+fn window_token_volume(
+    rows: &[FocusRecord],
+    tool: ProviderId,
+    kind: LimitKind,
+    now: DateTime<Utc>,
+) -> TokenTotals {
+    let tool = tool.to_string();
+    let mut totals = TokenTotals::default();
+    for row in rows {
+        if row_in_trailing_window(row, &tool, kind, now) {
+            totals.add(&row.x_token_type, decimal_to_u64(row.x_consumed_tokens));
+        }
+    }
+    totals
+}
+
+/// The priced dollar value of a window's local volume — the existing cost calculator's
+/// per-row `effective_cost`, summed over the same trailing-window rows. `None` when any
+/// contributing row is unpriced (`x_pricing_status != "priced"`): the volume is shown
+/// alone, never a guessed price (STATUSLINE-CAPTURE-BRIEF §6). `None` too when the
+/// window has no rows (the caller only reaches `Estimated` with nonzero volume).
+fn window_estimated_usd(
+    rows: &[FocusRecord],
+    tool: ProviderId,
+    kind: LimitKind,
+    now: DateTime<Utc>,
+) -> Option<Decimal> {
+    let tool = tool.to_string();
+    let mut sum = Decimal::ZERO;
+    let mut any = false;
+    for row in rows {
+        if row_in_trailing_window(row, &tool, kind, now) {
+            if row.x_pricing_status != PRICING_STATUS_PRICED {
+                return None;
+            }
+            sum += row.effective_cost;
+            any = true;
+        }
+    }
+    any.then_some(sum)
+}
+
+/// Whether a FOCUS row belongs to `tool`'s trailing window for `kind` ending at `now`.
+fn row_in_trailing_window(
+    row: &FocusRecord,
+    tool: &str,
+    kind: LimitKind,
+    now: DateTime<Utc>,
+) -> bool {
+    row.x_tool == tool
+        && row.charge_period_start <= now
+        && row.charge_period_start >= now - window_duration(kind)
+}
+
+/// The trailing duration each quota window covers.
+fn window_duration(kind: LimitKind) -> Duration {
+    match kind {
+        LimitKind::FiveHour => Duration::hours(5),
+        LimitKind::Daily => Duration::days(1),
+        LimitKind::Weekly => Duration::days(7),
+        LimitKind::Monthly | LimitKind::BillingCycle => Duration::days(30),
+    }
+}
+
+/// Map a finalized [`LimitWindow`] to its render-layer [`LimitAvailability`]
+/// (STATUSLINE-CAPTURE-BRIEF §1.2/§4b.7 — a pure map; no I/O, no clock beyond
+/// `generated_at`). Staleness is evaluated *here* against the live `generated_at` (so
+/// `--live` re-checks it each tick), never frozen by the provider:
+/// * `status == Unavailable` / no measure → `Estimated` (volume > 0) else `Unavailable`;
+/// * a *stale* reading (`resets_at < generated_at`), any status → same age-out;
+/// * `status == Unverified`, not stale → `Unverified` (carry the measure, flagged);
+/// * `status == Verified`, not stale, live reset → `Available`;
+/// * `status == Verified`, not stale, reset unknown → `Partial`.
+fn limit_availability(
+    limit: &LimitWindow,
+    generated_at: DateTime<Utc>,
+    volume: &TokenTotals,
+    estimated_usd: Option<Decimal>,
+) -> LimitAvailability {
     let reset_in_seconds = limit
         .resets_at
         .map(|resets_at| clamp_reset_seconds(resets_at, generated_at));
@@ -675,16 +795,20 @@ fn limit_availability(limit: &LimitWindow, generated_at: DateTime<Utc>) -> Limit
         .map(|resets_at| resets_at < generated_at)
         .unwrap_or(false);
 
-    // No usable reading — an explicit Unavailable status or a missing measure — maps
-    // to Unavailable regardless of anything else.
+    // No usable reading — an explicit Unavailable status or a missing measure — falls
+    // back to the volume-based estimate, never a fabricated %.
     let measure = match (limit.status, limit.measure.clone()) {
         (LimitStatus::Unavailable, _) | (_, None) => {
-            return LimitAvailability::Unavailable {
-                reason: unavailable_reason(limit),
-            };
+            return estimate_or_unavailable(limit, volume, estimated_usd);
         }
         (_, Some(measure)) => measure,
     };
+
+    // A reading whose window has already reset is stale; age it out to the estimate
+    // regardless of status (covers Verified and Unverified, Claude and Codex alike).
+    if is_stale {
+        return estimate_or_unavailable(limit, volume, estimated_usd);
+    }
 
     match limit.status {
         LimitStatus::Unverified => LimitAvailability::Unverified {
@@ -692,28 +816,43 @@ fn limit_availability(limit: &LimitWindow, generated_at: DateTime<Utc>) -> Limit
             resets_at: limit.resets_at,
             reset_in_seconds,
         },
-        LimitStatus::Verified => match (limit.resets_at, is_stale) {
-            (Some(resets_at), false) => LimitAvailability::Available {
+        LimitStatus::Verified => match limit.resets_at {
+            Some(resets_at) => LimitAvailability::Available {
                 measure,
                 resets_at,
                 reset_in_seconds: reset_in_seconds.unwrap_or(0),
             },
-            _ => LimitAvailability::Partial {
+            None => LimitAvailability::Partial {
                 measure: Some(measure),
-                resets_at: limit.resets_at,
-                reset_in_seconds,
-                reason: if is_stale {
-                    "data may be stale".to_string()
-                } else {
-                    "limit data incomplete".to_string()
-                },
+                resets_at: None,
+                reset_in_seconds: None,
+                reason: "reset time unknown".to_string(),
             },
         },
         // Unreachable: the Unavailable status returns above. Kept as a non-panicking
         // arm so the match stays exhaustive (no unwrap/panic in library code).
-        LimitStatus::Unavailable => LimitAvailability::Unavailable {
+        LimitStatus::Unavailable => estimate_or_unavailable(limit, volume, estimated_usd),
+    }
+}
+
+/// The absent→estimate fallback (STATUSLINE-CAPTURE-BRIEF §6): show the window's local
+/// token volume + priced value when there is no trustworthy %, else `Unavailable`. Never
+/// blank when there is something to show, never a fabricated number.
+fn estimate_or_unavailable(
+    limit: &LimitWindow,
+    volume: &TokenTotals,
+    estimated_usd: Option<Decimal>,
+) -> LimitAvailability {
+    let volume_tokens = volume.total();
+    if volume_tokens > 0 {
+        LimitAvailability::Estimated {
+            volume_tokens,
+            estimated_usd,
+        }
+    } else {
+        LimitAvailability::Unavailable {
             reason: unavailable_reason(limit),
-        },
+        }
     }
 }
 
@@ -2451,17 +2590,13 @@ mod tests {
             summary.limits[2].availability,
             LimitAvailability::Partial { .. }
         ));
-        match &summary.limits[3].availability {
-            LimitAvailability::Partial {
-                reset_in_seconds,
-                reason,
-                ..
-            } => {
-                assert_eq!(*reset_in_seconds, Some(0));
-                assert!(reason.contains("stale"));
-            }
-            _ => panic!("expired reset should be partial stale data"),
-        }
+        // A reading whose window has already reset (resets_at in the past) ages out
+        // against generated_at (STATUSLINE-CAPTURE-BRIEF §4b.5) — with no local volume
+        // to estimate from, that is Unavailable, never a confident stale meter.
+        assert!(matches!(
+            summary.limits[3].availability,
+            LimitAvailability::Unavailable { .. }
+        ));
     }
 
     #[test]
@@ -2489,6 +2624,8 @@ mod tests {
                 Some(now + Duration::minutes(30)),
             ),
             now,
+            &TokenTotals::default(),
+            None,
         );
         assert!(matches!(
             available,
@@ -2507,6 +2644,8 @@ mod tests {
                 Some(now + Duration::minutes(30)),
             ),
             now,
+            &TokenTotals::default(),
+            None,
         );
         assert!(matches!(
             unverified,
@@ -2516,8 +2655,14 @@ mod tests {
             }
         ));
 
-        // Verified but measure-less → Unavailable, not a fabricated zero.
-        let no_measure = limit_availability(&window(None, LimitStatus::Verified, Some(now)), now);
+        // Verified but measure-less → Unavailable, not a fabricated zero (no local
+        // volume to estimate from).
+        let no_measure = limit_availability(
+            &window(None, LimitStatus::Verified, Some(now)),
+            now,
+            &TokenTotals::default(),
+            None,
+        );
         assert!(matches!(no_measure, LimitAvailability::Unavailable { .. }));
 
         // A Spend measure rides the same arms untouched (renders in T6).
@@ -2531,6 +2676,8 @@ mod tests {
                 Some(now + Duration::hours(1)),
             ),
             now,
+            &TokenTotals::default(),
+            None,
         );
         assert!(matches!(
             spend,
@@ -2539,6 +2686,238 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// A Claude FOCUS row at `timestamp` carrying `tokens` input tokens. When `usd` is
+    /// `Some`, the row is marked priced with that `effective_cost`; otherwise it stays
+    /// unpriced (cost 0) — so tests can drive both estimated-value branches.
+    fn claude_row(timestamp: DateTime<Utc>, tokens: u64, usd: Option<Decimal>) -> FocusRecord {
+        let mut row = record(
+            FocusAccessPath::Subscription,
+            timestamp,
+            "claude-sonnet",
+            None,
+            TokenType::Input,
+            tokens,
+        );
+        row.x_tool = ProviderId::ClaudeCode.to_string();
+        if let Some(usd) = usd {
+            row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+            row.effective_cost = usd;
+        }
+        row
+    }
+
+    /// A Claude 5h window with the given measure/status/reset, captured at `now`.
+    fn claude_five_hour(
+        measure: Option<LimitMeasure>,
+        status: LimitStatus,
+        resets_at: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> LimitWindow {
+        LimitWindow {
+            tool: ProviderId::ClaudeCode,
+            plan: None,
+            kind: LimitKind::FiveHour,
+            measure,
+            resets_at,
+            captured_at: now,
+            status,
+            label: None,
+        }
+    }
+
+    #[test]
+    fn window_token_volume_sums_only_in_window_same_tool_rows() {
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let mut codex = record(
+            FocusAccessPath::Subscription,
+            now - Duration::hours(1),
+            "gpt-5.5",
+            None,
+            TokenType::Input,
+            7_777,
+        );
+        // A Codex row inside Claude's 5h window must NOT count toward Claude's volume.
+        codex.x_tool = ProviderId::Codex.to_string();
+        let rows = vec![
+            claude_row(now - Duration::hours(1), 1_000, None), // inside the 5h window
+            claude_row(now - Duration::hours(10), 9_000, None), // older than 5h, inside 7d
+            codex,
+        ];
+
+        let five = window_token_volume(&rows, ProviderId::ClaudeCode, LimitKind::FiveHour, now);
+        assert_eq!(five.total(), 1_000); // only the in-window Claude row
+
+        let weekly = window_token_volume(&rows, ProviderId::ClaudeCode, LimitKind::Weekly, now);
+        assert_eq!(weekly.total(), 10_000); // both Claude rows fall inside 7 days
+    }
+
+    #[test]
+    fn cross_check_demotes_high_but_trivial_claude_reading_to_unverified() {
+        // The #31820 guard: a flat 100% with only trivial logged volume is implausible,
+        // so it renders Unverified (flagged), never a confident near-max meter.
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let limit = claude_five_hour(
+            Some(LimitMeasure::TokenFraction(1.0)),
+            LimitStatus::Verified,
+            Some(now + Duration::hours(1)),
+            now,
+        );
+        let rows = vec![claude_row(now - Duration::minutes(30), 200, None)]; // below the floor
+        let snapshot = snapshot_with_rows(now, rows, vec![limit]);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        assert!(matches!(
+            summary.limits[0].availability,
+            LimitAvailability::Unverified { .. }
+        ));
+    }
+
+    #[test]
+    fn cross_check_keeps_high_claude_reading_with_real_volume_available() {
+        // A genuinely high reading backed by real logged volume is NOT demoted — the
+        // guard only flags the implausible "near-max on almost no usage" case.
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let limit = claude_five_hour(
+            Some(LimitMeasure::TokenFraction(0.96)),
+            LimitStatus::Verified,
+            Some(now + Duration::hours(1)),
+            now,
+        );
+        let rows = vec![claude_row(now - Duration::minutes(30), 50_000, None)]; // above the floor
+        let snapshot = snapshot_with_rows(now, rows, vec![limit]);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        assert!(matches!(
+            summary.limits[0].availability,
+            LimitAvailability::Available { .. }
+        ));
+    }
+
+    #[test]
+    fn cross_check_never_applies_to_codex_windows() {
+        // Codex windows come from sanctioned rollout logs (§7), so a high-but-trivial
+        // Codex reading is trusted on arrival — the cross-check is Claude-only.
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let codex = LimitWindow {
+            tool: ProviderId::Codex,
+            plan: Some("plus".to_string()),
+            kind: LimitKind::FiveHour,
+            measure: Some(LimitMeasure::TokenFraction(1.0)),
+            resets_at: Some(now + Duration::hours(1)),
+            captured_at: now,
+            status: LimitStatus::Verified,
+            label: None,
+        };
+        // No Codex volume at all — would trip the floor if the guard applied.
+        let snapshot = snapshot_with_rows(now, Vec::new(), vec![codex]);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        assert!(matches!(
+            summary.limits[0].availability,
+            LimitAvailability::Available { .. }
+        ));
+    }
+
+    #[test]
+    fn unavailable_reading_with_volume_estimates_value() {
+        // No trustworthy % (Unavailable) but real local volume → labeled estimate with
+        // a priced value, never blank, never a fabricated %.
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let limit = claude_five_hour(None, LimitStatus::Unavailable, None, now);
+        let rows = vec![
+            claude_row(
+                now - Duration::minutes(10),
+                1_000,
+                Some(Decimal::new(150, 2)),
+            ),
+            claude_row(
+                now - Duration::minutes(20),
+                2_000,
+                Some(Decimal::new(250, 2)),
+            ),
+        ];
+        let snapshot = snapshot_with_rows(now, rows, vec![limit]);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        match &summary.limits[0].availability {
+            LimitAvailability::Estimated {
+                volume_tokens,
+                estimated_usd,
+            } => {
+                assert_eq!(*volume_tokens, 3_000);
+                assert_eq!(*estimated_usd, Some(Decimal::new(400, 2)));
+            }
+            other => panic!("expected Estimated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unavailable_reading_with_unpriced_volume_shows_volume_without_price() {
+        // Same fallback, but with unpriced rows the $ value is None — show the volume
+        // alone, never a guessed price (§6).
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let limit = claude_five_hour(None, LimitStatus::Unavailable, None, now);
+        let rows = vec![claude_row(now - Duration::minutes(10), 4_096, None)];
+        let snapshot = snapshot_with_rows(now, rows, vec![limit]);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        match &summary.limits[0].availability {
+            LimitAvailability::Estimated {
+                volume_tokens,
+                estimated_usd,
+            } => {
+                assert_eq!(*volume_tokens, 4_096);
+                assert_eq!(*estimated_usd, None);
+            }
+            other => panic!("expected Estimated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unavailable_reading_without_volume_is_unavailable() {
+        // Nothing to show: no % and no volume → Unavailable, not a zero estimate.
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let limit = claude_five_hour(None, LimitStatus::Unavailable, None, now);
+        let snapshot = snapshot_with_rows(now, Vec::new(), vec![limit]);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        assert!(matches!(
+            summary.limits[0].availability,
+            LimitAvailability::Unavailable { .. }
+        ));
+    }
+
+    #[test]
+    fn stale_verified_reading_ages_out_to_estimate() {
+        // A Verified reading whose window already reset ages out against generated_at:
+        // with local volume present it becomes a labeled Estimate, never a stale meter.
+        let now = utc_datetime(2026, 1, 7, 12, 0, 0);
+        let limit = claude_five_hour(
+            Some(LimitMeasure::TokenFraction(0.5)),
+            LimitStatus::Verified,
+            Some(now - Duration::hours(1)), // already reset
+            now,
+        );
+        let rows = vec![claude_row(
+            now - Duration::hours(2),
+            6_000,
+            Some(Decimal::new(900, 2)),
+        )];
+        let snapshot = snapshot_with_rows(now, rows, vec![limit]);
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        match &summary.limits[0].availability {
+            LimitAvailability::Estimated {
+                volume_tokens,
+                estimated_usd,
+            } => {
+                assert_eq!(*volume_tokens, 6_000);
+                assert_eq!(*estimated_usd, Some(Decimal::new(900, 2)));
+            }
+            other => panic!("stale Verified should age out to Estimated, got {other:?}"),
+        }
     }
 
     #[test]

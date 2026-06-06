@@ -1,6 +1,16 @@
-# Claude Code Fixtures
+# Claude Code fixtures
 
-This machine currently has Claude Code local state but no parseable session
-usage logs under `~/.claude/sessions`. These fixtures encode the verified
-"installed, usage unavailable" case and leave room for sanitized session
-samples later.
+Committed sample data for the Claude Code adapter's tests — **synthetic, no real
+user data and no secrets.**
+
+- **`rate-limits-*.json`** — the sanctioned `statusLine` `rate_limits` cache (T4).
+  Each is a `claude-rate-limits.json`-shaped file exercising one parse/sanitize path:
+  `happy` (in-range → Verified), `impossible-900` (>100 → sanitized out),
+  `poisoned-epoch` (`used_percentage == resets_at` → sanitized out), `false-100`
+  (flat 100%, demoted to Unverified by the core cross-check against trivial volume),
+  `absent` (window key missing → Unavailable), `stale` (`resets_at` in the past →
+  aged out at the core layer), and `iso-resets` (`resets_at` as an RFC3339 string).
+- **`project-transcript*.jsonl`** — session transcripts for the usage parser (cost +
+  model mix): the base case, a dated-snapshot model id, and a priced model.
+- **`dedup-*.jsonl`** — transcript de-duplication cases (golden a/b, keyless entries).
+- **`installed-no-usage.json`** — the "installed, usage unavailable" discovery case.

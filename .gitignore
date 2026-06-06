@@ -4,3 +4,6 @@
 *.log
 
 .playwright-mcp/
+
+# local Claude Code agent state (settings, locks) — never committed
+.claude/
