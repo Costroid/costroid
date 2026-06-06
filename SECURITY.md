@@ -4,11 +4,11 @@ Costroid is a local-first, secure-by-design tool, and we take security seriously
 
 ## Supported versions
 
-Costroid's current release line is **0.1.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
+Costroid's current release line is **0.2.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
 
 | Version | Security fixes |
 | --- | --- |
-| Latest release line (0.1.x) | Yes |
+| Latest release line (0.2.x) | Yes |
 | Older releases | No (upgrade to the latest) |
 | Unreleased `main` | Best-effort |
 
@@ -56,7 +56,7 @@ These are the commitments Costroid is designed around. They follow directly from
 - **Your data never leaves your device.** Usage and cost data are processed locally and are not transmitted anywhere.
 - **Secrets live only in the OS keychain.** When optional login arrives, tokens are stored solely via the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). They are **never** written to disk, configuration files, or logs.
 - **No backend.** Credentials flow strictly between your device and the provider. **There is no Costroid server** in this product, and nothing is proxied through one.
-- **Authentication source ladder.** Costroid prefers the safest source that yields each datum, in order: (0) **local artifacts** already on disk; (1) **sanctioned push/hook** — Claude Code's `statusLine` push (an Anthropic-built extension point that hands Costroid the live `rate_limits` block locally, with zero token reuse and zero API tokens); (2) **sanctioned OAuth** (the provider's own first-class third-party OAuth, e.g. GitHub; planned/deferred); (3) **your own API key** entered by you for a provider's usage API (Anthropic / OpenAI / Gemini), to reconcile the local estimate against the real bill; (4) **opt-in session reuse** (Cursor only, which has no local data or sanctioned hook) — **off by default**, behind a one-time disclosure naming the host and the undocumented/ToS risk, always degrading to "unavailable." Tiers 2–4 all store secrets **only** in the OS keychain. (5) **Never** reuse a *subscription* OAuth token against a non-sanctioned or internal endpoint — that is the account-ban path; where it is the only route, the datum stays **unavailable**, never fetched. Reading browser cookies, if ever offered, is a clearly-disclosed, off-by-default last resort.
+- **Authentication source ladder.** Costroid prefers the safest source that yields each datum, and **only tiers 0–3 are ever built**: (0) **local artifacts** already on disk; (1) **sanctioned push/hook** — Claude Code's `statusLine` push (an Anthropic-built extension point that hands Costroid the live `rate_limits` block locally, with zero token reuse and zero API tokens); (2) **sanctioned OAuth** (the provider's own first-class third-party OAuth, e.g. GitHub; planned/deferred); (3) **your own API key** entered by you for a provider's usage API (Anthropic / OpenAI / Gemini), to reconcile the local estimate against the real bill. Tiers 2–3 store secrets **only** in the OS keychain. (4) **Never** reuse any credential, session, or token against a non-sanctioned, undocumented, or internal endpoint, and **never read browser cookies** — that is the account-ban path and a Terms-of-Service violation; where it would be the only route, the datum stays **unavailable**, never fetched. A provider with no sanctioned source (Cursor today) is detect-only, and its usage/quota stays "unavailable."
 - **Verifiable releases.** Release artifacts are published with SHA-256 checksums and keyless GitHub build-provenance attestations, so you can verify their origin and integrity (see below). OS code-signing (macOS notarization, Windows Authenticode) is not yet in place — planned for a later release.
 - **Dependency hygiene.** Costroid is Apache-2.0 and uses permissively-licensed dependencies only (no copyleft), with dependency advisory scanning in CI.
 - **Untrusted input.** Provider log files are treated as untrusted input and parsed defensively; malformed data should be handled gracefully, never crash unsafely or execute anything.
@@ -73,7 +73,7 @@ These are the commitments Costroid is designed around. They follow directly from
 
 Releases are produced by an automated GitHub Actions pipeline. Every artifact is published with a SHA-256 checksum and a keyless GitHub build-provenance attestation (Actions OIDC — no private signing keys), establishing that it was built by Costroid's CI from this repository.
 
-> **Note on OS code-signing.** v0.1.0 binaries are **not** OS-code-signed: there is no Apple Developer ID notarization (macOS) or Authenticode signature (Windows) yet, so first run may show an "unidentified developer" (macOS) or SmartScreen (Windows) prompt. Notarization and Authenticode are planned for a later release; provenance attestations and checksums are the integrity mechanism today.
+> **Note on OS code-signing.** v0.2.0 binaries are **not** OS-code-signed: there is no Apple Developer ID notarization (macOS) or Authenticode signature (Windows) yet, so first run may show an "unidentified developer" (macOS) or SmartScreen (Windows) prompt. Notarization and Authenticode are planned for a later release; provenance attestations and checksums are the integrity mechanism today.
 
 You can verify a downloaded artifact by checking its published checksum and verifying its attestation with the GitHub CLI:
 

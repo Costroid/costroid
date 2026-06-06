@@ -2241,7 +2241,7 @@ mod tests {
             limit_windows: 0,
             message: Some(
                 "BETA — model Composer 2.5 Fast (composer-2.5), logged in; \
-                 usage unavailable — live (Phase 2); quota unavailable — live (Phase 2)"
+                 usage unavailable — no sanctioned source; quota unavailable — no sanctioned source"
                     .to_string(),
             ),
         }];
@@ -2253,8 +2253,8 @@ mod tests {
             ),
             "plain now should render the cursor detected note: {output}"
         );
-        assert!(output.contains("usage unavailable — live (Phase 2)"));
-        assert!(output.contains("quota unavailable — live (Phase 2)"));
+        assert!(output.contains("usage unavailable — no sanctioned source"));
+        assert!(output.contains("quota unavailable — no sanctioned source"));
         assert!(
             !output.contains('\u{1b}'),
             "plain output must not contain ANSI escapes"

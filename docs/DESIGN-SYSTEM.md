@@ -181,7 +181,7 @@ q / Ctrl-C      quit (always restores the terminal)
 
 **The no-color-only rule:** the amber/red warning state is **always** paired with a textual cue (`!`, `!!`, `OVER`, or a word like `near limit`), so it survives `NO_COLOR`, color-blindness, and `--plain`.
 
-> **Forward note — the egui taskbar (`apps/bar`, Step 7, planned).** The richest surface, the egui/eframe (+ `tray-icon`) taskbar app, is a later deliverable; its visual design is not specified here yet (design TBD — no detailed mockups). It shares the same semantic states defined above: the amber warning state still needs a second, non-color cue (icon/badge/text), and `--plain` has no analogue in a GUI but the equivalent obligation holds via **AccessKit** for screen readers. Scope and sequencing for this surface are governed by [PRODUCT-PLAN.md](PRODUCT-PLAN.md) (§2d / §4, Step 7).
+> **Forward note — the egui taskbar (`apps/bar`, Step 6, planned).** The richest surface, the egui/eframe (+ `tray-icon`) taskbar app, is a later deliverable; its visual design is not specified here yet (design TBD — no detailed mockups). It shares the same semantic states defined above: the amber warning state still needs a second, non-color cue (icon/badge/text), and `--plain` has no analogue in a GUI but the equivalent obligation holds via **AccessKit** for screen readers. Scope and sequencing for this surface are governed by [PRODUCT-PLAN.md](PRODUCT-PLAN.md) (§2d / §4, Step 6).
 
 **ASCII substitutes per component:**
 

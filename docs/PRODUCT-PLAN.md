@@ -56,7 +56,7 @@ costroid/
 │  └─ costroid-connect/      NEW — ALL network + credential code, feature-gated, off by default   (Step 4)
 ├─ apps/
 │  ├─ cli/                   package `costroid` — CLI + TUI + statusline   (unchanged crate, new tabs/commands)
-│  └─ bar/                   NEW — package `costroid-bar` — egui/eframe taskbar app   (Step 7)
+│  └─ bar/                   NEW — package `costroid-bar` — egui/eframe taskbar app   (Step 6)
 ```
 
 Dependency direction stays acyclic: `apps/cli → core → {providers, focus}`; `apps/bar → core → …`; `core → connect` (optional, feature-gated); `connect → focus`. **No crate except `costroid-connect` ever links a network or keychain dependency.**
@@ -105,10 +105,10 @@ Adapters are bare structs today; capability is implicit. Add a declarative descr
 
 ```rust
 pub struct Capability {
-    pub api_cost: DataSource,           // local_artifact | sanctioned_hook | sanctioned_oauth | api_key | opt_in_session | unavailable
+    pub api_cost: DataSource,           // local_artifact | sanctioned_hook | sanctioned_oauth | api_key | unavailable
     pub subscription_quota: DataSource,
     pub model_mix: DataSource,
-    pub auth: AuthMethod,               // none | oauth | api_key | opt_in_session
+    pub auth: AuthMethod,               // none | oauth | api_key
     pub quota_kinds: &'static [LimitKind],
 }
 fn capability(&self) -> Capability;     // new trait method
@@ -123,7 +123,7 @@ The first network and credential code. **Isolated in one feature-gated crate** s
 - **Secrets:** the `keyring` crate → OS keychain only. Never disk/config/logs.
 - **Gating:** `costroid-connect` is behind a Cargo feature (e.g. `connect`); the local-only path never compiles it in. Network happens **only** on an explicit, user-initiated `costroid connect …` action against a provider endpoint the user authorized.
 
-### 2d. The egui taskbar — `apps/bar` (Step 7)
+### 2d. The egui taskbar — `apps/bar` (Step 6)
 
 `eframe` + `egui` + `tray-icon` (all MIT/Apache-2.0). Shares `costroid-core` verbatim. Detail in §4.
 
@@ -172,19 +172,16 @@ The canon (ARCHITECTURE.md, CLAUDE.md, README, SECURITY, RELEASING, DATA-MODEL, 
   7. **Alerts** — opt-in, quiet by default: quota ("weekly at 90%, resets Sunday"), budget ("80% of your $200 API budget"), and the model nudge — **API-cost usage only** as dollar-savings; for subscriptions, framed as **quota-extension** ("move heavy Opus tasks to Sonnet to buy weekly headroom"), never "save money."
 - **Acceptance:** every tab has a complete `--plain` rendering and relies on no color alone; budget/forecast/anomaly logic is unit-tested against fixtures; alerts default off.
 
-### Step 6 — **0.6.0**: Cursor live quota *(opt-in, disclosed, default-off)*
-- **Goal:** the one grey-zone path, done safely.
-- **Deliverables:** reuse an existing local Cursor session to fetch live quota/spend via its own RPC, behind a **one-time disclosure** naming the host and the undocumented/ToS risk; default-off; always degrades to "unavailable." Renders as a `Monthly`/`BillingCycle` `Spend` window (the §3 shape). Optional first-party OAuth (system browser + loopback + PKCE; keychain only) as the documented upgrade.
-- **Acceptance:** with the path off (default), Cursor stays detect-only; enabling it shows live Cursor spend and revokes cleanly; no secret leaves the keychain.
+> **Cursor live quota is *not* a numbered step.** It is **discovery-gated (§8)**: pursued only if Cursor ever publishes a sanctioned, documented API or first-party OAuth — never by reusing a local Cursor session against its undocumented `api2.cursor.sh` RPC (that path is removed as a ToS violation; §5 tier 4). Until then Cursor stays **detect-only**, usage/quota **"unavailable."**
 
-### Step 7 — **0.7.0**: The egui taskbar app · *the last surface*
+### Step 6 — **0.6.0**: The egui taskbar app · *the last surface*
 - See §4. Ships after the CLI/TUI is feature-complete, because everything it shows the core already computes.
 
 ### → **1.0**: feature-complete across the three surfaces, after the deferred adapters (§8) land.
 
 ---
 
-## 4. The taskbar app (egui) — detail · Step 7
+## 4. The taskbar app (egui) — detail · Step 6
 
 - **Stack:** `eframe` (egui's app framework) + `egui` + `tray-icon`. All **MIT/Apache-2.0** — no copyleft, no webview, no Tauri. Package `apps/bar` (binary `costroid-bar`), depending only on `costroid-core` (+ `costroid-connect` behind the same feature gate as the CLI).
 - **What it shows:** a tray/menu-bar icon rendering the most-constrained quota meter at a glance; click opens a compact egui window mirroring the **Overview** plus the same tabs as the TUI (Providers / Models / Budget / Forecast / Anomalies / History / Trends). Same normalized data, same estimate labeling, same lanes-never-summed rule.
@@ -198,13 +195,12 @@ The canon (ARCHITECTURE.md, CLAUDE.md, README, SECURITY, RELEASING, DATA-MODEL, 
 
 **The rule that makes "friendly" and "safe" compatible:** for each provider and each datum, use the highest-safety source that exists. **If the only path would violate the provider's terms, the datum is `unavailable` — never fetched.**
 
-Source ladder (use the first that applies):
+Source ladder (use the first that applies). Only tiers 0–3 are ever built; there is **no session-reuse tier** — that is the ToS line:
 0. **Local artifacts** — logs the tool already writes. *The only tier built today.*
 1. **Sanctioned push/hook** — a vendor-built third-party extension point (Claude Code's `statusLine` `rate_limits`). *Step 2.*
 2. **Sanctioned OAuth** — the provider's own first-class third-party OAuth (GitHub). *Deferred with Copilot (§8).*
 3. **Your own API key** — official usage/billing API, your key, your data. *Step 4.*
-4. **Opt-in session reuse** — last resort, only where nothing above exists *and* terms allow; default-off, one-time disclosure, revocable. *Cursor, Step 6.*
-5. **Never** — reusing a *subscription* OAuth token against a non-sanctioned/internal endpoint. **This is the account-ban path (Anthropic enforces it).** Where it's the only route, the datum is **unavailable**. A "log into Claude for quota" button must never exist.
+4. **Never** — reuse *any* credential, session, or token against a non-sanctioned, undocumented, or internal endpoint, and never read browser cookies. **This is the account-ban path and a ToS violation; Anthropic enforces it, and it is no safer for any other provider.** It explicitly rules out reusing a local Cursor session against `api2.cursor.sh`. Where it's the only route, the datum is **unavailable, never fetched**. A "log into &lt;provider&gt; for quota" button against an unsanctioned endpoint must never exist.
 
 ### Per-provider classification — *corrected to current facts (June 2026)*
 
@@ -212,20 +208,20 @@ Source ladder (use the first that applies):
 |---|---|---|---|---|---|
 | **Claude Code** | local transcripts (+ optional Anthropic usage API w/ key) | **statusLine sanctioned push** | none (`setup-statusline`) | 5h + 7d, token-% | cost ✅ · quota = Step 2 |
 | **Codex** | local rollout logs (+ optional OpenAI usage API w/ key) | local rollout logs | none | 5h + weekly, token-% | ✅ both |
-| **Cursor** | live RPC only (opt-in) | opt-in session reuse — else unavailable | opt-in, default-off | **monthly billing-cycle $-credit pool + overage; daily token rate-limit on free tier** | detect-only → Step 6 |
-| **GitHub Copilot** | — (credit-based, not per-token) | sanctioned GitHub OAuth — **per-user *AI-credit* usage** | OAuth (**exact scope/accessibility = discovery item #1**) | **monthly AI-credit pool ($) + overage** *(premium-requests is the legacy pre-June-2026 model)* | **deferred (§8)** |
-| **Antigravity CLI** | Gemini API w/ key (if routed) | local logs *if it writes them* — else unavailable | none if local; API key for Gemini | **5h + weekly, metered in "compute effort"** (+ credit overage) | **deferred (§8)** |
+| **Cursor** | unavailable (no sanctioned source) | unavailable (no sanctioned source) | none (local model-mix only) | **monthly billing-cycle $-credit pool + overage; daily token rate-limit on free tier** | detect-only; live quota **discovery-gated (§8)** |
+| **GitHub Copilot** | own token → billing API ($ by model) | **own classic PAT / `gh` OAuth → documented `…/billing/ai_credit/usage`** (tier 3/2) | own classic PAT (fine-grained unsupported) or `gh` OAuth | **monthly AI-credit pool ($) + overage** *(premium-requests is the legacy pre-June-2026 model)* | **discovery-gated (§8) — ToS-safe path identified; needs live-install check** |
+| **Antigravity CLI** | **own Gemini API key → AI Studio / Cloud Billing ($ lane, ToS-safe)** | **unavailable — compute-effort quota has no sanctioned source** (hooks not fed quota; only the internal `GetUserStatus` RPC = ban path) | own Gemini API key (for the $ lane) | **5h + weekly, metered in "compute effort"** (+ credit overage) | **discovery-gated (§8) — $ lane safe; quota unavailable** |
 
 **Provider-fact notes** (the easy-to-get-wrong ones — don't regress these):
 - **Cursor** is *not* "daily, spend-$." Paid plans (the real users) are a **monthly dollar credit pool**; the daily *token* window is a free-tier rate-limit. Don't invert them.
-- **Copilot** is *not* "request-count." As of **June 1, 2026** GitHub replaced premium requests with **AI Credits** (dollar-denominated monthly pool + overage). The per-user endpoints exist (`/users/{username}/settings/billing/ai_credit/usage`), and the **user-billed-only boundary is real and confirmed** ("not included in user-level endpoints" when org/enterprise-billed) — but the **OAuth scope/third-party accessibility is undocumented** and must be confirmed before Copilot is promised as a one-click login.
-- **Antigravity** quota is metered in **"compute effort,"** so its denominator may not be clean token-%; confirm on a live install.
+- **Copilot** is *not* "request-count." As of **June 1, 2026** GitHub replaced premium requests with **AI Credits** (dollar-denominated monthly pool + overage); request-count is the legacy pre-June-2026 model. *(Its ToS-safe source — own classic PAT / `gh` OAuth → the documented `ai_credit/usage` endpoint, user-billed only — is detailed in §8.)*
+- **Antigravity** quota is metered in **"compute effort,"** so its denominator may not be clean token-% (community-sourced figures only — no official numbers); confirm on a live install. *(The ToS-safe Gemini-API $ lane vs. the no-sanctioned-source compute-effort quota split is detailed in §8.)*
 
 ---
 
 ## 6. Hard invariants — never trade these away *(bind every step)*
 
-- **Completely ToS-safe.** Never reuse a subscription OAuth token against a non-sanctioned endpoint. No clean source → unavailable, never fetched.
+- **Completely ToS-safe.** Never reuse any credential, session, or token against a non-sanctioned, undocumented, or internal endpoint (this includes Cursor's `api2.cursor.sh` RPC), and never read browser cookies. No sanctioned source → the datum is unavailable, never fetched.
 - **Local-first; no content leaves the device.** Nothing leaves except calls to provider endpoints the user explicitly authorized. **The default build makes zero network calls** (enforced by the re-scoped offline-acceptance test).
 - **No telemetry. Ever, by default.** Any update check is opt-in, disclosed, individually disableable, off by default.
 - **Secrets in the OS keychain only** — never disk/config/logs; device↔provider; revocable. All such code lives only in `costroid-connect`.
@@ -255,8 +251,9 @@ Source ladder (use the first that applies):
 
 Per instruction, the data model is generalized to *fit* these, but **no adapter is built until a live-install discovery confirms its real shape** (same discipline as the Claude statusLine capture):
 
-- **Antigravity CLI adapter** — discovery: does its CLI write local usage logs, and in what shape, or is quota server-only? How is "compute effort" denominated? It routes to Gemini *and* Claude models — decide model-mix attribution. No local source + no sanctioned hook → quota unavailable until one exists; Gemini API cost via the user's own key.
-- **GitHub Copilot adapter + sanctioned OAuth (ladder tier 2)** — discovery #1: confirm whether an individual user can read their own `ai_credit/usage` via a third-party OAuth grant, and the exact scope/permission; scope to individually-billed users; render "unavailable (enterprise-billed)" otherwise.
+- **Cursor live quota** — *findings landed (2026-06-05).* Cursor serves usage/quota server-side only. It **does** have a sanctioned `cursor-agent /statusline` hook (~2026-04, the Claude-`statusLine` analog) and a documented Admin/Analytics usage API — **but neither carries an individual's quota**: the statusline is fed only session/runtime metadata (no quota/cost field), the CLI's JSON output has no usage field, and the Admin API is team-admin/enterprise-only (no per-individual-Pro endpoint). So today Cursor cost/quota are **"unavailable"** and Cursor is detect-only. A live fetch is pursued **only if Cursor publishes a documented per-user API/OAuth — or adds a quota field to its existing `/statusline`** (the cleanest unlock to watch) — *never* by reusing a local Cursor session against its undocumented `api2.cursor.sh` RPC (that path is removed as a ToS violation; §5 tier 4). The generalized model already supplies the `Monthly`/`BillingCycle` `Spend` shape it would render (landed in T2); only a sanctioned *source* is missing.
+- **Antigravity CLI adapter** — *findings landed (2026-06-05); it splits into two lanes.* **$ lane — ToS-safe, build when carded:** Gemini-API cost via the user's own key (AI Studio cost/usage dashboards + Cloud Billing BigQuery export). **Compute-effort subscription quota — no sanctioned source:** its documented Hooks are *not* fed quota (only `conversationId`/`workspacePaths`/`transcriptPath`/tool fields), local transcripts are conversation content only, the IDE `.pb` files are keychain-encrypted, and the only live quota source is the internal Language-Server `GetUserStatus` RPC via a reused token (ban path) → quota stays "unavailable." Remaining discovery: how "compute effort" is denominated (community-sourced only — not officially published) and model-mix attribution (it routes to Gemini *and* Claude). Unlock to watch: Google feeding a documented quota payload into a Hook/status bar, or a consumer usage API.
+- **GitHub Copilot adapter (own-token billing API + CLI statusLine)** — *ToS-safe path identified (2026-06-05); discovery narrowed to a live-install check.* Route: the user's **own classic PAT** (fine-grained PATs are *unsupported* on the billing endpoints per GitHub's tutorial — its permissions reference contradicts that; classic is the safe reading) **or** their `gh` OAuth token → the **documented** `GET /users/{username}/settings/billing/ai_credit/usage` (+ legacy `premium_request/usage`) → AI-credit consumption + $-by-model; the Copilot CLI `statusLine` hook adds session premium-request count/cost locally. **Scope to individually self-billed users** (org/enterprise seats aren't in user-level endpoints → "unavailable (enterprise-billed)"). **Never** the internal `api.github.com/copilot_internal/user` (ban path). Remaining check: mint a classic PAT with billing read on a personal plan, confirm a 200 + the exact `ai_credit/usage` JSON shape, then build the adapter.
 - **MCP server** (`costroid-mcp`) — still speculative; the recommendation engine it would expose is already built into the frontier view. Not built; name intentionally unclaimed.
 
 ---
@@ -271,9 +268,8 @@ Per instruction, the data model is generalized to *fit* these, but **no adapter 
 | 3 — generalize quota | (with 0.3.0) | core/providers | no | data-model migration |
 | 4 — connections | **0.4.0** | CLI/TUI | **yes (gated)** | keychain + re-scoping the no-network guarantee |
 | 5 — tabs + alerts | **0.5.0** | CLI/TUI | no (uses Step 4) | analytics correctness, alert restraint |
-| 6 — Cursor live quota | **0.6.0** | CLI/TUI | yes (opt-in) | ToS grey-zone, disclosure |
-| 7 — taskbar (egui) | **0.7.0** | **Taskbar** | no new | cross-platform tray, AccessKit |
-| later — Antigravity/Copilot | → **1.0** | all | varies | discovery-gated |
+| 6 — taskbar (egui) | **0.6.0** | **Taskbar** | no new | cross-platform tray, AccessKit |
+| later — Cursor live quota / Antigravity / Copilot | → **1.0** | all | varies | discovery-gated (sanctioned source required) |
 
 *Step 0 (canon reconcile) is done and the cost lane is built; Step 1 is a release away. The next build is **Step 2 — the Claude `statusLine` capture**.*
 
@@ -286,12 +282,12 @@ Per instruction, the data model is generalized to *fit* these, but **no adapter 
 > **Repo setup (important for the agent):** the `docs/` specs — this plan, the statusline brief, and the ARCHITECTURE / DATA-MODEL / DESIGN-SYSTEM specs — are **tracked in the repository**; read them from disk and edit them freely as the plan evolves (those edits commit alongside the task). Local git worktrees off this working copy contain `docs/` (the docs commit is in your local history); a clone or CI checkout from GitHub will too **once you push it** (if you've kept the docs commit local, a GitHub clone won't have them yet). Within a session, only *uncommitted* doc edits are invisible to a freshly-spawned worktree-isolated workflow agent — so when fanning out before committing, have the orchestrator pass spec content into sub-agent prompts rather than assume they see the latest unsaved state.
 
 **Rule 1 — follow the dependency order, not the step numbers.** The steps are not a flat list:
-- **Step 3 (generalize the quota model) is the lynchpin** — land it *with* Step 2 (the brief already folds its `captured_at`/`LimitStatus` half in) and *before* Steps 4, 5, and 6, which won't compile without its `LimitMeasure` / `Capability` types.
-- **Step 4's `costroid-connect` crate gates Step 6** (all network + keychain code lives there).
-- **Step 7 needs Steps 2–6 done** — it mirrors tabs that don't exist yet.
-Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6 → 7.
+- **Step 3 (generalize the quota model) is the lynchpin** — land it *with* Step 2 (the brief already folds its `captured_at`/`LimitStatus` half in) and *before* Steps 4 and 5, which won't compile without its `LimitMeasure` / `Capability` types.
+- **Step 4's `costroid-connect` crate houses all network + keychain code** — including the discovery-gated Cursor path (§8) if it ever lands.
+- **Step 6 (the taskbar) needs Steps 2–5 done** — it mirrors tabs that don't exist yet.
+Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6.
 
-**Rule 2 — the human checkpoints are by design, not a failure.** The golden rules (CLAUDE.md "decide vs ask") require the agent to **stop and ask** before: touching the keychain/secrets, making any network call, changing the public CLI surface, releasing/tagging, or shipping the Cursor ToS-disclosure text. A well-behaved Auto-Mode agent *pauses* at these — that's the safety net. So **Steps 1, 4, 5, 6, 7 each carry a human gate**; **Steps 2 and 3 are the closest to "hand it cold."** Don't expect to walk away from 4 / 6 / 7.
+**Rule 2 — the human checkpoints are by design, not a failure.** The golden rules (CLAUDE.md "decide vs ask") require the agent to **stop and ask** before: touching the keychain/secrets, making any network call, changing the public CLI surface, or releasing/tagging. A well-behaved Auto-Mode agent *pauses* at these — that's the safety net. So **Steps 1, 4, 5, and 6 each carry a human gate**; **Steps 2 and 3 are the closest to "hand it cold."** Don't expect to walk away from 4 / 6.
 
 **Rule 3 — split the L/XL steps; let the workflow fan out inside each.** "One step → one session" is too coarse for the big steps; the fan-out shape is in the table (a gating prerequisite, then parallel sub-units) — this is where the workflows earn their keep.
 
@@ -299,7 +295,7 @@ Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6 → 7.
 - **Step 2:** `UNVERIFIED_TOKEN_FLOOR` (N), the cache path, the freshness-stamp threshold (brief §12).
 - **Step 4:** which provider usage-API endpoints + auth schemes; the `costroid connect` CLI UX; how reconciliation renders.
 - **Step 5:** forecast algorithm, anomaly baseline, budget persistence (config schema), alert thresholds + copy.
-- **Step 6:** the Cursor RPC wire format, the disclosure wording, the feature-gate name.
+- **Step 6 (taskbar):** the GUI/UX design (none exists yet) — pin before the handoff.
 
 | Step | Autonomous fit | Size | Blocked by | Human gate | Internal fan-out |
 |---|---|---|---|---|---|
@@ -308,8 +304,7 @@ Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6 → 7.
 | 3 — generalize quota | strong | M | — | layering review (`Estimated` core-only) | A enums+migrate → B `Capability` → C core `Estimated` → D `Spend` render |
 | 4 — connections | **poor** | XL | **Step 3** | **yes ×4** — keychain, network, CI re-scope, CLI | 4a infra+CI re-scope → 4b keychain+http → 4c keys+CLI |
 | 5 — tabs + alerts | conditional | L | **Step 3** (`Capability`) | CLI surface; alert/forecast/budget policy | Capability prereq → cheap re-cuts → analytics → alerts |
-| 6 — Cursor live quota | **poor** | L | **Steps 3 + 4** | **yes ×3** — keychain, ToS text, undocumented RPC | serial, after 3 + 4 clear |
-| 7 — egui taskbar | **poor** | XL | **Steps 2–6** | release; GUI/UX design (none exists yet) | scaffold → per-tab fan-out → AccessKit → cross-platform |
+| 6 — egui taskbar | **poor** | XL | **Steps 2–5** | release; GUI/UX design (none exists yet) | scaffold → per-tab fan-out → AccessKit → cross-platform |
 
 **Bottom line:** the model executes successfully if you (a) go in dependency order with **3 riding alongside 2**, (b) accept the human gates on 1 / 4 / 5 / 6 / 7 as checkpoints rather than fighting them, and (c) split the L/XL steps into the sub-units above. **Start with Step 2 + §3's data-model half** — the highest-fit, highest-value first handoff.
 
@@ -381,7 +376,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **Files:** `crates/costroid-providers/src/lib.rs` (the `Provider` trait + 3 adapters).
 - **Goal:** make each provider *declare* its data sources / auth / quota shape (§2b) so unavailability renders honestly and new providers slot in by descriptor.
 - **Scope fence:** the descriptor + its impls only; no UI yet.
-- **Deliverables:** `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey, OptInSession, Unavailable }`; `enum AuthMethod { None, Oauth, ApiKey, OptInSession }`; `struct Capability { api_cost: DataSource, subscription_quota: DataSource, model_mix: DataSource, auth: AuthMethod, quota_kinds: &'static [LimitKind] }`; `fn capability(&self) -> Capability` on the trait, implemented for Claude/Codex/Cursor with today's honest values.
+- **Deliverables:** `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey, Unavailable }`; `enum AuthMethod { None, Oauth, ApiKey }`; `struct Capability { api_cost: DataSource, subscription_quota: DataSource, model_mix: DataSource, auth: AuthMethod, quota_kinds: &'static [LimitKind] }`; `fn capability(&self) -> Capability` on the trait, implemented for Claude/Codex/Cursor with today's honest values (Cursor `auth: None`).
 - **Done when:** gate green; a test asserts each provider's descriptor.
 - **Next:** Providers tab (T11) + the deferred adapters can rely on `Capability`.
 
@@ -425,8 +420,8 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display → **0.4.0**
 - **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
 - **T14 Budget 📌 · T15 Forecast 📌 · T16 Anomalies 📌 · T17 Alerts ⛔📌** — 📌 budget persistence schema · forecast algorithm · anomaly baseline · alert thresholds + copy → **0.5.0**
-- **T18 — Cursor live quota** · ⛔📌📌📌 · Prereq T2,T7,T8 — 📌 Cursor RPC wire format (needs a live-install discovery) · disclosure text · feature-gate name → **0.6.0**
-- **T19+ — egui taskbar** · ⛔ · Prereq T2–T6 (CLI feature-complete) — greenfield: needs a GUI design first, then per-tab fan-out → **0.7.0**
+- **T18+ — egui taskbar** · ⛔ · Prereq T2–T6 (CLI feature-complete) — greenfield: needs a GUI design first, then per-tab fan-out → **0.6.0**
+- **Cursor live quota — discovery-gated (§8), not a numbered build task.** Pursued only if Cursor publishes a sanctioned/documented API or first-party OAuth (never session reuse against `api2.cursor.sh`); until then Cursor stays detect-only / "unavailable." Card it (like Copilot/Antigravity) only after that discovery lands.
 
 When you reach a backlogged task, pin its 📌 and have a planning agent expand it into a full T1–T7-style card before you hand it to a build agent.
 
@@ -434,8 +429,10 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
 
+**🔒 ToS-safe rework (2026-06-06) — removed the session-reuse tier across plan + code.** The auth ladder is now **tiers 0–3 only; tier 4 = never** (no reuse of any credential/session/token against a non-sanctioned, undocumented, or internal endpoint — incl. Cursor's `api2.cursor.sh` — and no browser-cookie reading). Concretely: **`OptInSession` was removed from both `DataSource` and `AuthMethod`** in `costroid-providers`, and **Cursor's descriptor is now `auth: None`** (was `OptInSession`); the `each_provider_declares_its_capability` test was updated; full gate green. **Cursor live quota is no longer a numbered step** — it is **discovery-gated (§8)**, pursued only via a future *sanctioned* Cursor API/OAuth, never session reuse. The **egui taskbar moved Step 7 → Step 6 (v0.7.0 → v0.6.0)**, now the last numbered step; in the ledger the taskbar is **T18+** (no T19; Cursor is not a numbered T). §8 also gained verified ToS-safe discovery findings — **Copilot** (own classic-PAT / `gh` OAuth → documented `…/billing/ai_credit/usage`; user-billed only; never `copilot_internal/user`) and **Antigravity** (own-Gemini-key $ lane safe; "compute-effort" quota has no sanctioned source). The T3-DONE entry below predates this and is annotated accordingly.
+
 **✅ T3 DONE (gate green) — Capability descriptor + one out-of-named-file compile-fix.**
-- **Types landed exactly as the card specs them**, placed just before the `Provider` trait in `costroid-providers/src/lib.rs`: `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey, OptInSession, Unavailable }`, `enum AuthMethod { None, Oauth, ApiKey, OptInSession }` (both `#[serde(rename_all = "snake_case")]` + `Copy` — matching `AccessPath`; the snake_case wire form matches §2b's listed values, e.g. `local_artifact`/`opt_in_session`), and `struct Capability { api_cost, subscription_quota, model_mix: DataSource, auth: AuthMethod, quota_kinds: &'static [LimitKind] }`.
+- **Types landed exactly as the card specs them**, placed just before the `Provider` trait in `costroid-providers/src/lib.rs`: `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey, Unavailable }`, `enum AuthMethod { None, Oauth, ApiKey }` (both `#[serde(rename_all = "snake_case")]` + `Copy` — matching `AccessPath`; the snake_case wire form matches §2b's listed values, e.g. `local_artifact`/`api_key`), and `struct Capability { api_cost, subscription_quota, model_mix: DataSource, auth: AuthMethod, quota_kinds: &'static [LimitKind] }`. *(An `OptInSession` variant originally landed in both enums; the ToS-safe rework removed it — there is no session-reuse tier. See the ToS-safe-rework entry at the top of §11.5 and §5 tier 4.)*
 - **`Capability` is `Copy + PartialEq + Eq` but NOT `Serialize`/`Deserialize`** — only the two enums got serde (per the card). `Deserialize` is impossible anyway: `quota_kinds: &'static [LimitKind]` is a borrowed static slice. When the Providers tab (T11) needs to serialize a descriptor it can derive `Serialize` (slices serialize fine) or project to an owned shape; deferred — no producer/consumer yet.
 - **`capability()` is a REQUIRED trait method (no default).** Rationale: §2b wants each provider to *declare* its shape; a default would let a future adapter (Copilot/Antigravity) silently inherit a descriptor instead of declaring one. Consequence: the method forced a one-method compile-fix on the `FakeProvider` test double in `costroid-core` (`crates/costroid-core/src/lib.rs`, the `mod tests` import + the impl) — **one file outside the card's named providers file**, but a forced mechanical migration exactly like T2's "migrate every test," not scope creep. `FakeProvider` declares the honest conservative descriptor (all `Unavailable`, `auth: None`, empty `quota_kinds`); no test reads it. Card §12.3 Files line annotated to reflect this.
 - **Tests:** providers `each_provider_declares_its_capability` pins all three descriptors (the Done-when). Full gate green — **139 tests** (was 138; +1), incl. the offline forbidden-crates acceptance test (no new crates introduced).
@@ -592,14 +589,14 @@ Rules:
 **Scope fence:** the enums + struct + trait method + 3 impls + 1 test ONLY. No rendering (Providers
   tab is T11). Do NOT modify LimitWindow/LimitKind/LimitStatus (T2 owns those) — only reference them.
 **Deliverables:** `enum DataSource { LocalArtifact, SanctionedHook, SanctionedOauth, ApiKey,
-  OptInSession, Unavailable }`; `enum AuthMethod { None, Oauth, ApiKey, OptInSession }` (both
+  Unavailable }`; `enum AuthMethod { None, Oauth, ApiKey }` (both
   Serialize/Deserialize for consistency with ProviderId/AccessPath); `struct Capability { api_cost:
   DataSource, subscription_quota: DataSource, model_mix: DataSource, auth: AuthMethod, quota_kinds:
   &'static [LimitKind] }`; `fn capability(&self) -> Capability` on the Provider trait. Impls:
   Claude { api_cost: LocalArtifact, subscription_quota: SanctionedHook, model_mix: LocalArtifact,
   auth: None, quota_kinds: [FiveHour, Weekly] }; Codex { all LocalArtifact, auth: None, [FiveHour,
   Weekly] }; Cursor { api_cost/subscription_quota: Unavailable, model_mix: LocalArtifact, auth:
-  OptInSession, quota_kinds: [] }.
+  None, quota_kinds: [] }.
 **Done when:** gate green; a test asserts each provider's capability() values.
 **Next:** the Providers tab (T11) + deferred adapters (Copilot/Antigravity) rely on Capability.
 ```
@@ -710,16 +707,17 @@ Rules:
 
 ### 12.8 — Backlog tasks (T8+): the pin-then-card prompt
 
-*T8–T19 aren't carded — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
+*T8–T18 aren't carded — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
 
 ```
 Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
 Your job is to PIN + CARD it, not to build it:
 1. Read CLAUDE.md, docs/PRODUCT-PLAN.md §3/§5/§8/§11.5, and the relevant code/specs.
 2. Propose concrete answers to this task's 📌 (e.g. which provider usage endpoints + auth schemes;
-   the forecast algorithm; the anomaly baseline; the Cursor RPC wire format — needs a live-install
-   discovery; the GUI design). For anything that's an external/ToS or product call, present options +
-   a recommendation and STOP for the human.
+   the forecast algorithm; the anomaly baseline; the GUI design). For anything that's an external/ToS
+   or product call, present options + a recommendation and STOP for the human. **Never** propose a
+   session-reuse or undocumented-endpoint path (e.g. Cursor's `api2.cursor.sh`) — that is the ToS line
+   (§5 tier 4); a provider with no sanctioned source stays detect-only / "unavailable" (§8).
 3. Once pinned (with human sign-off where flagged), write a full T1–T7-style body for <ID> into §12
    and log the pinned decisions in §11.5.
 4. Do NOT implement or commit. Output the proposed card + decisions for review.

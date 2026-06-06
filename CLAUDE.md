@@ -8,7 +8,7 @@ Costroid is a secure, open-source, FOCUS-native developer tool that shows what y
 
 These are hard constraints. If a task seems to require breaking one, **stop and ask the human** instead.
 
-- **Follow the build steps in `docs/PRODUCT-PLAN.md`.** Surfaces ship in sequence — cost lane, then Claude `statusLine` capture, then the generalized quota model, then connections, then analytical tabs/alerts, then Cursor live quota, then the egui taskbar (the last surface). Don't jump ahead of the step you're on, and don't build a later step's adapter or surface speculatively.
+- **Follow the build steps in `docs/PRODUCT-PLAN.md`.** Surfaces ship in sequence — cost lane, then Claude `statusLine` capture, then the generalized quota model, then connections, then analytical tabs/alerts, then the egui taskbar (the last surface). (Cursor live quota is **not** in this sequence — it is discovery-gated, PRODUCT-PLAN §8.) Don't jump ahead of the step you're on, and don't build a later step's adapter or surface speculatively.
 - **Three providers ship today: Claude Code, Codex, Cursor.** GitHub Copilot and Antigravity CLI are *planned* additions via the `Capability` descriptor on the `Provider` trait — but only after a live-install discovery confirms each one's real data/auth/quota shape. Never build either adapter speculatively. (The provider layer is pluggable so adding one is *easy*; that is not permission to guess at one's shape.)
 - **Never build the web platform here.** It is a separate, separately-licensed repo. This repo is the local developer tool only.
 - **No chat / LLM-chat interface.** Costroid surfaces proactive, plain-language insight; it is not a chatbot and embeds no conversational LLM UI.
@@ -24,7 +24,7 @@ These are hard constraints. If a task seems to require breaking one, **stop and 
 
 ## Environment & setup
 
-**Prerequisites (local-only build):** Rust via `rustup` (with `clippy` and `rustfmt` components), plus `build-essential`, `pkg-config`, and `git`. The keyring deps (`libdbus-1-dev`, `libsecret-1-dev`) land **with the connections step** (Step 4 / v0.4.0, see `docs/PRODUCT-PLAN.md` §2c) — don't install them before then. The egui taskbar (Step 7) is built on `eframe`/`egui` + the `tray-icon` crate (no Tauri, no webview); its deps land with that step.
+**Prerequisites (local-only build):** Rust via `rustup` (with `clippy` and `rustfmt` components), plus `build-essential`, `pkg-config`, and `git`. The keyring deps (`libdbus-1-dev`, `libsecret-1-dev`) land **with the connections step** (Step 4 / v0.4.0, see `docs/PRODUCT-PLAN.md` §2c) — don't install them before then. The egui taskbar (Step 6) is built on `eframe`/`egui` + the `tray-icon` crate (no Tauri, no webview); its deps land with that step.
 
 **WSL:**
 - Work on the **Linux filesystem** (`~/costroid`), never under `/mnt/c` — cross-mount builds are slow and file-watching is flaky.
@@ -85,11 +85,11 @@ costroid/
 │  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (Step 4 / v0.4.0)
 ├─ apps/
 │  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline + --live (`setup-statusline`: planned, Step 2/5)
-│  └─ bar/                 binary `costroid-bar` — egui/eframe + `tray-icon` taskbar app (Step 7 / v0.7.0); depends only on `costroid-core`
+│  └─ bar/                 binary `costroid-bar` — egui/eframe + `tray-icon` taskbar app (Step 6 / v0.6.0); depends only on `costroid-core`
 └─ .github/workflows/      CI + cargo-dist release pipeline
 ```
 
-No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at Step 4 and `apps/bar` at Step 7 — see `docs/PRODUCT-PLAN.md` §2c/§2d and ARCHITECTURE §5.
+No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at Step 4 and `apps/bar` at Step 6 — see `docs/PRODUCT-PLAN.md` §2c/§2d and ARCHITECTURE §5.
 
 **What belongs where:**
 - `costroid-core` — the engine. Orchestrates providers, normalizes to FOCUS via `costroid-focus`, computes estimated cost, and houses the `bench`/`recommend` (frontier) module. No terminal/UI code.
@@ -97,7 +97,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at St
 - `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
 - `costroid-connect` — **all** network + credential code; feature-gated and **off by default**. HTTP via `ureq` + `rustls` (no async runtime); secrets via `keyring` (OS keychain only). Lands at Step 4 (v0.4.0). Depends on `costroid-core`/`costroid-focus`.
 - `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter, `--live`, and all rendering (`setup-statusline` is planned — Step 2/5). Depends on `costroid-core`.
-- `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 7); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
+- `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 6); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
 
 **Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`; `connect → {core, focus}`. No cycles. `costroid-focus` has no internal dependencies.
 
@@ -145,7 +145,7 @@ Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-
 
 ### Planned — the spine
 
-The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0** ship the built cost lane → **0.3.0** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0** connections (`costroid-connect`, first network code) → **0.5.0** analytical tabs + alerts → **0.6.0** Cursor live quota → **0.7.0** the egui taskbar (`apps/bar`, the last surface).
+The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0** ship the built cost lane → **0.3.0** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0** connections (`costroid-connect`, first network code) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
 
 ### Acceptance criteria (the local cost + quota product)
 
@@ -167,26 +167,21 @@ The full step sequence (goals, deliverables, acceptance, and the generalized-quo
 
 **Acceptance test:** on a machine with real Claude Code / Codex / Cursor logs and **networking disabled**, `costroid`, `costroid trends --period month --group model`, `costroid frontier`, `costroid export --format json`, and `costroid --plain` all produce correct output.
 
-### Connections & live quota (Steps 4 & 6, opt-in) — the auth source ladder
+### Connections & live quota (Step 4, opt-in) — the auth source ladder
 
-Network + credential code lives **only** in `costroid-connect` (feature-gated, off by default), and every source is chosen by descending an explicit ladder, most-sanctioned first (see `docs/PRODUCT-PLAN.md` §5):
+Network + credential code lives **only** in `costroid-connect` (feature-gated, off by default), and every source is chosen by descending an explicit ladder, most-sanctioned first — **only tiers 0–3 are ever built; tier 4 is the ToS line** (see `docs/PRODUCT-PLAN.md` §5):
 
 0. **Local artifacts** — provider logs on disk (today's default path).
 1. **Sanctioned push / hook** — Claude's `statusLine` `rate_limits` capture.
 2. **Sanctioned OAuth** (GitHub; deferred) — first-party, system browser + loopback redirect, PKCE.
 3. **Your own API key** — Anthropic/OpenAI/Gemini *usage* APIs, the user's own key.
-4. **Opt-in session reuse** (Cursor only) — default-off, behind a one-time disclosure naming the host and the undocumented/ToS risk; always degrades to "unavailable."
-5. **Never** reuse a subscription OAuth token against a non-sanctioned/internal endpoint — that's an account-ban path; that datum stays "unavailable."
+4. **Never** reuse any credential, session, or token against a non-sanctioned, undocumented, or internal endpoint (this includes reusing a local Cursor session against `api2.cursor.sh`), and never read browser cookies — that's an account-ban path and a ToS violation; that datum stays "unavailable," never fetched.
 
 **Step 4 (v0.4.0) — Connections.**
 
 - [ ] `costroid connect/disconnect <provider>` plus a Connections view that lists what is linked and supports instant disconnect/revoke; nothing is stored outside the keychain.
 - [ ] Tokens/keys stored **only** in the OS keychain (`keyring`); HTTP via `ureq` + `rustls`, strictly device↔provider, never via a server.
 - [ ] All network calls limited to provider endpoints the user authorized; still no telemetry.
-
-**Step 6 (v0.6.0) — Cursor live quota.**
-
-- [ ] Reuse an existing local Cursor session to fetch live quota/cost — **opt-in, default-off**, disclosed; always degrades to "unavailable." Cursor's paid plans are a **monthly dollar-denominated credit pool + usage-based overage** (billing-cycle, spend-$); the **daily token window is the free-tier rate-limit**. Quota is live-RPC-only.
 
 **Step 5 (v0.5.0) — alerts.**
 
@@ -198,8 +193,9 @@ Network + credential code lives **only** in `costroid-connect` (feature-gated, o
 
 Planned, but only after a live-install discovery confirms each one's real data/auth/quota shape — never built speculatively, each added via the `Capability` descriptor on the `Provider` trait:
 
-- **GitHub Copilot** — as of 2026-06-01, **AI Credits** (dollar-denominated monthly pool + overage) **replaced** premium requests; request-count is the **legacy** model. A per-user endpoint exists, but third-party OAuth scope/accessibility is **undocumented** (a discovery item). User-billed only; enterprise-billed shows "unavailable."
-- **Antigravity CLI** — 5h + weekly windows metered in "compute effort" (+ credit overage); local-log availability is **unknown** (discovery-gated).
+- **Cursor live quota** — Cursor serves usage/quota server-side only. It has a sanctioned `cursor-agent /statusline` hook and a documented Admin/Analytics usage API, but **neither carries an individual's quota** (statusline = session metadata only; Admin API = team-admin/enterprise-only) — so Cursor stays detect-only and its cost/quota are "unavailable." A live fetch is pursued **only if** Cursor publishes a documented per-user API/OAuth — or adds a quota field to its existing `/statusline` (the unlock to watch) — **never** by reusing a local Cursor session against its undocumented `api2.cursor.sh` RPC (a ToS violation). Quota shape (monthly $-credit pool + overage; daily token rate-limit on free tier) already maps to the generalized model; only a sanctioned source is missing.
+- **GitHub Copilot** — as of 2026-06-01, **AI Credits** (dollar-denominated monthly pool + overage) **replaced** premium requests; request-count is the **legacy** model. **A completely ToS-safe path is identified** (verified 2026-06-05): the user's **own classic PAT** (fine-grained PATs are unsupported on the billing endpoints) or `gh` OAuth → the documented `GET /users/{username}/settings/billing/ai_credit/usage` → AI-credit consumption + $-by-model; the Copilot CLI `statusLine` hook adds session cost. **User-billed only** (enterprise-billed → "unavailable"). **Never** the internal `api.github.com/copilot_internal/user`. Not promised until a live-install check confirms the endpoint on a personal plan.
+- **Antigravity CLI** — split (verified 2026-06-05): the **Gemini-API $ lane is ToS-safe** (the user's own Gemini key → AI Studio dashboards + Cloud Billing BigQuery export); the **"compute-effort" subscription quota has no sanctioned source** (Hooks aren't fed quota; transcripts are content only; IDE `.pb` is keychain-encrypted; the only quota source is the internal `GetUserStatus` RPC via a reused token = ban path) → quota stays "unavailable."
 
 ### Speculative / unbuilt
 

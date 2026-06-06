@@ -203,11 +203,12 @@ fn collect_snapshot_from_providers(
         }
 
         let focus_rows = focus_records_from_usage(&usage_events)?;
-        // Cursor is detect-and-defer: it keeps no token usage or quota on disk
-        // (both are live server RPCs; ARCHITECTURE.md §4), so it produces zero
+        // Cursor is detect-only: it keeps no token usage or quota on disk (both are
+        // served live server-side; ARCHITECTURE.md §4), so it produces zero
         // events/limits and is reported as `Detected` with the selected model,
-        // logged-in flag, and the Phase-2 deferral carried in `message`. Every other
-        // provider keeps the generic usage/limits-derived status.
+        // logged-in flag, and the discovery-gated "no sanctioned source" deferral
+        // carried in `message` (live quota is discovery-gated, §8 — never session
+        // reuse). Every other provider keeps the generic usage/limits-derived status.
         let (status, message) = if provider_id == ProviderId::Cursor {
             (
                 ProviderStatusKind::Detected,
@@ -249,9 +250,10 @@ fn provider_status_kind(usage_ok: bool, limits_ok: bool) -> ProviderStatusKind {
 }
 
 /// The detected-status line for Cursor: the selected model, the logged-in flag, and
-/// the explicit "usage/quota live (Phase 2)" deferral. Honest about what is locally
-/// knowable (presence + model) versus what is not (cost + quota). Never includes the
-/// account email/userId — only whether a session exists.
+/// the explicit "usage/quota unavailable — no sanctioned source" note (live quota is
+/// discovery-gated; ARCHITECTURE.md §8). Honest about what is locally knowable
+/// (presence + model) versus what is not (cost + quota). Never includes the account
+/// email/userId — only whether a session exists.
 fn cursor_detected_message(config: &CursorConfig) -> String {
     let model = match (&config.display_name, &config.model_id) {
         (Some(display), Some(id)) => format!("model {display} ({id})"),
@@ -265,8 +267,8 @@ fn cursor_detected_message(config: &CursorConfig) -> String {
         "login unknown"
     };
     format!(
-        "BETA — {model}, {login}; usage unavailable — live (Phase 2); \
-         quota unavailable — live (Phase 2)"
+        "BETA — {model}, {login}; usage unavailable — no sanctioned source; \
+         quota unavailable — no sanctioned source"
     )
 }
 
@@ -2596,7 +2598,8 @@ mod tests {
     fn cursor_detected_status_defers_usage_and_quota() {
         // The real CursorProvider against the fake `.cursor` fixture tree: the install
         // is detected with its selected model + logged-in flag, but usage and quota are
-        // deferred to Phase 2 (zero events, zero limits, zero FOCUS rows).
+        // unavailable — no sanctioned source (discovery-gated): zero events, zero limits,
+        // zero FOCUS rows.
         let env = HostEnv::new(fixture_path(&["cursor", "home"]), Vec::new(), false);
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(CursorProvider)];
 
@@ -2619,7 +2622,7 @@ mod tests {
             "composer-2.5",
             "Composer 2.5 Fast",
             "logged in",
-            "live (Phase 2)",
+            "no sanctioned source",
         ] {
             assert!(
                 message.contains(needle),

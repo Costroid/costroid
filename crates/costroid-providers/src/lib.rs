@@ -234,9 +234,9 @@ pub enum DataSource {
     SanctionedOauth,
     /// The user's own usage/billing API key.
     ApiKey,
-    /// Opt-in reuse of an existing local session (Cursor only), default-off.
-    OptInSession,
-    /// No clean source exists for this datum — unavailable, never fetched.
+    /// No sanctioned source exists for this datum — unavailable, never fetched.
+    /// (Reusing a credential/session against a non-sanctioned, undocumented, or
+    /// internal endpoint is never an option — that is the ToS line; see ARCHITECTURE §8.)
     Unavailable,
 }
 
@@ -249,7 +249,6 @@ pub enum AuthMethod {
     None,
     Oauth,
     ApiKey,
-    OptInSession,
 }
 
 /// A provider's declared data/auth/quota shape (§2b). Each adapter returns one from
@@ -420,16 +419,17 @@ impl Provider for CursorProvider {
         ProviderId::Cursor
     }
 
-    /// Cost + quota are live server RPCs, reachable only by opt-in session reuse
-    /// (default-off, disclosed; T18) — so both lanes are [`DataSource::Unavailable`]
-    /// today, never fetched. Only the selected model (model mix) is a local artifact
-    /// (`cli-config.json`). No local quota window, so `quota_kinds` is empty.
+    /// Cost + quota are served live server-side by Cursor with no sanctioned source,
+    /// and Costroid never reuses a session to fetch them — so both lanes are
+    /// [`DataSource::Unavailable`], never fetched (live quota is discovery-gated;
+    /// PRODUCT-PLAN §8 / ARCHITECTURE §8). Only the selected model (model mix) is a
+    /// local artifact (`cli-config.json`). No local quota window, so `quota_kinds` is empty.
     fn capability(&self) -> Capability {
         Capability {
             api_cost: DataSource::Unavailable,
             subscription_quota: DataSource::Unavailable,
             model_mix: DataSource::LocalArtifact,
-            auth: AuthMethod::OptInSession,
+            auth: AuthMethod::None,
             quota_kinds: &[],
         }
     }
@@ -438,22 +438,24 @@ impl Provider for CursorProvider {
         discover_cursor_location(env.cursor_roots())
     }
 
-    /// Cursor keeps **no** token usage on disk — usage is a live server RPC
-    /// (`GetAggregatedUsage`; ARCHITECTURE.md §4), and the only local numbers are
-    /// chat content (off-limits, §8) and a context-window size snapshot (not spend).
-    /// So there are no local usage events to produce: the now/trends/export screens
-    /// carry no Cursor rows, and `costroid-core` reports Cursor as *detected* with
-    /// usage deferred to Phase 2 (the live-data phase).
+    /// Cursor keeps **no** token usage on disk — usage is served live server-side by
+    /// Cursor (ARCHITECTURE.md §4), and the only local numbers are chat content
+    /// (off-limits, §8) and a context-window size snapshot (not spend). So there are
+    /// no local usage events to produce: the now/trends/export screens carry no Cursor
+    /// rows, and `costroid-core` reports Cursor as *detected* with usage **unavailable —
+    /// no sanctioned source** (discovery-gated; §8).
     fn parse_usage(&self, _loc: &DataLocation) -> Result<Vec<UsageEvent>, ProviderError> {
         Ok(Vec::new())
     }
 
-    /// Cursor's free-plan quota is a **daily** token window fetched live from the
-    /// server (`GetUsageLimitStatusAndActiveGrants`), not stored locally, and
-    /// [`LimitKind`] has no `Daily` variant — so Phase 1 emits no limit rather than
-    /// mislabel it `Weekly`. The quota's "live (Phase 2)" status is surfaced in the
-    /// provider's detected-status message in `costroid-core`. Adding `LimitKind::Daily`
-    /// plus the live fetch is Phase-2 work.
+    /// Cursor's quota (paid: a monthly $-credit pool; free: a daily token window) is
+    /// served live by Cursor with **no sanctioned source** Costroid may read, so
+    /// `parse_limits` emits no window — the "unavailable — no sanctioned source" status
+    /// is surfaced in the provider's detected-status message in `costroid-core`. A live
+    /// fetch is **discovery-gated** (PRODUCT-PLAN §8): pursued only via a future
+    /// *sanctioned* Cursor API/OAuth, **never** by reusing a local session against the
+    /// undocumented `api2.cursor.sh` RPC (a ToS violation; §5 tier 4). (The generalized
+    /// `LimitKind`/`Spend` shape that would render it already landed in T2.)
     fn parse_limits(&self, _loc: &DataLocation) -> Result<Vec<LimitWindow>, ProviderError> {
         Ok(Vec::new())
     }
@@ -1750,7 +1752,7 @@ mod tests {
     fn each_provider_emits_its_expected_window_shape() {
         // The generalized quota shape, pinned per provider (T2 Done-when): Codex →
         // Verified TokenFraction windows; Claude → measure-less Unavailable windows;
-        // Cursor → no windows at all (live-RPC-only, deferred to Phase 2).
+        // Cursor → no windows at all (served live server-side, no sanctioned source; discovery-gated).
         let codex_loc = DataLocation {
             provider: ProviderId::Codex,
             root: fixture_path(&["codex"]),
@@ -1798,7 +1800,8 @@ mod tests {
         // renders honestly and future adapters slot in by descriptor. Pins today's
         // honest values (T3 Done-when): Claude = local cost/mix + sanctioned-hook
         // quota, no login; Codex = all-local, no login; Cursor = cost/quota
-        // unavailable (live RPC, opt-in only) with only the model a local artifact.
+        // unavailable (live server-side, no sanctioned source; never session reuse)
+        // with only the model a local artifact.
         assert_eq!(
             ClaudeCodeProvider.capability(),
             Capability {
@@ -1825,7 +1828,7 @@ mod tests {
                 api_cost: DataSource::Unavailable,
                 subscription_quota: DataSource::Unavailable,
                 model_mix: DataSource::LocalArtifact,
-                auth: AuthMethod::OptInSession,
+                auth: AuthMethod::None,
                 quota_kinds: &[],
             }
         );
