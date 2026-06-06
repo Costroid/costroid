@@ -2,3 +2,5 @@
 
 # validator run artifacts
 *.log
+
+.playwright-mcp/
