@@ -99,7 +99,7 @@ To release a fix, bump the version and push the new `vX.Y.Z` tag.
 
 ## crates.io publish
 
-Costroid is published to crates.io through v0.2.0 — all four crates (`costroid-focus`,
+Costroid is published to crates.io through v0.3.0 — all four crates (`costroid-focus`,
 `costroid-providers`, `costroid-core`, `costroid`) — so `cargo install costroid` and
 `cargo binstall costroid` both work.
 
