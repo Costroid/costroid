@@ -1,0 +1,28 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_now(&all_arms_now(), RenderOptions::plain())"
+---
+costroid now
+period: this week, estimated API spend: ~$42.18
+limits:
+  claude code 5h: 55% used, resets in 2h  as of 08:30
+    reflects Claude Code's view; claude.ai chat usage may make true usage higher.
+  claude code wk: 96% used ? unverified, resets in 2d 2h  as of 08:30
+    reflects Claude Code's view; claude.ai chat usage may make true usage higher.
+  codex 5h: 40% used, resets in 41m  as of 08:30
+  cursor mo: $18.50 / $20.00 used, resets in 12d  as of 08:30
+  cursor wk: partial, 88% used, limit data incomplete
+  claude code 1d: usage 1,234,567 tokens (~$12.34, estimated), quota % unavailable
+    reflects Claude Code's view; claude.ai chat usage may make true usage higher.
+  codex 1d: usage 5,000 tokens (estimated), quota % unavailable
+  cursor cyc: unavailable, no sanctioned source
+api costs this week:
+  claude opus 4.7: ~$24.10, 60 tokens
+  gpt 5.5: ~$11.30, 60 tokens
+  sonnet 4.6: ~$6.78, 60 tokens
+subscription API-equivalent value, estimate not bill:
+  gpt 5.5: ~$0.00, 60 tokens, unpriced/partial
+unknown-access usage, partial:
+  mystery model: ~$0.00, 60 tokens, unknown model/unpriced
+insight: claude code wk at 96% (unverified), resets 2d 2h.
+provider cursor missing: no local data found

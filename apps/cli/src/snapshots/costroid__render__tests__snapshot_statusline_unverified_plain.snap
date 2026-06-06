@@ -1,0 +1,5 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_statusline(&all_arms_now(), RenderOptions::plain())"
+---
+costroid ~$42.18, claude code wk 96% used ? unverified, resets in 2d2h

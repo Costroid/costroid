@@ -678,6 +678,7 @@ fn limit_summary(
         plan: limit.plan.clone(),
         kind: limit.kind,
         label: limit.label.clone(),
+        captured_at: finalized.captured_at,
         availability: limit_availability(&finalized, generated_at, &volume, estimated_usd),
     }
 }
@@ -1174,6 +1175,12 @@ pub struct LimitSummary {
     pub plan: Option<String>,
     pub kind: LimitKind,
     pub label: Option<String>,
+    /// When the underlying reading was observed — threaded from the finalized
+    /// [`LimitWindow::captured_at`] so the render layer (which only ever sees
+    /// `LimitSummary`, never `LimitWindow`) can draw the always-on "as of HH:MM"
+    /// freshness stamp (STATUSLINE-CAPTURE-BRIEF §8). For `Unavailable` windows this is
+    /// the UNIX-epoch sentinel, but those arms render no stamp so it never surfaces.
+    pub captured_at: DateTime<Utc>,
     pub availability: LimitAvailability,
 }
 

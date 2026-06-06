@@ -11,10 +11,11 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
-Wires Claude Code's live 5h/7d quota **capture** (Step 2 / T5) on top of the cost lane —
-no new network code, no telemetry, still zero network calls in the default build. The
-captured quota is **not yet shown** on the `now` screen; on-screen rendering lands next
-(T6, the 0.3.0 milestone).
+The 0.3.0 milestone: the generalized quota model plus Claude Code's live 5h/7d quota —
+**captured** from the `statusLine` hook (T5), **read + sanitized + cross-checked** from a
+no-secret local cache (T4), and **rendered** on the `now` screen and status line (T6), all
+on top of the cost lane — no new network code, no telemetry, still zero network calls in
+the default build.
 
 ### Added
 
@@ -28,6 +29,16 @@ captured quota is **not yet shown** on the `now` screen; on-screen rendering lan
   exits 0 always, and never fails your prompt.
 - **`costroid statusline --wrap '<command>'`** — a manual escape hatch that captures and
   then runs an existing status-line command on the same input.
+- **Live Claude 5h/7d quota on the `now` screen and status line** — the captured
+  `rate_limits` cache is read, **sanitized and cross-checked**, then rendered: a meter for
+  token-fraction limits, `$used / $included used` (no fabricated %) for dollar limits, and
+  an estimate fallback. Readings degrade to a color-free " ? unverified" cue or to
+  "unavailable" rather than ever showing a confident wrong number, carry an always-on
+  "as of HH:MM" freshness stamp, and note that claude.ai chat usage may make true usage
+  higher. Still no network calls in the default build.
+- **Generalized quota model** — limit windows, measures (token-fraction vs. dollar spend),
+  kinds (5-hour / weekly / daily / monthly / billing-cycle) and availability states are
+  normalized across providers, so each provider's quota maps onto one shared shape.
 
 ## [0.2.0] - 2026-06-05
 

@@ -155,9 +155,9 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at St
 
 ## Build status & scope (the build steps)
 
-Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-step production plan. Build the step you're on; don't jump ahead, and don't build a later step's adapter or surface speculatively. Steps below are tagged CURRENT (built, v0.1.0) vs PLANNED (roadmap).
+Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-step production plan. Build the step you're on; don't jump ahead, and don't build a later step's adapter or surface speculatively. The last cut release is **v0.2.0** (the cost lane: frontier + Cursor-detect + WSL fix); the **0.3.0 quota milestone (T2 + T4 + T6) is code-complete on `main`, not yet tagged**. Verify current behavior in the code (canon) before trusting any item below.
 
-### Built today (v0.1.0)
+### Built and shipped (v0.1.0 → v0.2.0)
 
 1. **Core + workspace.** `costroid-core` / `costroid-focus` / `costroid-providers` (Claude + Codex), verified to the cent vs ccusage. *Shipped (v0.1.0).*
 2. **TUI + full cost picture.** `now` / `trends`, subscription + API, filter, per-lane totals, export, config; Cursor **detection only** (beta); subscription quota graceful. *Shipped (v0.1.0).*
@@ -166,13 +166,13 @@ Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-
 
 ### Planned — the spine
 
-The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0** ship the built cost lane → **0.3.0** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0** connections (`costroid-connect`, first network code) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
+The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0 (shipped)** the built cost lane → **0.3.0 (code-complete, T2+T4+T6)** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0 (next)** connections (`costroid-connect`, first network code) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
 
 ### Acceptance criteria (the local cost + quota product)
 
 - [ ] Workspace builds; `cargo install --path apps/cli` installs a working `costroid` binary.
 - [ ] Detects installed providers (Claude Code, Codex, Cursor) by locating their local data, including WSL→Windows paths; degrades gracefully when a provider is absent.
-- [ ] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check) and T5 landed the *writer* (`setup-statusline` + `statusline --capture-only`, atomic no-secret cache); only the *render* (T6) is still pending, so no Claude quota flows to the screen yet; Codex's from local windows today; Cursor quota is detect-and-defer).
+- [ ] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check), T5 the *writer* (`setup-statusline` + `statusline --capture-only`, atomic no-secret cache), and T6 the *render* (all five `LimitAvailability` arms, the `? unverified` cue, the `Spend` dollar line, the "as of HH:MM" stamp, and the claude.ai chat caveat) — so Claude live quota now surfaces end to end; Codex's from local windows today; Cursor quota is detect-and-defer).
 - [ ] `costroid trends`: `--period day|week|month|year` and `--group model|app|total` both work.
 - [ ] `costroid --live`: refreshes in place; `q`/Ctrl-C exits cleanly; works over SSH and inside tmux.
 - [ ] `costroid statusline`: emits a compact one-line status suitable for a shell prompt, tmux, or Starship; `costroid setup-statusline` wires Claude Code's `statusLine` for live quota.

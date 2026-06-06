@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::io::{self, IsTerminal};
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use costroid_core::{
     AggregateTotals, BenchFrontier, BenchView, CostLane, CostLaneSummary, FrontierPoint,
     FrontierStanding, GroupBy, LimitAvailability, LimitSummary, NowSummary, OverlayModel, Period,
@@ -18,6 +18,20 @@ const LIMIT_BAR_WIDTH: usize = 12;
 const STATUS_BAR_WIDTH: usize = 4;
 const WARN_FRACTION: f64 = 0.80;
 const CRITICAL_FRACTION: f64 = 0.95;
+/// A reading at least this old (capture time vs. the summary's `generated_at`) carries an
+/// always-on "as of HH:MM" freshness stamp (STATUSLINE-CAPTURE-BRIEF §8): every Claude
+/// reading is a cached push and every Codex window is only as fresh as its latest rollout
+/// entry, so a hours-old reading must never render as a bare, confident meter. Tunable.
+const LIMIT_FRESHNESS_STAMP_MINUTES: i64 = 10;
+/// The distinct, color-free flag for a cross-check-failed (`Unverified`) reading — shown
+/// INSTEAD of the confident `!`/`!!` state cue so a near-max unverified reading never
+/// reads as a confident alarm (brief §8). Survives `--plain` / `NO_COLOR`.
+const UNVERIFIED_CUE: &str = " ? unverified";
+/// The push-only chat-under-report caveat carried by Claude `Available`/`Unverified`
+/// lines (brief §8): claude.ai chat shares the 5h/7d limit but is invisible to the cache,
+/// so the meter can read low.
+const CLAUDE_CHAT_CAVEAT: &str =
+    "reflects Claude Code's view; claude.ai chat usage may make true usage higher.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RenderMode {
@@ -766,14 +780,25 @@ fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> Style
             Some(limit) => {
                 let (fraction, reset) = limit_fraction_and_reset(limit);
                 let pct = percent(fraction);
-                let cue = state_cue(limit_state(fraction));
+                // An unverified window may be the most-constrained pick (brief §8); it must
+                // carry the `? unverified` cue and a neutral meter, never a confident `!!`.
+                let unverified = matches!(limit.availability, LimitAvailability::Unverified { .. });
+                let cue = if unverified {
+                    UNVERIFIED_CUE.to_string()
+                } else {
+                    state_cue(limit_state(fraction)).to_string()
+                };
                 let reset = reset
                     .map(|seconds| format!(" {}", compact_reset(seconds)))
                     .unwrap_or_default();
                 let mut line = StyledLine::new();
                 line.push_plain(format!("{} {spend}{api_state}  ", mark(options)));
-                line.spans
-                    .push(limit_meter_span(fraction, STATUS_BAR_WIDTH, options));
+                line.spans.push(limit_meter_with_confidence(
+                    fraction,
+                    unverified,
+                    STATUS_BAR_WIDTH,
+                    options,
+                ));
                 line.push_plain(format!(" {pct}{cue}{reset}"));
                 line
             }
@@ -800,7 +825,10 @@ fn render_now_visual_document(summary: &NowSummary, options: RenderOptions) -> S
         push_line(&mut out, "  no local limit data found");
     } else {
         for limit in &summary.limits {
-            out.push(render_limit_line(limit, options));
+            out.push(render_limit_line(limit, summary.generated_at, options));
+            if let Some(caveat) = claude_caveat(limit) {
+                push_line(&mut out, &format!("    {caveat}"));
+            }
         }
     }
     push_rule(&mut out, options);
@@ -836,7 +864,10 @@ fn render_now_plain_document(summary: &NowSummary) -> StyledDocument {
         push_line(&mut out, "  no local limit data found");
     } else {
         for limit in &summary.limits {
-            push_line(&mut out, &plain_limit_line(limit));
+            push_line(&mut out, &plain_limit_line(limit, summary.generated_at));
+            if let Some(caveat) = claude_caveat(limit) {
+                push_line(&mut out, &format!("    {caveat}"));
+            }
         }
     }
     push_line(&mut out, "api costs this week:");
@@ -1062,8 +1093,9 @@ fn sum_costs(rows: &[CostLaneSummary]) -> Decimal {
         .fold(Decimal::ZERO, |total, row| total + row.totals.billed_cost)
 }
 
-/// The token-fraction carried by a [`LimitMeasure`], if any. `Spend` measures have no
-/// fraction (`None`) and fall to a placeholder line until T6 renders them properly.
+/// The token-fraction carried by a [`LimitMeasure`], if any. `Spend` measures meter a
+/// dollar pool, not a fraction, so they return `None` and are never selected as the
+/// "most constrained" window (they render their own dollar line instead).
 fn measure_fraction(measure: &LimitMeasure) -> Option<f64> {
     match measure {
         LimitMeasure::TokenFraction(fraction) => Some(*fraction),
@@ -1071,91 +1103,118 @@ fn measure_fraction(measure: &LimitMeasure) -> Option<f64> {
     }
 }
 
-/// T2 placeholder text for limit shapes T6 will format properly — `Spend` measures and
-/// the new `Unverified`/`Estimated` availability arms. No producer emits these in T2,
-/// so this never reaches a user; it exists only to keep the `match`es exhaustive and
-/// the build green (PRODUCT-PLAN §11.5 D1). Real measure-aware rendering is T6's.
-const LIMIT_RENDER_PENDING: &str = "limit detail pending";
+/// The always-on "as of HH:MM" freshness stamp (brief §8): once a reading is at least
+/// [`LIMIT_FRESHNESS_STAMP_MINUTES`] old it must carry an age signal so it never renders
+/// as a bare, confident meter. Empty for a still-fresh reading. Formatted in **UTC** so
+/// snapshots stay timezone-deterministic (the suite avoids env mutation).
+fn freshness_stamp(captured_at: DateTime<Utc>, generated_at: DateTime<Utc>) -> String {
+    if (generated_at - captured_at).num_minutes() >= LIMIT_FRESHNESS_STAMP_MINUTES {
+        format!("  as of {}", captured_at.format("%H:%M"))
+    } else {
+        String::new()
+    }
+}
 
-fn render_limit_line(limit: &LimitSummary, options: RenderOptions) -> StyledLine {
+/// The Claude chat-under-report caveat for a Claude window that shows usage, else `None`.
+/// The now-screen builders render it as an indented sub-note line. Covers `Available` /
+/// `Unverified` (the meter reads low — brief §8) AND `Estimated` (the volume shown is
+/// Claude-Code-only and must not be misread as account-wide — brief §6 requires the
+/// "excludes claude.ai chat" disclosure on the absent→estimate fallback).
+fn claude_caveat(limit: &LimitSummary) -> Option<&'static str> {
+    let shows_usage = matches!(
+        limit.availability,
+        LimitAvailability::Available { .. }
+            | LimitAvailability::Unverified { .. }
+            | LimitAvailability::Estimated { .. }
+    );
+    (limit.tool == ProviderId::ClaudeCode && shows_usage).then_some(CLAUDE_CHAT_CAVEAT)
+}
+
+/// A meter span that never alarm-colors an `unverified` reading — an unverified near-max
+/// must draw as a neutral bar, not a confident red one (brief §8). Verified readings keep
+/// the state-based color from [`limit_meter_span`].
+fn limit_meter_with_confidence(
+    fraction: f64,
+    unverified: bool,
+    width: usize,
+    options: RenderOptions,
+) -> StyledSpan {
+    if unverified {
+        StyledSpan::styled(
+            positional_meter_text(fraction, width, options),
+            SemanticStyle::Strong,
+        )
+    } else {
+        limit_meter_span(fraction, width, options)
+    }
+}
+
+/// Format a `Spend` dollar pool as "$used / $included used", or "$used used" when there is
+/// no published allowance — never fabricate a denominator (brief §6/§8).
+fn spend_text(used_usd: &Decimal, included_usd: &Option<Decimal>) -> String {
+    match included_usd {
+        Some(included) => format!(
+            "{} / {} used",
+            format_money(used_usd, Some("USD"), false),
+            format_money(included, Some("USD"), false)
+        ),
+        None => format!("{} used", format_money(used_usd, Some("USD"), false)),
+    }
+}
+
+/// The `Estimated` window's local token volume (thousands-grouped for readability).
+fn estimated_volume_text(volume_tokens: u64) -> String {
+    format!("{} tokens", with_thousands(&volume_tokens.to_string()))
+}
+
+/// The estimated dollar value suffix for an `Estimated` window: "(~$value, estimated)"
+/// when priced, or "(estimated)" alone when the model is unpriced — never a guessed price.
+fn estimated_value_suffix(estimated_usd: &Option<Decimal>) -> String {
+    match estimated_usd {
+        Some(value) => format!(" ({}, estimated)", format_money(value, Some("USD"), true)),
+        None => " (estimated)".to_string(),
+    }
+}
+
+fn render_limit_line(
+    limit: &LimitSummary,
+    generated_at: DateTime<Utc>,
+    options: RenderOptions,
+) -> StyledLine {
     let tool = provider_name(limit.tool);
     let kind = limit_kind(limit.kind);
-    let pending = || StyledLine::plain(format!("  {tool:<12} {kind:<3} {LIMIT_RENDER_PENDING}"));
+    let stamp = freshness_stamp(limit.captured_at, generated_at);
     match &limit.availability {
         LimitAvailability::Available {
             measure,
             reset_in_seconds,
             ..
-        } => match measure_fraction(measure) {
-            Some(used_fraction) => {
-                let cue = state_cue(limit_state(used_fraction));
-                let mut line = StyledLine::new();
-                line.push_plain(format!("  {tool:<12} {kind:<3} "));
-                line.spans
-                    .push(limit_meter_span(used_fraction, LIMIT_BAR_WIDTH, options));
-                line.push_plain(format!(
-                    "  {}{}  resets {}",
-                    percent(used_fraction),
-                    cue,
-                    reset_countdown(*reset_in_seconds)
-                ));
-                line
-            }
-            None => pending(),
-        },
-        LimitAvailability::Partial {
-            measure,
-            reset_in_seconds,
-            reason,
-            ..
-        } => match measure.as_ref().and_then(measure_fraction) {
-            Some(fraction) => {
+        } => match measure {
+            LimitMeasure::TokenFraction(fraction) => {
+                let fraction = *fraction;
                 let cue = state_cue(limit_state(fraction));
-                let reset = reset_in_seconds
-                    .map(reset_countdown)
-                    .map(|value| format!(" resets {value}"))
-                    .unwrap_or_default();
                 let mut line = StyledLine::new();
                 line.push_plain(format!("  {tool:<12} {kind:<3} "));
                 line.spans
                     .push(limit_meter_span(fraction, LIMIT_BAR_WIDTH, options));
                 line.push_plain(format!(
-                    "  {}{}  partial: {}{}",
+                    "  {}{}  resets {}{}",
                     percent(fraction),
                     cue,
-                    reason,
-                    reset
+                    reset_countdown(*reset_in_seconds),
+                    stamp
                 ));
                 line
             }
-            None => StyledLine::plain(format!("  {tool:<12} {kind:<3} partial: {reason}")),
-        },
-        // T6 renders these; T2 keeps the build green with a basic placeholder line.
-        LimitAvailability::Unverified { .. } | LimitAvailability::Estimated { .. } => pending(),
-        LimitAvailability::Unavailable { reason } => {
-            StyledLine::plain(format!("  {tool:<12} {kind:<3} unavailable: {reason}"))
-        }
-    }
-}
-
-fn plain_limit_line(limit: &LimitSummary) -> String {
-    let tool = provider_name(limit.tool);
-    let kind = limit_kind(limit.kind);
-    match &limit.availability {
-        LimitAvailability::Available {
-            measure,
-            reset_in_seconds,
-            ..
-        } => match measure_fraction(measure) {
-            Some(used_fraction) => {
-                let cue = plain_state_phrase(limit_state(used_fraction));
-                format!(
-                    "  {tool} {kind}: {} used{cue}, resets in {}",
-                    percent(used_fraction),
-                    reset_countdown(*reset_in_seconds)
-                )
-            }
-            None => format!("  {tool} {kind}: {LIMIT_RENDER_PENDING}"),
+            LimitMeasure::Spend {
+                used_usd,
+                included_usd,
+            } => StyledLine::plain(format!(
+                "  {tool:<12} {kind:<3} {}  resets {}{}",
+                spend_text(used_usd, included_usd),
+                reset_countdown(*reset_in_seconds),
+                stamp
+            )),
         },
         LimitAvailability::Partial {
             measure,
@@ -1163,21 +1222,171 @@ fn plain_limit_line(limit: &LimitSummary) -> String {
             reason,
             ..
         } => {
-            let usage = measure
-                .as_ref()
-                .and_then(measure_fraction)
-                .map(|fraction| format!("{} used", percent(fraction)))
-                .unwrap_or_else(|| "usage unknown".to_string());
+            let reset = reset_in_seconds
+                .map(reset_countdown)
+                .map(|value| format!("  resets {value}"))
+                .unwrap_or_default();
+            match measure {
+                Some(LimitMeasure::TokenFraction(fraction)) => {
+                    let fraction = *fraction;
+                    let cue = state_cue(limit_state(fraction));
+                    let mut line = StyledLine::new();
+                    line.push_plain(format!("  {tool:<12} {kind:<3} "));
+                    line.spans
+                        .push(limit_meter_span(fraction, LIMIT_BAR_WIDTH, options));
+                    line.push_plain(format!(
+                        "  {}{}  partial: {}{}",
+                        percent(fraction),
+                        cue,
+                        reason,
+                        reset
+                    ));
+                    line
+                }
+                Some(LimitMeasure::Spend {
+                    used_usd,
+                    included_usd,
+                }) => StyledLine::plain(format!(
+                    "  {tool:<12} {kind:<3} {}  partial: {}{}",
+                    spend_text(used_usd, included_usd),
+                    reason,
+                    reset
+                )),
+                None => {
+                    StyledLine::plain(format!("  {tool:<12} {kind:<3} partial: {reason}{reset}"))
+                }
+            }
+        }
+        LimitAvailability::Unverified {
+            measure,
+            reset_in_seconds,
+            ..
+        } => {
+            let reset = reset_in_seconds
+                .map(reset_countdown)
+                .map(|value| format!("  resets {value}"))
+                .unwrap_or_default();
+            match measure {
+                LimitMeasure::TokenFraction(fraction) => {
+                    let fraction = *fraction;
+                    let mut line = StyledLine::new();
+                    line.push_plain(format!("  {tool:<12} {kind:<3} "));
+                    line.spans.push(limit_meter_with_confidence(
+                        fraction,
+                        true,
+                        LIMIT_BAR_WIDTH,
+                        options,
+                    ));
+                    line.push_plain(format!(
+                        "  {}{}{}{}",
+                        percent(fraction),
+                        UNVERIFIED_CUE,
+                        reset,
+                        stamp
+                    ));
+                    line
+                }
+                LimitMeasure::Spend {
+                    used_usd,
+                    included_usd,
+                } => StyledLine::plain(format!(
+                    "  {tool:<12} {kind:<3} {}{}{}{}",
+                    spend_text(used_usd, included_usd),
+                    UNVERIFIED_CUE,
+                    reset,
+                    stamp
+                )),
+            }
+        }
+        LimitAvailability::Estimated {
+            volume_tokens,
+            estimated_usd,
+        } => StyledLine::plain(format!(
+            "  {tool:<12} {kind:<3} usage: {}{} — quota % unavailable",
+            estimated_volume_text(*volume_tokens),
+            estimated_value_suffix(estimated_usd)
+        )),
+        LimitAvailability::Unavailable { reason } => {
+            StyledLine::plain(format!("  {tool:<12} {kind:<3} unavailable: {reason}"))
+        }
+    }
+}
+
+fn plain_limit_line(limit: &LimitSummary, generated_at: DateTime<Utc>) -> String {
+    let tool = provider_name(limit.tool);
+    let kind = limit_kind(limit.kind);
+    let stamp = freshness_stamp(limit.captured_at, generated_at);
+    match &limit.availability {
+        LimitAvailability::Available {
+            measure,
+            reset_in_seconds,
+            ..
+        } => match measure {
+            LimitMeasure::TokenFraction(fraction) => {
+                let cue = plain_state_phrase(limit_state(*fraction));
+                format!(
+                    "  {tool} {kind}: {} used{cue}, resets in {}{stamp}",
+                    percent(*fraction),
+                    reset_countdown(*reset_in_seconds)
+                )
+            }
+            LimitMeasure::Spend {
+                used_usd,
+                included_usd,
+            } => format!(
+                "  {tool} {kind}: {}, resets in {}{stamp}",
+                spend_text(used_usd, included_usd),
+                reset_countdown(*reset_in_seconds)
+            ),
+        },
+        LimitAvailability::Partial {
+            measure,
+            reset_in_seconds,
+            reason,
+            ..
+        } => {
+            let usage = match measure {
+                Some(LimitMeasure::TokenFraction(fraction)) => {
+                    format!("{} used", percent(*fraction))
+                }
+                Some(LimitMeasure::Spend {
+                    used_usd,
+                    included_usd,
+                }) => spend_text(used_usd, included_usd),
+                None => "usage unknown".to_string(),
+            };
             let reset = reset_in_seconds
                 .map(reset_countdown)
                 .map(|value| format!(", resets in {value}"))
                 .unwrap_or_default();
             format!("  {tool} {kind}: partial, {usage}{reset}, {reason}")
         }
-        // T6 renders these; T2 keeps the build green with a basic placeholder line.
-        LimitAvailability::Unverified { .. } | LimitAvailability::Estimated { .. } => {
-            format!("  {tool} {kind}: {LIMIT_RENDER_PENDING}")
+        LimitAvailability::Unverified {
+            measure,
+            reset_in_seconds,
+            ..
+        } => {
+            let usage = match measure {
+                LimitMeasure::TokenFraction(fraction) => format!("{} used", percent(*fraction)),
+                LimitMeasure::Spend {
+                    used_usd,
+                    included_usd,
+                } => spend_text(used_usd, included_usd),
+            };
+            let reset = reset_in_seconds
+                .map(reset_countdown)
+                .map(|value| format!(", resets in {value}"))
+                .unwrap_or_default();
+            format!("  {tool} {kind}: {usage}{UNVERIFIED_CUE}{reset}{stamp}")
         }
+        LimitAvailability::Estimated {
+            volume_tokens,
+            estimated_usd,
+        } => format!(
+            "  {tool} {kind}: usage {}{}, quota % unavailable",
+            estimated_volume_text(*volume_tokens),
+            estimated_value_suffix(estimated_usd)
+        ),
         LimitAvailability::Unavailable { reason } => {
             format!("  {tool} {kind}: unavailable, {reason}")
         }
@@ -1192,13 +1401,20 @@ fn plain_limit_phrase(limit: &LimitSummary) -> String {
             measure,
             reset_in_seconds,
             ..
-        } => match measure_fraction(measure) {
-            Some(used_fraction) => format!(
+        } => match measure {
+            LimitMeasure::TokenFraction(fraction) => format!(
                 "{tool} {kind} {} used, resets in {}",
-                percent(used_fraction),
+                percent(*fraction),
                 compact_reset(*reset_in_seconds)
             ),
-            None => format!("{tool} {kind} {LIMIT_RENDER_PENDING}"),
+            LimitMeasure::Spend {
+                used_usd,
+                included_usd,
+            } => format!(
+                "{tool} {kind} {}, resets in {}",
+                spend_text(used_usd, included_usd),
+                compact_reset(*reset_in_seconds)
+            ),
         },
         LimitAvailability::Partial {
             measure,
@@ -1206,21 +1422,46 @@ fn plain_limit_phrase(limit: &LimitSummary) -> String {
             reason,
             ..
         } => {
-            let usage = measure
-                .as_ref()
-                .and_then(measure_fraction)
-                .map(percent)
-                .unwrap_or_else(|| "unknown usage".to_string());
+            let usage = match measure {
+                Some(LimitMeasure::TokenFraction(fraction)) => percent(*fraction),
+                Some(LimitMeasure::Spend {
+                    used_usd,
+                    included_usd,
+                }) => spend_text(used_usd, included_usd),
+                None => "unknown usage".to_string(),
+            };
             let reset = reset_in_seconds
                 .map(compact_reset)
                 .map(|value| format!(", resets in {value}"))
                 .unwrap_or_default();
             format!("{tool} {kind} partial, {usage}{reset}, {reason}")
         }
-        // T6 renders these; T2 keeps the build green with a basic placeholder phrase.
-        LimitAvailability::Unverified { .. } | LimitAvailability::Estimated { .. } => {
-            format!("{tool} {kind} {LIMIT_RENDER_PENDING}")
+        LimitAvailability::Unverified {
+            measure,
+            reset_in_seconds,
+            ..
+        } => {
+            let usage = match measure {
+                LimitMeasure::TokenFraction(fraction) => format!("{} used", percent(*fraction)),
+                LimitMeasure::Spend {
+                    used_usd,
+                    included_usd,
+                } => spend_text(used_usd, included_usd),
+            };
+            let reset = reset_in_seconds
+                .map(compact_reset)
+                .map(|value| format!(", resets in {value}"))
+                .unwrap_or_default();
+            format!("{tool} {kind} {usage}{UNVERIFIED_CUE}{reset}")
         }
+        LimitAvailability::Estimated {
+            volume_tokens,
+            estimated_usd,
+        } => format!(
+            "{tool} {kind} usage {}{}, quota % unavailable",
+            estimated_volume_text(*volume_tokens),
+            estimated_value_suffix(estimated_usd)
+        ),
         LimitAvailability::Unavailable { reason } => {
             format!("{tool} {kind} unavailable, {reason}")
         }
@@ -1246,10 +1487,11 @@ fn limit_fraction(limit: &LimitSummary) -> Option<f64> {
             measure: Some(measure),
             ..
         } => measure_fraction(measure),
-        // The new Unverified/Estimated arms don't feed the "most constrained" pick in
-        // T2 (no producer emits them yet); T6 decides how they surface.
+        // An Unverified window IS eligible to be the most-constrained pick (brief §8); the
+        // statusline carries its `? unverified` cue so a maxed-looking reading is never
+        // shown as confident. `Estimated` has no fraction → excluded, like `Unavailable`.
+        LimitAvailability::Unverified { measure, .. } => measure_fraction(measure),
         LimitAvailability::Partial { measure: None, .. }
-        | LimitAvailability::Unverified { .. }
         | LimitAvailability::Estimated { .. }
         | LimitAvailability::Unavailable { .. } => None,
     }
@@ -1273,9 +1515,12 @@ fn limit_fraction_and_reset(limit: &LimitSummary) -> (f64, Option<i64>) {
             measure.as_ref().and_then(measure_fraction).unwrap_or(0.0),
             *reset_in_seconds,
         ),
-        LimitAvailability::Unverified { .. }
-        | LimitAvailability::Estimated { .. }
-        | LimitAvailability::Unavailable { .. } => (0.0, None),
+        LimitAvailability::Unverified {
+            measure,
+            reset_in_seconds,
+            ..
+        } => (measure_fraction(measure).unwrap_or(0.0), *reset_in_seconds),
+        LimitAvailability::Estimated { .. } | LimitAvailability::Unavailable { .. } => (0.0, None),
     }
 }
 
@@ -1642,11 +1887,18 @@ fn insight_line(api: &[CostLaneSummary], limits: &[LimitSummary]) -> String {
     if let Some(limit) = most_constrained_limit(limits) {
         let fraction = limit_fraction(limit).unwrap_or(0.0);
         if fraction >= WARN_FRACTION {
+            // An unverified near-max must not read as a confident insight (brief §8) — flag it.
+            let flag = if matches!(limit.availability, LimitAvailability::Unverified { .. }) {
+                " (unverified)"
+            } else {
+                ""
+            };
             return format!(
-                "◆ {} {} at {}, resets {}.",
+                "◆ {} {} at {}{}, resets {}.",
                 provider_name(limit.tool),
                 limit_kind(limit.kind),
                 percent(fraction),
+                flag,
                 limit_fraction_and_reset(limit)
                     .1
                     .map(reset_countdown)
@@ -1986,6 +2238,7 @@ mod tests {
                 plan: None,
                 kind: LimitKind::FiveHour,
                 label: Some("unavailable".to_string()),
+                captured_at: now,
                 availability: LimitAvailability::Unavailable {
                     reason: "unavailable".to_string(),
                 },
@@ -1995,6 +2248,7 @@ mod tests {
                 plan: Some("plus".to_string()),
                 kind: LimitKind::FiveHour,
                 label: None,
+                captured_at: now,
                 availability: LimitAvailability::Available {
                     measure: LimitMeasure::TokenFraction(0.78),
                     resets_at: now + Duration::minutes(41),
@@ -2006,6 +2260,7 @@ mod tests {
                 plan: Some("plus".to_string()),
                 kind: LimitKind::Weekly,
                 label: None,
+                captured_at: now,
                 availability: LimitAvailability::Available {
                     measure: LimitMeasure::TokenFraction(0.92),
                     resets_at: now + Duration::hours(54),
@@ -2017,6 +2272,7 @@ mod tests {
                 plan: None,
                 kind: LimitKind::Weekly,
                 label: None,
+                captured_at: now,
                 availability: LimitAvailability::Partial {
                     measure: Some(LimitMeasure::TokenFraction(0.97)),
                     resets_at: None,
@@ -2025,6 +2281,129 @@ mod tests {
                 },
             },
         ]
+    }
+
+    /// Every availability arm + both `LimitMeasure` shapes in one fixture so the snapshots
+    /// prove T6 renders all five distinctly and uniformly across providers (brief §8/§9).
+    /// All "live" readings are captured 30 min before `generated_at` so the always-on
+    /// "as of HH:MM" stamp fires (threshold is 10 min); UTC keeps the stamp deterministic.
+    fn all_arms_limits() -> Vec<LimitSummary> {
+        let now = utc(2026, 6, 2, 9, 0);
+        let captured = now - Duration::minutes(30);
+        vec![
+            // Available, TokenFraction — Claude: meter + stamp + chat caveat.
+            LimitSummary {
+                tool: ProviderId::ClaudeCode,
+                plan: Some("max".to_string()),
+                kind: LimitKind::FiveHour,
+                label: None,
+                captured_at: captured,
+                availability: LimitAvailability::Available {
+                    measure: LimitMeasure::TokenFraction(0.55),
+                    resets_at: now + Duration::hours(2),
+                    reset_in_seconds: 2 * 60 * 60,
+                },
+            },
+            // Unverified, TokenFraction — Claude near-max, cross-check failed: neutral meter +
+            // "? unverified" (never "!!") + stamp + caveat.
+            LimitSummary {
+                tool: ProviderId::ClaudeCode,
+                plan: Some("max".to_string()),
+                kind: LimitKind::Weekly,
+                label: None,
+                captured_at: captured,
+                availability: LimitAvailability::Unverified {
+                    measure: LimitMeasure::TokenFraction(0.96),
+                    resets_at: Some(now + Duration::hours(50)),
+                    reset_in_seconds: Some(50 * 60 * 60),
+                },
+            },
+            // Available, TokenFraction — Codex: proves the stamp + render are uniform, not
+            // Claude-only (no caveat — caveat is Claude-only).
+            LimitSummary {
+                tool: ProviderId::Codex,
+                plan: Some("plus".to_string()),
+                kind: LimitKind::FiveHour,
+                label: None,
+                captured_at: captured,
+                availability: LimitAvailability::Available {
+                    measure: LimitMeasure::TokenFraction(0.40),
+                    resets_at: now + Duration::minutes(41),
+                    reset_in_seconds: 41 * 60,
+                },
+            },
+            // Available, Spend — a dollar credit pool with NO meter, NEVER a fabricated %.
+            LimitSummary {
+                tool: ProviderId::Cursor,
+                plan: Some("pro".to_string()),
+                kind: LimitKind::Monthly,
+                label: None,
+                captured_at: captured,
+                availability: LimitAvailability::Available {
+                    measure: LimitMeasure::Spend {
+                        used_usd: Decimal::new(1850, 2),
+                        included_usd: Some(Decimal::new(2000, 2)),
+                    },
+                    resets_at: now + Duration::days(12),
+                    reset_in_seconds: 12 * 24 * 60 * 60,
+                },
+            },
+            // Partial, TokenFraction — incomplete but not flagged (reset unknown).
+            LimitSummary {
+                tool: ProviderId::Cursor,
+                plan: Some("pro".to_string()),
+                kind: LimitKind::Weekly,
+                label: None,
+                captured_at: captured,
+                availability: LimitAvailability::Partial {
+                    measure: Some(LimitMeasure::TokenFraction(0.88)),
+                    resets_at: None,
+                    reset_in_seconds: None,
+                    reason: "limit data incomplete".to_string(),
+                },
+            },
+            // Estimated WITH a priced value — volume + ~$value, quota % unavailable, no meter.
+            LimitSummary {
+                tool: ProviderId::ClaudeCode,
+                plan: Some("max".to_string()),
+                kind: LimitKind::Daily,
+                label: None,
+                captured_at: now,
+                availability: LimitAvailability::Estimated {
+                    volume_tokens: 1_234_567,
+                    estimated_usd: Some(Decimal::new(1234, 2)),
+                },
+            },
+            // Estimated WITHOUT a value — unpriced model → volume alone, never a guessed price.
+            LimitSummary {
+                tool: ProviderId::Codex,
+                plan: Some("plus".to_string()),
+                kind: LimitKind::Daily,
+                label: None,
+                captured_at: now,
+                availability: LimitAvailability::Estimated {
+                    volume_tokens: 5_000,
+                    estimated_usd: None,
+                },
+            },
+            // Unavailable — unchanged arm, no meter, no stamp.
+            LimitSummary {
+                tool: ProviderId::Cursor,
+                plan: None,
+                kind: LimitKind::BillingCycle,
+                label: Some("no sanctioned source".to_string()),
+                captured_at: now,
+                availability: LimitAvailability::Unavailable {
+                    reason: "no sanctioned source".to_string(),
+                },
+            },
+        ]
+    }
+
+    fn all_arms_now() -> NowSummary {
+        let mut summary = priced_now();
+        summary.limits = all_arms_limits();
+        summary
     }
 
     fn provider_statuses() -> Vec<ProviderStatus> {
@@ -2223,6 +2602,128 @@ mod tests {
     #[test]
     fn snapshot_now_plain() {
         insta::assert_snapshot!(render_now(&priced_now(), RenderOptions::plain()));
+    }
+
+    // ----- T6: the five availability arms + Spend, across all four render modes -----
+
+    #[test]
+    fn snapshot_now_all_arms_braille() {
+        insta::assert_snapshot!(render_now(&all_arms_now(), RenderOptions::braille(true)));
+    }
+
+    #[test]
+    fn snapshot_now_all_arms_braille_no_ansi() {
+        insta::assert_snapshot!(render_now(&all_arms_now(), RenderOptions::braille(false)));
+    }
+
+    #[test]
+    fn snapshot_now_all_arms_ascii() {
+        insta::assert_snapshot!(render_now(&all_arms_now(), RenderOptions::ascii(false)));
+    }
+
+    #[test]
+    fn snapshot_now_all_arms_plain() {
+        insta::assert_snapshot!(render_now(&all_arms_now(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn now_all_arms_render_honestly_in_plain() {
+        // The Done-when checks, pinned against drift: plain has no ANSI; Unverified is
+        // flagged (never a confident phrase); the freshness stamp appears (UTC, so it is
+        // deterministic); the Claude caveat is reachable; Spend shows a dollar pool with no
+        // fabricated %; Estimated shows volume + value + "quota % unavailable" and no meter.
+        let output = render_now(&all_arms_now(), RenderOptions::plain());
+        assert!(
+            !output.contains('\u{1b}'),
+            "plain now must contain no ANSI escapes: {output}"
+        );
+        assert!(
+            output.contains("96% used ? unverified"),
+            "unverified reading must be flagged, never confident: {output}"
+        );
+        assert!(
+            output.contains("as of 08:30"),
+            "an aged reading must carry the freshness stamp: {output}"
+        );
+        assert!(
+            output.contains(
+                "reflects Claude Code's view; claude.ai chat usage may make true usage higher."
+            ),
+            "Claude quota lines must carry the chat caveat: {output}"
+        );
+        assert!(
+            output.contains("$18.50 / $20.00 used"),
+            "Spend must render a dollar pool, never a fabricated %: {output}"
+        );
+        assert!(
+            output.contains("usage 1,234,567 tokens (~$12.34, estimated), quota % unavailable"),
+            "Estimated must show volume + value + unavailable-%: {output}"
+        );
+        assert!(
+            output.contains("usage 5,000 tokens (estimated), quota % unavailable"),
+            "unpriced Estimated must show volume alone, never a guessed price: {output}"
+        );
+    }
+
+    #[test]
+    fn now_all_arms_spend_draws_no_meter_in_braille() {
+        // A Spend window has no fraction, so it must NOT draw a braille meter — the dollar
+        // line stands alone (brief §6/§8).
+        let output = render_now(&all_arms_now(), RenderOptions::braille(true));
+        let spend_line = output
+            .lines()
+            .find(|line| line.contains("$18.50 / $20.00 used"))
+            .unwrap_or_else(|| panic!("spend line should render: {output}"));
+        assert!(
+            !spend_line.contains('⣿') && !spend_line.contains('⣀'),
+            "spend line must not draw a meter: {spend_line}"
+        );
+    }
+
+    #[test]
+    fn statusline_flags_unverified_when_most_constrained() {
+        // The 0.96 Unverified window is the highest fraction, so it is the most-constrained
+        // pick — the one-liner must carry the `? unverified` cue, never a confident `!!`
+        // (the exact confident-wrong-number failure brief §0/§8 forbids).
+        let braille = render_statusline(&all_arms_now(), RenderOptions::braille(true));
+        assert!(
+            braille.contains("96% ? unverified"),
+            "statusline must flag the unverified pick: {braille}"
+        );
+        assert!(
+            !braille.contains("96% !!"),
+            "unverified must never render as a confident alarm: {braille}"
+        );
+        let plain = render_statusline(&all_arms_now(), RenderOptions::plain());
+        assert!(plain.contains("? unverified"), "plain statusline: {plain}");
+        assert!(
+            !plain.contains('\u{1b}'),
+            "plain statusline must contain no ANSI: {plain}"
+        );
+    }
+
+    #[test]
+    fn snapshot_statusline_unverified_braille() {
+        insta::assert_snapshot!(render_statusline(
+            &all_arms_now(),
+            RenderOptions::braille(true)
+        ));
+    }
+
+    #[test]
+    fn snapshot_statusline_unverified_plain() {
+        insta::assert_snapshot!(render_statusline(&all_arms_now(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn freshness_stamp_appears_only_past_the_threshold() {
+        let now = utc(2026, 6, 2, 9, 0);
+        // Fresh reading (under 10 min) → no stamp; aged reading → "as of HH:MM" in UTC.
+        assert_eq!(freshness_stamp(now - Duration::minutes(5), now), "");
+        assert_eq!(
+            freshness_stamp(now - Duration::minutes(10), now),
+            "  as of 08:50"
+        );
     }
 
     #[test]

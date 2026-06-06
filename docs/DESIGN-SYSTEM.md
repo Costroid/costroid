@@ -49,9 +49,11 @@ A horizontal run of `W` braille cells (default `W = 12`; configurable). Given a 
 used_cells = clamp(round(f * W), if f > 0 { 1 } else { 0 }, W)
 ```
 
-- Render `used_cells` as full `⣿` in the used color; the remaining `W - used_cells` as full `⣿` in dim gray (the track).
+- Render `used_cells` as full `⣿` in the used color; the remaining `W - used_cells` as the light/track glyph `⣀` (dots 7,8 only) in dim gray (the track) — not a full cell.
 - Optional half-cell precision: if the fractional remainder ≥ 0.5, render the boundary cell as left-column `⡇` in the used color.
 - **Thresholds** (defaults, configurable): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber and a `!` cue is appended after the percentage. At ≥ critical (or `f ≥ 1.0`, over limit), used color = red and the cue is `!!` (and `OVER` when `f ≥ 1.0`). The cue is what makes the state readable without color.
+- **Unverified (cross-check-failed) reading.** When a quota reading fails the `rate_limits` sanitize/cross-check (ARCHITECTURE §9.2), the meter draws in a **neutral (non-alarm) color** — never amber/red even at a near-max fraction — and the threshold `!`/`!!`/`OVER` cue is replaced by the distinct color-free cue ` ? unverified`. A maxed-looking but unverified reading must never render as a confident alarm.
+- **Freshness stamp.** Every `Available`/`Unverified` reading that is at least ~10 minutes older than the render carries an always-on `as of HH:MM` (UTC) stamp, so a hours-old cached reading never renders as a bare, confident meter.
 - Always show the percentage and reset countdown beside the meter: `⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀ 78%  resets 2h 14m`.
 
 **Reset-countdown format** — compact, two largest non-zero units:
@@ -65,6 +67,16 @@ used_cells = clamp(round(f * W), if f > 0 { 1 } else { 0 }, W)
 
 Each provider shows two meters (5-hour and weekly), labeled, stacked.
 
+### Limit measure variants (Spend / Estimated / Unavailable)
+
+Not every window meters a token fraction; the line is **measure-aware**:
+
+- **Spend pool** (a dollar-denominated allowance): render `$used / $included used` (or `$used used` when no published allowance) — **no meter, never a fabricated %**.
+- **Estimated** (quota source absent, volume inferred from local logs): render `usage: N tokens (~$value, estimated) — quota % unavailable` — no meter; the `~`/`estimated` hedge is mandatory and the price is omitted entirely when the model is unpriced (never guessed).
+- **Unavailable**: render `unavailable: <reason>` — no meter, no number.
+
+For Claude windows that show usage (Available / Unverified / Estimated), an indented sub-note carries the chat caveat: "reflects Claude Code's view; claude.ai chat usage may make true usage higher."
+
 ### Spend sparkline
 
 A **hand-rasterized braille** plot of bucketed spend over the period — **ink only** (draw the data dots, no track), computed directly from the codepoint (no Ratatui `Canvas`; ARCHITECTURE §7). For `n` buckets with values `vᵢ` and `max = max(vᵢ)` (or a fixed ceiling), each bucket's height in dot-rows is:
@@ -73,7 +85,7 @@ A **hand-rasterized braille** plot of bucketed spend over the period — **ink o
 h_i = clamp(round((v_i / max) * H), if v_i > 0 { 1 } else { 0 }, H)
 ```
 
-where `H` is the vertical dot resolution (default `H = 8`, i.e. 2 cells tall). Draw points at the bucket's x for rows `0..h_i` (bottom-up), in the primary color. Label the axis sparsely (period markers like `mon … sun`, `w1 … w4`, `jan … dec`). Linear scale by default. Bucket granularity follows the selected period.
+where `H` is the vertical dot resolution (`H = 4`, i.e. 1 cell tall in the shipped renderer). Draw points at the bucket's x for rows `0..h_i` (bottom-up), in the primary color. Label the axis sparsely (period markers like `mon … sun`, `w1 … w4`, `jan … dec`). Linear scale by default. Bucket granularity follows the selected period.
 
 ### API cost bar
 
@@ -174,19 +186,24 @@ q / Ctrl-C      quit (always restores the terminal)
 - **Partial:** some providers missing or incomplete (e.g. Cursor) → show what's available and label the gap explicitly; never fabricate.
 - **Per-provider error:** shown inline next to that provider, non-fatal; the rest of the screen still renders.
 - **Warning:** amber + cue on near/over-limit meters.
+- **Unverified:** a quota reading that failed the sanitize/cross-check renders with a neutral (non-alarm) meter and the color-free ` ? unverified` cue — never a confident alarm (ARCHITECTURE §9.2).
+- **Estimated / Unavailable:** when the quota source is absent, show the inferred token volume marked `(estimated)` with `quota % unavailable` (no meter), or `unavailable: <reason>` — never a fabricated percentage.
 
 ## Accessibility
 
 `--plain` produces no color, no braille, plain ASCII, in a linear top-to-bottom reading order with every value labeled and carrying its unit and context — built to be read aloud by a screen reader. Mode selection (the `--plain` flag, TTY detection, `NO_COLOR`, and a braille-capability check) is in ARCHITECTURE.md.
 
-**The no-color-only rule:** the amber/red warning state is **always** paired with a textual cue (`!`, `!!`, `OVER`, or a word like `near limit`), so it survives `NO_COLOR`, color-blindness, and `--plain`.
+**The no-color-only rule:** the amber/red warning state is **always** paired with a textual cue (`!`, `!!`, `OVER`, or a word like `near limit`), so it survives `NO_COLOR`, color-blindness, and `--plain`. The **unverified** state is likewise carried by its own color-free cue ` ? unverified` (shown instead of `!`/`!!`), with a neutral meter, so a cross-check-failed reading never reads as a confident alarm even without color.
 
 > **Forward note — the egui taskbar (`apps/bar`, Step 6, planned).** The richest surface, the egui/eframe (+ `tray-icon`) taskbar app, is a later deliverable; its visual design is not specified here yet (design TBD — no detailed mockups). It shares the same semantic states defined above: the amber warning state still needs a second, non-color cue (icon/badge/text), and `--plain` has no analogue in a GUI but the equivalent obligation holds via **AccessKit** for screen readers. Scope and sequencing for this surface are governed by [PRODUCT-PLAN.md](PRODUCT-PLAN.md) (§2d / §4, Step 6).
 
 **ASCII substitutes per component:**
 
 ```
-limit meter   "[##########--] 78% (near limit) resets 2h 14m"   # '#' used, '-' remaining
+limit meter   "[##########--] 78% (near limit) resets 2h 14m"   # '#' used, '-' remaining; --plain drops the bar: "claude code 5h: 78% used (near limit), resets in 2h 14m"
+unverified    "claude code 5h: 92% used ? unverified, resets in 41m  as of 14:03"   # neutral, no alarm word
+spend pool    "copilot mo: $3.20 / $10.00 used, resets in 5d"     # dollar line, no meter, no %
+estimated     "claude code 5h: usage 412,000 tokens (~$1.10, estimated), quota % unavailable"
 sparkline     prefer a labeled numeric list; or an ASCII height ramp .:-=+*#
 cost bar      "claude opus 4.8   $24.10   (57%)"                 # no bar, or "####"
 statusline    "costroid $4.18  78% used, resets in 2h14m"

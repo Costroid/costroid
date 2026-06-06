@@ -1,0 +1,32 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_now(&all_arms_now(), RenderOptions::braille(false))"
+---
+C⠉ costroid                                   this week  ~$42.18
+────────────────────────────────────────────────────────────────
+limits
+  claude code  5h  ⣿⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀  55%  resets 2h  as of 08:30
+    reflects Claude Code's view; claude.ai chat usage may make true usage higher.
+  claude code  wk  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇  96% ? unverified  resets 2d 2h  as of 08:30
+    reflects Claude Code's view; claude.ai chat usage may make true usage higher.
+  codex        5h  ⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀⣀  40%  resets 41m  as of 08:30
+  cursor       mo  $18.50 / $20.00 used  resets 12d  as of 08:30
+  cursor       wk  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣀  88% !  partial: limit data incomplete
+  claude code  1d  usage: 1,234,567 tokens (~$12.34, estimated) — quota % unavailable
+    reflects Claude Code's view; claude.ai chat usage may make true usage higher.
+  codex        1d  usage: 5,000 tokens (estimated) — quota % unavailable
+  cursor       cyc unavailable: no sanctioned source
+────────────────────────────────────────────────────────────────
+api costs (this week)
+  claude opus 4.7     ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ~$24.10
+  gpt 5.5             ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀       ~$11.30
+  sonnet 4.6          ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$6.78
+────────────────────────────────────────────────────────────────
+subscription API-equivalent value (estimate, not bill)
+  gpt 5.5             ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unpriced/partial]
+────────────────────────────────────────────────────────────────
+unknown-access usage (partial)
+  mystery model       ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unknown model/unpriced]
+────────────────────────────────────────────────────────────────
+◆ claude code wk at 96% (unverified), resets 2d 2h.
+provider cursor missing: no local data found
