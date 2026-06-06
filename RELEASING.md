@@ -29,12 +29,14 @@ human-triggered action and is intentionally not automated to run on a normal pus
 the `costroid-mcp` crate (deferred/speculative — see `docs/PRODUCT-PLAN.md`,
 which governs scope and build sequencing).
 
-**Planned later** (per the production plan — *not yet in the workspace, not yet published*): two new
-members join the build and the crates.io publish order at their roadmap steps — `costroid-connect`
-(library; all network + credential code, feature-gated and off by default; published after
-`costroid-core`) and `costroid-bar` (the egui taskbar app, binary `costroid-bar`; depends only on
-`costroid-core`, the last surface). See `docs/PRODUCT-PLAN.md` for the
-sequencing; the crates.io order below grows to accommodate them when they land.
+**Joining the publish order at their roadmap steps:** `costroid-connect` is now a workspace member
+(landed in T7) — an empty, feature-gated leaf, built only behind `apps/cli`'s off-by-default
+`connect` feature — but is **not yet published** (no behavior, no deps; `keyring` in T8, `ureq` +
+`rustls` in T9). When it has behavior it depends on `costroid-core`/`costroid-focus`, so it publishes
+after `costroid-core` (the CLI then depends on it). Still *not yet in the workspace, not yet
+published:* `costroid-bar` (the egui taskbar app, binary `costroid-bar`; depends only on
+`costroid-core`, the last surface). See `docs/PRODUCT-PLAN.md` for the sequencing; the crates.io order
+below grows to accommodate them when they land.
 
 ---
 

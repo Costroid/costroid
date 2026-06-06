@@ -103,24 +103,24 @@ costroid/
 │  ├─ costroid-core/       engine: orchestration, cost calc, bundled pricing, bench/recommend (frontier)
 │  ├─ costroid-focus/      FOCUS schema types + serde — no business logic
 │  ├─ costroid-providers/  Provider trait + Claude Code/Codex/Cursor adapters + WSL-aware log discovery
-│  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (Step 4 / v0.4.0)
+│  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (skeleton landed T7; network behavior at Step 4 / v0.4.0)
 ├─ apps/
 │  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline (`--capture-only` / `--wrap`) + `setup-statusline` (`--undo`) + --live
 │  └─ bar/                 binary `costroid-bar` — egui/eframe + `tray-icon` taskbar app (Step 6 / v0.6.0); depends only on `costroid-core`
 └─ .github/workflows/      CI + cargo-dist release pipeline
 ```
 
-No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at Step 4 and `apps/bar` at Step 6 — see `docs/PRODUCT-PLAN.md` §2c/§2d and ARCHITECTURE §5.
+No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` exists today as an empty, feature-gated leaf (the skeleton landed in T7); its network/credential **behavior** lands at Step 4, and `apps/bar` lands at Step 6 — see `docs/PRODUCT-PLAN.md` §2c/§2d and ARCHITECTURE §5.
 
 **What belongs where:**
 - `costroid-core` — the engine. Orchestrates providers, normalizes to FOCUS via `costroid-focus`, computes estimated cost, and houses the `bench`/`recommend` (frontier) module. No terminal/UI code.
 - `costroid-focus` — FOCUS record types and (de)serialization only. Pure data; depends on nothing internal.
 - `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
-- `costroid-connect` — **all** network + credential code; feature-gated and **off by default**. HTTP via `ureq` + `rustls` (no async runtime); secrets via `keyring` (OS keychain only). Lands at Step 4 (v0.4.0). Depends on `costroid-core`/`costroid-focus`.
+- `costroid-connect` — **all** network + credential code; feature-gated and **off by default**, with the `connect` feature gated on the **apps** (`apps/cli` today, `apps/bar` later), not the virtual workspace root. **Today it is an empty skeleton leaf with no dependencies (landed in T7);** its behavior lands later — HTTP via `ureq` + `rustls` (no async runtime) in T9, secrets via `keyring` (OS keychain only) in T8 — at which point it depends on `costroid-core`/`costroid-focus`. All at Step 4 (v0.4.0).
 - `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter (incl. the `statusline --capture-only` capture writer and the `statusline --wrap '<cmd>'` escape hatch), `setup-statusline` (Claude Code `settings.json` wiring with backup + `--undo`), `--live`, and all rendering. Depends on `costroid-core`.
 - `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 6); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
 
-**Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`; `connect → {core, focus}`. No cycles. `costroid-focus` has no internal dependencies.
+**Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → {core, focus}` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` has no internal dependencies. (Today `costroid-connect` is an empty leaf and gains its `core`/`focus` deps with behavior in T8/T9.)
 
 **Errors:** `thiserror` for typed errors in library crates; `anyhow` only in the binaries (`apps/`). No `unwrap`/`expect`/`panic!` in library code.
 
@@ -155,7 +155,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at St
 
 ## Build status & scope (the build steps)
 
-Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-step production plan. Build the step you're on; don't jump ahead, and don't build a later step's adapter or surface speculatively. The last cut release is **v0.2.0** (the cost lane: frontier + Cursor-detect + WSL fix); the **0.3.0 quota milestone (T2 + T4 + T6) is code-complete on `main`, not yet tagged**. Verify current behavior in the code (canon) before trusting any item below.
+Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-step production plan. Build the step you're on; don't jump ahead, and don't build a later step's adapter or surface speculatively. The last cut release is **v0.3.0** (tagged 2026-06-06 — the quota milestone: Claude live quota end to end + the generalized quota model, T2 + T4 + T6); **T7 (the `costroid-connect` skeleton + the re-scoped no-network guarantee, off by default) has since landed on `main`**, opening the 0.4.0 connections line. Verify current behavior in the code (canon) before trusting any item below.
 
 ### Built and shipped (v0.1.0 → v0.2.0)
 
@@ -166,7 +166,7 @@ Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-
 
 ### Planned — the spine
 
-The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0 (shipped)** the built cost lane → **0.3.0 (code-complete, T2+T4+T6)** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0 (next)** connections (`costroid-connect`, first network code) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
+The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0 (shipped)** the built cost lane → **0.3.0 (tagged, T2+T4+T6)** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0 (next; T7 infra landed)** connections (`costroid-connect`, first network code) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
 
 ### Acceptance criteria (the local cost + quota product)
 
@@ -184,7 +184,7 @@ The full step sequence (goals, deliverables, acceptance, and the generalized-quo
 - [ ] Live Claude quota from the `statusLine` `rate_limits` field is **sanitized + cross-checked** and degrades to "unavailable"/"unverified", never a confident wrong number (ARCHITECTURE §9.2).
 - [ ] Zero telemetry; zero unauthorized network calls.
 - [ ] Ships via cargo-dist (shell + PowerShell installers + Homebrew tap + npm wrapper, each artifact checksummed and build-provenance-attested; tag-triggered release in CI) and crates.io (`cargo install costroid` / `cargo binstall costroid`). (Scoop unsupported by cargo-dist — see RELEASING.md.)
-- [ ] CI green: fmt + clippy + test + FOCUS-conformance + `cargo deny` + the strace offline-acceptance test (which proves the default/local-only build makes zero network calls — re-scoped to the local path once `costroid-connect` lands at Step 4) + the forbidden-crates test.
+- [ ] CI green: fmt + clippy + test + FOCUS-conformance + `cargo deny` + the strace offline-acceptance test (which proves the default/local-only build makes zero network calls — re-scoped in T7 to the default/local path, with a feature-on stub for when network code lands in T8/T9) + the forbidden-crates test (a two-tier resolved-graph check since T7: the default build forbids the sanctioned `ureq`/`rustls`/`keyring` trio, `--features connect` admits only it).
 
 **Acceptance test:** on a machine with real Claude Code / Codex / Cursor logs and **networking disabled**, `costroid`, `costroid trends --period month --group model`, `costroid frontier`, `costroid export --format json`, and `costroid --plain` all produce correct output.
 

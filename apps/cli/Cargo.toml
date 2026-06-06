@@ -14,10 +14,18 @@ categories = ["command-line-utilities", "visualization"]
 name = "costroid"
 path = "src/main.rs"
 
+[features]
+# The connections subsystem is opt-in and off by default: the default build never
+# links `costroid-connect`, so it makes no network calls and touches no secret. The
+# taskbar (`apps/bar`, Step 6) will carry the same gate. Network + keychain code
+# lands behind this feature in T8/T9; today it pulls in an empty skeleton crate.
+connect = ["dep:costroid-connect"]
+
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+costroid-connect = { workspace = true, optional = true }
 costroid-core.workspace = true
 costroid-providers.workspace = true
 crossterm.workspace = true

@@ -359,6 +359,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "costroid-connect",
  "costroid-core",
  "costroid-focus",
  "costroid-providers",
@@ -368,6 +369,10 @@ dependencies = [
  "rust_decimal",
  "serde_json",
 ]
+
+[[package]]
+name = "costroid-connect"
+version = "0.3.0"
 
 [[package]]
 name = "costroid-core"

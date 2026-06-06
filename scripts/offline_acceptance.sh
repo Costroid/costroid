@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# Offline acceptance test — the Phase-1 capstone proof.
+# Offline acceptance test — the default/local-only build's capstone proof.
 #
-# Runs every Costroid command with networking *fully disabled* against committed
-# FIXTURE logs (never real user data), proving the tool collects, costs, exports,
-# renders, and emits a statusline using only bundled pricing — with no network
-# access and no telemetry.
+# This tests the DEFAULT build — the `connect` feature OFF (`cargo build -p costroid`,
+# which never links `costroid-connect`). It runs every Costroid command with
+# networking *fully disabled* against committed FIXTURE logs (never real user data),
+# proving the tool collects, costs, exports, renders, and emits a statusline using
+# only bundled pricing — with no network access and no telemetry.
 #
-# Two complementary layers of proof:
-#   * Static  — apps/cli/tests/offline.rs asserts no networking/telemetry crate is
-#     even linked (run via `cargo test`, not here).
+# The opt-in connections subsystem (`--features connect`, PRODUCT-PLAN Step 4) is the
+# single place network is ever allowed; its dynamic test — that network happens ONLY
+# on an explicit, user-initiated `connect` action to an authorized host, and that no
+# secret is written to disk/config/logs — is a STUB at the bottom of this file, to be
+# filled by T8 (keychain) / T9 (HTTP). It does not run here because no connect code or
+# command exists yet.
+#
+# Two complementary layers of proof (both scope to the default build):
+#   * Static  — apps/cli/tests/offline.rs asserts no networking/TLS/telemetry crate
+#     is even linked in the default build, and that `costroid-connect` is not linked
+#     unless `--features connect` (run via `cargo test`, not here).
 #   * Dynamic — this script runs each command under a network-isolation wrapper
 #     and asserts no outbound IP traffic is attempted.
 #
@@ -28,7 +37,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
-echo "==> Building costroid"
+echo "==> Building costroid (default features — connect OFF, the local-only build)"
 cargo build -q -p costroid
 bin="$repo_root/target/debug/costroid"
 
@@ -179,9 +188,32 @@ else
   echo "ok"
 fi
 
+# ============================================================================
+# STUB — feature-ON network test (`--features connect`) · fill in T8/T9
+# ============================================================================
+# When the connections subsystem lands, add the *positive* counterpart to the
+# proof above: not "no network ever", but "network ONLY on an explicit, user-
+# initiated connect action, and ONLY to the authorized provider host". Sketch:
+#
+#   1. Build the opt-in binary:   cargo build -q -p costroid --features connect
+#   2. Baseline — with NO connect action, every command above must STILL show zero
+#      outbound IP traffic (the gate must not leak network just by being compiled in).
+#   3. Action — drive `costroid connect <provider>` (own-key path, fed a fixture key
+#      via stdin/env; NEVER a real credential) under strace, and assert:
+#        * outbound connect() goes ONLY to the provider's documented usage/billing
+#          host (allow-list it; any other host = NETWORK VIOLATION);
+#        * the secret lands ONLY in the OS keychain — assert NOTHING was written to
+#          $home (config/logs/disk) by diffing the fixture HOME before/after;
+#        * `costroid disconnect <provider>` revokes it and leaves no residue.
+#   4. Still NO telemetry, ever — no call to any non-provider host.
+#
+# Until then there is no connect code or command to exercise, so this section is a
+# no-op placeholder and is intentionally NOT run.
+echo "==> Feature-on (connect) network test: STUB — not yet implemented (T8/T9)"
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "==> OFFLINE ACCEPTANCE: FAILED"
   exit 1
 fi
-echo "==> OFFLINE ACCEPTANCE: PASSED (all commands ran offline, no network, no telemetry)"
+echo "==> OFFLINE ACCEPTANCE (default build, connect OFF): PASSED (all commands ran offline, no network, no telemetry)"

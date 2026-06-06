@@ -52,12 +52,28 @@ confidence-threshold = 0.9
 multiple-versions = "warn"
 wildcards = "allow"
 # Enforce the project rule: TLS, if/when added, is rustls — never OpenSSL.
-# (Phase 1 has no TLS at all; the comprehensive no-network/no-telemetry proof
-# lives in apps/cli/tests/offline.rs.)
+# These three are banned everywhere, with no `wrappers` exception — not even
+# `costroid-connect` may pull them in.
+#
+# The connections subsystem (PRODUCT-PLAN Step 4) is allowed to link three crates —
+# `ureq` (blocking HTTP), `rustls` (its TLS), `keyring` (the OS keychain) — and ONLY
+# through `costroid-connect`. `wrappers` permits a banned crate solely when its
+# direct parent is in the list; any other crate taking a direct dependency on them is
+# an error. The comprehensive no-network/no-telemetry proof (and the default-build
+# ban on this same trio) lives in apps/cli/tests/offline.rs.
+#
+# Today these three are absent from the graph (T7 ships `costroid-connect` empty, and
+# with `all-features = false` the optional `connect`-gated deps are not resolved), so
+# the `wrappers` entries are a forward-looking, no-op guard. When T8/T9 add them,
+# evaluate this policy with the `connect` feature on (e.g. an `--all-features` deny
+# pass) so the guard actually fires.
 deny = [
     { name = "openssl" },
     { name = "openssl-sys" },
     { name = "native-tls" },
+    { name = "ureq", wrappers = ["costroid-connect"] },
+    { name = "rustls", wrappers = ["costroid-connect"] },
+    { name = "keyring", wrappers = ["costroid-connect"] },
 ]
 
 [advisories]

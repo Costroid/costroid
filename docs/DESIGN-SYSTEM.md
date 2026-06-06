@@ -131,9 +131,9 @@ Used only briefly; never for steady-state. ASCII fallback: `| / - \`.
 C⠉ costroid                                   this week  $42.18
 ────────────────────────────────────────────────────────────────
 limits
-  claude code   5h   ⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀  68%   resets 41m
+  claude code   5h   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀  92% ! resets 41m     ← amber + ! cue
                 wk   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀  78%   resets 2d 6h
-  cursor        wk   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀  92% ! resets Sun     ← amber + ! cue
+  cursor        wk   unavailable — no sanctioned source        ← detect-only: never a fabricated %
 ────────────────────────────────────────────────────────────────
 api costs (this week)
   claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $24.10

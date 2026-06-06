@@ -1,0 +1,27 @@
+[package]
+name = "costroid-connect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Costroid's opt-in network + credential boundary: the single crate where all HTTP and OS-keychain access lives, feature-gated and off by default."
+documentation = "https://docs.rs/costroid-connect"
+keywords = ["finops", "cost", "keychain", "oauth", "ai"]
+categories = ["command-line-utilities", "authentication"]
+
+# NO dependencies yet — this is an intentionally empty skeleton (T7).
+#
+# The crate exists now only to give the future network/credential code a home and
+# a feature gate; it carries no behavior. The deps that land later are scoped here
+# so the default build never links them (see deny.toml + apps/cli/tests/offline.rs):
+#   * T8 (keychain):  keyring        — OS keychain only; never disk/config/logs.
+#   * T9 (HTTP):      ureq + rustls  — blocking client, rustls TLS, no async runtime.
+#                     costroid-core + costroid-focus — once there is behavior to wire.
+# Until then the only consumer (apps/cli) gates this crate behind its `connect`
+# feature, off by default, so a default `cargo build` never compiles it in.
+[dependencies]
+
+[lints]
+workspace = true

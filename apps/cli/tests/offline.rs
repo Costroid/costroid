@@ -1,31 +1,48 @@
-//! Phase-1 offline guarantee — static proof.
+//! Offline guarantee — static proof (re-scoped for the connections subsystem, T7).
 //!
-//! Costroid reads local logs only and must make no network calls and emit no
-//! telemetry, ever. The strongest guarantee is structural: assert that the
-//! resolved dependency graph contains no HTTP/TLS/socket client and no telemetry
-//! SDK, so there is nothing in the shipped binary that *could* phone home.
+//! Costroid's **default, local-only build reads local logs only and must make no
+//! network call and emit no telemetry, ever.** The strongest guarantee is
+//! structural: assert that the *resolved* dependency graph of Costroid's own crates
+//! contains no HTTP/TLS/socket client and no telemetry SDK, so there is nothing in
+//! the shipped binary that *could* phone home.
+//!
+//! Network code is allowed in exactly one place — the feature-gated `costroid-connect`
+//! crate (PRODUCT-PLAN §2c / Step 4), **off by default**. So the guarantee is now
+//! two-tier:
+//!
+//! * **Default build (`connect` off)** — forbids *everything* that can reach the
+//!   network or emit telemetry, including the sanctioned trio (`ureq`/`rustls`/
+//!   `keyring`). `costroid-connect` must not even be linked. This is the local-only
+//!   product that ships today.
+//! * **`--features connect`** — admits **only** the sanctioned trio that the
+//!   connections subsystem will use; async runtimes, non-rustls TLS (OpenSSL), other
+//!   HTTP clients, and *all* telemetry stay forbidden in this build too.
+//!
+//! Why the *resolved* graph and not `cargo metadata`'s `packages` array: `packages`
+//! is a feature-independent superset (it lists optional dependencies whether or not
+//! their feature is on), so it cannot tell the default build apart from the
+//! `connect` build. Walking the resolved graph for an explicit feature set is what
+//! makes the distinction real — a crate gated behind `connect` is absent here when
+//! the feature is off and present when it is on.
 //!
 //! The dynamic counterpart — running every command under network isolation and
 //! proving no outbound connection is attempted — lives in
 //! `scripts/offline_acceptance.sh`. Together they make "no network, no telemetry"
 //! airtight.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::process::Command;
 
-/// Crates that would give Costroid the ability to make outbound network calls or
-/// emit telemetry. None may appear in the resolved dependency graph in Phase 1.
-///
-/// Note: TLS via `rustls` is the project's approved choice for *later* phases
-/// (Phase 2+ live quota / OAuth), so its presence here is a Phase-1 guard, not a
-/// permanent ban — see `deny.toml` for the persistent supply-chain policy.
-const FORBIDDEN_CRATES: &[&str] = &[
-    // HTTP / networking clients & servers
+/// Crates that grant the ability to make outbound network calls or emit telemetry
+/// and are **never** permitted in any Costroid build — not even inside
+/// `costroid-connect`. They encode the project's standing choices: blocking `ureq`
+/// (so no async runtime), `rustls` (so no OpenSSL), and zero telemetry.
+const ALWAYS_FORBIDDEN_CRATES: &[&str] = &[
+    // HTTP / networking clients & servers other than the sanctioned `ureq`
     "reqwest",
     "hyper",
     "hyper-util",
     "h2",
-    "ureq",
     "isahc",
     "surf",
     "attohttpc",
@@ -36,16 +53,15 @@ const FORBIDDEN_CRATES: &[&str] = &[
     "axum",
     "warp",
     "rouille",
-    // async runtimes that pull in network I/O
+    // async runtimes that pull in network I/O (Costroid's HTTP is blocking `ureq`)
     "tokio",
     "async-std",
     "smol",
     "async-io",
-    // TLS stacks (Phase 1 uses no TLS at all)
+    // TLS stacks other than `rustls`
     "openssl",
     "openssl-sys",
     "native-tls",
-    "rustls",
     // DNS resolvers
     "trust-dns-resolver",
     "hickory-resolver",
@@ -63,20 +79,36 @@ const FORBIDDEN_CRATES: &[&str] = &[
     "metrics-exporter-prometheus",
 ];
 
-#[test]
-fn no_networking_or_telemetry_crate_in_dependency_tree() {
-    // `--locked` ties the check to the committed Cargo.lock, so it is fully
-    // offline and deterministic.
-    let output = match Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version", "1", "--locked"])
-        .output()
-    {
+/// The sanctioned trio the connections subsystem (`costroid-connect`) is permitted
+/// to link — and **only** it, **only** when the `connect` feature is on: `ureq`
+/// (blocking HTTP), `rustls` (its TLS), and `keyring` (the OS keychain). Forbidden
+/// in the default/local-only build; permitted once `connect` is enabled.
+///
+/// (Today `connect` pulls in only an empty skeleton crate, so none of these is
+/// present in *either* build yet — T9 adds them to `costroid-connect`. When it does,
+/// the default-build test must continue to NOT see them and the `connect`-build test
+/// must continue to permit them.)
+const CONNECT_GATED_CRATES: &[&str] = &["ureq", "rustls", "keyring"];
+
+/// The designated network/credential home: excluded as a graph *root* (it is the
+/// thing being gated), but still reached as a *dependency* when `connect` is on.
+const CONNECT_CRATE: &str = "costroid-connect";
+
+/// Names of every crate reachable in the **resolved** dependency graph from
+/// Costroid's own crates — every workspace member except `costroid-connect` — under
+/// the given extra cargo args (e.g. `--features connect`). `--locked` ties the check
+/// to the committed `Cargo.lock`, so it is fully offline and deterministic.
+fn reachable_crate_names(extra_args: &[&str]) -> BTreeSet<String> {
+    let mut args = vec!["metadata", "--format-version", "1", "--locked"];
+    args.extend_from_slice(extra_args);
+
+    let output = match Command::new(env!("CARGO")).args(&args).output() {
         Ok(output) => output,
-        Err(err) => panic!("failed to run `cargo metadata`: {err}"),
+        Err(err) => panic!("failed to run `cargo metadata {extra_args:?}`: {err}"),
     };
     assert!(
         output.status.success(),
-        "`cargo metadata` failed:\n{}",
+        "`cargo metadata {extra_args:?}` failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -84,25 +116,124 @@ fn no_networking_or_telemetry_crate_in_dependency_tree() {
         Ok(value) => value,
         Err(err) => panic!("`cargo metadata` emitted invalid JSON: {err}"),
     };
+
     let packages = match meta["packages"].as_array() {
         Some(packages) => packages,
         None => panic!("`cargo metadata` output had no `packages` array"),
     };
-    let names: BTreeSet<&str> = packages
+    let id_to_name: std::collections::HashMap<&str, &str> = packages
         .iter()
-        .filter_map(|pkg| pkg["name"].as_str())
+        .filter_map(|pkg| Some((pkg["id"].as_str()?, pkg["name"].as_str()?)))
         .collect();
 
-    let hits: Vec<&str> = FORBIDDEN_CRATES
+    let resolve = &meta["resolve"];
+    let nodes = match resolve["nodes"].as_array() {
+        Some(nodes) => nodes,
+        None => panic!("`cargo metadata` output had no `resolve.nodes` array"),
+    };
+    // id -> resolved dependency ids (feature-pruned by the current selection).
+    let mut edges: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for node in nodes {
+        let Some(id) = node["id"].as_str() else {
+            continue;
+        };
+        let deps: Vec<&str> = node["deps"]
+            .as_array()
+            .map(|deps| deps.iter().filter_map(|d| d["pkg"].as_str()).collect())
+            .unwrap_or_default();
+        edges.insert(id, deps);
+    }
+
+    // Roots: every workspace member except the gated network home.
+    let members = match meta["workspace_members"].as_array() {
+        Some(members) => members,
+        None => panic!("`cargo metadata` output had no `workspace_members` array"),
+    };
+    let mut queue: VecDeque<&str> = VecDeque::new();
+    let mut visited: BTreeSet<&str> = BTreeSet::new();
+    for member in members {
+        let Some(id) = member.as_str() else {
+            continue;
+        };
+        if id_to_name.get(id).copied() != Some(CONNECT_CRATE) && visited.insert(id) {
+            queue.push_back(id);
+        }
+    }
+
+    // Breadth-first over the resolved edges (all kinds: normal, build, and dev — so
+    // a test-only network dependency would be caught too).
+    while let Some(id) = queue.pop_front() {
+        if let Some(deps) = edges.get(id) {
+            for &dep in deps {
+                if visited.insert(dep) {
+                    queue.push_back(dep);
+                }
+            }
+        }
+    }
+
+    visited
         .iter()
-        .copied()
-        .filter(|crate_name| names.contains(crate_name))
-        .collect();
+        .filter_map(|id| id_to_name.get(id).map(|name| name.to_string()))
+        .collect()
+}
+
+/// Default/local-only build: the gate is **off**, so `costroid-connect` must not be
+/// linked and the graph must contain no networking, TLS, or telemetry crate at all
+/// (the sanctioned trio included).
+#[test]
+fn default_build_links_no_network_tls_or_telemetry_crate() {
+    let names = reachable_crate_names(&[]);
 
     assert!(
-        hits.is_empty(),
-        "Phase 1 forbids networking/telemetry dependencies, but the resolved tree contains: {hits:?}.\n\
-         Costroid must read local logs only and make no network calls. If a later phase \
-         intentionally adds one of these, update this denylist and deny.toml together."
+        !names.contains(CONNECT_CRATE),
+        "the default build must not link `{CONNECT_CRATE}` — the `connect` feature \
+         must be off by default so the local-only build links no network/keychain code."
     );
+
+    let hits: Vec<&str> = ALWAYS_FORBIDDEN_CRATES
+        .iter()
+        .chain(CONNECT_GATED_CRATES.iter())
+        .copied()
+        .filter(|crate_name| names.contains(*crate_name))
+        .collect();
+    assert!(
+        hits.is_empty(),
+        "the default/local-only build forbids networking/TLS/telemetry dependencies, \
+         but the resolved graph contains: {hits:?}.\n\
+         Costroid must read local logs only and make no network call. Network code \
+         belongs solely in `costroid-connect`, behind the off-by-default `connect` \
+         feature — if a crate must move there, update CONNECT_GATED_CRATES, deny.toml, \
+         and the `connect`-build test together."
+    );
+}
+
+/// `--features connect`: the connections subsystem is linked, so the sanctioned trio
+/// (`ureq`/`rustls`/`keyring`) is permitted — but async runtimes, OpenSSL, other HTTP
+/// clients, and *all* telemetry stay forbidden even here.
+#[test]
+fn connect_feature_admits_only_the_sanctioned_trio() {
+    let names = reachable_crate_names(&["--features", "connect"]);
+
+    assert!(
+        names.contains(CONNECT_CRATE),
+        "`--features connect` must link `{CONNECT_CRATE}` — otherwise the gate is not \
+         actually wired to the connections subsystem."
+    );
+
+    let hits: Vec<&str> = ALWAYS_FORBIDDEN_CRATES
+        .iter()
+        .copied()
+        .filter(|crate_name| names.contains(*crate_name))
+        .collect();
+    assert!(
+        hits.is_empty(),
+        "even with `connect` on, Costroid forbids async runtimes, non-rustls TLS \
+         (OpenSSL), other HTTP clients, and all telemetry, but the resolved graph \
+         contains: {hits:?}.\n\
+         The connections subsystem uses only `ureq` + `rustls` + `keyring`."
+    );
+    // Note: the sanctioned trio is intentionally NOT asserted present — T7 ships
+    // `costroid-connect` as an empty skeleton, so none of it is linked yet. T8 adds
+    // `keyring`, T9 adds `ureq` + `rustls`; both are permitted here when they land.
 }

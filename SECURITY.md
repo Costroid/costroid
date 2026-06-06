@@ -4,11 +4,11 @@ Costroid is a local-first, secure-by-design tool, and we take security seriously
 
 ## Supported versions
 
-Costroid's current release line is **0.2.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
+Costroid's current release line is **0.3.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
 
 | Version | Security fixes |
 | --- | --- |
-| Latest release line (0.2.x) | Yes |
+| Latest release line (0.3.x) | Yes |
 | Older releases | No (upgrade to the latest) |
 | Unreleased `main` | Best-effort |
 
@@ -37,7 +37,7 @@ If that button isn't available, or you'd rather use email, contact **costroid@pr
 **In scope:**
 
 - The `costroid` CLI and TUI.
-- The library crates: `costroid-core`, `costroid-focus`, `costroid-providers`.
+- The library crates: `costroid-core`, `costroid-focus`, `costroid-providers`, and the off-by-default `costroid-connect` (the network/credential boundary — currently an empty, feature-gated skeleton).
 - Release artifacts and installers, including the **integrity of the bundled pricing data** and the release/signing pipeline.
 
 **Out of scope:**
@@ -74,7 +74,7 @@ These are the commitments Costroid is designed around. They follow directly from
 
 Releases are produced by an automated GitHub Actions pipeline. Every artifact is published with a SHA-256 checksum and a keyless GitHub build-provenance attestation (Actions OIDC — no private signing keys), establishing that it was built by Costroid's CI from this repository.
 
-> **Note on OS code-signing.** v0.2.0 binaries are **not** OS-code-signed: there is no Apple Developer ID notarization (macOS) or Authenticode signature (Windows) yet, so first run may show an "unidentified developer" (macOS) or SmartScreen (Windows) prompt. Notarization and Authenticode are planned for a later release; provenance attestations and checksums are the integrity mechanism today.
+> **Note on OS code-signing.** Current release binaries are **not** OS-code-signed: there is no Apple Developer ID notarization (macOS) or Authenticode signature (Windows) yet, so first run may show an "unidentified developer" (macOS) or SmartScreen (Windows) prompt. Notarization and Authenticode are planned for a later release; provenance attestations and checksums are the integrity mechanism today.
 
 You can verify a downloaded artifact by checking its published checksum and verifying its attestation with the GitHub CLI:
 

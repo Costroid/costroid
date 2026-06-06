@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/cli",
+    "crates/costroid-connect",
     "crates/costroid-core",
     "crates/costroid-focus",
     "crates/costroid-providers",
@@ -30,6 +31,7 @@ thiserror = "=2.0.18"
 # Internal deps carry both `path` (used for local workspace builds) and `version`
 # (required by crates.io: a path-only dependency is rejected on publish). Cargo
 # uses the path locally and records only the version in the published manifest.
+costroid-connect = { path = "crates/costroid-connect", version = "0.3.0" }
 costroid-core = { path = "crates/costroid-core", version = "0.3.0" }
 costroid-focus = { path = "crates/costroid-focus", version = "0.3.0" }
 costroid-providers = { path = "crates/costroid-providers", version = "0.3.0" }
