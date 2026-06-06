@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "Status",
+  "session_id": "fixture-session-0000",
+  "model": { "id": "claude-opus-4-8", "display_name": "Opus" },
+  "workspace": { "current_dir": "/home/fixture/project" },
+  "rate_limits": {
+    "five_hour": { "used_percentage": 78, "resets_at": 1800000000, "leftover": "should-be-dropped" },
+    "seven_day": { "used_percentage": 41.5, "resets_at": "2027-01-20T08:00:00Z" }
+  },
+  "secret_should_never_be_written": "do-not-capture-me"
+}

@@ -13,7 +13,7 @@ It's the kind of tool that should be free and open, so it is.
 
 ## Status
 
-**Early development.** Costroid's **v0.2.0** release ships the full local cost lane — the `now`, `trends`, `statusline`, and `export` commands, plus the cost-vs-quality `frontier` view (shipped in v0.2.0), Cursor detect-and-defer, and WSL Windows-root auto-detection. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). Live Claude subscription quota (via Claude Code's `statusLine`) is in progress — the local read + sanitize + cross-check landed; the `costroid setup-statusline` writer that captures the data lands next release, so end-to-end Claude limits aren't live yet. Commands and flags may still evolve.
+**Early development.** Costroid's **v0.2.0** release ships the full local cost lane — the `now`, `trends`, `statusline`, and `export` commands, plus the cost-vs-quality `frontier` view (shipped in v0.2.0), Cursor detect-and-defer, and WSL Windows-root auto-detection. Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). Live Claude subscription quota (via Claude Code's `statusLine`) is in progress — the local read + sanitize + cross-check landed, and `costroid setup-statusline` now wires up and captures the data end to end; the on-screen rendering of those limits lands next release, so they don't yet appear on the now-screen. Commands and flags may still evolve.
 
 ## What Costroid does
 
@@ -35,7 +35,7 @@ A note on the two views: subscription limits and API costs are deliberately sepa
 
 Where Costroid is headed:
 
-- **Live Claude quota (next release).** Claude Code's `statusLine` hook hands Costroid your real 5-hour and weekly limits locally — no login, no token reuse. A `costroid setup-statusline` command wires it up.
+- **Live Claude quota (rendering next release).** Claude Code's `statusLine` hook hands Costroid your real 5-hour and weekly limits locally — no login, no token reuse. `costroid setup-statusline` wires it up and captures the data today; surfacing it on the now-screen lands next release.
 - **Cost-vs-quality frontier** (`costroid frontier`) — **shipped in v0.2.0.** Plots the published cost-vs-quality frontier and where your own spend sits on it; advisory and sourced, never "just use the cheapest."
 - **Connections (your own key, opt-in).** Optional, default-off, feature-gated connections fetch live numbers no local log carries — your own Anthropic / OpenAI / Gemini usage-API key first, and a sanctioned OAuth login where the provider offers one. Costroid never reuses a session or token against an undocumented endpoint, so a provider with no sanctioned source (Cursor today) stays detect-only and shows "unavailable" until an official API exists. Tokens live only in your OS keychain and are used strictly between your device and the provider. `costroid connect`/`disconnect` plus a revocable Connections view manage it. Threshold alerts ride on this.
 - **Taskbar / menu-bar app** — a planned `costroid-bar` surface built in egui (no webview), the richest and last surface; everything it shows the core already computes.
@@ -103,11 +103,15 @@ costroid trends --period week    # day | week | month | year
 costroid trends --group model    # model | app | total
 costroid --live                  # auto-refresh the interactive view
 costroid statusline              # compact one-line status for shell / tmux / Starship
+costroid setup-statusline        # wire Claude Code's statusLine to capture live 5h/7d quota
+costroid setup-statusline --undo # restore the original statusLine + remove the cache
 costroid export --format json    # FOCUS export (--format json | csv)
 costroid --plain                 # one-shot ASCII, no color (screen-reader & pipe friendly)
 ```
 
 On an interactive terminal, `costroid` and `costroid trends` open a navigable view (press `?` for keys, `q` to quit); when the output is piped or `--plain` is set, they render once and exit. `statusline` and `export` are always one-shot.
+
+`costroid setup-statusline` is idempotent and safe: it backs up `settings.json` first (restore with `--undo`), injects a capture snippet into an existing `statusLine` or sets Costroid as the status line if you have none, and writes only two percentages + two reset stamps to a local cache — never a token, prompt, or credential, and never over the network. (The captured quota is read + sanitized today; rendering it on the now-screen lands in the next release.) If you have a `statusLine` you can't edit through `setup-statusline`, wrap it manually: `costroid statusline --wrap '<your-status-command>'` captures the quota and then runs your command on the same input (it degrades to a blank line on error, never breaking your prompt). (`costroid statusline --capture-only` is the internal capture step the generated snippet calls, not a command you run directly.)
 
 ## Security & privacy
 

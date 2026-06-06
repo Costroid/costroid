@@ -1097,7 +1097,10 @@ fn codex_has_rate_limits(loc: &DataLocation) -> Result<bool, ProviderError> {
 /// is Costroid's own no-secret state (written by `setup-statusline`, T5), so it always
 /// lives Linux-side — no Windows-path handling needed. `None` when neither
 /// `XDG_STATE_HOME` nor `HOME` resolves a base directory.
-fn claude_rate_limits_cache_path() -> Option<PathBuf> {
+///
+/// Public so the T5 capture *writer* (`apps/cli`) resolves the exact same path the T4
+/// *reader* above uses — a single source of truth keeps the two from drifting.
+pub fn claude_rate_limits_cache_path() -> Option<PathBuf> {
     let base = env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())

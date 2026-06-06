@@ -14,3 +14,8 @@ user data and no secrets.**
   model mix): the base case, a dated-snapshot model id, and a priced model.
 - **`dedup-*.jsonl`** — transcript de-duplication cases (golden a/b, keyless entries).
 - **`installed-no-usage.json`** — the "installed, usage unavailable" discovery case.
+- **`statusline-stdin.json`** — a raw Claude Code `statusLine` stdin session object (T5
+  capture-writer tests): the full hook payload (`session_id`, `model`, `workspace`,
+  `rate_limits`) plus `leftover` and `secret_should_never_be_written` fields, proving the
+  writer keeps only `used_percentage` + `resets_at` per window (plus a top-level
+  `captured_at`) and never leaks the secret or any extra field.

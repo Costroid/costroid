@@ -105,7 +105,7 @@ costroid/
 │  ├─ costroid-providers/  Provider trait + Claude Code/Codex/Cursor adapters + WSL-aware log discovery
 │  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (Step 4 / v0.4.0)
 ├─ apps/
-│  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline + --live (`setup-statusline`: planned, Step 2/5)
+│  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline (`--capture-only` / `--wrap`) + `setup-statusline` (`--undo`) + --live
 │  └─ bar/                 binary `costroid-bar` — egui/eframe + `tray-icon` taskbar app (Step 6 / v0.6.0); depends only on `costroid-core`
 └─ .github/workflows/      CI + cargo-dist release pipeline
 ```
@@ -117,7 +117,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` lands at St
 - `costroid-focus` — FOCUS record types and (de)serialization only. Pure data; depends on nothing internal.
 - `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
 - `costroid-connect` — **all** network + credential code; feature-gated and **off by default**. HTTP via `ureq` + `rustls` (no async runtime); secrets via `keyring` (OS keychain only). Lands at Step 4 (v0.4.0). Depends on `costroid-core`/`costroid-focus`.
-- `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter, `--live`, and all rendering (`setup-statusline` is planned — Step 2/5). Depends on `costroid-core`.
+- `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter (incl. the `statusline --capture-only` capture writer and the `statusline --wrap '<cmd>'` escape hatch), `setup-statusline` (Claude Code `settings.json` wiring with backup + `--undo`), `--live`, and all rendering. Depends on `costroid-core`.
 - `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 6); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
 
 **Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`; `connect → {core, focus}`. No cycles. `costroid-focus` has no internal dependencies.
@@ -172,7 +172,7 @@ The full step sequence (goals, deliverables, acceptance, and the generalized-quo
 
 - [ ] Workspace builds; `cargo install --path apps/cli` installs a working `costroid` binary.
 - [ ] Detects installed providers (Claude Code, Codex, Cursor) by locating their local data, including WSL→Windows paths; degrades gracefully when a provider is absent.
-- [ ] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check); the *writer* (`setup-statusline`, T5) and the *render* (T6) are still pending, so no Claude quota flows to the screen yet; Codex's from local windows today; Cursor quota is detect-and-defer).
+- [ ] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check) and T5 landed the *writer* (`setup-statusline` + `statusline --capture-only`, atomic no-secret cache); only the *render* (T6) is still pending, so no Claude quota flows to the screen yet; Codex's from local windows today; Cursor quota is detect-and-defer).
 - [ ] `costroid trends`: `--period day|week|month|year` and `--group model|app|total` both work.
 - [ ] `costroid --live`: refreshes in place; `q`/Ctrl-C exits cleanly; works over SSH and inside tmux.
 - [ ] `costroid statusline`: emits a compact one-line status suitable for a shell prompt, tmux, or Starship; `costroid setup-statusline` wires Claude Code's `statusLine` for live quota.

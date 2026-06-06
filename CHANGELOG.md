@@ -9,6 +9,26 @@ tools already write to disk, makes no network calls in the default build, and se
 telemetry. All cost figures are estimates (your tokens × current prices), reconcilable
 against your provider invoice, which is the source of truth.
 
+## [Unreleased]
+
+Wires Claude Code's live 5h/7d quota **capture** (Step 2 / T5) on top of the cost lane —
+no new network code, no telemetry, still zero network calls in the default build. The
+captured quota is **not yet shown** on the `now` screen; on-screen rendering lands next
+(T6, the 0.3.0 milestone).
+
+### Added
+
+- **`costroid setup-statusline`** (and **`--undo`**) — wires Claude Code's `statusLine` so
+  each assistant turn tees its `rate_limits` into a no-secret local cache: it injects a
+  capture snippet into an existing `statusLine`, or makes Costroid the status line if you
+  have none. Idempotent, backs up `settings.json` first, and fully reversible.
+- **`costroid statusline --capture-only`** — the internal capture step the snippet calls:
+  reads the `statusLine` JSON on stdin and writes only two percentages, two reset stamps,
+  and a capture time to the cache — never a token, prompt, or credential. Emits nothing,
+  exits 0 always, and never fails your prompt.
+- **`costroid statusline --wrap '<command>'`** — a manual escape hatch that captures and
+  then runs an existing status-line command on the same input.
+
 ## [0.2.0] - 2026-06-05
 
 Ships the already-built local **cost lane** on top of v0.1.0 — no new network code, no
@@ -54,5 +74,6 @@ First public release — the local cost lane's foundation.
   (`cargo install costroid` / `cargo binstall costroid`), each artifact SHA-256-checksummed
   and build-provenance-attested.
 
+[Unreleased]: https://github.com/Costroid/costroid/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/Costroid/costroid/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Costroid/costroid/releases/tag/v0.1.0
