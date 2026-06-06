@@ -159,6 +159,7 @@ The canon (ARCHITECTURE.md, CLAUDE.md, README, SECURITY, RELEASING, DATA-MODEL, 
 - **Deliverables:** `costroid-connect` crate (ureq + rustls + keyring, feature-gated); `costroid connect <anthropic|openai|gemini>` (paste key → keychain → pull real API usage/cost to reconcile against the local estimate); a **Connections view** listing what's linked; `costroid disconnect <provider>` with instant revoke. The auth source-ladder (§5) enforced in code: a datum with no clean source is **unavailable, never fetched**.
 - **Acceptance test** (mirrors the canon's Phase-2 test): a user enters a key, sees reconciled API cost, revokes it, and **confirms no secret was written to disk/config/logs** (inspect keychain + filesystem). With the `connect` feature **off**, the binary still passes the offline-acceptance test.
 - **Invariant changes — handle explicitly:** unban `rustls` + `ureq` + `keyring` in `costroid-connect` only (update `deny.toml` + the forbidden-crates test to scope the ban to the local path); **re-scope the strace offline-acceptance test** to assert the *default/local* path makes zero network calls, and add a test asserting network occurs only on an explicit `connect` action to an authorized host. Install the deferred keychain deps (`libdbus-1-dev`, `libsecret-1-dev`) in CI. **No telemetry — still, ever.**
+- **⛔ Legal review (before connections ship):** this is the step where the liability surface grows. Before 0.4.0 ships, get a quick **legal review of the connection flows** (own-key + sanctioned OAuth only) confirming they hit only provider endpoints the user authorized, store nothing outside the keychain, and induce no ToS violation. Not a code task — a human gate.
 
 ### Step 5 — **0.5.0**: Analytical tabs + alerts
 - **Goal:** the navigable cockpit. Build the tabs users ask for; ship the cheap re-cuts first, the new analytics next.
@@ -287,7 +288,7 @@ Per instruction, the data model is generalized to *fit* these, but **no adapter 
 - **Step 6 (the taskbar) needs Steps 2–5 done** — it mirrors tabs that don't exist yet.
 Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6.
 
-**Rule 2 — the human checkpoints are by design, not a failure.** The golden rules (CLAUDE.md "decide vs ask") require the agent to **stop and ask** before: touching the keychain/secrets, making any network call, changing the public CLI surface, or releasing/tagging. A well-behaved Auto-Mode agent *pauses* at these — that's the safety net. So **Steps 1, 4, 5, and 6 each carry a human gate**; **Steps 2 and 3 are the closest to "hand it cold."** Don't expect to walk away from 4 / 6.
+**Rule 2 — the human checkpoints are by design, not a failure.** The golden rules (CLAUDE.md "decide vs ask") require the agent to **stop and ask** before: touching the keychain/secrets, making any network call, changing the public CLI surface, or releasing/tagging — and, before connections (Step 4) ship, a **legal review of the connection flows** (own-key + sanctioned OAuth only; the liability surface grows there). A well-behaved Auto-Mode agent *pauses* at these — that's the safety net. So **Steps 1, 4, 5, and 6 each carry a human gate**; **Steps 2 and 3 are the closest to "hand it cold."** Don't expect to walk away from 4 / 6.
 
 **Rule 3 — split the L/XL steps; let the workflow fan out inside each.** "One step → one session" is too coarse for the big steps; the fan-out shape is in the table (a gating prerequisite, then parallel sub-units) — this is where the workflows earn their keep.
 
@@ -417,7 +418,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 **Backlog — carded when its Prereq lands (📌 must be pinned first):**
 - **T8 — keychain + API-key entry** · ⛔📌 · Prereq T7
 - **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes
-- **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display → **0.4.0**
+- **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display → **0.4.0** · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4)
 - **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
 - **T14 Budget 📌 · T15 Forecast 📌 · T16 Anomalies 📌 · T17 Alerts ⛔📌** — 📌 budget persistence schema · forecast algorithm · anomaly baseline · alert thresholds + copy → **0.5.0**
 - **T18+ — egui taskbar** · ⛔ · Prereq T2–T6 (CLI feature-complete) — greenfield: needs a GUI design first, then per-tab fan-out → **0.6.0**

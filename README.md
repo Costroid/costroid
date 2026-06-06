@@ -130,3 +130,5 @@ Costroid follows [FinOps Foundation](https://www.finops.org) practice and emits 
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+Costroid uses only local and provider-sanctioned data sources — it never reuses a credential or session against a non-sanctioned, undocumented, or internal endpoint, and the default build makes no network calls. If you optionally connect your own API key or a sanctioned login, you remain responsible for your own use of those credentials and for complying with each provider's terms of service.
