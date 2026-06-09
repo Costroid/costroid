@@ -45,7 +45,7 @@ The single source for navigating these docs and resolving conflicts between them
 
 ## Environment & setup
 
-**Prerequisites (local-only build):** Rust via `rustup` (with `clippy` and `rustfmt` components), plus `build-essential`, `pkg-config`, and `git`. The keyring deps (`libdbus-1-dev`, `libsecret-1-dev`) land **with the connections step** (Step 4 / v0.4.0, see `docs/PRODUCT-PLAN.md` §2c) — don't install them before then. The egui taskbar (Step 6) is built on `eframe`/`egui` + the `tray-icon` crate (no Tauri, no webview); its deps land with that step.
+**Prerequisites (local-only build):** Rust via `rustup` (with `clippy` and `rustfmt` components), plus `build-essential`, `pkg-config`, and `git`. The keyring deps (`libdbus-1-dev`, `libsecret-1-dev`) are needed now: T8 landed `costroid-connect`'s keychain store, whose Linux backend (the sync Secret Service path) links C libdbus — so a full `cargo test --workspace` / `cargo clippy --workspace` (and any `--features connect` build) requires them. The default `costroid` binary never links that code, but the workspace build does; CI installs both (see `.github/workflows/ci.yml`). The egui taskbar (Step 6) is built on `eframe`/`egui` + the `tray-icon` crate (no Tauri, no webview); its deps land with that step.
 
 **WSL:**
 - Work on the **Linux filesystem** (`~/costroid`), never under `/mnt/c` — cross-mount builds are slow and file-watching is flaky.
@@ -103,24 +103,24 @@ costroid/
 │  ├─ costroid-core/       engine: orchestration, cost calc, bundled pricing, bench/recommend (frontier)
 │  ├─ costroid-focus/      FOCUS schema types + serde — no business logic
 │  ├─ costroid-providers/  Provider trait + Claude Code/Codex/Cursor adapters + WSL-aware log discovery
-│  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (skeleton landed T7; network behavior at Step 4 / v0.4.0)
+│  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (skeleton T7; keychain credential store T8; network behavior T9, all Step 4 / v0.4.0)
 ├─ apps/
 │  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline (`--capture-only` / `--wrap`) + `setup-statusline` (`--undo`) + --live
 │  └─ bar/                 binary `costroid-bar` — egui/eframe + `tray-icon` taskbar app (Step 6 / v0.6.0); depends only on `costroid-core`
 └─ .github/workflows/      CI + cargo-dist release pipeline
 ```
 
-No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` exists today as an empty, feature-gated leaf (the skeleton landed in T7); its network/credential **behavior** lands at Step 4, and `apps/bar` lands at Step 6 — see `docs/PRODUCT-PLAN.md` §2c/§2d and ARCHITECTURE §5.
+No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` carries its first behavior today — T8 (the skeleton landed in T7) added the keychain credential store (`CredentialStore` / `ConnectionRegistry` / `ApiVendor`); its **network** behavior lands in T9, and `apps/bar` lands at Step 6 — see `docs/PRODUCT-PLAN.md` §2c/§2d and ARCHITECTURE §5.
 
 **What belongs where:**
 - `costroid-core` — the engine. Orchestrates providers, normalizes to FOCUS via `costroid-focus`, computes estimated cost, and houses the `bench`/`recommend` (frontier) module. No terminal/UI code.
 - `costroid-focus` — FOCUS record types and (de)serialization only. Pure data; depends on nothing internal.
 - `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
-- `costroid-connect` — **all** network + credential code; feature-gated and **off by default**, with the `connect` feature gated on the **apps** (`apps/cli` today, `apps/bar` later), not the virtual workspace root. **Today it is an empty skeleton leaf with no dependencies (landed in T7);** its behavior lands later — HTTP via `ureq` + `rustls` (no async runtime) in T9, secrets via `keyring` (OS keychain only) in T8 — at which point it depends on `costroid-core`/`costroid-focus`. All at Step 4 (v0.4.0).
+- `costroid-connect` — **all** network + credential code; feature-gated and **off by default**, with the `connect` feature gated on the **apps** (`apps/cli` today, `apps/bar` later), not the virtual workspace root. **T8 landed its first behavior:** the OS-keychain credential store (`CredentialStore`) + a non-secret `ConnectionRegistry` + the `ApiVendor` billing-vendor axis, on `keyring` (sync Secret Service backend, OS keychain only) with secrets wrapped in `secrecy::SecretString`. It still has **no** `costroid-core`/`costroid-focus` dependency (deliberately — `ApiVendor` stays distinct from `costroid-providers::ProviderId`); HTTP via `ureq` + `rustls` (no async runtime) and the `core`/`focus` deps land in T9. All at Step 4 (v0.4.0).
 - `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter (incl. the `statusline --capture-only` capture writer and the `statusline --wrap '<cmd>'` escape hatch), `setup-statusline` (Claude Code `settings.json` wiring with backup + `--undo`), `--live`, and all rendering. Depends on `costroid-core`.
 - `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 6); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
 
-**Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → {core, focus}` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` has no internal dependencies. (Today `costroid-connect` is an empty leaf and gains its `core`/`focus` deps with behavior in T8/T9.)
+**Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → {core, focus}` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` has no internal dependencies. (Today `costroid-connect` has its T8 keychain behavior but still **no** internal deps — only `keyring`/`secrecy`/`serde`/`thiserror`; it gains its `core`/`focus` deps with the network client in T9.)
 
 **Errors:** `thiserror` for typed errors in library crates; `anyhow` only in the binaries (`apps/`). No `unwrap`/`expect`/`panic!` in library code.
 
@@ -155,7 +155,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` exists toda
 
 ## Build status & scope (the build steps)
 
-Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-step production plan. Build the step you're on; don't jump ahead, and don't build a later step's adapter or surface speculatively. The last cut release is **v0.3.0** (tagged 2026-06-06 — the quota milestone: Claude live quota end to end + the generalized quota model, T2 + T4 + T6); **T7 (the `costroid-connect` skeleton + the re-scoped no-network guarantee, off by default) has since landed on `main`**, opening the 0.4.0 connections line. Verify current behavior in the code (canon) before trusting any item below.
+Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-step production plan. Build the step you're on; don't jump ahead, and don't build a later step's adapter or surface speculatively. The last cut release is **v0.3.0** (tagged 2026-06-06 — the quota milestone: Claude live quota end to end + the generalized quota model, T2 + T4 + T6); since then, on the 0.4.0 connections line, **T7 (the `costroid-connect` skeleton + re-scoped no-network guarantee) and T8 (the keychain credential store — `CredentialStore`/`ConnectionRegistry`/`ApiVendor`, off by default) have landed on `main`**. Next is T9 (the HTTP usage-API client + reconciliation), then T10 (the `connect`/`disconnect` CLI + Connections view). Verify current behavior in the code (canon) before trusting any item below.
 
 ### Built and shipped (v0.1.0 → v0.2.0)
 
@@ -166,7 +166,7 @@ Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-
 
 ### Planned — the spine
 
-The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0 (shipped)** the built cost lane → **0.3.0 (tagged, T2+T4+T6)** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0 (next; T7 infra landed)** connections (`costroid-connect`, first network code) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
+The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0 (shipped)** the built cost lane → **0.3.0 (tagged, T2+T4+T6)** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0 (in progress; T7 skeleton + T8 keychain landed, T9 network next)** connections (`costroid-connect`) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
 
 ### Acceptance criteria (the local cost + quota product)
 
@@ -184,7 +184,7 @@ The full step sequence (goals, deliverables, acceptance, and the generalized-quo
 - [ ] Live Claude quota from the `statusLine` `rate_limits` field is **sanitized + cross-checked** and degrades to "unavailable"/"unverified", never a confident wrong number (ARCHITECTURE §9.2).
 - [ ] Zero telemetry; zero unauthorized network calls.
 - [ ] Ships via cargo-dist (shell + PowerShell installers + Homebrew tap + npm wrapper, each artifact checksummed and build-provenance-attested; tag-triggered release in CI) and crates.io (`cargo install costroid` / `cargo binstall costroid`). (Scoop unsupported by cargo-dist — see RELEASING.md.)
-- [ ] CI green: fmt + clippy + test + FOCUS-conformance + `cargo deny` + the strace offline-acceptance test (which proves the default/local-only build makes zero network calls — re-scoped in T7 to the default/local path, with a feature-on stub for when network code lands in T8/T9) + the forbidden-crates test (a two-tier resolved-graph check since T7: the default build forbids the sanctioned `ureq`/`rustls`/`keyring` trio, `--features connect` admits only it).
+- [ ] CI green: fmt + clippy + test + FOCUS-conformance + `cargo deny` + the strace offline-acceptance test (which proves the default/local-only build makes zero network calls — re-scoped in T7 to the default/local path, T8 added a feature-on baseline that asserts a normal `--features connect` run leaks no network and writes no `$HOME` residue, with the connect-ACTION + network half still a stub until T9/T10) + the forbidden-crates test (a two-tier resolved-graph check since T7: the default build forbids the sanctioned `ureq`/`rustls`/`keyring` trio; `--features connect` admits only it — and since T8 actively asserts `keyring` is linked, with `ureq`/`rustls` still forward-looking until T9).
 
 **Acceptance test:** on a machine with real Claude Code / Codex / Cursor logs and **networking disabled**, `costroid`, `costroid trends --period month --group model`, `costroid frontier`, `costroid export --format json`, and `costroid --plain` all produce correct output.
 

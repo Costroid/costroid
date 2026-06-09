@@ -125,7 +125,7 @@ Intermediate (provider output):
 ```rust
 /// One usage event as parsed from a provider's local logs. Provider-neutral.
 pub struct UsageEvent {
-    pub tool: String,                 // "claude-code" | "codex" | "cursor"
+    pub tool: ProviderId,             // ClaudeCode | Codex | Cursor
     pub model: String,
     pub timestamp: DateTime<Utc>,
     pub input_tokens: u64,
@@ -133,7 +133,7 @@ pub struct UsageEvent {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub project: Option<String>,      // derived workspace/repo/cwd
-    pub access_path: AccessPath,      // Api | Subscription
+    pub access_path: AccessPath,      // Api | Subscription | Unknown
 }
 
 pub enum AccessPath { Api, Subscription, Unknown }

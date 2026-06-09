@@ -30,13 +30,16 @@ the `costroid-mcp` crate (deferred/speculative — see `docs/PRODUCT-PLAN.md`,
 which governs scope and build sequencing).
 
 **Joining the publish order at their roadmap steps:** `costroid-connect` is now a workspace member
-(landed in T7) — an empty, feature-gated leaf, built only behind `apps/cli`'s off-by-default
-`connect` feature — but is **not yet published** (no behavior, no deps; `keyring` in T8, `ureq` +
-`rustls` in T9). When it has behavior it depends on `costroid-core`/`costroid-focus`, so it publishes
-after `costroid-core` (the CLI then depends on it). Still *not yet in the workspace, not yet
-published:* `costroid-bar` (the egui taskbar app, binary `costroid-bar`; depends only on
-`costroid-core`, the last surface). See `docs/PRODUCT-PLAN.md` for the sequencing; the crates.io order
-below grows to accommodate them when they land.
+(skeleton landed in T7), built only behind `apps/cli`'s off-by-default `connect` feature — but is
+**not yet published**. T8 gave it its first behavior — the OS-keychain credential store
+(`CredentialStore` / `ConnectionRegistry` / `ApiVendor`) — and its first deps (`keyring` + `secrecy`
++ serde/serde_json/thiserror); it still takes **no** dependency on `costroid-core`/`costroid-focus`
+(those land with the HTTP client in T9), and `ureq` + `rustls` also arrive in T9. Once it depends on
+`costroid-core`/`costroid-focus` (T9), it publishes after `costroid-core` (the CLI then depends on
+it). Still *not yet in the workspace, not yet published:* `costroid-bar` (the egui taskbar app,
+binary `costroid-bar`; depends only on `costroid-core`, the last surface). See
+`docs/PRODUCT-PLAN.md` for the sequencing; the crates.io order below grows to accommodate them when
+they land.
 
 ---
 
@@ -44,6 +47,12 @@ below grows to accommodate them when they land.
 
 These are **not** done by this repo's automation — a human with org access must do them before
 the first real release, or release-time jobs will fail.
+
+0. **Local build deps (Linux, since T8):** the workspace build links `costroid-connect`'s Linux
+   keychain backend (keyring's sync Secret Service → C libdbus), so a local `cargo build/test
+   --workspace` or `dist build` needs the C dev libs: `sudo apt-get install -y libdbus-1-dev
+   libsecret-1-dev` (CI installs these in the pre-pr and offline-acceptance jobs). The default
+   `costroid` binary never links the keychain, but the full workspace build does.
 
 1. **GitHub repos under the `Costroid` org:**
    - `Costroid/costroid` (this repo).
@@ -65,8 +74,10 @@ the first real release, or release-time jobs will fail.
 
 ## Cutting a release (the deliberate human steps)
 
-1. Make sure `main` is green: the full gate (`fmt` / `clippy -D warnings` / `test`), the FOCUS
-   conformance job, the license (`cargo deny`) job, and the offline-acceptance job all pass.
+1. Make sure `main` is green: the full gate (`fmt` / `clippy -D warnings` / `test`, including the
+   `--features connect` build + clippy that links the keychain crate), the FOCUS conformance job, the
+   license (`cargo deny`, run `--all-features` for the connect-on pass) job, and the
+   offline-acceptance job all pass.
 2. Confirm the version. The workspace is versioned in lockstep via
    [Cargo.toml](Cargo.toml) `[workspace.package].version`. For `0.1.0` it is already set.
 3. Sanity-check the plan locally (no publish):
@@ -119,9 +130,11 @@ cargo publish -p costroid-core
 cargo publish -p costroid
 ```
 
-> When the planned members land (per `docs/PRODUCT-PLAN.md`), the order grows:
-> `costroid-connect` publishes after `costroid-core` (the CLI then depends on it), and the
-> `costroid-bar` binary publishes alongside `costroid` (both depend only on `costroid-core`).
+> The order grows as the remaining members gain publishable behavior (per `docs/PRODUCT-PLAN.md`):
+> `costroid-connect` (a member since T7, keychain store since T8) gains its `costroid-core`/
+> `costroid-focus` deps in T9 and then publishes after `costroid-core` (the CLI depends on it via the
+> `connect` feature); the `costroid-bar` binary (not yet in the workspace) publishes alongside
+> `costroid` (both depend only on `costroid-core`).
 
 Gotchas (learned shipping v0.1.0):
 - **A verified email** on the crates.io account is required before the first publish.
