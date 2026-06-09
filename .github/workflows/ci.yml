@@ -17,6 +17,12 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      # `cargo {clippy,test} --workspace` builds the `costroid-connect` member, whose
+      # Linux keychain backend (sync Secret Service) links C libdbus (T8). The default
+      # `costroid` binary never links it, but the workspace build does.
+      - name: Install keychain build deps (libdbus, libsecret)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libsecret-1-dev
+
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -25,6 +31,13 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      # Smoke-test the opt-in connections build: the `costroid` binary must compile and
+      # lint cleanly with the keychain crate linked in (off by default; T8).
+      - name: Connect feature (keychain) — build + lint
+        run: |
+          cargo build -p costroid --features connect
+          cargo clippy -p costroid --features connect --all-targets -- -D warnings
 
   focus-conformance:
     name: FOCUS 1.3 validator
@@ -61,11 +74,14 @@ jobs:
 
       # Enforces the Apache-2.0 / no-copyleft policy and the "rustls, never
       # OpenSSL" rule from deny.toml. licenses + bans are fully offline (no
-      # RustSec advisory-DB fetch), keeping the gate network-free.
-      - name: cargo-deny (licenses + bans)
+      # RustSec advisory-DB fetch), keeping the gate network-free. `--all-features`
+      # makes this the connect-on pass: it resolves the `connect` feature so the
+      # keyring `wrappers` guard (T8) is evaluated against the real keychain subtree.
+      - name: cargo-deny (licenses + bans, connect-on)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses bans
+          arguments: --all-features
 
   offline-acceptance:
     name: offline acceptance (Phase-1 capstone)
@@ -78,9 +94,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       # strace is the authoritative network-isolation mechanism; script/unshare
-      # (util-linux) and python3 are preinstalled on ubuntu runners.
-      - name: Install strace
-        run: sudo apt-get update && sudo apt-get install -y strace
+      # (util-linux) and python3 are preinstalled on ubuntu runners. libdbus/libsecret
+      # are needed for the script's `--features connect` baseline build (T8 keychain).
+      - name: Install strace + keychain build deps
+        run: sudo apt-get update && sudo apt-get install -y strace libdbus-1-dev libsecret-1-dev
 
       # Static proof: no networking/telemetry crate is even linked.
       - name: Static no-network/no-telemetry dependency proof

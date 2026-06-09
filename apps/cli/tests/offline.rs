@@ -84,31 +84,70 @@ const ALWAYS_FORBIDDEN_CRATES: &[&str] = &[
 /// (blocking HTTP), `rustls` (its TLS), and `keyring` (the OS keychain). Forbidden
 /// in the default/local-only build; permitted once `connect` is enabled.
 ///
-/// (Today `connect` pulls in only an empty skeleton crate, so none of these is
-/// present in *either* build yet — T9 adds them to `costroid-connect`. When it does,
-/// the default-build test must continue to NOT see them and the `connect`-build test
-/// must continue to permit them.)
+/// (T8 added `keyring` to `costroid-connect`, so it is present in the `connect` build
+/// and asserted so below; `ureq` + `rustls` arrive with the HTTP client in T9. Either
+/// way the default-build test must continue to NOT see any of the trio, and the
+/// `connect`-build test must continue to permit them.)
 const CONNECT_GATED_CRATES: &[&str] = &["ureq", "rustls", "keyring"];
 
 /// The designated network/credential home: excluded as a graph *root* (it is the
 /// thing being gated), but still reached as a *dependency* when `connect` is on.
 const CONNECT_CRATE: &str = "costroid-connect";
 
-/// Names of every crate reachable in the **resolved** dependency graph from
-/// Costroid's own crates — every workspace member except `costroid-connect` — under
-/// the given extra cargo args (e.g. `--features connect`). `--locked` ties the check
-/// to the committed `Cargo.lock`, so it is fully offline and deterministic.
+/// The target triples Costroid ships (mirrors `deny.toml` `[graph].targets`). The
+/// reachable graph is resolved once **per target** and unioned (see
+/// [`reachable_crate_names`]).
+const SHIPPED_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+];
+
+/// Names of every crate reachable in the **resolved** dependency graph from Costroid's
+/// own crates — every workspace member except `costroid-connect` — under the given
+/// extra cargo args (e.g. `--features connect`), unioned across every shipped target.
+///
+/// Resolving **per target** (`--filter-platform`) rather than via one unfiltered
+/// `cargo metadata` is deliberate: the unfiltered resolve is an all-targets *superset*
+/// that reports phantom optional dependencies a feature would prune — e.g. keyring's
+/// unused `async-secret-service` path (`zbus`/`async-io`), which the sync
+/// `dbus-secret-service` backend we select never links (confirmed with `cargo tree`).
+/// Per-target resolution applies real feature+target pruning, so a phantom `async-io`
+/// can't trip the ban; unioning all six triples still catches a network dependency
+/// gated to any single platform. `--locked` ties the check to the committed
+/// `Cargo.lock`, so it is fully offline and deterministic.
 fn reachable_crate_names(extra_args: &[&str]) -> BTreeSet<String> {
-    let mut args = vec!["metadata", "--format-version", "1", "--locked"];
+    let mut names = BTreeSet::new();
+    for target in SHIPPED_TARGETS {
+        names.extend(reachable_for_target(target, extra_args));
+    }
+    names
+}
+
+/// The resolved reachable set for a single target triple (see [`reachable_crate_names`]).
+fn reachable_for_target(target: &str, extra_args: &[&str]) -> BTreeSet<String> {
+    let mut args = vec![
+        "metadata",
+        "--format-version",
+        "1",
+        "--locked",
+        "--filter-platform",
+        target,
+    ];
     args.extend_from_slice(extra_args);
 
     let output = match Command::new(env!("CARGO")).args(&args).output() {
         Ok(output) => output,
-        Err(err) => panic!("failed to run `cargo metadata {extra_args:?}`: {err}"),
+        Err(err) => panic!(
+            "failed to run `cargo metadata --filter-platform {target} {extra_args:?}`: {err}"
+        ),
     };
     assert!(
         output.status.success(),
-        "`cargo metadata {extra_args:?}` failed:\n{}",
+        "`cargo metadata --filter-platform {target} {extra_args:?}` failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -233,7 +272,13 @@ fn connect_feature_admits_only_the_sanctioned_trio() {
          contains: {hits:?}.\n\
          The connections subsystem uses only `ureq` + `rustls` + `keyring`."
     );
-    // Note: the sanctioned trio is intentionally NOT asserted present — T7 ships
-    // `costroid-connect` as an empty skeleton, so none of it is linked yet. T8 adds
-    // `keyring`, T9 adds `ureq` + `rustls`; both are permitted here when they land.
+    // T8 landed the keychain: assert `keyring` is now actually linked under `connect`
+    // (the gate must really pull in the OS-keychain backend the credential store uses).
+    // `ureq` + `rustls` arrive with the HTTP client in T9 — permitted here, not yet
+    // asserted present.
+    assert!(
+        names.contains("keyring"),
+        "`--features connect` must link `keyring` — T8's credential store (the OS \
+         keychain) depends on it, so the gate has to pull it in."
+    );
 }

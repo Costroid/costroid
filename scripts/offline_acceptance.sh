@@ -189,27 +189,46 @@ else
 fi
 
 # ============================================================================
-# STUB — feature-ON network test (`--features connect`) · fill in T8/T9
+# Feature-ON (connect) — baseline landed in T8 (keychain); network half is T9/T10
 # ============================================================================
-# When the connections subsystem lands, add the *positive* counterpart to the
-# proof above: not "no network ever", but "network ONLY on an explicit, user-
-# initiated connect action, and ONLY to the authorized provider host". Sketch:
-#
-#   1. Build the opt-in binary:   cargo build -q -p costroid --features connect
-#   2. Baseline — with NO connect action, every command above must STILL show zero
-#      outbound IP traffic (the gate must not leak network just by being compiled in).
-#   3. Action — drive `costroid connect <provider>` (own-key path, fed a fixture key
-#      via stdin/env; NEVER a real credential) under strace, and assert:
-#        * outbound connect() goes ONLY to the provider's documented usage/billing
-#          host (allow-list it; any other host = NETWORK VIOLATION);
-#        * the secret lands ONLY in the OS keychain — assert NOTHING was written to
-#          $home (config/logs/disk) by diffing the fixture HOME before/after;
-#        * `costroid disconnect <provider>` revokes it and leaves no residue.
-#   4. Still NO telemetry, ever — no call to any non-provider host.
-#
-# Until then there is no connect code or command to exercise, so this section is a
-# no-op placeholder and is intentionally NOT run.
-echo "==> Feature-on (connect) network test: STUB — not yet implemented (T8/T9)"
+# T8 adds the OS-keychain credential store to `costroid-connect` (no network yet).
+# What this proves now:
+#   (a) compiling `--features connect` in does NOT leak network on a normal run (the
+#       gate must not phone home just by being linked); and
+#   (b) a normal run writes NO secret/file residue to $HOME (the credential store
+#       touches only the OS keychain). The store→retrieve→delete round-trip itself
+#       writing nothing to disk is proven at the unit level by
+#       `credential_round_trip_writes_nothing_to_disk` (in-memory mock backend), since
+#       there is no `connect` CLI to drive from here until T10.
+# Still a STUB (needs the HTTP client in T9 + the `connect` CLI in T10): the *positive*
+# network test — `costroid connect <provider>` reaching ONLY the authorized host, with
+# the secret landing ONLY in the keychain, and `disconnect` leaving no residue.
+
+echo "==> Building costroid --features connect (keychain linked; no network code yet)"
+cargo build -q -p costroid --features connect
+connect_bin="$repo_root/target/debug/costroid"
+
+# A content fingerprint of the fixture HOME, to prove a run writes no residue there.
+home_fingerprint() { (cd "$home" && find . -type f -exec sha256sum {} + 2>/dev/null | sort); }
+before_fp="$(home_fingerprint)"
+
+printf '  %-52s' "connect build: normal run leaks no network"
+rc=0; iso_run "$connect_bin" --plain || rc=$?
+if [ "$rc" -eq 90 ]; then echo "NETWORK VIOLATION"; fail=1
+elif [ "$rc" -ne 0 ]; then echo "FAIL (exit $rc)"; fail=1
+else echo "ok"; fi
+
+printf '  %-52s' "connect build: no secret/file residue in \$HOME"
+after_fp="$(home_fingerprint)"
+if [ "$before_fp" != "$after_fp" ]; then
+  echo "FAIL (\$HOME changed under the connect build)"
+  diff <(printf '%s\n' "$before_fp") <(printf '%s\n' "$after_fp") | sed 's/^/      /'
+  fail=1
+else
+  echo "ok"
+fi
+
+echo "==> Feature-on connect ACTION test (network + secret-to-keychain): STUB — T9/T10"
 
 echo
 if [ "$fail" -ne 0 ]; then

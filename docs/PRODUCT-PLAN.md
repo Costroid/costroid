@@ -24,7 +24,7 @@ Verified against the code, not the docs. (v0.2.0 — the cost lane: frontier + C
 
 **Solid foundation the rest builds on:** three-crate engine (`apps → core → {providers, focus}`, no cycles, no `unwrap`/`expect`/`panic!` in libs); a working 5-method `Provider` trait (`id` / `capability` / `discover` / `parse_usage` / `parse_limits`); WSL-aware multi-root discovery; three render modes (braille / ASCII / **plain**) with non-color cues; `--live`; the statusline emitter; FOCUS export; and **enforced** invariants — a strace-based offline-acceptance CI job, a two-tier resolved-graph forbidden-crates test (since T7: the default build forbids ~37 networking/TLS/telemetry crates incl. the gated `ureq`/`rustls`/`keyring` trio; `--features connect` admits only that trio), `cargo-deny` (no copyleft, openssl banned), attested releases. **177 tests, 23 render snapshots, green CI gate.** The cost lane is `cargo install`-able and correct today.
 
-**Not built yet:** any auth/connections **behavior** (T8+ — no keychain, no API-key entry, no OAuth; **T7 landed the empty `costroid-connect` crate + the re-scoped no-network guarantee**, but it carries no behavior); 5 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs); alerts; the taskbar; Antigravity & Copilot. *(Claude live quota **on screen** is now **done** — T4 landed the reader, T5 the writer, and **T6 the render**, so the captured quota surfaces end to end on a Pro/Max machine; see §11.5 ✅ T6 DONE. The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — landed in T2; its live **producers** in T4 (cross-check demotion + stale age-out + the `Estimated` fallback); its **rendering** in T6 (all 5 arms + `Spend`). The **`Capability` descriptor** — `DataSource`/`AuthMethod`/`Capability` + the required `capability()` trait method, declared by all three adapters — **landed in T3**; its consumer, the Providers tab (T11), is still future.)*
+**Not built yet:** the *network* half of connections (T9+ — no HTTP/usage-API fetch, no reconciliation, no OAuth) and the `costroid connect`/`disconnect` CLI + Connections view (T10). **T8 built the keychain credential store** in `costroid-connect` (`CredentialStore`/`ConnectionRegistry`/`ApiVendor`, `keyring` sync Secret Service — DONE 2026-06-09, ⛔-approved), so secrets have a home but nothing yet fetches; 5 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs); alerts; the taskbar; Antigravity & Copilot. *(Claude live quota **on screen** is now **done** — T4 landed the reader, T5 the writer, and **T6 the render**, so the captured quota surfaces end to end on a Pro/Max machine; see §11.5 ✅ T6 DONE. The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — landed in T2; its live **producers** in T4 (cross-check demotion + stale age-out + the `Estimated` fallback); its **rendering** in T6 (all 5 arms + `Spend`). The **`Capability` descriptor** — `DataSource`/`AuthMethod`/`Capability` + the required `capability()` trait method, declared by all three adapters — **landed in T3**; its consumer, the Providers tab (T11), is still future.)*
 ---
 
 ## 1. The product in one picture
@@ -272,7 +272,7 @@ Per instruction, the data model is generalized to *fit* these, but **no adapter 
 | 6 — taskbar (egui) | **0.6.0** | **Taskbar** | no new | cross-platform tray, AccessKit |
 | later — Cursor live quota / Antigravity / Copilot | → **1.0** | all | varies | discovery-gated (sanctioned source required) |
 
-*Step 0 (canon reconcile) and Step 1 (v0.2.0, shipped 2026-06-05) are done, and the Claude `statusLine` capture is built end to end (T2–T5 ✅). **The 0.3.0 milestone is complete — T6 (render the new limit states + Spend windows) landed, so T2 + T4 + T6 are all green.** Claude live quota now surfaces on screen. **T7 is also done** — the feature-gated `costroid-connect` crate + the re-scoped no-network guarantee — so the 0.4.0 connections line is unblocked; the next build is **T8 (keychain)**.*
+*Step 0 (canon reconcile) and Step 1 (v0.2.0, shipped 2026-06-05) are done, and the Claude `statusLine` capture is built end to end (T2–T5 ✅). **The 0.3.0 milestone is complete — T6 (render the new limit states + Spend windows) landed, so T2 + T4 + T6 are all green.** Claude live quota now surfaces on screen. **T7 is also done** — the feature-gated `costroid-connect` crate + the re-scoped no-network guarantee — so the 0.4.0 connections line is unblocked. **T8 (keychain credential store) is done** — gate green 2026-06-09, ⛔-approved (§11.5 ✅ T8); the next build is **T9 (HTTP usage-API clients + reconciliation)**.*
 
 ---
 
@@ -342,7 +342,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 ### 11.4 The task ledger
 
-*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T7 are all DONE**; **T8+ are a backlog** that gets expanded into full cards when its Prereq lands — their detail depends on decisions not yet made, and speccing them now would fabricate.*
+*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9+ remain a backlog** that gets expanded into full cards when its Prereq lands — their detail depends on decisions not yet made, and speccing them now would fabricate.*
 
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
 
@@ -354,7 +354,8 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - [x] **T5** `setup-statusline` + `--capture-only` — ✅ command + `StatuslineArgs {capture_only, wrap}` + `setup.rs` (idempotent settings.json wiring, backup/undo, atomic cache writer); gate green, 58 cli tests (see §11.5)
 - [x] **T6** Render new limit states + Spend windows — ✅ all 5 `LimitAvailability` arms + `Spend` dollar line + the `? unverified` cue (neutral meter) + the always-on "as of HH:MM" stamp (UTC, deterministic) + Claude chat caveat + statusline `Unverified` selection; `captured_at` threaded onto `LimitSummary`; gate green, 176 tests (see §11.5)
 - [x] **T7** `costroid-connect` infra + CI re-scope — ✅ empty feature-gated crate (gate on `apps/cli`'s `connect`, off by default) + two-tier resolved-graph `offline.rs` (default forbids the trio + connect unlinked; `--features connect` admits only `ureq`/`rustls`/`keyring`) + `deny.toml` `wrappers` scoping + script STUB; gate green, 177 tests (see §11.5)
-- T8+ — backlog (carded when its Prereq lands)
+- [x] **T8** Keychain credential store — ✅ **DONE 2026-06-09 (gate green, ⛔-approved)**; `costroid-connect` credential store (`ApiVendor`/`CredentialStore`/`ConnectionRegistry`), `keyring` 3.6.3 sync Secret Service, async-io stays banned; pure-library (CLI → T10); see §11.5 ✅ T8
+- T9+ — backlog (carded when its Prereq lands)
 
 **T2 + T4 + T6 ticked = the 0.3.0 milestone** (Claude live quota + generalized model).
 
@@ -418,7 +419,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **Next:** keychain (T8) and HTTP (T9) have a home.
 
 **Backlog — carded when its Prereq lands (📌 must be pinned first):**
-- **T8 — keychain + API-key entry** · ⛔📌 · Prereq T7
+- **T8 — keychain credential store** · ⛔ · Prereq T7 · ✅ **DONE 2026-06-09 (gate green, ⛔-approved) → §12.9 / §11.5** (pure-library; the `costroid connect` CLI + Connections view moved to T10)
 - **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes
 - **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display → **0.4.0** · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4)
 - **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
@@ -431,6 +432,25 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 ### 11.5 Decisions & limitations (living log)
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**✅ T8 DONE (2026-06-09, gate green, ⛔-approved) — keychain credential store landed in `costroid-connect` (the crate's first behavior). Files: `crates/costroid-connect/{Cargo.toml,src/lib.rs}`; `deny.toml`; `apps/cli/tests/offline.rs`; `scripts/offline_acceptance.sh`; `.github/workflows/ci.yml`. Gate: fmt + clippy (`--workspace` and `-p costroid --features connect`) + `build`/`test --workspace` (11 new connect tests, 2 offline tests) + `cargo deny check licenses bans` (default **and** `--all-features`) + `bash scripts/offline_acceptance.sh` — all green.**
+- **Built as pinned:** `enum ApiVendor { Anthropic, OpenAI, Gemini }` (billing-vendor axis, owned by `costroid-connect` — no `core`/`focus` dep); `CredentialStore::{new,store,retrieve,delete}` over the OS keychain (service `costroid`, account `apikey:<vendor>`); `ConnectionRegistry` (non-secret index at `${XDG_STATE_HOME:-~/.local/state}/costroid/connections.json`, atomic temp+rename); secrets wrapped in `secrecy::SecretString` (+ a redacting `Debug` on `CredentialStore`); `enum ConnectError` (thiserror, `#[from] keyring::Error`); **no `unwrap`/`expect`/`panic` in non-test code** (tests use panic-based `ok`/`some` helpers, matching the repo's deny-`unwrap_used` convention). Deps: `keyring = "=3.6.3"` (`default-features = false`, features `apple-native`/`windows-native`/`sync-secret-service`/`crypto-rust`) + `secrecy = "=0.10.3"` + workspace `serde`/`serde_json`/`thiserror`.
+- **Deviation 1 — `keyring` has NO `mock` feature** (the card assumed one). `keyring::mock` is available unconditionally in 3.x; tests install it once via a `Once` (`set_default_credential_builder(mock::default_credential_builder())`). The mock persists a secret only inside its own `Entry`, so `CredentialStore` **eagerly owns one `Entry` per vendor** (an array) — that cache lets the mock round-trip and gives each store instance an isolated in-memory store (parallel-safe), while being a harmless cheap handle-reuse for the real OS backends.
+- **Deviation 2 (positive) — async-io stays GLOBALLY banned.** Chose the **sync** Secret Service backend (`sync-secret-service` → `dbus-secret-service`, blocking **C libdbus**) over the `async-secret-service` (zbus) path, so NO async runtime is in any real build. `cargo tree --target all --features connect -i async-io` ⇒ nothing. So the ⛔-signed-off "permit keyring's async-io narrowly under connect" was **not needed**: `async-io`/`tokio`/`async-std`/`smol` remain in `ALWAYS_FORBIDDEN_CRATES` for **both** builds (the local-only no-async-runtime guarantee is preserved, not weakened). Cost: the C build-deps `libdbus-1-dev` (+ `libsecret-1-dev`, installed too per the card though `dbus-secret-service` needs only libdbus) — so `cargo {build,test,clippy} --workspace` now requires them (the default `costroid` binary still links none of it).
+- **Deviation 3 — `offline.rs` resolves per-target.** Unfiltered `cargo metadata` is an all-targets *superset* that reported phantom `async-io`/`zbus`/`secret-service` (keyring's unused `async-secret-service` optional deps), which would have falsely tripped the forbidden-crates ban. Fixed by resolving **once per shipped triple via `--filter-platform` and unioning** (`SHIPPED_TARGETS` mirrors `deny.toml`); this applies real feature+target pruning so the phantom `async-io` is gone, while still catching a network dep gated to any single platform. `connect_feature_admits_only_the_sanctioned_trio` now also **asserts `keyring` is present**; `ureq`/`rustls` remain T9.
+- **Guards/CI as-built:** `deny.toml` — keyring is now a *non-optional* dep of the `costroid-connect` member, so it is in the default workspace graph and its `wrappers` guard **fires** (comment updated); `ureq`/`rustls` wrappers stay unused (2 benign `unused-wrapper` warnings, exit 0) until T9. `apps/cli/tests/offline.rs` — per-target union + the keyring-present assertion. `scripts/offline_acceptance.sh` — the STUB's **secret-residue half** is filled at the unit level (`credential_round_trip_writes_nothing_to_disk`, mock backend) plus a **feature-on baseline** in the script (build `--features connect`; a normal run leaks no network and writes no `$HOME` residue); the connect-**action** + network half stays a T9/T10 stub. `ci.yml` — `pre-pr` and `offline-acceptance` jobs install `libdbus-1-dev`+`libsecret-1-dev`; `pre-pr` adds a `--features connect` build + clippy; the `license` job runs cargo-deny with `--all-features` (connect-on).
+- **No user-facing change** (pure library, no CLI) → no README/CHANGELOG edit needed. ARCHITECTURE §5's "keyring … in T8" note trued up to "landed".
+- **⛔ APPROVED 2026-06-09** (human sign-off): keyring stays **3.6.3** + the sync Secret Service backend, the credential model (service `costroid` / `apikey:<vendor>` / `ApiVendor`), and the denylist handling (async-io kept banned via the per-target resolve). **keyring 4.x evaluated and declined:** the `keyring` 4.0.1 crate is now the *CLI/sample* (it has a `[[bin]]`, depends on `clap`, and pulls **both** the dbus **and** `zbus-secret-service-keyring-store` backends *non-optionally* on Linux → `zbus → async-io`, which would break the §6 async-io ban; the backends aren't feature-gated, so it can't be excluded). The only async-io-clean 4.x path is a re-architecture onto `keyring-core` 1.0.0 + per-OS `*-keyring-store` crates (heavier deps: `regex`/`dashmap`/`ron`/`uuid`/`chrono`) — deferred, no functional gain for store/retrieve/delete. Revisit if keyring 3.x is ever deprecated.
+
+**📌 T8 PINNED + carded (2026-06-09) — keychain credential store; pure-library scope. Carded into §12.9; not yet built. Prereq T7 ✅ met.** The first behavioral code in `costroid-connect`. Two items were ⛔ human-signed-off (marked below); the rest are agent-decidable pins logged for the build agent.
+- **Pure-library scope (⛔-signed-off).** T8 ships *only* the OS-keychain credential store in `costroid-connect` — no CLI, no network. The `costroid connect`/`disconnect` command + Connections view are **T10**; the HTTP fetch + reconciliation are **T9**. "API-key entry" = the library *store* path, tested via `keyring`'s mock backend. Keeps a single public-CLI + ⛔-legal gate at T10 and T8 a self-contained secret-boundary unit.
+- **Credential identity = billing vendor, not tool.** `enum ApiVendor { Anthropic, OpenAI, Gemini }` owned by `costroid-connect` — a different axis from `ProviderId` (ClaudeCode/Codex/Cursor): Cursor has no key, and Anthropic ≠ the Claude-Code *tool*. So connect stays free of `core`/`focus` deps through T8 (they land in T9 when behavior wires up — matching the Cargo.toml note).
+- **Keychain naming (one-way door).** keyring service `costroid`, account `apikey:<vendor>`; `oauth:<vendor>` reserved for the deferred tier-2 OAuth (T9/T10) so a future token can't collide.
+- **Non-secret connection registry.** The OS keychain isn't portably enumerable, so "what's linked" — a *non-secret* fact — lives at `${XDG_STATE_HOME:-~/.local/state}/costroid/connections.json` (atomic temp+rename), never the secret. T10's Connections view reads it.
+- **In-memory hygiene.** Secrets wrapped in `secrecy::SecretString` / `zeroize` so they can't be `Debug`-logged or linger; never disk/config/logs (hard invariant §6).
+- **Linux backend denylist policy (⛔-signed-off).** keyring's Linux Secret-Service backend may pull a transitive IPC crate currently on the forbidden-crates list (e.g. an `async-io` D-Bus executor — *local IPC, not network egress*). Resolution: **permit it narrowly, scoped to the `costroid-connect` subtree under `--features connect`** — the default build stays clean (keyring unlinked) and the strace offline test still proves zero outbound; install `libdbus-1-dev` + `libsecret-1-dev` in CI (Step 4 §161). keyring uses pure-Rust crypto (`crypto-rust`), never openssl — which stays globally banned.
+- **Guard/CI consequences.** The `deny.toml` `keyring` `wrappers = ["costroid-connect"]` guard (a no-op since T7) now fires — needs a connect-on `cargo deny` pass to actually evaluate; `offline.rs`'s `connect_feature_admits_only_the_sanctioned_trio` now asserts keyring *is* linked under `--features connect` (T7 deliberately didn't — the skeleton was empty); the offline-acceptance STUB's "no secret written to disk/config/logs" half gets filled via the mock backend (the network half stays T9/T10).
+- **⛔ build-time gate.** T8 is the first secret/keychain code (CLAUDE.md golden rule) and relaxes the no-network guarantee surface (like T7) — the build agent stops for approval on the keyring crate/backends, the credential model, and the narrowed denylist allowance before finalizing.
 
 **🔒 ToS-safe rework (2026-06-06) — removed the session-reuse tier across plan + code.** The auth ladder is now **tiers 0–3 only; tier 4 = never** (no reuse of any credential/session/token against a non-sanctioned, undocumented, or internal endpoint — incl. Cursor's `api2.cursor.sh` — and no browser-cookie reading). Concretely: **`OptInSession` was removed from both `DataSource` and `AuthMethod`** in `costroid-providers`, and **Cursor's descriptor is now `auth: None`** (was `OptInSession`); the `each_provider_declares_its_capability` test was updated; full gate green. **Cursor live quota is no longer a numbered step** — it is **discovery-gated (§8)**, pursued only via a future *sanctioned* Cursor API/OAuth, never session reuse. The **egui taskbar moved Step 7 → Step 6 (v0.7.0 → v0.6.0)**, now the last numbered step; in the ledger the taskbar is **T18+** (no T19; Cursor is not a numbered T). §8 also gained verified ToS-safe discovery findings — **Copilot** (own classic-PAT / `gh` OAuth → documented `…/billing/ai_credit/usage`; user-billed only; never `copilot_internal/user`) and **Antigravity** (own-Gemini-key $ lane safe; "compute-effort" quota has no sanctioned source). The T3-DONE entry below predates this and is annotated accordingly.
 
@@ -505,9 +525,9 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 ---
 
-## 12. Ready-to-paste task prompts (T1–T7)
+## 12. Ready-to-paste task prompts (T1–T8)
 
-*To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T8+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
+*To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T9+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
 
 ### 12.0 — Standard header (prepend to every body)
 
@@ -735,7 +755,7 @@ Rules:
 **Next:** the **0.3.0 milestone** (Claude live quota + generalized model) is complete (T2+T4+T6 green).
 ```
 
-### 12.7 — T7 · `costroid-connect` infra + CI re-scope · L · ⛔ · Prereq: T3 · ✅ **DONE (2026-06-06, gate green, 177 tests, ⛔-approved — see §11.5)**
+### 12.7.1 — T7 · `costroid-connect` infra + CI re-scope · L · ⛔ · Prereq: T3 · ✅ **DONE (2026-06-06, gate green, 177 tests, ⛔-approved — see §11.5)**
 
 > **As-built deviations (the card prompt below predates them):** the `connect` feature lives on **`apps/cli`**, not the root `Cargo.toml` (a virtual workspace has no `[package]`, so no `[features]`) — `app → costroid-connect → core`, per ARCHITECTURE §5 / RELEASING.md; `offline.rs` walks the **resolved** dependency graph, not the `packages` superset (the only way to tell the default build from the `connect` build); `deny.toml` uses `wrappers` (3 benign `unused-wrapper` warnings until T9, check still exits 0). Full detail in §11.5 ✅ T7 DONE.
 
@@ -760,9 +780,9 @@ Rules:
 **Next:** T8 (keychain) and T9 (HTTP clients) have a home → 0.4.0 connections can proceed.
 ```
 
-### 12.8 — Backlog tasks (T8+): the pin-then-card prompt
+### 12.7.2 — Backlog tasks (T8+): the pin-then-card prompt
 
-*T8–T18 aren't carded — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
+*T9–T18 aren't carded — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
 
 ```
 Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
@@ -776,4 +796,70 @@ Your job is to PIN + CARD it, not to build it:
 3. Once pinned (with human sign-off where flagged), write a full T1–T7-style body for <ID> into §12
    and log the pinned decisions in §11.5.
 4. Do NOT implement or commit. Output the proposed card + decisions for review.
+```
+
+### 12.9 — T8 · Keychain credential store (`costroid-connect`) · L · ⛔ · Prereq: T7 · ✅ **DONE (2026-06-09, gate green, ⛔-approved — see §11.5)**
+
+> **As-built (2026-06-09; gate green, awaiting ⛔ sign-off — full detail in §11.5 ✅ T8).** Built as pinned, with three deviations from the card, all logged: (1) **`keyring` has no `mock` feature** — `keyring::mock` is always available; tests install it once via a `Once`, and each `CredentialStore` owns its entries (the mock persists per-store → isolated, parallel-safe). (2) **Backend = sync Secret Service** (`dbus-secret-service`, C libdbus) over the async/zbus path, so **`async-io` is pulled by NO real build and stays GLOBALLY banned even under `--features connect`** — the card's anticipated "allow async-io narrowly" was *not needed* (a stronger result). (3) **`offline.rs` now resolves per shipped target** (`--filter-platform`, unioned) because unfiltered `cargo metadata` is an all-targets superset that reported phantom `async-io`/`zbus` from keyring's unused async path (cargo tree confirms no async runtime in any real build).
+
+> **As-pinned (2026-06-09; two items ⛔ human-signed-off below).** T8 is **pure-library**: it ships *only* the OS-keychain credential store inside `costroid-connect` — **no new CLI, no network** (the `costroid connect`/`disconnect` UX + Connections view are **T10**; the HTTP fetch + reconciliation are **T9**). "API-key entry" here = the library *store* path, tested via `keyring`'s **mock** backend. Secrets are keyed by **billing vendor** (`Anthropic`/`OpenAI`/`Gemini`) — a different axis from `ProviderId` (the *tool*: ClaudeCode/Codex/Cursor) — via a small owned `enum ApiVendor`, so `costroid-connect` stays free of `core`/`focus` deps through T8 (those land in T9). **⛔-signed-off:** (1) **Linux backend** — keyring's transitive IPC deps (e.g. an `async-io` D-Bus executor; *local IPC, not network egress*) are permitted **narrowly, scoped to the `costroid-connect` subtree under `--features connect`** — the default build stays clean (keyring unlinked) and the strace test still proves zero outbound; `libdbus-1-dev`/`libsecret-1-dev` install in CI (Step 4 §161). (2) **Scope** — pure-library; CLI entry deferred to T10. Full detail in §11.5 *📌 T8 PINNED*.
+
+```
+**Goal:** give costroid-connect its FIRST behavior — a keychain-backed credential store for the user's
+  own usage/billing API keys (Anthropic/OpenAI/Gemini), so T9 can read a key and T10 can wire
+  connect/disconnect on top. KEYCHAIN ONLY — no network, no CLI in this task.
+**Files:** crates/costroid-connect/Cargo.toml (its FIRST deps — see Deliverables);
+  crates/costroid-connect/src/lib.rs (the store + ApiVendor + registry + error — replaces the empty
+  skeleton); deny.toml (the keyring `wrappers` guard now fires + a connect-on pass);
+  apps/cli/tests/offline.rs (flip the connect-on test to assert keyring PRESENT; permit keyring's IPC
+  subtree narrowly); scripts/offline_acceptance.sh (fill the secret-residue half of the feature-on STUB
+  via the mock backend); .github/workflows/ci.yml (libdbus-1-dev + libsecret-1-dev; a `--features connect`
+  build/test; a connect-on `cargo deny` pass).
+**📌 Pinned (2026-06-09 — accept as-is; (a)/(b) are ⛔-signed-off, do not re-litigate):**
+  · keychain service = `costroid`; account = `apikey:<vendor>` (reserve `oauth:<vendor>` for T9/T10).
+  · credential identity = owned `enum ApiVendor { Anthropic, OpenAI, Gemini }` (NOT ProviderId; no core/focus dep yet).
+  · secrets wrapped in `secrecy::SecretString` (no Debug/serde leak); never disk/config/logs.
+  · connection registry = a NON-secret index at ${XDG_STATE_HOME:-~/.local/state}/costroid/connections.json
+    (atomic temp+rename; lists connected vendors only — zero secret material).
+  · (a) ⛔ Linux backend: allow keyring's transitive IPC deps ONLY inside the costroid-connect subtree under
+    --features connect; default build unaffected; strace still proves 0 outbound; libdbus/libsecret in CI.
+  · (b) ⛔ scope: pure library; the `costroid connect`/`disconnect` CLI + Connections view are T10.
+**Scope fence:** the costroid-connect credential store + ApiVendor + ConnectionRegistry + error type +
+  the dep/guard/CI wiring ONLY. NO HTTP / usage-API calls (T9). NO `costroid connect` command or any
+  apps/cli source change beyond apps/cli/tests/offline.rs (T10 owns the CLI). NO core/focus dep on
+  costroid-connect yet. NO OAuth (tier 2, deferred §8). NO RequestCount / no new providers.
+**Deliverables — crate:** add to costroid-connect/Cargo.toml (still gated by the consumer's `connect`
+  feature, so off by default): `keyring = "3"` with the native backends (macOS `apple-native`, Windows
+  `windows-native`, Linux Secret Service) + its PURE-RUST crypto (`crypto-rust`, NEVER `crypto-openssl` —
+  openssl stays globally banned) + a mock/test path; `secrecy` (or `zeroize`) for in-memory secrets; verify
+  every new transitive license is permitted (cargo-deny). `enum ApiVendor { Anthropic, OpenAI, Gemini }`
+  (Display + FromStr). A `CredentialStore` exposing `store(ApiVendor, SecretString) -> Result<(), ConnectError>`,
+  `retrieve(ApiVendor) -> Result<Option<SecretString>, ConnectError>`, `delete(ApiVendor) -> Result<(), ConnectError>`
+  — keyring service `costroid`, account `apikey:<vendor>`. `struct ConnectionRegistry` over connections.json:
+  `mark_connected` / `mark_disconnected` / `list() -> Vec<ApiVendor>`, atomic write (temp+rename), stores NO
+  secret. `enum ConnectError` (thiserror; `#[from] keyring::Error`, IO, etc.) — NO unwrap/expect/panic (library crate).
+**Deliverables — guards/CI:** deny.toml — the `keyring` `wrappers = ["costroid-connect"]` entry now fires; add a
+  connect-on deny pass (a `--features connect` / `--all-features` graph) so the wrapper guard actually evaluates
+  (T7's deny.toml comment flagged this no-op); narrowly allow keyring's transitive IPC crate(s) ONLY under the
+  connect subtree; openssl/openssl-sys/native-tls stay banned GLOBALLY (no exception). apps/cli/tests/offline.rs —
+  `connect_feature_admits_only_the_sanctioned_trio` now asserts `keyring` IS linked under --features connect (it was
+  deliberately NOT asserted present in T7's empty skeleton); the default-build test still forbids keyring; document
+  exactly which keyring-transitive crate names are permitted under connect and WHY (local IPC, not egress).
+  scripts/offline_acceptance.sh — fill the secret-residue half of the STUB: with the MOCK backend a
+  store→retrieve→delete round-trip writes nothing to $HOME/disk/config/logs (diff a fixture HOME before/after);
+  the network half stays a T9/T10 stub. ci.yml — install libdbus-1-dev + libsecret-1-dev; add a `--features connect`
+  build+test job; run the connect-on `cargo deny` pass.
+**⛔ Human gate:** FIRST secret-handling/keychain code (CLAUDE.md golden rule + working-style: ask before anything
+  touching authentication, secrets, or the keychain) AND it relaxes the forbidden-crates/deny guarantee surface
+  (like T7). Stop for approval on the as-built specifics — the keyring crate + chosen backends/features, the
+  credential model (service/account scheme + ApiVendor), and the narrowed denylist allowance — before finalizing.
+  (Decisions (a)/(b) above are already signed off; do not re-open them.)
+**Done when:** default `cargo build/test --workspace` green with connect OFF — keyring NOT linked, offline.rs
+  default test + scripts/offline_acceptance.sh still pass (zero outbound); `--features connect` builds and the
+  credential-store + registry tests pass via the keyring MOCK backend; `cargo deny check licenses bans` passes both
+  default AND connect-on (keyring/wrappers guard fires, all licenses permissive, no openssl); offline.rs connect-on
+  test asserts keyring present; a mock store→retrieve→delete round-trip writes nothing outside the keychain
+  (asserted against a fixture HOME). No real developer keychain is ever touched by a test (mock only).
+**Next:** T9 (ureq+rustls usage-API clients + reconciliation) reads stored keys via `CredentialStore`; T10 wires the
+  `costroid connect`/`disconnect` CLI + the Connections view on top of the store + `ConnectionRegistry`.
 ```

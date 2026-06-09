@@ -62,11 +62,12 @@ wildcards = "allow"
 # an error. The comprehensive no-network/no-telemetry proof (and the default-build
 # ban on this same trio) lives in apps/cli/tests/offline.rs.
 #
-# Today these three are absent from the graph (T7 ships `costroid-connect` empty, and
-# with `all-features = false` the optional `connect`-gated deps are not resolved), so
-# the `wrappers` entries are a forward-looking, no-op guard. When T8/T9 add them,
-# evaluate this policy with the `connect` feature on (e.g. an `--all-features` deny
-# pass) so the guard actually fires.
+# T8 added `keyring` as a (non-optional) dependency of the `costroid-connect` member,
+# so it is resolved in the default workspace graph and its `wrappers` guard now FIRES
+# (it is permitted only because its direct parent is `costroid-connect`). `ureq` +
+# `rustls` remain a forward-looking, no-op guard until T9 adds them — hence the two
+# `unused-wrapper` warnings cargo-deny still emits for that pair. CI also runs an
+# `--all-features` (connect-on) pass so the connect-feature resolution is checked too.
 deny = [
     { name = "openssl" },
     { name = "openssl-sys" },
