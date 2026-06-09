@@ -307,7 +307,7 @@ Safe order: 1 → **2 (+3 together)** → 4 → 5 → 6.
 | 5 — tabs + alerts | conditional | L | **Step 3** (`Capability`) | CLI surface; alert/forecast/budget policy | Capability prereq → cheap re-cuts → analytics → alerts |
 | 6 — egui taskbar | **poor** | XL | **Steps 2–5** | release; GUI/UX design (none exists yet) | scaffold → per-tab fan-out → AccessKit → cross-platform |
 
-**Bottom line:** the model executes successfully if you (a) go in dependency order with **3 riding alongside 2**, (b) accept the human gates on 1 / 4 / 5 / 6 / 7 as checkpoints rather than fighting them, and (c) split the L/XL steps into the sub-units above. **Start with Step 2 + §3's data-model half** — the highest-fit, highest-value first handoff.
+**Bottom line:** the model executes successfully if you (a) go in dependency order with **3 riding alongside 2**, (b) accept the human gates on 1 / 4 / 5 / 6 as checkpoints rather than fighting them, and (c) split the L/XL steps into the sub-units above. **Start with Step 2 + §3's data-model half** — the highest-fit, highest-value first handoff.
 
 ---
 
@@ -420,8 +420,9 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 **Backlog — carded when its Prereq lands (📌 must be pinned first):**
 - **T8 — keychain credential store** · ⛔ · Prereq T7 · ✅ **DONE 2026-06-09 (gate green, ⛔-approved) → §12.9 / §11.5** (pure-library; the `costroid connect` CLI + Connections view moved to T10)
-- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes
-- **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display → **0.4.0** · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4)
+- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes (Anthropic/OpenAI/Gemini, tier-3 **own-key**; pin each endpoint+auth as a concrete proposal and **⛔ stop for human sign-off** — never guess an endpoint; §8 live-shape discipline applies to the exact API shape). **Split at carding into:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + its first `core`/`focus` deps + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + lands the `ureq`/`rustls` `deny.toml` wrappers; ⛔ guarantee-redefinition like T7/T8, **no provider knowledge** · **T9b** the 3 per-provider usage-API adapters (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
+- **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4). **Also finishes** the `scripts/offline_acceptance.sh` feature-on connect-ACTION network test (the connect action reaches only the authorized host · the secret lands only in the keychain · disconnect leaves no residue — replaces the `T9/T10` STUB at the script's tail). The 0.4.0 release itself is cut by **T10b**.
+- **T10b — Release v0.4.0 (connections)** · ⛔ · S · Prereq T9, T10 + the ⛔ legal review signed off → **cuts v0.4.0** — the release-mechanics cap on Step 4 (the connections analogue of T1, which cut v0.2.0). Version bump 0.3.0→0.4.0 across the **five** `[workspace.dependencies]` constraints (now incl. `costroid-connect` — the §11.5 T1 lockstep gotcha now covers 5 crates) + `Cargo.lock` + CHANGELOG + README/SECURITY release line; `dist plan` / host `dist build` dry-run; then the human tags + runs the **extended** crates.io ladder `focus → providers → core → connect → cli`. **Carded at §12.10.**
 - **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
 - **T14 Budget 📌 · T15 Forecast 📌 · T16 Anomalies 📌 · T17 Alerts ⛔📌** — 📌 budget persistence schema · forecast algorithm · anomaly baseline · alert thresholds + copy → **0.5.0**
 - **T18+ — egui taskbar** · ⛔ · Prereq T2–T6 (CLI feature-complete) — greenfield: needs a GUI design first, then per-tab fan-out → **0.6.0**
@@ -525,7 +526,7 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 ---
 
-## 12. Ready-to-paste task prompts (T1–T8)
+## 12. Ready-to-paste task prompts (T1–T8 + T10b release)
 
 *To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T9+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
 
@@ -755,7 +756,7 @@ Rules:
 **Next:** the **0.3.0 milestone** (Claude live quota + generalized model) is complete (T2+T4+T6 green).
 ```
 
-### 12.7.1 — T7 · `costroid-connect` infra + CI re-scope · L · ⛔ · Prereq: T3 · ✅ **DONE (2026-06-06, gate green, 177 tests, ⛔-approved — see §11.5)**
+### 12.7 — T7 · `costroid-connect` infra + CI re-scope · L · ⛔ · Prereq: T3 · ✅ **DONE (2026-06-06, gate green, 177 tests, ⛔-approved — see §11.5)**
 
 > **As-built deviations (the card prompt below predates them):** the `connect` feature lives on **`apps/cli`**, not the root `Cargo.toml` (a virtual workspace has no `[package]`, so no `[features]`) — `app → costroid-connect → core`, per ARCHITECTURE §5 / RELEASING.md; `offline.rs` walks the **resolved** dependency graph, not the `packages` superset (the only way to tell the default build from the `connect` build); `deny.toml` uses `wrappers` (3 benign `unused-wrapper` warnings until T9, check still exits 0). Full detail in §11.5 ✅ T7 DONE.
 
@@ -780,7 +781,7 @@ Rules:
 **Next:** T8 (keychain) and T9 (HTTP clients) have a home → 0.4.0 connections can proceed.
 ```
 
-### 12.7.2 — Backlog tasks (T8+): the pin-then-card prompt
+### 12.8 — Backlog tasks (T9+): the pin-then-card prompt
 
 *T9–T18 aren't carded — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
 
@@ -862,4 +863,44 @@ Your job is to PIN + CARD it, not to build it:
   (asserted against a fixture HOME). No real developer keychain is ever touched by a test (mock only).
 **Next:** T9 (ureq+rustls usage-API clients + reconciliation) reads stored keys via `CredentialStore`; T10 wires the
   `costroid connect`/`disconnect` CLI + the Connections view on top of the store + `ConnectionRegistry`.
+```
+
+### 12.10 — T10b · Release v0.4.0 (connections) · ⛔ · S · Prereq: T9 + T10 done + ⛔ legal review cleared
+
+> **The release-mechanics cap on Step 4** — the connections analogue of T1 (which cut v0.2.0). It does NOT build features (T9 = HTTP clients + reconciliation, T10 = the connect/disconnect CLI + Connections view); it cuts and publishes the release. 0.4.0 is the FIRST release to change the crates.io publish ladder (`costroid-connect` joins) and the FIRST lockstep version bump across FIVE workspace crates — so it warrants its own card (v0.3.0 was a chore-cut because it added zero new release mechanics; this adds several). Carded now because the mechanics are knowable (unlike T9's endpoints); runs only once its prereqs land.
+
+```
+**Goal:** ship the connections line as v0.4.0 — the first network release (opt-in, off by default).
+**Files:** Cargo.toml ([workspace.package].version + the FIVE [workspace.dependencies] internal
+  constraints, now incl. costroid-connect); Cargo.lock (refresh); CHANGELOG.md (0.4.0 entry);
+  README.md + SECURITY.md (release-line wording 0.3.x → 0.4.x); RELEASING.md (extend the crates.io
+  ladder). Do NOT tag/push/publish.
+**Scope fence:** version bump + lockfile + CHANGELOG + README/SECURITY release wording + the
+  RELEASING.md ladder line ONLY. NO code changes in apps/ or crates/; NO edits to .github/ or
+  dist-workspace.toml (but DO verify them — see Deliverables). Do NOT tag/push/publish.
+**Deliverables:** bump 0.3.0→0.4.0 — `[workspace.package].version` **and** the FIVE
+  `[workspace.dependencies]` constraints (`costroid-core/-focus/-providers/-connect = { …, version }`
+  — the new `costroid-connect` entry now rides the same lockstep bump the §11.5 T1 lesson logged for
+  the original four; a stale `^0.3.0` won't resolve against 0.4.0); `cargo update --workspace`;
+  CHANGELOG 0.4.0 entry (connections: opt-in own-key usage-API reconciliation + connect/disconnect +
+  the Connections view; off by default, the default build still makes zero network calls); flip
+  README/SECURITY release line to 0.4.x; extend the RELEASING.md crates.io ladder to
+  `focus → providers → core → connect → cli`; run `dist plan` + host-scoped
+  `dist build --artifacts=local` (dry-run, report only). **Verify the release pipeline:** confirm the
+  dist RELEASE workflow still ships the **connect-OFF default** `costroid` binary (so release.yml needs
+  no libdbus/libsecret) — if a connect-on artifact is ever added, first add `[dist].dependencies`
+  (apt = libdbus-1-dev, libsecret-1-dev) to dist-workspace.toml so the Linux runners install them.
+**⛔ Human gates:** (1) the **legal review of the connection flows** (Step 4) must be signed off before
+  this ships; (2) public release — review, then **COMMIT the prep first** (the agent does NOT commit) so
+  the tag lands on a 0.4.0-manifest commit (cargo-dist requires tag == `[workspace.package].version` —
+  the §11.5 T1 gotcha that aborted a run), then `git push origin main && git tag v0.4.0 && git push
+  origin v0.4.0` (triggers the GitHub-Release CI: installers only). **The tag does NOT publish to
+  crates.io** — run the extended `cargo publish` ladder (focus → providers → core → **connect** → cli)
+  per RELEASING.md, or `cargo install costroid` keeps serving 0.3.0.
+**Done when:** gate green; `dist plan` lists 0.4.0 across the 6 targets; version + lockfile + CHANGELOG +
+  README/SECURITY updated; the RELEASING.md crates.io ladder includes `costroid-connect`; (after your
+  tag + the crates.io ladder) release CI succeeds and `cargo install costroid` → 0.4.0.
+**Next:** 0.4.0 is live; the connections line is shipped → Step 5 (analytical tabs + alerts, T11–T17).
+  (0.5.0 / 0.6.0 can be chore-cut like 0.3.0 — they add no new publish-ladder/CI mechanics — unless a
+  later release again changes the published crate set.)
 ```
