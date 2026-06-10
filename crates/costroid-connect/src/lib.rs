@@ -174,9 +174,11 @@ impl FromStr for ApiVendor {
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
     /// The OS keychain backend reported an error (other than "no such entry", which
-    /// the store maps to `None`/`Ok` so callers never special-case it).
+    /// the store maps to `None`/`Ok` so callers never special-case it). Built only via
+    /// the scrubbing `From<KeyringError>` below — never construct it with an
+    /// unscrubbed `BadEncoding`.
     #[error("OS keychain error: {0}")]
-    Keyring(#[from] KeyringError),
+    Keyring(#[source] KeyringError),
 
     /// Reading or writing the non-secret connection registry failed.
     #[error("connection registry I/O at {path}: {source}")]
@@ -200,6 +202,22 @@ pub enum ConnectError {
     /// registry path cannot be computed.
     #[error("no state directory: set $HOME or $XDG_STATE_HOME")]
     NoStateDir,
+}
+
+impl From<KeyringError> for ConnectError {
+    /// Scrub the one keyring variant that carries secret material: `BadEncoding`
+    /// attaches the RAW stored secret bytes ("available for examination in the attached
+    /// value"), which a `Debug` render of this error would otherwise transit into a
+    /// message or log. The payload is emptied at this boundary — keyring's `Display` is
+    /// already redacted; this keeps `Debug` (and any future serialization) safe too.
+    fn from(err: KeyringError) -> Self {
+        match err {
+            KeyringError::BadEncoding(_) => {
+                ConnectError::Keyring(KeyringError::BadEncoding(Vec::new()))
+            }
+            other => ConnectError::Keyring(other),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -388,10 +406,15 @@ impl ConnectionRegistry {
     }
 }
 
-/// `<path>.tmp` sibling for atomic writes.
+/// A unique `<path>.<pid>.<n>.tmp` sibling for atomic writes (same directory, so the
+/// rename stays atomic). A FIXED temp name would let two concurrent writers interleave
+/// truncate/write/rename and publish a torn registry file.
 fn tmp_sibling(path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let serial = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".{}.{serial}.tmp", std::process::id()));
     PathBuf::from(tmp)
 }
 
@@ -610,5 +633,35 @@ mod tests {
             reg.list(),
             Err(ConnectError::RegistryFormat { .. })
         ));
+    }
+
+    #[test]
+    fn keyring_bad_encoding_payload_is_scrubbed_at_the_boundary() {
+        // keyring's BadEncoding attaches the RAW stored secret bytes; the From
+        // conversion must empty that payload so no Debug render of ConnectError can
+        // ever carry secret material.
+        let err: ConnectError = KeyringError::BadEncoding(b"super-secret-key".to_vec()).into();
+        match &err {
+            ConnectError::Keyring(KeyringError::BadEncoding(bytes)) => {
+                assert!(bytes.is_empty(), "payload must be scrubbed, got {bytes:?}");
+            }
+            other => panic!("expected a scrubbed BadEncoding, got {other:?}"),
+        }
+        let rendered = format!("{err:?} / {err}");
+        assert!(
+            !rendered.contains("super-secret-key"),
+            "no render may carry the secret: {rendered}"
+        );
+    }
+
+    #[test]
+    fn registry_tmp_siblings_never_collide() {
+        // A FIXED temp name would let two concurrent writers tear the registry; the
+        // unique sibling keeps the temp in the same directory (atomic rename).
+        let path = Path::new("/tmp/example/connections.json");
+        let first = tmp_sibling(path);
+        let second = tmp_sibling(path);
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), path.parent());
     }
 }

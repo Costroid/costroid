@@ -39,6 +39,25 @@ jobs:
           cargo build -p costroid --features connect
           cargo clippy -p costroid --features connect --all-targets -- -D warnings
 
+  msrv:
+    name: MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The documented MSRV (Cargo.toml `rust-version = "1.88"`) is enforced here, per
+      # CLAUDE.md ("document and test the MSRV in CI") — every other job tracks stable.
+      - name: Install Rust 1.88 (MSRV)
+        uses: dtolnay/rust-toolchain@1.88
+
+      # The workspace build compiles costroid-connect's Linux keychain backend (libdbus).
+      - name: Install keychain build deps (libdbus, libsecret)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libsecret-1-dev
+
+      - name: Check (workspace, all targets, on the MSRV toolchain)
+        run: cargo check --workspace --all-targets
+
   focus-conformance:
     name: FOCUS 1.3 validator
     runs-on: ubuntu-latest
@@ -54,8 +73,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Pinned: an unpinned validator could change its console format and make the
+      # allowlist checker pass vacuously (it now also hard-fails on a missing results
+      # summary). Bump deliberately, re-checking scripts/focus_known_failures.txt.
       - name: Install focus-validator
-        run: python -m pip install focus-validator
+        run: python -m pip install "focus-validator==2.1.0"
 
       # Exports the committed fixtures to FOCUS CSV and runs the official
       # validator (offline, bundled 1.3 ruleset) against the documented

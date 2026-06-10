@@ -621,7 +621,6 @@ name = "costroid-providers"
 version = "0.3.0"
 dependencies = [
  "chrono",
- "costroid-focus",
  "rust_decimal",
  "serde",
  "serde_json",

@@ -20,8 +20,8 @@
 #    float product (0.00030000000000000003 != 0.0003) is flagged as a violation.
 #    No exact-decimal producer can satisfy a bit-exact float64 equality for
 #    arbitrary token counts, and rounding/nulling to dodge it would corrupt correct
-#    data — so this is a validator defect, not a producer bug. To be reported
-#    upstream as a third defect (alongside #142/#143); replace 144 once filed.
+#    data — so this is a validator defect, not a producer bug. Reported upstream
+#    as the third defect (alongside #142/#143; filed, open as of 2026-06-10).
 #    Upstream: https://github.com/finopsfoundation/focus_validator/issues/144
 CAU-ListCost-C-011-C                     # float64 (UnitPrice * Quantity) != Cost; decimal product is exact
 CAU-ListUnitPrice-C-014-C                # same check, ListUnitPrice side

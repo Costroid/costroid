@@ -457,7 +457,37 @@ pub fn to_csv_string(rows: &[FocusRecord]) -> Result<String, FocusError> {
     }
     writer.flush()?;
     let bytes = writer.get_ref().clone();
-    String::from_utf8(bytes).map_err(FocusError::from)
+    let csv = String::from_utf8(bytes).map_err(FocusError::from)?;
+    if !rows.is_empty() {
+        return Ok(csv);
+    }
+    // Zero rows: the csv crate emits its header only with the first record, but the
+    // export contract (DATA-MODEL "Export shapes") is "the first row is the exact
+    // FOCUS column-name header" — for an empty export too, so consumers always see
+    // the schema. Derive the header by serializing a throwaway placeholder row and
+    // keeping only its header line — the serde field order stays the single source
+    // of truth (no hand-maintained column list to drift).
+    let placeholder = FocusRecord::unpriced_usage(UnpricedUsage {
+        timestamp: DateTime::UNIX_EPOCH,
+        tool: String::new(),
+        model: String::new(),
+        token_type: TokenType::Input,
+        token_count: 0,
+        project: None,
+        access_path: FocusAccessPath::Unknown,
+        service_name: String::new(),
+        service_provider_name: String::new(),
+        host_provider_name: String::new(),
+        invoice_issuer_name: String::new(),
+        billing_currency: String::new(),
+    })?;
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer.serialize(&placeholder)?;
+    writer.flush()?;
+    let bytes = writer.get_ref().clone();
+    let with_row = String::from_utf8(bytes).map_err(FocusError::from)?;
+    let header = with_row.lines().next().unwrap_or_default();
+    Ok(format!("{header}\n"))
 }
 
 fn billing_period(timestamp: DateTime<Utc>) -> Result<(DateTime<Utc>, DateTime<Utc>), FocusError> {
@@ -756,5 +786,24 @@ mod tests {
         assert!(header.ends_with(
             "x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens"
         ));
+    }
+
+    #[test]
+    fn zero_row_csv_export_still_emits_the_header() {
+        // The documented contract (DATA-MODEL "Export shapes"): the first row is the
+        // exact FOCUS column-name header — even for an empty export, so consumers
+        // always see the schema rather than an empty file.
+        let empty = match to_csv_string(&[]) {
+            Ok(value) => value,
+            Err(err) => panic!("empty csv should serialize: {err}"),
+        };
+        assert_eq!(empty.lines().count(), 1, "header line only: {empty}");
+        assert!(empty.ends_with('\n'));
+        // Byte-identical to the header of a populated export (single source of truth).
+        let populated = match to_csv_string(&[record()]) {
+            Ok(value) => value,
+            Err(err) => panic!("csv should serialize: {err}"),
+        };
+        assert_eq!(empty.lines().next(), populated.lines().next());
     }
 }

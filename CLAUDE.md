@@ -115,12 +115,12 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` carries its
 **What belongs where:**
 - `costroid-core` — the engine. Orchestrates providers, normalizes to FOCUS via `costroid-focus`, computes estimated cost, and houses the `bench`/`recommend` (frontier) module. No terminal/UI code.
 - `costroid-focus` — FOCUS record types and (de)serialization only. Pure data; depends on nothing internal.
-- `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. Depends only on `costroid-focus`.
+- `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. No internal dependencies today (it emits the provider-neutral `UsageEvent`/`LimitWindow`, not FOCUS rows — a `costroid-focus` dep may return if it ever consumes FOCUS types directly).
 - `costroid-connect` — **all** network + credential code; feature-gated and **off by default**, with the `connect` feature gated on the **apps** (`apps/cli` today, `apps/bar` later), not the virtual workspace root. **T8 landed its first behavior:** the OS-keychain credential store (`CredentialStore`) + a non-secret `ConnectionRegistry` + the `ApiVendor` billing-vendor axis, on `keyring` (sync Secret Service backend, OS keychain only) with secrets wrapped in `secrecy::SecretString`. It still has **no** `costroid-core`/`costroid-focus` dependency (deliberately — `ApiVendor` stays distinct from `costroid-providers::ProviderId`); HTTP via `ureq` + `rustls` (no async runtime) and the `core`/`focus` deps land in T9. All at Step 4 (v0.4.0).
 - `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter (incl. the `statusline --capture-only` capture writer and the `statusline --wrap '<cmd>'` escape hatch), `setup-statusline` (Claude Code `settings.json` wiring with backup + `--undo`), `--live`, and all rendering. Depends on `costroid-core`.
 - `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 6); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
 
-**Dependency direction:** `apps → core → {providers, focus}`; `providers → focus`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → {core, focus}` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` has no internal dependencies. (Today `costroid-connect` has its T8 keychain behavior but still **no** internal deps — only `keyring`/`secrecy`/`serde`/`thiserror`; it gains its `core`/`focus` deps with the network client in T9.)
+**Dependency direction:** `apps → core → {providers, focus}`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → {core, focus}` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` and `costroid-providers` have no internal dependencies (the FOCUS normalization of provider events happens in `costroid-core`; the once-declared `providers → focus` edge was unused and removed in the 2026-06-10 fix pass). (Today `costroid-connect` has its T8 keychain behavior but still **no** internal deps — only `keyring`/`secrecy`/`serde`/`thiserror`; it gains its `core`/`focus` deps with the network client in T9.)
 
 **Errors:** `thiserror` for typed errors in library crates; `anyhow` only in the binaries (`apps/`). No `unwrap`/`expect`/`panic!` in library code.
 
@@ -132,7 +132,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` carries its
 
 **Dependencies:** prefer lean, well-maintained, permissively-licensed crates. Use `rustls`, not OpenSSL, for TLS. Recommended (not required): `cargo deny` for license + advisory checks in CI.
 
-**Config:** a TOML config under the XDG config dir (e.g. `~/.config/costroid/config.toml`), with sensible zero-config defaults. **Secrets never go in config** — keychain only.
+**Config (planned convention — no config system is built yet):** when one lands, it is a TOML config under the XDG config dir (e.g. `~/.config/costroid/config.toml`), with sensible zero-config defaults; today everything runs zero-config on built-in consts. **Secrets never go in config** — keychain only.
 
 **Commits:** small and focused; conventional-commit style preferred.
 
@@ -160,7 +160,7 @@ Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-
 ### Built and shipped (v0.1.0 → v0.2.0)
 
 1. **Core + workspace.** `costroid-core` / `costroid-focus` / `costroid-providers` (Claude + Codex), verified to the cent vs ccusage. *Shipped (v0.1.0).*
-2. **TUI + full cost picture.** `now` / `trends`, subscription + API, filter, per-lane totals, export, config; Cursor **detection only** (beta); subscription quota graceful. *Shipped (v0.1.0).*
+2. **TUI + full cost picture.** `now` / `trends`, subscription + API, filter, per-lane totals, export; Cursor **detection only** (beta); subscription quota graceful. (The TOML config file remains planned — zero-config today.) *Shipped (v0.1.0).*
 3. **Frontier / recommendation view (`costroid frontier`).** The `bench` module: the cost-vs-quality frontier + the user's position, scoped to what the data honestly supports; advisory, sourced, **API-cost rows only**. *Built and gate-green.*
 4. **Status-line emitter.** `costroid statusline` (tmux / Starship / Claude Code `statusLine`). *Emitter shipped (v0.1.0).*
 

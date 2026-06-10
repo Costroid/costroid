@@ -2,4 +2,4 @@
 source: apps/cli/src/render.rs
 expression: "render_statusline(&priced_now(), RenderOptions::plain())"
 ---
-costroid ~$42.18, cursor wk partial, 97%, limit data incomplete
+costroid ~$42.18, cursor wk partial, 97% (critical), limit data incomplete

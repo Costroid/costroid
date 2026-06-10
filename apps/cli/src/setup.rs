@@ -14,6 +14,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
@@ -67,10 +68,17 @@ pub fn build_cache_value(input: &[u8], captured_at: DateTime<Utc>) -> Option<Val
 fn clean_window(window: Option<&Value>) -> Option<Value> {
     let window = window?.as_object()?;
     let mut clean = Map::new();
-    if let Some(pct) = window.get("used_percentage") {
+    // Shape-check the VALUES too, not just the keys: the percentage must be a number
+    // and the reset stamp a number or string (epoch or RFC3339). If a future Claude
+    // Code build ever ships an object/array under an allowed key, it is dropped —
+    // nothing non-scalar (and so nothing sensitive) can transit into the cache.
+    if let Some(pct) = window.get("used_percentage").filter(|v| v.is_number()) {
         clean.insert("used_percentage".to_string(), pct.clone());
     }
-    if let Some(reset) = window.get("resets_at") {
+    if let Some(reset) = window
+        .get("resets_at")
+        .filter(|v| v.is_number() || v.is_string())
+    {
         clean.insert("resets_at".to_string(), reset.clone());
     }
     if clean.is_empty() {
@@ -79,17 +87,27 @@ fn clean_window(window: Option<&Value>) -> Option<Value> {
     Some(Value::Object(clean))
 }
 
-/// Atomic-write the cache JSON: temp file in the same directory, then rename, so a
-/// concurrent reader never sees a torn file. Creates the parent directory as needed.
+/// A unique temp sibling for `path` (same directory, so the rename stays atomic):
+/// `<file>.<pid>.<n>.tmp`. A FIXED temp name would let two concurrent writers (e.g. two
+/// Claude Code sessions both firing `--capture-only`) interleave truncate/write/rename
+/// and publish a torn file at the final path.
+fn unique_tmp_sibling(path: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let serial = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}.{serial}.tmp", std::process::id()));
+    PathBuf::from(tmp)
+}
+
+/// Atomic-write the cache JSON: unique temp file in the same directory, then rename, so
+/// a concurrent reader never sees a torn file. Creates the parent directory as needed.
 fn write_cache_atomic(cache_path: &Path, value: &Value) -> Result<()> {
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("creating cache dir {}", parent.display()))?;
     }
     let bytes = serde_json::to_vec_pretty(value).context("serializing cache")?;
-    let mut tmp = cache_path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
+    let tmp = unique_tmp_sibling(cache_path);
     fs::write(&tmp, &bytes).with_context(|| format!("writing {}", tmp.display()))?;
     fs::rename(&tmp, cache_path)
         .with_context(|| format!("renaming into {}", cache_path.display()))?;
@@ -178,11 +196,32 @@ fn run_wrapped(command: &str, input: &[u8]) -> Result<()> {
 /// The path-1 capture snippet: read stdin once, tee a copy to the capture side-effect,
 /// then feed the identical bytes to the user's original renderer. The sentinel on its own
 /// line makes the edit detectable (idempotency) and reversible.
+///
+/// The original is wrapped in a `{ … }` group on its own line(s) so the pipe feeds the
+/// WHOLE original command: embedded verbatim (no escaping needed), a multi-line original
+/// still receives stdin on whichever line consumes it, and a leading `#` comments out
+/// only its own line — never the pipe itself.
 fn capture_snippet(original_command: &str) -> String {
     format!(
         "{SENTINEL}\ninput=$(cat); printf '%s' \"$input\" | {COSTROID_STATUSLINE_CMD} \
-         --capture-only; printf '%s' \"$input\" | {original_command}"
+         --capture-only; printf '%s' \"$input\" | {{\n{original_command}\n}}"
     )
+}
+
+/// Recover the original command a path-1 snippet wrapped, for the no-backup `--undo`
+/// fallback. Understands the current `{ … }` group form and the flat pre-fix form
+/// (`… --capture-only; printf '%s' "$input" | <original>`), both under the v1 sentinel.
+fn original_from_snippet(command: &str) -> Option<String> {
+    if !command.contains(SENTINEL) {
+        return None;
+    }
+    if let Some((_, tail)) = command.split_once("| {\n") {
+        return tail.strip_suffix("\n}").map(str::to_string);
+    }
+    command
+        .rsplit_once("\"$input\" | ")
+        .map(|(_, original)| original.to_string())
+        .filter(|original| !original.is_empty())
 }
 
 /// What the pure settings transform decided to do.
@@ -256,29 +295,44 @@ fn set_statusline_command(settings: &mut Value, command: &str) {
     }
 }
 
-/// Remove Costroid's `statusLine` wiring (path-2 case, when there is no backup to
-/// restore from). Returns whether anything was removed. A non-Costroid status line is
-/// left untouched.
+/// Remove Costroid's `statusLine` wiring when there is no backup to restore from.
+/// Returns whether anything changed. A non-Costroid status line is left untouched.
+///
+/// A path-1 snippet (sentinel-bearing) embeds the user's ORIGINAL renderer — deleting
+/// the key would discard it, so the original is parsed back out of the snippet and
+/// restored instead. Only the exact path-2 command (`costroid statusline`, nothing of
+/// the user's inside) removes the key. An unparseable sentinel-bearing command is left
+/// untouched rather than destroyed.
 fn strip_wiring(settings: &mut Value) -> bool {
     let Some(cmd) = current_statusline_command(settings) else {
         return false;
     };
-    if !is_wired(&cmd) {
-        return false;
+    if cmd.trim() == COSTROID_STATUSLINE_CMD {
+        return match settings.as_object_mut() {
+            Some(obj) => obj.remove("statusLine").is_some(),
+            None => false,
+        };
     }
-    match settings.as_object_mut() {
-        Some(obj) => obj.remove("statusLine").is_some(),
-        None => false,
+    if cmd.contains(SENTINEL) {
+        if let Some(original) = original_from_snippet(&cmd) {
+            set_statusline_command(settings, &original);
+            return true;
+        }
     }
+    false
 }
 
 /// Serialize settings pretty-printed (round-tripped — unknown keys preserved). Note: the
 /// workspace `serde_json` is BTreeMap-backed, so unrelated keys are written in sorted
-/// order; the backup preserves the original verbatim.
+/// order; the backup preserves the original verbatim. Written via a unique temp file +
+/// rename, like the cache: a crash mid-write must never leave a torn `settings.json`
+/// (which would make a re-run refuse to touch it).
 fn write_settings(path: &Path, value: &Value) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(value).context("serializing settings.json")?;
     bytes.push(b'\n');
-    fs::write(path, &bytes).with_context(|| format!("writing {}", path.display()))?;
+    let tmp = unique_tmp_sibling(path);
+    fs::write(&tmp, &bytes).with_context(|| format!("writing {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("renaming into {}", path.display()))?;
     Ok(())
 }
 
@@ -620,6 +674,84 @@ mod tests {
         let mut other = Value::Object(settings);
         assert!(!strip_wiring(&mut other));
         assert!(other.get("statusLine").is_some());
+    }
+
+    #[test]
+    fn snippet_group_form_survives_multiline_and_comment_originals() {
+        // The original is wrapped in a `{ … }` group on its own line(s), so a
+        // multi-line original (or one starting with a #-comment) still receives the
+        // piped stdin — the flat form piped only into its FIRST line.
+        let original = "# my statusline\nccusage statusline --fancy";
+        let snippet = capture_snippet(original);
+        assert!(snippet.contains("| {\n"));
+        assert!(snippet.ends_with("\n}"));
+        assert!(snippet.contains(original));
+        // And --undo's no-backup fallback recovers the original verbatim.
+        assert_eq!(original_from_snippet(&snippet).as_deref(), Some(original));
+    }
+
+    #[test]
+    fn original_from_snippet_understands_the_flat_legacy_form() {
+        // Pre-fix installs carry the flat (ungrouped) snippet; --undo must still
+        // recover their original renderer.
+        let legacy = format!(
+            "{SENTINEL}\ninput=$(cat); printf '%s' \"$input\" | {COSTROID_STATUSLINE_CMD} \
+             --capture-only; printf '%s' \"$input\" | ccusage statusline"
+        );
+        assert_eq!(
+            original_from_snippet(&legacy).as_deref(),
+            Some("ccusage statusline")
+        );
+    }
+
+    #[test]
+    fn strip_wiring_restores_the_wrapped_original_for_path1() {
+        // A path-1 snippet embeds the user's original renderer — undo without a backup
+        // must RESTORE it, never delete the statusLine key (that would discard the
+        // user's own command).
+        let mut settings = Map::new();
+        let mut sl = Map::new();
+        sl.insert("command".into(), Value::String("ccusage statusline".into()));
+        settings.insert("statusLine".into(), Value::Object(sl));
+        let (mut wrapped, _) = apply_setup(Value::Object(settings));
+        assert!(strip_wiring(&mut wrapped));
+        assert_eq!(
+            current_statusline_command(&wrapped).as_deref(),
+            Some("ccusage statusline")
+        );
+    }
+
+    #[test]
+    fn clean_window_drops_non_scalar_values() {
+        // An object-shaped used_percentage (a hypothetical future upstream schema
+        // change) must never be persisted to the no-secret cache; scalar values pass.
+        let input = br#"{"rate_limits":{
+            "five_hour":{"used_percentage":{"secret":"leak"},"resets_at":1781000000},
+            "seven_day":{"used_percentage":41.5,"resets_at":"2026-06-12T00:00:00Z"}}}"#;
+        let value = match build_cache_value(input, fixed_time()) {
+            Some(value) => value,
+            None => panic!("seven_day still yields a cache"),
+        };
+        assert!(!value.to_string().contains("secret"));
+        // five_hour kept only its scalar resets_at — the object pct was dropped.
+        assert!(value.pointer("/five_hour/used_percentage").is_none());
+        assert!(value.pointer("/five_hour/resets_at").is_some());
+        // seven_day kept both scalars (number pct + string reset).
+        assert!(value.pointer("/seven_day/used_percentage").is_some());
+        assert!(value.pointer("/seven_day/resets_at").is_some());
+    }
+
+    #[test]
+    fn unique_tmp_siblings_never_collide() {
+        let path = Path::new("/tmp/example/settings.json");
+        let first = unique_tmp_sibling(path);
+        let second = unique_tmp_sibling(path);
+        assert_ne!(first, second, "two writers must never share a temp path");
+        assert_eq!(
+            first.parent(),
+            path.parent(),
+            "same directory keeps the rename atomic"
+        );
     }
 
     // --- file orchestration (backup / undo / malformed) ---

@@ -11,7 +11,7 @@ limits
     reflects Claude Code's view; claude.ai chat usage may make true usage higher.
   codex        5h  ⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀⣀  40%  resets 41m  as of 08:30
   cursor       mo  $18.50 / $20.00 used  resets 12d  as of 08:30
-  cursor       wk  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣀  88% !  partial: limit data incomplete
+  cursor       wk  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⣀  88% !  partial: limit data incomplete  as of 08:30
   claude code  1d  usage: 1,234,567 tokens (~$12.34, estimated) — quota % unavailable
     reflects Claude Code's view; claude.ai chat usage may make true usage higher.
   codex        1d  usage: 5,000 tokens (estimated) — quota % unavailable

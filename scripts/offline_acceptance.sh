@@ -50,8 +50,12 @@ cp "$repo_root/fixtures/claude-code/project-transcript-priced.jsonl" "$home/.cla
 cp "$repo_root/fixtures/claude-code/project-transcript-dated.jsonl" "$home/.claude/projects/fixture-dated/"
 cp "$repo_root/fixtures/codex/rollout.jsonl" "$home/.codex/sessions/fixture/"
 # Override $HOME at the fixtures and neutralize every real log-source hint so the
-# tool can only ever read the committed fixtures, never the developer's data.
-env_args=(HOME="$home" USERPROFILE="" CLAUDE_CONFIG_DIR="" ANTHROPIC_API_KEY="")
+# tool can only ever read the committed fixtures, never the developer's data. This
+# must cover EVERY env override the discovery code honors: CODEX_HOME (Codex root),
+# CURSOR_DATA_DIR (Cursor root), and XDG_STATE_HOME (the Claude rate-limits cache) —
+# empty maps to "unset" in each resolver, mirroring CLAUDE_CONFIG_DIR.
+env_args=(HOME="$home" USERPROFILE="" CLAUDE_CONFIG_DIR="" ANTHROPIC_API_KEY=""
+  CODEX_HOME="" CURSOR_DATA_DIR="" XDG_STATE_HOME="")
 
 # --- pick isolation mode ------------------------------------------------------
 if command -v strace >/dev/null 2>&1; then
@@ -184,6 +188,9 @@ if [ "$live_rc" -eq 90 ]; then
   echo "NETWORK VIOLATION"; fail=1
 elif [ "$live_rc" -eq 124 ]; then
   echo "FAIL (hung; --live did not exit)"; fail=1
+elif [ "$live_rc" -ne 0 ]; then
+  # Any other nonzero exit (e.g. a TUI startup crash) must FAIL, not pass silently.
+  echo "FAIL (exit $live_rc)"; fail=1
 else
   echo "ok"
 fi

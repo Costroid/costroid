@@ -470,8 +470,20 @@ impl Provider for CursorProvider {
 fn choose_limit(current: Option<LimitWindow>, next: Option<LimitWindow>) -> Option<LimitWindow> {
     match (current, next) {
         (None, value) => value,
-        (Some(_), Some(next)) if limit_has_data(&next) => Some(next),
-        (Some(current), Some(_)) => Some(current),
+        (Some(current), Some(next)) => {
+            if !limit_has_data(&next) {
+                Some(current)
+            } else if !limit_has_data(&current) || next.captured_at >= current.captured_at {
+                // The LATEST data-bearing reading wins by `captured_at`, not scan order —
+                // merged multi-root discovery scans roots in priority order, so a stale
+                // root's window must not override a fresher one. The epoch sentinel
+                // (no timestamp) loses to any real stamp; ties keep `next`, preserving
+                // single-file behavior where later lines are newer.
+                Some(next)
+            } else {
+                Some(current)
+            }
+        }
         (Some(current), None) => Some(current),
     }
 }
@@ -938,8 +950,8 @@ fn parse_codex_file(
     for value in read_jsonl_values(ProviderId::Codex, path)? {
         update_codex_context(&value, &mut current_model, &mut current_cwd);
         if let Some((primary, secondary)) = parse_codex_limits(&value) {
-            parsed.primary_limit = choose_limit(parsed.primary_limit, Some(primary));
-            parsed.secondary_limit = choose_limit(parsed.secondary_limit, Some(secondary));
+            parsed.primary_limit = choose_limit(parsed.primary_limit, primary);
+            parsed.secondary_limit = choose_limit(parsed.secondary_limit, secondary);
         }
         if let Some(event) = parse_codex_usage(&value, access_path, &current_model, &current_cwd) {
             parsed.usage_events.push(event);
@@ -1018,24 +1030,26 @@ fn parse_codex_usage(
     has_any_tokens(&event).then_some(event)
 }
 
-fn parse_codex_limits(value: &Value) -> Option<(LimitWindow, LimitWindow)> {
+fn parse_codex_limits(value: &Value) -> Option<(Option<LimitWindow>, Option<LimitWindow>)> {
     let rate_limits = value.pointer("/payload/rate_limits")?;
     let plan = rate_limits.get("plan_type").and_then(Value::as_str);
     // captured_at is the rollout entry that carried these rate_limits; choose_limit
     // keeps the latest such entry, so the surviving window's freshness is its line's.
     let captured_at = codex_entry_timestamp(value).unwrap_or_else(epoch_utc);
+    // Each window parses independently: an entry carrying only `primary` (or only
+    // `secondary`) still surfaces the window that IS present, never dropping data.
     let primary = parse_codex_limit(
         rate_limits.get("primary"),
         LimitKind::FiveHour,
         plan,
         captured_at,
-    )?;
+    );
     let secondary = parse_codex_limit(
         rate_limits.get("secondary"),
         LimitKind::Weekly,
         plan,
         captured_at,
-    )?;
+    );
     Some((primary, secondary))
 }
 
@@ -1064,6 +1078,11 @@ fn parse_codex_limit(
     let measure = value
         .get("used_percent")
         .and_then(Value::as_f64)
+        // Provider logs are untrusted input (PRODUCT-PLAN §6): sanitize the RAW
+        // percentage before ÷100, mirroring Claude's guard — an out-of-range value
+        // yields no measure (core degrades it to Estimated/Unavailable), never a
+        // confident wrong meter.
+        .filter(|pct| (0.0..=100.0).contains(pct))
         .map(|pct| LimitMeasure::TokenFraction(pct / 100.0));
     let resets_at = value
         .get("resets_at")
@@ -1105,7 +1124,12 @@ pub fn claude_rate_limits_cache_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .or_else(|| {
-            env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state"))
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                // Same emptiness guard as XDG_STATE_HOME: an empty-but-set HOME must
+                // yield None, never a cwd-relative ".local/state/…" path.
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(|home| home.join(".local").join("state"))
         })?;
     Some(base.join("costroid").join("claude-rate-limits.json"))
 }
@@ -1187,7 +1211,8 @@ fn claude_limit_window(
         resets_at,
         captured_at,
         status,
-        label: (status == LimitStatus::Unavailable).then(|| "unavailable".to_string()),
+        label: (status == LimitStatus::Unavailable)
+            .then(|| "no usable reading in the statusline cache".to_string()),
     }
 }
 
@@ -1202,6 +1227,16 @@ fn parse_reset_stamp(value: &Value) -> Option<DateTime<Utc>> {
 }
 
 fn unavailable_limit(provider: ProviderId, kind: LimitKind) -> LimitWindow {
+    // A descriptive, per-provider reason (rendered as "unavailable: <label>") instead
+    // of the redundant "unavailable: unavailable"; the Claude wording doubles as
+    // onboarding guidance toward the capture setup.
+    // ASCII-only wording: this string flows verbatim into every render mode,
+    // including the Ascii fallback for non-UTF-8 terminals.
+    let label = match provider {
+        ProviderId::ClaudeCode => "no captured reading; run `costroid setup-statusline`",
+        ProviderId::Codex => "no rate-limit data in local rollout logs",
+        ProviderId::Cursor => "no sanctioned source",
+    };
     LimitWindow {
         tool: provider,
         plan: None,
@@ -1210,7 +1245,7 @@ fn unavailable_limit(provider: ProviderId, kind: LimitKind) -> LimitWindow {
         resets_at: None,
         captured_at: epoch_utc(),
         status: LimitStatus::Unavailable,
-        label: Some("unavailable".to_string()),
+        label: Some(label.to_string()),
     }
 }
 
@@ -1550,6 +1585,62 @@ mod tests {
     }
 
     #[test]
+    fn claude_cache_inrange_poisoned_equality_is_sanitized_out() {
+        // Pins the used_percentage == resets_at equality guard INDEPENDENTLY of the
+        // range check: both fields read 50 (in range), so only the equality comparison
+        // can catch the leak. (The poisoned-epoch fixture's value also fails the >100
+        // check, so it alone could not detect a deleted equality guard.)
+        let five = claude_cache_window("rate-limits-poisoned-inrange.json", LimitKind::FiveHour);
+        assert_eq!(five.status, LimitStatus::Unavailable);
+        assert!(five.measure.is_none());
+
+        // The untouched sibling window still parses.
+        let weekly = claude_cache_window("rate-limits-poisoned-inrange.json", LimitKind::Weekly);
+        assert_eq!(weekly.status, LimitStatus::Verified);
+    }
+
+    #[test]
+    fn claude_cache_negative_percentage_is_sanitized_out() {
+        // The documented `<0` half of the out-of-range sanitize (DATA-MODEL).
+        let window = claude_cache_window("rate-limits-negative.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Unavailable);
+        assert!(window.measure.is_none());
+    }
+
+    #[test]
+    fn claude_cache_non_numeric_percentage_is_sanitized_out() {
+        // A string "78" is not a number → no measure (`Value::as_f64` is the gate).
+        let window = claude_cache_window("rate-limits-string-pct.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Unavailable);
+        assert!(window.measure.is_none());
+    }
+
+    #[test]
+    fn claude_cache_malformed_json_degrades_to_unavailable() {
+        // A torn/truncated cache (e.g. a crashed writer) degrades to two Unavailable
+        // windows — never an error, never a crash.
+        let limits = read_claude_rate_limits(Some(&fixture_path(&[
+            "claude-code",
+            "rate-limits-malformed.json",
+        ])));
+        assert_eq!(limits.len(), 2);
+        assert!(limits
+            .iter()
+            .all(|limit| limit.status == LimitStatus::Unavailable));
+        assert!(limits.iter().all(|limit| limit.measure.is_none()));
+    }
+
+    #[test]
+    fn claude_cache_missing_captured_at_keeps_reading_with_epoch_sentinel() {
+        // A present cache whose captured_at is missing keeps its Verified reading but
+        // carries the epoch sentinel — the render layer then discloses "capture time
+        // unknown" instead of stamping a bogus "as of 00:00" (see the render test).
+        let window = claude_cache_window("rate-limits-no-captured-at.json", LimitKind::FiveHour);
+        assert_eq!(window.status, LimitStatus::Verified);
+        assert_eq!(window.captured_at, epoch_utc());
+    }
+
+    #[test]
     fn codex_fixture_parses_usage_and_limits() {
         let provider = CodexProvider;
         let loc = DataLocation {
@@ -1589,6 +1680,141 @@ mod tests {
         assert!(limits.iter().any(
             |limit| limit.kind == LimitKind::Weekly && close_to(token_fraction(limit), 0.1825)
         ));
+    }
+
+    /// Parse a synthetic Codex rollout entry (inline JSON, never real user data).
+    fn codex_limits_entry(json: &str) -> Value {
+        match serde_json::from_str(json) {
+            Ok(value) => value,
+            Err(err) => panic!("synthetic codex entry should parse: {err}"),
+        }
+    }
+
+    #[test]
+    fn codex_out_of_range_used_percent_is_sanitized_out() {
+        // Provider logs are untrusted input (PRODUCT-PLAN §6): a corrupt out-of-range
+        // used_percent must never become a confident Verified "900%"/negative meter —
+        // the same raw-range guard Claude's identically-shaped field gets.
+        let entry = codex_limits_entry(
+            r#"{"timestamp":"2026-06-02T09:00:00Z","payload":{"rate_limits":{
+                "primary":{"used_percent":900,"resets_at":1781000000},
+                "secondary":{"used_percent":-5,"resets_at":1781400000}}}}"#,
+        );
+        let (primary, secondary) = match parse_codex_limits(&entry) {
+            Some(pair) => pair,
+            None => panic!("entry carries rate_limits"),
+        };
+        let primary = match primary {
+            Some(window) => window,
+            None => panic!("primary window present"),
+        };
+        let secondary = match secondary {
+            Some(window) => window,
+            None => panic!("secondary window present"),
+        };
+        assert!(primary.measure.is_none(), "900 must be sanitized out");
+        assert!(secondary.measure.is_none(), "-5 must be sanitized out");
+        // The reset stamp itself still parses; core degrades the measure-less window.
+        assert!(primary.resets_at.is_some());
+    }
+
+    #[test]
+    fn codex_boundary_used_percent_survives() {
+        // Exactly 0 and exactly 100 are in range and must survive (the false-100 class
+        // is a Claude-cache phenomenon; Codex rollout logs are trusted on arrival).
+        let entry = codex_limits_entry(
+            r#"{"timestamp":"2026-06-02T09:00:00Z","payload":{"rate_limits":{
+                "primary":{"used_percent":100,"resets_at":1781000000},
+                "secondary":{"used_percent":0,"resets_at":1781400000}}}}"#,
+        );
+        let (primary, secondary) = match parse_codex_limits(&entry) {
+            Some(pair) => pair,
+            None => panic!("entry carries rate_limits"),
+        };
+        let primary = match primary {
+            Some(window) => window,
+            None => panic!("primary window present"),
+        };
+        let secondary = match secondary {
+            Some(window) => window,
+            None => panic!("secondary window present"),
+        };
+        assert!(close_to(token_fraction(&primary), 1.0));
+        assert!(close_to(token_fraction(&secondary), 0.0));
+    }
+
+    #[test]
+    fn codex_lone_primary_window_still_surfaces() {
+        // An entry carrying only `primary` keeps the window that IS present — the two
+        // windows parse independently (no all-or-nothing coupling).
+        let entry = codex_limits_entry(
+            r#"{"timestamp":"2026-06-02T09:00:00Z","payload":{"rate_limits":{
+                "primary":{"used_percent":42.5,"resets_at":1781000000}}}}"#,
+        );
+        let (primary, secondary) = match parse_codex_limits(&entry) {
+            Some(pair) => pair,
+            None => panic!("entry carries rate_limits"),
+        };
+        let primary = match primary {
+            Some(window) => window,
+            None => panic!("lone primary must surface"),
+        };
+        assert!(close_to(token_fraction(&primary), 0.425));
+        assert!(secondary.is_none());
+    }
+
+    #[test]
+    fn choose_limit_keeps_latest_reading_not_scan_order() {
+        // Multi-root discovery scans roots in priority order, so the LAST-scanned file
+        // is not necessarily the NEWEST — the fold must keep the later captured_at
+        // (e.g. a fresher Linux reading must survive a stale Windows root scanned
+        // after it), and the epoch sentinel must lose to any real stamp.
+        let stamp = |epoch: i64| epoch_seconds(epoch).unwrap_or_else(epoch_utc);
+        let window = |captured_at: DateTime<Utc>, fraction: f64| LimitWindow {
+            tool: ProviderId::Codex,
+            plan: None,
+            kind: LimitKind::FiveHour,
+            measure: Some(LimitMeasure::TokenFraction(fraction)),
+            resets_at: None,
+            captured_at,
+            status: LimitStatus::Verified,
+            label: None,
+        };
+        let newer = window(stamp(1_750_000_000), 0.9);
+        let older = window(stamp(1_700_000_000), 0.1);
+
+        // Stale data scanned AFTER fresh data must not override it…
+        let kept = choose_limit(Some(newer.clone()), Some(older.clone()));
+        assert!(kept
+            .as_ref()
+            .is_some_and(|limit| close_to(token_fraction(limit), 0.9)));
+        // …and fresh data scanned after stale data wins as before.
+        let kept = choose_limit(Some(older.clone()), Some(newer.clone()));
+        assert!(kept
+            .as_ref()
+            .is_some_and(|limit| close_to(token_fraction(limit), 0.9)));
+
+        // The epoch sentinel (no recorded capture instant) loses to any real stamp.
+        let sentinel = window(epoch_utc(), 0.5);
+        let kept = choose_limit(Some(newer.clone()), Some(sentinel.clone()));
+        assert!(kept
+            .as_ref()
+            .is_some_and(|limit| close_to(token_fraction(limit), 0.9)));
+        let kept = choose_limit(Some(sentinel), Some(newer));
+        assert!(kept
+            .as_ref()
+            .is_some_and(|limit| close_to(token_fraction(limit), 0.9)));
+
+        // A data-bearing window is never displaced by a no-data one, however fresh.
+        let no_data = LimitWindow {
+            measure: None,
+            resets_at: None,
+            ..window(stamp(1_760_000_000), 0.0)
+        };
+        let kept = choose_limit(Some(older), Some(no_data));
+        assert!(kept
+            .as_ref()
+            .is_some_and(|limit| close_to(token_fraction(limit), 0.1)));
     }
 
     #[test]

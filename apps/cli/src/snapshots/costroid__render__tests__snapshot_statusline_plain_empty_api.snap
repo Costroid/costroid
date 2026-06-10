@@ -2,4 +2,4 @@
 source: apps/cli/src/render.rs
 expression: "render_statusline(&subscription_only_now(), RenderOptions::plain())"
 ---
-costroid ~$0.00, no API usage, cursor wk partial, 97%, limit data incomplete
+costroid ~$0.00, no API usage, cursor wk partial, 97% (critical), limit data incomplete

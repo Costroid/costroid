@@ -43,7 +43,7 @@ For every component below: bright dots/cells = used/spent (primary fg), dim = re
 
 ### Limit meter (5-hour and weekly)
 
-A horizontal run of `W` braille cells (default `W = 12`; configurable). Given a usage `fraction f ∈ [0, 1+]`:
+A horizontal run of `W` braille cells (`W = 12`, a fixed const today; configurability arrives with the planned config file). Given a usage `fraction f ∈ [0, 1+]`:
 
 ```
 used_cells = clamp(round(f * W), if f > 0 { 1 } else { 0 }, W)
@@ -51,9 +51,9 @@ used_cells = clamp(round(f * W), if f > 0 { 1 } else { 0 }, W)
 
 - Render `used_cells` as full `⣿` in the used color; the remaining `W - used_cells` as the light/track glyph `⣀` (dots 7,8 only) in dim gray (the track) — not a full cell.
 - Optional half-cell precision: if the fractional remainder ≥ 0.5, render the boundary cell as left-column `⡇` in the used color.
-- **Thresholds** (defaults, configurable): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber and a `!` cue is appended after the percentage. At ≥ critical (or `f ≥ 1.0`, over limit), used color = red and the cue is `!!` (and `OVER` when `f ≥ 1.0`). The cue is what makes the state readable without color.
+- **Thresholds** (fixed consts today — `WARN_FRACTION`/`CRITICAL_FRACTION` in render.rs; configurability arrives with the planned config file): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber and a `!` cue is appended after the percentage. At ≥ critical (or `f ≥ 1.0`, over limit), used color = red and the cue is `!!` (and `OVER` when `f ≥ 1.0`). The cue is what makes the state readable without color.
 - **Unverified (cross-check-failed) reading.** When a quota reading fails the `rate_limits` sanitize/cross-check (ARCHITECTURE §9.2), the meter draws in a **neutral (non-alarm) color** — never amber/red even at a near-max fraction — and the threshold `!`/`!!`/`OVER` cue is replaced by the distinct color-free cue ` ? unverified`. A maxed-looking but unverified reading must never render as a confident alarm.
-- **Freshness stamp.** Every `Available`/`Unverified` reading that is at least ~10 minutes older than the render carries an always-on `as of HH:MM` (UTC) stamp, so a hours-old cached reading never renders as a bare, confident meter.
+- **Freshness stamp.** Every `Available`/`Unverified` — and measure-carrying `Partial` — reading that is at least ~10 minutes older than the render carries an always-on `as of HH:MM` (UTC) stamp, so an hours-old cached reading never renders as a bare, confident meter. A reading with no recorded capture instant discloses `capture time unknown` instead.
 - Always show the percentage and reset countdown beside the meter: `⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀ 78%  resets 2h 14m`.
 
 **Reset-countdown format** — compact, two largest non-zero units:
@@ -95,11 +95,11 @@ One horizontal dot bar per model, sorted by cost descending. With `W` cells and 
 filled = clamp(round((cost / max) * W), if cost > 0 { 1 } else { 0 }, W)
 ```
 
-Bright `⣿` for `filled`, dim `⣿` for the rest. The model name sits left in the strong weight; the dollar figure right-aligned in the strong weight (`Intl`-style, e.g. `$24.10`, `$1,840.00`). Cost bars never go amber — amber is for limits, not spend. Each row: `claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $24.10`.
+Bright `⣿` for `filled`, the dim **track glyph `⣀`** for the rest (shape-distinct, so the fill survives `NO_COLOR` — never the same glyph distinguished by color alone). The model name sits left in the strong weight; the dollar figure right-aligned in the strong weight (`Intl`-style, e.g. `$24.10`, `$1,840.00`). Cost bars never go amber — amber is for limits, not spend. Each row: `claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀   $24.10`.
 
 ### Statusline glyph (`costroid statusline`)
 
-A single line, no newline, fast, side-effect-free — for shell prompts, tmux, Starship. It shows the current-period spend and the **most-constrained** limit as a short meter. Format is a template of tokens:
+A single line, no newline, fast — for shell prompts, tmux, Starship. Side-effect-free on interactive stdin; with piped stdin (Claude Code's `statusLine` JSON) it opportunistically captures the `rate_limits` block into the local no-secret cache first (T5 path 2). It shows the current-period spend and the **most-constrained** limit as a short meter. Format is a template of tokens:
 
 ```
 tokens:  {mark} {spend} {meter} {pct} {reset} {tool}
@@ -111,7 +111,7 @@ minimal: "{spend}"
         → "$4.18"
 ```
 
-The inline `{meter}` is a short run (default 4 cells) using the same fill rules as the limit meter. Honors `NO_COLOR`/`--plain` (ASCII variant below). Provide `--format <template>` and the three presets.
+The inline `{meter}` is a short run (default 4 cells) using the same fill rules as the limit meter. Honors `NO_COLOR`/`--plain` (ASCII variant below). **The `--format <template>` flag and the compact/minimal presets above are PLANNED, not yet built** — the shipped statusline emits one fixed layout, and its only flags are `--capture-only` and `--wrap` (the template/preset table documents design intent for the future flag).
 
 ### Spinner
 

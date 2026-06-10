@@ -5,7 +5,7 @@ expression: "render_now(&priced_now(), RenderOptions::braille(true))"
 C⠉ costroid                                   this week  [1m~$42.18[0m
 ────────────────────────────────────────────────────────────────
 limits
-  claude code  5h  unavailable: unavailable
+  claude code  5h  unavailable: no captured reading; run `costroid setup-statusline`
   codex        5h  [1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀[0m  78%  resets 41m
   codex        wk  [33;1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀[0m  92% !  resets 2d 6h
   cursor       wk  [31;1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇[0m  97% !!  partial: limit data incomplete

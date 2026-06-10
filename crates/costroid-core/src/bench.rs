@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     decimal_to_u64, CoreError, CostLane, EngineSnapshot, PricingCatalog, ProviderStatus,
-    TokenTotals,
+    TokenTotals, PRICING_STATUS_PRICED,
 };
 
 const BENCH_SCHEMA_VERSION: &str = "1";
@@ -205,6 +205,11 @@ pub struct OverlayModel {
     pub appearances: Vec<OverlayAppearance>,
     /// Equal-volume, cost-only re-pricing comparisons vs the frontier targets.
     pub repricing: Vec<RepricingDelta>,
+    /// Whether EVERY accumulated row was priced (`x_PricingStatus == "priced"`). When
+    /// false the `billed_cost` baseline understates real spend (unpriced rows carry $0),
+    /// so no `Computed` re-pricing delta is ever emitted against it — the comparison is
+    /// surfaced as a labeled gap, never an invented number.
+    pub fully_priced: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -235,6 +240,9 @@ pub enum RepricingStatus {
     TargetRateGap,
     /// Target is this same model → not a comparison.
     SameModel,
+    /// This model's own spend baseline includes unpriced rows (its $ is a placeholder
+    /// zero/undercount) → no delta against it (never compared, never invented).
+    BaselineUnpriced,
 }
 
 /// The hedge label + the pricing date the re-pricing math used. Per-benchmark sources
@@ -291,8 +299,10 @@ pub fn bench_view(snapshot: &EngineSnapshot) -> Result<BenchView, CoreError> {
             raw_model: row.x_model.clone(),
             billed_cost: Decimal::ZERO,
             tokens: TokenTotals::default(),
+            fully_priced: true,
         });
         entry.billed_cost += row.billed_cost;
+        entry.fully_priced &= row.x_pricing_status == PRICING_STATUS_PRICED;
         entry
             .tokens
             .add(&row.x_token_type, decimal_to_u64(row.x_consumed_tokens));
@@ -314,8 +324,14 @@ pub fn bench_view(snapshot: &EngineSnapshot) -> Result<BenchView, CoreError> {
         .into_iter()
         .map(|(model_id, acc)| {
             let appearances = frontier_appearances(&frontiers, &model_id);
-            let repricing =
-                repricing_for(&model_id, &acc.tokens, acc.billed_cost, &targets, &pricing);
+            let repricing = repricing_for(
+                &model_id,
+                &acc.tokens,
+                acc.billed_cost,
+                acc.fully_priced,
+                &targets,
+                &pricing,
+            );
             OverlayModel {
                 model_id,
                 raw_model: acc.raw_model,
@@ -323,6 +339,7 @@ pub fn bench_view(snapshot: &EngineSnapshot) -> Result<BenchView, CoreError> {
                 tokens: acc.tokens,
                 appearances,
                 repricing,
+                fully_priced: acc.fully_priced,
             }
         })
         .collect();
@@ -341,6 +358,7 @@ struct OverlayAccum {
     raw_model: String,
     billed_cost: Decimal,
     tokens: TokenTotals,
+    fully_priced: bool,
 }
 
 fn build_frontiers(table: &BenchmarkTable, pricing: &PricingCatalog) -> Vec<BenchFrontier> {
@@ -452,6 +470,7 @@ fn repricing_for(
     model_id: &str,
     tokens: &TokenTotals,
     billed_cost: Decimal,
+    fully_priced: bool,
     targets: &[RepricingTarget],
     pricing: &PricingCatalog,
 ) -> Vec<RepricingDelta> {
@@ -464,6 +483,17 @@ fn repricing_for(
                     target_label: target.label.clone(),
                     delta_usd: Decimal::ZERO,
                     status: RepricingStatus::SameModel,
+                    on_frontier_in: target.on_frontier_in.clone(),
+                };
+            }
+            // An unpriced baseline ($0/undercounted billed_cost) must never anchor a
+            // "costs about $X less/more" claim — surface a gap, never an invented delta.
+            if !fully_priced {
+                return RepricingDelta {
+                    target_model_id: target.model_id.clone(),
+                    target_label: target.label.clone(),
+                    delta_usd: Decimal::ZERO,
+                    status: RepricingStatus::BaselineUnpriced,
                     on_frontier_in: target.on_frontier_in.clone(),
                 };
             }
@@ -882,5 +912,56 @@ mod tests {
         assert!(view.disclaimer.note.starts_with('~'));
         assert!(view.disclaimer.note.contains("not a quality claim"));
         assert!(!view.disclaimer.pricing_as_of.is_empty());
+    }
+
+    // 12 — an unpriced baseline never anchors a Computed delta (never invent a number).
+    #[test]
+    fn unpriced_baseline_gets_gap_status_never_a_computed_delta() {
+        // "mystery-model" is absent from the pricing catalog, so its API rows carry $0
+        // placeholder costs (x_PricingStatus = unknown_model). A delta computed against
+        // that baseline would fabricate a "costs about $X more/less" claim.
+        let view = match bench_view(&snapshot(&[event(
+            "mystery-model",
+            AccessPath::Api,
+            1_000_000,
+            200_000,
+        )])) {
+            Ok(view) => view,
+            Err(err) => panic!("bench_view should build: {err}"),
+        };
+        let mystery = match view
+            .overlay
+            .iter()
+            .find(|model| model.raw_model == "mystery-model")
+        {
+            Some(model) => model,
+            None => panic!("mystery-model should appear in the overlay"),
+        };
+        assert!(!mystery.fully_priced);
+        assert!(mystery
+            .repricing
+            .iter()
+            .all(|delta| delta.status != RepricingStatus::Computed));
+        assert!(mystery
+            .repricing
+            .iter()
+            .any(|delta| delta.status == RepricingStatus::BaselineUnpriced));
+
+        // A fully-priced model keeps its Computed comparisons.
+        let view = match bench_view(&snapshot(&[event(
+            "gpt-5.5",
+            AccessPath::Api,
+            1_000_000,
+            200_000,
+        )])) {
+            Ok(view) => view,
+            Err(err) => panic!("bench_view should build: {err}"),
+        };
+        let priced = &view.overlay[0];
+        assert!(priced.fully_priced);
+        assert!(priced
+            .repricing
+            .iter()
+            .any(|delta| delta.status == RepricingStatus::Computed));
     }
 }

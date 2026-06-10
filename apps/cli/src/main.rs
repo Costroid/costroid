@@ -199,7 +199,17 @@ fn run_statusline(args: &StatuslineArgs, render_options: render::RenderOptions) 
         setup::capture_from_bytes(&setup::read_stdin());
     }
     let env = HostEnv::detect();
-    let snapshot = costroid_core::collect_local_snapshot(&env)?;
+    // Render-something-on-failure: this exact command is what `setup-statusline`
+    // installs as Claude Code's statusLine, so a collect error degrades to a blank
+    // line + exit 0 — it must never take down the user's prompt (the --capture-only
+    // and --wrap paths are already hardened the same way).
+    let snapshot = match costroid_core::collect_local_snapshot(&env) {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            println!();
+            return Ok(());
+        }
+    };
     let summary = costroid_core::now_summary(&snapshot, NowOptions::default());
     print!("{}", render_statusline(&summary, render_options));
     Ok(())

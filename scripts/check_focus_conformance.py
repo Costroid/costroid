@@ -61,6 +61,21 @@ def main() -> int:
     allowed = allowlist(Path(sys.argv[2]).read_text(encoding="utf-8"))
     failures = root_failures(report)
 
+    # Guard against a vacuous pass: a crashed validator (Python traceback) or a changed
+    # console format yields zero parsed FAIL lines, which must not read as "conformant".
+    # A real run always carries the results header and at least one rule-result line.
+    has_summary = any(
+        line.startswith("=== Validation Results") for line in report.splitlines()
+    )
+    has_rule_lines = any(mark in report for mark in ("✅", "❌"))
+    if not has_summary or not has_rule_lines:
+        print("FAIL: validator report carries no results summary / rule lines —")
+        print("the validator likely crashed or changed its output format; refusing a")
+        print("vacuous pass. Report tail:")
+        for line in report.splitlines()[-15:]:
+            print(f"  | {line}")
+        return 1
+
     unexpected = sorted(failures - allowed)
 
     for line in report.splitlines():

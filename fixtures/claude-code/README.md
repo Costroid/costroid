@@ -10,6 +10,12 @@ user data and no secrets.**
   (flat 100%, demoted to Unverified by the core cross-check against trivial volume),
   `absent` (window key missing → Unavailable), `stale` (`resets_at` in the past →
   aged out at the core layer), and `iso-resets` (`resets_at` as an RFC3339 string).
+  The 2026-06-10 fix pass added the sanitize-edge set: `poisoned-inrange`
+  (`used_percentage == resets_at == 50` — pins the equality guard independently of
+  the range check), `negative` (`<0` → sanitized out), `string-pct` (non-numeric →
+  sanitized out), `no-captured-at` (reading kept, epoch-sentinel `captured_at` →
+  renders "capture time unknown"), and `malformed` (truncated JSON — deliberately
+  NOT valid JSON — → two Unavailable windows, never a crash).
 - **`project-transcript*.jsonl`** — session transcripts for the usage parser (cost +
   model mix): the base case, a dated-snapshot model id, and a priced model.
 - **`dedup-*.jsonl`** — transcript de-duplication cases (golden a/b, keyless entries).

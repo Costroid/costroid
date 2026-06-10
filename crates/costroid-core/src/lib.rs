@@ -1210,8 +1210,9 @@ pub enum LimitAvailability {
         resets_at: Option<DateTime<Utc>>,
         reset_in_seconds: Option<i64>,
     },
-    /// No provider reading — Costroid's own volume-based estimate stands in. The arm
-    /// exists for the type to be complete; its producer is wired later (T4/T6).
+    /// No provider reading — Costroid's own volume-based estimate stands in. Its
+    /// producer (the volume-based fallback, T4: `estimate_or_unavailable` via
+    /// `limit_availability`) and its render (T6) are built.
     Estimated {
         volume_tokens: u64,
         estimated_usd: Option<Decimal>,

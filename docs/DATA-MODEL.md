@@ -2,7 +2,7 @@
 
 This document defines Costroid's data model: the FOCUS records it emits, the separate subscription-limit type, the internal Rust shapes, the per-provider parsing notes, the bundled pricing schema, and the grouping dimensions. It is the spec for the data shapes across `costroid-focus` (the FOCUS records), `costroid-providers` (the provider-neutral intermediate — `UsageEvent` and the `LimitWindow`/`LimitMeasure`/`LimitStatus`/`LimitKind` quota types), and `costroid-core` (the `LimitAvailability` availability/render type). For how data flows through the system see [ARCHITECTURE.md](ARCHITECTURE.md); scope and build sequencing (which providers ship when, and the step at which the quota model generalizes) are governed by [PRODUCT-PLAN.md](PRODUCT-PLAN.md).
 
-**Verify before finalizing.** The FOCUS column names below were validated against the **FOCUS 1.3 specification** at <https://focus.finops.org> during implementation. Confirmed: the active 1.3 participating-entity columns are `ServiceProviderName`, `HostProviderName`, and `InvoiceIssuerName`; the older `ProviderName` and `PublisherName` columns are **deprecated in 1.3 (removed in 1.4)** and Costroid omits them. Still treat the FOCUS spec, not this file, as the authority on column semantics, and re-check the allowed-value lists for `ServiceCategory`, `ChargeCategory`, `ChargeFrequency`, and `PricingCategory` against the current spec when extending the schema.
+**Verify before finalizing.** The FOCUS column names below were validated against the **FOCUS 1.3 specification** at <https://focus.finops.org> during implementation. Confirmed: the active 1.3 participating-entity columns are `ServiceProviderName`, `HostProviderName`, and `InvoiceIssuerName`. The older `ProviderName` and `PublisherName` columns are **deprecated in 1.3 (removed in 1.4)** — but the export **does emit them**, mirroring the active participating-entity values, because the bundled 1.3 validator still requires their presence (see the code comment in `crates/costroid-focus/src/lib.rs` at the struct's service/provider block). Still treat the FOCUS spec, not this file, as the authority on column semantics, and re-check the allowed-value lists for `ServiceCategory`, `ChargeCategory`, `ChargeFrequency`, and `PricingCategory` against the current spec when extending the schema.
 
 ## FOCUS 1.3 in brief
 
@@ -12,7 +12,7 @@ Costroid emits the full FOCUS Cost & Usage column set, populating the columns a 
 
 ## Conformance status (Phase 1)
 
-As of **Milestone 6b**, the export carries the **full FOCUS 1.3 Cost & Usage column set** and passes the official **`focus_validator`** — run offline against the bundled 1.3 ruleset — on every mandatory column-presence, type, allowed-value, **nullability**, and provider/account check, for **both priced and unpriced rows** (the conformance fixtures now include a priced model, `claude-sonnet-4-6`, alongside the unpriced ones). Numeric columns serialize as real JSON numbers (a surgical `RawValue` serializer confined to the `Decimal` fields; CSV emits bare decimals).
+As of **Milestone 6b**, the export carries the **full FOCUS 1.3 Cost & Usage column set** and passes the official **`focus_validator`** — run offline against the 1.3.0.1 ruleset, vendored at `scripts/focus-ruleset/` since the 2026-06-10 fix pass (the PyPI wheel bundles only 1.2.0.1) — on every mandatory column-presence, type, allowed-value, **nullability**, and provider/account check, for **both priced and unpriced rows** (the conformance fixtures now include a priced model, `claude-sonnet-4-6`, alongside the unpriced ones). Numeric columns serialize as real JSON numbers (a surgical `RawValue` serializer confined to the `Decimal` fields; CSV emits bare decimals).
 
 **M6b closed the three deferred cost-calculator items:** (1) `PricingUnit` is now `"tokens"` (FOCUS UnitFormat-valid; `"1M tokens"` was not), with `PricingQuantity` the token count and the unit-price columns expressed **per token** (the per-1M catalog rate ÷ 1,000,000); (2) on rows with no priced SKU (`SkuPriceId` null), `ConsumedQuantity` / `PricingQuantity` / `PricingUnit` / `PricingCategory` are now **null** as FOCUS 1.3 requires (a deliberate v1.3 requirement — *"… MUST be null when SkuPriceId is null"*); (3) this is purely a **representation** change — `cost = tokens × rate` is invariant, so every now/trends/statusline dollar figure is bit-for-bit identical to M4.5.
 
@@ -39,7 +39,7 @@ Mapping (FOCUS column → how Costroid fills it for an AI usage charge):
 - **ChargeFrequency** — `"Usage-Based"` (confirm against the allowed values).
 - **ServiceName** — the offering, e.g. `"Anthropic API"`, `"OpenAI API"`, `"Cursor"`.
 - **ServiceCategory** — `"AI and Machine Learning"` (confirm this is the current allowed value).
-- **ServiceProviderName / HostProviderName / InvoiceIssuerName** — the vendor (e.g. Anthropic, OpenAI, Anysphere). For API usage these are typically the same entity. These are the **active FOCUS 1.3** participating-entity columns; the deprecated `ProviderName` / `PublisherName` columns are **not** emitted.
+- **ServiceProviderName / HostProviderName / InvoiceIssuerName** — the vendor (e.g. Anthropic, OpenAI, Anysphere). For API usage these are typically the same entity. These are the **active FOCUS 1.3** participating-entity columns. The deprecated `ProviderName` / `PublisherName` columns **are also emitted** (mirroring `ServiceProviderName`) because the bundled 1.3 validator requires their presence despite the deprecation; drop them when moving to a 1.4 ruleset.
 - **SkuId** — a stable identifier for the model + meter (e.g. `<model-id>:output`); always populated.
 - **SkuPriceId** — the specific priced rate used (e.g. `<provider>:<model>:<meter>:tokens:<as-of>`); **null on unpriced rows**, which gates the nullability of the pricing columns below.
 - **PricingCategory** — `"Standard"` on priced rows (1.2 renamed "On-Demand" → "Standard"); **null when `SkuPriceId` is null** (FOCUS 1.3 requires it). See the unpriced-row convention under Pricing data.
@@ -139,7 +139,7 @@ pub struct UsageEvent {
 pub enum AccessPath { Api, Subscription, Unknown }
 ```
 
-FOCUS record (in `costroid-focus`; column names match the spec exactly via serde):
+FOCUS record (in `costroid-focus`; column names match the spec exactly via serde). **This listing is an ABRIDGED subset** — the shipped struct carries the *full* FOCUS 1.3 Cost & Usage column set (M6a/M6b), including `BillingAccountId`/`Name`/`Type`, `ServiceSubcategory`, `ProviderName`/`PublisherName` (see above), `InvoiceId`, `SkuMeter`/`SkuPriceDetails`, `PricingCurrency` (+ its unit-price/cost mirrors), the `CommitmentDiscount*` family, `CapacityReservation*`, and the remaining 1.3 columns, most null for a local AI-usage charge. **The struct in `crates/costroid-focus/src/lib.rs` (`FocusRecord`) is the authority for the full field set and the serialized column order**; the subset below shows only the columns Costroid actively populates with meaningful values:
 
 ```rust
 use serde::{Serialize, Deserialize};
@@ -207,7 +207,7 @@ pub struct FocusRecord {
 `costroid export` serializes FOCUS rows. Two formats, identical data:
 
 - **JSON** (`--format json`): a JSON object wrapping the rows — `{ "focusVersion": "1.3", "rows": [ ... ] }` — where each element of `rows` is a `FocusRecord` keyed by FOCUS column name (PascalCase, with `x_` custom columns). This wrapper is the canonical shape (it carries the FOCUS version for forward-compatibility); a top-level `currency` field may be added if trivial. Do not emit a bare array.
-- **CSV** (`--format csv`): the first row is the exact FOCUS column-name header (PascalCase, `x_` columns appended); one row per charge; decimals formatted plainly; timestamps RFC 3339.
+- **CSV** (`--format csv`): the first row is the exact FOCUS column-name header (PascalCase, `x_` columns appended) — emitted even for a zero-row export, so consumers always see the schema; one row per charge; decimals formatted plainly; timestamps RFC 3339.
 
 Limits are **not** part of the FOCUS export (they are not charges). If a limits dump is needed, export `LimitWindow`s to a separate file/stream, clearly distinct from the cost data.
 

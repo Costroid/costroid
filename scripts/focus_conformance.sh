@@ -37,16 +37,25 @@ cp "$repo_root/fixtures/claude-code/project-transcript-priced.jsonl" "$home/.cla
 cp "$repo_root/fixtures/claude-code/project-transcript-dated.jsonl" "$home/.claude/projects/fixture-dated/"
 cp "$repo_root/fixtures/codex/rollout.jsonl" "$home/.codex/sessions/fixture/"
 export_csv="$workdir/focus.csv"
+# Neutralize EVERY env override the discovery code honors (CODEX_HOME, CURSOR_DATA_DIR,
+# XDG_STATE_HOME too) so the validated CSV can only contain the committed fixtures,
+# never the developer's real logs.
 HOME="$home" USERPROFILE="" CLAUDE_CONFIG_DIR="" ANTHROPIC_API_KEY="" \
+  CODEX_HOME="" CURSOR_DATA_DIR="" XDG_STATE_HOME="" \
   "$bin" export --format csv > "$export_csv"
 
 echo "==> Running focus-validator (FOCUS 1.3, offline)"
 # The validator reads a CWD-relative currency_codes.csv, so run from its package root.
+# The 1.3.0.1 ruleset is VENDORED at scripts/focus-ruleset/ (see its README): the PyPI
+# focus-validator wheel bundles only the 1.2.0.1 model, so without --rule-set-path a
+# --block-download run cannot validate 1.3 at all — it crashes with UnsupportedVersion
+# (which the checker below now correctly treats as a FAILURE, never a vacuous pass).
 site_packages="$("$py" -c 'import os, focus_validator; print(os.path.dirname(os.path.dirname(focus_validator.__file__)))')"
 report="$workdir/report.txt"
 ( cd "$site_packages" && "$py" -m focus_validator.main \
     --data-file "$export_csv" \
     --validate-version 1.3 \
+    --rule-set-path "$repo_root/scripts/focus-ruleset" \
     --block-download \
     --output-type console ) > "$report" 2>&1 || true
 

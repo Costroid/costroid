@@ -350,7 +350,10 @@ fn render_frontier_visual_document(view: &BenchView, options: RenderOptions) -> 
     }
 
     push_rule(&mut out, options);
-    push_line(&mut out, &frontier_insight_line(view));
+    push_line(
+        &mut out,
+        &mode_insight(frontier_insight_line(view), options),
+    );
     push_provider_notes(&mut out, &view.providers);
     push_empty_provider_guidance(&mut out, &view.providers);
     out
@@ -480,6 +483,14 @@ fn score_text(point: &FrontierPoint) -> String {
 }
 
 fn overlay_line(model: &OverlayModel) -> StyledLine {
+    // An unpriced baseline carries a placeholder $0/undercount — render the gap,
+    // never the misleading dollar figure or a comparison against it.
+    if !model.fully_priced {
+        return StyledLine::plain(format!(
+            "  {}  spend not fully priced (frontier comparison unavailable)",
+            model.model_id
+        ));
+    }
     let mut line = StyledLine::new();
     line.push_plain(format!("  {}  spent ", model.model_id));
     line.push_styled(
@@ -496,6 +507,12 @@ fn overlay_line(model: &OverlayModel) -> StyledLine {
 }
 
 fn plain_overlay_line(model: &OverlayModel) -> String {
+    if !model.fully_priced {
+        return format!(
+            "{}: spend not fully priced (frontier comparison unavailable)",
+            model.model_id
+        );
+    }
     let mut line = format!(
         "{}: spent {}",
         model.model_id,
@@ -840,7 +857,10 @@ fn render_now_visual_document(summary: &NowSummary, options: RenderOptions) -> S
     }
     push_non_api_sections(&mut out, &summary.current_costs, options);
     push_rule(&mut out, options);
-    push_line(&mut out, &insight_line(&api, &summary.limits));
+    push_line(
+        &mut out,
+        &mode_insight(insight_line(&api, &summary.limits), options),
+    );
     push_provider_notes(&mut out, &summary.providers);
     push_empty_provider_guidance(&mut out, &summary.providers);
     out
@@ -932,7 +952,7 @@ fn render_trends_visual_document(
     }
     push_non_api_sections(&mut out, &summary.totals, options);
     push_rule(&mut out, options);
-    push_line(&mut out, &insight_line(&api, &[]));
+    push_line(&mut out, &mode_insight(insight_line(&api, &[]), options));
     push_provider_notes(&mut out, &summary.providers);
     push_empty_provider_guidance(&mut out, &summary.providers);
     out
@@ -1108,6 +1128,12 @@ fn measure_fraction(measure: &LimitMeasure) -> Option<f64> {
 /// as a bare, confident meter. Empty for a still-fresh reading. Formatted in **UTC** so
 /// snapshots stay timezone-deterministic (the suite avoids env mutation).
 fn freshness_stamp(captured_at: DateTime<Utc>, generated_at: DateTime<Utc>) -> String {
+    // The UNIX-epoch sentinel means "no observation instant recorded" (a cache or
+    // rollout entry with a missing/unparseable capture time). Stamping it would render
+    // a bogus, confident "as of 00:00" — disclose the unknown age instead.
+    if captured_at.timestamp() == 0 {
+        return "  capture time unknown".to_string();
+    }
     if (generated_at - captured_at).num_minutes() >= LIMIT_FRESHNESS_STAMP_MINUTES {
         format!("  as of {}", captured_at.format("%H:%M"))
     } else {
@@ -1226,6 +1252,9 @@ fn render_limit_line(
                 .map(reset_countdown)
                 .map(|value| format!("  resets {value}"))
                 .unwrap_or_default();
+            // A Partial reading still carries an observation instant — give it the same
+            // age signal as Available/Unverified (an arbitrarily old % must never render
+            // with zero age cue; measure-less Partial has no reading to age).
             match measure {
                 Some(LimitMeasure::TokenFraction(fraction)) => {
                     let fraction = *fraction;
@@ -1235,11 +1264,12 @@ fn render_limit_line(
                     line.spans
                         .push(limit_meter_span(fraction, LIMIT_BAR_WIDTH, options));
                     line.push_plain(format!(
-                        "  {}{}  partial: {}{}",
+                        "  {}{}  partial: {}{}{}",
                         percent(fraction),
                         cue,
                         reason,
-                        reset
+                        reset,
+                        stamp
                     ));
                     line
                 }
@@ -1247,10 +1277,11 @@ fn render_limit_line(
                     used_usd,
                     included_usd,
                 }) => StyledLine::plain(format!(
-                    "  {tool:<12} {kind:<3} {}  partial: {}{}",
+                    "  {tool:<12} {kind:<3} {}  partial: {}{}{}",
                     spend_text(used_usd, included_usd),
                     reason,
-                    reset
+                    reset,
+                    stamp
                 )),
                 None => {
                     StyledLine::plain(format!("  {tool:<12} {kind:<3} partial: {reason}{reset}"))
@@ -1302,9 +1333,15 @@ fn render_limit_line(
             volume_tokens,
             estimated_usd,
         } => StyledLine::plain(format!(
-            "  {tool:<12} {kind:<3} usage: {}{} — quota % unavailable",
+            "  {tool:<12} {kind:<3} usage: {}{} {} quota % unavailable",
             estimated_volume_text(*volume_tokens),
-            estimated_value_suffix(estimated_usd)
+            estimated_value_suffix(estimated_usd),
+            // The em-dash is not ASCII — substitute in the Ascii fallback mode.
+            if options.mode == RenderMode::Ascii {
+                "--"
+            } else {
+                "—"
+            }
         )),
         LimitAvailability::Unavailable { reason } => {
             StyledLine::plain(format!("  {tool:<12} {kind:<3} unavailable: {reason}"))
@@ -1346,9 +1383,11 @@ fn plain_limit_line(limit: &LimitSummary, generated_at: DateTime<Utc>) -> String
             ..
         } => {
             let usage = match measure {
-                Some(LimitMeasure::TokenFraction(fraction)) => {
-                    format!("{} used", percent(*fraction))
-                }
+                Some(LimitMeasure::TokenFraction(fraction)) => format!(
+                    "{} used{}",
+                    percent(*fraction),
+                    plain_state_phrase(limit_state(*fraction))
+                ),
                 Some(LimitMeasure::Spend {
                     used_usd,
                     included_usd,
@@ -1359,7 +1398,15 @@ fn plain_limit_line(limit: &LimitSummary, generated_at: DateTime<Utc>) -> String
                 .map(reset_countdown)
                 .map(|value| format!(", resets in {value}"))
                 .unwrap_or_default();
-            format!("  {tool} {kind}: partial, {usage}{reset}, {reason}")
+            // A Partial reading still carries an observation instant — give it the same
+            // age signal as Available/Unverified (an arbitrarily old % must never render
+            // with zero age cue; measure-less Partial has no reading to age).
+            let stamp = if measure.is_some() {
+                stamp
+            } else {
+                String::new()
+            };
+            format!("  {tool} {kind}: partial, {usage}{reset}, {reason}{stamp}")
         }
         LimitAvailability::Unverified {
             measure,
@@ -1403,8 +1450,9 @@ fn plain_limit_phrase(limit: &LimitSummary) -> String {
             ..
         } => match measure {
             LimitMeasure::TokenFraction(fraction) => format!(
-                "{tool} {kind} {} used, resets in {}",
+                "{tool} {kind} {} used{}, resets in {}",
                 percent(*fraction),
+                plain_state_phrase(limit_state(*fraction)),
                 compact_reset(*reset_in_seconds)
             ),
             LimitMeasure::Spend {
@@ -1423,7 +1471,11 @@ fn plain_limit_phrase(limit: &LimitSummary) -> String {
             ..
         } => {
             let usage = match measure {
-                Some(LimitMeasure::TokenFraction(fraction)) => percent(*fraction),
+                Some(LimitMeasure::TokenFraction(fraction)) => format!(
+                    "{}{}",
+                    percent(*fraction),
+                    plain_state_phrase(limit_state(*fraction))
+                ),
                 Some(LimitMeasure::Spend {
                     used_usd,
                     included_usd,
@@ -1794,7 +1846,25 @@ fn push_line(out: &mut StyledDocument, line: &str) {
 }
 
 fn push_rule(out: &mut StyledDocument, options: RenderOptions) {
-    push_line(out, &"─".repeat(options.width.max(1)));
+    // RenderMode::Ascii targets terminals that may not render multi-byte glyphs
+    // (chosen when braille capability — incl. a UTF-8 locale — is absent), so the
+    // horizontal rule must be pure ASCII there.
+    let glyph = if options.mode == RenderMode::Ascii {
+        "-"
+    } else {
+        "─"
+    };
+    push_line(out, &glyph.repeat(options.width.max(1)));
+}
+
+/// Swap the ◆ insight marker for a pure-ASCII one in [`RenderMode::Ascii`] (plain mode
+/// replaces it with "insight:" separately).
+fn mode_insight(line: String, options: RenderOptions) -> String {
+    if options.mode == RenderMode::Ascii {
+        line.replace('◆', "*")
+    } else {
+        line
+    }
 }
 
 fn push_header_line(
@@ -2175,6 +2245,20 @@ mod tests {
         }
     }
 
+    /// A bucket start the way production builds them — a LOCAL midnight (core's
+    /// `start_of_period_local`) — so the trends snapshot's `%Y-%m-%d` label (formatted
+    /// in Local, the documented product behavior) is the same date in every timezone
+    /// the suite runs in. A UTC-midnight fixture would render the previous day in any
+    /// UTC-negative zone and break the snapshot.
+    fn local_midnight_utc(year: i32, month: u32, day: u32) -> DateTime<Utc> {
+        match Local.with_ymd_and_hms(year, month, day, 0, 0, 0) {
+            LocalResult::Single(value) | LocalResult::Ambiguous(value, _) => {
+                value.with_timezone(&Utc)
+            }
+            LocalResult::None => panic!("test local midnight should exist"),
+        }
+    }
+
     fn totals(cost_cents: i64, priced: usize, missing: usize, unknown: usize) -> AggregateTotals {
         AggregateTotals {
             row_count: priced + missing + unknown,
@@ -2237,10 +2321,12 @@ mod tests {
                 tool: ProviderId::ClaudeCode,
                 plan: None,
                 kind: LimitKind::FiveHour,
-                label: Some("unavailable".to_string()),
+                // Mirrors the descriptive label `unavailable_limit` emits since the
+                // F26 fix (never the redundant "unavailable: unavailable").
+                label: Some("no captured reading; run `costroid setup-statusline`".to_string()),
                 captured_at: now,
                 availability: LimitAvailability::Unavailable {
-                    reason: "unavailable".to_string(),
+                    reason: "no captured reading; run `costroid setup-statusline`".to_string(),
                 },
             },
             LimitSummary {
@@ -2455,8 +2541,8 @@ mod tests {
 
     fn priced_trends() -> TrendsSummary {
         let now = utc(2026, 6, 2, 9, 0);
-        let week_one = range(utc(2026, 6, 1, 0, 0), 7);
-        let week_two = range(utc(2026, 6, 8, 0, 0), 7);
+        let week_one = range(local_midnight_utc(2026, 6, 1), 7);
+        let week_two = range(local_midnight_utc(2026, 6, 8), 7);
         TrendsSummary {
             generated_at: now,
             period: Period::Month,
@@ -2723,6 +2809,65 @@ mod tests {
         assert_eq!(
             freshness_stamp(now - Duration::minutes(10), now),
             "  as of 08:50"
+        );
+    }
+
+    #[test]
+    fn epoch_sentinel_discloses_unknown_capture_time_never_midnight() {
+        // A reading whose capture instant was never recorded (the UNIX-epoch sentinel)
+        // must disclose the unknown age — never render the bogus, confident
+        // "as of 00:00" the bare arithmetic would produce.
+        let now = utc(2026, 6, 2, 9, 0);
+        let stamp = freshness_stamp(Utc.timestamp_nanos(0), now);
+        assert_eq!(stamp, "  capture time unknown");
+        assert!(!stamp.contains("as of"));
+    }
+
+    #[test]
+    fn plain_paths_carry_the_state_cue() {
+        // In --plain (and the plain statusline) there is no color at all, so the
+        // textual cue is the ONLY near-limit signal — Available AND Partial must
+        // carry it, exactly like the styled paths' `!`/`!!`.
+        let generated = utc(2026, 6, 2, 9, 0);
+        let available = LimitSummary {
+            tool: ProviderId::Codex,
+            plan: None,
+            kind: LimitKind::FiveHour,
+            label: None,
+            captured_at: generated,
+            availability: LimitAvailability::Available {
+                measure: LimitMeasure::TokenFraction(0.97),
+                resets_at: generated + Duration::hours(1),
+                reset_in_seconds: 3600,
+            },
+        };
+        assert!(plain_limit_line(&available, generated).contains("(critical)"));
+        assert!(plain_limit_phrase(&available).contains("(critical)"));
+
+        let partial = LimitSummary {
+            availability: LimitAvailability::Partial {
+                measure: Some(LimitMeasure::TokenFraction(0.97)),
+                resets_at: None,
+                reset_in_seconds: None,
+                reason: "limit data incomplete".to_string(),
+            },
+            ..available
+        };
+        assert!(plain_limit_line(&partial, generated).contains("(critical)"));
+        assert!(plain_limit_phrase(&partial).contains("(critical)"));
+    }
+
+    #[test]
+    fn ascii_mode_output_is_pure_ascii() {
+        // RenderMode::Ascii is the fallback for terminals without braille capability —
+        // including non-UTF-8 locales — so its output must be pure ASCII (no ─ rule,
+        // no ◆ marker, no em-dash).
+        let now = render_now(&all_arms_now(), RenderOptions::ascii(false));
+        assert!(now.is_ascii(), "ascii now screen must be pure ASCII: {now}");
+        let trends = render_trends(&priced_trends(), RenderOptions::ascii(false));
+        assert!(
+            trends.is_ascii(),
+            "ascii trends screen must be pure ASCII: {trends}"
         );
     }
 

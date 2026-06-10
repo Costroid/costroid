@@ -53,6 +53,16 @@ const ALWAYS_FORBIDDEN_CRATES: &[&str] = &[
     "axum",
     "warp",
     "rouille",
+    "minreq",
+    // websocket / ssh clients — outbound channels no Costroid build may carry.
+    // (Raw socket primitives like `socket2`/`mio` are deliberately NOT listed: `mio`
+    // is in the legitimate tree via crossterm, and a primitive alone is not egress.)
+    "tungstenite",
+    "tokio-tungstenite",
+    "websocket",
+    "ssh2",
+    "libssh2-sys",
+    "russh",
     // async runtimes that pull in network I/O (Costroid's HTTP is blocking `ureq`)
     "tokio",
     "async-std",
