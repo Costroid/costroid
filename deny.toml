@@ -6,9 +6,9 @@
 #
 # The license + bans checks are fully OFFLINE (they inspect the local graph and
 # the committed Cargo.lock), so CI runs `cargo deny check licenses bans` with no
-# network. The advisories check needs the RustSec DB (network) and is therefore
-# left out of the offline gate; run `cargo deny check advisories` manually when
-# online.
+# network. The advisories check needs the RustSec DB (network), so it runs in
+# CI's dedicated online `advisories` job (`cargo deny check advisories`); the
+# offline gate remains licenses + bans.
 
 [graph]
 # Evaluate only the platforms we actually ship. This excludes target-gated crates
@@ -78,8 +78,8 @@ deny = [
 ]
 
 [advisories]
-# Not part of the offline gate (needs the RustSec DB). Configured here so a
-# manual `cargo deny check advisories` works when online.
+# Not part of the offline gate (needs the RustSec DB); checked in CI's dedicated
+# online `advisories` job, which runs `cargo deny check advisories`.
 yanked = "warn"
 
 [sources]

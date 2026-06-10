@@ -105,6 +105,21 @@ jobs:
           command: check licenses bans
           arguments: --all-features
 
+  advisories:
+    name: security advisories (cargo-deny, online)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The RustSec advisory check fetches the advisory DB, so it lives in this
+      # dedicated ONLINE job — keeping the `license` job above (licenses + bans)
+      # fully offline. See the header comment in deny.toml.
+      - name: cargo-deny (advisories)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
   offline-acceptance:
     name: offline acceptance (Phase-1 capstone)
     runs-on: ubuntu-latest
