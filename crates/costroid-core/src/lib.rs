@@ -260,7 +260,7 @@ fn provider_status_kind(usage_ok: bool, limits_ok: bool) -> ProviderStatusKind {
 }
 
 /// The detected-status line for Cursor: the selected model, the logged-in flag, and
-/// the explicit "usage/quota unavailable — no sanctioned source" note (live quota is
+/// the explicit "usage/quota unavailable - no sanctioned source" note (live quota is
 /// discovery-gated; ARCHITECTURE.md §8). Honest about what is locally knowable
 /// (presence + model) versus what is not (cost + quota). Never includes the account
 /// email/userId — only whether a session exists.
@@ -277,8 +277,8 @@ fn cursor_detected_message(config: &CursorConfig) -> String {
         "login unknown"
     };
     format!(
-        "BETA — {model}, {login}; usage unavailable — no sanctioned source; \
-         quota unavailable — no sanctioned source"
+        "BETA - {model}, {login}; usage unavailable - no sanctioned source; \
+         quota unavailable - no sanctioned source"
     )
 }
 

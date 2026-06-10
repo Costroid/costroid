@@ -33,7 +33,7 @@ CursorBench v3.1 — corroborating (vendor)   as of 2026-05-18
   GPT-5.5 Extra High  64.3% @ ~$4.37  on frontier
 ────────────────────────────────────────────────────────────────
 your models (API-billed):
-  gpt-5.5  spent [1m~$35.00[0m · claude-sonnet-4-6 costs about ~$17.00 less at equal volume
+  gpt-5.5  spent [1m~$35.00[0m; claude-sonnet-4-6 costs about ~$17.00 less at equal volume
 ────────────────────────────────────────────────────────────────
 ◆ gpt-5.5 drove most of your API spend; claude-sonnet-4-6 sits cheaper on the frontier at equal volume. (estimated)
 no providers detected

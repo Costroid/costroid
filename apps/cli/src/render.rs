@@ -320,8 +320,14 @@ fn render_frontier_visual_document(view: &BenchView, options: RenderOptions) -> 
         push_line(
             &mut out,
             &format!(
-                "{} — {}   as of {}",
+                "{} {} {}   as of {}",
                 frontier.name,
+                // The em-dash is not ASCII — substitute in the Ascii fallback mode.
+                if options.mode == RenderMode::Ascii {
+                    "-"
+                } else {
+                    "—"
+                },
                 role_label(&frontier.role),
                 frontier.as_of
             ),
@@ -335,7 +341,7 @@ fn render_frontier_visual_document(view: &BenchView, options: RenderOptions) -> 
         }
         push_line(&mut out, "  x: cost/task ->   y: score (high = top)");
         for point in &frontier.points {
-            push_line(&mut out, &format!("  {}", point_line(point)));
+            push_line(&mut out, &format!("  {}", point_line(point, options)));
         }
     }
 
@@ -366,7 +372,7 @@ fn render_frontier_plain_document(view: &BenchView) -> StyledDocument {
         push_line(
             &mut out,
             &format!(
-                "{} — {}, source {}, as of {}",
+                "{} - {}, source {}, as of {}",
                 frontier.name,
                 role_label(&frontier.role),
                 frontier.source,
@@ -421,7 +427,7 @@ fn plot_points(frontier: &BenchFrontier) -> Vec<PlotPoint> {
         .collect()
 }
 
-fn point_line(point: &FrontierPoint) -> String {
+fn point_line(point: &FrontierPoint, options: RenderOptions) -> String {
     let cost = match point.cost_per_task_usd {
         Some(value) => format!("@ {}", format_money(&value, Some("USD"), true)),
         None => "@ cost n/a".to_string(),
@@ -434,7 +440,15 @@ fn point_line(point: &FrontierPoint) -> String {
     let note = point
         .note
         .as_deref()
-        .map(|note| format!("  — {note}"))
+        .map(|note| {
+            // The em-dash is not ASCII — substitute in the Ascii fallback mode.
+            let separator = if options.mode == RenderMode::Ascii {
+                "--"
+            } else {
+                "—"
+            };
+            format!("  {separator} {note}")
+        })
         .unwrap_or_default();
     format!(
         "{}  {}% {}  {}{}",
@@ -465,7 +479,7 @@ fn plain_point_line(point: &FrontierPoint, view: &BenchView) -> String {
     let note = point
         .note
         .as_deref()
-        .map(|note| format!(" — {note}"))
+        .map(|note| format!(" -- {note}"))
         .unwrap_or_default();
     format!(
         "{}: score {}%, cost {}, on frontier: {}, your API spend: {}{}",
@@ -539,12 +553,12 @@ fn delta_phrase(delta: &RepricingDelta) -> String {
     let money = format_money(&delta.delta_usd.abs(), Some("USD"), true);
     if delta.delta_usd < Decimal::ZERO {
         format!(
-            " · {} costs about {} less at equal volume",
+            "; {} costs about {} less at equal volume",
             delta.target_model_id, money
         )
     } else if delta.delta_usd > Decimal::ZERO {
         format!(
-            " · {} costs about {} more at equal volume",
+            "; {} costs about {} more at equal volume",
             delta.target_model_id, money
         )
     } else {
@@ -2861,14 +2875,30 @@ mod tests {
     #[test]
     fn ascii_mode_output_is_pure_ascii() {
         // RenderMode::Ascii is the fallback for terminals without braille capability —
-        // including non-UTF-8 locales — so its output must be pure ASCII (no ─ rule,
-        // no ◆ marker, no em-dash).
+        // including non-UTF-8 locales — so every Ascii-mode surface (now, trends,
+        // frontier with and without API usage, statusline) must be pure ASCII
+        // (no ─ rule, no ◆ marker, no em-dash, no braille scatter/meter glyphs).
         let now = render_now(&all_arms_now(), RenderOptions::ascii(false));
         assert!(now.is_ascii(), "ascii now screen must be pure ASCII: {now}");
         let trends = render_trends(&priced_trends(), RenderOptions::ascii(false));
         assert!(
             trends.is_ascii(),
             "ascii trends screen must be pure ASCII: {trends}"
+        );
+        let frontier = render_frontier(&used_gpt(), RenderOptions::ascii(false));
+        assert!(
+            frontier.is_ascii(),
+            "ascii frontier screen must be pure ASCII: {frontier}"
+        );
+        let frontier_no_api = render_frontier(&bench_view_for(&[]), RenderOptions::ascii(false));
+        assert!(
+            frontier_no_api.is_ascii(),
+            "ascii frontier screen without API usage must be pure ASCII: {frontier_no_api}"
+        );
+        let statusline = render_statusline(&all_arms_now(), RenderOptions::ascii(false));
+        assert!(
+            statusline.is_ascii(),
+            "ascii statusline must be pure ASCII: {statusline}"
         );
     }
 
@@ -2887,8 +2917,8 @@ mod tests {
             focus_rows: 0,
             limit_windows: 0,
             message: Some(
-                "BETA — model Composer 2.5 Fast (composer-2.5), logged in; \
-                 usage unavailable — no sanctioned source; quota unavailable — no sanctioned source"
+                "BETA - model Composer 2.5 Fast (composer-2.5), logged in; \
+                 usage unavailable - no sanctioned source; quota unavailable - no sanctioned source"
                     .to_string(),
             ),
         }];
@@ -2896,16 +2926,44 @@ mod tests {
         let output = render_now(&summary, RenderOptions::plain());
         assert!(
             output.contains(
-                "provider cursor detected: BETA — model Composer 2.5 Fast (composer-2.5), logged in"
+                "provider cursor detected: BETA - model Composer 2.5 Fast (composer-2.5), logged in"
             ),
             "plain now should render the cursor detected note: {output}"
         );
-        assert!(output.contains("usage unavailable — no sanctioned source"));
-        assert!(output.contains("quota unavailable — no sanctioned source"));
+        assert!(output.contains("usage unavailable - no sanctioned source"));
+        assert!(output.contains("quota unavailable - no sanctioned source"));
         assert!(
             !output.contains('\u{1b}'),
             "plain output must not contain ANSI escapes"
         );
+        assert!(
+            output.is_ascii(),
+            "plain output must be pure ASCII: {output}"
+        );
+    }
+
+    #[test]
+    fn plain_mode_output_is_pure_ascii() {
+        // Plain mode is the accessibility floor (screen readers, dumb pipes, non-UTF-8
+        // terminals), so every Costroid-generated byte in it must be ASCII.
+        // Provider-supplied names (models, projects) pass through verbatim — the
+        // fixtures are ASCII, so a failure here means a Costroid string regressed.
+        let outputs = [
+            render_now(&all_arms_now(), RenderOptions::plain()),
+            render_now(&priced_now(), RenderOptions::plain()),
+            render_now(&subscription_only_now(), RenderOptions::plain()),
+            render_trends(&priced_trends(), RenderOptions::plain()),
+            render_statusline(&priced_now(), RenderOptions::plain()),
+            render_statusline(&subscription_only_now(), RenderOptions::plain()),
+            render_frontier(&used_gpt(), RenderOptions::plain()),
+            render_frontier(&bench_view_for(&[]), RenderOptions::plain()),
+        ];
+        for output in outputs {
+            assert!(
+                output.is_ascii(),
+                "plain output must be pure ASCII: {output}"
+            );
+        }
     }
 
     #[test]
