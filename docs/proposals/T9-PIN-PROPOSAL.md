@@ -1,6 +1,6 @@
 # T9 pin proposal — usage-API endpoint + auth pins (Anthropic · OpenAI · Gemini)
 
-> **STATUS: PROPOSED — awaiting ⛔ human sign-off. Researched and adversarially verified 2026-06-10. NOT canon: PRODUCT-PLAN §12 carding and the §8 Antigravity classification change happen only after sign-off.**
+> **STATUS: ⛔ SIGNED OFF 2026-06-10 — accepted as proposed, unamended** (the human's instruction to start T9a; recorded in PRODUCT-PLAN §11.5). The pins below are now canon: T9a is carded at PRODUCT-PLAN §12.11, the T9b two-adapter amendment and the §5/§8 Antigravity canon correction are applied in PRODUCT-PLAN and CLAUDE.md. *(Researched and adversarially verified 2026-06-10.)*
 
 This is the concrete pin proposal that PRODUCT-PLAN §12.8 (the pin-then-card prompt) requires before T9 can be carded: *which provider usage endpoints + auth schemes (Anthropic/OpenAI/Gemini, tier-3 own-key); pin each endpoint+auth as a concrete proposal and ⛔ stop for human sign-off — never guess an endpoint.* It was produced by a 7-agent workflow (3 researchers → 3 adversarial doc-verifiers → a completeness critic), with **every endpoint claim checked against live official docs as of 2026-06-10**. This file is the durable record of that research (the raw research output lived in a temp dir that does not survive reboot).
 
@@ -156,6 +156,8 @@ This research establishes a correction to that framing:
 ## 7. After sign-off
 
 Per the memory/process note this proposal was delivered with: once the ⛔ sign-off arrives, a planning agent writes the full T1–T7-style T9 card(s) into PRODUCT-PLAN §12 and logs the pinned decisions in §11.5 — **including the §5/§8 Gemini/Antigravity canon correction (§5 of this file)**. Do not implement from this proposal directly; build happens in a fresh agent per §12.0 once the card exists. If sign-off is refused or amended, this file is updated (or superseded) rather than silently diverging.
+
+> **✅ Done (2026-06-10):** sign-off arrived and the carding pass ran — §11.5 logs the pins, T9a is carded at §12.11 (T9b/T9c get carded when their prereqs land), and the §5/§8/CLAUDE.md canon corrections are applied. §6 of this file remains the binding cross-cutting pin list for T9a–T9c.
 
 ---
 

@@ -156,7 +156,7 @@ The canon (ARCHITECTURE.md, CLAUDE.md, README, SECURITY, RELEASING, DATA-MODEL, 
 
 ### Step 4 — **0.4.0**: Connections — the safe, friendly login · *first network code*
 - **Goal:** the API-cost half users connect — paste-your-key for the official usage/billing APIs — built on the §2c isolation.
-- **Deliverables:** `costroid-connect` crate (ureq + rustls + keyring, feature-gated); `costroid connect <anthropic|openai|gemini>` (paste key → keychain → pull real API usage/cost to reconcile against the local estimate); a **Connections view** listing what's linked; `costroid disconnect <provider>` with instant revoke. The auth source-ladder (§5) enforced in code: a datum with no clean source is **unavailable, never fetched**.
+- **Deliverables:** `costroid-connect` crate (ureq + rustls + keyring, feature-gated); `costroid connect <anthropic|openai>` (paste key → keychain → pull real API usage/cost to reconcile against the local estimate; **Gemini deferred** per the ⛔-signed-off T9 pins — no sanctioned static-key usage API, so `ApiVendor::Gemini` renders a first-class "unavailable"); a **Connections view** listing what's linked; `costroid disconnect <provider>` with instant revoke. The auth source-ladder (§5) enforced in code: a datum with no clean source is **unavailable, never fetched**.
 - **Acceptance test** (mirrors the canon's Phase-2 test): a user enters a key, sees reconciled API cost, revokes it, and **confirms no secret was written to disk/config/logs** (inspect keychain + filesystem). With the `connect` feature **off**, the binary still passes the offline-acceptance test.
 - **Invariant changes — handle explicitly:** unban `rustls` + `ureq` + `keyring` in `costroid-connect` only (update `deny.toml` + the forbidden-crates test to scope the ban to the local path); **re-scope the strace offline-acceptance test** to assert the *default/local* path makes zero network calls, and add a test asserting network occurs only on an explicit `connect` action to an authorized host. Install the deferred keychain deps (`libdbus-1-dev`, `libsecret-1-dev`) in CI. **No telemetry — still, ever.**
 - **⛔ Legal review (before connections ship):** this is the step where the liability surface grows. Before 0.4.0 ships, get a quick **legal review of the connection flows** (own-key + sanctioned OAuth only) confirming they hit only provider endpoints the user authorized, store nothing outside the keychain, and induce no ToS violation. Not a code task — a human gate.
@@ -211,7 +211,7 @@ Source ladder (use the first that applies). Only tiers 0–3 are ever built; the
 | **Codex** | local rollout logs (+ optional OpenAI usage API w/ key) | local rollout logs | none | 5h + weekly, token-% | ✅ both |
 | **Cursor** | unavailable (no sanctioned source) | unavailable (no sanctioned source) | none (local model-mix only) | **monthly billing-cycle $-credit pool + overage; daily token rate-limit on free tier** | detect-only; live quota **discovery-gated (§8)** |
 | **GitHub Copilot** | own token → billing API ($ by model) | **own classic PAT / `gh` OAuth → documented `…/billing/ai_credit/usage`** (tier 3/2) | own classic PAT (fine-grained unsupported) or `gh` OAuth | **monthly AI-credit pool ($) + overage** *(premium-requests is the legacy pre-June-2026 model)* | **discovery-gated (§8) — ToS-safe path identified; needs live-install check** |
-| **Antigravity CLI** | **own Gemini API key → AI Studio / Cloud Billing ($ lane, ToS-safe)** | **unavailable — compute-effort quota has no sanctioned source** (hooks not fed quota; only the internal `GetUserStatus` RPC = ban path) | own Gemini API key (for the $ lane) | **5h + weekly, metered in "compute effort"** (+ credit overage) | **discovery-gated (§8) — $ lane safe; quota unavailable** |
+| **Antigravity CLI** | **ToS-safe lane exists but is NOT T9-implementable** (the Gemini key reads nothing programmatically; BigQuery export = OAuth-class) → unavailable for now (§8) | **unavailable — compute-effort quota has no sanctioned source** (hooks not fed quota; only the internal `GetUserStatus` RPC = ban path) | n/a for usage read (a Gemini key is inference-only) | **5h + weekly, metered in "compute effort"** (+ credit overage) | **discovery-gated (§8) — $ lane ToS-safe but not T9-implementable; quota unavailable** |
 
 **Provider-fact notes** (the easy-to-get-wrong ones — don't regress these):
 - **Cursor** is *not* "daily, spend-$." Paid plans (the real users) are a **monthly dollar credit pool**; the daily *token* window is a free-tier rate-limit. Don't invert them.
@@ -253,7 +253,7 @@ Source ladder (use the first that applies). Only tiers 0–3 are ever built; the
 Per instruction, the data model is generalized to *fit* these, but **no adapter is built until a live-install discovery confirms its real shape** (same discipline as the Claude statusLine capture):
 
 - **Cursor live quota** — *findings landed (2026-06-05).* Cursor serves usage/quota server-side only. It **does** have a sanctioned `cursor-agent /statusline` hook (~2026-04, the Claude-`statusLine` analog) and a documented Admin/Analytics usage API — **but neither carries an individual's quota**: the statusline is fed only session/runtime metadata (no quota/cost field), the CLI's JSON output has no usage field, and the Admin API is team-admin/enterprise-only (no per-individual-Pro endpoint). So today Cursor cost/quota are **"unavailable"** and Cursor is detect-only. A live fetch is pursued **only if Cursor publishes a documented per-user API/OAuth — or adds a quota field to its existing `/statusline`** (the cleanest unlock to watch) — *never* by reusing a local Cursor session against its undocumented `api2.cursor.sh` RPC (that path is removed as a ToS violation; §5 tier 4). The generalized model already supplies the `Monthly`/`BillingCycle` `Spend` shape it would render (landed in T2); only a sanctioned *source* is missing.
-- **Antigravity CLI adapter** — *findings landed (2026-06-05); it splits into two lanes.* **$ lane — ToS-safe, build when carded:** Gemini-API cost via the user's own key (AI Studio cost/usage dashboards + Cloud Billing BigQuery export). **Compute-effort subscription quota — no sanctioned source:** its documented Hooks are *not* fed quota (only `conversationId`/`workspacePaths`/`transcriptPath`/tool fields), local transcripts are conversation content only, the IDE `.pb` files are keychain-encrypted, and the only live quota source is the internal Language-Server `GetUserStatus` RPC via a reused token (ban path) → quota stays "unavailable." Remaining discovery: how "compute effort" is denominated (community-sourced only — not officially published) and model-mix attribution (it routes to Gemini *and* Claude). Unlock to watch: Google feeding a documented quota payload into a Hook/status bar, or a consumer usage API. *(Research note 2026-06-10, pending T9 carding/⛔ sign-off: the Gemini-$ lane, while ToS-safe, is **not** implementable under T9's own-key constraint — a Gemini API key cannot read usage/billing data, and the Cloud Billing BigQuery export path is OAuth-class; see [docs/proposals/T9-PIN-PROPOSAL.md](proposals/T9-PIN-PROPOSAL.md).)*
+- **Antigravity CLI adapter** — *findings landed (2026-06-05); it splits into two lanes.* **$ lane — ToS-safe but NOT implementable under T9's own-key constraint** (⛔-signed-off correction, 2026-06-10): a Gemini API key authenticates inference only — it reads no usage/billing data programmatically (the AI Studio cost/usage views are browser UI, not API), and the only machine-readable cost source, the Cloud Billing BigQuery export, is OAuth-class (service-account JSON + RS256 JWT-bearer exchange) — so the lane is a post-T9 "Gemini (advanced)" connector at best; see `docs/proposals/T9-PIN-PROPOSAL.md` §4–§5. **Compute-effort subscription quota — no sanctioned source:** its documented Hooks are *not* fed quota (only `conversationId`/`workspacePaths`/`transcriptPath`/tool fields), local transcripts are conversation content only, the IDE `.pb` files are keychain-encrypted, and the only live quota source is the internal Language-Server `GetUserStatus` RPC via a reused token (ban path) → quota stays "unavailable." Remaining discovery: how "compute effort" is denominated (community-sourced only — not officially published) and model-mix attribution (it routes to Gemini *and* Claude). Unlock to watch: Google feeding a documented quota payload into a Hook/status bar, or a consumer usage API. *(⛔ signed off 2026-06-10 — the $-lane correction above is canon; full rationale + the unlock-to-watch in [docs/proposals/T9-PIN-PROPOSAL.md](proposals/T9-PIN-PROPOSAL.md).)*
 - **GitHub Copilot adapter (own-token billing API + CLI statusLine)** — *ToS-safe path identified (2026-06-05); discovery narrowed to a live-install check.* Route: the user's **own classic PAT** (fine-grained PATs are *unsupported* on the billing endpoints per GitHub's tutorial — its permissions reference contradicts that; classic is the safe reading) **or** their `gh` OAuth token → the **documented** `GET /users/{username}/settings/billing/ai_credit/usage` (+ legacy `premium_request/usage`) → AI-credit consumption + $-by-model; the Copilot CLI `statusLine` hook adds session premium-request count/cost locally. **Scope to individually self-billed users** (org/enterprise seats aren't in user-level endpoints → "unavailable (enterprise-billed)"). **Never** the internal `api.github.com/copilot_internal/user` (ban path). Remaining check: mint a classic PAT with billing read on a personal plan, confirm a 200 + the exact `ai_credit/usage` JSON shape, then build the adapter.
 - **MCP server** (`costroid-mcp`) — still speculative; the recommendation engine it would expose is already built into the frontier view. Not built; name intentionally unclaimed.
 
@@ -420,7 +420,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 **Backlog — carded when its Prereq lands (📌 must be pinned first):**
 - **T8 — keychain credential store** · ⛔ · Prereq T7 · ✅ **DONE 2026-06-09 (gate green, ⛔-approved) → §12.9 / §11.5** (pure-library; the `costroid connect` CLI + Connections view moved to T10)
-- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes (Anthropic/OpenAI/Gemini, tier-3 **own-key**; pin each endpoint+auth as a concrete proposal and **⛔ stop for human sign-off** — never guess an endpoint; §8 live-shape discipline applies to the exact API shape). **Split at carding into:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + its first `core`/`focus` deps + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + adds the `ureq`/`rustls` crates so their `deny.toml` wrappers (carried since T7 as forward-looking no-ops) finally fire — clearing the 2 benign `unused-wrapper` warnings — and adds their presence assertions to `offline.rs` (keyring's T8 precedent); ⛔ guarantee-redefinition like T7/T8, **no provider knowledge** · **T9b** the 3 per-provider usage-API adapters (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
+- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — **📌 PINNED + ⛔ SIGNED OFF 2026-06-10** (`docs/proposals/T9-PIN-PROPOSAL.md`; logged in §11.5): **Anthropic** Admin cost/usage reports + **OpenAI** org costs/usage (tier-3 own admin key each) · **Gemini = defer** (no sanctioned static-key usage API → first-class "unavailable"). **Split:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + adds the `ureq`/`rustls` crates so their `deny.toml` wrappers (carried since T7 as forward-looking no-ops) finally fire — clearing the 2 benign `unused-wrapper` warnings — and adds their presence assertions to `offline.rs` (keyring's T8 precedent); ⛔ guarantee-redefinition like T7/T8, **no provider knowledge**; its first `core`/`focus` deps only if the client API actually needs them (else they defer to T9b) — **carded at §12.11** · **T9b** the **TWO** per-provider usage-API adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state *(amended from "3 adapters" by the signed-off proposal)* (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm; card when T9a lands) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
 - **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4). **Also finishes** the `scripts/offline_acceptance.sh` feature-on connect-ACTION network test (the connect action reaches only the authorized host · the secret lands only in the keychain · disconnect leaves no residue — replaces the `T9/T10` STUB at the script's tail). The 0.4.0 release itself is cut by **T10b**.
 - **T10b — Release v0.4.0 (connections)** · ⛔ · S · Prereq T9, T10 + the ⛔ legal review signed off → **cuts v0.4.0** — the release-mechanics cap on Step 4 (the connections analogue of T1, which cut v0.2.0). Version bump 0.3.0→0.4.0 across the **four** `[workspace.dependencies]` constraints (now incl. `costroid-connect`; the CLI has no entry — the §11.5 T1 lockstep gotcha, with all **5** `version.workspace` members bumping together) + `Cargo.lock` + CHANGELOG + README/SECURITY release line; `dist plan` / host `dist build` dry-run; then the human tags + runs the **extended** crates.io ladder `focus → providers → core → connect → cli`. **Carded at §12.10.**
 - **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
@@ -433,6 +433,8 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 ### 11.5 Decisions & limitations (living log)
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**📌 T9 PINNED + ⛔ SIGNED OFF (2026-06-10) — usage-API endpoint/auth pins accepted as proposed; T9a carded at §12.11.** Human sign-off given 2026-06-10 (the instruction to start T9a), accepting `docs/proposals/T9-PIN-PROPOSAL.md` unamended. The pins: **Anthropic** = Admin API `GET /v1/organizations/cost_report` + `GET /v1/organizations/usage_report/messages` (`x-api-key: sk-ant-admin…` + `anthropic-version: 2023-06-01`; `cost_report` amounts are **decimal-string CENTS**, fractional; individual/non-org accounts and Claude-on-AWS orgs → first-class "unavailable", never an error loop) · **OpenAI** = `GET /v1/organization/costs` + `GET /v1/organization/usage/completions` (`Authorization: Bearer sk-admin-…`; **float dollars**; costs has **no model group_by** → per-model $ is derived/best-effort only) · **Gemini = defer** — a Gemini API key authenticates inference only and the BigQuery billing export is OAuth-class, so `ApiVendor::Gemini` stays and renders **"unavailable — no sanctioned static-key usage API"**. **T9b amended to TWO adapters** (Anthropic + OpenAI) + the Gemini unavailable state — not the backlog's anticipated three. **Canon correction applied** (§5 table · §8 · the CLAUDE.md echo): the Antigravity Gemini-$ lane is **ToS-safe but NOT implementable under T9's own-key constraint** (the key reads nothing programmatically; the AI Studio cost views are browser UI, not API; the BigQuery export needs service-account JSON + an RS256 JWT-bearer OAuth exchange) — a post-T9 "Gemini (advanced)" connector at best; the docs stop promising the lane. Cross-cutting build pins (money-encoding unit-tagging at every parse boundary; classify-then-degrade on 429/5xx; `User-Agent: costroid/x.y.z`; wrong-key-class paste detection; blast-radius copy; the open empirical checks) live in the proposal §6 and bind T9a–T9c.
 
 **✅ DOC-CURRENCY SWEEP (2026-06-10, the follow-up to the fix pass below; no task card) — the 2026-06-10 status review's remaining findings closed.** Doc-currency fixes across all md files: **8 doc-vs-code drifts, all doc-side** (the code was already correct; the docs were trued to it). Alongside the doc fixes: SECURITY.md truthed + a new **online `advisories` CI job** (`cargo deny check advisories` — the advisory-DB fetch lives in its own job, outside the offline gates); Costroid-generated text reaching `--plain` **and `RenderMode::Ascii`** output made **pure ASCII** (the em-dash provider notes; the Ascii-mode frontier header / point-note em-dashes) with a test pin; the FOCUS-conformance gate's allowlist **tightened to exact-match**; and the T9 pin proposal landed in-repo at `docs/proposals/T9-PIN-PROPOSAL.md` as **PROPOSED** (⛔ sign-off still pending — the §5/§8 classifications stay unchanged until it lands; see the §8 Antigravity research note).
 
@@ -538,7 +540,7 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 ---
 
-## 12. Ready-to-paste task prompts (T1–T8 + T10b release)
+## 12. Ready-to-paste task prompts (T1–T8, T9a + T10b release)
 
 *To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T9+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
 
@@ -914,6 +916,79 @@ Your job is to PIN + CARD it, not to build it:
 **Done when:** gate green; `dist plan` lists 0.4.0 across the 6 targets; version + lockfile + CHANGELOG +
   README/SECURITY updated; the RELEASING.md crates.io ladder includes `costroid-connect`; (after your
   tag + the crates.io ladder) release CI succeeds and `cargo install costroid` → 0.4.0.
+
+### 12.11 — T9a · `costroid-connect` HTTP infra: the generic authorized-host client · L · ⛔ (guarantee redefinition) · Prereq: T7 ✅, T8 ✅, T9 pins ⛔-signed-off (§11.5 2026-06-10) ✅
+
+```
+**Goal:** give `costroid-connect` its network half's foundation: a small, generic, provider-agnostic
+  BLOCKING HTTPS client on `ureq`+`rustls` that can only talk to an explicitly authorized host —
+  the HTTP layer the T9b adapters will call and the T10 offline-acceptance connect-ACTION test will
+  exercise. NO provider knowledge (no endpoint, no param, no response shape — all of that is T9b).
+**Spec:** docs/proposals/T9-PIN-PROPOSAL.md §6 (cross-cutting pins: User-Agent, backoff/degrade
+  split, secret redaction; the wrong-key-class copy is T10's); ARCHITECTURE §8 (credential boundary).
+**Files:** crates/costroid-connect/{Cargo.toml,src/}; root Cargo.toml ([workspace.dependencies]
+  pins for the new crates, exact `=` versions); apps/cli/tests/offline.rs (presence assertions);
+  deny.toml (comment currency — the ureq/rustls wrappers now fire); SECURITY.md + CLAUDE.md +
+  ARCHITECTURE §5/§8 (the guarantee re-wording below); CHANGELOG.md [Unreleased].
+**Scope fence:** no provider adapters/endpoints (T9b); no reconciliation (T9c); no CLI surface, no
+  connect/disconnect, no key-paste UX (T10); the DEFAULT build's resolved graph is unchanged (trio
+  still forbidden + connect unlinked); scripts/offline_acceptance.sh's connect-ACTION half STAYS the
+  T9/T10 stub (T10 finishes it); tests must NEVER touch the real network (loopback only — the suite
+  must pass inside the strace harness and offline CI).
+**Pins (decisions already made — do not re-open):**
+  - HTTPS-only, GET-only (both pinned vendor APIs are GET; widen only when a carded task needs it).
+  - Authorized-host enforcement IN the type: a client value is constructed over ONE allowlisted host;
+    any request whose URL is not on that host is a typed error BEFORE any I/O. Redirects: disabled
+    entirely — a redirect response is a typed error (neither pinned API needs them; following one
+    could leave the authorized host).
+  - Auth: caller-supplied header name/value pairs with `secrecy::SecretString` values (T9b composes
+    `x-api-key` + `anthropic-version`, or `Authorization: Bearer …`). The client NEVER logs, echoes,
+    or Debug-prints a secret (redacting Debug — the CredentialStore precedent; pin it with a test).
+  - `User-Agent: costroid/<CARGO_PKG_VERSION>` on every request (proposal §6 — Anthropic asks for it).
+  - Timeouts (connect + overall) and a bounded response-body size — typed errors, never a hang.
+  - Error taxonomy: the client CLASSIFIES (unauthorized-host / redirect / timeout / status 429 / 5xx
+    / other-4xx / transport / body-too-large); retry/backoff POLICY belongs to the caller (T9b) —
+    keep the client small. Everything degrades to a typed error (`ConnectError` grows variants);
+    no `unwrap`/`expect`/`panic!`.
+  - TLS roots: **OS-native trust** (ureq's native-certs path / rustls-native-certs) — NOT
+    `webpki-roots` (MPL-2.0 fails deny.toml's permissive allowlist). ⛔ if native roots prove
+    infeasible on a tier-1 platform and a non-allowlisted license would be the only path.
+  - `ureq`: current stable, pinned exact (`=`), default-features off + only the needed features
+    (rustls TLS + native certs; json OFF — body parsing is T9b's; gzip only if a pinned API needs
+    it). The resolved graph must stay clean across the six shipped triples (offline.rs proves it).
+  - `core`/`focus` deps: the §11.4 backlog line anticipated them landing here — add ONLY if the
+    client API actually uses their types; a generic client should not need them, so the expected
+    outcome is DEFER to T9b and log the deviation (the lean-deps rule beats backlog anticipation).
+  - Response body: returned as bytes/string (the caller parses; typed shapes are T9b).
+**Guards (the ⛔ guarantee redefinition — the T7/T8 precedent):**
+  - offline.rs connect tier: assert `ureq` AND `rustls` present (keyring's T8 precedent); default
+    tier unchanged. deny.toml: the wrappers finally fire → `cargo deny check licenses bans` (default
+    AND `--all-features`, as CI runs it) green with ZERO unused-wrapper warnings; update the
+    deny.toml comments that said "until T9".
+  - The strace feature-on baseline must STILL pass: the client existing ≠ a call happening; a normal
+    `--features connect` run performs zero network I/O (nothing calls the client until T10).
+  - Doc guarantee re-wording (SECURITY.md's interim-posture note, the CLAUDE.md echo, ARCHITECTURE
+    §5/§8): from "costroid-connect contains no network code" to "contains the generic HTTP client
+    but NO caller and NO provider adapter; no network call can occur without the explicit
+    user-initiated connect action (T10) — enforced by the feature-on strace baseline + the
+    authorized-host type."
+**Tests that prove Done-when (loopback only):** authorized-host refusal (off-host URL → typed error,
+  no I/O); redirect → typed error; secrets absent from Debug/Display/error text; 429/5xx/timeout
+  classification; the UA header actually sent; a success path returning the body. How to serve
+  loopback TLS is the agent's choice — a self-signed rustls test server with an injectable test
+  root, or a test-only plain-HTTP loopback constructor — pick one, NEVER weaken the public prod API
+  (no `danger_*` knobs in the public surface), and log the choice in §11.5.
+**Done when:** four-command gate green; offline.rs green on BOTH tiers (default: trio forbidden,
+  connect unlinked; connect: trio present); cargo-deny green default + --all-features with zero
+  unused-wrapper warnings; `bash scripts/offline_acceptance.sh` green (incl. the feature-on
+  baseline); the new client tests green with zero real-network I/O; docs + CHANGELOG updated;
+  §11.4 box ticked; §11.5 as-built entry written.
+**⛔ Human gate (stop before finalizing):** present (1) the redefined guarantee wording, (2) the
+  exact new crates/versions/features + their licenses (incl. the TLS-roots choice), (3) the client's
+  public API surface — it becomes the contract T9b builds on.
+**Next:** T9b (TWO adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state;
+  card it when T9a lands, against the client API as built).
+```
 **Next:** 0.4.0 is live; the connections line is shipped → Step 5 (analytical tabs + alerts, T11–T17).
   (0.5.0 / 0.6.0 can be chore-cut like 0.3.0 — they add no new publish-ladder/CI mechanics — unless a
   later release again changes the published crate set.)
