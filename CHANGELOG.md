@@ -32,6 +32,20 @@ proven by stricter guards.
   HTTP client and the `costroid connect`/`disconnect` commands arrive with v0.4.0. The
   offline-acceptance gate gains a feature-on baseline proving that even a
   `--features connect` run makes zero network calls and writes no stray files to `$HOME`.
+- **Generic authorized-host HTTPS client** in `costroid-connect` — the foundation of the
+  opt-in connections feature's network half. A small, blocking, provider-agnostic client
+  (`ureq` + `rustls`, no async runtime, no OpenSSL) that is bound in the type to **one**
+  explicitly authorized host: any off-host request is a typed error before any I/O,
+  redirects are refused (never followed), proxy env vars are ignored, requests are
+  HTTPS-only and GET-only with bounded timeouts and body size, TLS trust comes from your
+  **OS-native certificate store** (never a compiled-in bundle), and auth headers ride in
+  redacted secret strings that can never reach logs or error text. **Nothing calls it
+  yet** — there is still no user-facing connect flow and no provider adapter, so every
+  build (default *and* `--features connect`) still performs zero network calls: the
+  strace/offline-acceptance baseline keeps proving the zero-call property, while the
+  forbidden-crates test proves sanctioned-only *linkage* (the full
+  `ureq`/`rustls`/`keyring` trio links only behind `--features connect`, and the default
+  build links none of it).
 - **MSRV CI job** — the documented minimum supported Rust version (Rust 1.88) is now
   built in CI.
 - **Security-advisory CI job** — `cargo deny check advisories` now runs in CI as a

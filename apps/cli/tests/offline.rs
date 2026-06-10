@@ -94,10 +94,10 @@ const ALWAYS_FORBIDDEN_CRATES: &[&str] = &[
 /// (blocking HTTP), `rustls` (its TLS), and `keyring` (the OS keychain). Forbidden
 /// in the default/local-only build; permitted once `connect` is enabled.
 ///
-/// (T8 added `keyring` to `costroid-connect`, so it is present in the `connect` build
-/// and asserted so below; `ureq` + `rustls` arrive with the HTTP client in T9. Either
-/// way the default-build test must continue to NOT see any of the trio, and the
-/// `connect`-build test must continue to permit them.)
+/// (T8 added `keyring` — the credential store; T9a added `ureq` + `rustls` — the
+/// generic authorized-host HTTP client. The full trio is now present in the
+/// `connect` build and asserted so below; the default-build test must continue to
+/// NOT see any of it.)
 const CONNECT_GATED_CRATES: &[&str] = &["ureq", "rustls", "keyring"];
 
 /// The designated network/credential home: excluded as a graph *root* (it is the
@@ -282,13 +282,16 @@ fn connect_feature_admits_only_the_sanctioned_trio() {
          contains: {hits:?}.\n\
          The connections subsystem uses only `ureq` + `rustls` + `keyring`."
     );
-    // T8 landed the keychain: assert `keyring` is now actually linked under `connect`
-    // (the gate must really pull in the OS-keychain backend the credential store uses).
-    // `ureq` + `rustls` arrive with the HTTP client in T9 — permitted here, not yet
-    // asserted present.
-    assert!(
-        names.contains("keyring"),
-        "`--features connect` must link `keyring` — T8's credential store (the OS \
-         keychain) depends on it, so the gate has to pull it in."
-    );
+    // T8 landed the keychain (`keyring`) and T9a the HTTP client (`ureq` + `rustls`):
+    // assert the whole sanctioned trio is now actually linked under `connect` — the
+    // gate must really pull in the OS-keychain backend the credential store uses and
+    // the blocking HTTP/TLS stack the authorized-host client uses.
+    for gated in CONNECT_GATED_CRATES {
+        assert!(
+            names.contains(*gated),
+            "`--features connect` must link `{gated}` — the connections subsystem \
+             (T8 credential store, T9a authorized-host HTTP client) depends on the \
+             full `ureq`/`rustls`/`keyring` trio, so the gate has to pull it in."
+        );
+    }
 }

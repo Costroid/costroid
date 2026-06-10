@@ -62,18 +62,22 @@ wildcards = "allow"
 # an error. The comprehensive no-network/no-telemetry proof (and the default-build
 # ban on this same trio) lives in apps/cli/tests/offline.rs.
 #
-# T8 added `keyring` as a (non-optional) dependency of the `costroid-connect` member,
-# so it is resolved in the default workspace graph and its `wrappers` guard now FIRES
-# (it is permitted only because its direct parent is `costroid-connect`). `ureq` +
-# `rustls` remain a forward-looking, no-op guard until T9 adds them — hence the two
-# `unused-wrapper` warnings cargo-deny still emits for that pair. CI also runs an
-# `--all-features` (connect-on) pass so the connect-feature resolution is checked too.
+# T8 added `keyring` and T9a added `ureq` as (non-optional) dependencies of the
+# `costroid-connect` member, so both are resolved in the default workspace graph and
+# their `wrappers` guards FIRE (each is permitted only because its direct parent is
+# `costroid-connect`). `rustls` is in the graph as `ureq`'s TLS backend — its only
+# direct parent is `ureq` itself, so `ureq` is its wrapper (the chain is still
+# costroid-connect → ureq → rustls; no other crate may take a direct dependency on
+# any of the three). All three wrappers now fire with zero `unused-wrapper`
+# warnings. CI's license job gates the `--all-features` (connect-on) pass — features
+# are additive, so that resolution is a strict superset of the default graph (no
+# coverage hole); the default-mode pass is run locally as part of the pre-PR gate.
 deny = [
     { name = "openssl" },
     { name = "openssl-sys" },
     { name = "native-tls" },
     { name = "ureq", wrappers = ["costroid-connect"] },
-    { name = "rustls", wrappers = ["costroid-connect"] },
+    { name = "rustls", wrappers = ["ureq"] },
     { name = "keyring", wrappers = ["costroid-connect"] },
 ]
 

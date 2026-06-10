@@ -98,7 +98,8 @@ jobs:
       # OpenSSL" rule from deny.toml. licenses + bans are fully offline (no
       # RustSec advisory-DB fetch), keeping the gate network-free. `--all-features`
       # makes this the connect-on pass: it resolves the `connect` feature so the
-      # keyring `wrappers` guard (T8) is evaluated against the real keychain subtree.
+      # sanctioned-trio `wrappers` guards (keyring since T8; ureq + rustls since
+      # T9a) are evaluated against the real connect subtree.
       - name: cargo-deny (licenses + bans, connect-on)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:

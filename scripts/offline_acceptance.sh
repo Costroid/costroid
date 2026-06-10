@@ -10,10 +10,12 @@
 # The opt-in connections subsystem (`--features connect`, PRODUCT-PLAN Step 4) is the
 # single place network is ever allowed. Its dynamic proof has two halves: the T8
 # feature-ON baseline RUNS BELOW (a normal `--features connect` run leaks no network
-# and writes no secret/file residue to $HOME); the *positive* connect-ACTION half —
-# network ONLY on an explicit, user-initiated `connect` action to an authorized host,
-# with the secret landing ONLY in the keychain — remains a STUB at the bottom of this
-# file, to be filled by T9 (HTTP client) / T10 (the connect CLI).
+# and writes no secret/file residue to $HOME — and since T9a that build links the
+# authorized-host HTTP client, so the baseline also proves the client existing ≠ a
+# call happening); the *positive* connect-ACTION half — network ONLY on an explicit,
+# user-initiated `connect` action to an authorized host, with the secret landing
+# ONLY in the keychain — remains a STUB at the bottom of this file, to be filled by
+# T10 (the connect CLI; T9a's client has no caller until then).
 #
 # Two complementary layers of proof (both scope to the default build):
 #   * Static  — apps/cli/tests/offline.rs asserts no networking/TLS/telemetry crate
@@ -197,22 +199,25 @@ else
 fi
 
 # ============================================================================
-# Feature-ON (connect) — baseline landed in T8 (keychain); network half is T9/T10
+# Feature-ON (connect) — baseline landed in T8 (keychain); T9a added the HTTP
+# client (no caller); the connect-ACTION half is T10
 # ============================================================================
-# T8 adds the OS-keychain credential store to `costroid-connect` (no network yet).
-# What this proves now:
-#   (a) compiling `--features connect` in does NOT leak network on a normal run (the
-#       gate must not phone home just by being linked); and
+# T8 added the OS-keychain credential store and T9a the generic authorized-host
+# HTTP client to `costroid-connect` — but NOTHING calls the client until T10's
+# explicit, user-initiated `connect` action. What this proves now:
+#   (a) compiling `--features connect` in — keychain AND the ureq/rustls HTTP
+#       client — does NOT leak network on a normal run (linked code must not phone
+#       home just by existing); and
 #   (b) a normal run writes NO secret/file residue to $HOME (the credential store
 #       touches only the OS keychain). The store→retrieve→delete round-trip itself
 #       writing nothing to disk is proven at the unit level by
 #       `credential_round_trip_writes_nothing_to_disk` (in-memory mock backend), since
 #       there is no `connect` CLI to drive from here until T10.
-# Still a STUB (needs the HTTP client in T9 + the `connect` CLI in T10): the *positive*
-# network test — `costroid connect <provider>` reaching ONLY the authorized host, with
-# the secret landing ONLY in the keychain, and `disconnect` leaving no residue.
+# Still a STUB (needs the `connect` CLI in T10): the *positive* network test —
+# `costroid connect <provider>` reaching ONLY the authorized host, with the secret
+# landing ONLY in the keychain, and `disconnect` leaving no residue.
 
-echo "==> Building costroid --features connect (keychain linked; no network code yet)"
+echo "==> Building costroid --features connect (keychain + HTTP client linked; no caller — zero network expected)"
 cargo build -q -p costroid --features connect
 connect_bin="$repo_root/target/debug/costroid"
 
@@ -236,7 +241,7 @@ else
   echo "ok"
 fi
 
-echo "==> Feature-on connect ACTION test (network + secret-to-keychain): STUB — T9/T10"
+echo "==> Feature-on connect ACTION test (network + secret-to-keychain): STUB — T10"
 
 echo
 if [ "$fail" -ne 0 ]; then

@@ -11,17 +11,24 @@ documentation = "https://docs.rs/costroid-connect"
 keywords = ["finops", "cost", "keychain", "oauth", "ai"]
 categories = ["command-line-utilities", "authentication"]
 
-# The ONLY crate allowed a keychain (T8) or network (T9) dependency, and only ever
+# The ONLY crate allowed a keychain (T8) or network (T9a) dependency, and only ever
 # linked behind the consumer's `connect` feature (off by default — see apps/cli). The
 # default/local-only `costroid` binary never links this crate, so it ships no keychain
-# code; the deny.toml `wrappers` guard + apps/cli/tests/offline.rs keep that honest.
+# or HTTP/TLS code; the deny.toml `wrappers` guard + apps/cli/tests/offline.rs keep
+# that honest.
 #
 # Linux backend choice (T8): `keyring`'s SYNC Secret Service (`dbus-secret-service`,
 # blocking C libdbus) + pure-Rust crypto (`crypto-rust`) — deliberately NOT the
 # `async-secret-service` (zbus) path, so NO async runtime is pulled and `async-io`
 # stays globally banned even under `--features connect`. The cost is the C build-deps
 # `libdbus-1-dev` + `libsecret-1-dev` (installed in CI; PRODUCT-PLAN Step 4 §161).
-# HTTP (`ureq` + `rustls`) + the `core`/`focus` deps land in T9.
+#
+# HTTP (T9a): blocking `ureq` on `rustls` (no async runtime, no OpenSSL), with
+# OS-native trust roots loaded via `rustls-native-certs` — never `webpki-roots`
+# (see the [workspace.dependencies] note in the root Cargo.toml). The generic
+# authorized-host client lives in src/http.rs; it has NO caller and NO provider
+# knowledge until T9b/T10. The `core`/`focus` deps are still deliberately absent
+# (deferred to T9b — the generic client needs no internal type).
 [dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = [
     "apple-native",
@@ -29,10 +36,12 @@ keyring = { version = "=3.6.3", default-features = false, features = [
     "sync-secret-service",
     "crypto-rust",
 ] }
+rustls-native-certs = { workspace = true }
 secrecy = "=0.10.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+ureq = { workspace = true }
 
 [lints]
 workspace = true

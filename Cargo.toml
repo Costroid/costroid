@@ -24,9 +24,24 @@ crossterm = "=0.29.0"
 csv = "=1.4.0"
 ratatui = "=0.30.0"
 rust_decimal = { version = "=1.42.0", features = ["serde"] }
+# The sanctioned HTTP stack (T9a) — linked ONLY by `costroid-connect`, which itself is
+# linked only behind the apps' off-by-default `connect` feature. `ureq` is pinned
+# exact with default features OFF and precisely two features on:
+#   * `rustls-no-provider` — rustls TLS *without* `webpki-roots` (CDLA-Permissive-2.0,
+#     not on deny.toml's allowlist; the client uses OS-native trust roots via
+#     `rustls-native-certs` instead, per the T9a pin);
+#   * `_ring` — rustls's `ring` crypto provider (ureq's own `rustls` feature =
+#     `rustls-no-provider` + `_ring` + `rustls-webpki-roots`; we take the first two).
+#     `_ring` is an ureq-internal feature name, which the exact `=` pin keeps stable.
+# `json`/`gzip` stay off (body parsing is the T9b adapters'; no pinned API needs gzip).
+rustls-native-certs = "=0.8.4"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150", features = ["raw_value"] }
 thiserror = "=2.0.18"
+ureq = { version = "=3.3.0", default-features = false, features = [
+    "rustls-no-provider",
+    "_ring",
+] }
 
 # Internal deps carry both `path` (used for local workspace builds) and `version`
 # (required by crates.io: a path-only dependency is rejected on publish). Cargo

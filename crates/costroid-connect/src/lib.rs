@@ -4,14 +4,17 @@
 //! default** (compiled in only behind a consumer's `connect` Cargo feature — today
 //! `apps/cli`'s, off by default).
 //!
-//! # Status: keychain credential store (T8)
+//! # Status: keychain credential store (T8) + the generic HTTP client (T9a)
 //!
-//! This crate now carries its **first behavior**: a keychain-backed store for the
-//! user's own usage/billing API keys ([`CredentialStore`]), plus a *non-secret*
-//! on-disk index of which vendors are linked ([`ConnectionRegistry`]). It still makes
-//! **no network call** — the blocking HTTP client (`ureq` + `rustls`) and the
-//! usage-API reconciliation land in **T9**, and the `costroid connect`/`disconnect`
-//! CLI + Connections view in **T10**.
+//! This crate carries the keychain-backed store for the user's own usage/billing
+//! API keys ([`CredentialStore`]), a *non-secret* on-disk index of which vendors are
+//! linked ([`ConnectionRegistry`]), and — since T9a — the **generic authorized-host
+//! HTTPS client** ([`AuthorizedClient`]): blocking `ureq` + `rustls`, OS-native trust
+//! roots, bound to one explicitly authorized host, redirects disabled, GET-only.
+//! The client has **no caller and no provider knowledge** — the per-provider
+//! usage-API adapters are **T9b**, and no network call can occur without the
+//! explicit, user-initiated `connect` action that lands with the
+//! `costroid connect`/`disconnect` CLI + Connections view in **T10**.
 //!
 //! ## What lives here
 //!
@@ -27,8 +30,14 @@
 //!   Anthropic / OpenAI / Gemini. This is deliberately distinct from
 //!   `costroid-providers::ProviderId` (the *tool* axis: Claude Code / Codex / Cursor)
 //!   — Cursor has no key, and "Anthropic" is not the Claude-Code tool — so this crate
-//!   stays free of a `costroid-core`/`costroid-focus` dependency until T9 wires real
-//!   behavior.
+//!   stays free of a `costroid-core`/`costroid-focus` dependency (T9a kept it that
+//!   way: the generic client needs no internal type; they arrive with T9b if needed).
+//! * [`AuthorizedClient`] (+ [`AuthHeader`], [`HttpResponse`], [`RequestLimits`]) —
+//!   the client described above (in `src/http.rs`): it can only talk to the one host
+//!   it was constructed over (off-host requests are a typed error **before any I/O**),
+//!   classifies failures (redirect / timeout / 429 / 5xx / other-4xx / transport /
+//!   body-too-large) and leaves retry *policy* to its caller, and never lets a
+//!   secret-valued header reach logs, `Debug`, or error text.
 //!
 //! # The gate
 //!
@@ -38,11 +47,13 @@
 //! all. Two tests keep that honest:
 //!
 //! * `apps/cli/tests/offline.rs` — the default build links none of the sanctioned
-//!   trio (`keyring`/`ureq`/`rustls`); with `connect` on, `keyring` is permitted (and
-//!   asserted present) while async runtimes, OpenSSL, other HTTP clients, and all
-//!   telemetry stay forbidden.
+//!   trio (`keyring`/`ureq`/`rustls`); with `connect` on, exactly that trio is
+//!   permitted (and asserted present, since T9a) while async runtimes, OpenSSL,
+//!   other HTTP clients, and all telemetry stay forbidden.
 //! * `scripts/offline_acceptance.sh` — the default build runs every command under
-//!   network isolation and proves no outbound IP traffic is attempted.
+//!   network isolation and proves no outbound IP traffic is attempted; its
+//!   feature-on baseline proves a normal `--features connect` run attempts none
+//!   either (the client existing ≠ a call happening — nothing calls it until T10).
 //!
 //! ## Why the *sync* Secret Service backend (Linux)
 //!
@@ -82,6 +93,10 @@ use std::str::FromStr;
 use keyring::{Entry, Error as KeyringError};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+
+mod http;
+
+pub use http::{AuthHeader, AuthorizedClient, HttpResponse, RequestLimits};
 
 /// The OS-keychain *service* name under which every Costroid secret is filed. Stable
 /// (changing it would orphan stored keys); the per-secret *account* namespaces the
@@ -169,8 +184,10 @@ impl FromStr for ApiVendor {
 // Errors
 // ---------------------------------------------------------------------------
 
-/// Anything that can go wrong reaching the OS keychain or the connection registry.
-/// Library-crate errors are propagated, never `unwrap`/`panic`.
+/// Anything that can go wrong reaching the OS keychain, the connection registry, or
+/// (since T9a) the authorized host. Library-crate errors are propagated, never
+/// `unwrap`/`panic`, and **no variant ever carries secret material** in its fields,
+/// `Debug`, or `Display` text (pinned by tests).
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
     /// The OS keychain backend reported an error (other than "no such entry", which
@@ -202,6 +219,91 @@ pub enum ConnectError {
     /// registry path cannot be computed.
     #[error("no state directory: set $HOME or $XDG_STATE_HOME")]
     NoStateDir,
+
+    // ---- the T9a HTTP-client taxonomy (PRODUCT-PLAN §12.11 pins) ----------
+    //
+    /// The request URL is not on the client's single authorized host. Raised
+    /// **before any I/O** — the authorized-host guarantee lives in the type.
+    #[error("refusing request to {requested:?}: not the authorized host {authorized:?}")]
+    UnauthorizedHost {
+        /// The (normalized) host the request asked for.
+        requested: String,
+        /// The one host this client is authorized to talk to.
+        authorized: String,
+    },
+
+    /// The authorized host given at construction is not a bare hostname.
+    #[error("invalid authorized host: {reason}")]
+    InvalidHost {
+        /// Why the host was rejected (never echoes secret material).
+        reason: String,
+    },
+
+    /// The request URL could not be validated (not absolute, wrong scheme,
+    /// userinfo, or invalid host characters). Raised before any I/O.
+    #[error("invalid request URL: {reason}")]
+    InvalidUrl {
+        /// Why the URL was rejected (never echoes secret material).
+        reason: String,
+    },
+
+    /// The authorized host answered with a redirect. Redirects are disabled
+    /// entirely — following one could leave the authorized host — so any 3xx is
+    /// refused, never followed.
+    #[error("redirect response (HTTP {status}) — redirects are disabled, refusing to follow")]
+    Redirect {
+        /// The 3xx status received.
+        status: u16,
+    },
+
+    /// The connect or overall deadline elapsed ([`RequestLimits`]).
+    #[error("request timed out")]
+    Timeout,
+
+    /// HTTP 429 — the vendor is rate-limiting. Backoff *policy* is the caller's;
+    /// the parsed `Retry-After` seconds (when present) support it.
+    #[error("rate limited by the authorized host (HTTP 429)")]
+    RateLimited {
+        /// `Retry-After` in seconds, when the response carried the seconds form.
+        retry_after_seconds: Option<u64>,
+    },
+
+    /// HTTP 5xx — the vendor's side failed; degrade, don't fabricate.
+    #[error("server error from the authorized host (HTTP {status})")]
+    ServerError {
+        /// The 5xx status received.
+        status: u16,
+    },
+
+    /// HTTP 4xx other than 429 — wrong key class, missing permission, bad request.
+    #[error("client error from the authorized host (HTTP {status})")]
+    ClientError {
+        /// The 4xx status received.
+        status: u16,
+    },
+
+    /// A transport-level failure: DNS, TCP connect, TLS, or protocol. The message
+    /// comes from the transport stack and never contains header values.
+    #[error("transport error: {message}")]
+    Transport {
+        /// The transport stack's (secret-free) description.
+        message: String,
+    },
+
+    /// The response body exceeded [`RequestLimits::max_body_bytes`].
+    #[error("response body exceeds the {limit_bytes}-byte limit")]
+    BodyTooLarge {
+        /// The configured cap that was exceeded.
+        limit_bytes: u64,
+    },
+
+    /// The OS-native trust store could not be loaded (or yielded no certificates),
+    /// so an HTTPS client cannot be built.
+    #[error("could not load OS-native TLS roots: {detail}")]
+    NativeRoots {
+        /// The trust-store loader's (secret-free) description.
+        detail: String,
+    },
 }
 
 impl From<KeyringError> for ConnectError {
