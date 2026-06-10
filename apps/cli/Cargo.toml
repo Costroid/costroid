@@ -17,8 +17,9 @@ path = "src/main.rs"
 [features]
 # The connections subsystem is opt-in and off by default: the default build never
 # links `costroid-connect`, so it makes no network calls and touches no secret. The
-# taskbar (`apps/bar`, Step 6) will carry the same gate. Network + keychain code
-# lands behind this feature in T8/T9; today it pulls in an empty skeleton crate.
+# taskbar (`apps/bar`, Step 6) will carry the same gate. T8 landed the keychain
+# credential store behind this feature; the HTTP client lands in T9, and nothing in
+# the CLI calls the crate until the connect/disconnect commands land in T10.
 connect = ["dep:costroid-connect"]
 
 [dependencies]

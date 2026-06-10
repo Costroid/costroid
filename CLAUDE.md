@@ -18,7 +18,7 @@ These are hard constraints. If a task seems to require breaking one, **stop and 
 - **Local cost is always an estimate** (your tokens × current prices). Never present it as the authoritative bill; design for reconciliation against the provider invoice, which is the source of truth.
 - **Keep the core permissive.** This repo is Apache-2.0. Do not add any copyleft (GPL / AGPL / LGPL / SSPL) dependency. Verify a dependency's license is permissive (MIT / Apache-2.0 / BSD / ISC / Zlib / Unicode) before adding it.
 - **Accessibility is required, not optional.** Every visual has a `--plain` ASCII equivalent; never rely on color alone (the amber warning state needs a second, non-color cue); `--plain` output must be screen-reader-friendly.
-- **No `unwrap()`, `expect()`, or `panic!` in library crates.** Propagate errors. (Tests may use them.)
+- **No `unwrap()`, `expect()`, or `panic!` in library crates.** Propagate errors. (Tests may use `panic!`/assertions — but not `unwrap`/`expect`: the workspace clippy lints deny those even in test code.)
 
 ---
 
@@ -120,11 +120,11 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` carries its
 - `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter (incl. the `statusline --capture-only` capture writer and the `statusline --wrap '<cmd>'` escape hatch), `setup-statusline` (Claude Code `settings.json` wiring with backup + `--undo`), `--live`, and all rendering. Depends on `costroid-core`.
 - `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 6); accessibility via AccessKit, never color-alone. Depends only on `costroid-core`.
 
-**Dependency direction:** `apps → core → {providers, focus}`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → {core, focus}` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` and `costroid-providers` have no internal dependencies (the FOCUS normalization of provider events happens in `costroid-core`; the once-declared `providers → focus` edge was unused and removed in the 2026-06-10 fix pass). (Today `costroid-connect` has its T8 keychain behavior but still **no** internal deps — only `keyring`/`secrecy`/`serde`/`thiserror`; it gains its `core`/`focus` deps with the network client in T9.)
+**Dependency direction:** `apps → core → {providers, focus}`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → {core, focus}` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` and `costroid-providers` have no internal dependencies (the FOCUS normalization of provider events happens in `costroid-core`; the once-declared `providers → focus` edge was unused and removed in the 2026-06-10 fix pass). (Today `costroid-connect` has its T8 keychain behavior but still **no** internal deps — only `keyring`/`secrecy`/`serde`/`serde_json`/`thiserror`; it gains its `core`/`focus` deps with the network client in T9.)
 
 **Errors:** `thiserror` for typed errors in library crates; `anyhow` only in the binaries (`apps/`). No `unwrap`/`expect`/`panic!` in library code.
 
-**Logging:** `tracing` for local diagnostics only — never networked, never telemetry. Quiet by default; `-v`/`-vv` raise verbosity.
+**Logging (planned convention — not wired yet):** `tracing` for local diagnostics only — never networked, never telemetry; quiet by default, with `-v`/`-vv` raising verbosity. Today nothing links `tracing` and the CLI defines no verbosity flags; adopt this shape when diagnostics are first needed.
 
 **Edition & MSRV:** Rust edition 2021. Track the latest stable Rust; document and test the MSRV in CI.
 

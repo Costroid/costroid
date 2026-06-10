@@ -8,11 +8,12 @@
 # only bundled pricing — with no network access and no telemetry.
 #
 # The opt-in connections subsystem (`--features connect`, PRODUCT-PLAN Step 4) is the
-# single place network is ever allowed; its dynamic test — that network happens ONLY
-# on an explicit, user-initiated `connect` action to an authorized host, and that no
-# secret is written to disk/config/logs — is a STUB at the bottom of this file, to be
-# filled by T8 (keychain) / T9 (HTTP). It does not run here because no connect code or
-# command exists yet.
+# single place network is ever allowed. Its dynamic proof has two halves: the T8
+# feature-ON baseline RUNS BELOW (a normal `--features connect` run leaks no network
+# and writes no secret/file residue to $HOME); the *positive* connect-ACTION half —
+# network ONLY on an explicit, user-initiated `connect` action to an authorized host,
+# with the secret landing ONLY in the keychain — remains a STUB at the bottom of this
+# file, to be filled by T9 (HTTP client) / T10 (the connect CLI).
 #
 # Two complementary layers of proof (both scope to the default build):
 #   * Static  — apps/cli/tests/offline.rs asserts no networking/TLS/telemetry crate

@@ -2124,8 +2124,9 @@ fn provider_status(status: ProviderStatusKind) -> &'static str {
 }
 
 fn limit_kind(kind: LimitKind) -> &'static str {
-    // Short window labels (fit the `{kind:<3}` column). The new kinds get minimal
-    // placeholder abbreviations here so the build stays green; T6 owns any refinement.
+    // Short window labels (fit the `{kind:<3}` column). Daily/Monthly/BillingCycle
+    // have no producer yet (no adapter emits them); revisit their abbreviations when
+    // the first one lands (e.g. a Cursor billing-cycle window).
     match kind {
         LimitKind::FiveHour => "5h",
         LimitKind::Weekly => "wk",

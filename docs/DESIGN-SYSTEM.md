@@ -46,11 +46,16 @@ For every component below: bright dots/cells = used/spent (primary fg), dim = re
 A horizontal run of `W` braille cells (`W = 12`, a fixed const today; configurability arrives with the planned config file). Given a usage `fraction f ∈ [0, 1+]`:
 
 ```
-used_cells = clamp(round(f * W), if f > 0 { 1 } else { 0 }, W)
+full = floor(f * W)                          # full `⣿` cells (f ≥ 1 ⇒ full = W, no half)
+half = (f * W − full) ≥ 0.5                  # one boundary half-cell `⡇` (dots 1,2,3,7)
+if f > 0 and full == 0 and not half:
+    half = true                              # min-visibility: any nonzero usage shows ⡇
+track = W − full − (1 if half else 0)        # `⣀` cells
 ```
 
-- Render `used_cells` as full `⣿` in the used color; the remaining `W - used_cells` as the light/track glyph `⣀` (dots 7,8 only) in dim gray (the track) — not a full cell.
-- Optional half-cell precision: if the fractional remainder ≥ 0.5, render the boundary cell as left-column `⡇` in the used color.
+(This is `meter_segments` in render.rs — floor plus a half-cell, **not** `round(f * W)` full cells; the min-visibility cell is the half-cell `⡇`, never a full `⣿`.)
+
+- Render `full` as `⣿`, the boundary `half` (when present) as left-column `⡇`, and the `track` as the light glyph `⣀` (dots 7,8 only) — never a full cell. As shipped, fill and track render in a single span sharing the line's style (plain, or amber/red near limit) — the **glyph shapes** distinguish used from remaining, so the meter reads correctly under `NO_COLOR` and color-blindness alike.
 - **Thresholds** (fixed consts today — `WARN_FRACTION`/`CRITICAL_FRACTION` in render.rs; configurability arrives with the planned config file): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber and a `!` cue is appended after the percentage. At ≥ critical (or `f ≥ 1.0`, over limit), used color = red and the cue is `!!` (and `OVER` when `f ≥ 1.0`). The cue is what makes the state readable without color.
 - **Unverified (cross-check-failed) reading.** When a quota reading fails the `rate_limits` sanitize/cross-check (ARCHITECTURE §9.2), the meter draws in a **neutral (non-alarm) color** — never amber/red even at a near-max fraction — and the threshold `!`/`!!`/`OVER` cue is replaced by the distinct color-free cue ` ? unverified`. A maxed-looking but unverified reading must never render as a confident alarm.
 - **Freshness stamp.** Every `Available`/`Unverified` — and measure-carrying `Partial` — reading that is at least ~10 minutes older than the render carries an always-on `as of HH:MM` (UTC) stamp, so an hours-old cached reading never renders as a bare, confident meter. A reading with no recorded capture instant discloses `capture time unknown` instead.
