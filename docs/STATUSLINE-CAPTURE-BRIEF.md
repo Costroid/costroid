@@ -1,6 +1,6 @@
 # Statusline-capture build brief
 
-> **Status: committed** — the implementation brief for Step 2 (v0.3.0) of [PRODUCT-PLAN.md](PRODUCT-PLAN.md): capturing Claude Code's live 5h/7d quota through its `statusLine` hook and surfacing it honestly. The values once open (see §12) — chiefly the cross-check floor `N` — were settled during implementation and have shipped (`N` = `UNVERIFIED_TOKEN_FLOOR = 5_000`, resolved in T4). It binds to the real code as of commit `0dcb885` and is governed by ARCHITECTURE §4/§8/§9.2 and [DATA-MODEL.md](DATA-MODEL.md). Where this brief and those docs disagree, the canon wins and this brief is wrong — flag it.
+> **Status: committed** — the implementation brief for Step 2 (v0.3.0) of [PRODUCT-PLAN.md](PRODUCT-PLAN.md), covering **T4** (the cache reader + sanitize/cross-check), **T5** (the capture writer + `setup-statusline`), and **T6** (rendering the new states): capturing Claude Code's live 5h/7d quota through its `statusLine` hook and surfacing it honestly. The values once open (see §12) — chiefly the cross-check floor `N` — were settled during implementation and have shipped (`N` = `UNVERIFIED_TOKEN_FLOOR = 5_000`, resolved in T4). It binds to the real code as of commit `0dcb885` and is governed by ARCHITECTURE §4/§8/§9.2 and [DATA-MODEL.md](DATA-MODEL.md). Where this brief and those docs disagree, the canon wins and this brief is wrong — flag it.
 
 ---
 
@@ -155,13 +155,17 @@ New `Command::SetupStatusline(SetupStatuslineArgs)` variant alongside the existi
 
 ## 4. The pipeline, split across two layers (the layering fix)
 
+> ## ⚠️ HISTORICAL — this work shipped in T4/T5/T6 (v0.3.0)
+>
+> **The sections below (§4–§8) preserve the original implementation plan for rationale; the §1 update block records the as-shipped deltas. The code is canon. Source line links are pinned to commit `0dcb885` and are stale.** Do not treat §4–§8 as instructions: where their imperative voice ("replace it with…", "must gain…") names a code shape, the shipped code may differ — the inline ✅ annotations flag the known deltas.
+
 The cross-check and the estimate need per-window *usage* volume, which exists only at the **core** layer (focus rows + `generated_at`); the provider's `parse_limits` sees only the cache. So the pipeline splits — the provider does what it can from the cache; core finalizes using usage it alone can see.
 
 ### 4a. Provider — `ClaudeCodeProvider::parse_limits` (cache → sanitize → provisional window)
 
-Today this is a stub returning `unavailable_limit()` for both windows ([providers/src/lib.rs:246-251](../crates/costroid-providers/src/lib.rs#L246-L251)). Replace it with, per window (`five_hour`→`FiveHour`, `seven_day`→`Weekly`):
+Today this is a stub returning `unavailable_limit()` for both windows ([providers/src/lib.rs:246-251](../crates/costroid-providers/src/lib.rs#L246-L251)). *(✅ Shipped in T4 — the stub is gone: `parse_limits` now calls `read_claude_rate_limits()`, which builds one window per kind via `claude_limit_window()`, implementing the steps below; the "today"/"replace" framing is historical.)* Replace it with, per window (`five_hour`→`FiveHour`, `seven_day`→`Weekly`):
 
-1. **Read** the cache (§2). Absent/unreadable/missing-window → `unavailable_limit(ClaudeCode, kind, captured_at, Unavailable)`. Never error the run.
+1. **Read** the cache (§2). Absent/unreadable/missing-window → `unavailable_limit(ClaudeCode, kind, captured_at, Unavailable)` *(✅ as shipped the helper kept its **2-arg** form, `unavailable_limit(provider, kind)` — `crates/costroid-providers/src/lib.rs` — which hardwires `status: Unavailable` and sets `captured_at` to the `epoch_utc()` sentinel; see the §1 update block)*. Never error the run.
 2. **Sanitize the RAW percentage, before ÷100** (ARCHITECTURE §9.2 — order matters). On the raw `used_percentage` (0–100): if `> 100` (the 900% bug / out-of-range) **or** `== resets_at` (the poisoned-epoch leak) → **no data** → `status = Unavailable`, `used_fraction = None`. Only on passing: `used_fraction = Some(pct / 100.0)`.
 3. **Parse `resets_at` defensively** — **both epoch seconds and ISO-8601 (RFC 3339)** appear across Claude Code versions (ARCHITECTURE §12). Try integer-epoch (reuse [`epoch_seconds()`](../crates/costroid-providers/src/lib.rs#L947-L952)), then RFC 3339; neither → `None`.
 4. Set `captured_at` from the cache. **Provisional `status`:** `Verified` if a sane in-range reading survived step 2, else `Unavailable`. The provider does **not** cross-check — it can't see usage.
@@ -178,6 +182,8 @@ In `now_summary` / the `limit_availability()` refactor (§1.2), which has the sn
 
 ## 5. The cross-check threshold + the per-window volume helper (one of the two genuinely-open items)
 
+> *⚠️ HISTORICAL — shipped in T4/T5/T6 (v0.3.0); see the §4 banner. The code is canon; line links are pinned to `0dcb885` and stale.*
+
 **New helper needed — it does not exist today, and it lives in `costroid-core`** (the cross-check and estimate run at the core layer, §4b, which has the focus rows; the provider can't). The research confirms [`AggregateTotals.tokens`/`TokenTotals`](../crates/costroid-core/src/lib.rs#L935-L945) is the per-meter shape, but **no per-window (last-5h / last-7d) token sum exists**. Add:
 
 ```rust
@@ -192,13 +198,15 @@ It feeds **two** consumers:
 - **The cross-check (§4b.6):** a *bound*, not a conversion. We cannot turn tokens into a % (the plan's token cap is unpublished — the denominator problem). So the check is one-directional and conservative: *"the field claims ≥X% but the window logged < N tokens — implausible → `Unverified`."* It never says a reading is *correct*.
 - **The estimate fallback (§6):** the per-meter volume (and its priced $ value) shown when there's no trustworthy %.
 
-**The open threshold — `N` (trivial floor) and `X` (high):** quantified here, not hand-waved into code, but the exact `N` is the one genuinely-open number. `X = WARN_FRACTION` (0.80, reuse [the existing constant](../apps/cli/src/render.rs#L19-L20)). `N` is an **absolute summed-token floor** (not a %, because there's no denominator) below which a ≥`X` reading is demoted. **Concrete starting value so the code compiles: `const UNVERIFIED_TOKEN_FLOOR: u64 = 5_000;`** (summed across meters) — small enough that only an implausible "near-max on almost no usage" trips it, since one heavy prompt legitimately burns far more. The check is **safe-directional**: it only ever demotes to `Unverified` (flag), so an over-conservative `N` mislabels a real reading as unverified (annoying, never a confident-wrong number); an under-conservative `N` lets a false-100% through (the failure we're guarding). Bias `N` low.
+**The open threshold — `N` (trivial floor) and `X` (high):** quantified here, not hand-waved into code, but the exact `N` is the one genuinely-open number. *(✅ Resolved in T4 — shipped exactly at the starting value below: `const UNVERIFIED_TOKEN_FLOOR: u64 = 5_000;` in `crates/costroid-core/src/lib.rs`, with `X` as the core-local mirror `HIGH_USAGE_FRACTION = 0.80` rather than render's `WARN_FRACTION`; see §12.1. The live-install check on bug #31820 below remains the open Step-2 leftover that could later tighten `N`.)* `X = WARN_FRACTION` (0.80, reuse [the existing constant](../apps/cli/src/render.rs#L19-L20)). `N` is an **absolute summed-token floor** (not a %, because there's no denominator) below which a ≥`X` reading is demoted. **Concrete starting value so the code compiles: `const UNVERIFIED_TOKEN_FLOOR: u64 = 5_000;`** (summed across meters) — small enough that only an implausible "near-max on almost no usage" trips it, since one heavy prompt legitimately burns far more. The check is **safe-directional**: it only ever demotes to `Unverified` (flag), so an over-conservative `N` mislabels a real reading as unverified (annoying, never a confident-wrong number); an under-conservative `N` lets a false-100% through (the failure we're guarding). Bias `N` low.
 
 **Tie to your live-install check:** whether #31820's false-in-range (flat 100%, no throttling) ever actually fires on *your* binary decides whether this cross-check is **mandatory** or merely **prudent**. Build the guard either way — but the answer sets how conservative `N` is: if you observe a false-100% in practice, tighten `N` (demote more aggressively); if it never fires, `N` can sit at the floor as a cheap insurance check.
 
 ---
 
 ## 6. The absent→estimate fallback + Opus 7d (must-nail: labeled, never blank, never fabricated)
+
+> *⚠️ HISTORICAL — shipped in T4/T5/T6 (v0.3.0); see the §4 banner. The code is canon. (One exception: the dedicated `opus_weekly` field below remains design intent, not shipped — see the §1 update block.)*
 
 When a window has no trustworthy % (`Unavailable` from §4: absent for API-key users, the #40094 intermittent drop, pre-first-response, sanitized-out, or aged-out-stale):
 
@@ -210,6 +218,8 @@ When a window has no trustworthy % (`Unavailable` from §4: absent for API-key u
 ---
 
 ## 7. The `LimitWindow` shape ripple (must-nail: Codex too, not Claude-only)
+
+> *⚠️ HISTORICAL — shipped in T4/T5/T6 (v0.3.0); see the §4 banner. The code is canon; line links are pinned to `0dcb885` and stale.*
 
 The §1.1 shape change touches **every** existing `LimitWindow` producer. There is exactly one besides the new Claude path: **Codex**. (Cursor produces **no** `LimitWindow` — [`parse_limits` returns `Vec::new()`](../crates/costroid-providers/src/lib.rs#L325) and its deferral rides on `ProviderStatusKind::Detected` + message — so it stays out of this path entirely and needs no change here.)
 
@@ -223,6 +233,8 @@ The §1.1 shape change touches **every** existing `LimitWindow` producer. There 
 ---
 
 ## 8. Rendering the states (must-nail: distinct renders)
+
+> *⚠️ HISTORICAL — shipped in T4/T5/T6 (v0.3.0); see the §4 banner. The code is canon; line links are pinned to `0dcb885` and stale.*
 
 [`render_limit_line()`](../apps/cli/src/render.rs#L1065-L1118), [`plain_limit_line()`](../apps/cli/src/render.rs#L1120-L1155), and the statusline path get arms for the new `LimitAvailability` variants. Reuse the existing meter primitives ([`limit_meter_span`/`positional_meter_text`](../apps/cli/src/render.rs#L1302-L1327)) and the always-visible cue convention ([`state_cue`](../apps/cli/src/render.rs#L1240-L1268) — `!`/`!!`/`OVER`, never color-only).
 
@@ -238,7 +250,7 @@ The §1.1 shape change touches **every** existing `LimitWindow` producer. There 
 - **Always-on "as of HH:MM" stamp.** `Available`, `Unverified`, and (since the 2026-06-10 fix pass) measure-carrying `Partial` renders carry an `"as of HH:MM"` derived from `captured_at` once the reading is older than `const LIMIT_FRESHNESS_STAMP_MINUTES: i64 = 10;` (starting value, tunable). A reading captured hours ago whose window hasn't reset must **never** render as a bare, confident meter with no age signal — including the reset-less `Partial` case, which the `resets_at`-based age-out can never reach. **Codex carries the same stamp** — not because it is a push (it reads local logs), but because its windows are only as fresh as the **latest rollout entry** (`captured_at` from §7); the threshold logic is identical. A reading whose capture instant was never recorded (the epoch sentinel) renders `"capture time unknown"` instead — never a bogus `"as of 00:00"`.
 - **Chat-under-report caveat.** claude.ai chat shares the same 5h/7d limit but is invisible to the cache, so a Claude meter can read **low**. This direction is *disclosable, not fixable* (§9.2): carry a caveat such as *"reflects Claude Code's view; if you've used claude.ai chat this window your true usage may be higher."* Compact/minimal presets may shorten it, but it must remain reachable.
 
-**Statusline selection:** the selection helpers in the render path (`most_constrained_limit` → `has_fraction` → `limit_fraction`) pick the highest-fraction limit and today exclude anything without a fraction. **`limit_fraction()` must gain an `Unverified` arm** (it currently returns `Some` only for `Available` and `Partial { Some }`) so an `Unverified` window is eligible — **and if selected, the one-line output must carry the `? unverified` cue**: a maxed-looking statusline that is actually unverified is the exact confident-wrong-number failure §0 forbids. `Estimated` has **no** quota fraction → excluded from "most constrained," like `Unavailable`.
+**Statusline selection:** the selection helpers in the render path (`most_constrained_limit` → `has_fraction` → `limit_fraction`) pick the highest-fraction limit and today exclude anything without a fraction. **`limit_fraction()` must gain an `Unverified` arm** (it currently returns `Some` only for `Available` and `Partial { Some }`) so an `Unverified` window is eligible — **and if selected, the one-line output must carry the `? unverified` cue**: a maxed-looking statusline that is actually unverified is the exact confident-wrong-number failure §0 forbids. `Estimated` has **no** quota fraction → excluded from "most constrained," like `Unavailable`. *(✅ Shipped in T6 — `limit_fraction()` in `apps/cli/src/render.rs` has the `Unverified` arm, reading `measure` via `measure_fraction()` (the shipped `LimitMeasure` shape, not a bare `used_fraction`); `Partial { measure: None }`, `Estimated`, and `Unavailable` return `None` as specified. When an `Unverified` window wins selection, `render_statusline_line` appends `UNVERIFIED_CUE` (`" ? unverified"`) in place of the state cue and draws the meter through `limit_meter_with_confidence` — never a confident `!!`.)*
 
 **Format presets** (`default`/`compact`/`minimal`) named in [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) are still unimplemented in `render_statusline_line` ([render.rs:747-783](../apps/cli/src/render.rs#L747-L783)) — implementing them is in-scope for the statusline step but orthogonal to capture; the capture cue work above must land regardless of preset.
 
@@ -282,8 +294,8 @@ The §1.1 shape change touches **every** existing `LimitWindow` producer. There 
 ## 12. Open items / decisions for review
 
 1. **The cross-check floor `N`** (§5) — ✅ **RESOLVED in T4:** shipped as `UNVERIFIED_TOKEN_FLOOR = 5_000` with `X = HIGH_USAGE_FRACTION = 0.80` (a core-local mirror of render's `WARN_FRACTION`). The guard is built and biased low (it only ever demotes, so it flags "near-max on almost no usage" but never a real heavy prompt); a live-install #31820 datapoint can later *tighten* `N`, but the cross-check ships either way (prudent, and mandatory if the false-100% is ever observed).
-2. **`LimitAvailability` extension shape** (§1.2) — adding `Unverified` + `Estimated` variants vs. carrying a `confidence`/`basis` tag on the existing variants. Brief recommends explicit variants (clearer match arms, snapshot-distinct). *Reviewable.*
-3. **Stale → `Estimated` vs `Unavailable`** (§1.2/§4b.5) — staleness is evaluated **at render time** in `limit_availability()` against the current `generated_at` (the provider only records `resets_at`, never freezes a verdict; this covers `Verified` and `Unverified` uniformly). A stale reading ages to `Estimated` when local usage exists, else `Unavailable`. Confirms canon "age a stale reading out to unknown." *Reviewable.*
+2. **`LimitAvailability` extension shape** (§1.2) — adding `Unverified` + `Estimated` variants vs. carrying a `confidence`/`basis` tag on the existing variants. Brief recommends explicit variants (clearer match arms, snapshot-distinct). ✅ **RESOLVED (shipped, T2/T4/T6):** explicit variants won — core `LimitAvailability` (`crates/costroid-core/src/lib.rs`) carries the five variants `Available`/`Partial`/`Unverified`/`Estimated`/`Unavailable`; no `confidence`/`basis` tag exists.
+3. **Stale → `Estimated` vs `Unavailable`** (§1.2/§4b.5) — staleness is evaluated **at render time** in `limit_availability()` against the current `generated_at` (the provider only records `resets_at`, never freezes a verdict; this covers `Verified` and `Unverified` uniformly). A stale reading ages to `Estimated` when local usage exists, else `Unavailable`. Confirms canon "age a stale reading out to unknown." ✅ **RESOLVED (shipped, T4):** built exactly so — `limit_availability()` (`costroid-core`) checks `resets_at < generated_at` per render and ages the reading out via `estimate_or_unavailable()` (→ `Estimated` when window volume exists, else `Unavailable`), uniformly across statuses and providers.
 4. **Cache path** — ✅ **RESOLVED (shipped; the T4 reader + T5 writer share it):** `claude_rate_limits_cache_path()` in `costroid-providers` (made `pub` so writer and reader resolve one path) returns `${XDG_STATE_HOME:-~/.local/state}/costroid/claude-rate-limits.json`.
 5. **Concrete starting constants** (all tunable): ✅ `UNVERIFIED_TOKEN_FLOOR = 5_000` shipped in T4 (`costroid-core`, with `HIGH_USAGE_FRACTION = 0.80`; see item #1) and the sentinel `# costroid:statusline-capture v1` shipped in T5 (`apps/cli/src/setup.rs`, `SENTINEL`). ✅ `LIMIT_FRESHNESS_STAMP_MINUTES = 10` shipped in T6 (`apps/cli/src/render.rs`, used by `freshness_stamp()` for the always-on "as of HH:MM" UTC stamp), alongside `UNVERIFIED_CUE = " ? unverified"` (§8).
 

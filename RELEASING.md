@@ -1,7 +1,8 @@
 # Releasing Costroid
 
-This is the runbook for cutting a Costroid release. The release **infrastructure** is
-configured and dry-run-verified in the repo (M7); the **actual** publish is a deliberate,
+This is the runbook for cutting a Costroid release. The release **infrastructure** was
+configured and dry-run-verified for v0.1.0 (the release-infrastructure milestone, PR #1) and has
+cut every release since (latest tag: v0.3.0); the **actual** publish is a deliberate,
 human-triggered action and is intentionally not automated to run on a normal push.
 
 > **Nothing in this repo publishes by itself.** The release workflow
@@ -11,9 +12,9 @@ human-triggered action and is intentionally not automated to run on a normal pus
 
 ---
 
-## What the first release ships
+## What a release ships
 
-`v0.1.0` ships the `costroid` binary for six targets, with four installers, via
+Every release (v0.1.0 onward) ships the `costroid` binary for six targets, with four installers, via
 [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`, configured in
 [dist-workspace.toml](dist-workspace.toml)):
 
@@ -25,7 +26,7 @@ human-triggered action and is intentionally not automated to run on a normal pus
 - **Integrity & provenance:** every artifact gets a SHA-256 checksum and a keyless GitHub
   build-provenance attestation (Actions OIDC — no certificates, no secrets).
 
-**Not in v0.1.0** (deferred): macOS notarization / Windows Authenticode code-signing, Scoop, MSI,
+**Not in any release yet** (deferred): macOS notarization / Windows Authenticode code-signing, Scoop, MSI,
 the `costroid-mcp` crate (deferred/speculative — see `docs/PRODUCT-PLAN.md`,
 which governs scope and build sequencing).
 
@@ -75,11 +76,12 @@ the first real release, or release-time jobs will fail.
 ## Cutting a release (the deliberate human steps)
 
 1. Make sure `main` is green: the full gate (`fmt` / `clippy -D warnings` / `test`, including the
-   `--features connect` build + clippy that links the keychain crate), the FOCUS conformance job, the
-   license (`cargo deny`, run `--all-features` for the connect-on pass) job, and the
-   offline-acceptance job all pass.
+   `--features connect` build + clippy that links the keychain crate), the MSRV check, the FOCUS
+   conformance job, the license (`cargo deny`, run `--all-features` for the connect-on pass) job,
+   the online advisories job, and the offline-acceptance job all pass.
 2. Confirm the version. The workspace is versioned in lockstep via
-   [Cargo.toml](Cargo.toml) `[workspace.package].version`. For `0.1.0` it is already set.
+   [Cargo.toml](Cargo.toml) `[workspace.package].version`. Bump it to the new `X.Y.Z` (and
+   refresh `Cargo.lock` — see the mechanics below) in a committed change before tagging.
 3. Sanity-check the plan locally (no publish):
    ```bash
    dist plan                       # prints the artifacts/installers that will be built
@@ -87,8 +89,8 @@ the first real release, or release-time jobs will fail.
    ```
 4. **Tag and push** — this is the trigger that starts the real release:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
    The `Release` workflow then: builds every target, attests + checksums each artifact, creates
    the GitHub Release with all assets, pushes the Homebrew formula to the tap, and publishes the
@@ -133,7 +135,9 @@ cargo publish -p costroid
 > The order grows as the remaining members gain publishable behavior (per `docs/PRODUCT-PLAN.md`):
 > `costroid-connect` (a member since T7, keychain store since T8) gains its `costroid-core`/
 > `costroid-focus` deps in T9 and then publishes after `costroid-core` (the CLI depends on it via the
-> `connect` feature); the `costroid-bar` binary (not yet in the workspace) publishes alongside
+> `connect` feature) — the v0.4.0 ladder, per PRODUCT-PLAN T10b, is
+> `costroid-focus → costroid-providers → costroid-core → costroid-connect → costroid (cli)`; the
+> `costroid-bar` binary (not yet in the workspace) publishes alongside
 > `costroid` (both depend only on `costroid-core`).
 
 Gotchas (learned shipping v0.1.0):

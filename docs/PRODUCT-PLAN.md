@@ -24,7 +24,7 @@ Verified against the code, not the docs. (v0.2.0 — the cost lane: frontier + C
 
 **Solid foundation the rest builds on:** three-crate engine (`apps → core → {providers, focus}`, no cycles, no `unwrap`/`expect`/`panic!` in libs); a working 5-method `Provider` trait (`id` / `capability` / `discover` / `parse_usage` / `parse_limits`); WSL-aware multi-root discovery; three render modes (braille / ASCII / **plain**) with non-color cues; `--live`; the statusline emitter; FOCUS export; and **enforced** invariants — a strace-based offline-acceptance CI job, a two-tier resolved-graph forbidden-crates test (since T7: the default build forbids ~44 networking/TLS/telemetry crates incl. the gated `ureq`/`rustls`/`keyring` trio; `--features connect` admits only that trio), `cargo-deny` (no copyleft, openssl banned), attested releases. **209 tests, 23 render snapshots, green CI gate** (counts as of the 2026-06-10 fix pass — see §11.5). The cost lane is `cargo install`-able and correct today.
 
-**Not built yet:** the *network* half of connections (T9+ — no HTTP/usage-API fetch, no reconciliation, no OAuth) and the `costroid connect`/`disconnect` CLI + Connections view (T10). **T8 built the keychain credential store** in `costroid-connect` (`CredentialStore`/`ConnectionRegistry`/`ApiVendor`, `keyring` sync Secret Service — DONE 2026-06-09, ⛔-approved), so secrets have a home but nothing yet fetches; 5 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs); alerts; the taskbar; Antigravity & Copilot. *(Claude live quota **on screen** is now **done** — T4 landed the reader, T5 the writer, and **T6 the render**, so the captured quota surfaces end to end on a Pro/Max machine; see §11.5 ✅ T6 DONE. The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — landed in T2; its live **producers** in T4 (cross-check demotion + stale age-out + the `Estimated` fallback); its **rendering** in T6 (all 5 arms + `Spend`). The **`Capability` descriptor** — `DataSource`/`AuthMethod`/`Capability` + the required `capability()` trait method, declared by all three adapters — **landed in T3**; its consumer, the Providers tab (T11), is still future.)*
+**Not built yet:** the *network* half of connections (T9+ — no HTTP/usage-API fetch, no reconciliation, no OAuth) and the `costroid connect`/`disconnect` CLI + Connections view (T10). **T8 built the keychain credential store** in `costroid-connect` (`CredentialStore`/`ConnectionRegistry`/`ApiVendor`, `keyring` sync Secret Service — DONE 2026-06-09, ⛔-approved), so secrets have a home but nothing yet fetches; 6 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs — only Overview/now and Trends exist today); alerts; the taskbar; Antigravity & Copilot. *(Claude live quota **on screen** is now **done** — T4 landed the reader, T5 the writer, and **T6 the render**, so the captured quota surfaces end to end on a Pro/Max machine; see §11.5 ✅ T6 DONE. The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — landed in T2; its live **producers** in T4 (cross-check demotion + stale age-out + the `Estimated` fallback); its **rendering** in T6 (all 5 arms + `Spend`). The **`Capability` descriptor** — `DataSource`/`AuthMethod`/`Capability` + the required `capability()` trait method, declared by all three adapters — **landed in T3**; its consumer, the Providers tab (T11), is still future.)*
 ---
 
 ## 1. The product in one picture
@@ -207,7 +207,7 @@ Source ladder (use the first that applies). Only tiers 0–3 are ever built; the
 
 | Provider | API $ source | Quota source | Login | Quota shape | Status |
 |---|---|---|---|---|---|
-| **Claude Code** | local transcripts (+ optional Anthropic usage API w/ key) | **statusLine sanctioned push** | none (`setup-statusline`) | 5h + 7d, token-% | cost ✅ · quota = Step 2 |
+| **Claude Code** | local transcripts (+ optional Anthropic usage API w/ key) | **statusLine sanctioned push** | none (`setup-statusline`) | 5h + 7d, token-% | ✅ both |
 | **Codex** | local rollout logs (+ optional OpenAI usage API w/ key) | local rollout logs | none | 5h + weekly, token-% | ✅ both |
 | **Cursor** | unavailable (no sanctioned source) | unavailable (no sanctioned source) | none (local model-mix only) | **monthly billing-cycle $-credit pool + overage; daily token rate-limit on free tier** | detect-only; live quota **discovery-gated (§8)** |
 | **GitHub Copilot** | own token → billing API ($ by model) | **own classic PAT / `gh` OAuth → documented `…/billing/ai_credit/usage`** (tier 3/2) | own classic PAT (fine-grained unsupported) or `gh` OAuth | **monthly AI-credit pool ($) + overage** *(premium-requests is the legacy pre-June-2026 model)* | **discovery-gated (§8) — ToS-safe path identified; needs live-install check** |
@@ -253,7 +253,7 @@ Source ladder (use the first that applies). Only tiers 0–3 are ever built; the
 Per instruction, the data model is generalized to *fit* these, but **no adapter is built until a live-install discovery confirms its real shape** (same discipline as the Claude statusLine capture):
 
 - **Cursor live quota** — *findings landed (2026-06-05).* Cursor serves usage/quota server-side only. It **does** have a sanctioned `cursor-agent /statusline` hook (~2026-04, the Claude-`statusLine` analog) and a documented Admin/Analytics usage API — **but neither carries an individual's quota**: the statusline is fed only session/runtime metadata (no quota/cost field), the CLI's JSON output has no usage field, and the Admin API is team-admin/enterprise-only (no per-individual-Pro endpoint). So today Cursor cost/quota are **"unavailable"** and Cursor is detect-only. A live fetch is pursued **only if Cursor publishes a documented per-user API/OAuth — or adds a quota field to its existing `/statusline`** (the cleanest unlock to watch) — *never* by reusing a local Cursor session against its undocumented `api2.cursor.sh` RPC (that path is removed as a ToS violation; §5 tier 4). The generalized model already supplies the `Monthly`/`BillingCycle` `Spend` shape it would render (landed in T2); only a sanctioned *source* is missing.
-- **Antigravity CLI adapter** — *findings landed (2026-06-05); it splits into two lanes.* **$ lane — ToS-safe, build when carded:** Gemini-API cost via the user's own key (AI Studio cost/usage dashboards + Cloud Billing BigQuery export). **Compute-effort subscription quota — no sanctioned source:** its documented Hooks are *not* fed quota (only `conversationId`/`workspacePaths`/`transcriptPath`/tool fields), local transcripts are conversation content only, the IDE `.pb` files are keychain-encrypted, and the only live quota source is the internal Language-Server `GetUserStatus` RPC via a reused token (ban path) → quota stays "unavailable." Remaining discovery: how "compute effort" is denominated (community-sourced only — not officially published) and model-mix attribution (it routes to Gemini *and* Claude). Unlock to watch: Google feeding a documented quota payload into a Hook/status bar, or a consumer usage API.
+- **Antigravity CLI adapter** — *findings landed (2026-06-05); it splits into two lanes.* **$ lane — ToS-safe, build when carded:** Gemini-API cost via the user's own key (AI Studio cost/usage dashboards + Cloud Billing BigQuery export). **Compute-effort subscription quota — no sanctioned source:** its documented Hooks are *not* fed quota (only `conversationId`/`workspacePaths`/`transcriptPath`/tool fields), local transcripts are conversation content only, the IDE `.pb` files are keychain-encrypted, and the only live quota source is the internal Language-Server `GetUserStatus` RPC via a reused token (ban path) → quota stays "unavailable." Remaining discovery: how "compute effort" is denominated (community-sourced only — not officially published) and model-mix attribution (it routes to Gemini *and* Claude). Unlock to watch: Google feeding a documented quota payload into a Hook/status bar, or a consumer usage API. *(Research note 2026-06-10, pending T9 carding/⛔ sign-off: the Gemini-$ lane, while ToS-safe, is **not** implementable under T9's own-key constraint — a Gemini API key cannot read usage/billing data, and the Cloud Billing BigQuery export path is OAuth-class; see [docs/proposals/T9-PIN-PROPOSAL.md](proposals/T9-PIN-PROPOSAL.md).)*
 - **GitHub Copilot adapter (own-token billing API + CLI statusLine)** — *ToS-safe path identified (2026-06-05); discovery narrowed to a live-install check.* Route: the user's **own classic PAT** (fine-grained PATs are *unsupported* on the billing endpoints per GitHub's tutorial — its permissions reference contradicts that; classic is the safe reading) **or** their `gh` OAuth token → the **documented** `GET /users/{username}/settings/billing/ai_credit/usage` (+ legacy `premium_request/usage`) → AI-credit consumption + $-by-model; the Copilot CLI `statusLine` hook adds session premium-request count/cost locally. **Scope to individually self-billed users** (org/enterprise seats aren't in user-level endpoints → "unavailable (enterprise-billed)"). **Never** the internal `api.github.com/copilot_internal/user` (ban path). Remaining check: mint a classic PAT with billing read on a personal plan, confirm a 200 + the exact `ai_credit/usage` JSON shape, then build the adapter.
 - **MCP server** (`costroid-mcp`) — still speculative; the recommendation engine it would expose is already built into the frontier view. Not built; name intentionally unclaimed.
 
@@ -342,7 +342,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 ### 11.4 The task ledger
 
-*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9+ remain a backlog** that gets expanded into full cards when its Prereq lands — their detail depends on decisions not yet made, and speccing them now would fabricate.*
+*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9+ remain a backlog** that gets expanded into full cards when its Prereq lands (except T10b, whose release mechanics are knowable; carded at §12.10) — their detail depends on decisions not yet made, and speccing them now would fabricate.*
 
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
 
@@ -366,7 +366,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **Done when:** gate green; `dist plan` clean; version + lockfile bumped; (after your tag) release CI succeeds.
 - **Next:** independent — blocks nothing, but **tag v0.2.0 before T2+ work reaches `main`** (or branch T2–T6) so 0.2.0 ships only the built cost lane, not half-finished 0.3.0 quota work.
 
-**T2 — Quota data-model foundation** · M · Prereq: none — *do this first of the build work*
+**T2 — Quota data-model foundation** · M · Prereq: none — *do this first of the build work* · ✅ **DONE (gate green — see §11.5)**
 - **Files:** `crates/costroid-providers/src/lib.rs` (`LimitKind`, `LimitWindow`, the 3 `parse_limits`); `crates/costroid-core/src/lib.rs` (`LimitAvailability`, `limit_availability`).
 - **Goal:** generalize the quota types so every later provider/feature fits one shape (§2a).
 - **Scope fence:** types + migration only. No statusline capture, no rendering beyond compiling, no new providers, **no `RequestCount`**.
@@ -374,7 +374,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **Done when:** gate green; existing limit tests updated and passing.
 - **Next:** the new types exist → T3, T4, T6 (and later the Providers tab) build on them.
 
-**T3 — Capability descriptor** · S · Prereq: T2
+**T3 — Capability descriptor** · S · Prereq: T2 · ✅ **DONE (gate green — see §11.5)**
 - **Files:** `crates/costroid-providers/src/lib.rs` (the `Provider` trait + 3 adapters).
 - **Goal:** make each provider *declare* its data sources / auth / quota shape (§2b) so unavailability renders honestly and new providers slot in by descriptor.
 - **Scope fence:** the descriptor + its impls only; no UI yet.
@@ -401,7 +401,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **Done when:** gate green; idempotent re-run tested; malformed/absent settings.json handled; capture parse-failure exits 0.
 - **Next:** end-to-end Claude live quota works on a Pro/Max machine.
 
-**T6 — Render new limit states + Spend windows** · M · Prereq: T2 (+ T4 for live data)
+**T6 — Render new limit states + Spend windows** · M · Prereq: T2 (+ T4 for live data) · ✅ **DONE (2026-06-06, gate green — see §11.5)**
 - **Files:** `apps/cli/src/render.rs` (`render_limit_line` / `plain_limit_line` / `state_cue`) + snapshots; **and `costroid-core`** to plumb `captured_at` (see ⚠️ below).
 - **Goal:** render `Available / Partial / Unavailable / Unverified / Estimated` and `Spend` windows (dollar pool used/included, never a fabricated %), with the always-on "as of HH:MM" stamp + the claude.ai-chat under-report caveat (brief §8).
 - **✅ Done in T6 (was: ⚠️ Do first, T4 handoff):** `captured_at` was threaded onto `LimitSummary` in `limit_summary`, giving the "as of HH:MM" stamp its source. Internal struct only, no export-schema gate.
@@ -409,7 +409,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **Done when:** gate green; snapshot tests cover every availability arm in braille/ASCII/plain; plain asserts no ANSI.
 - **Next:** the **0.3.0 milestone** (Claude live quota + generalized model) is complete.
 
-**T7 — `costroid-connect` infra + CI re-scope** · L · ⛔ · Prereq: T3
+**T7 — `costroid-connect` infra + CI re-scope** · L · ⛔ · Prereq: T3 · ✅ **DONE (2026-06-06, gate green, ⛔-approved — see §11.5)**
 - **Files:** new `crates/costroid-connect/`; root `Cargo.toml` (member + feature); `deny.toml`; `apps/cli/tests/offline.rs`; `scripts/offline_acceptance.sh`.
 - **Goal:** create the feature-gated network/credential crate **with no behavior yet**, and re-scope the no-network guarantees so the default build still *proves* zero network.
 - **Scope fence:** crate skeleton + feature gate + test re-scoping only. **No keychain, no HTTP yet** (T8/T9).
@@ -420,9 +420,9 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 **Backlog — carded when its Prereq lands (📌 must be pinned first):**
 - **T8 — keychain credential store** · ⛔ · Prereq T7 · ✅ **DONE 2026-06-09 (gate green, ⛔-approved) → §12.9 / §11.5** (pure-library; the `costroid connect` CLI + Connections view moved to T10)
-- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes (Anthropic/OpenAI/Gemini, tier-3 **own-key**; pin each endpoint+auth as a concrete proposal and **⛔ stop for human sign-off** — never guess an endpoint; §8 live-shape discipline applies to the exact API shape). **Split at carding into:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + its first `core`/`focus` deps + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + lands the `ureq`/`rustls` `deny.toml` wrappers; ⛔ guarantee-redefinition like T7/T8, **no provider knowledge** · **T9b** the 3 per-provider usage-API adapters (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
+- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — 📌 which provider endpoints + auth schemes (Anthropic/OpenAI/Gemini, tier-3 **own-key**; pin each endpoint+auth as a concrete proposal and **⛔ stop for human sign-off** — never guess an endpoint; §8 live-shape discipline applies to the exact API shape). **Split at carding into:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + its first `core`/`focus` deps + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + adds the `ureq`/`rustls` crates so their `deny.toml` wrappers (carried since T7 as forward-looking no-ops) finally fire — clearing the 2 benign `unused-wrapper` warnings — and adds their presence assertions to `offline.rs` (keyring's T8 precedent); ⛔ guarantee-redefinition like T7/T8, **no provider knowledge** · **T9b** the 3 per-provider usage-API adapters (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
 - **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4). **Also finishes** the `scripts/offline_acceptance.sh` feature-on connect-ACTION network test (the connect action reaches only the authorized host · the secret lands only in the keychain · disconnect leaves no residue — replaces the `T9/T10` STUB at the script's tail). The 0.4.0 release itself is cut by **T10b**.
-- **T10b — Release v0.4.0 (connections)** · ⛔ · S · Prereq T9, T10 + the ⛔ legal review signed off → **cuts v0.4.0** — the release-mechanics cap on Step 4 (the connections analogue of T1, which cut v0.2.0). Version bump 0.3.0→0.4.0 across the **five** `[workspace.dependencies]` constraints (now incl. `costroid-connect` — the §11.5 T1 lockstep gotcha now covers 5 crates) + `Cargo.lock` + CHANGELOG + README/SECURITY release line; `dist plan` / host `dist build` dry-run; then the human tags + runs the **extended** crates.io ladder `focus → providers → core → connect → cli`. **Carded at §12.10.**
+- **T10b — Release v0.4.0 (connections)** · ⛔ · S · Prereq T9, T10 + the ⛔ legal review signed off → **cuts v0.4.0** — the release-mechanics cap on Step 4 (the connections analogue of T1, which cut v0.2.0). Version bump 0.3.0→0.4.0 across the **four** `[workspace.dependencies]` constraints (now incl. `costroid-connect`; the CLI has no entry — the §11.5 T1 lockstep gotcha, with all **5** `version.workspace` members bumping together) + `Cargo.lock` + CHANGELOG + README/SECURITY release line; `dist plan` / host `dist build` dry-run; then the human tags + runs the **extended** crates.io ladder `focus → providers → core → connect → cli`. **Carded at §12.10.**
 - **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
 - **T14 Budget 📌 · T15 Forecast 📌 · T16 Anomalies 📌 · T17 Alerts ⛔📌** — 📌 budget persistence schema · forecast algorithm · anomaly baseline · alert thresholds + copy → **0.5.0**
 - **T18+ — egui taskbar** · ⛔ · Prereq T2–T6 (CLI feature-complete) — greenfield: needs a GUI design first, then per-tab fan-out → **0.6.0**
@@ -433,6 +433,8 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 ### 11.5 Decisions & limitations (living log)
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**✅ DOC-CURRENCY SWEEP (2026-06-10, the follow-up to the fix pass below; no task card) — the 2026-06-10 status review's remaining findings closed.** Doc-currency fixes across all md files: **8 doc-vs-code drifts, all doc-side** (the code was already correct; the docs were trued to it). Alongside the doc fixes: SECURITY.md truthed + a new **online `advisories` CI job** (`cargo deny check advisories` — the advisory-DB fetch lives in its own job, outside the offline gates); Costroid-generated text reaching `--plain` **and `RenderMode::Ascii`** output made **pure ASCII** (the em-dash provider notes; the Ascii-mode frontier header / point-note em-dashes) with a test pin; the FOCUS-conformance gate's allowlist **tightened to exact-match**; and the T9 pin proposal landed in-repo at `docs/proposals/T9-PIN-PROPOSAL.md` as **PROPOSED** (⛔ sign-off still pending — the §5/§8 classifications stay unchanged until it lands; see the §8 Antigravity research note).
 
 **✅ FIX PASS (2026-06-10, full 12-leg gate green) — a cross-cutting 35-finding remediation from a whole-repo review (no task card; correctness + guard-hardening + doc-currency, no new features, T9 untouched).** Files: all four lib crates + `apps/cli` + `offline.rs` + the three scripts + `ci.yml` + 6 new fixtures + `scripts/focus-ruleset/` + 6 docs. **209 tests** (was 190), 23 snapshots (12 updated in place). Highlights, worst-first:
 - **Quota-integrity code fixes:** `--plain`/plain-statusline now carry the warn/critical textual cue on `Available`/`Partial` (in plain, the cue is the ONLY signal — a bare "97%" was a color-alone violation); an epoch-sentinel `captured_at` renders **"capture time unknown"**, never a bogus "as of 00:00" (Claude cache missing `captured_at`, or a timestamp-less Codex entry, while the reading stays usable); Codex `used_percent` is now **raw-range-sanitized** like Claude's (out-of-range ⇒ measure `None`, never a Verified "900% !!"); `choose_limit` keeps the **latest `captured_at`**, not the last-scanned root (multi-root staleness inversion; sentinel loses to any real stamp; ties keep scan order); `parse_codex_limits` parses the two windows **independently** (a lone `primary` no longer drops); **measure-carrying `Partial` arms now carry the freshness stamp** — this *revises the T6 "no stamp on Partial" decision*: a Verified reading with an unparseable reset maps to `Partial` forever (the `resets_at` age-out can never reach it), so without a stamp an arbitrarily old % rendered with zero age signal.
@@ -468,7 +470,7 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 **✅ T7 DONE (2026-06-06, gate green, 177 tests, ⛔-approved) — `costroid-connect` infra + the re-scoped no-network guarantee. Opens the 0.4.0 connections line. Files: new `crates/costroid-connect/` (empty leaf); `Cargo.toml` (member + `workspace.dependencies` entry); `apps/cli/Cargo.toml` (the `connect` feature + optional dep); `deny.toml`; `apps/cli/tests/offline.rs`; `scripts/offline_acceptance.sh`.**
 - **The `connect` feature lives on `apps/cli`, not the root (card-deviation, the only valid home).** The card said "root `Cargo.toml` … `[features] connect = []`", but the root is a **virtual** workspace manifest (no `[package]`), so `[features]` cannot live there. Placed it on `apps/cli` as `connect = ["dep:costroid-connect"]` + `costroid-connect = { workspace = true, optional = true }` — matching CLAUDE.md / ARCHITECTURE §5 / RELEASING.md:121 (`app → costroid-connect → core`; the CLI depends on connect, connect publishes after core). `apps/cli/Cargo.toml` is a manifest, not a `.rs` source change, so it's inside the scope fence's "no source changes to … cli beyond the test". **Fixed the §2 dependency-direction drift** (it read `core → connect`; corrected to the apps-gated `app → connect → {core, focus}`). `costroid-connect` ships as an **empty leaf** (no deps) — keychain (`keyring`, T8) and HTTP (`ureq`+`rustls`, T9) land later; adding `core`/`focus` deps now would be dead weight.
 - **`offline.rs` re-scoped to a two-tier check over the *resolved* graph, not `cargo metadata`'s `packages` superset.** Verified empirically that `packages` lists optional deps **regardless of feature**, so it cannot distinguish the default build from the `connect` build (and would falsely flag `ureq` in T9 even with the feature off). The new helper walks the resolved dependency graph (`resolve.nodes` `deps[].pkg`) from every workspace member **except `costroid-connect`** (the gated home — reached only as a *dependency* when `connect` is on). Two tests: (1) **default build** forbids the full network/TLS/telemetry list **including** the sanctioned trio `ureq`/`rustls`/`keyring`, **and asserts `costroid-connect` is not linked**; (2) **`--features connect`** forbids only the always-banned set (async runtimes, OpenSSL, other HTTP clients, all telemetry) — the trio is permitted — **and asserts `costroid-connect` is linked**. The trio is intentionally **not** asserted *present* (T7's crate is empty; T8/T9 add them). CI already runs both via `cargo test -p costroid --test offline`.
-- **`deny.toml` scopes the trio via `wrappers` (⛔-approved: keep the guard now).** `openssl`/`openssl-sys`/`native-tls` stay banned **globally, no exception**; added `{ name = "ureq"/"rustls"/"keyring", wrappers = ["costroid-connect"] }` — allowed **only** when their direct parent is `costroid-connect`. **Known: this emits 3 benign `unused-wrapper` warnings** until the crates land (and, with `all-features = false`, even after — so T9 must add an `--all-features`/`connect`-on deny pass for the guard to actually fire; noted in the `deny.toml` comment). `cargo deny check licenses bans` still exits **0**.
+- **`deny.toml` scopes the trio via `wrappers` (⛔-approved: keep the guard now).** `openssl`/`openssl-sys`/`native-tls` stay banned **globally, no exception**; added `{ name = "ureq"/"rustls"/"keyring", wrappers = ["costroid-connect"] }` — allowed **only** when their direct parent is `costroid-connect`. **Known: this emits 3 benign `unused-wrapper` warnings** (2 since T8 — keyring's wrapper now fires) until the crates land (and, with `all-features = false`, even after — so T9 must add an `--all-features`/`connect`-on deny pass for the guard to actually fire; noted in the `deny.toml` comment). `cargo deny check licenses bans` still exits **0**.
 - **`scripts/offline_acceptance.sh`** header re-scoped to "the **default** build, `connect` **OFF**" (it already builds `-p costroid` with default features = the local-only path); added a clearly-commented **STUB** for the feature-on network test (T8/T9: build `--features connect`, exercise an explicit `connect` action, assert outbound traffic only to the authorized host + **no secret written to disk/config/logs** + clean `disconnect`). The stub is a non-executed placeholder, so the script still PASSES.
 - **No change to CI or README** (T7's code adds no user-facing behavior; SECURITY.md:54's "re-scoped … when connections land" stays accurate — the actual `connect` *action* arrives in T10/0.4.0).
 - **Follow-up doc-currency audit (2026-06-07).** A full md-canon sweep (all 10 docs vs the golden rules / auth ladder / no-network / keychain / `--plain` / sequencing) then refreshed the docs for T7's as-built reality **and the v0.3.0 tag**: CLAUDE.md (workspace tree + crate bullet + dependency-direction now shows the apps→connect edge + build-status now "v0.3.0 tagged, T7 landed"), ARCHITECTURE §5 (costroid-connect moved out of "Planned crates" → exists as an off-by-default skeleton; dependency-direction + offline re-scope updated), RELEASING.md (connect is now a workspace member, unpublished; only `costroid-bar` is still absent), SECURITY.md (release line 0.2.x→0.3.x, version-agnostic signing note, `costroid-connect` added to the in-scope crates), §0 ground-truth (177 tests, the two-tier forbidden-crates test, "Not built yet" re-attributed to T8+), STATUSLINE-CAPTURE-BRIEF (offline test now two-tier; flagged the unbuilt `opus_weekly` design-intent), and **DESIGN-SYSTEM §now-mockup — fixed a canon violation: it drew Cursor with a confident `92%` amber meter, contradicting Cursor's detect-only/"unavailable" invariant; the amber+`!` near-limit illustration moved onto Claude's 5h (a real token-fraction meter) and Cursor now renders `unavailable — no sanctioned source`.** README/CHANGELOG/DATA-MODEL verified consistent, no change needed.
@@ -617,7 +619,7 @@ Rules:
 **Next:** independent — blocks nothing (modulo the tag-point caveat above).
 ```
 
-### 12.2 — T2 · Quota data-model foundation · M · Prereq: none — *the lynchpin; do first*
+### 12.2 — T2 · Quota data-model foundation · M · Prereq: none — *the lynchpin; do first* · ✅ **DONE (gate green, 138 tests — see §11.5)**
 
 ```
 **Goal:** generalize the quota types so every later provider/feature fits ONE shape (§2a). Pure
@@ -661,7 +663,7 @@ Rules:
   `LimitAvailability` variants.
 ```
 
-### 12.3 — T3 · Capability descriptor · S · Prereq: T2
+### 12.3 — T3 · Capability descriptor · S · Prereq: T2 · ✅ **DONE (gate green, 139 tests — see §11.5)**
 
 ```
 **Goal:** make each provider DECLARE its data sources / auth / quota shape (§2b) so unavailability
@@ -685,7 +687,7 @@ Rules:
 **Next:** the Providers tab (T11) + deferred adapters (Copilot/Antigravity) rely on Capability.
 ```
 
-### 12.4 — T4 · Claude statusLine capture: cache + cross-check · L · Prereq: T2 · 📌
+### 12.4 — T4 · Claude statusLine capture: cache + cross-check · L · Prereq: T2 · 📌 · ✅ **DONE (2026-06-06, gate green, 154 tests — see §11.5)**
 
 ```
 **Spec:** docs/STATUSLINE-CAPTURE-BRIEF.md — read it fully; it IS the design (§4a provider / §4b
@@ -713,7 +715,7 @@ Rules:
 **Next:** Claude windows carry real captured_at + status → T6 renders them; 0.3.0 needs T6.
 ```
 
-### 12.5 — T5 · `setup-statusline` + `--capture-only` · M · ⛔ (public CLI surface) · Prereq: T4 · 📌
+### 12.5 — T5 · `setup-statusline` + `--capture-only` · M · ⛔ (public CLI surface) · Prereq: T4 · 📌 · ✅ **DONE (2026-06-06, gate green, ⛔-approved — see §11.5)**
 
 ```
 **Spec:** docs/STATUSLINE-CAPTURE-BRIEF.md (the setup-statusline section).
@@ -793,7 +795,7 @@ Rules:
 
 ### 12.8 — Backlog tasks (T9+): the pin-then-card prompt
 
-*T9–T18 aren't carded — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
+*T9–T18 aren't carded (except T10b, whose release mechanics are knowable; carded at §12.10) — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
 
 ```
 Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
@@ -881,17 +883,19 @@ Your job is to PIN + CARD it, not to build it:
 
 ```
 **Goal:** ship the connections line as v0.4.0 — the first network release (opt-in, off by default).
-**Files:** Cargo.toml ([workspace.package].version + the FIVE [workspace.dependencies] internal
-  constraints, now incl. costroid-connect); Cargo.lock (refresh); CHANGELOG.md (0.4.0 entry);
+**Files:** Cargo.toml ([workspace.package].version + the FOUR [workspace.dependencies] internal
+  constraints, now incl. costroid-connect — the `costroid` CLI has no entry); Cargo.lock (refresh); CHANGELOG.md (0.4.0 entry);
   README.md + SECURITY.md (release-line wording 0.3.x → 0.4.x); RELEASING.md (extend the crates.io
   ladder). Do NOT tag/push/publish.
 **Scope fence:** version bump + lockfile + CHANGELOG + README/SECURITY release wording + the
   RELEASING.md ladder line ONLY. NO code changes in apps/ or crates/; NO edits to .github/ or
   dist-workspace.toml (but DO verify them — see Deliverables). Do NOT tag/push/publish.
-**Deliverables:** bump 0.3.0→0.4.0 — `[workspace.package].version` **and** the FIVE
-  `[workspace.dependencies]` constraints (`costroid-core/-focus/-providers/-connect = { …, version }`
-  — the new `costroid-connect` entry now rides the same lockstep bump the §11.5 T1 lesson logged for
-  the original four; a stale `^0.3.0` won't resolve against 0.4.0); `cargo update --workspace`;
+**Deliverables:** bump 0.3.0→0.4.0 — `[workspace.package].version` **and** the FOUR
+  `[workspace.dependencies]` internal constraints (`costroid-core/-focus/-providers/-connect =
+  { …, version }` — the new `costroid-connect` entry now rides the same lockstep bump the §11.5 T1
+  lesson logged for the original three; the `costroid` CLI has no constraints entry, though all FIVE
+  `version.workspace` members move together; a stale `^0.3.0` won't resolve against 0.4.0);
+  `cargo update --workspace`;
   CHANGELOG 0.4.0 entry (connections: opt-in own-key usage-API reconciliation + connect/disconnect +
   the Connections view; off by default, the default build still makes zero network calls); flip
   README/SECURITY release line to 0.4.x; extend the RELEASING.md crates.io ladder to

@@ -56,7 +56,7 @@ track = W − full − (1 if half else 0)        # `⣀` cells
 (This is `meter_segments` in render.rs — floor plus a half-cell, **not** `round(f * W)` full cells; the min-visibility cell is the half-cell `⡇`, never a full `⣿`.)
 
 - Render `full` as `⣿`, the boundary `half` (when present) as left-column `⡇`, and the `track` as the light glyph `⣀` (dots 7,8 only) — never a full cell. As shipped, fill and track render in a single span sharing the line's style (plain, or amber/red near limit) — the **glyph shapes** distinguish used from remaining, so the meter reads correctly under `NO_COLOR` and color-blindness alike.
-- **Thresholds** (fixed consts today — `WARN_FRACTION`/`CRITICAL_FRACTION` in render.rs; configurability arrives with the planned config file): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber and a `!` cue is appended after the percentage. At ≥ critical (or `f ≥ 1.0`, over limit), used color = red and the cue is `!!` (and `OVER` when `f ≥ 1.0`). The cue is what makes the state readable without color.
+- **Thresholds** (fixed consts today — `WARN_FRACTION`/`CRITICAL_FRACTION` in render.rs; configurability arrives with the planned config file): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber; at ≥ critical (or `f ≥ 1.0`, over limit), used color = red. The cue is what makes the state readable without color, and **the exact cue string is per render mode** (as built — `state_cue` / `plain_state_phrase` in render.rs): in `Braille` **and** `Ascii` modes the cue appended after the percentage is ` !` (warn) / ` !!` (critical) / ` !! OVER` (over); in `Plain` mode (no meter at all) the cue is spelled out as ` (near limit)` / ` (critical)` / ` (over limit)`. Below warn there is no cue in any mode.
 - **Unverified (cross-check-failed) reading.** When a quota reading fails the `rate_limits` sanitize/cross-check (ARCHITECTURE §9.2), the meter draws in a **neutral (non-alarm) color** — never amber/red even at a near-max fraction — and the threshold `!`/`!!`/`OVER` cue is replaced by the distinct color-free cue ` ? unverified`. A maxed-looking but unverified reading must never render as a confident alarm.
 - **Freshness stamp.** Every `Available`/`Unverified` — and measure-carrying `Partial` — reading that is at least ~10 minutes older than the render carries an always-on `as of HH:MM` (UTC) stamp, so an hours-old cached reading never renders as a bare, confident meter. A reading with no recorded capture instant discloses `capture time unknown` instead.
 - Always show the percentage and reset countdown beside the meter: `⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀ 78%  resets 2h 14m`.
@@ -104,19 +104,29 @@ Bright `⣿` for `filled`, the dim **track glyph `⣀`** for the rest (shape-dis
 
 ### Statusline glyph (`costroid statusline`)
 
-A single line, no newline, fast — for shell prompts, tmux, Starship. Side-effect-free on interactive stdin; with piped stdin (Claude Code's `statusLine` JSON) it opportunistically captures the `rate_limits` block into the local no-secret cache first (T5 path 2). It shows the current-period spend and the **most-constrained** limit as a short meter. Format is a template of tokens:
+A single line, no newline, fast — for shell prompts, tmux, Starship. Side-effect-free on interactive stdin; with piped stdin (Claude Code's `statusLine` JSON) it opportunistically captures the `rate_limits` block into the local no-secret cache first (T5 path 2). It shows the current-period spend and the **most-constrained** limit as a short meter.
+
+**As shipped**, the statusline emits **one fixed layout** — mark, hedged spend, a short meter (`STATUS_BAR_WIDTH = 4` cells, same fill rules as the limit meter), percentage, state cue, and compact reset — and its only flags are `--capture-only` and `--wrap '<cmd>'`:
 
 ```
+C⠉ ~$4.18  ⣿⣿⣿⣀ 78% 2h14m          (meter+pct turn amber with a ! at ≥ warn; an
+                                     unverified pick gets a neutral meter + ? unverified)
+```
+
+Honors `NO_COLOR`/`--plain` (ASCII/plain variants under Accessibility).
+
+> **PLANNED — not built.** The `--format <template>` flag and the preset table below do **not** exist yet; the table documents design intent for the future flag only. Nothing in it describes shipped behavior.
+
+```
+planned presets — not built
 tokens:  {mark} {spend} {meter} {pct} {reset} {tool}
 default: "{mark} {spend}  {meter} {pct} {reset}"
-        → "C⠉ $4.18  ⣿⣿⣿⣀ 78% ⟳2h14m"     (meter+pct turn amber with a ! when near limit)
+        → "C⠉ $4.18  ⣿⣿⣿⣀ 78% ⟳2h14m"
 compact: "{mark} {spend} {pct}"
         → "C⠉ $4.18 78%"
 minimal: "{spend}"
         → "$4.18"
 ```
-
-The inline `{meter}` is a short run (default 4 cells) using the same fill rules as the limit meter. Honors `NO_COLOR`/`--plain` (ASCII variant below). **The `--format <template>` flag and the compact/minimal presets above are PLANNED, not yet built** — the shipped statusline emits one fixed layout, and its only flags are `--capture-only` and `--wrap` (the template/preset table documents design intent for the future flag).
 
 ### Spinner
 
@@ -138,7 +148,6 @@ C⠉ costroid                                   this week  $42.18
 limits
   claude code   5h   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀  92% ! resets 41m     ← amber + ! cue
                 wk   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀  78%   resets 2d 6h
-  cursor        wk   unavailable — no sanctioned source        ← detect-only: never a fabricated %
 ────────────────────────────────────────────────────────────────
 api costs (this week)
   claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $24.10
@@ -146,9 +155,12 @@ api costs (this week)
   sonnet 4.6        ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀   $6.78
 ────────────────────────────────────────────────────────────────
 ◆ opus drove most of your api spend this week. (estimated)
+provider cursor detected: BETA - model Composer 2.5 Fast (composer-2.5), logged in; usage unavailable - no sanctioned source; quota unavailable - no sanctioned source
 ```
 
 Live limit meters (5-hour and weekly, with reset countdowns) on top; current API spend by model below; one colleague insight line at the bottom. Subscription limits and API costs are visually parallel but clearly separate sections — limits carry no dollars.
+
+**Cursor never appears in the limits section.** Detect-only Cursor contributes zero limit windows, so it gets no limits row (and never a fabricated %); its status renders as a **bottom provider note** under the insight line — `push_provider_notes` in render.rs formats `provider cursor detected: <message>`, where the message is built by `cursor_detected_message` in costroid-core (`BETA - {model}, {login}; usage unavailable - no sanctioned source; quota unavailable - no sanctioned source`). The same note slot carries every non-`Available` provider's status (partial / missing / error), inline and non-fatal.
 
 ### trends
 
@@ -196,22 +208,23 @@ q / Ctrl-C      quit (always restores the terminal)
 
 ## Accessibility
 
-`--plain` produces no color, no braille, plain ASCII, in a linear top-to-bottom reading order with every value labeled and carrying its unit and context — built to be read aloud by a screen reader. Mode selection (the `--plain` flag, TTY detection, `NO_COLOR`, and a braille-capability check) is in ARCHITECTURE.md.
+`--plain` produces no color, no braille, in a linear top-to-bottom reading order with every value labeled and carrying its unit and context — built to be read aloud by a screen reader. The ASCII guarantee, precisely (as built and test-pinned — `plain_mode_output_is_pure_ascii` / `ascii_mode_output_is_pure_ascii` in render.rs): every **Costroid-generated** byte in `Plain` and `Ascii` output is pure ASCII; **provider-supplied names** (models, projects) pass through verbatim, so a provider's non-ASCII name appears as-is. Mode selection (the `--plain` flag, TTY detection, `NO_COLOR`, and a braille-capability check) is in ARCHITECTURE.md.
 
-**The no-color-only rule:** the amber/red warning state is **always** paired with a textual cue (`!`, `!!`, `OVER`, or a word like `near limit`), so it survives `NO_COLOR`, color-blindness, and `--plain`. The **unverified** state is likewise carried by its own color-free cue ` ? unverified` (shown instead of `!`/`!!`), with a neutral meter, so a cross-check-failed reading never reads as a confident alarm even without color.
+**The no-color-only rule:** the amber/red warning state is **always** paired with a textual cue, so it survives `NO_COLOR`, color-blindness, and `--plain`. The exact strings as built (see the threshold spec above): `Braille`/`Ascii` append ` !` / ` !!` / ` !! OVER` after the percentage; `Plain` spells out ` (near limit)` / ` (critical)` / ` (over limit)`. The **unverified** state is likewise carried by its own color-free cue ` ? unverified` (shown instead of the state cue, in every mode), with a neutral meter, so a cross-check-failed reading never reads as a confident alarm even without color.
 
 > **Forward note — the egui taskbar (`apps/bar`, Step 6, planned).** The richest surface, the egui/eframe (+ `tray-icon`) taskbar app, is a later deliverable; its visual design is not specified here yet (design TBD — no detailed mockups). It shares the same semantic states defined above: the amber warning state still needs a second, non-color cue (icon/badge/text), and `--plain` has no analogue in a GUI but the equivalent obligation holds via **AccessKit** for screen readers. Scope and sequencing for this surface are governed by [PRODUCT-PLAN.md](PRODUCT-PLAN.md) (§2d / §4, Step 6).
 
 **ASCII substitutes per component:**
 
 ```
-limit meter   "[##########--] 78% (near limit) resets 2h 14m"   # '#' used, '-' remaining; --plain drops the bar: "claude code 5h: 78% used (near limit), resets in 2h 14m"
-unverified    "claude code 5h: 92% used ? unverified, resets in 41m  as of 14:03"   # neutral, no alarm word
-spend pool    "copilot mo: $3.20 / $10.00 used, resets in 5d"     # dollar line, no meter, no %
+limit meter   Ascii: "[###########-] 92% !  resets 41m"           # '#' used, '+' half-cell, '-' remaining; same ! / !! / !! OVER cues as braille
+              Plain (no bar): "claude code 5h: 92% used (near limit), resets in 41m"   # cue spelled out: (near limit) / (critical) / (over limit)
+unverified    "claude code 5h: 92% used ? unverified, resets in 41m  as of 14:03"   # neutral, no alarm word (same ? unverified cue in every mode)
+spend pool    "copilot mo: $3.20 / $10.00 used, resets in 5d"     # dollar line, no meter, no % — illustrative of the Spend variant only: Copilot is discovery-gated, not shipped
 estimated     "claude code 5h: usage 412,000 tokens (~$1.10, estimated), quota % unavailable"
 sparkline     prefer a labeled numeric list; or an ASCII height ramp .:-=+*#
 cost bar      "claude opus 4.8   $24.10   (57%)"                 # no bar, or "####"
-statusline    "costroid $4.18  78% used, resets in 2h14m"
+statusline    Ascii: "costroid ~$4.18  [###-] 78% 2h14m"          Plain: "costroid ~$4.18, claude code 5h 78% used, resets in 2h14m"
 spinner       "| / - \"  or  "working..."
 ```
 

@@ -80,7 +80,7 @@ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warni
 
 ```bash
 cargo install cargo-dist                 # provides the `dist` binary
-dist init                                 # one-time: writes dist config + the GitHub Actions release workflow
+dist init                                 # one-time bootstrap — ALREADY RUN (dist-workspace.toml + release.yml exist); rerun only to change dist config
 dist build                                # build installers/archives locally to verify
 # Releases are then cut by pushing a version tag; CI builds and publishes the installers,
 # the Homebrew tap, and the npm wrapper, each artifact checksummed + build-provenance-attested.
@@ -130,7 +130,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` carries its
 
 **Lockfile:** commit `Cargo.lock` — Costroid is an application (it ships the `costroid` binary), so the lockfile is tracked for reproducible, verifiable builds; ensure `.gitignore` ignores `/target` but not `Cargo.lock`.
 
-**Dependencies:** prefer lean, well-maintained, permissively-licensed crates. Use `rustls`, not OpenSSL, for TLS. Recommended (not required): `cargo deny` for license + advisory checks in CI.
+**Dependencies:** prefer lean, well-maintained, permissively-licensed crates. Use `rustls`, not OpenSSL, for TLS. `cargo deny` is a **required** CI gate (policy in `deny.toml`): licenses + bans run offline in the `license` job; advisories run in a dedicated online `advisories` job.
 
 **Config (planned convention — no config system is built yet):** when one lands, it is a TOML config under the XDG config dir (e.g. `~/.config/costroid/config.toml`), with sensible zero-config defaults; today everything runs zero-config on built-in consts. **Secrets never go in config** — keychain only.
 
@@ -160,8 +160,8 @@ Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-
 ### Built and shipped (v0.1.0 → v0.2.0)
 
 1. **Core + workspace.** `costroid-core` / `costroid-focus` / `costroid-providers` (Claude + Codex), verified to the cent vs ccusage. *Shipped (v0.1.0).*
-2. **TUI + full cost picture.** `now` / `trends`, subscription + API, filter, per-lane totals, export; Cursor **detection only** (beta); subscription quota graceful. (The TOML config file remains planned — zero-config today.) *Shipped (v0.1.0).*
-3. **Frontier / recommendation view (`costroid frontier`).** The `bench` module: the cost-vs-quality frontier + the user's position, scoped to what the data honestly supports; advisory, sourced, **API-cost rows only**. *Built and gate-green.*
+2. **TUI + full cost picture.** `now` / `trends`, subscription + API, filter, per-lane totals, export; Cursor **detection only** (beta); subscription quota graceful. (The TOML config file remains planned — zero-config today.) *Shipped (v0.1.0; the Cursor detect-and-defer (beta) + WSL Windows-root auto-detect refinements landed in v0.2.0).*
+3. **Frontier / recommendation view (`costroid frontier`).** The `bench` module: the cost-vs-quality frontier + the user's position, scoped to what the data honestly supports; advisory, sourced, **API-cost rows only**. *Shipped (v0.2.0).*
 4. **Status-line emitter.** `costroid statusline` (tmux / Starship / Claude Code `statusLine`). *Emitter shipped (v0.1.0).*
 
 ### Planned — the spine
@@ -170,21 +170,21 @@ The full step sequence (goals, deliverables, acceptance, and the generalized-quo
 
 ### Acceptance criteria (the local cost + quota product)
 
-- [ ] Workspace builds; `cargo install --path apps/cli` installs a working `costroid` binary.
-- [ ] Detects installed providers (Claude Code, Codex, Cursor) by locating their local data, including WSL→Windows paths; degrades gracefully when a provider is absent.
-- [ ] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check), T5 the *writer* (`setup-statusline` + `statusline --capture-only`, atomic no-secret cache), and T6 the *render* (all five `LimitAvailability` arms, the `? unverified` cue, the `Spend` dollar line, the "as of HH:MM" stamp, and the claude.ai chat caveat) — so Claude live quota now surfaces end to end; Codex's from local windows today; Cursor quota is detect-and-defer).
-- [ ] `costroid trends`: `--period day|week|month|year` and `--group model|app|total` both work.
-- [ ] `costroid --live`: refreshes in place; `q`/Ctrl-C exits cleanly; works over SSH and inside tmux.
-- [ ] `costroid statusline`: emits a compact one-line status suitable for a shell prompt, tmux, or Starship; `costroid setup-statusline` wires Claude Code's `statusLine` for live quota.
-- [ ] `costroid frontier`: shows the cost-vs-quality frontier and the user's position; advisory, sourced, **API-cost rows only**; un-benchmarked models shown as gaps, never guessed.
-- [ ] `costroid export`: emits FOCUS 1.3-conformant records (`--format json|csv`) that validate against the schema in `docs/DATA-MODEL.md`.
-- [ ] `--plain`: every screen renders in ASCII, no color, no braille, identical data, screen-reader-friendly.
-- [ ] Pricing comes from bundled curated JSON; the tool works fully offline; all cost figures are labeled estimates.
-- [ ] Subscription limits and API costs are modeled separately (limits are not summable dollars); a model used both ways appears in both, marked by access path.
-- [ ] Live Claude quota from the `statusLine` `rate_limits` field is **sanitized + cross-checked** and degrades to "unavailable"/"unverified", never a confident wrong number (ARCHITECTURE §9.2).
-- [ ] Zero telemetry; zero unauthorized network calls.
-- [ ] Ships via cargo-dist (shell + PowerShell installers + Homebrew tap + npm wrapper, each artifact checksummed and build-provenance-attested; tag-triggered release in CI) and crates.io (`cargo install costroid` / `cargo binstall costroid`). (Scoop unsupported by cargo-dist — see RELEASING.md.)
-- [ ] CI green: fmt + clippy + test + FOCUS-conformance + `cargo deny` + the strace offline-acceptance test (which proves the default/local-only build makes zero network calls — re-scoped in T7 to the default/local path, T8 added a feature-on baseline that asserts a normal `--features connect` run leaks no network and writes no `$HOME` residue, with the connect-ACTION + network half still a stub until T9/T10) + the forbidden-crates test (a two-tier resolved-graph check since T7: the default build forbids the sanctioned `ureq`/`rustls`/`keyring` trio; `--features connect` admits only it — and since T8 actively asserts `keyring` is linked, with `ureq`/`rustls` still forward-looking until T9).
+- [x] Workspace builds; `cargo install --path apps/cli` installs a working `costroid` binary.
+- [x] Detects installed providers (Claude Code, Codex, Cursor) by locating their local data, including WSL→Windows paths; degrades gracefully when a provider is absent.
+- [x] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check), T5 the *writer* (`setup-statusline` + `statusline --capture-only`, atomic no-secret cache), and T6 the *render* (all five `LimitAvailability` arms, the `? unverified` cue, the `Spend` dollar line, the "as of HH:MM" stamp, and the claude.ai chat caveat) — so Claude live quota now surfaces end to end; Codex's from local windows today; Cursor quota is detect-and-defer).
+- [x] `costroid trends`: `--period day|week|month|year` and `--group model|app|total` both work.
+- [x] `costroid --live`: refreshes in place; `q`/Ctrl-C exits cleanly; works over SSH and inside tmux.
+- [x] `costroid statusline`: emits a compact one-line status suitable for a shell prompt, tmux, or Starship; `costroid setup-statusline` wires Claude Code's `statusLine` for live quota.
+- [x] `costroid frontier`: shows the cost-vs-quality frontier and the user's position; advisory, sourced, **API-cost rows only**; un-benchmarked models shown as gaps, never guessed.
+- [x] `costroid export`: emits FOCUS 1.3-conformant records (`--format json|csv`) that validate against the schema in `docs/DATA-MODEL.md`.
+- [x] `--plain`: every screen renders in ASCII, no color, no braille, identical data, screen-reader-friendly.
+- [x] Pricing comes from bundled curated JSON; the tool works fully offline; all cost figures are labeled estimates.
+- [x] Subscription limits and API costs are modeled separately (limits are not summable dollars); a model used both ways appears in both, marked by access path.
+- [x] Live Claude quota from the `statusLine` `rate_limits` field is **sanitized + cross-checked** and degrades to "unavailable"/"unverified", never a confident wrong number (ARCHITECTURE §9.2).
+- [x] Zero telemetry; zero unauthorized network calls.
+- [x] Ships via cargo-dist (shell + PowerShell installers + Homebrew tap + npm wrapper, each artifact checksummed and build-provenance-attested; tag-triggered release in CI) and crates.io (`cargo install costroid` / `cargo binstall costroid`). (Scoop unsupported by cargo-dist — see RELEASING.md.)
+- [x] CI green: fmt + clippy + test + MSRV check + FOCUS-conformance + `cargo deny` (licenses + bans, offline, in the `license` job; advisories in a dedicated **online** `advisories` job) + the strace offline-acceptance test (which proves the default/local-only build makes zero network calls — re-scoped in T7 to the default/local path, T8 added a feature-on baseline that asserts a normal `--features connect` run leaks no network and writes no `$HOME` residue, with the connect-ACTION + network half still a stub until T9/T10) + the forbidden-crates test (a two-tier resolved-graph check since T7: the default build forbids the sanctioned `ureq`/`rustls`/`keyring` trio; `--features connect` admits only it — and since T8 actively asserts `keyring` is linked, with `ureq`/`rustls` still forward-looking until T9).
 
 **Acceptance test:** on a machine with real Claude Code / Codex / Cursor logs and **networking disabled**, `costroid`, `costroid trends --period month --group model`, `costroid frontier`, `costroid export --format json`, and `costroid --plain` all produce correct output.
 
@@ -200,9 +200,9 @@ Network + credential code lives **only** in `costroid-connect` (feature-gated, o
 
 **Step 4 (v0.4.0) — Connections.**
 
-- [ ] `costroid connect/disconnect <provider>` plus a Connections view that lists what is linked and supports instant disconnect/revoke; nothing is stored outside the keychain.
-- [ ] Tokens/keys stored **only** in the OS keychain (`keyring`); HTTP via `ureq` + `rustls`, strictly device↔provider, never via a server.
-- [ ] All network calls limited to provider endpoints the user authorized; still no telemetry.
+- [ ] `costroid connect/disconnect <provider>` plus a Connections view that lists what is linked and supports instant disconnect/revoke; nothing is stored outside the keychain. *(T10 — not started; nothing in `apps/cli` calls `costroid-connect` yet.)*
+- [ ] Tokens/keys stored **only** in the OS keychain (`keyring`); HTTP via `ureq` + `rustls`, strictly device↔provider, never via a server. *(Keychain half **done** — T8's `CredentialStore` on `keyring`, secrecy-wrapped; the `ureq` + `rustls` HTTP half lands in T9 — neither crate is linked today.)*
+- [ ] All network calls limited to provider endpoints the user authorized; still no telemetry. *(No network code exists yet — T9.)*
 
 **Step 5 (v0.5.0) — alerts.**
 

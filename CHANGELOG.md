@@ -11,6 +11,56 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
+Groundwork for the 0.4.0 connections line, plus a cross-cutting review fix pass. Nothing
+here turns networking on: the new `costroid-connect` crate is feature-gated and **off by
+default** (the default `costroid` binary does not even link it), there is no user-facing
+connect flow until v0.4.0, and the default build still makes zero network calls — now
+proven by stricter guards.
+
+### Added
+
+- **`costroid-connect` crate skeleton (feature-gated, off by default)** — the single
+  future home of all network and credential code. With it, the no-network guarantee is
+  re-scoped into a two-tier guard over the resolved dependency graph: the default build
+  is proven to link no networking, TLS, or keychain code at all (and no
+  `costroid-connect`), while a `--features connect` build may admit only the sanctioned
+  `ureq`/`rustls`/`keyring` trio.
+- **OS-keychain credential store** in `costroid-connect` — `CredentialStore` keeps your
+  own usage/billing API keys only in the OS keychain (via `keyring`, secrets wrapped in
+  `secrecy`), alongside a non-secret `ConnectionRegistry` index and the `ApiVendor`
+  billing-vendor axis. Library-only and off by default: no network and no CLI yet — the
+  HTTP client and the `costroid connect`/`disconnect` commands arrive with v0.4.0. The
+  offline-acceptance gate gains a feature-on baseline proving that even a
+  `--features connect` run makes zero network calls and writes no stray files to `$HOME`.
+- **MSRV CI job** — the documented minimum supported Rust version (Rust 1.88) is now
+  built in CI.
+- **Security-advisory CI job** — `cargo deny check advisories` now runs in CI as a
+  dedicated online job (CI-only; the shipped tool is unchanged and still makes no
+  network calls).
+- **T9 usage-API endpoint pins** recorded in-repo as a proposal
+  (`docs/proposals/T9-PIN-PROPOSAL.md`), status **PROPOSED** — awaiting sign-off, not
+  yet scheduled work.
+
+### Fixed
+
+- **`--plain` and the plain statusline carry a textual warning/critical cue** —
+  `(near limit)` / `(critical)` / `(over limit)`, matching the styled paths' `!` / `!!`
+  — so limit state never relies on color alone.
+- **"capture time unknown"** — a captured quota reading whose timestamp is the epoch
+  sentinel (no observation instant recorded) now renders "capture time unknown" instead
+  of a fabricated "as of 00:00" freshness stamp.
+- **Codex quota readings are raw-range-sanitized** like Claude's: an out-of-range
+  `used_percent` in Codex's local windows is dropped — the window degrades (keeping its
+  reset stamp) rather than rendering a confident wrong number.
+- **The FOCUS-conformance CI gate now performs a real validation.** It had been passing
+  vacuously (the PyPI validator ships no FOCUS 1.3 ruleset, and its crash was
+  swallowed); the official 1.3.0.1 ruleset is now vendored, the checker hard-fails when
+  the validator produces no results, and the known-failure allowlist is matched exactly.
+- **Costroid-generated `--plain` text and Ascii-mode output are pure ASCII (test-pinned)**
+  — the Cursor detect-only note no longer carries em dashes into plain output, and the
+  frontier header / point-note separators no longer carry them into `RenderMode::Ascii`
+  output.
+
 ## [0.3.0] - 2026-06-06
 
 The 0.3.0 milestone: the generalized quota model plus Claude Code's live 5h/7d quota —
