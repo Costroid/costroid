@@ -342,7 +342,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 ### 11.4 The task ledger
 
-*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9a is DONE** (§12.11 / §11.5, gate green 2026-06-10, ⛔-approved); **T9b/T9c and T10+ remain a backlog** that gets expanded into full cards when its Prereq lands (except T10b, whose release mechanics are knowable; carded at §12.10) — their detail depends on decisions not yet made, and speccing them now would fabricate.*
+*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9a is DONE** (§12.11 / §11.5, gate green 2026-06-10, ⛔-approved); **T9b/T9c are now carded** (§12.12/§12.13 — T9b build-ready against the T9a client API as built; T9c real but with its T9b-dependent slots explicitly marked `[fill at T9b landing: …]` rather than fabricated); **T10+ remains a backlog** that gets expanded into full cards when its Prereq lands (except T10b, whose release mechanics are knowable; carded at §12.10) — its detail depends on decisions not yet made, and speccing it now would fabricate.*
 
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
 
@@ -356,7 +356,9 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - [x] **T7** `costroid-connect` infra + CI re-scope — ✅ empty feature-gated crate (gate on `apps/cli`'s `connect`, off by default) + two-tier resolved-graph `offline.rs` (default forbids the trio + connect unlinked; `--features connect` admits only `ureq`/`rustls`/`keyring`) + `deny.toml` `wrappers` scoping + script STUB; gate green, 177 tests (see §11.5)
 - [x] **T8** Keychain credential store — ✅ **DONE 2026-06-09 (gate green, ⛔-approved)**; `costroid-connect` credential store (`ApiVendor`/`CredentialStore`/`ConnectionRegistry`), `keyring` 3.6.3 sync Secret Service, async-io stays banned; pure-library (CLI → T10); see §11.5 ✅ T8
 - [x] **T9a** `costroid-connect` HTTP infra — ✅ **DONE 2026-06-10 (gate green, ⛔-approved)**; the generic authorized-host HTTPS client (`AuthorizedClient`/`AuthHeader`/`HttpResponse`/`RequestLimits`) on blocking `ureq` 3.3.0 + `rustls` (ring), OS-native roots via `rustls-native-certs` (no `webpki-roots`), redirects + proxies disabled, GET/HTTPS-only, secrets redacted; offline.rs asserts the full trio, deny wrappers fire with zero warnings; no caller, no provider knowledge, no `core`/`focus` dep (deferred to T9b); see §11.5 ✅ T9a
-- T9b/T9c + T10+ — backlog (carded when its Prereq lands; T9b is next — card it against the T9a client API as built)
+- [ ] **T9b** the two usage-API adapters (Anthropic + OpenAI) + the Gemini first-class-unavailable state — **carded at §12.12** (2026-06-10, against the T9a client API as built; the next build task)
+- [ ] **T9c** estimate-vs-invoice reconciliation engine (pure core) — **carded at §12.13** (T9b-dependent slots marked `[fill at T9b landing: …]`; fill them when T9b lands)
+- T10+ — backlog (carded when its Prereq lands; T10b already carded at §12.10)
 
 **T2 + T4 + T6 ticked = the 0.3.0 milestone** (Claude live quota + generalized model).
 
@@ -421,7 +423,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 **Backlog — carded when its Prereq lands (📌 must be pinned first):**
 - **T8 — keychain credential store** · ⛔ · Prereq T7 · ✅ **DONE 2026-06-09 (gate green, ⛔-approved) → §12.9 / §11.5** (pure-library; the `costroid connect` CLI + Connections view moved to T10)
-- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — **📌 PINNED + ⛔ SIGNED OFF 2026-06-10** (`docs/proposals/T9-PIN-PROPOSAL.md`; logged in §11.5): **Anthropic** Admin cost/usage reports + **OpenAI** org costs/usage (tier-3 own admin key each) · **Gemini = defer** (no sanctioned static-key usage API → first-class "unavailable"). **Split:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + adds the `ureq`/`rustls` crates so their `deny.toml` wrappers (carried since T7 as forward-looking no-ops) finally fire — clearing the 2 benign `unused-wrapper` warnings — and adds their presence assertions to `offline.rs` (keyring's T8 precedent); ⛔ guarantee-redefinition like T7/T8, **no provider knowledge**; its first `core`/`focus` deps only if the client API actually needs them (else they defer to T9b) — **carded at §12.11; ✅ DONE 2026-06-10 (gate green, ⛔-approved; `core`/`focus` deps deferred to T9b as expected)** · **T9b** the **TWO** per-provider usage-API adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state *(amended from "3 adapters" by the signed-off proposal)* (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm; card when T9a lands) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
+- **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — **📌 PINNED + ⛔ SIGNED OFF 2026-06-10** (`docs/proposals/T9-PIN-PROPOSAL.md`; logged in §11.5): **Anthropic** Admin cost/usage reports + **OpenAI** org costs/usage (tier-3 own admin key each) · **Gemini = defer** (no sanctioned static-key usage API → first-class "unavailable"). **Split:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + adds the `ureq`/`rustls` crates so their `deny.toml` wrappers (carried since T7 as forward-looking no-ops) finally fire — clearing the 2 benign `unused-wrapper` warnings — and adds their presence assertions to `offline.rs` (keyring's T8 precedent); ⛔ guarantee-redefinition like T7/T8, **no provider knowledge**; its first `core`/`focus` deps only if the client API actually needs them (else they defer to T9b) — **carded at §12.11; ✅ DONE 2026-06-10 (gate green, ⛔-approved; `core`/`focus` deps deferred to T9b as expected)** · **T9b** the **TWO** per-provider usage-API adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state *(amended from "3 adapters" by the signed-off proposal)* (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm) — **carded at §12.12** (2026-06-10, against the T9a client API as built) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation) — **carded at §12.13** (T9b-dependent slots marked). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
 - **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 — 📌 connect UX, reconciliation display · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4). **Also finishes** the `scripts/offline_acceptance.sh` feature-on connect-ACTION network test (the connect action reaches only the authorized host · the secret lands only in the keychain · disconnect leaves no residue — replaces the `T9/T10` STUB at the script's tail). The 0.4.0 release itself is cut by **T10b**.
 - **T10b — Release v0.4.0 (connections)** · ⛔ · S · Prereq T9, T10 + the ⛔ legal review signed off → **cuts v0.4.0** — the release-mechanics cap on Step 4 (the connections analogue of T1, which cut v0.2.0). Version bump 0.3.0→0.4.0 across the **four** `[workspace.dependencies]` constraints (now incl. `costroid-connect`; the CLI has no entry — the §11.5 T1 lockstep gotcha, with all **5** `version.workspace` members bumping together) + `Cargo.lock` + CHANGELOG + README/SECURITY release line; `dist plan` / host `dist build` dry-run; then the human tags + runs the **extended** crates.io ladder `focus → providers → core → connect → cli`. **Carded at §12.10.**
 - **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
@@ -551,7 +553,7 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 ---
 
-## 12. Ready-to-paste task prompts (T1–T8, T9a + T10b release)
+## 12. Ready-to-paste task prompts (T1–T8, T9a–T9c + T10b release)
 
 *To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T9+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
 
@@ -808,7 +810,9 @@ Rules:
 
 ### 12.8 — Backlog tasks (T9+): the pin-then-card prompt
 
-*T9–T18 aren't carded (except T10b, whose release mechanics are knowable; carded at §12.10) — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
+*T10–T18 aren't carded (except T10b, whose release mechanics are knowable; carded at §12.10) — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
+
+> **T9 status — this prompt has fully RUN for T9; do not re-run it.** The T9 pins were proposed + ⛔-signed-off 2026-06-10 (`docs/proposals/T9-PIN-PROPOSAL.md`, logged in §11.5), T9a is built (§12.11 ✅), and T9b/T9c are carded (§12.12/§12.13).
 
 ```
 Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
@@ -927,6 +931,10 @@ Your job is to PIN + CARD it, not to build it:
 **Done when:** gate green; `dist plan` lists 0.4.0 across the 6 targets; version + lockfile + CHANGELOG +
   README/SECURITY updated; the RELEASING.md crates.io ladder includes `costroid-connect`; (after your
   tag + the crates.io ladder) release CI succeeds and `cargo install costroid` → 0.4.0.
+**Next:** 0.4.0 is live; the connections line is shipped → Step 5 (analytical tabs + alerts, T11–T17).
+  (0.5.0 / 0.6.0 can be chore-cut like 0.3.0 — they add no new publish-ladder/CI mechanics — unless a
+  later release again changes the published crate set.)
+```
 
 ### 12.11 — T9a · `costroid-connect` HTTP infra: the generic authorized-host client · L · ⛔ (guarantee redefinition) · Prereq: T7 ✅, T8 ✅, T9 pins ⛔-signed-off (§11.5 2026-06-10) ✅ · ✅ **DONE 2026-06-10, ⛔-approved (see §11.5 ✅ T9a)**
 
@@ -1001,10 +1009,218 @@ Your job is to PIN + CARD it, not to build it:
 **⛔ Human gate (stop before finalizing):** present (1) the redefined guarantee wording, (2) the
   exact new crates/versions/features + their licenses (incl. the TLS-roots choice), (3) the client's
   public API surface — it becomes the contract T9b builds on.
-**Next:** T9b (TWO adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state;
-  card it when T9a lands, against the client API as built).
+**Next:** T9b (TWO adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state) —
+  now carded at §12.12, against the client API as built.
 ```
-**Next:** 0.4.0 is live; the connections line is shipped → Step 5 (analytical tabs + alerts, T11–T17).
-  (0.5.0 / 0.6.0 can be chore-cut like 0.3.0 — they add no new publish-ladder/CI mechanics — unless a
-  later release again changes the published crate set.)
+
+### 12.12 — T9b · The two usage-API adapters (Anthropic + OpenAI) + the Gemini first-class-unavailable state · L · ⛔📌 · Prereq: T9a ✅
+
+> **As-pinned (2026-06-10).** The 📌 is already resolved: every endpoint, parameter, auth, and money detail below is sourced from the ⛔-signed-off `docs/proposals/T9-PIN-PROPOSAL.md` (§2 Anthropic · §3 OpenAI · §4 Gemini · §6 cross-cutting) — read it fully; it IS the API design, and where this card is silent the proposal governs. **Never invent an endpoint/param/field beyond it** (that is the whole point of pin-then-card). The two ⛔ below (secret-handling approval + the §8-style live-shape confirm) still gate.
+
+```
+**Goal:** give costroid-connect's network half its first real behavior: TWO adapter modules
+  (Anthropic, OpenAI) that turn a stored admin key (`CredentialStore::retrieve(ApiVendor)`) + a
+  date range into `AuthorizedClient::get` calls against the four pinned endpoints, parse the
+  documented response shapes, and produce typed VENDOR-REPORT values (billed-$ per day; tokens by
+  model) for T9c's reconciliation — plus the Gemini first-class-unavailable state (NO adapter: a
+  typed unavailable carrying the exact reason string already shipped in the docs:
+  "unavailable — no sanctioned static-key usage API").
+**Spec:** docs/proposals/T9-PIN-PROPOSAL.md (the API design — §2/§3/§4/§6); §11.5 ✅ T9a (the
+  as-built client contract + its three T9b contract notes); DATA-MODEL "Estimate vs. invoice
+  reconciliation" (design-intent prose only — it specs NO vendor-report shapes, so the builder
+  PROPOSES the type names and logs them in §11.5).
+**Files:** crates/costroid-connect/{Cargo.toml, src/lib.rs, src/anthropic.rs + src/openai.rs (new;
+  exact module layout = builder's choice)}; crates/costroid-core/src/ (a NEW vendor-report types
+  module — see Type placement); hand-built fixture response bodies for the adapter tests;
+  docs/DATA-MODEL.md (record the as-built vendor-report shapes next to the reconciliation section);
+  RELEASING.md (the §11.5 ✅ T9a entry deferred the publish-ladder note here: costroid-connect now
+  depends on costroid-core → publishes after core); CHANGELOG.md [Unreleased].
+**Type placement (pinned):** the parsed vendor-report data shapes live in **costroid-core**
+  (provider-neutral), so T9c stays pure-core/fixture-tested with NO connect dependency — the
+  dependency direction is connect → core, NEVER core → connect. T9b therefore adds
+  costroid-connect's FIRST internal dep (`costroid-core.workspace = true` — the
+  [workspace.dependencies] entry already exists) + `rust_decimal.workspace = true` for the money
+  types (`costroid-focus` only if a shape genuinely needs it; expected NOT — log if added). The
+  honesty caveats ride IN the types as data, never doc-only: the Anthropic Priority-Tier-absent
+  footnote (Priority Tier dollars are ABSENT from cost_report — cost totals understate the bill
+  for priority users; track Priority Tier via usage_report `service_tier=priority`; conversely
+  code-execution costs appear ONLY in cost_report) and the OpenAI per-model-$ derived/best-effort
+  label — T9c/T10 must be unable to lose them.
+**Endpoints — Anthropic** (host `api.anthropic.com`; auth **`x-api-key: <admin key>` +
+  `anthropic-version: 2023-06-01`**, NOT Bearer; key class **`sk-ant-admin…`** — standard
+  `sk-ant-api03…` keys are explicitly rejected on these endpoints; pin code + tests to the API
+  paths + version header, NOT to doc URLs — the docs are mid-host-migration):
+  · `GET /v1/organizations/cost_report` — actual billed cost in USD per day. Params: `starting_at`
+    (required, RFC 3339; buckets snapped to UTC day start, inclusive), `ending_at` (exclusive),
+    `bucket_width` (**`1d` only** — the sole granularity), **always pass `group_by[]=description`**
+    (it is what unlocks the parsed `model`/`token_type`/`service_tier`/`context_window`/
+    `inference_geo` fields), `limit`, `page`. Response: `data[]` of buckets `{starting_at,
+    ending_at, results[]}`; each result carries `amount`, `currency` (always "USD"), `description`,
+    `cost_type` (`tokens|web_search|code_execution|session_usage`), `model`, `token_type`,
+    `service_tier`, `context_window`, `inference_geo`, `workspace_id` (null = default workspace).
+    Data appears ~5 minutes after request completion.
+  · `GET /v1/organizations/usage_report/messages` — token counts by model per bucket. Params:
+    `starting_at` (required), `ending_at` (exclusive), `bucket_width` (`1m|1h|1d`),
+    **use `group_by[]=model`**, `limit`, `page`. Response per result: `uncached_input_tokens`,
+    `cache_read_input_tokens`, `cache_creation{ephemeral_5m_input_tokens,
+    ephemeral_1h_input_tokens}`, `output_tokens`, `server_tool_use{web_search_requests}` —
+    **NO cost field**, tokens only. Buckets-per-page caps: `1d` default 7 / max 31 ·
+    `1h` 24/168 · `1m` 60/1440 — paginate for longer ranges.
+  · Pagination: `has_more` + `next_page`, passed back as `?page=…` — the token is OPAQUE (doc
+    samples look timestamp-like; pass it back verbatim, never parse it). (The bucket caps above
+    are usage_report's; cost_report's per-page cap is undocumented — probe empirically.)
+**Endpoints — OpenAI** (host `api.openai.com`; auth **`Authorization: Bearer <key>`**, no version
+  header; key class **`sk-admin-…`** — project/standard keys cannot call these endpoints, and
+  admin keys cannot call non-administration endpoints; use the **`/v1`** path form — reference
+  tables omit it but every official curl example uses it):
+  · `GET /v1/organization/costs` — actual billed spend in USD per day, whole org. Params:
+    `start_time` (required, Unix seconds, inclusive), `end_time` (exclusive), `bucket_width`
+    (**`1d` only**), `limit` (1–180 buckets, default 7), `group_by` of
+    `project_id | line_item | api_key_id`, `page` cursor. Response: `object="page"` → `data[]`
+    buckets `{start_time, end_time, results[]}`; each result `object="organization.costs.result"`
+    with `amount: {value: number, currency: "usd"}` (**float dollars**). **`group_by` has NO
+    `model` option** → per-model $ is only derivable from the undocumented, uncontracted
+    `line_item` strings → label any per-model $ **derived/best-effort** (typed), or compute
+    per-model estimates from documented token counts × prices.
+  · `GET /v1/organization/usage/completions` — token counts by model per bucket. Params:
+    `start_time` (required), `end_time`, `bucket_width` (`1m|1h|1d`, default `1d`),
+    **`group_by=model`**, the same per-page bucket caps (`1d` 7/31 · `1h` 24/168 · `1m` 60/1440),
+    `page` cursor. Response per result: `input_tokens` (INCLUDES cached), `output_tokens`,
+    `input_cached_tokens`, `input_audio_tokens`, `output_audio_tokens`, `num_model_requests` —
+    no cost field.
+  · Pagination: `page` = previous `next_page`; stop on `has_more=false`.
+**Money pins (proposal §6 — unit-tag at EVERY parse boundary; mixing encodings silently is a 100×
+  error):** Anthropic cost_report `amount` = **decimal-string CENTS, fractional possible**
+  ("123.78912" = $1.2378912) — parse arbitrary-precision via `rust_decimal`, divide by 100; never
+  integer-cents, never float-and-round. OpenAI `amount.value` = **float dollars** — convert via
+  the JSON number's literal text (serde_json's `raw_value` feature is already on workspace-wide)
+  into `Decimal`; NEVER through f64 arithmetic. **Do NOT validate parsers against Anthropic's doc
+  examples — they are internally inconsistent** (proposal §2.4: the prose money math is wrong, and
+  a sample pairs a Sonnet description with an opus model id) — hand-build fixtures from the
+  documented SCHEMA instead. Separate `service_tier` types per endpoint (cost_report's enum is
+  only `standard|batch` — narrower than usage_report's six values; don't share an enum);
+  cost_report's `inference_geo` = best-effort nullable (its doc text is self-contradictory).
+**Defensive pins:** backoff POLICY lives in the adapters (T9a classifies, T9b decides): honor
+  `ConnectError::RateLimited { retry_after_seconds }`; respect Anthropic's ≤1 req/min sustained
+  guidance (bursts for paginated downloads OK); 429/5xx → bounded backoff → degrade to a typed
+  unavailable outcome, NEVER a hard failure (OpenAI's costs endpoint had a real ~1-day 404
+  outage). First-class unavailable states modeled AS DATA, never error loops: Anthropic
+  individual/non-org account ("The Admin API is unavailable for individual accounts") +
+  Claude-on-AWS orgs; OpenAI member-not-Owner (cannot mint an admin key). 401 vs 403 (both arrive
+  as `ConnectError::ClientError { status }`) classify to DISTINCT adapter outcomes — the
+  wrong-key-class connect-time copy itself is T10's. **Secrets NEVER in URLs** (§11.5 T9a contract
+  note 1: ureq error text can echo the full request URI; the redaction guarantee covers
+  `AuthHeader` values only) — URLs compose from non-secret parts exclusively; keys ride only in
+  `AuthHeader`. Each adapter sets its OWN explicit `RequestLimits` (never passes arbitrary caller
+  values through — T9a contract note 2). Hosts are bare `api.anthropic.com` / `api.openai.com`
+  (trailing-dot FQDNs are off-host by design — T9a contract note 3; fine for both vendors).
+**Scope fence:** NO CLI surface / connect / disconnect / key-paste UX / Connections view (T10).
+  NO reconciliation math (T9c). NO `GET /v1/organizations/me` (the sanctioned connect-time key
+  validation) and NO `GET /v1/organizations/rate_limits` (the documented API-lane denominators) —
+  both documented with the same key, noted for T10/later carding per proposal §2.5, NOT called
+  here. NO Gemini adapter — and NEVER the legacy OpenAI `GET /v1/usage` /
+  `GET /v1/dashboard/billing/usage` (confirmed undocumented/internal — the tier-4 line). NO OAuth
+  (tier 2, deferred). No rendering. The DEFAULT build's resolved graph stays unchanged;
+  scripts/offline_acceptance.sh's connect-ACTION half STAYS the T10 stub; tests NEVER touch the
+  real network.
+**Guards:** NO guarantee redefinition this time — the sanctioned trio is unchanged and the new
+  internal dep (costroid-core) is already in every build's graph. offline.rs (both tiers),
+  cargo-deny (both passes), and the feature-on strace baseline must all stay green AS-IS
+  (adapters existing ≠ a call happening; nothing calls them until T10).
+**Tests (fixtures only, zero real network):** drive the adapters through the `cfg(test)` loopback
+  constructor — widen `AuthorizedClient::loopback_http_for_tests` from module-private to
+  `pub(crate)` (STILL `cfg(test)`-only: invisible to builds, dependent crates, and tests/
+  integration tests — so adapter tests are in-crate unit tests). Fixtures are hand-built per the
+  documented response schemas (NOT copied from Anthropic's broken doc examples). Cover: multi-page
+  pagination (opaque token passed back verbatim; the bucket caps); money parsing (fractional-cent
+  string ÷ 100; float-dollar via literal text; unit tags asserted); every unavailable state
+  (individual-account / member-not-Owner shaped responses + the Gemini reason string) as data,
+  never loops; 429-degrade (Retry-After honored, bounded backoff, typed unavailable — never a
+  hard-fail); 401 vs 403 distinct; no secret in any composed URL.
+**⛔ Human gates (TWO):**
+  (1) Secret-handling: this task READS stored keys via `CredentialStore::retrieve(ApiVendor)`
+      (CLAUDE.md decide-vs-ask: anything touching authentication/secret handling stops first).
+      Stop for approval on the adapter public API + the key flow before finalizing.
+  (2) The §8-style LIVE-SHAPE CONFIRM — the FINAL gate before T9b is DONE. The build proceeds
+      fixtures-first; before the parsers are TRUSTED, the human runs the open empirical checks
+      with their OWN admin keys (proposal §6), when ready, and the results are logged in §11.5:
+      [ ] Responses-API coverage: does `usage/completions` include Responses-API traffic? (Codex
+          rides the Responses API; there is no usage/responses endpoint and no doc says
+          completions covers it — fire a known Responses-API call and watch the usage endpoint,
+          §3.3. If NOT covered, token-side reconciliation silently undercounts exactly the Codex
+          traffic while /costs still bills it — the report types must label that lane.)
+      [ ] the OpenAI `line_item` string format (undocumented; grounds the derived/best-effort label)
+      [ ] history depth/retention on all four pinned endpoints (undocumented at both vendors)
+      [ ] OpenAI UTC-alignment + invoice-exactness of daily buckets
+      [ ] Anthropic org-creator-gets-admin-role (§2.3 — informs T10's connect copy; record only)
+**Done when:** four-command gate green; offline.rs both tiers + cargo-deny both passes +
+  `bash scripts/offline_acceptance.sh` (incl. the feature-on baseline) all still green; adapter
+  fixture tests green with zero network I/O; the vendor-report types live in costroid-core with
+  no core→connect edge; both ⛔ gates passed (the live-shape confirm executed + logged);
+  DATA-MODEL + RELEASING.md + CHANGELOG updated; §11.4 box ticked; §11.5 as-built entry written
+  (incl. the proposed vendor-report type names + the live-confirm findings).
+**Next:** T9c consumes the core vendor-report types (fill §12.13's `[fill at T9b landing: …]`
+  slots from the as-built names); T10 wires connect/disconnect + the `GET /v1/organizations/me`
+  connect-time validation + the wrong-key-class copy on top.
+```
+
+### 12.13 — T9c · Estimate-vs-invoice reconciliation engine · M · Prereq: T9b (carded §12.12, not yet built)
+
+> **Carded 2026-06-10 with the T9b-dependent slots explicitly marked `[fill at T9b landing: …]`** rather than fabricated — fill them (from the §11.5 ✅ T9b as-built entry) before handing this card to a build agent; everything else below is pinned now and stands.
+
+```
+**Goal:** the estimate-vs-invoice reconciliation ENGINE: pure costroid-core logic that compares
+  Costroid's local estimated cost (Σ tokens × bundled prices — ALWAYS the estimate) against the
+  vendor-billed report values T9b's adapters produce (the invoice side — the SOURCE OF TRUTH),
+  per day and, where honestly supported, per model, and surfaces the variance with typed, honest
+  labels. ENGINE ONLY — display/render is T10's "reconciliation display" 📌.
+**Spec:** DATA-MODEL "Estimate vs. invoice reconciliation" — currently design-intent PROSE, not
+  shapes (it pins: the local figure is the estimate; the provider invoice is the source of truth;
+  reconciliation aggregates estimated cost per billing period and service, compares it to the
+  invoiced cost, surfaces the variance, and may calibrate the estimate). This card defers shape
+  names to the builder, who reconciles them with DATA-MODEL and updates that section to as-built.
+  Proposal §6's money pin (unit-tagged money at every boundary) binds here too.
+**Files:** crates/costroid-core/src/ — the engine lives beside the vendor-report types
+  [fill at T9b landing: the module name/path T9b created]; fixture files (hand-built vendor-report
+  + local-estimate pairs); docs/DATA-MODEL.md (reconciliation section → as-built shapes);
+  CHANGELOG.md [Unreleased].
+**Pinned now:**
+  · Pure costroid-core: NO connect dependency (core can NEVER depend on connect — the dependency
+    direction is connect → core; T9c consumes the vendor-report types core itself defined in
+    T9b). Fixture-tested, ZERO network — the engine never fetches; callers (T10) hand it values.
+  · Comparison semantics: local estimate per day/model (from the FOCUS rows core already
+    computes) vs vendor-billed per day; deltas labeled honestly — never present the estimate as
+    the bill, never silently "correct" it. Calibration (DATA-MODEL's "may calibrate") is AT MOST
+    a labeled output value — never a mutation of FOCUS rows or the pricing table; defer it
+    entirely if it doesn't fall out naturally.
+  · The typed caveats T9b carried in MUST survive into the engine's output types: the OpenAI
+    per-model-$ **derived/best-effort** label (per-model $ comparison for OpenAI is best-effort
+    or token-side only) and the Anthropic **Priority-Tier-absent** footnote (vendor cost totals
+    understate the bill for priority users) — flattening either away is a bug.
+  · Vendor-side absence is TYPED absence, never a zero: a day/lane the vendor report doesn't
+    cover (history depth, data latency, Gemini's first-class unavailable) reconciles to
+    "unavailable", never to a fabricated $0 delta.
+  · Money is Decimal end to end; subscription lanes are NOT in scope (limits are not summable
+    dollars; DATA-MODEL's effective-estimate-vs-flat-fee "is the plan worth it?" comparison is a
+    future view, not T9c).
+  · [fill at T9b landing: the vendor-report type names/fields the engine consumes];
+    [fill at T9b landing: the caveat/unavailability representations as built];
+    [fill at T9b landing: any live-confirm findings that bound comparability — e.g. OpenAI
+    daily-bucket UTC alignment, and whether usage/completions covers Responses-API traffic
+    (if NOT, the OpenAI token-side lane is labeled partial for exactly the Codex traffic)].
+**Scope fence:** engine only — NO network, NO connect dep, NO CLI command/flag, NO rendering or
+  TUI/statusline surface (T10's reconciliation-display 📌 owns surfacing), NO subscription
+  plan-worth-it view, NO change to the FOCUS export schema (reconciliation output is its own
+  shape, not new FOCUS columns — `x_Estimated` etc. stay as DATA-MODEL specs them).
+**Tests (fixtures, no network):** fixture pairs prove: an exact-match day (zero delta, labeled
+  estimate-vs-billed); under- and over-estimate days (signed variance); vendor-absent days
+  (typed absence, never $0); the derived/best-effort and Priority-Tier caveats present on the
+  relevant outputs; Decimal precision preserved (no float drift); [fill at T9b landing: fixture
+  shapes mirror the as-built vendor-report types].
+**Done when:** four-command gate green; the engine compiles with no connect edge (core's
+  Cargo.toml gains nothing — the dependency direction holds by construction); fixtures cover
+  every path above; DATA-MODEL's reconciliation section updated to as-built; CHANGELOG updated;
+  §11.4 box ticked; §11.5 as-built entry written.
+**Next:** T10 surfaces reconciliation (the display 📌) + wires connect/disconnect; then T10b cuts
+  v0.4.0.
 ```
