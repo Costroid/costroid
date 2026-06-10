@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Run the official FOCUS validator against Costroid's export of the committed
-# fixtures and check the result against the documented known-failure allowlist.
+# fixtures and check the result against the documented known-failure allowlist
+# (scripts/focus_known_failures.txt). The allowlist is an EXACT-MATCH contract:
+# it pins each expected failure's rule id AND violation count plus the report's
+# total "Fail:" figure, and the checker fails on any deviation in either
+# direction — a new failure (even inside an already-known-defective rule), a
+# changed count, or an allowlisted entry that stopped failing (stale entry).
 #
 # Runs fully offline (--block-download uses the validator's bundled FOCUS 1.3
 # ruleset); Costroid itself makes no network calls. The validator is an external

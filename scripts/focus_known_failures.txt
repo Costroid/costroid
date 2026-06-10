@@ -1,15 +1,33 @@
 # Known, documented focus-validator (FOCUS 1.3) failures for Costroid's export.
 #
-# This is the allowlist consumed by scripts/check_focus_conformance.py. It is
-# validated against the export of the committed fixtures, which include BOTH a
-# priced row (claude-sonnet-4-6, in the pricing table) and unpriced rows (models
-# not in the table) — so the arithmetic checks AND the SkuPriceId-null row rules
-# are both exercised. CI fails on any failing rule NOT listed here.
+# This is the allowlist consumed by scripts/check_focus_conformance.py — an
+# EXACT-MATCH contract, not a tolerance list. It is validated against the export
+# of the committed fixtures, which include BOTH priced rows (claude-sonnet-4-6
+# and the dated claude-haiku-4-5 snapshot, in the pricing table) and unpriced
+# rows (models not in the table) — so the arithmetic checks AND the
+# SkuPriceId-null row rules are both exercised. CI fails on ANY deviation from
+# the exact set below, in either direction:
+#   - a failing rule not listed here (new regression);
+#   - a listed rule failing with a DIFFERENT violation count (a new violating
+#     row hiding inside a known-defective rule is still a regression);
+#   - a listed rule that no longer fails (stale entry — remove it);
+#   - a report "Fail:" total different from report-fail-count (this also pins
+#     the composite "AND failed" aggregate lines, which mirror the root
+#     failures and are not listed individually).
+# Entry format: `<rule-id> violations=<N>`. The counts are tied to the
+# committed fixtures — adding, removing, or repricing fixture rows legitimately
+# changes them; re-pin the counts (and report-fail-count) deliberately in the
+# same change, never loosely.
 #
 # As of Milestone 6b, the only remaining failures are genuine validator-ruleset
 # defects that no conformant producer can satisfy. (Milestone 6a's deferred items
 # — PricingUnit UnitFormat and nulling Consumed/Pricing quantities + PricingCategory
 # on SkuPriceId-null rows — are now FIXED and no longer appear here.)
+#
+# The report's "Fail:" total: the 6 root failures below plus their 3 composite
+# "AND failed" aggregates (CAU-CapacityReservationStatus-C-002-C,
+# CAU-ContractedCost-C-000-M, CAU-PricingCurrencyContractedUnitPrice-C-003-M).
+report-fail-count = 9
 #
 # 1) The cost = unit-price x quantity arithmetic checks. The FOCUS spec defines
 #    these as EXACT equality ("ListCost MUST equal the product of ListUnitPrice and
@@ -22,11 +40,13 @@
 #    arbitrary token counts, and rounding/nulling to dodge it would corrupt correct
 #    data — so this is a validator defect, not a producer bug. Reported upstream
 #    as the third defect (alongside #142/#143; filed, open as of 2026-06-10).
+#    violations=3: of the 8 priced fixture rows, 3 have token counts whose
+#    float64 product lands a ULP off the exact decimal.
 #    Upstream: https://github.com/finopsfoundation/focus_validator/issues/144
-CAU-ListCost-C-011-C                     # float64 (UnitPrice * Quantity) != Cost; decimal product is exact
-CAU-ListUnitPrice-C-014-C                # same check, ListUnitPrice side
-CAU-ContractedCost-C-011-C               # float64 (ContractedUnitPrice * Quantity) != ContractedCost
-CAU-ContractedUnitPrice-C-013-C          # same check, ContractedUnitPrice side
+CAU-ListCost-C-011-C violations=3                     # float64 (UnitPrice * Quantity) != Cost; decimal product is exact
+CAU-ListUnitPrice-C-014-C violations=3                # same check, ListUnitPrice side
+CAU-ContractedCost-C-011-C violations=3               # float64 (ContractedUnitPrice * Quantity) != ContractedCost
+CAU-ContractedUnitPrice-C-013-C violations=3          # same check, ContractedUnitPrice side
 #
 # 2) Defects in the shipped validator ruleset (model-1.3.0.1.json) that no
 #    conformant producer can satisfy. Costroid's values are spec-correct (null);
@@ -40,8 +60,9 @@ CAU-ContractedUnitPrice-C-013-C          # same check, ContractedUnitPrice side
 # {"AND": ...} with no top-level CheckFunction (the only two such rules in the
 # ruleset); the validator drops the condition and C-004-C fires unconditionally.
 # Costroid has no capacity reservations, so its value is correctly null.
+# violations=15: fires on every fixture row (15 exported rows).
 # Upstream: https://github.com/finopsfoundation/focus_validator/issues/142
-CAU-CapacityReservationStatus-C-004-C
+CAU-CapacityReservationStatus-C-004-C violations=15
 #
 # PricingCurrencyContractedUnitPrice: C-012-C ("MUST NOT be null when SkuPriceId is
 # not null") encodes its Condition as CheckValue(SkuPriceId == null) — inverted vs
@@ -49,5 +70,6 @@ CAU-CapacityReservationStatus-C-004-C
 # (CheckNotValue). It thus duplicates C-011-C's condition with the opposite
 # requirement, unsatisfiable on SkuPriceId-null (unpriced) rows. Costroid's value
 # is correctly null when there is no priced SKU.
+# violations=7: fires on each of the 7 SkuPriceId-null (unpriced) fixture rows.
 # Upstream: https://github.com/finopsfoundation/focus_validator/issues/143
-CAU-PricingCurrencyContractedUnitPrice-C-012-C
+CAU-PricingCurrencyContractedUnitPrice-C-012-C violations=7
