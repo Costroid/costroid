@@ -100,6 +100,13 @@ impl UsdAmount {
     pub fn checked_add(self, other: Self) -> Option<Self> {
         self.0.checked_add(other.0).map(UsdAmount)
     }
+
+    /// Exact subtraction; `None` on overflow. The result may be **negative** — a signed
+    /// variance (estimate − billed) is still a dollar amount. Used by the reconciliation
+    /// engine ([`crate::reconcile`]).
+    pub fn checked_sub(self, other: Self) -> Option<Self> {
+        self.0.checked_sub(other.0).map(UsdAmount)
+    }
 }
 
 /// Parse a plain decimal string (no scientific notation) exactly.
@@ -644,6 +651,18 @@ mod tests {
             None => panic!("addition overflowed"),
         };
         assert_eq!(sum.as_usd(), ok(Decimal::from_str_exact("0.003")));
+    }
+
+    #[test]
+    fn checked_sub_yields_signed_dollars_without_drift() {
+        // A signed variance (estimate − billed) may be negative and stays exact.
+        let estimate = ok(UsdAmount::from_json_dollars_str("1.00"));
+        let billed = ok(UsdAmount::from_json_dollars_str("1.50"));
+        let variance = match estimate.checked_sub(billed) {
+            Some(variance) => variance,
+            None => panic!("subtraction overflowed"),
+        };
+        assert_eq!(variance.as_usd(), ok(Decimal::from_str_exact("-0.50")));
     }
 
     #[test]

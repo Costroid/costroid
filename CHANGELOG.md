@@ -58,6 +58,17 @@ proven by stricter guards.
   at all:** nothing calls the adapters yet (the `costroid connect` flow arrives in
   v0.4.0), keys ride only in the OS keychain and only in request headers (never a URL,
   log, or error), and every build still performs zero network calls.
+- **Estimate-vs-invoice reconciliation engine** in `costroid-core` — pure-core logic
+  (`costroid-core::reconcile`) that compares Costroid's local **estimate** (Σ tokens ×
+  bundled prices — always an estimate) against a vendor's **billed** cost report (the
+  invoice — the source of truth), per UTC day and per model, surfacing the signed variance
+  and its percentage. The estimate is never presented as the bill and never silently
+  "corrected"; the vendor report's honesty caveats (Anthropic Priority-Tier-absent, OpenAI
+  per-model best-effort) are carried through; vendor-side gaps are typed absence, never a
+  fabricated `$0`; money stays exact `Decimal` end to end. **Pure core, no network, no
+  `costroid-connect` dependency, and not yet surfaced** — a future caller (the `costroid
+  connect` flow, v0.4.0) fetches the report and hands both sides in; this release only adds
+  the engine, so the default build's behavior is unchanged (still zero network calls).
 - **MSRV CI job** — the documented minimum supported Rust version (Rust 1.88) is now
   built in CI.
 - **Security-advisory CI job** — `cargo deny check advisories` now runs in CI as a

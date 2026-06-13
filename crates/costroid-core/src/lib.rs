@@ -23,6 +23,12 @@ pub use bench::{
     OverlayAppearance, OverlayModel, RepricingDelta, RepricingStatus,
 };
 
+pub mod reconcile;
+pub use reconcile::{
+    reconcile_cost, BilledAbsence, CostReconciliation, DayReconciliation, LocalCostEstimate,
+    ModelReconciliation, ReconciledReportStatus, VendorBilled,
+};
+
 pub mod vendor_report;
 pub use vendor_report::{
     utc_date_from_rfc3339, utc_date_from_unix_seconds, AccessForbiddenHint, AmountConfidence,
