@@ -272,7 +272,7 @@ Per instruction, the data model is generalized to *fit* these, but **no adapter 
 | 6 — taskbar (egui) | **0.6.0** | **Taskbar** | no new | cross-platform tray, AccessKit |
 | later — Cursor live quota / Antigravity / Copilot | → **1.0** | all | varies | discovery-gated (sanctioned source required) |
 
-*Step 0 (canon reconcile) and Step 1 (v0.2.0, shipped 2026-06-05) are done, and the Claude `statusLine` capture is built end to end (T2–T5 ✅). **The 0.3.0 milestone is complete — T6 (render the new limit states + Spend windows) landed, so T2 + T4 + T6 are all green.** Claude live quota now surfaces on screen. **T7 is also done** — the feature-gated `costroid-connect` crate + the re-scoped no-network guarantee — so the 0.4.0 connections line is unblocked. **T8 (keychain credential store) is done** — gate green 2026-06-09, ⛔-approved (§11.5 ✅ T8); the next build is **T9 (HTTP usage-API clients + reconciliation)**.*
+*Step 0 (canon reconcile) and Step 1 (v0.2.0, shipped 2026-06-05) are done, and the Claude `statusLine` capture is built end to end (T2–T5 ✅). **The 0.3.0 milestone is complete — T6 (render the new limit states + Spend windows) landed, so T2 + T4 + T6 are all green.** Claude live quota now surfaces on screen. **T7 is also done** — the feature-gated `costroid-connect` crate + the re-scoped no-network guarantee — so the 0.4.0 connections line is unblocked. **T8 (keychain credential store) is done** — gate green 2026-06-09, ⛔-approved (§11.5 ✅ T8) — and **T9a (the generic authorized-host HTTPS client) is done** — gate green 2026-06-10, ⛔-approved (§11.5 ✅ T9a); the next build is **T9b** (the two usage-API adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state, §12.12).*
 
 ---
 

@@ -52,8 +52,10 @@ proven by stricter guards.
   dedicated online job (CI-only; the shipped tool is unchanged and still makes no
   network calls).
 - **T9 usage-API endpoint pins** recorded in-repo as a proposal
-  (`docs/proposals/T9-PIN-PROPOSAL.md`), status **PROPOSED** — awaiting sign-off, not
-  yet scheduled work.
+  (`docs/proposals/T9-PIN-PROPOSAL.md`), **signed off 2026-06-10** — the Anthropic and
+  OpenAI own-admin-key usage endpoints are pinned, and Gemini is deferred to a
+  first-class "unavailable" state (no sanctioned static-key usage API). The generic
+  authorized-host HTTPS client above is the first scheduled work these pins unblocked.
 
 ### Fixed
 
