@@ -829,7 +829,7 @@ Rules:
 
 *T10–T18 aren't carded (except T10b, whose release mechanics are knowable; carded at §12.10) — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
 
-> **T9 status — this prompt has fully RUN for T9; do not re-run it.** The T9 pins were proposed + ⛔-signed-off 2026-06-10 (`docs/proposals/T9-PIN-PROPOSAL.md`, logged in §11.5), T9a is built (§12.11 ✅), and T9b/T9c are carded (§12.12/§12.13).
+> **T9 status — this prompt has fully RUN for T9; do not re-run it.** The T9 pins were proposed + ⛔-signed-off 2026-06-10 (`docs/proposals/T9-PIN-PROPOSAL.md`, logged in §11.5), T9a is built (§12.11 ✅), and T9b/T9c are built (§12.12/§12.13 ✅ DONE 2026-06-13 — T9 complete).
 
 ```
 Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
