@@ -54,9 +54,9 @@ Custom (`x_`) columns Costroid adds:
 - **x_TokenType** — `"input" | "output" | "cache_read" | "cache_write"`.
 - **x_AccessPath** — `"api" | "subscription" | "unknown"` (see next section).
 - **x_Estimated** — `true` when the cost was computed locally from token × price (the default for all Phase 1 rows).
-- **x_PricingStatus** — `"priced" | "missing_price" | "unknown_model"`: whether a rate was found in the bundled pricing table — `priced` when the `(model, meter)` join succeeds, `missing_price` for a known model that lacks that meter's rate, and `unknown_model` when the model isn't in the table at all.
 - **x_Tool** — `"claude-code" | "codex" | "cursor"` (the tool that produced the log).
 - **x_Project** — the derived project/workspace (see Grouping).
+- **x_PricingStatus** — `"priced" | "missing_price" | "unknown_model"`: whether a rate was found in the bundled pricing table — `priced` when the `(model, meter)` join succeeds, `missing_price` for a known model that lacks that meter's rate, and `unknown_model` when the model isn't in the table at all.
 - **x_ConsumedTokens** — the raw token count for the meter row, **always populated** (never null, even on unpriced rows where `ConsumedQuantity` must be null). The aggregation engine totals tokens from this column so nulling `ConsumedQuantity` never drops usage.
 
 ## Subscription limits are modeled separately
@@ -194,9 +194,9 @@ pub struct FocusRecord {
     #[serde(rename = "x_TokenType")]     pub x_token_type: String,
     #[serde(rename = "x_AccessPath")]    pub x_access_path: String,
     #[serde(rename = "x_Estimated")]     pub x_estimated: bool,
-    #[serde(rename = "x_PricingStatus")] pub x_pricing_status: String,
     #[serde(rename = "x_Tool")]          pub x_tool: String,
     #[serde(rename = "x_Project")]       pub x_project: Option<String>,
+    #[serde(rename = "x_PricingStatus")] pub x_pricing_status: String,
     // Raw token count, ALWAYS populated (even when ConsumedQuantity is null);
     // the aggregation engine reads this for token totals.
     #[serde(rename = "x_ConsumedTokens")] pub x_consumed_tokens: Decimal,

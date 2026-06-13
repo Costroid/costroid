@@ -94,13 +94,16 @@ where `H` is the vertical dot resolution (`H = 4`, i.e. 1 cell tall in the shipp
 
 ### API cost bar
 
-One horizontal dot bar per model, sorted by cost descending. With `W` cells and `max = max(cost)`:
+One horizontal dot bar per model, sorted by cost descending — drawn with the **same `meter_segments` primitive as the limit meter**. With `W` cells and `max = max(cost)`:
 
 ```
-filled = clamp(round((cost / max) * W), if cost > 0 { 1 } else { 0 }, W)
+full  = floor((cost / max) * W)
+half  = 1 when (cost / max) * W - full >= 0.5, else 0
+        (min-visibility: if cost > 0 and full == 0 and half == 0, force half = 1)
+track = W - full - half
 ```
 
-Bright `⣿` for `filled`, the dim **track glyph `⣀`** for the rest (shape-distinct, so the fill survives `NO_COLOR` — never the same glyph distinguished by color alone). The model name sits left in the strong weight; the dollar figure right-aligned in the strong weight (`Intl`-style, e.g. `$24.10`, `$1,840.00`). Cost bars never go amber — amber is for limits, not spend. Each row: `claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀   $24.10`.
+Bright `⣿` for the `full` cells, the **left-column half-cell `⡇`** for the boundary `half`, and the dim **track glyph `⣀`** for the rest (all three shape-distinct, so the fill survives `NO_COLOR` — never the same glyph distinguished by color alone). The model name sits left in the strong weight; the dollar figure right-aligned in the strong weight (`Intl`-style, e.g. `$24.10`, `$1,840.00`). Cost bars never go amber — amber is for limits, not spend. Each row: `claude opus 4.8   ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀   $24.10`.
 
 ### Statusline glyph (`costroid statusline`)
 
