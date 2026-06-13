@@ -46,6 +46,18 @@ proven by stricter guards.
   forbidden-crates test proves sanctioned-only *linkage* (the full
   `ureq`/`rustls`/`keyring` trio links only behind `--features connect`, and the default
   build links none of it).
+- **Anthropic + OpenAI usage-API adapters (and a first-class Gemini "unavailable")** in
+  `costroid-connect` — parse a stored admin key's billed-cost and token-usage reports
+  into provider-neutral shapes in `costroid-core` (so reconciliation stays pure-core).
+  Money is exact end to end (`rust_decimal`, never `f64`) and unit-tagged at the parse
+  boundary so Anthropic's decimal-cents and OpenAI's float-dollars encodings cannot mix.
+  Honesty caveats ride as typed data — Anthropic's totals omit Priority-Tier dollars, and
+  OpenAI's per-model dollars are best-effort (and its token lane may not cover the
+  Responses API that Codex uses). Gemini has no adapter and reports "unavailable — no
+  sanctioned static-key usage API". **This does not change the default build's behavior
+  at all:** nothing calls the adapters yet (the `costroid connect` flow arrives in
+  v0.4.0), keys ride only in the OS keychain and only in request headers (never a URL,
+  log, or error), and every build still performs zero network calls.
 - **MSRV CI job** — the documented minimum supported Rust version (Rust 1.88) is now
   built in CI.
 - **Security-advisory CI job** — `cargo deny check advisories` now runs in CI as a

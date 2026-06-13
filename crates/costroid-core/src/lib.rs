@@ -23,6 +23,15 @@ pub use bench::{
     OverlayAppearance, OverlayModel, RepricingDelta, RepricingStatus,
 };
 
+pub mod vendor_report;
+pub use vendor_report::{
+    utc_date_from_rfc3339, utc_date_from_unix_seconds, AccessForbiddenHint, AmountConfidence,
+    CostLineItem, CostReportCaveats, CostReportOutcome, DateRange, ModelCostAmount,
+    ModelTokenUsage, MoneyParseError, UsageReportCaveats, UsageReportOutcome, UsdAmount,
+    VendorCostDay, VendorCostReport, VendorReportUnavailable, VendorUsageDay, VendorUsageReport,
+    GEMINI_UNAVAILABLE_MESSAGE,
+};
+
 const PRICING_STATUS_PRICED: &str = "priced";
 const PRICING_STATUS_UNKNOWN_MODEL: &str = "unknown_model";
 const PRICING_SCHEMA_VERSION: &str = "1";

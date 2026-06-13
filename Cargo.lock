@@ -584,6 +584,7 @@ dependencies = [
 name = "costroid-connect"
 version = "0.3.0"
 dependencies = [
+ "costroid-core",
  "keyring",
  "rustls-native-certs",
  "secrecy",

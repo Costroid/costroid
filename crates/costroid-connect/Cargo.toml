@@ -27,9 +27,19 @@ categories = ["command-line-utilities", "authentication"]
 # OS-native trust roots loaded via `rustls-native-certs` — never `webpki-roots`
 # (see the [workspace.dependencies] note in the root Cargo.toml). The generic
 # authorized-host client lives in src/http.rs; it has NO caller and NO provider
-# knowledge until T9b/T10. The `core`/`focus` deps are still deliberately absent
-# (deferred to T9b — the generic client needs no internal type).
+# knowledge until T9b/T10.
+#
+# T9b adds the crate's FIRST internal dependency: `costroid-core`, whose
+# `vendor_report` module holds the provider-neutral parsed usage/cost shapes the
+# Anthropic/OpenAI adapters produce (direction: connect → core, NEVER core → connect).
+# `costroid-core` is already in every build's resolved graph (it is the engine), so
+# this edge adds NO new crate to the offline.rs / cargo-deny graphs. `rust_decimal` is
+# deliberately NOT added: all money/Decimal logic is encapsulated in core's `UsdAmount`
+# (the adapters pass raw amount strings to its unit-tagged constructors and never name
+# `Decimal`), and `costroid-focus` is not needed (no shape uses a FOCUS type) — both
+# per the lean-deps rule, mirroring T9a's deferral.
 [dependencies]
+costroid-core = { workspace = true }
 keyring = { version = "=3.6.3", default-features = false, features = [
     "apple-native",
     "windows-native",

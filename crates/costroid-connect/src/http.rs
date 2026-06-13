@@ -208,12 +208,14 @@ impl AuthorizedClient {
     }
 
     /// Test-only: a plain-HTTP client over a loopback `host:port` authority, so the
-    /// unit suite can drive the complete request/response/classification path
-    /// against a local `TcpListener` — no TLS, no real network, passes offline.
-    /// Compiled **only** under `cfg(test)`: the public, production surface stays
-    /// HTTPS-only with no escape hatch.
+    /// in-crate test suites (the http tests **and** the T9b adapter tests) can drive the
+    /// complete request/response/classification path against a local `TcpListener` — no
+    /// TLS, no real network, passes offline. `pub(crate)` so the adapter modules reach
+    /// it, but still compiled **only** under `cfg(test)`: it is invisible to real builds,
+    /// to dependent crates, and to integration tests, so the public production surface
+    /// stays HTTPS-only with no escape hatch.
     #[cfg(test)]
-    fn loopback_http_for_tests(authority: &str, limits: RequestLimits) -> Self {
+    pub(crate) fn loopback_http_for_tests(authority: &str, limits: RequestLimits) -> Self {
         Self {
             scheme: "http",
             authorized: normalize_authority(authority, "http"),
@@ -225,6 +227,20 @@ impl AuthorizedClient {
     /// The host this client is authorized to talk to.
     pub fn authorized_host(&self) -> &str {
         &self.authorized
+    }
+
+    /// Compose an on-host absolute URL from a non-secret `path_and_query` (which must
+    /// start with `/`), using this client's own scheme + authorized authority — so an
+    /// adapter builds URLs that pass [`ensure_authorized`](Self::ensure_authorized)
+    /// without hardcoding the scheme (and so the same adapter code drives the real
+    /// HTTPS host in production and the loopback authority under `cfg(test)`).
+    ///
+    /// **`path_and_query` must contain only non-secret parts** — credentials ride in
+    /// [`AuthHeader`] values, never in a URL (`ureq` error text can echo the URI; the
+    /// redaction guarantee covers header values only). `pub(crate)`: an in-crate adapter
+    /// helper, not part of the public surface.
+    pub(crate) fn url_for(&self, path_and_query: &str) -> String {
+        format!("{}://{}{}", self.scheme, self.authorized, path_and_query)
     }
 
     /// Perform a GET against `url`, which **must** be on the authorized host
@@ -268,7 +284,16 @@ impl AuthorizedClient {
             429 => Err(ConnectError::RateLimited {
                 retry_after_seconds: retry_after_seconds(&response),
             }),
-            400..=499 => Err(ConnectError::ClientError { status }),
+            400..=499 => {
+                // Attach the (bounded) error body so adapters can classify the cause
+                // (e.g. an individual-account 403). It is a vendor error message, never
+                // a secret — the key rides only in a request header, never a response.
+                let body =
+                    read_bounded(response.body_mut().as_reader(), self.limits.max_body_bytes)
+                        .ok()
+                        .and_then(|bytes| String::from_utf8(bytes).ok());
+                Err(ConnectError::ClientError { status, body })
+            }
             500..=599 => Err(ConnectError::ServerError { status }),
             // A 1xx surfacing as the *final* status (or any other out-of-band
             // status code) is a protocol anomaly, never a success.
@@ -779,7 +804,10 @@ mod tests {
         let (authority, _captured) =
             serve_once(http_response("404 Not Found", &[], b""), Duration::ZERO);
         let error = err(loopback_client(&authority).get(&format!("http://{authority}/v1"), &[]));
-        assert!(matches!(error, ConnectError::ClientError { status: 404 }));
+        assert!(matches!(
+            error,
+            ConnectError::ClientError { status: 404, .. }
+        ));
     }
 
     #[test]

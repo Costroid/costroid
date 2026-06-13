@@ -94,9 +94,37 @@ use keyring::{Entry, Error as KeyringError};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
+mod anthropic;
+mod fetch;
 mod http;
+mod openai;
+#[cfg(test)]
+mod test_support;
 
+pub use anthropic::AnthropicAdapter;
 pub use http::{AuthHeader, AuthorizedClient, HttpResponse, RequestLimits};
+pub use openai::OpenAiAdapter;
+
+// Re-export the core vendor-report vocabulary that appears in the adapters' public
+// signatures, so a `costroid-connect` consumer need not also import from
+// `costroid-core` for the return types. The shapes themselves are owned by
+// `costroid-core::vendor_report` (T9b type-placement pin: connect → core).
+pub use costroid_core::vendor_report::{
+    CostReportOutcome, DateRange, UsageReportOutcome, VendorReportUnavailable,
+};
+
+/// Gemini has **no sanctioned static-key usage API**, so there is no adapter: both
+/// report kinds resolve to a first-class [`VendorReportUnavailable::NoSanctionedStaticKeyApi`]
+/// carrying the pinned reason string (`docs/proposals/T9-PIN-PROPOSAL.md` §4). T10
+/// renders it; nothing here ever performs a network call for Gemini.
+pub fn gemini_cost_report() -> CostReportOutcome {
+    CostReportOutcome::Unavailable(VendorReportUnavailable::NoSanctionedStaticKeyApi)
+}
+
+/// The usage-report counterpart of [`gemini_cost_report`].
+pub fn gemini_usage_report() -> UsageReportOutcome {
+    UsageReportOutcome::Unavailable(VendorReportUnavailable::NoSanctionedStaticKeyApi)
+}
 
 /// The OS-keychain *service* name under which every Costroid secret is filed. Stable
 /// (changing it would orphan stored keys); the per-secret *account* namespaces the
@@ -276,10 +304,16 @@ pub enum ConnectError {
     },
 
     /// HTTP 4xx other than 429 — wrong key class, missing permission, bad request.
+    /// Carries the (bounded, best-effort UTF-8) response body so a provider adapter can
+    /// classify the cause — e.g. distinguish Anthropic's individual-account 403 from a
+    /// role 403. The body is a vendor **error message**, never a secret: the API key
+    /// rides only in a request header and never appears in a response (pinned by test).
     #[error("client error from the authorized host (HTTP {status})")]
     ClientError {
         /// The 4xx status received.
         status: u16,
+        /// The response body as UTF-8 text, when present and decodable (else `None`).
+        body: Option<String>,
     },
 
     /// A transport-level failure: DNS, TCP connect, TLS, or protocol. The message
@@ -302,6 +336,16 @@ pub enum ConnectError {
     #[error("could not load OS-native TLS roots: {detail}")]
     NativeRoots {
         /// The trust-store loader's (secret-free) description.
+        detail: String,
+    },
+
+    /// A 2xx response body did not match the documented schema (a usage-API adapter
+    /// could not parse it, or a money amount was malformed). The detail describes the
+    /// JSON/parse problem and never contains a secret — the API key rides only in a
+    /// request header, never in a response (T9b adapters).
+    #[error("could not parse the vendor response: {detail}")]
+    ResponseFormat {
+        /// The (secret-free) parse-failure description.
         detail: String,
     },
 }
@@ -594,6 +638,24 @@ mod tests {
         assert_eq!(
             ok(serde_json::from_str::<ApiVendor>("\"gemini\"")),
             ApiVendor::Gemini
+        );
+    }
+
+    #[test]
+    fn gemini_reports_are_first_class_unavailable_with_the_pinned_string() {
+        // No Gemini adapter exists; both report kinds resolve to the pinned unavailable
+        // reason — never a network call, never an error.
+        assert!(matches!(
+            gemini_cost_report(),
+            CostReportOutcome::Unavailable(VendorReportUnavailable::NoSanctionedStaticKeyApi)
+        ));
+        assert!(matches!(
+            gemini_usage_report(),
+            UsageReportOutcome::Unavailable(VendorReportUnavailable::NoSanctionedStaticKeyApi)
+        ));
+        assert_eq!(
+            VendorReportUnavailable::NoSanctionedStaticKeyApi.message(),
+            costroid_core::vendor_report::GEMINI_UNAVAILABLE_MESSAGE
         );
     }
 

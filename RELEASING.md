@@ -35,10 +35,12 @@ which governs scope and build sequencing).
 **not yet published**. T8 gave it its first behavior — the OS-keychain credential store
 (`CredentialStore` / `ConnectionRegistry` / `ApiVendor`) — and its first deps (`keyring` + `secrecy`
 + serde/serde_json/thiserror); the T9a HTTP client brought in `ureq` + `rustls` (+
-`rustls-native-certs`), with the crate still unpublished. It still takes **no** dependency on
-`costroid-core`/`costroid-focus` — those are deferred to **T9b** (the per-provider usage-API
-adapters), after which it publishes after `costroid-core` in the ladder (the CLI then depends on
-it). Still *not yet in the workspace, not yet published:* `costroid-bar` (the egui taskbar app,
+`rustls-native-certs`), with the crate still unpublished. **T9b (the per-provider usage-API adapters)
+gave it its first internal dependency, `costroid-core`** (the adapters parse into
+`costroid-core::vendor_report`; it needs **no** `costroid-focus`), so it now **publishes after
+`costroid-core`** in the ladder — before `costroid` (the CLI), which depends on it via the `connect`
+feature. It remains unpublished until the v0.4.0 cut (T10b). Still *not yet in the workspace, not yet
+published:* `costroid-bar` (the egui taskbar app,
 binary `costroid-bar`; depends only on `costroid-core`, the last surface). See
 `docs/PRODUCT-PLAN.md` for the sequencing; the crates.io order below grows to accommodate them when
 they land.
@@ -135,9 +137,9 @@ cargo publish -p costroid
 
 > The order grows as the remaining members gain publishable behavior (per `docs/PRODUCT-PLAN.md`):
 > `costroid-connect` (a member since T7; keychain store since T8; the `ureq`+`rustls` HTTP client
-> since T9a) gains its `costroid-core`/
-> `costroid-focus` deps in T9b and then publishes after `costroid-core` (the CLI depends on it via the
-> `connect` feature) — the v0.4.0 ladder, per PRODUCT-PLAN T10b, is
+> since T9a) gained its `costroid-core` dependency in **T9b** (the usage-API adapters parse into
+> `costroid-core::vendor_report`; it needs no `costroid-focus`) and so publishes after `costroid-core`
+> (the CLI depends on it via the `connect` feature) — the v0.4.0 ladder, per PRODUCT-PLAN T10b, is
 > `costroid-focus → costroid-providers → costroid-core → costroid-connect → costroid (cli)`; the
 > `costroid-bar` binary (not yet in the workspace) publishes alongside
 > `costroid` (both depend only on `costroid-core`).
