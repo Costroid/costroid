@@ -24,7 +24,7 @@ Verified against the code, not the docs. (v0.2.0 — the cost lane: frontier + C
 
 **Solid foundation the rest builds on:** three-crate engine (`apps → core → {providers, focus}`, no cycles, no `unwrap`/`expect`/`panic!` in libs); a working 5-method `Provider` trait (`id` / `capability` / `discover` / `parse_usage` / `parse_limits`); WSL-aware multi-root discovery; three render modes (braille / ASCII / **plain**) with non-color cues; `--live`; the statusline emitter; FOCUS export; and **enforced** invariants — a strace-based offline-acceptance CI job, a two-tier resolved-graph forbidden-crates test (since T7: the default build forbids ~44 networking/TLS/telemetry crates incl. the gated `ureq`/`rustls`/`keyring` trio; `--features connect` admits only that trio), `cargo-deny` (no copyleft, openssl banned), attested releases. **228 tests, 23 render snapshots, green CI gate** (counts as of the T9a review fix pass, 2026-06-10 — see §11.5). The cost lane is `cargo install`-able and correct today.
 
-**Not built yet:** OAuth, and the `costroid connect`/`disconnect` CLI + Connections view (T10). **T8 built the keychain credential store** in `costroid-connect` (`CredentialStore`/`ConnectionRegistry`/`ApiVendor`, `keyring` sync Secret Service — DONE 2026-06-09, ⛔-approved), **T9a built the generic authorized-host HTTP client** (`AuthorizedClient` on `ureq`+`rustls`, OS-native roots — DONE 2026-06-10, ⛔-approved), **T9b built the Anthropic + OpenAI usage-API adapters** (`AnthropicAdapter`/`OpenAiAdapter` parsing into `costroid-core::vendor_report`; Gemini = first-class unavailable — DONE 2026-06-13, both ⛔ gates cleared), and **T9c built the estimate-vs-invoice reconciliation engine** (`costroid-core::reconcile` — pure core, fixture-tested, no connect dep — DONE 2026-06-13, 280 tests), so secrets have a home, the HTTP layer exists, the adapters can fetch+parse, and the engine can compare estimate vs invoice — but **nothing calls the adapters or the engine** (no CLI wiring), so no build performs a network call until T10's explicit connect action; 6 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs — only Overview/now and Trends exist today); alerts; the taskbar; Antigravity & Copilot. *(Claude live quota **on screen** is now **done** — T4 landed the reader, T5 the writer, and **T6 the render**, so the captured quota surfaces end to end on a Pro/Max machine; see §11.5 ✅ T6 DONE. The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — landed in T2; its live **producers** in T4 (cross-check demotion + stale age-out + the `Estimated` fallback); its **rendering** in T6 (all 5 arms + `Spend`). The **`Capability` descriptor** — `DataSource`/`AuthMethod`/`Capability` + the required `capability()` trait method, declared by all three adapters — **landed in T3**; its consumer, the Providers tab (T11), is still future.)*
+**Not built yet:** OAuth, and the `costroid connect`/`disconnect` CLI + Connections view + reconciliation surface (T10 — now **📌 PINNED + ⛔ SIGNED OFF 2026-06-13 and carded**: T10a §12.14, T10c §12.15, T10-LIVE-ROWS §12.16, T10b/release §12.10; none built yet). **T8 built the keychain credential store** in `costroid-connect` (`CredentialStore`/`ConnectionRegistry`/`ApiVendor`, `keyring` sync Secret Service — DONE 2026-06-09, ⛔-approved), **T9a built the generic authorized-host HTTP client** (`AuthorizedClient` on `ureq`+`rustls`, OS-native roots — DONE 2026-06-10, ⛔-approved), **T9b built the Anthropic + OpenAI usage-API adapters** (`AnthropicAdapter`/`OpenAiAdapter` parsing into `costroid-core::vendor_report`; Gemini = first-class unavailable — DONE 2026-06-13, both ⛔ gates cleared), and **T9c built the estimate-vs-invoice reconciliation engine** (`costroid-core::reconcile` — pure core, fixture-tested, no connect dep — DONE 2026-06-13, 280 tests), so secrets have a home, the HTTP layer exists, the adapters can fetch+parse, and the engine can compare estimate vs invoice — but **nothing calls the adapters or the engine** (no CLI wiring), so no build performs a network call until T10's explicit connect action; 6 of 8 tabs (Providers, Budget, Forecast, Anomalies, + Models/History as dedicated tabs — only Overview/now and Trends exist today); alerts; the taskbar; Antigravity & Copilot. *(Claude live quota **on screen** is now **done** — T4 landed the reader, T5 the writer, and **T6 the render**, so the captured quota surfaces end to end on a Pro/Max machine; see §11.5 ✅ T6 DONE. The generalized quota **shape** — `LimitKind`×5, `LimitMeasure`, `LimitStatus`, the reshaped `LimitAvailability` — landed in T2; its live **producers** in T4 (cross-check demotion + stale age-out + the `Estimated` fallback); its **rendering** in T6 (all 5 arms + `Spend`). The **`Capability` descriptor** — `DataSource`/`AuthMethod`/`Capability` + the required `capability()` trait method, declared by all three adapters — **landed in T3**; its consumer, the Providers tab (T11), is still future.)*
 ---
 
 ## 1. The product in one picture
@@ -272,7 +272,7 @@ Per instruction, the data model is generalized to *fit* these, but **no adapter 
 | 6 — taskbar (egui) | **0.6.0** | **Taskbar** | no new | cross-platform tray, AccessKit |
 | later — Cursor live quota / Antigravity / Copilot | → **1.0** | all | varies | discovery-gated (sanctioned source required) |
 
-*Step 0 (canon reconcile) and Step 1 (v0.2.0, shipped 2026-06-05) are done, and the Claude `statusLine` capture is built end to end (T2–T5 ✅). **The 0.3.0 milestone is complete — T6 (render the new limit states + Spend windows) landed, so T2 + T4 + T6 are all green.** Claude live quota now surfaces on screen. **T7 is also done** — the feature-gated `costroid-connect` crate + the re-scoped no-network guarantee — so the 0.4.0 connections line is unblocked. **T8 (keychain credential store) is done** — gate green 2026-06-09, ⛔-approved (§11.5 ✅ T8) — and **T9a (the generic authorized-host HTTPS client) is done** — gate green 2026-06-10, ⛔-approved (§11.5 ✅ T9a). **T9b (the Anthropic + OpenAI usage-API adapters + the Gemini first-class-unavailable state) is done** — 2026-06-13, both ⛔ gates cleared (§11.5 ✅ T9b), and **T9c (the estimate-vs-invoice reconciliation engine, pure `costroid-core::reconcile`) is done** — 2026-06-13, 280 tests (§11.5 ✅ T9c); the next build is **T10** (the `connect`/`disconnect` CLI + Connections view, which surfaces reconciliation and wires the first caller of `costroid-connect`).*
+*Step 0 (canon reconcile) and Step 1 (v0.2.0, shipped 2026-06-05) are done, and the Claude `statusLine` capture is built end to end (T2–T5 ✅). **The 0.3.0 milestone is complete — T6 (render the new limit states + Spend windows) landed, so T2 + T4 + T6 are all green.** Claude live quota now surfaces on screen. **T7 is also done** — the feature-gated `costroid-connect` crate + the re-scoped no-network guarantee — so the 0.4.0 connections line is unblocked. **T8 (keychain credential store) is done** — gate green 2026-06-09, ⛔-approved (§11.5 ✅ T8) — and **T9a (the generic authorized-host HTTPS client) is done** — gate green 2026-06-10, ⛔-approved (§11.5 ✅ T9a). **T9b (the Anthropic + OpenAI usage-API adapters + the Gemini first-class-unavailable state) is done** — 2026-06-13, both ⛔ gates cleared (§11.5 ✅ T9b), and **T9c (the estimate-vs-invoice reconciliation engine, pure `costroid-core::reconcile`) is done** — 2026-06-13, 280 tests (§11.5 ✅ T9c); **T10 is now PINNED + ⛔ SIGNED OFF (2026-06-13) and carded** — the `connect`/`disconnect`/`connections` CLI + key validation (T10a §12.14), the reconciliation display (T10c §12.15), the deferred live-confirm (T10-LIVE-ROWS §12.16), and the release (T10b §12.10); the first caller of `costroid-connect` and the first real network — **none built yet** (build each in a fresh agent per §12.0).*
 
 ---
 
@@ -342,7 +342,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 ### 11.4 The task ledger
 
-*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9a is DONE** (§12.11 / §11.5, gate green 2026-06-10, ⛔-approved); **T9b is DONE** (§12.12 / §11.5, 2026-06-13, 264 tests, both ⛔ gates cleared); **T9c is DONE** (§12.13 / §11.5, 2026-06-13, 280 tests — the pure-core reconciliation engine, no connect dep); **T10+ remains a backlog** that gets expanded into full cards when its Prereq lands (except T10b, whose release mechanics are knowable; carded at §12.10) — its detail depends on decisions not yet made, and speccing it now would fabricate.*
+*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9a is DONE** (§12.11 / §11.5, gate green 2026-06-10, ⛔-approved); **T9b is DONE** (§12.12 / §11.5, 2026-06-13, 264 tests, both ⛔ gates cleared); **T9c is DONE** (§12.13 / §11.5, 2026-06-13, 280 tests — the pure-core reconciliation engine, no connect dep); **T10 is PINNED + ⛔ SIGNED OFF (2026-06-13) and carded** — T10a (§12.14), T10c (§12.15), the deferred live-confirm T10-LIVE-ROWS (§12.16), and T10b/release (§12.10) — none built yet; **T11+ remains a backlog** that gets expanded into full cards when its Prereq lands.*
 
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
 
@@ -358,7 +358,11 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - [x] **T9a** `costroid-connect` HTTP infra — ✅ **DONE 2026-06-10 (gate green, ⛔-approved)**; the generic authorized-host HTTPS client (`AuthorizedClient`/`AuthHeader`/`HttpResponse`/`RequestLimits`) on blocking `ureq` 3.3.0 + `rustls` (ring), OS-native roots via `rustls-native-certs` (no `webpki-roots`), redirects + proxies disabled, GET/HTTPS-only, secrets redacted; offline.rs asserts the full trio, deny wrappers fire with zero warnings; no caller, no provider knowledge, no `core`/`focus` dep (deferred to T9b); see §11.5 ✅ T9a
 - [x] **T9b** the two usage-API adapters (Anthropic + OpenAI) + the Gemini first-class-unavailable state — ✅ **DONE 2026-06-13 (gate green, 264 tests, both ⛔ gates cleared — Gate 1 secret-handling approved; Gate 2 live-confirmed at the envelope level, populated-row checks logged as follow-ups since the org has no raw-API usage)**; `AnthropicAdapter`/`OpenAiAdapter` parse into the new `costroid-core::vendor_report` types (`UsdAmount` unit-tagged money, cost/usage reports, typed caveats, `VendorReportUnavailable`); Gemini = first-class unavailable; `costroid-connect` gained its first internal dep (`costroid-core` only); see §11.5 ✅ T9b
 - [x] **T9c** estimate-vs-invoice reconciliation engine (pure core) — ✅ **DONE 2026-06-13 (gate green, 280 tests)**; `costroid-core::reconcile` (`reconcile_cost` + `LocalCostEstimate`/`CostReconciliation`/`DayReconciliation`/`ModelReconciliation`/`VendorBilled`/`BilledAbsence`/`ReconciledReportStatus`) compares the local API-lane estimate (UTC-day bucketed) against T9b's vendor cost report; signed `variance`/`variance_pct`, typed vendor-side absence (never `$0`), caveats carried through; pure-core, no connect dep (core's Cargo.toml unchanged); see §11.5 ✅ T9c
-- T10+ — backlog (carded when its Prereq lands; T10b already carded at §12.10). **T10 cannot begin until ⛔ GATE 2b (§11.5 ✅ T9b) is cleared or formally deferred.**
+- [ ] **T10a** connect/disconnect/connections CLI + key validation + the connect-action test — **📌 PINNED + ⛔ SIGNED OFF 2026-06-13; carded at §12.14** (not built). First caller of `costroid-connect` + first real network. ⛔ gates on build: CLI surface · secret-handling · GATE 2b live-confirm. Prereq: T9 ✅. **T10a cannot finalize until ⛔ GATE 2b (§11.5 ✅ T9b / 📌 T10) is cleared or each item formally deferred to T10-LIVE-ROWS (§12.16).**
+- [ ] **T10c** reconciliation display (`costroid reconcile`) — **carded at §12.15** (not built); surfaces T9c's `CostReconciliation`. Prereq: T10a.
+- [ ] **T10-LIVE-ROWS** deferred populated-row / probe-behavior live-confirm — **carded at §12.16**; holds any ⛔ GATE 2b item T10a can't confirm for lack of real raw-API usage. Prereq: real API usage on the connected org.
+- T10b — release **v0.4.0** — carded at §12.10. Prereq: T9 + ⛔ GATE 2b + T10a + T10c done + ⛔ legal review cleared.
+- T11+ — backlog (Step 5 analytical tabs + alerts; carded when their Prereq lands).
 
 **T2 + T4 + T6 ticked = the 0.3.0 milestone** (Claude live quota + generalized model).
 
@@ -436,6 +440,16 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 ### 11.5 Decisions & limitations (living log)
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**📌 T10 PINNED + ⛔ SIGNED OFF (2026-06-13) — the `connect`/`disconnect` CLI + Connections view + reconciliation surface (the first caller of `costroid-connect`); T10a carded at §12.14, T10c at §12.15, the deferred live-confirm card T10-LIVE-ROWS at §12.16.** Full pin record + sourced endpoint research in `docs/proposals/T10-PIN-PROPOSAL.md` (PROPOSED → ⛔ SIGNED OFF 2026-06-13; produced by a 7-agent research → adversarial-doc-verify → completeness-critic workflow, every endpoint checked against live official docs). The pins:
+- **CLI surface (§1.1) — APPROVED as proposed.** `costroid connect/disconnect <vendor>` + `connections [--check]` + `reconcile [--vendor] [--period]`, all `#[cfg(feature="connect")]`. Admin key read **stdin-only** (no-echo on TTY, one line on a pipe) — **NEVER argv/env**; wrong-key-class **prefix check before any network**; `gemini` → the pinned `unavailable — no sanctioned static-key usage API` line, exit 0, no key accepted; typed-failure remediation copy (individual-account / member-not-Owner / rejected).
+- **Connect-time validation (§2) — the only NEW endpoint surface; neither reads spend beyond the user's own data.** **Anthropic** = `GET /v1/organizations/me` (live-confirmed; `x-api-key: sk-ant-admin…` + `anthropic-version: 2023-06-01`; returns `{id,name,type}` only, **zero billing**; same Admin-API org-gate as `cost_report` → predicts the fetch; any non-200 = invalid/ineligible). **OpenAI = `GET /v1/organization/costs` over a recent COMPLETED 1-day window, `limit=1`** — the **⛔-SIGNED-OFF AMENDMENT** to proposal Option A (NOT `/usage/completions`, NOT `admin_api_keys`): probe the exact endpoint T10c depends on, so "Connected" predicts the cost fetch; `200`=success→store, `401`/`403`=failure→remediate + don't-store; probing `/costs` directly **moots the OpenAI costs-vs-usage scope question** the completeness critic flagged (the cost/usage scope is undocumented on fetchable pages). Both reuse the built `AnthropicAdapter`/`OpenAiAdapter` + `AuthorizedClient` classification (`OpenAiAdapter::fetch_cost_report` over a 1-day window IS the probe); T10a adds Anthropic's `me` `validate()` call.
+- **Connections view (§4) — a `costroid connections` subcommand** (local-only by default; `--check` re-validates live). A Providers TUI tab stays Step 5. Lists Anthropic/OpenAI connected/not + Gemini unavailable; status by a **non-color text cue**; **optional non-secret org-label added to `RegistryFile`** (captured from `me`).
+- **Reconciliation display (§5) — a `costroid reconcile [--vendor][--period]` subcommand** surfacing T9c `CostReconciliation`: **vendor-scoped** local estimate (`x_Tool` claude-code→Anthropic, codex→OpenAI, cursor excluded), signed variance (+over / −under), **typed vendor-absence rendered as text, NEVER `$0`**, caveats footnoted (`priority_tier_absent`, `per_model_derived_best_effort`); **dollar (cost) reconciliation ONLY** — token-side + its `responses_api_coverage_unconfirmed` caveat deferred; `--plain` + non-color cue.
+- **Connect-action offline test (§7) — two layers, zero real network.** Layer 1: a `--features connect` integration test drives an **injectable** command core against the loopback `MockServer` + keyring mock (only-loopback egress; secret-to-keychain-only via a fixture-`$HOME` fingerprint; disconnect-clean). Layer 2: the strace script runs `costroid connect anthropic` with a prefix-valid-but-fake key under isolation, proving **fail-closed + no `$HOME` residue + no rogue host**. **No host-override knob** (it would weaken the authorized-host guarantee).
+- **Deferred:** OAuth (tier 2, §8); API-lane rate-limit denominators (§9 — only Anthropic `/v1/organizations/rate_limits` is a clean source, OpenAI has none → render "unavailable" if ever built); token-side reconciliation.
+- **Split (§10):** **T10a** (connect/disconnect/connections + validation + connect-action test + ⛔ GATE 2b) → **T10c** (reconciliation display) → **T10b** (release, §12.10). Carded at §12.14 / §12.15 (T10b already §12.10).
+- **⛔ gates carried to the cards (NOT bypassed):** (1) **GATE 2b** — T10a's live-confirm with Eren's own key resolves the T9b populated-row follow-ups + the OpenAI `/costs` probe behavior; anything unconfirmable for lack of real usage is deferred to **T10-LIVE-ROWS** (§12.16) with locked criteria (Eren noted this will likely defer unless real API usage is generated first). (2) **Legal review of the connection flows** — gates the **0.4.0 release (T10b)**, reviewing the flow **T10a builds**; Eren engages it in parallel with the T10a build. Plus the standing **CLI-surface** + **secret-handling** ⛔ approvals on T10a.
 
 **✅ T9c DONE (2026-06-13, gate green, 280 tests).** The estimate-vs-invoice reconciliation **engine** — pure `costroid-core`, fixture-tested, **zero network, no `costroid-connect` dependency** (it consumes the vendor-report types core itself defined in T9b; the `connect → core` direction holds by construction — core's `Cargo.toml` gained nothing). No CLI/render surface (T10 owns surfacing). Files: `crates/costroid-core/{src/reconcile.rs (new), src/lib.rs (mod + re-exports), src/vendor_report.rs (+`UsdAmount::checked_sub`)}`; docs/DATA-MODEL.md (reconciliation section → as-built shapes) + CHANGELOG.md. Gate: fmt + clippy (`--workspace -D warnings`, and `-p costroid --features connect`) + `test --workspace` (**280 tests**, +16 over T9b's 264: `reconcile` +15, `vendor_report` `checked_sub` +1) + offline.rs both tiers + `cargo deny check licenses bans` (default **and** `--all-features` — both green, graph unchanged) + `bash scripts/offline_acceptance.sh` (incl. the feature-on baseline) — all green.
 - **As-built engine (the card left the shape to the builder; reconciled with DATA-MODEL "Reconciliation engine").** Module **`costroid-core::reconcile`** (re-exported from the crate root): entry point `reconcile_cost(&LocalCostEstimate, &CostReportOutcome) -> CostReconciliation`. **Input** `LocalCostEstimate` = estimated dollars per **(UTC day, model)**, **API lane only**; `from_focus_records(&[FocusRecord])` keeps API-lane rows (`CostLane::Api`), buckets by **UTC day** (`charge_period_start.date_naive()`) + `x_Model`, sums `billed_cost`. **Output** `CostReconciliation { days: Vec<DayReconciliation>, caveats: CostReportCaveats, report: ReconciledReportStatus }`; `DayReconciliation`/`ModelReconciliation` each carry `local_estimate: UsdAmount`, `vendor_billed: VendorBilled`, `variance: Option<UsdAmount>`, `variance_pct: Option<Decimal>` (+ per-model `confidence: Option<AmountConfidence>`). Added `UsdAmount::checked_sub` to `vendor_report.rs` so signed variance stays inside the unit-tagged money newtype (never raw `Decimal` escaping it).
@@ -570,7 +584,7 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 ---
 
-## 12. Ready-to-paste task prompts (T1–T8, T9a–T9c + T10b release)
+## 12. Ready-to-paste task prompts (T1–T8, T9a–T9c, T10a/T10c + T10b release + T10-LIVE-ROWS)
 
 *To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T9+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
 
@@ -827,9 +841,10 @@ Rules:
 
 ### 12.8 — Backlog tasks (T9+): the pin-then-card prompt
 
-*T10–T18 aren't carded (except T10b, whose release mechanics are knowable; carded at §12.10) — they have open 📌 that must be pinned first. Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
+*T11–T18 aren't carded — they have open 📌 that must be pinned first. (**T10 has fully run this prompt** — T10a §12.14, T10c §12.15, T10-LIVE-ROWS §12.16, T10b §12.10, all carded + none built; pins in `docs/proposals/T10-PIN-PROPOSAL.md` + §11.5 📌 T10.) Paste §12.0 + this body, with `<ID>` filled, to turn a backlog task into a real card (don't build it yet):*
 
 > **T9 status — this prompt has fully RUN for T9; do not re-run it.** The T9 pins were proposed + ⛔-signed-off 2026-06-10 (`docs/proposals/T9-PIN-PROPOSAL.md`, logged in §11.5), T9a is built (§12.11 ✅), and T9b/T9c are built (§12.12/§12.13 ✅ DONE 2026-06-13 — T9 complete).
+> **T10 status — this prompt has fully RUN for T10; do not re-run it.** The T10 pins were proposed + ⛔-signed-off 2026-06-13 (`docs/proposals/T10-PIN-PROPOSAL.md`, logged in §11.5 📌 T10), and T10a/T10c/T10-LIVE-ROWS are carded (§12.14/§12.15/§12.16; T10b release at §12.10) — **none built yet**; build each in a fresh agent per §12.0 when its Prereq holds.
 
 ```
 Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
@@ -1258,4 +1273,196 @@ Your job is to PIN + CARD it, not to build it:
   §11.4 box ticked; §11.5 as-built entry written.
 **Next:** T10 surfaces reconciliation (the display 📌) + wires connect/disconnect; then T10b cuts
   v0.4.0.
+```
+
+### 12.14 — T10a · `connect`/`disconnect`/`connections` CLI + key validation + connect-action test · XL · ⛔📌 · Prereq: T9 ✅ + ⛔ GATE 2b resolution agreed (§11.5 ✅ T9b / 📌 T10)
+
+> **As-pinned (2026-06-13).** The 📌 is resolved: every CLI/endpoint/validation detail below is from the ⛔-signed-off `docs/proposals/T10-PIN-PROPOSAL.md` (§1.1 CLI · §2 validation · §4 connections · §6 GATE 2b · §7 the connect-action test) — read it fully; it IS the design, and where this card is silent the proposal governs. **Never invent an endpoint/param/field beyond it.** The OpenAI validation was signed off with an amendment: probe **`GET /v1/organization/costs`** (a recent COMPLETED 1-day window, `limit=1`), NOT `/usage/completions`. The three ⛔ below (CLI surface + secret-handling approval + the GATE-2b live-confirm) still gate; the ⛔ legal review of the flow this card builds gates T10b (the release), not this card's build.
+
+```
+**Goal:** wire the FIRST caller of costroid-connect — the connect/disconnect/connections CLI — so a
+  user pastes their own admin key (Anthropic sk-ant-admin / OpenAI sk-admin-), it is validated WITHOUT
+  reading spend beyond their own data, stored ONLY in the OS keychain, and listed; disconnect revokes
+  instantly. This is the FIRST real network in the product (opt-in, behind --features connect + an
+  explicit user action).
+**Spec:** docs/proposals/T10-PIN-PROPOSAL.md §1.1 (CLI), §2 (validation — incl. the OpenAI /costs
+  amendment in §2.2), §4 (connections), §6 (GATE 2b), §7 (the connect-action test); §11.5 ✅ T8/T9a/T9b
+  + 📌 T10 (CredentialStore/ConnectionRegistry/AuthorizedClient/AnthropicAdapter/OpenAiAdapter);
+  CLAUDE.md golden rules + decide-vs-ask.
+**Files:** apps/cli/src/main.rs (clap: add Connect/Disconnect/Connections, all #[cfg(feature="connect")]);
+  apps/cli/src/ (a NEW connect command module — the INJECTABLE command core, so the Layer-1 test can drive
+  it with a loopback client + mock keychain); apps/cli/Cargo.toml (the `connect` feature already gates
+  costroid-connect); crates/costroid-connect/src/anthropic.rs (add the non-billing `validate()` →
+  GET /v1/organizations/me) + src/openai.rs (the validation probe = fetch_cost_report over a 1-day
+  COMPLETED window, limit=1 — no new endpoint); crates/costroid-connect/src/lib.rs (optional NON-secret
+  org-label on RegistryFile, captured from `me`); apps/cli/tests/ (the Layer-1 connect-action integration
+  test, #[cfg(feature="connect")]); scripts/offline_acceptance.sh (replace the T9/T10 STUB with the
+  Layer-2 fail-closed check); README.md + CHANGELOG.md.
+**Pinned (proposal §1.1/§2 — signed off 2026-06-13):**
+  · vendor = anthropic|openai|gemini; `gemini` connect prints the pinned `unavailable — no sanctioned
+    static-key usage API` line (GEMINI_UNAVAILABLE_MESSAGE; ASCII-folded in --plain) + exits 0 with NO
+    key prompt/accept.
+  · Key entry = STDIN ONLY — NEVER argv/env (argv leaks to `ps`; env leaks to children/history). No-echo
+    prompt on a TTY; read one line on a pipe (so `echo "$KEY" | costroid connect anthropic` works).
+    Build agent picks a lean PERMISSIVE no-echo crate (e.g. rpassword, MIT) or a small termios shim.
+  · Wrong-key-class PREFIX check BEFORE any network (reuse the adapters' wrong_key_class): sk-ant-admin /
+    sk-admin-; on mismatch print "<seen>-key; <vendor> needs a <expected>… admin key", do NOT store,
+    exit nonzero. Only the prefix is inspected (expose_secret()); the key is never echoed.
+  · Anthropic validation = GET /v1/organizations/me (x-api-key + anthropic-version: 2023-06-01; returns
+    {id,name,type}; ZERO billing; same Admin-API org-gate as cost_report → a 200 predicts the fetch; any
+    non-200 = invalid/ineligible — treat generically, capture the real status at GATE 2b).
+  · OpenAI validation = GET /v1/organization/costs over a recent COMPLETED 1-day window, limit=1 (the
+    SIGNED-OFF AMENDMENT — NOT /usage/completions, NOT admin_api_keys): probe the exact endpoint T10c
+    depends on, so "Connected" predicts the cost fetch and the costs-vs-usage scope question is moot.
+    OpenAiAdapter::fetch_cost_report over that window IS the probe; 200=success, 401/403=failure, and a
+    post-auth 400 on the window (cf. Anthropic completed-day 400 → RequestRejected{400}) means "request
+    completed-day ranges" — confirm at GATE 2b.
+  · On success: CredentialStore::store(vendor, secret) (keychain only) → ConnectionRegistry::mark_connected
+    + capture the non-secret org label; print "Connected <vendor> — organization <name> (<id>). Key stored
+    in your OS keychain." On failure: typed VendorReportUnavailable reason + remediation (AuthenticationFailed
+    → "key was rejected"; AccessForbidden{IndividualAccount} → "create an org first"; {MemberNotOwner} →
+    "use an Owner-created admin key"), do NOT store, exit nonzero. Never echo the key.
+  · disconnect = CredentialStore::delete (idempotent) + ConnectionRegistry::mark_disconnected (idempotent);
+    print "Disconnected <vendor>." exit 0 even if nothing was stored. No network.
+  · connections = LOCAL-ONLY list by default (registry + keychain presence): anthropic/openai connected|not
+    + the org label when present; gemini always "unavailable". `--check` re-runs the validation call per
+    connected vendor (network). Status by a NON-COLOR text cue; --plain + em-dash ASCII-fold (as
+    cursor_detected_message).
+**Scope fence:** connect/disconnect/connections + the two validation calls + the connect-action test ONLY.
+  NO reconciliation display (T10c — `costroid reconcile`). NO rate-limit denominators (deferred — proposal
+  §9). NO OAuth (deferred — proposal §8; the Anthropic `me` OAuth-Bearer alt is NOT used). NO TUI tab
+  (Step 5). NO new endpoint beyond the §2 validation calls. The DEFAULT build's resolved graph + the
+  strace DEFAULT tier stay UNCHANGED (zero network); only the explicit connect/connections --check actions
+  reach the network, behind --features connect.
+**Connect-action test (proposal §7 — two layers, zero real network):**
+  · Layer 1 — a #[cfg(feature="connect")] integration test drives the INJECTABLE command core against the
+    cfg(test) loopback MockServer (the T9b test_support pattern) + the keyring MOCK backend, asserting:
+    (a) the only network egress is to the loopback authorized host (off-host refused by the type before
+    I/O — already T9a-tested); (b) connect writes the secret ONLY to the mock keychain (a fixture $HOME
+    fingerprint is UNCHANGED across connect — extends T8's credential_round_trip_writes_nothing_to_disk to
+    the full command); (c) disconnect removes the key + registry entry, no residue.
+  · Layer 2 — replace the script STUB: run `costroid connect anthropic` (--features connect build) under
+    strace/unshare with a PREFIX-VALID-BUT-FAKE key on stdin (e.g. sk-ant-admin-FAKE, so it passes the
+    prefix check and ATTEMPTS the validation call) + a fixture $HOME, asserting (i) no non-loopback AF_INET
+    connect escapes isolation (the real-host attempt FAILS CLOSED), (ii) the fixture $HOME fingerprint is
+    unchanged (no secret/file residue on the failure path), (iii) disconnect likewise leaves no residue.
+  · NO host-override knob is added (it would weaken the authorized-host guarantee). The CI strace gate
+    treats both layers like the rest (assert_no_inet already allows 127.0.0.1/::1).
+**⛔ Human gates (THREE on this card):**
+  (1) CLI surface — the subcommand shapes + stdin key entry + copy (CLAUDE.md ask-first; §1.1 APPROVED —
+      confirm the as-built matches).
+  (2) Secret-handling — connect reads/stores keys (CLAUDE.md ask-first); approve the validate() API + the
+      key flow (stdin → prefix-check → validate → keychain; never argv/env/disk/log; AuthHeader-only wire)
+      before finalizing.
+  (3) ⛔ GATE 2b — the live-confirm with the human's OWN admin key runs HERE (proposal §6): the connect
+      validation + a first real cost fetch confirm the T9b populated-row shapes, the OpenAI /costs probe
+      behavior (200/401/403 + any window 400), and a real 401/403 status. Any item NOT confirmable for
+      lack of real usage is formally DEFERRED to the named T10-LIVE-ROWS card (§12.16) with its locked
+      criterion. This card's §11.5 entry MUST record GATE 2b as CLEARED or each item deferred. (Eren noted
+      it will likely defer unless real API usage is generated first.)
+  (NOTE — not a gate on THIS card: the ⛔ legal review of the connection flows gates T10b/0.4.0 ship, not
+   the T10a build; Eren engages it in parallel with this build.)
+**Done when:** four-command gate green; --features connect builds; connect/disconnect/connections work
+  against the keyring MOCK + loopback MockServer (ZERO real network in tests); Layer-1 test + Layer-2 script
+  prove the three properties (only-loopback host, secret-keychain-only, disconnect-clean); offline.rs both
+  tiers + cargo-deny both passes + the DEFAULT strace tier stay green; GATE 2b cleared OR each item deferred
+  to T10-LIVE-ROWS; README/CHANGELOG updated; §11.4 box ticked; §11.5 as-built entry written.
+**Next:** T10c (§12.15) surfaces reconciliation (`costroid reconcile`) on the stored keys + the fetch path;
+  T10b (§12.10) cuts v0.4.0 once T10c + the ⛔ legal review land.
+```
+
+### 12.15 — T10c · reconciliation display (`costroid reconcile`) · L · 📌 · Prereq: T10a ✅ (§12.14)
+
+> **As-pinned (2026-06-13).** From the ⛔-signed-off `docs/proposals/T10-PIN-PROPOSAL.md` §5. Surfaces the T9c engine (`costroid-core::reconcile`, §11.5 ✅ T9c) — no new secret/network boundary beyond T10a's (it reuses the connected key + the authorized client). The 📌 is resolved; no ⛔ gate new to this card.
+
+```
+**Goal:** surface T9c's estimate-vs-invoice reconciliation HONESTLY — a `costroid reconcile` subcommand
+  that fetches a connected vendor's cost report, compares it to the local API-lane estimate per UTC day +
+  model (via reconcile_cost), and renders signed variance with every typed caveat/absence intact.
+**Spec:** docs/proposals/T10-PIN-PROPOSAL.md §5; DATA-MODEL "Reconciliation engine"; §11.5 ✅ T9c
+  (reconcile_cost / LocalCostEstimate / CostReconciliation / DayReconciliation / ModelReconciliation /
+  VendorBilled / BilledAbsence / ReconciledReportStatus); DESIGN-SYSTEM (reconciliation rendering,
+  --plain, non-color cue).
+**Files:** apps/cli/src/main.rs (clap: add Reconcile, #[cfg(feature="connect")]); apps/cli/src/render.rs
+  (the reconciliation renderer + --plain/Ascii variants + insta snapshots); apps/cli/src/ (the reconcile
+  command wiring: fetch via the adapter → vendor-scope the FOCUS rows → reconcile_cost → render);
+  docs/DESIGN-SYSTEM.md (the as-built reconciliation component) + CHANGELOG.md.
+**Pinned (proposal §5):**
+  · `costroid reconcile [--vendor anthropic|openai] [--period day|week|month|year]`; no --vendor = every
+    connected vendor (each section; gemini = "unavailable — no sanctioned static-key usage API").
+  · VENDOR-SCOPE the local estimate (the T9c "scope to one vendor before building" rule): x_Tool
+    claude-code → Anthropic, codex → OpenAI, cursor → EXCLUDED (no admin key, no invoice). Build
+    LocalCostEstimate::from_focus_records over only that vendor's rows; reconcile against that vendor's
+    CostReportOutcome (fetched via the adapter + the stored key; request COMPLETED-day ranges).
+  · Render HONESTLY: signed variance (variance = local − billed → "+$X over" / "−$X under"; variance_pct
+    ROUNDED at the render boundary — full Decimal precision is preserved upstream); TYPED vendor-absence as
+    TEXT, NEVER $0 (DayNotCovered → "report doesn't cover this day"; ModelNotInReport → "not attributed by
+    the vendor"; ReportUnavailable(reason) → the typed reason incl. NotConnected → "connect <vendor> first"
+    + Gemini's pinned string); when absent, variance/variance_pct render "—". A LOCAL $0 against a real
+    billed figure is a genuine "vendor billed a model Costroid never saw" signal — render it as real.
+  · Caveats FOOTNOTED (survive on CostReconciliation.caveats + per-model confidence): priority_tier_absent
+    → "Anthropic Priority-Tier spend isn't in this report — the bill may be higher"; per_model_derived_
+    best_effort → "OpenAI per-model figures are best-effort (derived from line items)" + mark those rows.
+    report = Unavailable(reason) → surface the local estimate day-by-day beside "vendor invoice
+    unavailable: <reason>", never a fabricated delta.
+  · DOLLAR (cost) reconciliation ONLY for T10c. If any TOKEN view is ever shown it MUST carry
+    responses_api_coverage_unconfirmed ("OpenAI token counts may undercount Codex/Responses-API traffic") —
+    but DEFER the token-side view (and that caveat) to a later card; T9c's cost-day totals are complete.
+  · Local figure ALWAYS labeled an estimate (x_Estimated); never presented as the bill; hedged per the
+    DESIGN-SYSTEM voice.
+**Scope fence:** the reconcile subcommand + its renderer ONLY. NO new endpoint/parse (reuse the adapters +
+  reconcile_cost). NO connect/disconnect/connections changes (T10a). NO TUI History/Models tab (Step 5).
+  NO token-side reconciliation. NO rate-limit denominators. NO new secret/network boundary (reuses T10a's).
+**Accessibility:** full --plain rendering; NON-COLOR cue for over/under + absence + caveat states; em-dash
+  ASCII-fold at the render boundary; insta snapshots incl. --plain.
+**⛔ Human gate:** none new beyond T10a's (no new secret/network boundary). (The ⛔ legal review + the
+  release are T10b/§12.10.)
+**Done when:** four-command gate green; `costroid reconcile` renders a fixture reconciliation in all render
+  modes (driven by fixtures/loopback, ZERO real network — the adapter path is loopback-tested as in T9b);
+  typed absence never shows $0; caveats survive on screen; --plain snapshot pinned; offline.rs both tiers +
+  the DEFAULT strace tier stay green; DESIGN-SYSTEM + CHANGELOG updated; §11.4 box ticked; §11.5 entry
+  written.
+**Next:** T10b (§12.10) cuts v0.4.0 (after the ⛔ legal review) — the connections line ships.
+```
+
+### 12.16 — T10-LIVE-ROWS · deferred populated-row / probe-behavior live-confirm · S · ⛔📌 · Prereq: real API usage on Eren's connected org
+
+> **A DEFERRED card, created 2026-06-13 by the T10 pin pass** to hold any ⛔ GATE 2b item that T10a's live-confirm could NOT verify for lack of real raw-API usage (the same reason T9b's populated-row checks were deferred — §11.5 ✅ T9b: Eren's org had no raw-API usage across a 30-day window). It is NOT a build task in the usual sense — it is a locked-criterion live-verification checklist, run by the human with their own admin key once real usage exists, that then flips/confirms the items and pins real-body regression fixtures. **It does not block T10c, but it (or its formal closure) is part of clearing ⛔ GATE 2b before T10b/0.4.0 ships.**
+
+```
+**Goal:** finalize the T9b/T10a live-confirm items that needed REAL raw-API usage to verify — the
+  populated per-result-row parses, the OpenAI /costs probe behavior, and a real 401/403 — and pin verbatim
+  real bodies as regression fixtures, so no money-bearing parse or auth classification ships
+  documented-schema-derived-only.
+**Spec:** §11.5 ✅ T9b (the standing follow-ups) + ✅ T9b ⛔ GATE 2b block; docs/proposals/T10-PIN-PROPOSAL.md
+  §6 (the GATE-2b resolution table) + §2.2 (the OpenAI /costs probe).
+**Files:** crates/costroid-connect/src/anthropic.rs + src/openai.rs (real-body regression fixtures, like
+  T9b's parses_the_live_empty_results_envelope; flip caveats if confirmed); crates/costroid-core/src/
+  vendor_report.rs (only if a real field shape forces a parser change — NOT expected); §11.5 (log the
+  results); CHANGELOG.md if a caveat flips.
+**Locked completion criteria (each: confirm with a real admin key against real usage, then pin a verbatim
+  body fixture; NO change to the type shapes is expected — if one IS forced, that is a finding to log):**
+  · [ ] Populated per-RESULT-row shapes parse: Anthropic cost_report `amount` (decimal-cents ÷100) /
+    `description` / `model` / `cost_type` / `service_tier`, and usage_report token fields; OpenAI
+    `amount.value` (float dollars) / `line_item` and the usage token fields. Pin a real body per vendor.
+  · [ ] OpenAI Responses-API coverage (Codex): fire a known Responses-API call, watch usage/completions;
+    if covered, flip responses_api_coverage_unconfirmed → false (and relax T10c's token-undercount copy);
+    if not, KEEP it true + keep the copy. (Cost day-totals are complete regardless — this is token-side.)
+  · [ ] A real 401 body AND a real 403 body + their STATUS captured (the classifier branches 401 vs 403);
+    confirm the connect-time remediation copy matches the real failure.
+  · [ ] The OpenAI /costs PROBE behavior (proposal §2.2): a recent completed 1-day window, limit=1 →
+    200 on a good key; 401/403 on a bad/under-scoped key; and any post-auth 400 on a current-day/future
+    window (→ RequestRejected{400}). Confirm "request completed-day ranges" holds.
+  · [ ] The OpenAI `line_item` string format (grounds the best-effort per-model parse), `currency` value,
+    and history depth/retention on the pinned endpoints.
+**Scope fence:** live-verification + real-body regression fixtures + caveat flips ONLY. NO new endpoints,
+  NO new features, NO CLI/render change beyond a copy tweak if a caveat flips. Tests still NEVER hit the
+  real network (the live run is the human's one-off; only its captured bodies become committed fixtures).
+**⛔ Human gate:** this IS the human-run live-confirm (the one allowed use of a real admin key + real data,
+  per §11.5 ✅ T9b) — not an automated test. Each item is checked off only on a real confirmation.
+**Done when:** every box above is either confirmed (with a pinned real-body fixture + any flipped caveat)
+  or, if real usage for that lane still doesn't exist, explicitly re-deferred with the reason logged in
+  §11.5 — and ⛔ GATE 2b is recorded as fully cleared. (Partial closure is allowed: confirmed items ship;
+  unconfirmable-for-no-usage items stay deferred here, which is itself the §6 "formally deferred" path.)
+**Next:** with GATE 2b fully cleared, T10b/0.4.0 has no outstanding live-confirm debt.
 ```
