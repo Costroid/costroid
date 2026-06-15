@@ -12,6 +12,16 @@ use costroid_providers::{LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
+// The reconciliation renderer (T10c) is a pure function of the core `CostReconciliation`
+// type, so it compiles + snapshot-tests in the default suite, but it is only *called* from
+// the connect-gated `reconcile` command — gate the imports + functions on
+// `any(feature = "connect", test)` so the default non-test build carries no dead code.
+#[cfg(any(feature = "connect", test))]
+use costroid_core::{
+    AmountConfidence, BilledAbsence, CostReconciliation, DayReconciliation, ModelReconciliation,
+    ReconciledReportStatus, UsdAmount, VendorBilled, VendorReportUnavailable,
+};
+
 const COST_BAR_WIDTH: usize = 12;
 const DEFAULT_RENDER_WIDTH: usize = 64;
 const LIMIT_BAR_WIDTH: usize = 12;
@@ -285,6 +295,359 @@ pub(crate) fn render_frontier_document(view: &BenchView, options: RenderOptions)
     match options.mode {
         RenderMode::Plain => render_frontier_plain_document(view),
         RenderMode::Braille | RenderMode::Ascii => render_frontier_visual_document(view, options),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation surface (T10c) — `costroid reconcile`. Renders T9c's
+// `CostReconciliation` HONESTLY: signed variance per UTC day + model; TYPED vendor-side
+// absence as text, NEVER a fabricated $0; every caveat footnoted; the local figure ALWAYS
+// labeled an estimate (`~`). It is a pure function of the core type (no `costroid-connect`
+// dependency), so its snapshots run in the default test suite; the connect-gated `reconcile`
+// command (apps/cli/src/reconcile.rs) fetches the report and calls it. Same monochrome voice
+// as the frontier — no amber (reserved for near-limit); the over/under direction is carried
+// as TEXT, never color. Gated `any(feature = "connect", test)` so the default non-test build
+// (which never calls it) carries no dead code.
+// ---------------------------------------------------------------------------
+
+/// Render one vendor's reconciliation section to a string in `options`' mode.
+#[cfg(any(feature = "connect", test))]
+pub(crate) fn render_reconciliation(
+    vendor: &str,
+    window_label: &str,
+    recon: &CostReconciliation,
+    options: RenderOptions,
+) -> String {
+    render_reconciliation_document(vendor, window_label, recon, options).render(options)
+}
+
+#[cfg(any(feature = "connect", test))]
+pub(crate) fn render_reconciliation_document(
+    vendor: &str,
+    window_label: &str,
+    recon: &CostReconciliation,
+    options: RenderOptions,
+) -> StyledDocument {
+    let mut out = StyledDocument::new();
+
+    // Header: the vendor + section totals (estimate always `~`-marked; the invoice total
+    // only when a report was available).
+    let (total_est, total_billed) = reconciliation_totals(recon);
+    let money = match total_billed {
+        Some(billed) => format!(
+            "est {} / inv {}",
+            format_money(&total_est, Some("USD"), true),
+            format_money(&billed, Some("USD"), false),
+        ),
+        None => format!("est {}", format_money(&total_est, Some("USD"), true)),
+    };
+    if options.mode == RenderMode::Plain {
+        // Plain follows the established `costroid <screen>` convention (a clean header, like
+        // now/trends/frontier's plain builders) — never the visual builder's `costroid
+        // costroid` doubling, which would read awkwardly to a screen reader.
+        push_line(&mut out, &format!("costroid reconcile  {vendor}  {money}"));
+    } else {
+        push_header_line(&mut out, mark(options), vendor, money, options);
+    }
+    push_line(
+        &mut out,
+        &fold_ascii(&format!("estimate vs invoice — {window_label}"), options),
+    );
+    // The standing hedge (DESIGN-SYSTEM voice): the local figure is an estimate; the vendor
+    // invoice is the source of truth.
+    push_line(
+        &mut out,
+        "Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.",
+    );
+
+    // Report-level unavailability (Gemini, not-connected, auth failure, …): name the typed
+    // reason once up top, then STILL surface the local estimate day by day below — every
+    // vendor cell renders typed-absent, never a fabricated $0.
+    if let ReconciledReportStatus::Unavailable(reason) = &recon.report {
+        push_line(
+            &mut out,
+            &fold_ascii(
+                &format!(
+                    "vendor invoice unavailable: {}",
+                    report_unavailable_text(reason, vendor)
+                ),
+                options,
+            ),
+        );
+    }
+
+    push_reconcile_rule(&mut out, options);
+
+    if recon.days.is_empty() {
+        push_line(
+            &mut out,
+            "No local usage recorded for this vendor in this window.",
+        );
+    }
+    for day in &recon.days {
+        push_reconciliation_day(&mut out, day, vendor, options);
+    }
+
+    push_reconciliation_footnotes(&mut out, recon, options);
+    out
+}
+
+/// One UTC day (its total) plus its per-model breakdown, indented.
+#[cfg(any(feature = "connect", test))]
+fn push_reconciliation_day(
+    out: &mut StyledDocument,
+    day: &DayReconciliation,
+    vendor: &str,
+    options: RenderOptions,
+) {
+    let line = format!(
+        "{date}  est {est}   {inv}   {var}",
+        date = day.date,
+        est = format_money(&day.local_estimate.as_usd(), Some("USD"), true),
+        inv = reconcile_billed_cell(&day.vendor_billed, vendor),
+        var = reconcile_variance_cell(
+            day.variance,
+            day.variance_pct,
+            billed_usd(&day.vendor_billed),
+            options
+        ),
+    );
+    push_line(out, &fold_ascii(&line, options));
+    for model in &day.by_model {
+        push_reconciliation_model(out, model, vendor, options);
+    }
+}
+
+#[cfg(any(feature = "connect", test))]
+fn push_reconciliation_model(
+    out: &mut StyledDocument,
+    model: &ModelReconciliation,
+    vendor: &str,
+    options: RenderOptions,
+) {
+    // Mark a row whose vendor figure is best-effort (OpenAI per-model, derived from line
+    // items) with `*`; the footnote explains it.
+    let marker = if matches!(model.confidence, Some(AmountConfidence::DerivedBestEffort)) {
+        " *"
+    } else {
+        ""
+    };
+    let line = format!(
+        "    {name:<22} est {est}   {inv}   {var}{marker}",
+        name = model.model,
+        est = format_money(&model.local_estimate.as_usd(), Some("USD"), true),
+        inv = reconcile_billed_cell(&model.vendor_billed, vendor),
+        var = reconcile_variance_cell(
+            model.variance,
+            model.variance_pct,
+            billed_usd(&model.vendor_billed),
+            options
+        ),
+    );
+    push_line(out, &fold_ascii(&line, options));
+}
+
+/// The vendor-billed cell: a dollar invoice figure when billed, otherwise the TYPED absence
+/// reason as TEXT — never a fabricated `$0`. (Any em-dash in a reason message is folded by
+/// the caller's `fold_ascii` on the whole line.)
+#[cfg(any(feature = "connect", test))]
+fn reconcile_billed_cell(billed: &VendorBilled, vendor: &str) -> String {
+    match billed {
+        VendorBilled::Billed(amount) => {
+            format!("inv {}", format_money(&amount.as_usd(), Some("USD"), false))
+        }
+        VendorBilled::Unavailable(absence) => match absence {
+            BilledAbsence::DayNotCovered => "report doesn't cover this day".to_string(),
+            BilledAbsence::ModelNotInReport => "not attributed by the vendor".to_string(),
+            BilledAbsence::ReportUnavailable(reason) => report_unavailable_text(reason, vendor),
+        },
+    }
+}
+
+/// The billed dollar figure when the vendor side is present, else `None` (a typed absence —
+/// where the variance is also `None`). The variance cell uses it to detect a sub-cent
+/// denominator (one that displays as `$0.00`) so a percentage doesn't explode against it.
+#[cfg(any(feature = "connect", test))]
+fn billed_usd(billed: &VendorBilled) -> Option<Decimal> {
+    match billed {
+        VendorBilled::Billed(amount) => Some(amount.as_usd()),
+        VendorBilled::Unavailable(_) => None,
+    }
+}
+
+/// The typed reason a whole report is unavailable. `NotConnected` becomes an actionable
+/// "connect <vendor> first"; every other reason uses its single-sourced core message.
+#[cfg(any(feature = "connect", test))]
+fn report_unavailable_text(reason: &VendorReportUnavailable, vendor: &str) -> String {
+    match reason {
+        VendorReportUnavailable::NotConnected => format!("connect {vendor} first"),
+        other => other.message(),
+    }
+}
+
+/// The signed-variance cell: `+$X over (+P%)` / `-$X under (-P%)` / `exact`, or the typed
+/// "—" when the vendor side is absent (no fabricated delta). The percentage is ROUNDED here,
+/// at the render boundary — full `Decimal` precision is preserved upstream by the engine.
+/// `billed_usd` is the vendor figure the percentage is relative to (its denominator); it's
+/// used only to catch the sub-cent-denominator case below.
+#[cfg(any(feature = "connect", test))]
+fn reconcile_variance_cell(
+    variance: Option<UsdAmount>,
+    variance_pct: Option<Decimal>,
+    billed_usd: Option<Decimal>,
+    options: RenderOptions,
+) -> String {
+    let variance = match variance {
+        Some(variance) => variance.as_usd(),
+        // Typed vendor-side absence → "—" (folded to "-" outside braille), never "$0.00".
+        None => return dash(options).to_string(),
+    };
+    if variance.is_zero() {
+        return "exact".to_string();
+    }
+    let over = variance > Decimal::ZERO;
+    let word = if over { "over" } else { "under" };
+    let abs = variance.abs();
+    // A genuinely non-zero variance whose dollar magnitude rounds below a cent: show
+    // "<$0.01" (no numeric sign — the over/under word carries direction) so the row never
+    // reads as a misleading "+$0.00 over". Real vendor bills are sub-cent (Anthropic bills
+    // fractions of a cent), so this is reachable, not theoretical.
+    let variance_subcent = abs.round_dp(2).is_zero();
+    let money = if variance_subcent {
+        format!("<$0.01 {word}")
+    } else {
+        let sign = if over { "+" } else { "-" };
+        format!("{sign}{} {word}", format_money(&abs, Some("USD"), false))
+    };
+    match variance_pct {
+        // A ≥ $0.01 variance against a billed figure that itself rounds below a cent (so the
+        // invoice cell shows "$0.00") makes the percentage explode against an effectively-
+        // invisible denominator (e.g. "+$1.40 over (+69950.0%)" beside "inv $0.00"). Name the
+        // denominator's magnitude instead — parallel to the "(vs $0 billed)" case below. A
+        // sub-cent variance keeps its percentage: those magnitudes are coherent and small.
+        Some(_)
+            if !variance_subcent
+                && matches!(billed_usd, Some(billed) if !billed.is_zero() && billed.round_dp(2).is_zero()) =>
+        {
+            format!("{money} (vs <$0.01 billed)")
+        }
+        Some(pct) => format!("{money} ({})", format_signed_pct(pct)),
+        // The vendor billed $0 → the percentage is undefined; the signed dollar still stands.
+        None => format!("{money} (vs $0 billed)"),
+    }
+}
+
+/// A percentage rounded to one decimal at the render boundary, with an explicit leading sign
+/// and a uniform single fractional digit (so `-100.0%` lines up with `+20.0%`). The sign is
+/// taken from the **unrounded** value, so a tiny negative that rounds to `0.0` still reads
+/// `-0.0%` (sign-consistent with its `under`) rather than flipping to `+0.0%`.
+#[cfg(any(feature = "connect", test))]
+fn format_signed_pct(pct: Decimal) -> String {
+    let mut magnitude = pct.abs().round_dp(1);
+    magnitude.rescale(1);
+    let sign = if pct.is_sign_negative() { "-" } else { "+" };
+    format!("{sign}{magnitude}%")
+}
+
+/// The reconciliation section rule: an ASCII `-` outside braille (Plain is the accessibility
+/// floor and must be pure ASCII, unlike the shared `push_rule` which keeps `─` in Plain).
+#[cfg(any(feature = "connect", test))]
+fn push_reconcile_rule(out: &mut StyledDocument, options: RenderOptions) {
+    let glyph = if options.mode == RenderMode::Braille {
+        "─"
+    } else {
+        "-"
+    };
+    push_line(out, &glyph.repeat(options.width.max(1)));
+}
+
+/// Section totals: estimated dollars (always summed) and billed dollars (only when a report
+/// was available — `None` folds the invoice total out of the header).
+#[cfg(any(feature = "connect", test))]
+fn reconciliation_totals(recon: &CostReconciliation) -> (Decimal, Option<Decimal>) {
+    let total_est = recon
+        .days
+        .iter()
+        .fold(Decimal::ZERO, |acc, day| acc + day.local_estimate.as_usd());
+    let total_billed = match recon.report {
+        ReconciledReportStatus::Available => Some(recon.days.iter().fold(
+            Decimal::ZERO,
+            |acc, day| match &day.vendor_billed {
+                VendorBilled::Billed(amount) => acc + amount.as_usd(),
+                VendorBilled::Unavailable(_) => acc,
+            },
+        )),
+        ReconciledReportStatus::Unavailable(_) => None,
+    };
+    (total_est, total_billed)
+}
+
+/// The carried-through caveats, footnoted (they survive on `CostReconciliation.caveats`).
+#[cfg(any(feature = "connect", test))]
+fn push_reconciliation_footnotes(
+    out: &mut StyledDocument,
+    recon: &CostReconciliation,
+    options: RenderOptions,
+) {
+    if recon.caveats.per_model_derived_best_effort {
+        push_line(
+            out,
+            &fold_ascii(
+                "* OpenAI per-model figures are best-effort (derived from line items).",
+                options,
+            ),
+        );
+    }
+    if recon.caveats.priority_tier_absent {
+        push_line(
+            out,
+            &fold_ascii(
+                "Note: Anthropic Priority-Tier spend isn't in this report — the bill may be higher.",
+                options,
+            ),
+        );
+    }
+    // When a report is available but doesn't span every local day, the header `inv` total
+    // covers only the spanned days while `est` covers all of them — footnote it so the
+    // headline pair isn't misread as a real over-estimate.
+    let some_day_uncovered = matches!(recon.report, ReconciledReportStatus::Available)
+        && recon.days.iter().any(|day| {
+            matches!(
+                day.vendor_billed,
+                VendorBilled::Unavailable(BilledAbsence::DayNotCovered)
+            )
+        });
+    if some_day_uncovered {
+        push_line(
+            out,
+            "Note: the invoice total covers only the days this report spans; days outside it show \"report doesn't cover this day\".",
+        );
+    }
+}
+
+/// The absence/placeholder dash — an em-dash on a braille TTY, an ASCII hyphen otherwise.
+#[cfg(any(feature = "connect", test))]
+fn dash(options: RenderOptions) -> &'static str {
+    if options.mode == RenderMode::Braille {
+        "—"
+    } else {
+        "-"
+    }
+}
+
+/// Fold the handful of non-ASCII glyphs reconciliation copy can carry (`—`, `…`, `×`, `·`)
+/// to ASCII for the Ascii/Plain modes — Plain is the accessibility floor (every byte ASCII),
+/// and Ascii targets non-UTF-8 terminals — while a braille TTY keeps them.
+#[cfg(any(feature = "connect", test))]
+fn fold_ascii(value: &str, options: RenderOptions) -> String {
+    if options.mode == RenderMode::Braille {
+        value.to_string()
+    } else {
+        value
+            .replace('—', "-")
+            .replace('…', "...")
+            .replace('×', "x")
+            .replace('·', "-")
     }
 }
 
@@ -2235,10 +2598,11 @@ fn format_bucket_start(range: &PeriodRange) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, LocalResult, TimeZone, Utc};
+    use chrono::{Duration, LocalResult, NaiveDate, TimeZone, Utc};
     use costroid_core::{
-        AggregateTotals, CostLaneSummary, GroupKey, LimitSummary, NowSummary, PeriodRange,
-        PricingCoverage, ProviderStatus, TrendsSummary,
+        reconcile_cost, AggregateTotals, CostLaneSummary, CostLineItem, CostReportCaveats,
+        CostReportOutcome, GroupKey, LimitSummary, LocalCostEstimate, NowSummary, PeriodRange,
+        PricingCoverage, ProviderStatus, TrendsSummary, VendorCostDay, VendorCostReport,
     };
     use rust_decimal::Decimal;
 
@@ -3190,5 +3554,353 @@ mod tests {
         assert!(output.contains("no API-billed usage to compare"));
         // Reference frontier still renders both benchmarks with their dominance verdicts.
         assert!(output.contains("dominated by gpt-5.5"));
+    }
+
+    // ---- reconciliation surface (T10c) --------------------------------------
+
+    #[track_caller]
+    fn dec(literal: &str) -> Decimal {
+        match Decimal::from_str_exact(literal) {
+            Ok(value) => value,
+            Err(err) => panic!("bad fixture decimal {literal:?}: {err:?}"),
+        }
+    }
+
+    fn usd(literal: &str) -> UsdAmount {
+        UsdAmount::from_usd(dec(literal))
+    }
+
+    fn naive(year: i32, month: u32, day: u32) -> NaiveDate {
+        match NaiveDate::from_ymd_opt(year, month, day) {
+            Some(date) => date,
+            None => panic!("bad fixture date"),
+        }
+    }
+
+    fn local_with(entries: &[(NaiveDate, &str, &str)]) -> LocalCostEstimate {
+        let mut estimate = LocalCostEstimate::new();
+        for (date, model, dollars) in entries {
+            if let Err(err) = estimate.add(*date, model, usd(dollars)) {
+                panic!("fixture add failed: {err:?}");
+            }
+        }
+        estimate
+    }
+
+    fn available(days: Vec<VendorCostDay>, caveats: CostReportCaveats) -> CostReportOutcome {
+        CostReportOutcome::Available(VendorCostReport { days, caveats })
+    }
+
+    /// A vendor cost day from line items (panicking on the impossible money-overflow path —
+    /// the workspace lints forbid `unwrap`/`expect` even in tests).
+    fn vendor_day(date: NaiveDate, items: Vec<CostLineItem>) -> VendorCostDay {
+        match VendorCostDay::from_line_items(date, items) {
+            Ok(day) => day,
+            Err(err) => panic!("fixture vendor day failed: {err:?}"),
+        }
+    }
+
+    fn line_item(model: &str, dollars: &str, confidence: AmountConfidence) -> CostLineItem {
+        CostLineItem {
+            label: model.to_string(),
+            amount: usd(dollars),
+            model: Some(model.to_string()),
+            cost_type: Some("tokens".to_string()),
+            service_tier: Some("standard".to_string()),
+            confidence,
+        }
+    }
+
+    /// An Anthropic-shaped reconciliation exercising every honest state: an over-estimate
+    /// day with a per-model split, a local day the vendor report doesn't cover (typed
+    /// absence, never $0), and a model the vendor billed but Costroid never saw (a real
+    /// local $0). Carries the Priority-Tier caveat.
+    fn anthropic_reconciliation() -> CostReconciliation {
+        let d_covered = naive(2026, 6, 14);
+        let d_uncovered = naive(2026, 6, 13);
+        let local = local_with(&[
+            (d_covered, "claude-opus-4-8", "3.00"),
+            (d_covered, "claude-sonnet-4-6", "1.20"),
+            (d_uncovered, "claude-opus-4-8", "1.00"),
+        ]);
+        let outcome = available(
+            vec![vendor_day(
+                d_covered,
+                vec![
+                    line_item("claude-opus-4-8", "3.00", AmountConfidence::Exact),
+                    line_item("claude-sonnet-4-6", "1.00", AmountConfidence::Exact),
+                    line_item("claude-ghost-9", "0.50", AmountConfidence::Exact),
+                ],
+            )],
+            CostReportCaveats {
+                priority_tier_absent: true,
+                per_model_derived_best_effort: false,
+            },
+        );
+        reconcile_cost(&local, &outcome)
+    }
+
+    /// An OpenAI-shaped reconciliation: a best-effort per-model figure (marked + footnoted)
+    /// and an under-estimate.
+    fn openai_reconciliation() -> CostReconciliation {
+        let day = naive(2026, 6, 14);
+        let local = local_with(&[(day, "gpt-5.5", "1.00")]);
+        let outcome = available(
+            vec![vendor_day(
+                day,
+                vec![line_item(
+                    "gpt-5.5",
+                    "1.50",
+                    AmountConfidence::DerivedBestEffort,
+                )],
+            )],
+            CostReportCaveats {
+                priority_tier_absent: false,
+                per_model_derived_best_effort: true,
+            },
+        );
+        reconcile_cost(&local, &outcome)
+    }
+
+    /// A not-connected reconciliation: the report is unavailable, but the local estimate
+    /// still surfaces day by day beside the typed reason (never a fabricated delta).
+    fn not_connected_reconciliation() -> CostReconciliation {
+        let local = local_with(&[(naive(2026, 6, 14), "claude-opus-4-8", "2.00")]);
+        reconcile_cost(
+            &local,
+            &CostReportOutcome::Unavailable(VendorReportUnavailable::NotConnected),
+        )
+    }
+
+    /// Gemini: a first-class unavailable with no local usage — the pinned message, no delta.
+    fn gemini_reconciliation() -> CostReconciliation {
+        reconcile_cost(
+            &LocalCostEstimate::new(),
+            &CostReportOutcome::Unavailable(VendorReportUnavailable::NoSanctionedStaticKeyApi),
+        )
+    }
+
+    /// Exercises three honest states the other fixtures don't: a model the vendor billed
+    /// **$0** (variance shown, percentage undefined → "(vs $0 billed)"); a locally-estimated
+    /// model the covered day does **not** attribute (`ModelNotInReport`); and a genuinely
+    /// non-zero **sub-cent** variance (whose dollar magnitude rounds below a cent).
+    fn mixed_states_reconciliation() -> CostReconciliation {
+        let d = naive(2026, 6, 14);
+        let local = local_with(&[
+            (d, "billed-zero", "1.00"),
+            (d, "unattributed", "0.40"),
+            (d, "sub-cent", "0.001"),
+        ]);
+        let outcome = available(
+            vec![vendor_day(
+                d,
+                vec![
+                    line_item("billed-zero", "0", AmountConfidence::Exact),
+                    line_item("sub-cent", "0.002", AmountConfidence::Exact),
+                ],
+            )],
+            CostReportCaveats::default(),
+        );
+        reconcile_cost(&local, &outcome)
+    }
+
+    const WINDOW: &str = "2026-06-08 to 2026-06-14 (UTC, completed days)";
+
+    #[test]
+    fn snapshot_reconcile_anthropic_braille() {
+        insta::assert_snapshot!(render_reconciliation(
+            "anthropic",
+            WINDOW,
+            &anthropic_reconciliation(),
+            RenderOptions::braille(false),
+        ));
+    }
+
+    #[test]
+    fn snapshot_reconcile_anthropic_ascii() {
+        insta::assert_snapshot!(render_reconciliation(
+            "anthropic",
+            WINDOW,
+            &anthropic_reconciliation(),
+            RenderOptions::ascii(false),
+        ));
+    }
+
+    #[test]
+    fn snapshot_reconcile_anthropic_plain() {
+        insta::assert_snapshot!(render_reconciliation(
+            "anthropic",
+            WINDOW,
+            &anthropic_reconciliation(),
+            RenderOptions::plain(),
+        ));
+    }
+
+    #[test]
+    fn snapshot_reconcile_openai_plain() {
+        insta::assert_snapshot!(render_reconciliation(
+            "openai",
+            WINDOW,
+            &openai_reconciliation(),
+            RenderOptions::plain(),
+        ));
+    }
+
+    #[test]
+    fn snapshot_reconcile_not_connected_plain() {
+        insta::assert_snapshot!(render_reconciliation(
+            "openai",
+            WINDOW,
+            &not_connected_reconciliation(),
+            RenderOptions::plain(),
+        ));
+    }
+
+    #[test]
+    fn snapshot_reconcile_gemini_plain() {
+        insta::assert_snapshot!(render_reconciliation(
+            "gemini",
+            WINDOW,
+            &gemini_reconciliation(),
+            RenderOptions::plain(),
+        ));
+    }
+
+    #[test]
+    fn snapshot_reconcile_mixed_states_plain() {
+        insta::assert_snapshot!(render_reconciliation(
+            "openai",
+            WINDOW,
+            &mixed_states_reconciliation(),
+            RenderOptions::plain(),
+        ));
+    }
+
+    #[test]
+    fn reconcile_renders_the_zero_billed_unattributed_and_subcent_states() {
+        let output = render_reconciliation(
+            "openai",
+            WINDOW,
+            &mixed_states_reconciliation(),
+            RenderOptions::plain(),
+        );
+        // A model the vendor billed $0 → the dollar variance stands; the percentage is
+        // undefined (never a divide-by-zero or a fabricated %).
+        assert!(
+            output.contains("+$1.00 over (vs $0 billed)"),
+            "zero-billed model: {output}"
+        );
+        // A locally-estimated model a covered day doesn't attribute → typed text, no $0.
+        assert!(output.contains("not attributed by the vendor"));
+        // A genuinely non-zero sub-cent variance never reads as a misleading "$0.00".
+        assert!(
+            output.contains("<$0.01 under (-50.0%)"),
+            "sub-cent variance: {output}"
+        );
+        assert!(
+            !output.contains("$0.00 under") && !output.contains("$0.00 over"),
+            "no misleading $0.00 direction cell: {output}"
+        );
+    }
+
+    #[test]
+    fn reconcile_renders_honest_states_in_plain() {
+        let output = render_reconciliation(
+            "anthropic",
+            WINDOW,
+            &anthropic_reconciliation(),
+            RenderOptions::plain(),
+        );
+        // Local figure labeled an estimate; invoice shown un-tilded.
+        assert!(output.contains("est ~$4.20"));
+        // Signed variance carries the over/under direction as TEXT (never color alone).
+        assert!(
+            output.contains("over"),
+            "expected an over-estimate row: {output}"
+        );
+        // Exact match renders "exact", not "+$0.00".
+        assert!(output.contains("exact"));
+        // Typed vendor-side absence renders as text, NEVER a fabricated $0.
+        assert!(output.contains("report doesn't cover this day"));
+        assert!(!output.contains("$0.00 under") && !output.contains("inv $0.00 "));
+        // A vendor-billed model Costroid never saw → a REAL local $0 against the billed figure.
+        assert!(output.contains("claude-ghost-9"));
+        assert!(output.contains("est ~$0.00"));
+        // The Priority-Tier caveat survives onto the screen.
+        assert!(output.contains("Priority-Tier spend isn't in this report"));
+    }
+
+    #[test]
+    fn reconcile_openai_marks_and_footnotes_best_effort() {
+        let output = render_reconciliation(
+            "openai",
+            WINDOW,
+            &openai_reconciliation(),
+            RenderOptions::plain(),
+        );
+        // The under-estimate is signed + worded.
+        assert!(output.contains("under"));
+        // The best-effort per-model row is marked and footnoted.
+        assert!(output.contains(" *"));
+        assert!(output.contains("OpenAI per-model figures are best-effort"));
+    }
+
+    #[test]
+    fn reconcile_not_connected_surfaces_estimate_and_remediation() {
+        let output = render_reconciliation(
+            "openai",
+            WINDOW,
+            &not_connected_reconciliation(),
+            RenderOptions::plain(),
+        );
+        assert!(output.contains("vendor invoice unavailable: connect openai first"));
+        // The local estimate still surfaces (never hidden behind the unavailable invoice).
+        assert!(output.contains("est ~$2.00"));
+        // No fabricated delta against a missing invoice.
+        assert!(!output.contains("over") && !output.contains("under"));
+    }
+
+    #[test]
+    fn reconcile_gemini_uses_the_pinned_unavailable_message() {
+        let output = render_reconciliation(
+            "gemini",
+            WINDOW,
+            &gemini_reconciliation(),
+            RenderOptions::plain(),
+        );
+        // Plain folds the message's em-dash to ASCII, so compare the folded pinned string.
+        assert!(output.contains(&costroid_core::GEMINI_UNAVAILABLE_MESSAGE.replace('—', "-")));
+        assert!(output.contains("No local usage recorded"));
+    }
+
+    #[test]
+    fn reconcile_ascii_and_plain_output_is_pure_ascii() {
+        // The accessibility floor: Ascii (non-UTF-8 terminals) and Plain (screen readers)
+        // must be pure ASCII — the em-dash subtitle, the absence "—", and any reason-message
+        // em-dash all fold.
+        for recon in [
+            anthropic_reconciliation(),
+            openai_reconciliation(),
+            not_connected_reconciliation(),
+            gemini_reconciliation(),
+            mixed_states_reconciliation(),
+        ] {
+            let ascii =
+                render_reconciliation("anthropic", WINDOW, &recon, RenderOptions::ascii(false));
+            assert!(
+                ascii.is_ascii(),
+                "ascii reconcile must be pure ASCII: {ascii}"
+            );
+            let plain = render_reconciliation("anthropic", WINDOW, &recon, RenderOptions::plain());
+            assert!(
+                plain.is_ascii(),
+                "plain reconcile must be pure ASCII: {plain}"
+            );
+            // Plain is the accessibility floor — no ANSI escapes either.
+            assert!(
+                !plain.contains('\u{1b}'),
+                "plain reconcile must carry no ANSI escapes: {plain}"
+            );
+        }
     }
 }

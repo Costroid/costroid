@@ -105,6 +105,32 @@ track = W - full - half
 
 Bright `⣿` for the `full` cells, the **left-column half-cell `⡇`** for the boundary `half`, and the dim **track glyph `⣀`** for the rest (all three shape-distinct, so the fill survives `NO_COLOR` — never the same glyph distinguished by color alone). The model name sits left in the strong weight; the dollar figure right-aligned in the strong weight (`Intl`-style, e.g. `$24.10`, `$1,840.00`). Cost bars never go amber — amber is for limits, not spend. Each row: `claude opus 4.8   ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀   $24.10`.
 
+### Reconciliation section (`costroid reconcile`) — as built (T10c)
+
+One section per vendor, comparing Costroid's **local estimate** against the vendor's **billed invoice** per completed UTC day + model. It surfaces the T9c `CostReconciliation` engine; the renderer is a pure function of that type (snapshot-tested). The layout is a plain monospaced table — **no braille meter** (reconciliation is numeric, not a fill), and **no amber** (amber is reserved for limits). Direction is carried as **text** (`over`/`under`), never color.
+
+```
+C⠉ costroid                                   anthropic  est ~$5.20 / inv $4.50
+estimate vs invoice — 2026-06-08 to 2026-06-14 (UTC, completed days)
+Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.
+────────────────────────────────────────────────────────────────
+2026-06-13  est ~$1.00   report doesn't cover this day   —
+    claude-opus-4-8        est ~$1.00   report doesn't cover this day   —
+2026-06-14  est ~$4.20   inv $4.50   -$0.30 under (-6.7%)
+    claude-ghost-9         est ~$0.00   inv $0.50   -$0.50 under (-100.0%)
+    claude-opus-4-8        est ~$3.00   inv $3.00   exact
+    claude-sonnet-4-6      est ~$1.20   inv $1.00   +$0.20 over (+20.0%)
+Note: Anthropic Priority-Tier spend isn't in this report — the bill may be higher.
+Note: the invoice total covers only the days this report spans; days outside it show "report doesn't cover this day".
+```
+
+- **Header** — the mark + vendor + section totals: the estimate always `~`-prefixed (`est ~$5.20`); the invoice total (`inv $4.50`) only when a report was available.
+- **Day / model rows** — each carries `est ~$X` (always estimate-marked), the invoice cell, and the variance cell. Per-model rows are indented under their day.
+- **Signed variance** — `variance = local − billed`: `+$X over (+P%)` when the estimate exceeds the invoice, `-$X under (-P%)` when the invoice exceeds it, `exact` at zero. The percentage is rounded to a uniform **1 dp at the render boundary** (full `Decimal` precision is kept upstream); `% n/a` becomes `(vs $0 billed)` when the vendor billed `$0`.
+- **Typed vendor-side absence is TEXT, never `$0`** — the invoice cell shows `report doesn't cover this day` (`DayNotCovered`), `not attributed by the vendor` (`ModelNotInReport`), or the typed report reason (`connect <vendor> first` for not-connected; Gemini's pinned `unavailable — no sanctioned static-key usage API`); the variance cell renders `—` (no fabricated delta). A **local `$0`** against a real billed figure (e.g. `claude-ghost-9`) is genuine — a model the vendor billed but Costroid never saw — and renders as a real row.
+- **Caveats footnoted** — `priority_tier_absent` → the Priority-Tier note; `per_model_derived_best_effort` → footnote + a trailing `*` on each best-effort (OpenAI per-model) row; and when a report is available but doesn't span every local day (some day `DayNotCovered`), a footnote clarifies that the header `inv` total covers only the spanned days (so the headline `est / inv` pair isn't misread as a real over-estimate).
+- **`--plain` / Ascii** — the `─` rule, the `—` dashes, and any `—`/`…`/`×`/`·` in a reason message all ASCII-fold (`-`, `-`, `...`, `x`, `-`) so Plain/Ascii output is pure ASCII (locked by `is_ascii()` asserts); braille keeps those glyphs. (The hedge's "tokens x current prices" is plain ASCII `x` in every mode, including braille.) The over/under words and `*`/footnotes survive every mode, so nothing depends on color.
+
 ### Statusline glyph (`costroid statusline`)
 
 A single line, no newline, fast — for shell prompts, tmux, Starship. Side-effect-free on interactive stdin; with piped stdin (Claude Code's `statusLine` JSON) it opportunistically captures the `rate_limits` block into the local no-secret cache first (T5 path 2). It shows the current-period spend and the **most-constrained** limit as a short meter.

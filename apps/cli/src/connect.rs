@@ -50,6 +50,18 @@ pub trait AdapterSet {
         key: &SecretString,
         range: DateRange,
     ) -> Result<CostReportOutcome, ConnectError>;
+    /// Fetch a vendor's billed-cost report for `range`, reading the **stored** key from
+    /// `store` (the T10c `reconcile` fetch). Reuses the exact authorized-client + stored-key
+    /// path the connect probe rides — no new endpoint, no new secret/network boundary. Gemini
+    /// has no sanctioned static-key usage API, so it resolves to the pinned unavailable
+    /// **without any fetch**. Returns [`VendorReportUnavailable::NotConnected`] (as data) when
+    /// no key is stored for the vendor.
+    fn cost_report(
+        &self,
+        vendor: ApiVendor,
+        store: &CredentialStore,
+        range: DateRange,
+    ) -> Result<CostReportOutcome, ConnectError>;
 }
 
 /// The production [`AdapterSet`]: the real HTTPS adapters bound to `api.anthropic.com` /
@@ -68,6 +80,22 @@ impl AdapterSet for RealAdapters {
         range: DateRange,
     ) -> Result<CostReportOutcome, ConnectError> {
         OpenAiAdapter::new()?.fetch_cost_report(key, range)
+    }
+
+    fn cost_report(
+        &self,
+        vendor: ApiVendor,
+        store: &CredentialStore,
+        range: DateRange,
+    ) -> Result<CostReportOutcome, ConnectError> {
+        match vendor {
+            ApiVendor::Anthropic => AnthropicAdapter::new()?.cost_report(store, range),
+            ApiVendor::OpenAI => OpenAiAdapter::new()?.cost_report(store, range),
+            // Gemini: first-class unavailable (no sanctioned static-key usage API) — no fetch.
+            ApiVendor::Gemini => Ok(CostReportOutcome::Unavailable(
+                VendorReportUnavailable::NoSanctionedStaticKeyApi,
+            )),
+        }
     }
 }
 
@@ -417,6 +445,20 @@ mod tests {
             range: DateRange,
         ) -> Result<CostReportOutcome, ConnectError> {
             self.server.openai_adapter().fetch_cost_report(key, range)
+        }
+        fn cost_report(
+            &self,
+            vendor: ApiVendor,
+            store: &CredentialStore,
+            range: DateRange,
+        ) -> Result<CostReportOutcome, ConnectError> {
+            match vendor {
+                ApiVendor::Anthropic => self.server.anthropic_adapter().cost_report(store, range),
+                ApiVendor::OpenAI => self.server.openai_adapter().cost_report(store, range),
+                ApiVendor::Gemini => Ok(CostReportOutcome::Unavailable(
+                    VendorReportUnavailable::NoSanctionedStaticKeyApi,
+                )),
+            }
         }
     }
 

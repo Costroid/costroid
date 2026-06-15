@@ -1,5 +1,7 @@
 #[cfg(feature = "connect")]
 mod connect;
+#[cfg(feature = "connect")]
+mod reconcile;
 mod render;
 mod setup;
 mod tui;
@@ -48,6 +50,9 @@ enum Command {
     /// List connected vendors (local-only by default; --check re-validates each over the network).
     #[cfg(feature = "connect")]
     Connections(ConnectionsArgs),
+    /// Reconcile your local cost estimate against a connected vendor's billed invoice.
+    #[cfg(feature = "connect")]
+    Reconcile(ReconcileArgs),
 }
 
 #[cfg(feature = "connect")]
@@ -72,6 +77,37 @@ enum VendorArg {
     Anthropic,
     Openai,
     Gemini,
+}
+
+#[cfg(feature = "connect")]
+#[derive(Debug, Parser)]
+struct ReconcileArgs {
+    /// Reconcile a single vendor (default: every connected billing vendor).
+    #[arg(long, value_enum)]
+    vendor: Option<ReconcileVendorArg>,
+
+    /// The window of completed UTC days to reconcile.
+    #[arg(long, value_enum, default_value_t = PeriodArg::Week)]
+    period: PeriodArg,
+}
+
+/// Only Anthropic and OpenAI publish a sanctioned own-key cost API, so only they can be
+/// reconciled (Gemini is always "unavailable"; the no-`--vendor` view shows it as such).
+#[cfg(feature = "connect")]
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ReconcileVendorArg {
+    Anthropic,
+    Openai,
+}
+
+#[cfg(feature = "connect")]
+impl From<ReconcileVendorArg> for ApiVendor {
+    fn from(value: ReconcileVendorArg) -> Self {
+        match value {
+            ReconcileVendorArg::Anthropic => ApiVendor::Anthropic,
+            ReconcileVendorArg::Openai => ApiVendor::OpenAI,
+        }
+    }
 }
 
 #[cfg(feature = "connect")]
@@ -193,6 +229,10 @@ fn main() -> Result<()> {
         #[cfg(feature = "connect")]
         Some(Command::Connections(args)) => {
             std::process::exit(run_connections_command(args.check, cli.plain)?);
+        }
+        #[cfg(feature = "connect")]
+        Some(Command::Reconcile(args)) => {
+            std::process::exit(run_reconcile_command(args, cli.plain)?);
         }
         None => {
             if render_options.mode == RenderMode::Plain {
@@ -340,6 +380,32 @@ fn run_connections_command(check: bool, plain: bool) -> Result<i32> {
         &registry,
         &mut stdout,
         style,
+    )
+}
+
+/// `costroid reconcile`: load the local FOCUS rows from the same pipeline `now`/`trends`/
+/// `export` use, then reconcile them against each connected vendor's billed-cost report.
+/// Reuses T10a's stored key + authorized client — no new secret or network boundary; the
+/// only network is the cost-report fetch on this explicit action (behind `--features
+/// connect`). The default build links none of this.
+#[cfg(feature = "connect")]
+fn run_reconcile_command(args: &ReconcileArgs, plain: bool) -> Result<i32> {
+    let options = detect_render_options(plain);
+    let env = HostEnv::detect();
+    let rows = costroid_core::focus_records_from_local_logs(&env)?;
+    let store = CredentialStore::new()?;
+    let registry = ConnectionRegistry::open()?;
+    let window = reconcile::completed_window(args.period.into());
+    let mut stdout = std::io::stdout().lock();
+    reconcile::run_reconcile(
+        args.vendor.map(Into::into),
+        window,
+        &rows,
+        &connect::RealAdapters,
+        &store,
+        &registry,
+        &mut stdout,
+        options,
     )
 }
 

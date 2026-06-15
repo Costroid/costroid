@@ -1,0 +1,11 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_reconciliation(\"openai\", WINDOW, &not_connected_reconciliation(),\nRenderOptions::plain(),)"
+---
+costroid reconcile  openai  est ~$2.00
+estimate vs invoice - 2026-06-08 to 2026-06-14 (UTC, completed days)
+Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.
+vendor invoice unavailable: connect openai first
+----------------------------------------------------------------
+2026-06-14  est ~$2.00   connect openai first   -
+    claude-opus-4-8        est ~$2.00   connect openai first   -

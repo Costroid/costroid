@@ -1,0 +1,11 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_reconciliation(\"openai\", WINDOW, &openai_reconciliation(),\nRenderOptions::plain(),)"
+---
+costroid reconcile  openai  est ~$1.00 / inv $1.50
+estimate vs invoice - 2026-06-08 to 2026-06-14 (UTC, completed days)
+Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.
+----------------------------------------------------------------
+2026-06-14  est ~$1.00   inv $1.50   -$0.50 under (-33.3%)
+    gpt-5.5                est ~$1.00   inv $1.50   -$0.50 under (-33.3%) *
+* OpenAI per-model figures are best-effort (derived from line items).

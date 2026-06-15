@@ -13,14 +13,31 @@ against your provider invoice, which is the source of truth.
 
 The 0.4.0 connections line: the `costroid connect`/`disconnect`/`connections` CLI now
 exists — the first opt-in connection of your own usage/billing API key, and the first
-real network in the product. It stays **off by default**: networking lives only in the
-feature-gated `costroid-connect` crate (the default `costroid` binary does not even link
-it), and only the explicit `connect` / `connections --check` actions reach the network —
-the default build and every other command still make **zero** network calls, proven by
-the offline-acceptance harness.
+real network in the product — and `costroid reconcile` now puts your local cost estimate
+side by side with the vendor's billed invoice. It all stays **off by default**: networking
+lives only in the feature-gated `costroid-connect` crate (the default `costroid` binary
+does not even link it), and only the explicit `connect` / `connections --check` /
+`reconcile` actions reach the network — the default build and every other command still
+make **zero** network calls, proven by the offline-acceptance harness.
 
 ### Added
 
+- **`costroid reconcile` — estimate-vs-invoice on screen (opt-in, feature-gated).**
+  Compares Costroid's local cost estimate against a connected vendor's billed invoice, per
+  completed UTC day and per model: `costroid reconcile [--vendor anthropic|openai]
+  [--period day|week|month|year]`. With no `--vendor` it reconciles every connected
+  billing vendor (each its own section) and always shows Gemini as "unavailable — no
+  sanctioned static-key usage API". It reuses the key you already connected and the same
+  authorized client — **no new network or secret boundary**; the only network is the
+  cost-report fetch on this explicit action, and the default build neither links nor
+  exposes the command. Rendering is honest: the local figure is always labeled an estimate
+  (`~`); signed variance carries its direction as text (`+$X over` / `-$X under` /
+  `exact`, percentage rounded at the render boundary); a vendor-side gap is shown as typed
+  text (`report doesn't cover this day`, `not attributed by the vendor`, `connect <vendor>
+  first`) and **never** a fabricated `$0`; the report's caveats are footnoted (Anthropic
+  Priority-Tier absence; OpenAI per-model figures best-effort). This is **dollar (cost)
+  reconciliation only** — it carries no token-undercount caveat (Codex/Responses-API
+  traffic is fully counted). Full `--plain` ASCII path; nothing relies on color.
 - **`costroid connect` / `disconnect` / `connections` CLI (opt-in, feature-gated).**
   Connect your own admin usage/billing API key — Anthropic (`sk-ant-admin…`) or OpenAI
   (`sk-admin-…`) — to read live numbers no local log carries. The key is read from

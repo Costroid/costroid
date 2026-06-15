@@ -4,10 +4,16 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Utc};
 use costroid_focus::{
-    to_csv_string, to_json_string, FocusAccessPath, FocusError, FocusRecord, TokenType,
-    UnpricedUsage, DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD,
-    PRICING_STATUS_MISSING_PRICE, PRICING_UNIT_TOKENS,
+    to_csv_string, to_json_string, FocusAccessPath, FocusError, TokenType, UnpricedUsage,
+    DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD, PRICING_STATUS_MISSING_PRICE,
+    PRICING_UNIT_TOKENS,
 };
+// Re-export FOCUS's record type from the engine crate: the apps depend on `core`, not on
+// `costroid-focus` directly (the dependency arc is `apps → core → {providers, focus}`), so
+// a caller that needs to name a normalized row — e.g. the T10c `reconcile` command wiring,
+// which scopes `FocusRecord`s by vendor before `LocalCostEstimate::from_focus_records` —
+// reaches it here rather than taking a direct `focus` edge.
+pub use costroid_focus::FocusRecord;
 use costroid_providers::{
     default_providers, read_cursor_config, AccessPath, CursorConfig, HostEnv, LimitKind,
     LimitMeasure, LimitStatus, LimitWindow, Provider, ProviderId, UsageEvent,

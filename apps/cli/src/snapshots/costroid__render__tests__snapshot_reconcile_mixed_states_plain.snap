@@ -1,0 +1,12 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_reconciliation(\"openai\", WINDOW, &mixed_states_reconciliation(),\nRenderOptions::plain(),)"
+---
+costroid reconcile  openai  est ~$1.40 / inv $0.00
+estimate vs invoice - 2026-06-08 to 2026-06-14 (UTC, completed days)
+Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.
+----------------------------------------------------------------
+2026-06-14  est ~$1.40   inv $0.00   +$1.40 over (vs <$0.01 billed)
+    billed-zero            est ~$1.00   inv $0.00   +$1.00 over (vs $0 billed)
+    sub-cent               est ~$0.00   inv $0.00   <$0.01 under (-50.0%)
+    unattributed           est ~$0.40   not attributed by the vendor   -

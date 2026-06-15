@@ -1,0 +1,10 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_reconciliation(\"gemini\", WINDOW, &gemini_reconciliation(),\nRenderOptions::plain(),)"
+---
+costroid reconcile  gemini  est ~$0.00
+estimate vs invoice - 2026-06-08 to 2026-06-14 (UTC, completed days)
+Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.
+vendor invoice unavailable: unavailable - no sanctioned static-key usage API
+----------------------------------------------------------------
+No local usage recorded for this vendor in this window.
