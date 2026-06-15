@@ -33,7 +33,7 @@ use costroid_core::vendor_report::{
 };
 
 use crate::fetch::{build_query, fetch_page, PageOutcome, RetryPolicy};
-use crate::{AuthHeader, AuthorizedClient, ConnectError, CredentialStore};
+use crate::{AuthHeader, AuthorizedClient, ConnectError, CredentialStore, OrgLabel};
 
 /// The pinned host. Tests pin to the API *paths* + version header, not doc URLs.
 const HOST: &str = "api.anthropic.com";
@@ -43,11 +43,28 @@ const API_VERSION: &str = "2023-06-01";
 const ADMIN_KEY_PREFIX: &str = "sk-ant-admin";
 const COST_REPORT_PATH: &str = "/v1/organizations/cost_report";
 const USAGE_REPORT_PATH: &str = "/v1/organizations/usage_report/messages";
+/// The connect-time validation endpoint (T10a, proposal §2.1): the identity of the org an
+/// admin key belongs to (`{id,name,type}`), with **zero** billing/usage/cost data. Gated
+/// by the same Admin-API org-gate as `cost_report`, so a 200 predicts the cost fetch.
+const ME_PATH: &str = "/v1/organizations/me";
 /// Buckets per page. The usage report caps `1d` at 31; cost_report's per-page cap is
 /// undocumented (a Gate-2 live check) — 31 is a safe daily-month request that paginates.
 const PAGE_LIMIT: &str = "31";
 /// A hard ceiling on pages, so a misbehaving `has_more=true` server cannot loop forever.
 const MAX_PAGES: u32 = 1024;
+
+/// The outcome of [`AnthropicAdapter::validate`] — the connect-time `me` pre-flight that
+/// proves an admin key works and captures the org label **without reading any billing
+/// data**. First-class data, never an error loop (mirrors [`CostReportOutcome`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrgValidation {
+    /// The key authenticated and the organization is eligible; carries its non-secret
+    /// label (`me.name` / `me.id`).
+    Valid(OrgLabel),
+    /// A first-class reason the key is unusable (wrong class, rejected, ineligible, …) —
+    /// the same typed reasons the cost fetch would surface.
+    Unavailable(VendorReportUnavailable),
+}
 
 /// The Anthropic Usage & Cost adapter, bound to `api.anthropic.com`.
 pub struct AnthropicAdapter {
@@ -67,8 +84,10 @@ impl AnthropicAdapter {
         })
     }
 
-    /// Test seam: build over an injected (loopback) client + retry policy.
-    #[cfg(test)]
+    /// Test seam: build over an injected (loopback) client + retry policy. Compiled under
+    /// `feature = "test-support"` too, so [`crate::test_support`] can hand a dependent
+    /// crate a loopback-backed adapter; it stays `pub(crate)` (no public escape hatch).
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_client(client: AuthorizedClient, retry: RetryPolicy) -> Self {
         Self { client, retry }
     }
@@ -198,6 +217,36 @@ impl AnthropicAdapter {
             // coverage gap is OpenAI-only.
             caveats: UsageReportCaveats::default(),
         }))
+    }
+
+    /// Connect-time validation (T10a, proposal §2.1): prove the admin key works and
+    /// capture the org label via `GET /v1/organizations/me`, **reading no billing/usage/
+    /// cost data**. The `me` endpoint shares `cost_report`'s Admin-API org-gate, so a 200
+    /// here reliably predicts the cost fetch; any non-200 maps to the same typed reasons
+    /// (401 → `AuthenticationFailed`, 403 → `AccessForbidden{hint}`, other 4xx →
+    /// `RequestRejected`). The wrong-key-class prefix is checked **before any I/O**, and
+    /// the secret rides only in the request header — never the URL, never a log.
+    pub fn validate(&self, key: &SecretString) -> Result<OrgValidation, ConnectError> {
+        if let Some(unavailable) = wrong_key_class(key) {
+            return Ok(OrgValidation::Unavailable(unavailable));
+        }
+        let headers = self.headers(key);
+        match fetch_page(
+            &self.client,
+            ME_PATH,
+            &headers,
+            &self.retry,
+            classify_forbidden,
+        )? {
+            PageOutcome::Unavailable(reason) => Ok(OrgValidation::Unavailable(reason)),
+            PageOutcome::Body(bytes) => {
+                let me: MeResponse = parse_json(&bytes, "organizations/me")?;
+                Ok(OrgValidation::Valid(OrgLabel {
+                    name: me.name,
+                    id: Some(me.id),
+                }))
+            }
+        }
     }
 
     /// Compose the two pinned auth headers. The version pin is non-secret but is wrapped
@@ -361,6 +410,17 @@ fn usage_bucket_to_day(bucket: UsageBucket) -> Result<VendorUsageDay, ConnectErr
 // examples — proposal §2.4). Unknown fields are ignored; missing optional fields
 // default, so the parser tolerates the docs' mid-migration drift.
 // ---------------------------------------------------------------------------
+
+/// The `GET /v1/organizations/me` body: `{id, name, type}` — identity only, **no billing
+/// field documented**. `type` is ignored (always `"organization"`); both fields default
+/// to empty so a partial body never errors.
+#[derive(Deserialize)]
+struct MeResponse {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+}
 
 #[derive(Deserialize)]
 struct CostResponse {
@@ -670,6 +730,95 @@ mod tests {
         assert!(report.days.iter().all(|day| day.total == UsdAmount::ZERO
             && day.by_model.is_empty()
             && day.line_items.is_empty()));
+        assert!(report.caveats.priority_tier_absent);
+    }
+
+    #[test]
+    fn validate_me_captures_org_label_and_sends_no_billing_query() {
+        const ME: &str = r#"{"id":"org-abc123","name":"Erens Org","type":"organization"}"#;
+        let server = serve_sequence(vec![ok_json(ME)]);
+        let adapter = AnthropicAdapter::with_client(server.client(), RetryPolicy::test());
+        let outcome = ok(adapter.validate(&admin_key()));
+        match outcome {
+            OrgValidation::Valid(label) => {
+                assert_eq!(label.name, "Erens Org");
+                assert_eq!(label.id.as_deref(), Some("org-abc123"));
+            }
+            other => panic!("expected Valid, got {other:?}"),
+        }
+        // The wire: a GET to /me with the pinned auth headers and NO billing query.
+        let req = ok(server.next_request());
+        let line = first_line(&req);
+        assert!(
+            line.starts_with("GET /v1/organizations/me"),
+            "validate must hit /me: {line}"
+        );
+        let lower = req.to_ascii_lowercase();
+        assert!(lower.contains("x-api-key: sk-ant-admin-fixture-0001"));
+        assert!(lower.contains("anthropic-version: 2023-06-01"));
+        assert!(
+            !line.contains("cost_report") && !line.contains("starting_at"),
+            "the identity pre-flight reads no billing data: {line}"
+        );
+        assert!(!line.contains("sk-ant-admin"), "no secret in URL: {line}");
+    }
+
+    #[test]
+    fn validate_rejects_standard_key_before_any_request() {
+        let server = serve_sequence(vec![]); // no reply needed — no request must be made
+        let adapter = AnthropicAdapter::with_client(server.client(), RetryPolicy::test());
+        let key = SecretString::from("sk-ant-api03-not-admin".to_string());
+        assert!(matches!(
+            ok(adapter.validate(&key)),
+            OrgValidation::Unavailable(VendorReportUnavailable::WrongKeyClass { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_maps_401_to_authentication_failed() {
+        let server = serve_sequence(vec![reply("401 Unauthorized", &[], "{}")]);
+        let adapter = AnthropicAdapter::with_client(server.client(), RetryPolicy::test());
+        assert!(matches!(
+            ok(adapter.validate(&admin_key())),
+            OrgValidation::Unavailable(VendorReportUnavailable::AuthenticationFailed)
+        ));
+    }
+
+    #[test]
+    fn validate_individual_account_403_classifies_as_individual_account() {
+        let body = r#"{"type":"error","error":{"type":"permission_error","message":"The Admin API is unavailable for individual accounts."}}"#;
+        let server = serve_sequence(vec![reply("403 Forbidden", &[], body)]);
+        let adapter = AnthropicAdapter::with_client(server.client(), RetryPolicy::test());
+        assert!(matches!(
+            ok(adapter.validate(&admin_key())),
+            OrgValidation::Unavailable(VendorReportUnavailable::AccessForbidden {
+                hint: AccessForbiddenHint::IndividualAccount
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_the_live_gate2b_cost_rows() {
+        // Verbatim api.anthropic.com cost_report 2xx body for the COMPLETED 2026-06-14 UTC
+        // day (GATE-2b live confirm, 2026-06-15; APPENDIX A). `amount` is decimal-CENTS
+        // (÷100): 0.0045 cents = $0.000045 (input), 0.047 cents = $0.00047 (output) →
+        // $0.000515/day, all attributed to claude-haiku-4-5 at Exact confidence.
+        const LIVE_COST: &str = r#"{"data":[{"starting_at":"2026-06-14T00:00:00Z","ending_at":"2026-06-15T00:00:00Z","results":[
+            {"currency":"USD","amount":"0.0045","workspace_id":null,"description":"Claude Haiku 4.5 Usage - Input Tokens","cost_type":"tokens","context_window":"0-200k","model":"claude-haiku-4-5-20251001","service_tier":"standard","token_type":"uncached_input_tokens","inference_geo":"not_available"},
+            {"currency":"USD","amount":"0.047","workspace_id":null,"description":"Claude Haiku 4.5 Usage - Output Tokens","cost_type":"tokens","context_window":"0-200k","model":"claude-haiku-4-5-20251001","service_tier":"standard","token_type":"output_tokens","inference_geo":"not_available"}]}],"has_more":false,"next_page":null}"#;
+        let (outcome, _server) = cost_report_for(vec![ok_json(LIVE_COST)]);
+        let report = match outcome {
+            CostReportOutcome::Available(report) => report,
+            other => panic!("expected Available, got {other:?}"),
+        };
+        assert_eq!(report.days.len(), 1);
+        let day = &report.days[0];
+        // 0.0045 + 0.047 = 0.0515 cents = $0.000515.
+        assert_eq!(day.total, dollars_from_cents("0.0515"));
+        assert_eq!(day.by_model.len(), 1);
+        assert_eq!(day.by_model[0].model, "claude-haiku-4-5-20251001");
+        assert_eq!(day.by_model[0].confidence, AmountConfidence::Exact);
+        assert_eq!(day.by_model[0].amount, dollars_from_cents("0.0515"));
         assert!(report.caveats.priority_tier_absent);
     }
 

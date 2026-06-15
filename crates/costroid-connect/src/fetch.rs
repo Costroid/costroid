@@ -41,8 +41,9 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     /// A zero-delay policy for tests: still exercises the retry-then-degrade path
-    /// (set `max_retries`) but never actually sleeps.
-    #[cfg(test)]
+    /// (set `max_retries`) but never actually sleeps. Also compiled under
+    /// `feature = "test-support"` so the loopback adapter builders can use it.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn test() -> Self {
         RetryPolicy {
             max_retries: 2,

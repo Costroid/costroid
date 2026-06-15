@@ -12,10 +12,11 @@
 # feature-ON baseline RUNS BELOW (a normal `--features connect` run leaks no network
 # and writes no secret/file residue to $HOME — and since T9a that build links the
 # authorized-host HTTP client, so the baseline also proves the client existing ≠ a
-# call happening); the *positive* connect-ACTION half — network ONLY on an explicit,
-# user-initiated `connect` action to an authorized host, with the secret landing
-# ONLY in the keychain — remains a STUB at the bottom of this file, to be filled by
-# T10 (the connect CLI; T9a's client has no caller until then).
+# call happening); the connect-ACTION half (T10a, proposal §7 Layer 2) ALSO RUNS BELOW —
+# `costroid connect anthropic` with a fake key under a netns FAILS CLOSED and writes no
+# $HOME residue, and `disconnect` makes no network call and leaves no secret residue. The
+# *positive* "reaches ONLY the authorized loopback host, secret to the keychain only" is
+# the Layer-1 integration test (`cargo test --features connect-test-support`).
 #
 # Two complementary layers of proof (both scope to the default build):
 #   * Static  — apps/cli/tests/offline.rs asserts no networking/TLS/telemetry crate
@@ -213,9 +214,10 @@ fi
 #       writing nothing to disk is proven at the unit level by
 #       `credential_round_trip_writes_nothing_to_disk` (in-memory mock backend), since
 #       there is no `connect` CLI to drive from here until T10.
-# Still a STUB (needs the `connect` CLI in T10): the *positive* network test —
-# `costroid connect <provider>` reaching ONLY the authorized host, with the secret
-# landing ONLY in the keychain, and `disconnect` leaving no residue.
+# The connect-ACTION half now LANDS below (T10a): the fail-closed + no-residue checks
+# (this script) plus the positive loopback proof (the Layer-1 `cargo test` integration
+# test). `costroid connect`/`connections --check` are the only network actions; the
+# default build and every other command still make zero network calls.
 
 echo "==> Building costroid --features connect (keychain + HTTP client linked; no caller — zero network expected)"
 cargo build -q -p costroid --features connect
@@ -241,7 +243,71 @@ else
   echo "ok"
 fi
 
-echo "==> Feature-on connect ACTION test (network + secret-to-keychain): STUB — T10"
+# ============================================================================
+# Feature-on connect ACTION test (T10a, proposal §7 Layer 2) — fail-closed + no residue
+# ============================================================================
+# Replaces the T9/T10 STUB. `costroid connect anthropic` is the first real network in the
+# product. This proves the failure-path properties WITHOUT any real network:
+#   (i)  it FAILS CLOSED — run with a PREFIX-VALID-BUT-FAKE key on stdin under REAL
+#        isolation (a netns with no interfaces), it cannot reach api.anthropic.com, so the
+#        connect attempt cannot escape (the netns IS the no-egress proof; the "only the
+#        authorized host, never a rogue one" positive is Layer 1's job — the
+#        `cargo test --features connect-test-support` loopback test — plus T9a's
+#        before-I/O host check). strace is NOT used here: it only observes, and would let
+#        the real host be reached, so the connect ACTION must run under a netns.
+#   (ii) the fixture $HOME is unchanged on the failure path (no key, no file written —
+#        the key is stored only AFTER a successful validation, which never happens here);
+#   (iii) `disconnect anthropic` makes NO network call (asserted under the normal strace
+#        isolation) and leaves no SECRET residue (only a non-secret, possibly-empty
+#        registry — never key material).
+echo "==> Feature-on connect ACTION test (T10a Layer 2: fail-closed + no residue)"
+FAKE_KEY='sk-ant-admin-FAKE0000000000000000000000'
+
+if unshare --user --map-root-user --net true 2>/dev/null; then
+  before_action_fp="$(home_fingerprint)"
+  printf '  %-52s' "connect anthropic (fake key) fails closed (netns)"
+  # FAKE_KEY is prefix-valid (`sk-ant-admin-…`), so `wrong_key_class` passes and the binary
+  # DOES proceed to the real network attempt — which the netns (no interfaces) makes fail.
+  # The assertion is exit!=0. It tolerates a vacuous pass on an unrelated nonzero exit, but
+  # never errs toward a leak: `connect` runs ONLY inside this no-egress netns (never strace,
+  # never host networking) or is SKIPPED below — so it can never reach the real host. The
+  # *positive* "only the authorized loopback host" is Layer 1's job.
+  printf '%s\n' "$FAKE_KEY" | timeout 60s unshare --user --map-root-user --net \
+    env "${env_args[@]}" "$connect_bin" connect anthropic >/dev/null 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "FAIL (connect succeeded with no network — must fail closed)"; fail=1
+  else
+    echo "ok (exit $rc — no egress possible under netns)"
+  fi
+  printf '  %-52s' "connect failure path: no \$HOME residue"
+  if [ "$before_action_fp" != "$(home_fingerprint)" ]; then
+    echo "FAIL (\$HOME changed on the connect failure path)"
+    diff <(printf '%s\n' "$before_action_fp") <(home_fingerprint) | sed 's/^/      /'
+    fail=1
+  else
+    echo "ok"
+  fi
+else
+  echo "  connect fail-closed check SKIPPED (no user netns; Layer-1 cargo test covers it)"
+fi
+
+# disconnect makes NO network call and stores no secret — run under the normal isolation
+# (strace asserts no AF_INET) and confirm no key material lands under $HOME. This check is
+# about network + secret residue, NOT disconnect's success: a headless CI/test box has no
+# Secret Service daemon, so the keychain `delete` may error out — that nonzero exit is
+# TOLERATED (it touched the keychain, not the network). disconnect's actual removal/no-
+# residue behavior is proven by the Layer-1 integration test against the keyring mock.
+printf '  %-52s' "disconnect anthropic: no network, no secret residue"
+# stderr is silenced (a headless box dumps a multi-line keychain/DBus error); any network
+# -violation diagnostic from iso_run prints to stdout and is preserved.
+iso_run "$connect_bin" disconnect anthropic 2>/dev/null && dc_rc=0 || dc_rc=$?
+if [ "$dc_rc" -eq 90 ]; then
+  echo "NETWORK VIOLATION (disconnect made a network call)"; fail=1
+elif grep -rIl -- 'sk-ant-admin' "$home" >/dev/null 2>&1; then
+  echo "FAIL (key material found under \$HOME)"; fail=1
+else
+  echo "ok (no network; keychain may be absent in a headless env)"
+fi
 
 echo
 if [ "$fail" -ne 0 ]; then

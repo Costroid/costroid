@@ -77,8 +77,10 @@ impl OpenAiAdapter {
         })
     }
 
-    /// Test seam: build over an injected (loopback) client + retry policy.
-    #[cfg(test)]
+    /// Test seam: build over an injected (loopback) client + retry policy. Compiled under
+    /// `feature = "test-support"` too, so [`crate::test_support`] can hand a dependent
+    /// crate a loopback-backed adapter; it stays `pub(crate)` (no public escape hatch).
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_client(client: AuthorizedClient, retry: RetryPolicy) -> Self {
         Self { client, retry }
     }
@@ -202,8 +204,12 @@ impl OpenAiAdapter {
         Ok(UsageReportOutcome::Available(VendorUsageReport {
             days,
             caveats: UsageReportCaveats {
-                // completions may not cover Responses-API (Codex) traffic — Gate-2 check.
-                responses_api_coverage_unconfirmed: true,
+                // Responses-API (Codex) coverage CONFIRMED by the 2026-06-14 GATE-2b live
+                // run: a Responses call (15 in / 27 out) surfaced in `usage/completions` in
+                // the same bucket as a Chat call (total num_model_requests: 2, 30 in / 57
+                // out). The token side is complete, so this is `false` and T10c carries no
+                // token-undercount caveat. (§11.5 ✅ T10a / T10-LIVE-ROWS §12.16.)
+                responses_api_coverage_unconfirmed: false,
             },
         }))
     }
@@ -533,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_subtracts_cached_input_and_flags_responses_coverage() {
+    fn usage_subtracts_cached_input_and_responses_coverage_is_confirmed() {
         const USAGE: &str = r#"{
             "object":"page",
             "data":[{"object":"bucket","start_time":1780272000,"end_time":1780358400,"results":[
@@ -549,8 +555,8 @@ mod tests {
             other => panic!("expected Available, got {other:?}"),
         };
         assert!(
-            report.caveats.responses_api_coverage_unconfirmed,
-            "the Responses-API coverage gap must be flagged"
+            !report.caveats.responses_api_coverage_unconfirmed,
+            "Responses-API/Codex coverage is confirmed (2026-06-14 live run) — no caveat"
         );
         let model = &report.days[0].by_model[0];
         assert_eq!(model.model, "gpt-5.5");
@@ -655,5 +661,52 @@ mod tests {
         assert_eq!(report.days.len(), 2);
         assert!(report.days.iter().all(|day| day.total == UsdAmount::ZERO));
         assert!(report.caveats.per_model_derived_best_effort);
+    }
+
+    #[test]
+    fn parses_the_live_gate2b_costs_rows_with_string_scientific_and_overlong_amounts() {
+        // Verbatim api.openai.com /costs 2xx body for the COMPLETED 2026-06-14 UTC day
+        // (GATE-2b live confirm, 2026-06-15; APPENDIX A). `amount.value` is a JSON STRING,
+        // including the scientific-notation zero `0E-6176` and a 39-decimal value — exactly
+        // the shapes the OLD parser errored on. `line_item` = "<model>, <direction>". The
+        // populated bucket's `start_time_iso` lacks a tz suffix; the second (current)
+        // bucket is empty — both ignored fields (the adapter uses `start_time`).
+        const LIVE_COSTS: &str = r#"{"object":"page","has_more":false,"next_page":null,"data":[
+ {"object":"bucket","start_time":1781395200,"end_time":1781481600,"start_time_iso":"2026-06-14T00:00:00","end_time_iso":"2026-06-15T00:00:00","results":[
+   {"object":"organization.costs.result","amount":{"value":"0E-6176","currency":"usd"},"quantity":0.0,"line_item":"gpt-4o-mini-2024-07-18, cached input","project_id":"proj_x","organization_id":"org-x","project_name":"Default project","organization_name":"ErensOrg","user_id":null,"api_key_id":null,"user_email":null},
+   {"object":"organization.costs.result","amount":{"value":"0.000004500000000000000000000000000000000","currency":"usd"},"quantity":30.0,"line_item":"gpt-4o-mini-2024-07-18, input","project_id":"proj_x","project_name":"Default project","organization_name":"ErensOrg"},
+   {"object":"organization.costs.result","amount":{"value":"0.00003420000000000000000000000000000000","currency":"usd"},"quantity":57.0,"line_item":"gpt-4o-mini-2024-07-18, output","project_id":"proj_x","project_name":"Default project","organization_name":"ErensOrg"}]},
+ {"object":"bucket","start_time":1781481600,"end_time":1781568000,"start_time_iso":"2026-06-15T00:00:00+00:00","end_time_iso":"2026-06-16T00:00:00+00:00","results":[]}]}"#;
+        let (outcome, _server) = costs_for(vec![ok_json(LIVE_COSTS)]);
+        let report = match outcome {
+            CostReportOutcome::Available(report) => report,
+            other => panic!("expected Available, got {other:?}"),
+        };
+        assert_eq!(report.days.len(), 2);
+        let day = &report.days[0];
+        // 0 (the 0E-6176 cached-input row) + 0.0000045 + 0.0000342 = $0.0000387.
+        assert_eq!(day.total, dollars("0.0000387"));
+        assert_eq!(day.by_model.len(), 1);
+        assert_eq!(day.by_model[0].model, "gpt-4o-mini-2024-07-18");
+        assert_eq!(day.by_model[0].amount, dollars("0.0000387"));
+        assert_eq!(
+            day.by_model[0].confidence,
+            AmountConfidence::DerivedBestEffort
+        );
+        // The empty (current) bucket totals $0 — never a fabricated figure.
+        assert_eq!(report.days[1].total, UsdAmount::ZERO);
+        assert!(report.caveats.per_model_derived_best_effort);
+    }
+
+    #[test]
+    fn costs_401_from_non_admin_key_is_authentication_failed() {
+        // GATE-2b live confirm (2026-06-15): a non-admin key on /costs returns HTTP 401.
+        // The connect-time probe (fetch_cost_report over a completed window) classifies it
+        // as AuthenticationFailed — the 401-vs-403 classifier branch on real data.
+        let (outcome, _server) = costs_for(vec![reply("401 Unauthorized", &[], "")]);
+        assert!(matches!(
+            outcome,
+            CostReportOutcome::Unavailable(VendorReportUnavailable::AuthenticationFailed)
+        ));
     }
 }

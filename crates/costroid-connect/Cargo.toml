@@ -38,6 +38,17 @@ categories = ["command-line-utilities", "authentication"]
 # (the adapters pass raw amount strings to its unit-tagged constructors and never name
 # `Decimal`), and `costroid-focus` is not needed (no shape uses a FOCUS type) — both
 # per the lean-deps rule, mirroring T9a's deferral.
+[features]
+# Exposes the in-crate loopback HTTP test harness (the `test_support` module: a
+# `MockServer`, loopback-backed adapter builders, and the keyring-mock installer) so a
+# DEPENDENT crate's tests can drive the connect command path against a local
+# `TcpListener` + an in-memory keychain — zero real network, zero real keychain. It is a
+# test-only seam: OFF by default, never enabled by the shipping `--features connect`
+# build, so the production surface stays HTTPS-only with no escape hatch (the loopback
+# constructor remains `pub(crate)`; only the curated `test_support` API is `pub`). The
+# CLI's `connect-test-support` feature turns it on for the T10a Layer-1 test.
+test-support = []
+
 [dependencies]
 costroid-core = { workspace = true }
 keyring = { version = "=3.6.3", default-features = false, features = [

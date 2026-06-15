@@ -1,3 +1,5 @@
+#[cfg(feature = "connect")]
+mod connect;
 mod render;
 mod setup;
 mod tui;
@@ -10,6 +12,9 @@ use render::{
     detect_render_options, render_frontier, render_now, render_statusline, render_trends,
     RenderMode,
 };
+
+#[cfg(feature = "connect")]
+use costroid_connect::{ApiVendor, ConnectionRegistry, CredentialStore, SecretString};
 
 #[derive(Debug, Parser)]
 #[command(name = "costroid", version, about = "Local AI coding cost visibility")]
@@ -34,6 +39,50 @@ enum Command {
     /// Wire Claude Code's `statusLine` to capture live 5h/7d quota into a local cache.
     SetupStatusline(SetupStatuslineArgs),
     Export(ExportArgs),
+    /// Connect a vendor's usage/billing API with your own admin key (stored in the OS keychain).
+    #[cfg(feature = "connect")]
+    Connect(VendorArgs),
+    /// Disconnect a vendor: delete its key from the OS keychain and unlink it.
+    #[cfg(feature = "connect")]
+    Disconnect(VendorArgs),
+    /// List connected vendors (local-only by default; --check re-validates each over the network).
+    #[cfg(feature = "connect")]
+    Connections(ConnectionsArgs),
+}
+
+#[cfg(feature = "connect")]
+#[derive(Debug, Parser)]
+struct VendorArgs {
+    /// Which billing vendor: anthropic | openai | gemini.
+    #[arg(value_enum)]
+    vendor: VendorArg,
+}
+
+#[cfg(feature = "connect")]
+#[derive(Debug, Parser)]
+struct ConnectionsArgs {
+    /// Re-validate each connected vendor over the network (opt-in; default is local-only).
+    #[arg(long)]
+    check: bool,
+}
+
+#[cfg(feature = "connect")]
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum VendorArg {
+    Anthropic,
+    Openai,
+    Gemini,
+}
+
+#[cfg(feature = "connect")]
+impl From<VendorArg> for ApiVendor {
+    fn from(value: VendorArg) -> Self {
+        match value {
+            VendorArg::Anthropic => ApiVendor::Anthropic,
+            VendorArg::Openai => ApiVendor::OpenAI,
+            VendorArg::Gemini => ApiVendor::Gemini,
+        }
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -133,6 +182,18 @@ fn main() -> Result<()> {
         Some(Command::Export(args)) => {
             run_export(args.format)?;
         }
+        #[cfg(feature = "connect")]
+        Some(Command::Connect(args)) => {
+            std::process::exit(run_connect_command(args.vendor.into(), cli.plain)?);
+        }
+        #[cfg(feature = "connect")]
+        Some(Command::Disconnect(args)) => {
+            std::process::exit(run_disconnect_command(args.vendor.into(), cli.plain)?);
+        }
+        #[cfg(feature = "connect")]
+        Some(Command::Connections(args)) => {
+            std::process::exit(run_connections_command(args.check, cli.plain)?);
+        }
         None => {
             if render_options.mode == RenderMode::Plain {
                 run_now(render_options)?;
@@ -224,6 +285,93 @@ fn run_export(format: ExportFormat) -> Result<()> {
     };
     print!("{output}");
     Ok(())
+}
+
+#[cfg(feature = "connect")]
+fn connect_output_style(plain: bool) -> connect::OutputStyle {
+    // Fold the em-dash for --plain / a non-UTF-8 terminal; keep it on a UTF-8 (braille) TTY.
+    let mode = detect_render_options(plain).mode;
+    connect::OutputStyle {
+        ascii: mode != RenderMode::Braille,
+    }
+}
+
+#[cfg(feature = "connect")]
+fn run_connect_command(vendor: ApiVendor, plain: bool) -> Result<i32> {
+    let style = connect_output_style(plain);
+    let mut stdout = std::io::stdout().lock();
+    if vendor == ApiVendor::Gemini {
+        // gemini: print the pinned unavailable line, exit 0, never read/accept a key.
+        return connect::gemini_connect(&mut stdout, style);
+    }
+    let key = read_admin_key(vendor)?;
+    let store = CredentialStore::new()?;
+    let registry = ConnectionRegistry::open()?;
+    connect::run_connect(
+        vendor,
+        key,
+        &connect::RealAdapters,
+        &store,
+        &registry,
+        &mut stdout,
+        style,
+    )
+}
+
+#[cfg(feature = "connect")]
+fn run_disconnect_command(vendor: ApiVendor, plain: bool) -> Result<i32> {
+    let style = connect_output_style(plain);
+    let mut stdout = std::io::stdout().lock();
+    let store = CredentialStore::new()?;
+    let registry = ConnectionRegistry::open()?;
+    connect::run_disconnect(vendor, &store, &registry, &mut stdout, style)
+}
+
+#[cfg(feature = "connect")]
+fn run_connections_command(check: bool, plain: bool) -> Result<i32> {
+    let style = connect_output_style(plain);
+    let mut stdout = std::io::stdout().lock();
+    let store = CredentialStore::new()?;
+    let registry = ConnectionRegistry::open()?;
+    connect::run_connections(
+        check,
+        &connect::RealAdapters,
+        &store,
+        &registry,
+        &mut stdout,
+        style,
+    )
+}
+
+/// Read the admin key from **stdin only** — never argv (leaks to `ps`), never env (leaks
+/// to child processes and shell history). On a TTY: a hidden, no-echo prompt; on a pipe:
+/// one line (so `echo "$KEY" | costroid connect anthropic` and secret-manager pipelines
+/// work). Surrounding whitespace (e.g. a trailing newline) is trimmed **in place** and the
+/// buffer is then **moved** into the `SecretString`, which owns and zeroizes it on drop —
+/// so no separate, un-scrubbed plaintext copy of the key lingers. (One inherent remnant can
+/// remain: `rpassword`/`read_line` hand back a plain `String`, and the `String → Box<str>`
+/// conversion may shrink-realloc — the same "minimizes, not eliminates" limit the keychain
+/// `retrieve` and `OpenAiAdapter::headers` carry.) The key is never echoed.
+#[cfg(feature = "connect")]
+fn read_admin_key(vendor: ApiVendor) -> Result<SecretString> {
+    use std::io::IsTerminal;
+    let mut raw = if std::io::stdin().is_terminal() {
+        rpassword::prompt_password(format!(
+            "Paste your {vendor} admin key (input hidden, not echoed): "
+        ))?
+    } else {
+        use std::io::BufRead;
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        line
+    };
+    // Trim surrounding whitespace IN PLACE (no `.to_string()` copy of the plaintext), then
+    // hand the one buffer to SecretString, which zeroizes it on drop.
+    let lead = raw.len() - raw.trim_start().len();
+    raw.drain(..lead);
+    let end = raw.trim_end().len();
+    raw.truncate(end);
+    Ok(SecretString::from(raw))
 }
 
 impl From<PeriodArg> for Period {

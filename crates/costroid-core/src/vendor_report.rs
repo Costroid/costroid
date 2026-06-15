@@ -88,10 +88,25 @@ impl UsdAmount {
         Ok(UsdAmount(scaled))
     }
 
-    /// Parse OpenAI's `costs` money encoding: a JSON number's **literal text** already
-    /// in **dollars**, e.g. `"1.23"`. Parsed straight from the text into [`Decimal`]
-    /// (the caller must hand the raw JSON number text, e.g. via `serde_json`'s
-    /// `RawValue`) — **never** through `f64` arithmetic.
+    /// Parse OpenAI's `/costs` money encoding: an `amount.value` already in **dollars**,
+    /// e.g. `"1.23"` — handed in as the raw JSON literal text (via `serde_json`'s
+    /// `RawValue`), **never** through `f64` arithmetic.
+    ///
+    /// The GATE-2b live run (2026-06-14) showed the real shape is gnarlier than the
+    /// docs implied, and this constructor must absorb all of it **without erroring**
+    /// (a valid connect/reconcile must not crash on a real body):
+    /// * the value is a JSON **string**, so `RawValue` captures it quote-wrapped
+    ///   (`"\"0.0000045\""`); a bare JSON number (`1.23`, the older fixtures) still works;
+    /// * it can be **scientific notation with an extreme exponent** (`"0E-6176"`, a zero
+    ///   whose scale 6176 ≫ `Decimal`'s max scale 28);
+    /// * it can carry **more than 28 fractional digits** (`"0.0000045000…"`, 39 places).
+    ///
+    /// All three are normalized: quotes are stripped, scientific notation is expanded to
+    /// a plain decimal string, and the parse **rounds** to `Decimal`'s 28-dp scale (so 39
+    /// places → `0.0000045`, an underflowing tiny value → `0`) — replacing the old
+    /// `from_str_exact`/`from_scientific`, which returned `Underflow` /
+    /// `ScaleExceedsMaximumPrecision` on exactly these real values. Still always exact
+    /// `Decimal`, never `f64`.
     pub fn from_json_dollars_str(raw: &str) -> Result<Self, MoneyParseError> {
         Ok(UsdAmount(parse_json_number_decimal(raw)?))
     }
@@ -117,19 +132,101 @@ fn parse_plain_decimal(raw: &str) -> Result<Decimal, MoneyParseError> {
     })
 }
 
-/// Parse a JSON number's literal text exactly, tolerating scientific notation
-/// (`1.5e-3`) which a vendor *could* emit; both forms map to an exact [`Decimal`].
+/// Parse a JSON dollar literal into a [`Decimal`], absorbing the real OpenAI `/costs`
+/// shapes (see [`UsdAmount::from_json_dollars_str`]): a quote-wrapped string, scientific
+/// notation with an out-of-range exponent, or >28 fractional digits. Scientific notation is
+/// expanded to a plain decimal string ourselves because **both** `Decimal::from_scientific`
+/// **and** the rounding `FromStr` reject an out-of-range scale (the live `0E-6176` → scale
+/// 6176 ≫ the max scale 28) — feeding the literal straight to `str::parse` would error (it
+/// *does* accept an exponent, it just can't represent that scale). The expanded *plain* form
+/// then parses with the rounding `FromStr` (`str::parse`), which rounds >28 dp instead of
+/// erroring. Never `f64`.
 fn parse_json_number_decimal(raw: &str) -> Result<Decimal, MoneyParseError> {
-    let trimmed = raw.trim();
-    let parsed = if trimmed.contains(['e', 'E']) {
-        Decimal::from_scientific(trimmed)
+    let trimmed = strip_json_string_quotes(raw.trim()).trim();
+    let plain: std::borrow::Cow<'_, str> = if trimmed.contains(['e', 'E']) {
+        match expand_scientific(trimmed) {
+            Some(plain) => std::borrow::Cow::Owned(plain),
+            None => {
+                return Err(MoneyParseError::Invalid {
+                    raw: raw.to_string(),
+                    reason: "invalid or out-of-range scientific notation".to_string(),
+                })
+            }
+        }
     } else {
-        Decimal::from_str_exact(trimmed)
+        std::borrow::Cow::Borrowed(trimmed)
     };
-    parsed.map_err(|err| MoneyParseError::Invalid {
-        raw: raw.to_string(),
-        reason: err.to_string(),
-    })
+    plain
+        .parse::<Decimal>()
+        .map_err(|err| MoneyParseError::Invalid {
+            raw: raw.to_string(),
+            reason: err.to_string(),
+        })
+}
+
+/// Strip a single pair of surrounding ASCII double-quotes when present — OpenAI's
+/// `/costs` `amount.value` is a JSON **string**, so capturing it via `serde_json`'s
+/// `RawValue` yields quote-wrapped text (`"\"0.0000045\""`); a bare JSON number is
+/// returned unchanged.
+fn strip_json_string_quotes(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        &text[1..text.len() - 1]
+    } else {
+        text
+    }
+}
+
+/// Expand a scientific-notation numeric string (`"1.5e-2"`, `"0E-6176"`) into a plain
+/// decimal string with no exponent, so the rounding `FromStr` can parse it. A zero
+/// significand (or a deep-underflowing exponent) short-circuits to `"0"`, and a
+/// deep-overflowing exponent returns `None` — both **without** building a gigantic
+/// zero-padded string, so an adversarial exponent (`1E-9000000000`) cannot exhaust
+/// memory. Returns `None` for text that is not well-formed scientific notation.
+fn expand_scientific(text: &str) -> Option<String> {
+    let exp_at = text.find(['e', 'E'])?;
+    let (mantissa, exp_str) = (&text[..exp_at], &text[exp_at + 1..]);
+    let exponent: i64 = exp_str.parse().ok()?;
+
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", mantissa.strip_prefix('+').unwrap_or(mantissa)),
+    };
+    let (int_digits, frac_digits) = match mantissa.split_once('.') {
+        Some((int_part, frac_part)) => (int_part, frac_part),
+        None => (mantissa, ""),
+    };
+    if (int_digits.is_empty() && frac_digits.is_empty())
+        || !int_digits.bytes().all(|b| b.is_ascii_digit())
+        || !frac_digits.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+
+    let digits: String = format!("{int_digits}{frac_digits}");
+    // The decimal point sits after `int_digits.len()` digits, then shifts right by the
+    // exponent; `point` is its index from the left of `digits`. `Decimal` holds at most
+    // ~29 significant digits (max scale 28), so a point far outside that range is decided
+    // without materializing the padded string.
+    let point = (int_digits.len() as i64).saturating_add(exponent);
+    const LIMIT: i64 = 60;
+    if digits.bytes().all(|b| b == b'0') || point < -LIMIT {
+        return Some("0".to_string()); // exactly zero, or underflows below 28-dp precision
+    }
+    if point > LIMIT {
+        return None; // overflows `Decimal`'s range — an honest parse error upstream
+    }
+    let plain = if point <= 0 {
+        let zeros = "0".repeat((-point) as usize);
+        format!("{sign}0.{zeros}{digits}")
+    } else if point as usize >= digits.len() {
+        let zeros = "0".repeat(point as usize - digits.len());
+        format!("{sign}{digits}{zeros}")
+    } else {
+        let (whole, frac) = digits.split_at(point as usize);
+        format!("{sign}{whole}.{frac}")
+    };
+    Some(plain)
 }
 
 /// A money-parse failure. **Carries the offending amount text, never any secret** —
@@ -392,11 +489,16 @@ impl VendorUsageDay {
 /// Typed honesty caveats for a token-usage report.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageReportCaveats {
-    /// OpenAI: `usage/completions` may **not** include Responses-API traffic. Codex
-    /// rides the Responses API, and there is no `usage/responses` endpoint, so if this
-    /// lane does not cover it, token-side reconciliation **silently undercounts Codex**
-    /// while `costs` still bills it. `true` means coverage is **unconfirmed** (the
-    /// Gate-2 live check has not yet established it); set `false` only once confirmed.
+    /// OpenAI: whether `usage/completions`'s coverage of **Responses-API traffic
+    /// (Codex)** is still **unconfirmed**. Codex rides the Responses API and there is no
+    /// `usage/responses` endpoint, so if this lane missed it, token-side reconciliation
+    /// would **silently undercount Codex** while `costs` still bills it.
+    ///
+    /// **Confirmed covered by the 2026-06-14 GATE-2b live run** (a Responses call
+    /// surfaced in `usage/completions` in the same bucket as a Chat call), so the OpenAI
+    /// adapter now sets this **`false`** and T10c carries no token-undercount caveat. The
+    /// field is retained (the type is the durable record and the engine may read it); a
+    /// `true` would mean coverage is unverified — no producer flags it `true` today.
     pub responses_api_coverage_unconfirmed: bool,
 }
 
@@ -626,6 +728,79 @@ mod tests {
     fn openai_dollars_string_is_taken_verbatim() {
         let amount = ok(UsdAmount::from_json_dollars_str("1.23"));
         assert_eq!(amount.as_usd(), ok(Decimal::from_str_exact("1.23")));
+    }
+
+    #[test]
+    fn openai_costs_amount_absorbs_the_real_gate2b_shapes_without_erroring() {
+        // The 2026-06-14 live `/costs` bodies (APPENDIX A): `amount.value` is a JSON
+        // STRING (so `RawValue` captures it quote-wrapped), can be the scientific-notation
+        // zero `0E-6176`, and can carry 39 fractional digits. The OLD parser returned
+        // `from_scientific`/`from_str_exact` errors on exactly these — a valid connect
+        // would have crashed. Each must now parse, exact and `f64`-free.
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str("\"0E-6176\"")).as_usd(),
+            Decimal::ZERO
+        );
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str(
+                "\"0.000004500000000000000000000000000000000\"" // 39 dp
+            ))
+            .as_usd(),
+            ok(Decimal::from_str_exact("0.0000045"))
+        );
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str(
+                "\"0.00003420000000000000000000000000000000\"" // 38 dp
+            ))
+            .as_usd(),
+            ok(Decimal::from_str_exact("0.0000342"))
+        );
+        // A bare (unquoted) JSON number — the older fixture shape — still parses.
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str("1.23")).as_usd(),
+            ok(Decimal::from_str_exact("1.23"))
+        );
+        // In-range scientific notation still works (and a tiny one underflows to zero).
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str("1.5e-2")).as_usd(),
+            ok(Decimal::from_str_exact("0.015"))
+        );
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str("\"4.5E-39\"")).as_usd(),
+            Decimal::ZERO
+        );
+        // A deep-overflow exponent is a typed error, never a fabricated value or an OOM.
+        assert!(matches!(
+            UsdAmount::from_json_dollars_str("\"1E40\""),
+            Err(MoneyParseError::Invalid { .. })
+        ));
+        assert!(matches!(
+            UsdAmount::from_json_dollars_str("\"1E-9000000000\""),
+            Ok(zero) if zero.as_usd() == Decimal::ZERO
+        ));
+    }
+
+    #[test]
+    fn over_scale_dollars_round_at_the_28th_digit_not_truncate() {
+        // The 39-dp APPENDIX-A values round by dropping trailing ZEROS; pin the actual
+        // ROUNDING semantics too (a non-zero tail that forces a round-up at the 28th place),
+        // so a regression to truncation or a different rounding mode is caught on money code.
+        // A round-up that cascades a carry all the way to 1:
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str(
+                "0.99999999999999999999999999995"
+            ))
+            .as_usd(),
+            Decimal::ONE
+        );
+        // A plain round-up at the 28th digit (…678|5 → …679):
+        assert_eq!(
+            ok(UsdAmount::from_json_dollars_str(
+                "\"0.12345678901234567890123456785\""
+            ))
+            .as_usd(),
+            ok(Decimal::from_str_exact("0.1234567890123456789012345679"))
+        );
     }
 
     #[test]

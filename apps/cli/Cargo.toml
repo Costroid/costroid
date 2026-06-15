@@ -18,10 +18,17 @@ path = "src/main.rs"
 # The connections subsystem is opt-in and off by default: the default build never
 # links `costroid-connect`, so it makes no network calls and touches no secret. The
 # taskbar (`apps/bar`, Step 6) will carry the same gate. T8 landed the keychain
-# credential store and T9a the generic authorized-host HTTP client behind this
-# feature; nothing in the CLI calls the crate until the connect/disconnect commands
-# land in T10 — so even a `--features connect` build performs zero network calls.
-connect = ["dep:costroid-connect"]
+# credential store, T9a the generic authorized-host HTTP client, and T9b the usage-API
+# adapters behind this feature; T10a (`connect`/`disconnect`/`connections`) is the first
+# caller — `connect` / `connections --check` make network calls, but the default build
+# and every other command still make none. `rpassword` (the no-echo TTY key prompt) is
+# pulled in here too, so it never reaches the default/local-only graph.
+connect = ["dep:costroid-connect", "dep:rpassword"]
+# Test-only: enables `costroid-connect/test-support` (the loopback MockServer + keyring
+# mock) so the T10a Layer-1 connect-action test (in src/connect.rs) can drive the command
+# core with zero real network. NOT enabled by the shipping `--features connect` build, so
+# the plain-`connect` lint never compiles the loopback harness into the surface.
+connect-test-support = ["connect", "costroid-connect/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,6 +39,7 @@ costroid-core.workspace = true
 costroid-providers.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
+rpassword = { version = "=7.5.4", optional = true }
 rust_decimal.workspace = true
 serde_json.workspace = true
 

@@ -11,13 +11,35 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
-Groundwork for the 0.4.0 connections line, plus a cross-cutting review fix pass. Nothing
-here turns networking on: the new `costroid-connect` crate is feature-gated and **off by
-default** (the default `costroid` binary does not even link it), there is no user-facing
-connect flow until v0.4.0, and the default build still makes zero network calls — now
-proven by stricter guards.
+The 0.4.0 connections line: the `costroid connect`/`disconnect`/`connections` CLI now
+exists — the first opt-in connection of your own usage/billing API key, and the first
+real network in the product. It stays **off by default**: networking lives only in the
+feature-gated `costroid-connect` crate (the default `costroid` binary does not even link
+it), and only the explicit `connect` / `connections --check` actions reach the network —
+the default build and every other command still make **zero** network calls, proven by
+the offline-acceptance harness.
 
 ### Added
+
+- **`costroid connect` / `disconnect` / `connections` CLI (opt-in, feature-gated).**
+  Connect your own admin usage/billing API key — Anthropic (`sk-ant-admin…`) or OpenAI
+  (`sk-admin-…`) — to read live numbers no local log carries. The key is read from
+  **stdin only** (a hidden, no-echo prompt on a terminal; one line on a pipe — never a
+  command-line argument or an environment variable), validated before it is stored
+  (Anthropic via `GET /v1/organizations/me`, which reads no billing data; OpenAI by a
+  one-day cost probe), and kept **only** in your OS keychain — never on disk, in a config
+  file, or in a log. `disconnect` revokes instantly (idempotent). `connections` lists what
+  is linked, local-only by default; `connections --check` re-validates each over the
+  network. `gemini` is a recognized vendor with a known answer — it prints "unavailable —
+  no sanctioned static-key usage API" and exits without prompting for a key. Every screen
+  has a `--plain` ASCII path with a non-color status cue. Off by default and absent from
+  the local-only build.
+- **OpenAI `/costs` token-coverage and money-shape, live-confirmed.** A live read of the
+  OpenAI Organization usage API confirmed that `usage/completions` **covers Responses-API
+  (Codex) traffic**, so Costroid carries no token-undercount caveat for it. The cost
+  money parser was hardened for the real `/costs` shape — `amount.value` can be a JSON
+  string, scientific notation, or carry more than 28 fractional digits — and now absorbs
+  all of it exactly (always `Decimal`, never floating point) instead of erroring.
 
 - **`costroid-connect` crate skeleton (feature-gated, off by default)** — the single
   future home of all network and credential code. With it, the no-network guarantee is

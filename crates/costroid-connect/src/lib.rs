@@ -83,7 +83,7 @@
 //!
 //! [`keyring`]: https://crates.io/crates/keyring
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -91,19 +91,28 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use keyring::{Entry, Error as KeyringError};
-use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
 mod anthropic;
 mod fetch;
 mod http;
 mod openai;
-#[cfg(test)]
-mod test_support;
+/// A `cfg(test)`/`feature = "test-support"`-only loopback HTTP harness (see the module).
+/// `pub` only under the opt-in `test-support` feature so a dependent crate's tests can
+/// drive the connect path against a local `TcpListener` + an in-memory keychain; never
+/// part of the shipping `--features connect` surface.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
-pub use anthropic::AnthropicAdapter;
+pub use anthropic::{AnthropicAdapter, OrgValidation};
 pub use http::{AuthHeader, AuthorizedClient, HttpResponse, RequestLimits};
 pub use openai::OpenAiAdapter;
+
+// Re-export `secrecy`'s `SecretString` + `ExposeSecret` so the first caller (the T10a
+// `connect` CLI) can wrap a pasted key in the keychain's secret type — and inspect only
+// its non-secret class prefix — without itself depending on `secrecy`. The key is a
+// `SecretString` from the moment it leaves stdin until it lands in the keychain.
+pub use secrecy::{ExposeSecret, SecretString};
 
 // Re-export the core vendor-report vocabulary that appears in the adapters' public
 // signatures, so a `costroid-connect` consumer need not also import from
@@ -439,12 +448,30 @@ impl fmt::Debug for CredentialStore {
 // ConnectionRegistry — the non-secret "what is linked?" index
 // ---------------------------------------------------------------------------
 
-/// On-disk shape of the connection registry. Holds **only** vendor slugs — never any
-/// secret material. A `BTreeSet` keeps the list deduplicated and deterministically
-/// ordered (so the file is stable across writes).
+/// A **non-secret** organization label captured at connect time (Anthropic `me`'s
+/// `name`/`id`), stored beside the vendor in the [`ConnectionRegistry`] so the
+/// Connections view can show it offline. Carries **zero** secret material — the API key
+/// itself never leaves the OS keychain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrgLabel {
+    /// The organization's display name (e.g. Anthropic `me.name`).
+    pub name: String,
+    /// The organization id, when the vendor returns one (Anthropic `me.id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+/// On-disk shape of the connection registry. Holds **only** vendor slugs and non-secret
+/// org labels — never any secret material. A `BTreeSet`/`BTreeMap` keep it deduplicated
+/// and deterministically ordered (so the file is stable across writes).
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct RegistryFile {
     connected: BTreeSet<ApiVendor>,
+    /// Optional non-secret org labels, keyed by vendor. Skipped when empty so a
+    /// label-free registry still serializes to exactly `{"connected": [...]}` (the T8
+    /// shape), and so a registry written by an older build round-trips.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    labels: BTreeMap<ApiVendor, OrgLabel>,
 }
 
 /// Resolve the default registry path
@@ -494,18 +521,45 @@ impl ConnectionRegistry {
         Ok(self.load()?.connected.contains(&vendor))
     }
 
-    /// Mark `vendor` connected (idempotent).
+    /// Mark `vendor` connected (idempotent). Leaves any existing org label untouched.
     pub fn mark_connected(&self, vendor: ApiVendor) -> Result<(), ConnectError> {
         let mut file = self.load()?;
         file.connected.insert(vendor);
         self.save(&file)
     }
 
+    /// Mark `vendor` connected and set (or, with `None`, clear) its non-secret org label
+    /// in one atomic write (idempotent). The label carries no secret material.
+    pub fn mark_connected_with_label(
+        &self,
+        vendor: ApiVendor,
+        label: Option<OrgLabel>,
+    ) -> Result<(), ConnectError> {
+        let mut file = self.load()?;
+        file.connected.insert(vendor);
+        match label {
+            Some(label) => {
+                file.labels.insert(vendor, label);
+            }
+            None => {
+                file.labels.remove(&vendor);
+            }
+        }
+        self.save(&file)
+    }
+
     /// Mark `vendor` disconnected (idempotent; removing an absent vendor is a no-op).
+    /// Also drops any stored org label, so disconnect leaves no residue.
     pub fn mark_disconnected(&self, vendor: ApiVendor) -> Result<(), ConnectError> {
         let mut file = self.load()?;
         file.connected.remove(&vendor);
+        file.labels.remove(&vendor);
         self.save(&file)
+    }
+
+    /// The non-secret org label recorded for `vendor`, if any.
+    pub fn label(&self, vendor: ApiVendor) -> Result<Option<OrgLabel>, ConnectError> {
+        Ok(self.load()?.labels.get(&vendor).cloned())
     }
 
     /// Read the registry file. A missing file is an empty registry (not an error); a
@@ -785,6 +839,45 @@ mod tests {
             serde_json::json!(["anthropic", "gemini"])
         );
         assert_eq!(some(parsed.as_object()).len(), 1);
+    }
+
+    #[test]
+    fn registry_stores_and_clears_non_secret_org_labels() {
+        let dir = TempDir::new("reg-label");
+        let path = dir.path.join("connections.json");
+        let reg = ConnectionRegistry::at(path.clone());
+
+        // A label-free connect keeps the T8 shape (only `connected`).
+        ok(reg.mark_connected(ApiVendor::OpenAI));
+        let raw = ok(fs::read_to_string(&path));
+        let parsed: serde_json::Value = ok(serde_json::from_str(&raw));
+        assert_eq!(
+            some(parsed.as_object()).len(),
+            1,
+            "labels skipped when empty"
+        );
+
+        // Connect with a label → it is stored and readable, alongside the slug.
+        let label = OrgLabel {
+            name: "Erens Org".to_string(),
+            id: Some("org-123".to_string()),
+        };
+        ok(reg.mark_connected_with_label(ApiVendor::Anthropic, Some(label.clone())));
+        assert_eq!(some(ok(reg.label(ApiVendor::Anthropic))), label);
+        assert!(ok(reg.label(ApiVendor::OpenAI)).is_none());
+
+        // The file holds the label but no secret-shaped material.
+        let raw = ok(fs::read_to_string(&path));
+        assert!(raw.contains("Erens Org") && raw.contains("org-123"));
+        assert!(
+            !raw.contains("sk-"),
+            "no key material in the registry: {raw}"
+        );
+
+        // Disconnect drops both the slug and the label (no residue).
+        ok(reg.mark_disconnected(ApiVendor::Anthropic));
+        assert!(!ok(reg.is_connected(ApiVendor::Anthropic)));
+        assert!(ok(reg.label(ApiVendor::Anthropic)).is_none());
     }
 
     #[test]

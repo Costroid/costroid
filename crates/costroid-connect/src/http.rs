@@ -213,8 +213,11 @@ impl AuthorizedClient {
     /// TLS, no real network, passes offline. `pub(crate)` so the adapter modules reach
     /// it, but still compiled **only** under `cfg(test)`: it is invisible to real builds,
     /// to dependent crates, and to integration tests, so the public production surface
-    /// stays HTTPS-only with no escape hatch.
-    #[cfg(test)]
+    /// stays HTTPS-only with no escape hatch. (Compiled under `feature = "test-support"`
+    /// too — for a dependent crate's loopback tests — but only ever as `pub(crate)`, so it
+    /// is reachable solely through the curated [`crate::test_support`] API, never the
+    /// public surface.)
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn loopback_http_for_tests(authority: &str, limits: RequestLimits) -> Self {
         Self {
             scheme: "http",

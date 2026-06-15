@@ -33,11 +33,22 @@ jobs:
         run: cargo test --workspace
 
       # Smoke-test the opt-in connections build: the `costroid` binary must compile and
-      # lint cleanly with the keychain crate linked in (off by default; T8).
-      - name: Connect feature (keychain) — build + lint
+      # lint cleanly with the keychain + HTTP + connect-CLI code linked in (off by
+      # default; T8/T9/T10a).
+      - name: Connect feature — build + lint
         run: |
           cargo build -p costroid --features connect
           cargo clippy -p costroid --features connect --all-targets -- -D warnings
+
+      # Run the T10a Layer-1 connect-action test (proposal §7): it drives the connect
+      # command core against a loopback MockServer + the keyring mock — zero real network,
+      # zero real keychain — so it runs here like any test. `connect-test-support` is NOT
+      # in the shipping `--features connect` build (it only enables the in-crate loopback
+      # harness), so it is linted + run via this dedicated step.
+      - name: Connect Layer-1 integration test (loopback + keyring mock)
+        run: |
+          cargo clippy -p costroid --features connect-test-support --all-targets -- -D warnings
+          cargo test -p costroid --features connect-test-support
 
   msrv:
     name: MSRV (Rust 1.88)
