@@ -564,7 +564,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "costroid"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-connect"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "costroid-core",
  "keyring",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "costroid-focus",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-focus"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "csv",
@@ -622,7 +622,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-providers"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "rust_decimal",

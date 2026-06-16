@@ -11,6 +11,8 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-16
+
 The 0.4.0 connections line: the `costroid connect`/`disconnect`/`connections` CLI now
 exists — the first opt-in connection of your own usage/billing API key, and the first
 real network in the product — and `costroid reconcile` now puts your local cost estimate
@@ -225,7 +227,8 @@ First public release — the local cost lane's foundation.
   (`cargo install costroid` / `cargo binstall costroid`), each artifact SHA-256-checksummed
   and build-provenance-attested.
 
-[Unreleased]: https://github.com/Costroid/costroid/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Costroid/costroid/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Costroid/costroid/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Costroid/costroid/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Costroid/costroid/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Costroid/costroid/releases/tag/v0.1.0

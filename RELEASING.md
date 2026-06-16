@@ -117,32 +117,31 @@ To release a fix, bump the version and push the new `vX.Y.Z` tag.
 
 ## crates.io publish
 
-Costroid is published to crates.io through v0.3.0 — all four crates (`costroid-focus`,
-`costroid-providers`, `costroid-core`, `costroid`) — so `cargo install costroid` and
-`cargo binstall costroid` both work.
+Costroid publishes to crates.io as **five** crates since v0.4.0 — `costroid-focus`,
+`costroid-providers`, `costroid-core`, `costroid-connect`, and `costroid` — so
+`cargo install costroid` and `cargo binstall costroid` both work. (`costroid-connect` joined
+the ladder in v0.4.0: it gained its only internal dependency, `costroid-core`, in T9b — the
+usage-API adapters parse into `costroid-core::vendor_report` — and the CLI depends on it via
+the `connect` feature, so it publishes after `costroid-core` and before `costroid`.)
 
-Publish future versions in **dependency order** (each crate must be on crates.io before its
-dependents), with `CARGO_REGISTRY_TOKEN` configured:
+Publish in **dependency order** (each crate must be on crates.io before its dependents),
+with `CARGO_REGISTRY_TOKEN` configured:
 
 ```
-costroid-focus  →  costroid-providers  →  costroid-core  →  costroid (cli)
+costroid-focus  →  costroid-providers  →  costroid-core  →  costroid-connect  →  costroid (cli)
 ```
 
 ```bash
 cargo publish -p costroid-focus
 cargo publish -p costroid-providers   # recent cargo waits for the index between each
 cargo publish -p costroid-core
+cargo publish -p costroid-connect
 cargo publish -p costroid
 ```
 
-> The order grows as the remaining members gain publishable behavior (per `docs/PRODUCT-PLAN.md`):
-> `costroid-connect` (a member since T7; keychain store since T8; the `ureq`+`rustls` HTTP client
-> since T9a) gained its `costroid-core` dependency in **T9b** (the usage-API adapters parse into
-> `costroid-core::vendor_report`; it needs no `costroid-focus`) and so publishes after `costroid-core`
-> (the CLI depends on it via the `connect` feature) — the v0.4.0 ladder, per PRODUCT-PLAN T10b, is
-> `costroid-focus → costroid-providers → costroid-core → costroid-connect → costroid (cli)`; the
-> `costroid-bar` binary (not yet in the workspace) publishes alongside
-> `costroid` (both depend only on `costroid-core`).
+> The order grows as members gain publishable behavior (per `docs/PRODUCT-PLAN.md`). The
+> `costroid-bar` binary (not yet in the workspace) will publish alongside `costroid` (both
+> depend only on `costroid-core`).
 
 Gotchas (learned shipping v0.1.0):
 - **A verified email** on the crates.io account is required before the first publish.

@@ -4,11 +4,11 @@ Costroid is a local-first, secure-by-design tool, and we take security seriously
 
 ## Supported versions
 
-Costroid's current release line is **0.3.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
+Costroid's current release line is **0.4.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
 
 | Version | Security fixes |
 | --- | --- |
-| Latest release line (0.3.x) | Yes |
+| Latest release line (0.4.x) | Yes |
 | Older releases | No (upgrade to the latest) |
 | Unreleased `main` | Best-effort |
 
