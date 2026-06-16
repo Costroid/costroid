@@ -585,6 +585,7 @@ mod tests {
             focus_rows,
             limit_windows: Vec::new(),
             providers: Vec::new(),
+            capabilities: Vec::new(),
         }
     }
 

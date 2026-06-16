@@ -342,7 +342,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 
 ### 11.4 The task ledger
 
-*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9a is DONE** (§12.11 / §11.5, gate green 2026-06-10, ⛔-approved); **T9b is DONE** (§12.12 / §11.5, 2026-06-13, 264 tests, both ⛔ gates cleared); **T9c is DONE** (§12.13 / §11.5, 2026-06-13, 280 tests — the pure-core reconciliation engine, no connect dep); **T10a is DONE** (§12.14 / §11.5, 2026-06-15 — the connect/disconnect/connections CLI + key validation + the connect-action test; the first caller + first real network; ⛔ GATE 2b cleared); **T10c is DONE** (§12.15 / §11.5, 2026-06-15 — the `costroid reconcile` estimate-vs-invoice display surfacing T9c, no new ⛔ gate); **only T10b/release (§12.10) remains** on the 0.4.0 line (its ⛔ legal gate now CLEARED 2026-06-16 — §11.5 / `docs/proposals/T10b-LEGAL-REVIEW.md` §10; only the release mechanics remain), and T10-LIVE-ROWS (§12.16) is fulfilled/closed; **T11+ remains a backlog** that gets expanded into full cards when its Prereq lands.*
+*Dependency-ordered. ⛔ = human gate · 📌 = pin before starting · S/M/L/XL = size. **T1 is independent; T2 is the lynchpin for all build work.** Cards **T1–T8 are all DONE** (T8: §12.9 / §11.5, gate green 2026-06-09, ⛔-approved); **T9a is DONE** (§12.11 / §11.5, gate green 2026-06-10, ⛔-approved); **T9b is DONE** (§12.12 / §11.5, 2026-06-13, 264 tests, both ⛔ gates cleared); **T9c is DONE** (§12.13 / §11.5, 2026-06-13, 280 tests — the pure-core reconciliation engine, no connect dep); **T10a is DONE** (§12.14 / §11.5, 2026-06-15 — the connect/disconnect/connections CLI + key validation + the connect-action test; the first caller + first real network; ⛔ GATE 2b cleared); **T10c is DONE** (§12.15 / §11.5, 2026-06-15 — the `costroid reconcile` estimate-vs-invoice display surfacing T9c, no new ⛔ gate); **only T10b/release (§12.10) remains** on the 0.4.0 line (its ⛔ legal gate now CLEARED 2026-06-16 — §11.5 / `docs/proposals/T10b-LEGAL-REVIEW.md` §10; only the release mechanics remain), and T10-LIVE-ROWS (§12.16) is fulfilled/closed; **T11–T17 are now PINNED + carded** (§12.17–§12.23, 2026-06-16 — Step 5 analytical tabs + alerts; pins in §11.5 "📌 STEP 5 PINNED"); build each in a fresh agent per §12.0, in order, **T11 first** (it lands the tab model T12/T13 inherit). **T18+ (egui taskbar) remains backlog.***
 
 > These cards are the at-a-glance **map**. The full, **paste-ready prompts live in §12** and are the source of truth — when a build agent revises a task it edits §12 + logs in §11.5, not these cards. The T2/T4/T6 boundary (types vs behavior vs render) is settled in **§11.5 D1**.
 
@@ -362,7 +362,14 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - [x] **T10c** reconciliation display (`costroid reconcile`) — ✅ **DONE 2026-06-15 (gate green: cli 90 default tests — incl. 13 reconcile render snapshots/asserts — + core 85 + connect 64, 0 failed; +5 reconcile.rs tests (3 Layer-1 loopback + 2 window) under `--features connect-test-support`, 106 total cli; offline.rs both tiers + cargo-deny both + offline_acceptance.sh default tier green; independently adversarially reviewed, 0 critical/high/medium)**. Surfaces T9c's `CostReconciliation`: `costroid reconcile [--vendor anthropic|openai] [--period day|week|month|year]` fetches each connected vendor's `cost_report` over a COMPLETED-day window (reusing T10a's stored key + authorized client — no new secret/network boundary), vendor-scopes the FOCUS rows (`claude-code`→Anthropic, `codex`→OpenAI, `cursor`→excluded), reconciles via `reconcile_cost`, and renders the signed variance HONESTLY (typed absence as text never `$0`; caveats footnoted; local figure always `~`-labeled). The fetch rides the injectable `AdapterSet::cost_report` seam (loopback-tested, zero real network); the renderer is a pure function of the core type (snapshot-tested incl. `--plain`). Prereq: T10a. See §11.5 ✅ T10c.
 - [ ] **T10-LIVE-ROWS** deferred populated-row / probe-behavior live-confirm — **carded at §12.16**; holds any ⛔ GATE 2b item T10a can't confirm for lack of real raw-API usage. Prereq: real API usage on the connected org.
 - **T10b — release v0.4.0 — ✅ DONE / SHIPPED 2026-06-16** (§11.5): live on crates.io (5-crate ladder), the GitHub Release (installers + 6-target binaries + checksums + attestations), and Homebrew + npm. Closed **Step 4 (connections)**. (One failed Release run — a `dist build` libdbus-on-runner gotcha — fixed by `precise-builds = true` and a `v0.4.0` re-tag; see §11.5.)
-- T11+ — backlog (Step 5 analytical tabs + alerts; carded when their Prereq lands).
+- [x] **T11** Providers tab — ✅ **DONE 2026-06-16** (gate green: default `cargo test --workspace` cli 97 + core 85, 0 failed; `--features connect-test-support` cli 117; clippy `-D warnings` clean on default + `connect` + `connect-test-support`; fmt clean; offline.rs both tiers green — connect-delta still the reviewed allowlist). The FIRST production consumer of `Capability`: a new `Screen::Providers` tab renders, per provider, each lane's honest source + auth + quota shape + detection health via the owned `ProviderCapabilityView` core seam (captured for every provider before the `Box<dyn Provider>` set is consumed); Cursor renders `detected` + "no sanctioned source" (never "coming soon"). Lands the numbered-tab model T12/T13 inherit (1–6 jumps + Tab/BackTab cycle; Frontier stays its a/esc overlay; footer + help enumerate tabs). Under `--features connect` only, a read-only connection lane (org label + connected/not via the dual gate; Gemini reuses the pinned `GEMINI_UNAVAILABLE_MESSAGE` verbatim; NEVER key material; NO new network). braille/ascii/plain snapshots committed + ASCII-purity gates extended. See §11.5 ✅ T11. (M · Prereq T3 ✅)
+- [ ] **T12** Models tab — 📋 **carded §12.18** (S · Prereq T11)
+- [ ] **T13** History tab — 📋 **carded §12.19** (M · Prereq T11 — adds TUI scroll state, none today)
+- [ ] **T14** Budget — 📋 **carded §12.20** (L · Prereq T11 — the FIRST user-config file, TOML)
+- [ ] **T15** Forecast — 📋 **carded §12.21** (L · Prereq T11)
+- [ ] **T16** Anomalies — 📋 **carded §12.22** (L–XL · Prereq T11 + T15's daily-series helper)
+- [ ] **T17** Alerts — 📋 **carded §12.23** (L · ⛔ · Prereq T14 config) → **closes Step 5 / 0.5.0**
+- T18+ — backlog (egui taskbar, Step 6; carded when its Prereq lands).
 
 **T2 + T4 + T6 ticked = the 0.3.0 milestone** (Claude live quota + generalized model).
 
@@ -430,8 +437,8 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - **T9 — usage-API clients + reconciliation** · ⛔📌 · Prereq T7,T8 — **📌 PINNED + ⛔ SIGNED OFF 2026-06-10** (`docs/proposals/T9-PIN-PROPOSAL.md`; logged in §11.5): **Anthropic** Admin cost/usage reports + **OpenAI** org costs/usage (tier-3 own admin key each) · **Gemini = defer** (no sanctioned static-key usage API → first-class "unavailable"). **Split:** **T9a** `costroid-connect` HTTP infra — `ureq`+`rustls` + a generic authorized-host client (the HTTP layer the T10 offline-acceptance network test exercises) + adds the `ureq`/`rustls` crates so their `deny.toml` wrappers (carried since T7 as forward-looking no-ops) finally fire — clearing the 2 benign `unused-wrapper` warnings — and adds their presence assertions to `offline.rs` (keyring's T8 precedent); ⛔ guarantee-redefinition like T7/T8, **no provider knowledge**; its first `core`/`focus` deps only if the client API actually needs them (else they defer to T9b) — **carded at §12.11; ✅ DONE 2026-06-10 (gate green, ⛔-approved; `core`/`focus` deps deferred to T9b as expected)** · **T9b** the **TWO** per-provider usage-API adapters — Anthropic + OpenAI — plus the Gemini first-class-unavailable state *(amended from "3 adapters" by the signed-off proposal)* (read keys via `CredentialStore::retrieve(ApiVendor)`; each a §8 live-shape confirm) — **carded at §12.12** (2026-06-10, against the T9a client API as built) · **T9c** the estimate-vs-invoice reconciliation engine (pure `costroid-core`, fixture-tested, **no network** — see DATA-MODEL reconciliation) — **carded at §12.13** (T9b-dependent slots marked). T8's pure-library↔CLI carve-out + §10 Rule 3 (gating prereq, then parallel sub-units) is the precedent.
 - **T10 — connect/disconnect CLI + Connections view** · ⛔📌 · Prereq T8,T9 + ⛔ **GATE 2b** (populated-row live-confirm — §11.5 ✅ T9b) — 📌 connect UX, reconciliation display · ⛔ **legal review of the connection flows before this ships** (own-key + sanctioned OAuth only — see Step 4). **Also finishes** the `scripts/offline_acceptance.sh` feature-on connect-ACTION network test (the connect action reaches only the authorized host · the secret lands only in the keychain · disconnect leaves no residue — replaces the `T9/T10` STUB at the script's tail). The 0.4.0 release itself is cut by **T10b**.
 - **T10b — Release v0.4.0 (connections)** · ⛔ · S · Prereq T9, T10 + the ⛔ legal review signed off → **cuts v0.4.0** — the release-mechanics cap on Step 4 (the connections analogue of T1, which cut v0.2.0). Version bump 0.3.0→0.4.0 across the **four** `[workspace.dependencies]` constraints (now incl. `costroid-connect`; the CLI has no entry — the §11.5 T1 lockstep gotcha, with all **5** `version.workspace` members bumping together) + `Cargo.lock` + CHANGELOG + README/SECURITY release line; `dist plan` / host `dist build` dry-run; then the human tags + runs the **extended** crates.io ladder `focus → providers → core → connect → cli`. **Carded at §12.10.**
-- **T11 Providers tab** (Prereq T3) · **T12 Models tab** · **T13 History tab** — cheap re-cuts
-- **T14 Budget 📌 · T15 Forecast 📌 · T16 Anomalies 📌 · T17 Alerts ⛔📌** — 📌 budget persistence schema · forecast algorithm · anomaly baseline · alert thresholds + copy → **0.5.0**
+- **T11 Providers tab** (§12.17) · **T12 Models tab** (§12.18) · **T13 History tab** (§12.19) — cheap re-cuts, **PINNED + carded 2026-06-16** (T11 lands the numbered-tab model)
+- **T14 Budget · T15 Forecast · T16 Anomalies · T17 Alerts ⛔** — **PINNED + carded 2026-06-16** (§12.20–§12.23; pins in §11.5 "📌 STEP 5 PINNED": TOML config · linear run-rate forecast · median+MAD anomaly baseline · banner+`alerts --check` delivery, notify-rust deferred) → **0.5.0**
 - **T18+ — egui taskbar** · ⛔ · Prereq T2–T6 (CLI feature-complete) — greenfield: needs a GUI design first, then per-tab fan-out → **0.6.0**
 - **Cursor live quota — discovery-gated (§8), not a numbered build task.** Pursued only if Cursor publishes a sanctioned/documented API or first-party OAuth (never session reuse against `api2.cursor.sh`); until then Cursor stays detect-only / "unavailable." Card it (like Copilot/Antigravity) only after that discovery lands.
 
@@ -440,6 +447,26 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 ### 11.5 Decisions & limitations (living log)
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**✅ T11 DONE — Providers tab + the numbered-tab model (2026-06-16).** The FIRST production consumer of the `Capability` descriptor: a new `Screen::Providers` TUI tab renders, per provider (Claude Code / Codex / Cursor), each lane's honest source + auth + quota shape + detection health — *what's available, what's unavailable, and why*. Gate green (default `cargo test --workspace` cli 97 + core 85; `--features connect-test-support` cli 117; clippy `-D warnings` on default + `connect` + `connect-test-support`; fmt; offline.rs both tiers; the connect-delta still the reviewed allowlist — no new crate). **Built by an independent fresh agent + an adversarial review workflow** (3 dimensions × verify), 0 confirmed defects.
+- **Core seam = `ProviderCapabilityView` (owned), parallel to `ProviderStatus` on `EngineSnapshot`.** `Capability` is `Copy` but its `quota_kinds: &'static [LimitKind]` blocks `Deserialize` (per §11.5 ✅ T3's note), so collection projects each provider's `capability()` into an owned, `Serialize`/`Deserialize` view (`Vec<LimitKind>`), captured for EVERY provider **before** the `Box<dyn Provider>` set is consumed — present even for missing/errored providers, joined to `providers` by `ProviderId`. Infallible (no unwrap/expect/panic). `EngineSnapshot` gained the `capabilities` field (the 5 test literals updated).
+- **Tab model (Q1): numbered `1`–`6` jumps + `Tab`/`BackTab` cycle**, replacing the 2-way toggle (`TAB_SCREENS` = [Now, Trends, Providers]; `cycle_tab`/`tab_for_digit`). Only `1`–`3` are wired today; `4`–`6` are reserved/inert until T12+ append to `TAB_SCREENS` (no further `handle_key` change). **Frontier stays its own `a`/`esc` overlay** (outside the cycle; Tab from Frontier returns to the first tab). Footer nav + `draw_help` enumerate the tabs.
+- **Render = `render_providers_document` (braille/ascii/plain split)** with author-written DataSource/AuthMethod copy (`LocalArtifact`→"from local logs", `SanctionedHook`→"from the statusLine capture; run setup-statusline", `SanctionedOauth`/`ApiKey`→"via your connected key", `Unavailable`→"no sanctioned source"). Monochrome (Strong/bold titles only; amber/red reserved) — `providers_document_is_monochrome` guards it. Cursor renders `detected` + both unavailable lanes as "no sanctioned source", **never "coming soon"**. braille/ascii/plain snapshots committed; included in the `*_mode_output_is_pure_ascii` gates.
+- **DECISION — the connect-gated connection lane is a SEPARATE `#[cfg(feature="connect")]` fn (`push_provider_connection_lane`), appended to the document by the TUI, not a parameter of `render_providers_document`.** Rationale: keeps `render_providers_document` mirroring the other `render_*_document` fns AND keeps the default build entirely free of connect types/symbols + free of dead-code (an always-compiled `ConnectionEntry`/`ConnectionState` would warn "variant never constructed" in the connect-OFF non-test build). The lane reads the EXISTING keychain/registry read-only via the dual gate (`is_connected && retrieve.is_some`), shows org label + connected/not only (**never** key material), reuses the pinned `GEMINI_UNAVAILABLE_MESSAGE` verbatim, makes **NO** network call, and degrades to empty if the keychain/registry is unreachable. The lane's `--plain`/Ascii output is folded to pure ASCII (em-dash → `-`, non-ASCII → `?`), mirroring `connect.rs::emit`. `push_rule` is skipped in Plain mode (plain docs delimit by labels, never the `─` glyph) — a reusable gotcha for T12/T13's plain renders.
+- **For T12/T13:** the tab model + the `render_*_document`/snapshot/ASCII-purity pattern are in place — a new tab adds a `Screen` variant + `TAB_SCREENS` entry + a `document_for_width` arm + footer/help label + a `render_<tab>_document`. The Providers tab's Capability rendering is the template the deferred Copilot/Antigravity adapters (§8) render through by filling `Capability`.
+- **Independent coordinator review + fix (2026-06-16).** A fresh-context adversarial review (6 dimensions × per-finding verify, separate from the builder's own pass) confirmed the load-bearing invariants clean — scope fence, library no-panic, Cursor/Gemini honesty, ASCII purity, no-color-alone, tab-nav reserved-slot safety, connect-gating, the core seam — and surfaced **one low finding: the connection-lane gate+label logic was uninjectable + untested** (`gather_connection_entries` hard-called `CredentialStore::new()`/`ConnectionRegistry::open()`, and `format_org_label` had no coverage). **Fixed:** extracted the testable inner `connection_entries(&store, &registry)` (the thin wrapper keeps the open-and-degrade behavior) + added 2 connect-tier tests (the dual gate incl. the registry-connected-but-no-key → `NotConnected` keychain-source-of-truth case; the verbatim Gemini message; `format_org_label` with/without id). Connect-test-support tier now **121** (was 117 + builder's render test + these 2). Gate re-run green on all tiers.
+
+**📌 STEP 5 PINNED + CARDED (2026-06-16) — analytical tabs + alerts (T11–T17); cards at §12.17–§12.23.** Ran the §12.8 pin-then-card pass (a 6-reader + synthesis workflow mapping each tab/alert against the as-built code; canon = code). **Task split:** **T11 Providers tab** (M, Prereq T3 ✅ — the FIRST production consumer of the `Capability` descriptor; today only tests call `capability()` — and also lands the tab-model refactor the rest inherit), **T12 Models tab** (S), **T13 History tab** (M — adds TUI scroll state, which doesn't exist today), **T14 Budget** (L), **T15 Forecast** (L), **T16 Anomalies** (L–XL), **T17 Alerts** (L, ⛔). **Step 5 adds NO new network** — pure-local analytics over the existing point-in-time `EngineSnapshot`; Budget's optional invoice-true number reuses T10a's EXISTING user-initiated connect seam (`AdapterSet::cost_report`, `apps/cli/src/reconcile.rs:233`), feature-gated + off by default. **Key structural finding (code is canon):** the TUI has **no tab model** — `Screen` has 3 variants and `Tab` is a hardcoded 2-way toggle (`apps/cli/src/tui.rs:42,186-191`), `Frontier` an `a`/`esc` overlay; T11 builds the real tab bar.
+- **The four product decisions (Eren-confirmed 2026-06-16):**
+  - **(Q1) Tab navigation = numbered `1`–`6` direct jumps + a `Tab`/`BackTab` cycle** (Frontier stays its own `a`/`esc` overlay). Lands in T11; replaces the 2-way `match`.
+  - **(Q2) First user-config file = TOML at `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml`** (the documented target). Owned by `apps/cli`, **non-secret (NEVER keychain)**, atomic temp+rename + forward-compat `serde` (mirror the `connections.json` idiom but rooted at CONFIG not STATE). Adds the permissive `toml` crate (MIT/Apache, already deny-allowlist-clean) — the one dependency add, pre-approved here. Money is `rust_decimal::Decimal`, never f64. Budget compares the **API lane only**; a flat-fee subscription gets **no $ target** (§170, lanes-never-summed). Introduced by T14; extended by T17 for alert prefs.
+  - **(Q3) Anomaly baseline history = re-parse local logs over the trailing window each run** (NO new persisted rolling store; pure-local, no telemetry). The daily-series helper is shared with T15.
+  - **(Q4) Alerts delivery = an inline terminal banner (now/tabs) + a cron-friendly `costroid alerts --check` exit-code subcommand** — both built-in, no new dependency, no daemon. **OS desktop notifications (notify-rust) are DEFERRED behind a Cargo feature + config opt-in (off by default)** — they pull Linux D-Bus deps that re-touch the offline/forbidden-crates gates + the libdbus/precise-builds release wrinkle (T10b lesson above), so any future add takes a `CONNECT_ALLOWED`-style allowlist review. Alerts default **OFF/quiet**; thresholds reuse `WARN_FRACTION=0.80`/`CRITICAL_FRACTION=0.95` (`render.rs:29-30`), user-overridable in the TOML config.
+- **Pinned-technical defaults (decided in the pass; no human sign-off needed):**
+  - **T15 Forecast:** $ projection = linear run-rate over the elapsed month (`spend_to_date/days_elapsed × days_in_month`) off a shared per-UTC-day API-lane series helper (generalize the `reconcile.rs` bucketing — no helper exists today); quota projection = linear burn from the current `LimitMeasure` fraction to `resets_at`. Both labeled estimates; the $ projection is suppressed below a **3-day** min-data floor; the quota ETA **degrades to unavailable** on an `Unverified`/`Estimated`/stale reading (ARCHITECTURE §9.2) — never a confident wrong ETA.
+  - **T16 Anomalies:** baseline = **median + MAD** over the trailing **14 local days** of the user's own history, flag a day when `|value − median| > 3.5·MAD` (conservative → not alarmist; MAD beats mean±σ on spiky right-skewed spend). Signals: spend spike (daily API `billed_cost`), model-mix shift (share-of-tokens per `GroupKey(model)`), quota burn-rate jump (`LimitMeasure` delta/day). Suppress all anomalies below **7 days** of history; quota-derived signals skip `Unverified`/`Estimated` readings. (`bench.rs` `BaselineUnpriced` is a $0-unpriced placeholder, NOT a statistical baseline — not reusable.)
+  - **Render obligation (all tabs):** each new `render_<tab>_document` has a braille/ascii/plain split + ASCII-purity-gate inclusion; advisory tabs (Models/Forecast/Anomalies) stay **monochrome** (amber/red reserved for the near-limit/over-budget state, which always carries a non-color cue).
+- **Build order:** T11 (lands the tab model) → T12, T13 (cheap re-cuts) → T14 (config layer) → T15, T16 (analytics) → T17 (alerts, ⛔, extends T14's config). Each built in a fresh agent per §12.0 + the §11.1 review loop. **No separate proposal doc** — the pins live here + in the cards (§12.8 step 3); revisable by the build agent as it learns.
 
 **✅ T10b DONE — v0.4.0 SHIPPED (2026-06-16). Step 4 (connections) is complete.** The release is live on all three distribution paths: **crates.io** (all 5 crates at 0.4.0, via the extended ladder `focus → providers → core → connect → cli`), the **GitHub Release** (`curl|sh` + PowerShell installers + all 6 target binaries + per-file SHA-256 + provenance attestations), and **Homebrew + npm**. `cargo install costroid` → 0.4.0. The prep was the standard lockstep bump (5 `version.workspace` members + the 4 internal `[workspace.dependencies]` constraints incl. `costroid-connect`) + `Cargo.lock` + CHANGELOG `[0.4.0]` + README/SECURITY 0.4.x + the RELEASING.md 5-crate ladder; cut by committing the prep, pushing main, tagging `v0.4.0`, then the manual crates.io ladder.
 - **⚠️ Release-pipeline lesson (cost one failed Release run + a re-tag): `dist build` builds the WHOLE workspace, so on a connect-OFF release it still tried to compile `costroid-connect → keyring → libdbus-sys` and FAILED on the CI Linux runners (`Package dbus-1 was not found` — runners have no `libdbus-1-dev`).** A local `dist build` dry-run does NOT catch this (a dev box has libdbus installed). **Fix (committed, `3158c44`): `precise-builds = true` in `dist-workspace.toml`** → dist builds only `-p costroid` (connect-OFF), never compiling `costroid-connect`/`libdbus`, so the release runners need no system libs (verified: a clean rebuild compiled only `costroid`; the shipped binary stays `nm`-clean of the trio). This supersedes the old card note ("the connect-OFF release needs no libdbus") — true for the *binary*, but `dist build` needed `precise-builds` to actually avoid the workspace compile. The first (failed) v0.4.0 Release published no GitHub artifacts, so the fix was committed and the `v0.4.0` tag force-moved onto it (crates.io 0.4.0 was already live and is byte-identical — `dist-workspace.toml` is in no published crate; only the git tag ref moved). **Going forward this won't recur** (precise-builds is permanent); a future connect-ON release artifact would still need the apt deps (`libdbus-1-dev`/`libsecret-1-dev`) per the §12.10 note.
@@ -617,7 +644,7 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 
 ---
 
-## 12. Ready-to-paste task prompts (T1–T8, T9a–T9c, T10a/T10c + T10b release + T10-LIVE-ROWS)
+## 12. Ready-to-paste task prompts (T1–T8, T9a–T9c, T10a/T10c + T10b release + T10-LIVE-ROWS · T11–T17 Step 5 tabs+alerts)
 
 *To run a task: paste **§12.0 (the header)** then that task's **body block**, into a fresh ultracode-xhigh agent. Resolve any 📌 (defaults in §11.5) first. Backlog tasks (T9+) use **§12.8**. §12 is the source of truth for task content — agents edit it (and §11.5) as they learn; those edits are tracked in `docs/` and commit with the task.*
 
@@ -878,6 +905,7 @@ Rules:
 
 > **T9 status — this prompt has fully RUN for T9; do not re-run it.** The T9 pins were proposed + ⛔-signed-off 2026-06-10 (`docs/proposals/T9-PIN-PROPOSAL.md`, logged in §11.5), T9a is built (§12.11 ✅), and T9b/T9c are built (§12.12/§12.13 ✅ DONE 2026-06-13 — T9 complete).
 > **T10 status — this prompt has fully RUN for T10; do not re-run it.** The T10 pins were proposed + ⛔-signed-off 2026-06-13 (`docs/proposals/T10-PIN-PROPOSAL.md`, logged in §11.5 📌 T10), and T10a/T10c/T10-LIVE-ROWS are carded (§12.14/§12.15/§12.16; T10b release at §12.10) — **none built yet**; build each in a fresh agent per §12.0 when its Prereq holds.
+> **Step 5 status — this prompt has RUN for T11–T17; do not re-run it.** The Step 5 pins were proposed (a 6-reader + synthesis workflow) + Eren-confirmed 2026-06-16 (logged in §11.5 "📌 STEP 5 PINNED"), and T11–T17 are carded (§12.17–§12.23) — **none built yet**; build each in a fresh agent per §12.0 when its Prereq holds (**T11 first — it lands the tab model T12/T13 inherit**).
 
 ```
 Backlog task <ID> (see §11.4) is NOT carded — it has open 📌 decisions a build agent can't guess.
@@ -1523,4 +1551,245 @@ Your job is to PIN + CARD it, not to build it:
   §11.5 — and ⛔ GATE 2b is recorded as fully cleared. (Partial closure is allowed: confirmed items ship;
   unconfirmable-for-no-usage items stay deferred here, which is itself the §6 "formally deferred" path.)
 **Next:** with GATE 2b fully cleared, T10b/0.4.0 has no outstanding live-confirm debt.
+```
+
+---
+
+## Step 5 cards (T11–T17) — analytical tabs + alerts · PINNED + carded 2026-06-16 (pins in §11.5 "📌 STEP 5 PINNED")
+
+> **Shared structural note for T11–T16 (do not restate per card).** The TUI has **no tab model** today — `Screen` has 3 variants and `Tab` is a hardcoded 2-way `match` (`apps/cli/src/tui.rs:42,186-191`), with `Frontier` an `a`/`esc` overlay (tui.rs:224-241). **T11 lands the tab-model refactor** the rest inherit: replace the 2-way `match` with **numbered `1`–`6` direct jumps + a `Tab`/`BackTab` cycle** (Q1-confirmed; Frontier stays its own overlay), and update the footer nav (tui.rs:318-340) + `draw_help` (tui.rs:456-475) to enumerate tabs. Each later tab then adds: a `Screen` variant (tui.rs:42), a `document_for_width` arm (tui.rs:273-316), a footer label, a help line, and a `render_<tab>_document` (braille/ascii/plain split per `render.rs:1138-1153`) included in `plain_mode_output_is_pure_ascii` / `ascii_mode_output_is_pure_ascii` (render.rs:3240,3310). **Step 5 adds NO new network** — pure-local analytics over the cached point-in-time `EngineSnapshot`; the only optional connect path is Budget's invoice-true enrichment via the EXISTING user-initiated `AdapterSet::cost_report` seam (`apps/cli/src/reconcile.rs:233`), feature-gated + off by default. Advisory tabs (Models/Forecast/Anomalies) stay **monochrome** (amber/red reserved for the near-limit/over-budget state, which always carries a non-color cue).
+
+### 12.17 — T11 · Providers tab · M · Prereq: T3 ✅ (Capability shipped)
+
+```
+**Goal:** ship the Providers analytical tab — the FIRST production consumer of the `Capability`
+  descriptor (today only tests call `capability()` — providers/src/lib.rs:276, core/src/lib.rs:3116).
+  Renders, per provider (Claude Code / Codex / Cursor), each data lane's honest source + auth + quota
+  shape + detection health, and (under --features connect only) connection state — i.e. *what's
+  available, what's unavailable, and why*. Also lands the tab-model refactor T12/T13 inherit.
+**Spec:** docs/PRODUCT-PLAN.md §2b + §11.5 "📌 STEP 5 PINNED"; DESIGN-SYSTEM §Accessibility (--plain +
+  no-color-alone); honesty invariant — a lane with no clean source declares DataSource::Unavailable,
+  never fabricated (providers/src/lib.rs:237-241). Cursor = auth:None, detect-only, permanently
+  unavailable (NOT "coming soon"); map it to ProviderStatusKind::Detected, not Missing (core/src/
+  lib.rs:1024-1029).
+**Files:** apps/cli/src/tui.rs (Screen::Providers variant + tab-model refactor of the 2-way Tab match at
+  186-191 → numbered 1–6 jumps + Tab/BackTab cycle; footer + draw_help enumeration); apps/cli/src/
+  render.rs (new render_providers_document, braille/ascii/plain — mirror the render_*_document split);
+  crates/costroid-core/src/lib.rs (capture capability() into a NEW owned per-provider view alongside
+  ProviderStatus BEFORE the Box<dyn Provider> set is consumed at :178/:183 — Capability is Copy but its
+  &'static quota_kinds blocks Deserialize, so project to an owned ProviderCapabilityView); apps/cli/src/
+  connect.rs reuse (under #[cfg(feature="connect")]: the is_connected && store.retrieve dual gate at
+  :205, OrgLabel, the pinned GEMINI_UNAVAILABLE_MESSAGE).
+**Scope fence:** the Providers tab + its render fn + the minimal core seam to surface capability() +
+  the numbered-tab refactor ONLY. NO new core analytics. NO config file (T14). NO new network — the
+  connect lane is read-only over the EXISTING keychain/registry (ConnectionRegistry/CredentialStore),
+  and the default build (connect off) must render local Capability/ProviderStatus alone and degrade
+  gracefully (mirror connect.rs being entirely #[cfg(feature="connect")]). NO Cursor live-quota work
+  (discovery-gated §8). NO scroll state (T13).
+**Deliverables:** Screen::Providers + the numbered-tab refactor (replace tui.rs:186-191 with 1–6 jumps +
+  Tab/BackTab; footer label tui.rs:318-340; help line tui.rs:456-475); render_providers_document with
+  author-written human copy for DataSource (LocalArtifact→"from local logs", SanctionedHook→"from the
+  statusLine capture; run setup-statusline", SanctionedOauth/ApiKey→"via your connected key",
+  Unavailable→"no sanctioned source") + AuthMethod, phrased to match cursor_detected_message (core/src/
+  lib.rs:288-303); the owned ProviderCapabilityView core seam (infallible — capability() is infallible;
+  no unwrap/expect/panic); the connect-gated connection lane (org label + connected/not only — NEVER key
+  material; Gemini reuses the pinned string verbatim, not paraphrased); braille + ascii + plain snapshots
+  + inclusion in plain_mode_output_is_pure_ascii / ascii_mode_output_is_pure_ascii (render.rs:3240,3310).
+**Done when:** `cargo build/test --workspace` green (connect OFF default — tab renders local Capability/
+  ProviderStatus, no connect symbols linked); `--features connect` builds and the connection lane renders
+  org label + connected state via the dual gate; clippy/fmt clean; no unwrap/expect/panic in library
+  code; Cursor renders Detected + "no sanctioned source" (both Unavailable lanes), never "coming soon";
+  braille/ascii/plain snapshots committed and the ASCII-purity gates pass; the new tab is reachable via
+  its number key + Tab cycle + appears in help + footer.
+**Next:** the tab-model + render seam are in place → T12 (Models) and T13 (History) slot in cheaply; the
+  deferred Copilot/Antigravity adapters (§8) render through this same tab by filling Capability.
+```
+
+### 12.18 — T12 · Models tab · S · Prereq: T11 (tab model)
+
+```
+**Goal:** a per-model tab fusing API spend + token mix with the bench/frontier overlay (cost-vs-quality
+  standing + repricing), un-benchmarked models shown as gaps never guessed.
+**Spec:** §11.5 "📌 STEP 5 PINNED"; the shared structural note above; advisory rows are API-cost ONLY
+  (frontier is API-only, ARCHITECTURE §9.6).
+**Files:** apps/cli/src/tui.rs (Screen::Models + tab entry/footer/help); apps/cli/src/render.rs
+  (render_models_document braille/ascii/plain + a models_document_is_monochrome guard mirroring
+  frontier_document_is_monochrome render.rs:3516); crates/costroid-core/src/lib.rs (a small composite
+  view fn joining CostLaneSummary(group=Model) with the matching bench OverlayModel — reuse
+  trends_summary/now_summary + bench_view; bench.rs:194-270,278-355).
+**Scope fence:** the tab + its render fn + the per-model composite view ONLY. NO new pricing/bench math
+  (reuse bench_view). NO network. Stay monochrome (amber/red reserved for limits).
+**Deliverables:** Screen::Models arm; the composite per-model view fn; render_models_document with the
+  format_money `~` estimate hedge; the monochrome guard; braille/ascii/plain snapshots + ASCII-purity
+  inclusion.
+**Done when:** workspace green; clippy/fmt clean; no unwrap/expect/panic; per-model rows show spend +
+  tokens + frontier standing; un-benchmarked models are gaps not guesses; the tab is monochrome;
+  snapshots committed; ASCII-purity passes; the tab is reachable by number + cycle.
+**Next:** the cheapest re-cut done → T13 History; the same composite-view pattern serves apps/bar later.
+```
+
+### 12.19 — T13 · History tab · M · Prereq: T11 (tab model)
+
+```
+**Goal:** a scrollable per-turn FocusRecord history list with the FOCUS export promoted into the tab.
+**Spec:** §11.5 "📌 STEP 5 PINNED"; DATA-MODEL §210 (FocusExportEnvelope); the stable-header-even-for-
+  zero-rows export contract (focus/src/lib.rs:446-491).
+**Files:** apps/cli/src/tui.rs (Screen::History + tab entry/footer/help; NEW scroll/viewport state on
+  App + PgUp/PgDn/arrow keys — there is NO scroll offset today, draw_app renders one wrapped Paragraph
+  at :437-440); apps/cli/src/render.rs (render_history_document over snapshot.focus_rows); apps/cli/src/
+  main.rs (promote the export action out of run_export into the tab); reuse export_focus_json/
+  export_focus_csv (core/src/lib.rs:99,103).
+**Scope fence:** the History tab + scroll state + in-tab export ONLY. NO new export schema (reuse
+  FocusExportEnvelope). NO network. Read x_ConsumedTokens for usage, never ConsumedQuantity alone
+  (focus/src/lib.rs:336-340). Row-level/time-window selection over focus_rows.
+**Deliverables:** Screen::History arm; App scroll-offset field + keys + draw_app viewport handling;
+  render_history_document; time-windowed row selection; in-tab JSON/CSV export reusing the existing
+  emitters (stable header even for zero rows); braille/ascii/plain snapshots + ASCII-purity inclusion.
+**Done when:** workspace green; clippy/fmt clean; no unwrap/expect/panic; rows scroll (PgUp/PgDn/arrows);
+  export emits valid FOCUS 1.3 (validates against the DATA-MODEL schema) incl. the zero-row header; usage
+  never dropped; snapshots committed; ASCII-purity passes.
+**Next:** the three cheap re-cuts (T11–T13) ship → the analytics tabs (T14–T16) build on the tab model +
+  the scroll machinery this lands.
+```
+
+### 12.20 — T14 · Budget · L · 📌 RESOLVED (§11.5: TOML config) · Prereq: T11
+
+> **📌 RESOLVED (Eren-confirmed 2026-06-16, §11.5):** the FIRST user-config file = **TOML** at
+> `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml`, owned by `apps/cli`, non-secret (never
+> keychain), atomic temp+rename + forward-compat serde. Schema: `[budget] total_monthly_usd` (optional)
+> + `[budget.per_tool]` keyed by tool, money as `rust_decimal::Decimal`. Adds the permissive `toml`
+> crate (pre-approved here; deny-allowlist-clean). **API-lane only — NEVER a $ target for a flat-fee
+> subscription** (§170). Introducing the first config file + the `toml` dep is the only build-time
+> heads-up (already human-approved).
+
+```
+**Goal:** a Budget tab comparing user-set monthly $ target(s) against ACTUAL API-lane spend, with a fill
+  bar + pace cue, preferring the reconciled invoice $ where a vendor is connected. Introduces the FIRST
+  user-config file (TOML).
+**Spec:** §11.5 "📌 STEP 5 PINNED" (Q2); §170 (never a $ budget for a flat-fee subscription); the
+  connections.json atomic/forward-compat idiom at connect/src/lib.rs:490-531 (mirror it, rooted at
+  CONFIG not STATE, non-secret).
+**Files:** apps/cli (NEW config module + XDG_CONFIG_HOME path resolver, toml dep in apps/cli/Cargo.toml);
+  crates/costroid-core/src/lib.rs (budget-vs-actual compute over the CostLaneSummary Api lane + optional
+  reconcile UsdAmount); apps/cli/src/render.rs (render_budget_document; reuse meter_segments/
+  cost_bar_span :2018-2096, add an over-cap cue mirroring " !! OVER"); apps/cli/src/tui.rs
+  (Screen::Budget); optional connect-gated AdapterSet::cost_report enrich via apps/cli/src/
+  reconcile.rs:233.
+**Scope fence:** the budget config + compute + tab ONLY. API/overage lane ONLY (never subscription $).
+  NO new network in the default path (the invoice enrich is the EXISTING user-initiated connect seam,
+  feature-gated). Config absence = today's zero-config behavior. Decimal money, never f64.
+**Deliverables:** the config struct + loader/saver (forward-compat serde, atomic write, TOML); the
+  flat-fee-subscription guard (reject/ignore a subscription-keyed budget); the budget-vs-actual core fn
+  (prefer the reconciled invoice where connected, fall back to the local estimate + carry the estimate
+  label); render_budget_document with the over-cap textual cue (amber/red ALLOWED here ONLY paired with
+  the non-color cue) + a --plain `$X / $Y budget (over by $Z)` line; braille/ascii/plain snapshots +
+  ASCII-purity inclusion; cargo deny green with toml added.
+**Done when:** workspace green; clippy/fmt; no unwrap/expect/panic; budget compares the API lane only and
+  refuses a subscription $ target; over-budget renders the non-color OVER cue; config round-trips and
+  absence = zero-config default; cargo deny passes (toml allowlist-clean); snapshots + ASCII purity pass.
+**Next:** the config layer exists → T17 Alerts extends it for thresholds/opt-in.
+```
+
+### 12.21 — T15 · Forecast · L · 📌 RESOLVED (§11.5: linear run-rate) · Prereq: T11
+
+> **📌 RESOLVED (technical, §11.5):** $ projection = linear run-rate over the elapsed month
+> (`spend_to_date/days_elapsed × days_in_month`) off a NEW shared per-UTC-day API-lane series helper
+> (generalize the reconcile.rs bucketing); quota projection = linear burn from the current `LimitMeasure`
+> fraction to `resets_at`. Both labeled estimates; the $ projection is suppressed below a 3-day min-data
+> floor; the quota ETA degrades to unavailable on an Unverified/Estimated/stale reading (ARCHITECTURE
+> §9.2). Revisit only if Eren wants a different method.
+
+```
+**Goal:** a Forecast tab projecting "~$X projected API spend this month" + "hit your weekly Claude limit
+  ~Friday", both hedged as estimates.
+**Spec:** §11.5 "📌 STEP 5 PINNED" (T15 default); ARCHITECTURE §9.2 (degrade, never a confident wrong
+  number).
+**Files:** crates/costroid-core (NEW pure-core forecast module + a shared finer-than-Period per-UTC-day
+  series helper — none exists today); apps/cli/src/render.rs (render_forecast_document; reuse sparkline/
+  braille_sparkline :2098-2138 + braille_scatter :978-1132 for the projection line; distinguish actual vs
+  projected by glyph/dim style, NEVER color alone); apps/cli/src/tui.rs (Screen::Forecast).
+**Scope fence:** the daily-series helper + the projection algorithm + the tab ONLY. Pure-local, NO
+  network. Monochrome (advisory; amber/red reserved for limits). Always hedged (~/estimated). Quota
+  projection rides LimitMeasure + resets_at and degrades to unavailable, never a confident wrong ETA.
+**Deliverables:** the shared daily-series helper; the run-rate $ projection + the linear quota-burn ETA
+  (with the 3-day min-data floor); a forecast-output type carrying an explicit estimate marker;
+  render_forecast_document with an actual-vs-projected distinction surviving --plain (a `projected ~$X by
+  <date> (estimated)` line) + the monochrome guard; braille/ascii/plain snapshots + ASCII-purity
+  inclusion.
+**Done when:** workspace green; clippy/fmt; no unwrap/expect/panic; projections are labeled estimates and
+  suppressed below the data floor; the quota ETA is absent on Unverified/stale; the tab is monochrome;
+  snapshots + ASCII purity pass; tested on fixtures only.
+**Next:** the daily-series helper is shared by T16 Anomalies; forecast signals feed T17 Alerts.
+```
+
+### 12.22 — T16 · Anomalies · L–XL · 📌 RESOLVED (§11.5: median+MAD, re-parse) · Prereq: T11 + T15 daily-series helper
+
+> **📌 RESOLVED (technical, §11.5):** baseline = median + MAD over the trailing 14 local days of the
+> user's OWN history, flag when `|value − median| > 3.5·MAD`; signals = spend spike / model-mix shift /
+> quota burn-rate jump; suppress below 7 days of history; **history derived by re-parsing local logs over
+> the window (Q3 — NO new persisted store).** Quota-derived signals skip Unverified/Estimated readings.
+
+```
+**Goal:** an Anomalies tab surfacing proactive, non-alarmist callouts vs the user's OWN history — spend
+  spikes, unusual model mix, quota burn-rate jumps — each with magnitude + the compared window.
+**Spec:** §11.5 "📌 STEP 5 PINNED" (T16 default + Q3); ARCHITECTURE §9.2 (confidence-respecting).
+**Files:** crates/costroid-core (NEW anomaly/baseline engine — median+MAD; bench.rs BaselineUnpriced is
+  NOT a statistical baseline and is not reusable; reuse the T15 daily-series helper, re-parsing local
+  logs over the window); apps/cli/src/render.rs (render_anomalies_document; a marker glyph surviving
+  --plain — */!/text, not color; the anomaly voice mirrors insight_line :2333); apps/cli/src/tui.rs
+  (Screen::Anomalies).
+**Scope fence:** the baseline engine + the tab ONLY. Baseline is vs OWN local history, pure-local, NO
+  network/external baseline, NO new persisted store (re-parse). Proactive never alarmist (conservative
+  k=3.5). Monochrome. Quota-derived signals respect confidence. Fixtures only, no real user data.
+**Deliverables:** the median+MAD baseline over the trailing 14-day window (re-parsed from local logs); the
+  three signal detectors keyed off billed_cost / GroupKey(model) / LimitMeasure deltas; an anomaly-event
+  struct (magnitude + compared window); the 7-day min-history suppression; render_anomalies_document with
+  --plain labeled lines + a non-color marker; braille/ascii/plain snapshots + ASCII-purity inclusion.
+**Done when:** workspace green; clippy/fmt; no unwrap/expect/panic; anomalies are vs own history and
+  suppressed below the history floor; no alarmist tone; quota signals skip Unverified readings;
+  monochrome; snapshots + ASCII purity pass; tested on fixtures only.
+**Next:** anomaly signals feed T17 Alerts.
+```
+
+### 12.23 — T17 · Alerts · L · ⛔📌 RESOLVED-posture (§11.5: banner + `alerts --check`) · Prereq: T14 config
+
+> **⛔📌 Posture RESOLVED (Eren-confirmed 2026-06-16, §11.5 Q4):** delivery = an inline terminal banner
+> (now/tabs) + a cron-friendly `costroid alerts --check` exit-code subcommand — both built-in, NO new
+> dependency, NO daemon. **OS desktop notifications (notify-rust) DEFERRED behind a Cargo feature +
+> config opt-in (off)** — they pull Linux D-Bus deps that re-touch the offline/forbidden-crates gates +
+> the libdbus/precise-builds release wrinkle, so a future add takes a CONNECT_ALLOWED-style allowlist
+> review. Default OFF/quiet; thresholds reuse WARN=0.80/CRITICAL=0.95. **The ⛔ stays for the standard
+> build-time review of the final CLI surface (`alerts --check`) + the alert copy strings.**
+
+```
+**Goal:** opt-in threshold alerts (quota crossings + budget crossings) — quiet/off by default, no daemon,
+  no telemetry, no new dependency in the baseline.
+**Spec:** §11.5 "📌 STEP 5 PINNED" (Q4 + the copy rules); §173-174 (alerts default off); DESIGN-SYSTEM
+  §Voice; the connections.json atomic/0600 persistence idiom (connect/src/lib.rs:490-531).
+**Files:** crates/costroid-core (a crossing-detector reusing WARN_FRACTION/CRITICAL_FRACTION
+  render.rs:29-30); apps/cli (alert config EXTENDING the T14 TOML config — enabled flag default-off,
+  per-window thresholds, quiet-hours; a NEW `costroid alerts --check` clap subcommand setting an exit
+  code; an inline-banner render component for now/tabs); apps/cli/tests/offline.rs (only if notify-rust
+  is ever added later: a CONNECT_ALLOWED-style allowlist review + strace offline pass + the
+  libdbus/precise-builds consideration).
+**Scope fence:** the crossing-detector + alert config + the --check command + the inline banner ONLY.
+  Default OFF. NO daemon. NO network/telemetry (inline + exit-code are inherently local). NO desktop
+  notifications in the baseline (deferred behind a feature + config opt-in if pursued). The two alert
+  classes (quota % vs budget $) NEVER mixed. Never fire off an Unverified/stale reading.
+**Deliverables:** the core crossing-detector; the alert config schema (default-off, thresholds,
+  quiet-hours, forward-compat serde, extending T14's config); `costroid alerts --check` (exit 0 = clear,
+  nonzero = a crossing, one printed line); the inline banner (--plain ASCII + a non-color cue); the copy
+  strings per the voice rules (quota = quota-extension framing, NEVER "save money"; API/budget = dollars;
+  sentence case, no emoji, one insight at a time); snapshots/tests for the banner + the exit-code
+  behavior.
+**⛔ Human gate:** new CLI surface (`alerts --check`) + the alert copy + the notify-rust/feature posture —
+  present the final CLI flags, default-off behavior, threshold defaults, and the copy strings for sign-off
+  before finalizing (the plan's only ⛔ Step-5 card; the delivery posture is pre-approved per §11.5 Q4).
+**Done when:** workspace green; clippy/fmt; no unwrap/expect/panic; alerts default OFF and emit nothing
+  networked (the strace offline test still passes); --check sets correct exit codes; the banner has a
+  --plain + non-color form; quota copy never uses money-framing; no alert fires off an Unverified
+  reading; if notify-rust is added it is feature-gated off + passes the offline/forbidden-crates review.
+**Next:** Step 5 complete (analytical tabs + alerts) → the 0.5.0 release cut (a chore-cut like 0.3.0
+  unless the published crate set changes); Step 6 = the egui taskbar (apps/bar) mirrors these tabs from
+  core.
 ```

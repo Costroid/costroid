@@ -15,8 +15,9 @@ use costroid_focus::{
 // reaches it here rather than taking a direct `focus` edge.
 pub use costroid_focus::FocusRecord;
 use costroid_providers::{
-    default_providers, read_cursor_config, AccessPath, CursorConfig, HostEnv, LimitKind,
-    LimitMeasure, LimitStatus, LimitWindow, Provider, ProviderId, UsageEvent,
+    default_providers, read_cursor_config, AccessPath, AuthMethod, Capability, CursorConfig,
+    DataSource, HostEnv, LimitKind, LimitMeasure, LimitStatus, LimitWindow, Provider, ProviderId,
+    UsageEvent,
 };
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -182,6 +183,15 @@ fn collect_snapshot_from_providers(
 
     for provider in providers {
         let provider_id = provider.id();
+        // Capture the declared capability for EVERY provider up front — before discovery
+        // can `continue` past a missing/errored one — so the Providers tab always has a
+        // descriptor to render, joined to `providers` by id.
+        snapshot
+            .capabilities
+            .push(ProviderCapabilityView::from_capability(
+                provider_id,
+                provider.capability(),
+            ));
         let location = match provider.discover(env) {
             Ok(Some(location)) => location,
             Ok(None) => {
@@ -993,6 +1003,12 @@ pub struct EngineSnapshot {
     pub focus_rows: Vec<FocusRecord>,
     pub limit_windows: Vec<LimitWindow>,
     pub providers: Vec<ProviderStatus>,
+    /// The declared `Capability` of every provider considered this collection, captured
+    /// before the `Box<dyn Provider>` set was consumed — present even for providers that
+    /// were missing or errored, so the Providers tab (T11) can render each lane's source
+    /// and what is unavailable regardless of detection outcome. Parallel to `providers`,
+    /// joined by `ProviderId`.
+    pub capabilities: Vec<ProviderCapabilityView>,
 }
 
 impl EngineSnapshot {
@@ -1003,6 +1019,7 @@ impl EngineSnapshot {
             focus_rows: Vec::new(),
             limit_windows: Vec::new(),
             providers: Vec::new(),
+            capabilities: Vec::new(),
         }
     }
 }
@@ -1016,6 +1033,40 @@ pub struct ProviderStatus {
     pub focus_rows: usize,
     pub limit_windows: usize,
     pub message: Option<String>,
+}
+
+/// An owned projection of a provider's [`Capability`] descriptor (§2b), captured per
+/// provider during collection so a consumer (the Providers tab, T11) can render *what is
+/// available and why* without re-instantiating the `Box<dyn Provider>` set.
+///
+/// `Capability` is `Copy` but its `quota_kinds: &'static [LimitKind]` borrows a static
+/// slice, which blocks `Deserialize`; this view owns a `Vec<LimitKind>` instead so the
+/// whole [`EngineSnapshot`] stays `Serialize`/`Deserialize`. Honest by construction: a
+/// lane with no clean source carries [`DataSource::Unavailable`], never a fabricated one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCapabilityView {
+    pub provider: ProviderId,
+    pub api_cost: DataSource,
+    pub subscription_quota: DataSource,
+    pub model_mix: DataSource,
+    pub auth: AuthMethod,
+    pub quota_kinds: Vec<LimitKind>,
+}
+
+impl ProviderCapabilityView {
+    /// Project a provider's `Capability` into the owned, serializable view. Infallible —
+    /// `capability()` is infallible and the only owning step is copying the static
+    /// `quota_kinds` slice into a `Vec`.
+    fn from_capability(provider: ProviderId, capability: Capability) -> Self {
+        Self {
+            provider,
+            api_cost: capability.api_cost,
+            subscription_quota: capability.subscription_quota,
+            model_mix: capability.model_mix,
+            auth: capability.auth,
+            quota_kinds: capability.quota_kinds.to_vec(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1428,6 +1479,7 @@ mod tests {
             focus_rows,
             limit_windows,
             providers: Vec::new(),
+            capabilities: Vec::new(),
         }
     }
 
@@ -3000,6 +3052,29 @@ mod tests {
         }));
         assert_eq!(snapshot.focus_rows.len(), 3);
         assert_eq!(snapshot.limit_windows.len(), 1);
+
+        // The capability is captured for EVERY provider considered — including the
+        // missing one (Cursor) and the errored one (Claude) — parallel to `providers`,
+        // so the Providers tab always has a descriptor to render. (The `FakeProvider`
+        // double declares the conservative all-`Unavailable` descriptor.)
+        assert_eq!(snapshot.capabilities.len(), 3);
+        for id in [
+            ProviderId::ClaudeCode,
+            ProviderId::Codex,
+            ProviderId::Cursor,
+        ] {
+            let view = match snapshot
+                .capabilities
+                .iter()
+                .find(|view| view.provider == id)
+            {
+                Some(view) => view,
+                None => panic!("capability for {id} should be captured"),
+            };
+            assert_eq!(view.api_cost, DataSource::Unavailable);
+            assert_eq!(view.auth, AuthMethod::None);
+            assert!(view.quota_kinds.is_empty());
+        }
     }
 
     #[test]

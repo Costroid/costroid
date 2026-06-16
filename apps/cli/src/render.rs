@@ -6,9 +6,10 @@ use chrono::{DateTime, Local, Utc};
 use costroid_core::{
     AggregateTotals, BenchFrontier, BenchView, CostLane, CostLaneSummary, FrontierPoint,
     FrontierStanding, GroupBy, LimitAvailability, LimitSummary, NowSummary, OverlayModel, Period,
-    PeriodRange, ProviderStatusKind, RepricingDelta, RepricingStatus, TrendsSummary,
+    PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind, RepricingDelta,
+    RepricingStatus, TrendsSummary,
 };
-use costroid_providers::{LimitKind, LimitMeasure, ProviderId};
+use costroid_providers::{AuthMethod, DataSource, LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
@@ -1149,6 +1150,261 @@ pub(crate) fn render_trends_document(
     match options.mode {
         RenderMode::Plain => render_trends_plain_document(summary),
         RenderMode::Braille | RenderMode::Ascii => render_trends_visual_document(summary, options),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn render_providers(
+    capabilities: &[ProviderCapabilityView],
+    statuses: &[ProviderStatus],
+    options: RenderOptions,
+) -> String {
+    render_providers_document(capabilities, statuses, options).render(options)
+}
+
+/// The Providers tab (T11): per provider, each data lane's declared source (§2b
+/// `Capability`), how it authenticates, the quota windows it can report, and its detection
+/// health — i.e. *what is available, what is unavailable, and why*. The first production
+/// consumer of the `Capability` descriptor. Honest by construction: a lane with no clean
+/// source renders "no sanctioned source", never a fabricated one.
+///
+/// The connect-gated connection lane (your own usage-API keys) is appended separately by
+/// [`push_provider_connection_lane`] under `--features connect`; the default build renders
+/// the local `Capability`/`ProviderStatus` alone.
+pub(crate) fn render_providers_document(
+    capabilities: &[ProviderCapabilityView],
+    statuses: &[ProviderStatus],
+    options: RenderOptions,
+) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_providers_plain_document(capabilities, statuses),
+        RenderMode::Braille | RenderMode::Ascii => {
+            render_providers_visual_document(capabilities, statuses, options)
+        }
+    }
+}
+
+fn render_providers_visual_document(
+    capabilities: &[ProviderCapabilityView],
+    statuses: &[ProviderStatus],
+    options: RenderOptions,
+) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    let mut header = StyledLine::new();
+    header.push_plain(format!("{} costroid", mark(options)));
+    header.push_styled("  providers", SemanticStyle::Strong);
+    out.push(header);
+
+    if capabilities.is_empty() {
+        push_rule(&mut out, options);
+        push_line(&mut out, "no providers to describe");
+        return out;
+    }
+
+    for capability in capabilities {
+        push_rule(&mut out, options);
+        let status = find_status(statuses, capability.provider);
+        let mut head = StyledLine::new();
+        head.push_styled(provider_name(capability.provider), SemanticStyle::Strong);
+        head.push_plain(format!(" ({})", provider_state_word(status)));
+        out.push(head);
+        push_line(
+            &mut out,
+            &format!("  api cost   {}", data_source_phrase(capability.api_cost)),
+        );
+        push_line(
+            &mut out,
+            &format!("  quota      {}", quota_phrase(capability)),
+        );
+        push_line(
+            &mut out,
+            &format!("  model mix  {}", data_source_phrase(capability.model_mix)),
+        );
+        push_line(
+            &mut out,
+            &format!("  auth       {}", auth_phrase(capability.auth)),
+        );
+        if let Some(note) = status.and_then(|status| status.message.as_deref()) {
+            push_line(&mut out, &format!("  note: {note}"));
+        }
+    }
+    out
+}
+
+fn render_providers_plain_document(
+    capabilities: &[ProviderCapabilityView],
+    statuses: &[ProviderStatus],
+) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid providers");
+    if capabilities.is_empty() {
+        push_line(&mut out, "no providers to describe");
+        return out;
+    }
+    for capability in capabilities {
+        let status = find_status(statuses, capability.provider);
+        push_line(
+            &mut out,
+            &format!(
+                "{} ({}):",
+                provider_name(capability.provider),
+                provider_state_word(status)
+            ),
+        );
+        push_line(
+            &mut out,
+            &format!("  api cost: {}", data_source_phrase(capability.api_cost)),
+        );
+        push_line(&mut out, &format!("  quota: {}", quota_phrase(capability)));
+        push_line(
+            &mut out,
+            &format!("  model mix: {}", data_source_phrase(capability.model_mix)),
+        );
+        push_line(
+            &mut out,
+            &format!("  auth: {}", auth_phrase(capability.auth)),
+        );
+        if let Some(note) = status.and_then(|status| status.message.as_deref()) {
+            push_line(&mut out, &format!("  note: {note}"));
+        }
+    }
+    out
+}
+
+fn find_status(statuses: &[ProviderStatus], provider: ProviderId) -> Option<&ProviderStatus> {
+    statuses.iter().find(|status| status.provider == provider)
+}
+
+/// The detection-health word for a provider, joining its `ProviderStatus` (if collected)
+/// to its capability. A provider with no status row (never collected) reads "not detected"
+/// rather than a fabricated state.
+fn provider_state_word(status: Option<&ProviderStatus>) -> &'static str {
+    match status {
+        Some(status) => provider_status(status.status),
+        None => "not detected",
+    }
+}
+
+/// Author-written human copy for a [`DataSource`] (T11 card). Pure ASCII so the Providers
+/// tab renders identically in `--plain`; phrased to match `cursor_detected_message`
+/// ("no sanctioned source").
+fn data_source_phrase(source: DataSource) -> &'static str {
+    match source {
+        DataSource::LocalArtifact => "from local logs",
+        DataSource::SanctionedHook => "from the statusLine capture; run setup-statusline",
+        // Tiers 2-3 of the auth ladder both surface as the user's connected credential.
+        DataSource::SanctionedOauth | DataSource::ApiKey => "via your connected key",
+        DataSource::Unavailable => "no sanctioned source",
+    }
+}
+
+/// Author-written human copy for an [`AuthMethod`] (T11 card). Pure ASCII.
+fn auth_phrase(auth: AuthMethod) -> &'static str {
+    match auth {
+        AuthMethod::None => "no login required",
+        AuthMethod::Oauth => "sanctioned OAuth",
+        AuthMethod::ApiKey => "your own API key",
+    }
+}
+
+/// The quota line: the subscription-quota source plus the windows the provider can report.
+/// An empty `quota_kinds` carries no window suffix (e.g. Cursor, which keeps no local quota
+/// window), so the source phrase ("no sanctioned source") stands alone.
+fn quota_phrase(capability: &ProviderCapabilityView) -> String {
+    let source = data_source_phrase(capability.subscription_quota);
+    if capability.quota_kinds.is_empty() {
+        source.to_string()
+    } else {
+        let kinds = capability
+            .quota_kinds
+            .iter()
+            .map(|kind| limit_kind(*kind))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{source} ({kinds})")
+    }
+}
+
+/// A single billing-vendor's connection state for the Providers tab's connection lane,
+/// gathered read-only over the existing keychain/registry (no network). Carries only the
+/// non-secret org label — NEVER key material. Connect-gated: the default build never
+/// compiles it, so it links no `costroid-connect` symbols.
+#[cfg(feature = "connect")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConnectionEntry {
+    pub(crate) vendor: String,
+    pub(crate) state: ConnectionState,
+}
+
+#[cfg(feature = "connect")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ConnectionState {
+    /// Linked: the key is present in the OS keychain AND the registry marks it connected
+    /// (the dual gate). `org` is the non-secret organization label, if captured.
+    Connected {
+        org: Option<String>,
+    },
+    NotConnected,
+    /// No sanctioned source (e.g. Gemini): carries the pinned unavailable message verbatim.
+    Unavailable(String),
+}
+
+/// Append the connect-gated connection lane (your own usage-API keys) to the Providers tab.
+/// Called only under `--features connect`; renders the org label + connected/not state,
+/// NEVER key material. Pure ASCII in `--plain`/Ascii (the pinned Gemini message and any
+/// server-supplied org label are folded via [`fold_for_ascii`]); the em-dash is kept only
+/// on a UTF-8 (Braille) TTY.
+#[cfg(feature = "connect")]
+pub(crate) fn push_provider_connection_lane(
+    out: &mut StyledDocument,
+    connections: &[ConnectionEntry],
+    options: RenderOptions,
+) {
+    if connections.is_empty() {
+        return;
+    }
+    // Plain mode delimits sections by labels alone (no rules), like the other plain docs;
+    // the visual modes get the horizontal rule.
+    if options.mode != RenderMode::Plain {
+        push_rule(out, options);
+    }
+    push_line(out, "connections (your own usage API keys)");
+    let dash = if options.mode == RenderMode::Braille {
+        "—"
+    } else {
+        "-"
+    };
+    for entry in connections {
+        let detail = match &entry.state {
+            ConnectionState::Connected { org: Some(org) } => {
+                format!("connected {dash} organization {org}")
+            }
+            ConnectionState::Connected { org: None } => "connected".to_string(),
+            ConnectionState::NotConnected => "not connected".to_string(),
+            ConnectionState::Unavailable(message) => message.clone(),
+        };
+        push_line(
+            out,
+            &fold_for_ascii(&format!("  {:<10} {detail}", entry.vendor), options),
+        );
+    }
+}
+
+/// Strip control characters always, and for `--plain`/Ascii fold the known glyphs (em-dash,
+/// ellipsis) and map any remaining non-ASCII to `?` — mirroring the connect command's
+/// `emit`, so the connection lane is guaranteed pure ASCII there regardless of a
+/// server-supplied org label. Braille keeps printable Unicode.
+#[cfg(feature = "connect")]
+fn fold_for_ascii(value: &str, options: RenderOptions) -> String {
+    let sanitized: String = value.chars().filter(|ch| !ch.is_control()).collect();
+    match options.mode {
+        RenderMode::Braille => sanitized,
+        RenderMode::Ascii | RenderMode::Plain => sanitized
+            .replace('—', "-")
+            .replace('…', "...")
+            .chars()
+            .map(|ch| if ch.is_ascii() { ch } else { '?' })
+            .collect(),
     }
 }
 
@@ -2894,6 +3150,77 @@ mod tests {
         ]
     }
 
+    /// The three providers' honest capability descriptors (mirroring the as-built
+    /// `capability()` impls) for the Providers tab (T11).
+    fn provider_capabilities_fixture() -> Vec<ProviderCapabilityView> {
+        vec![
+            ProviderCapabilityView {
+                provider: ProviderId::ClaudeCode,
+                api_cost: DataSource::LocalArtifact,
+                subscription_quota: DataSource::SanctionedHook,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: vec![LimitKind::FiveHour, LimitKind::Weekly],
+            },
+            ProviderCapabilityView {
+                provider: ProviderId::Codex,
+                api_cost: DataSource::LocalArtifact,
+                subscription_quota: DataSource::LocalArtifact,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: vec![LimitKind::FiveHour, LimitKind::Weekly],
+            },
+            ProviderCapabilityView {
+                provider: ProviderId::Cursor,
+                api_cost: DataSource::Unavailable,
+                subscription_quota: DataSource::Unavailable,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: Vec::new(),
+            },
+        ]
+    }
+
+    /// Detection health spanning the arms: Claude available (no note), Codex missing (a
+    /// "no local data" note), Cursor detected (the BETA detect-and-defer note). The Cursor
+    /// row pins the card's "detected, never coming soon" requirement.
+    fn provider_statuses_for_tab() -> Vec<ProviderStatus> {
+        vec![
+            ProviderStatus {
+                provider: ProviderId::ClaudeCode,
+                status: ProviderStatusKind::Available,
+                files: 2,
+                usage_events: 4,
+                focus_rows: 9,
+                limit_windows: 2,
+                message: None,
+            },
+            ProviderStatus {
+                provider: ProviderId::Codex,
+                status: ProviderStatusKind::Missing,
+                files: 0,
+                usage_events: 0,
+                focus_rows: 0,
+                limit_windows: 0,
+                message: Some("no local data found".to_string()),
+            },
+            ProviderStatus {
+                provider: ProviderId::Cursor,
+                status: ProviderStatusKind::Detected,
+                files: 1,
+                usage_events: 0,
+                focus_rows: 0,
+                limit_windows: 0,
+                message: Some(
+                    "BETA - model Composer 2.5 Fast (composer-2.5), logged in; \
+                     usage unavailable - no sanctioned source; \
+                     quota unavailable - no sanctioned source"
+                        .to_string(),
+                ),
+            },
+        ]
+    }
+
     fn priced_now() -> NowSummary {
         let now = utc(2026, 6, 2, 9, 0);
         NowSummary {
@@ -3264,6 +3591,15 @@ mod tests {
             statusline.is_ascii(),
             "ascii statusline must be pure ASCII: {statusline}"
         );
+        let providers = render_providers(
+            &provider_capabilities_fixture(),
+            &provider_statuses_for_tab(),
+            RenderOptions::ascii(false),
+        );
+        assert!(
+            providers.is_ascii(),
+            "ascii providers tab must be pure ASCII: {providers}"
+        );
     }
 
     #[test]
@@ -3321,6 +3657,11 @@ mod tests {
             render_statusline(&subscription_only_now(), RenderOptions::plain()),
             render_frontier(&used_gpt(), RenderOptions::plain()),
             render_frontier(&bench_view_for(&[]), RenderOptions::plain()),
+            render_providers(
+                &provider_capabilities_fixture(),
+                &provider_statuses_for_tab(),
+                RenderOptions::plain(),
+            ),
         ];
         for output in outputs {
             assert!(
@@ -3362,6 +3703,126 @@ mod tests {
     #[test]
     fn snapshot_trends_plain() {
         insta::assert_snapshot!(render_trends(&priced_trends(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn snapshot_providers_braille() {
+        insta::assert_snapshot!(render_providers(
+            &provider_capabilities_fixture(),
+            &provider_statuses_for_tab(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_providers_ascii() {
+        insta::assert_snapshot!(render_providers(
+            &provider_capabilities_fixture(),
+            &provider_statuses_for_tab(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_providers_plain() {
+        insta::assert_snapshot!(render_providers(
+            &provider_capabilities_fixture(),
+            &provider_statuses_for_tab(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn providers_render_is_honest_and_cursor_is_detected_never_coming_soon() {
+        let output = render_providers(
+            &provider_capabilities_fixture(),
+            &provider_statuses_for_tab(),
+            RenderOptions::plain(),
+        );
+        // Author-written DataSource/AuthMethod copy.
+        assert!(output.contains("api cost: from local logs"));
+        assert!(
+            output.contains("quota: from the statusLine capture; run setup-statusline (5h, wk)")
+        );
+        assert!(output.contains("auth: no login required"));
+        // Codex's quota is local, with both windows.
+        assert!(output.contains("quota: from local logs (5h, wk)"));
+        // Cursor: detected (never Missing/"coming soon"), both unavailable lanes honest.
+        assert!(output.contains("cursor (detected):"));
+        assert!(output.contains("api cost: no sanctioned source"));
+        assert!(output.contains("quota: no sanctioned source"));
+        assert!(!output.contains("coming soon"));
+        // Detection health: the missing Codex carries its note; the available Claude none.
+        assert!(output.contains("note: no local data found"));
+    }
+
+    #[test]
+    fn providers_document_is_monochrome() {
+        // The Providers tab is informational, so amber/red (Warn/Critical, reserved for the
+        // near-limit/over-budget state) must never appear — bold (Strong) headers are an
+        // allowed non-color cue, mirroring `frontier_document_is_monochrome`.
+        let doc = render_providers_document(
+            &provider_capabilities_fixture(),
+            &provider_statuses_for_tab(),
+            RenderOptions::braille(true),
+        );
+        for line in &doc.lines {
+            for span in &line.spans {
+                assert!(
+                    !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
+                    "providers tab must be monochrome (amber/red are reserved): {span:?}"
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "connect")]
+    #[test]
+    fn connection_lane_renders_state_without_key_material_and_folds_ascii() {
+        use costroid_core::GEMINI_UNAVAILABLE_MESSAGE;
+
+        let connections = vec![
+            ConnectionEntry {
+                vendor: "anthropic".to_string(),
+                state: ConnectionState::Connected {
+                    org: Some("Acme (org-123)".to_string()),
+                },
+            },
+            ConnectionEntry {
+                vendor: "openai".to_string(),
+                state: ConnectionState::NotConnected,
+            },
+            ConnectionEntry {
+                vendor: "gemini".to_string(),
+                state: ConnectionState::Unavailable(GEMINI_UNAVAILABLE_MESSAGE.to_string()),
+            },
+        ];
+        let capabilities = provider_capabilities_fixture();
+        let statuses = provider_statuses_for_tab();
+
+        // Braille (UTF-8 TTY): keeps the em-dash glyph; shows org label, connected/not, and
+        // the pinned Gemini message verbatim — and never any key material.
+        let braille_opts = RenderOptions::braille(false);
+        let mut braille = render_providers_document(&capabilities, &statuses, braille_opts);
+        push_provider_connection_lane(&mut braille, &connections, braille_opts);
+        let braille = braille.render(braille_opts);
+        assert!(braille.contains("connections (your own usage API keys)"));
+        assert!(braille.contains("connected — organization Acme (org-123)"));
+        assert!(braille.contains("openai     not connected"));
+        assert!(braille.contains(GEMINI_UNAVAILABLE_MESSAGE));
+
+        // Plain + Ascii fold to pure ASCII (em-dash -> '-'), even with the pinned message.
+        for options in [RenderOptions::plain(), RenderOptions::ascii(false)] {
+            let mut doc = render_providers_document(&capabilities, &statuses, options);
+            push_provider_connection_lane(&mut doc, &connections, options);
+            let rendered = doc.render(options);
+            assert!(
+                rendered.is_ascii(),
+                "connection lane must be pure ASCII: {rendered}"
+            );
+            assert!(rendered.contains("connected - organization Acme (org-123)"));
+            assert!(rendered.contains("unavailable - no sanctioned static-key usage API"));
+        }
     }
 
     #[test]
@@ -3433,6 +3894,7 @@ mod tests {
             focus_rows,
             limit_windows: Vec::new(),
             providers: Vec::new(),
+            capabilities: Vec::new(),
         };
         match costroid_core::bench_view(&snapshot) {
             Ok(view) => view,

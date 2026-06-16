@@ -22,8 +22,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_frontier_document, render_now_document, render_trends_document, RenderOptions,
-    SemanticStyle, StyledDocument, StyledLine,
+    render_frontier_document, render_now_document, render_providers_document,
+    render_trends_document, RenderOptions, SemanticStyle, StyledDocument, StyledLine,
 };
 
 const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -42,7 +42,36 @@ pub(crate) enum StartScreen {
 enum Screen {
     Now,
     Trends,
+    Providers,
     Frontier,
+}
+
+/// The numbered tab cycle (Q1, §11.5): `1`-`6` jump straight to a tab, `Tab`/`BackTab`
+/// cycle through them. Frontier is intentionally NOT in the cycle — it stays its own
+/// `a`/`esc` overlay. Later Step 5 tabs (Models/History/Budget…) append here, filling the
+/// reserved `4`-`6` slots, with no further `handle_key` change.
+const TAB_SCREENS: [Screen; 3] = [Screen::Now, Screen::Trends, Screen::Providers];
+
+/// Step left (`delta = -1`) or right (`delta = 1`) through [`TAB_SCREENS`], wrapping. A
+/// screen outside the cycle (Frontier) returns to the first tab.
+fn cycle_tab(current: Screen, delta: isize) -> Screen {
+    match TAB_SCREENS.iter().position(|screen| *screen == current) {
+        Some(index) => {
+            let len = TAB_SCREENS.len() as isize;
+            let next = (index as isize + delta).rem_euclid(len) as usize;
+            TAB_SCREENS.get(next).copied().unwrap_or(current)
+        }
+        None => TAB_SCREENS[0],
+    }
+}
+
+/// Map a `1`-`6` digit to its tab, if one exists yet (only `1`-`3` are wired today; the
+/// rest are reserved and inert until a later tab fills them).
+fn tab_for_digit(ch: char) -> Option<Screen> {
+    let index = ch.to_digit(10)? as usize;
+    index
+        .checked_sub(1)
+        .and_then(|zero_based| TAB_SCREENS.get(zero_based).copied())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +131,10 @@ struct App {
     last_collect_at: Option<DateTime<Utc>>,
     status: Option<String>,
     render_options: RenderOptions,
+    /// The Providers-tab connection lane, gathered once read-only over the existing
+    /// keychain/registry (no network). Connect-gated: absent from the default build.
+    #[cfg(feature = "connect")]
+    connections: Vec<crate::render::ConnectionEntry>,
 }
 
 impl App {
@@ -132,6 +165,8 @@ impl App {
             last_collect_at: None,
             status: None,
             render_options,
+            #[cfg(feature = "connect")]
+            connections: Vec::new(),
         }
     }
 
@@ -183,12 +218,17 @@ impl App {
         match key.code {
             KeyCode::Char('q') => AppAction::Quit,
             KeyCode::Tab => {
-                self.screen = match self.screen {
-                    Screen::Now => Screen::Trends,
-                    Screen::Trends => Screen::Now,
-                    // Frontier is entered/left via `a`/`esc`, not the Tab cycle.
-                    Screen::Frontier => Screen::Now,
-                };
+                self.screen = cycle_tab(self.screen, 1);
+                AppAction::Continue
+            }
+            KeyCode::BackTab => {
+                self.screen = cycle_tab(self.screen, -1);
+                AppAction::Continue
+            }
+            KeyCode::Char(ch @ '1'..='6') => {
+                if let Some(screen) = tab_for_digit(ch) {
+                    self.screen = screen;
+                }
                 AppAction::Continue
             }
             KeyCode::Char('d') if self.screen == Screen::Trends => {
@@ -299,6 +339,24 @@ impl App {
                         apply_trends_filter(&mut summary, &self.filter);
                         render_trends_document(&summary, options)
                     }
+                    Screen::Providers => {
+                        #[allow(unused_mut)]
+                        let mut doc = render_providers_document(
+                            &snapshot.capabilities,
+                            &snapshot.providers,
+                            options,
+                        );
+                        // The connection lane (your own usage-API keys) is read-only over
+                        // the existing keychain/registry — connect-gated, so the default
+                        // build renders the local Capability/ProviderStatus alone.
+                        #[cfg(feature = "connect")]
+                        crate::render::push_provider_connection_lane(
+                            &mut doc,
+                            &self.connections,
+                            options,
+                        );
+                        doc
+                    }
                     Screen::Frontier => match costroid_core::bench_view(&snapshot) {
                         Ok(view) => render_frontier_document(&view, options),
                         Err(error) => {
@@ -319,6 +377,7 @@ impl App {
         let left = match self.screen {
             Screen::Now => "now",
             Screen::Trends => "trends",
+            Screen::Providers => "providers",
             Screen::Frontier => "frontier",
         };
         let live = if self.live { "live" } else { "manual" };
@@ -334,7 +393,7 @@ impl App {
             .unwrap_or_default();
         let nav = match self.screen {
             Screen::Frontier => "esc back",
-            Screen::Now | Screen::Trends => "tab switch | a frontier",
+            Screen::Now | Screen::Trends | Screen::Providers => "1-3/tab switch | a frontier",
         };
         format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
     }
@@ -374,6 +433,12 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
         config.live,
         config.render_options,
     );
+    // Gather the Providers-tab connection lane once, read-only over the existing
+    // keychain/registry (no network), so live refreshes never re-read the keychain.
+    #[cfg(feature = "connect")]
+    {
+        app.connections = gather_connection_entries();
+    }
     let now = clock.now();
     session
         .terminal
@@ -454,17 +519,18 @@ fn draw_app(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
 }
 
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(74, 13, area);
+    let popup = centered_rect(74, 14, area);
     let lines = vec![
-        Line::from("d/w/m/y  set trends period"),
-        Line::from("g        cycle trends group"),
-        Line::from("tab      switch now/trends"),
-        Line::from("a        cost-vs-quality frontier"),
-        Line::from("esc / n  back from frontier"),
-        Line::from("f or /   filter model/app rows"),
-        Line::from("r        refresh local logs"),
-        Line::from("?        close help"),
-        Line::from("q/Ctrl-C quit"),
+        Line::from("1/2/3      now / trends / providers"),
+        Line::from("tab/S-tab  cycle tabs"),
+        Line::from("d/w/m/y    set trends period"),
+        Line::from("g          cycle trends group"),
+        Line::from("a          cost-vs-quality frontier"),
+        Line::from("esc / n    back from frontier"),
+        Line::from("f or /     filter model/app rows"),
+        Line::from("r          refresh local logs"),
+        Line::from("?          close help"),
+        Line::from("q/Ctrl-C   quit"),
     ];
     let block = Block::default().title("help").borders(Borders::ALL);
     let paragraph = Paragraph::new(Text::from(lines))
@@ -609,6 +675,85 @@ fn next_group(group: GroupBy) -> GroupBy {
     }
 }
 
+/// Read the per-vendor connection state for the Providers tab, read-only over the existing
+/// keychain/registry — NO network, NEVER key material. Mirrors `connect.rs`'s
+/// `run_connections` (no `--check`): the dual gate (`is_connected` AND `retrieve.is_some`,
+/// the keychain being the source of truth for the secret's presence), the non-secret org
+/// label, and Gemini's pinned "unavailable" message. Degrades to an empty/partial lane if
+/// the keychain or registry is unreachable, never aborting the TUI.
+#[cfg(feature = "connect")]
+fn gather_connection_entries() -> Vec<crate::render::ConnectionEntry> {
+    use costroid_connect::{ConnectionRegistry, CredentialStore};
+
+    // Open the read-only handles, degrading to an empty lane if the keychain or registry is
+    // unreachable (never aborting the TUI). The gate + label logic lives in the injectable
+    // `connection_entries` below, which is unit-tested against a mock keychain.
+    let store = match CredentialStore::new() {
+        Ok(store) => store,
+        Err(_) => return Vec::new(),
+    };
+    let registry = match ConnectionRegistry::open() {
+        Ok(registry) => registry,
+        Err(_) => return Vec::new(),
+    };
+    connection_entries(&store, &registry)
+}
+
+/// Build the per-vendor connection lane over an already-open keychain + registry — injectable
+/// so it is unit-testable without touching the real OS keychain. The dual gate (`is_connected`
+/// AND the key present in the keychain, the keychain being the source of truth for the
+/// secret's presence), the non-secret org label, and Gemini's pinned "unavailable" message.
+/// Read-only, NO network, NEVER key material; a per-vendor keychain/registry read error
+/// degrades that vendor to "not connected" rather than aborting the lane.
+#[cfg(feature = "connect")]
+fn connection_entries(
+    store: &costroid_connect::CredentialStore,
+    registry: &costroid_connect::ConnectionRegistry,
+) -> Vec<crate::render::ConnectionEntry> {
+    use crate::render::{ConnectionEntry, ConnectionState};
+    use costroid_connect::ApiVendor;
+
+    let mut entries = Vec::new();
+    for vendor in ApiVendor::ALL {
+        let state = match vendor {
+            // Gemini is a first-class "unavailable", never a network call; reuse the pinned
+            // message verbatim (single-sourced in costroid-core).
+            ApiVendor::Gemini => {
+                ConnectionState::Unavailable(costroid_core::GEMINI_UNAVAILABLE_MESSAGE.to_string())
+            }
+            ApiVendor::Anthropic | ApiVendor::OpenAI => {
+                // The dual gate (connect.rs): the registry marks it connected AND the key is
+                // present in the keychain (the keychain is the source of truth). Read-only.
+                let connected = registry.is_connected(vendor).unwrap_or(false)
+                    && store
+                        .retrieve(vendor)
+                        .map(|key| key.is_some())
+                        .unwrap_or(false);
+                if connected {
+                    let org = registry.label(vendor).ok().flatten().map(format_org_label);
+                    ConnectionState::Connected { org }
+                } else {
+                    ConnectionState::NotConnected
+                }
+            }
+        };
+        entries.push(ConnectionEntry {
+            vendor: vendor.to_string(),
+            state,
+        });
+    }
+    entries
+}
+
+/// The non-secret organization label, `name (id)` or just `name`. Never key material.
+#[cfg(feature = "connect")]
+fn format_org_label(label: costroid_connect::OrgLabel) -> String {
+    match label.id {
+        Some(id) => format!("{} ({})", label.name, id),
+        None => label.name,
+    }
+}
+
 type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>;
 
 struct PanicHookGuard {
@@ -692,11 +837,13 @@ mod tests {
     use std::path::PathBuf;
 
     use chrono::{LocalResult, TimeZone};
-    use costroid_core::{CostLane, ProviderStatus, ProviderStatusKind};
+    use costroid_core::{CostLane, ProviderCapabilityView, ProviderStatus, ProviderStatusKind};
     use costroid_focus::{
         FocusAccessPath, FocusRecord, TokenType, UnpricedUsage, DEFAULT_BILLING_CURRENCY,
     };
-    use costroid_providers::{LimitKind, LimitMeasure, LimitStatus, LimitWindow, ProviderId};
+    use costroid_providers::{
+        AuthMethod, DataSource, LimitKind, LimitMeasure, LimitStatus, LimitWindow, ProviderId,
+    };
     use ratatui::backend::TestBackend;
 
     use super::*;
@@ -793,7 +940,37 @@ mod tests {
                     message: Some("no local data found".to_string()),
                 },
             ],
+            capabilities: sample_capabilities(),
         }
+    }
+
+    fn sample_capabilities() -> Vec<ProviderCapabilityView> {
+        vec![
+            ProviderCapabilityView {
+                provider: ProviderId::ClaudeCode,
+                api_cost: DataSource::LocalArtifact,
+                subscription_quota: DataSource::SanctionedHook,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: vec![LimitKind::FiveHour, LimitKind::Weekly],
+            },
+            ProviderCapabilityView {
+                provider: ProviderId::Codex,
+                api_cost: DataSource::LocalArtifact,
+                subscription_quota: DataSource::LocalArtifact,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: vec![LimitKind::FiveHour, LimitKind::Weekly],
+            },
+            ProviderCapabilityView {
+                provider: ProviderId::Cursor,
+                api_cost: DataSource::Unavailable,
+                subscription_quota: DataSource::Unavailable,
+                model_mix: DataSource::LocalArtifact,
+                auth: AuthMethod::None,
+                quota_kinds: Vec::new(),
+            },
+        ]
     }
 
     fn empty_snapshot(now: DateTime<Utc>) -> EngineSnapshot {
@@ -822,6 +999,7 @@ mod tests {
                     message: Some("no local data found".to_string()),
                 },
             ],
+            capabilities: Vec::new(),
         }
     }
 
@@ -931,6 +1109,61 @@ mod tests {
         // `a` is inert once on the frontier (no re-entry).
         assert_eq!(app.handle_key(key(KeyCode::Char('n'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
+    }
+
+    #[test]
+    fn numbered_keys_and_tab_cycle_reach_providers() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        assert_eq!(app.screen, Screen::Now);
+
+        // Numbered jumps go straight to a tab.
+        assert_eq!(app.handle_key(key(KeyCode::Char('2'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Trends);
+        assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Providers);
+        assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Now);
+        // A reserved digit (no tab there yet) is inert.
+        assert_eq!(app.handle_key(key(KeyCode::Char('4'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Now);
+
+        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Now.
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Trends);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Providers);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Now);
+
+        // BackTab cycles in reverse.
+        assert_eq!(app.handle_key(key(KeyCode::BackTab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Providers);
+
+        // Frontier is outside the cycle (an a/esc overlay); Tab returns to the first tab.
+        assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Frontier);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Now);
+    }
+
+    #[test]
+    fn frame_snapshot_providers_surface() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Providers);
+        let frame = frame_to_string(&app, 90, 26);
+
+        assert!(frame.contains("claude code"));
+        assert!(frame.contains("codex"));
+        assert!(frame.contains("cursor"));
+        assert!(frame.contains("api cost"));
+        assert!(frame.contains("model mix"));
+        assert!(frame.contains("from the statusLine capture"));
+        // Cursor's both unavailable lanes render honestly — never "coming soon".
+        assert!(frame.contains("no sanctioned source"));
+        assert!(!frame.contains("coming soon"));
+        // Connect is off in the default build: no connection lane.
+        assert!(!frame.contains("connections (your own usage API keys)"));
     }
 
     #[test]
@@ -1134,5 +1367,118 @@ mod tests {
             .buckets
             .iter()
             .all(|bucket| bucket.group.value.contains("opus")));
+    }
+}
+
+/// Connect-gated tests for the Providers-tab connection lane (`connection_entries` +
+/// `format_org_label`), driven over a MOCK OS keychain + a temp registry — zero real
+/// keychain, zero network. Compiled only under `--features connect-test-support` (the same
+/// tier as the T10a Layer-1 connect-action tests in `src/connect.rs`).
+#[cfg(all(test, feature = "connect-test-support"))]
+mod connection_lane_tests {
+    use super::{connection_entries, format_org_label};
+    use crate::render::ConnectionState;
+    use costroid_connect::test_support::install_mock_keychain;
+    use costroid_connect::{
+        ApiVendor, ConnectionRegistry, CredentialStore, OrgLabel, SecretString,
+    };
+
+    // The workspace clippy lints deny `.unwrap()`/`.expect()` even in tests.
+    #[track_caller]
+    fn okv<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(err) => panic!("expected Ok, got Err: {err:?}"),
+        }
+    }
+
+    /// An auto-cleaned temp dir for the registry file (no `tempfile` dep, to keep the
+    /// forbidden-crates graph clean), mirroring `connect.rs`'s own test helper.
+    struct TempDir {
+        path: std::path::PathBuf,
+    }
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("costroid-t11-{tag}-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            okv(std::fs::create_dir_all(&path));
+            Self { path }
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn connection_lane_reflects_the_dual_gate_label_and_gemini_message() {
+        install_mock_keychain();
+        let store = okv(CredentialStore::new());
+        let dir = TempDir::new("conn-lane");
+        let registry = ConnectionRegistry::at(dir.path.join("connections.json"));
+
+        // Anthropic: key in the keychain AND registry-connected with a label → Connected{org}.
+        okv(store.store(
+            ApiVendor::Anthropic,
+            &SecretString::from("sk-ant-admin-FAKE-T11".to_string()),
+        ));
+        okv(registry.mark_connected_with_label(
+            ApiVendor::Anthropic,
+            Some(OrgLabel {
+                name: "Acme".to_string(),
+                id: Some("org-123".to_string()),
+            }),
+        ));
+        // OpenAI: marked connected in the registry but NO key in the keychain → the dual gate
+        // must still report NotConnected (the keychain is the source of truth, not the mark).
+        okv(registry.mark_connected(ApiVendor::OpenAI));
+
+        let entries = connection_entries(&store, &registry);
+        assert_eq!(entries.len(), 3, "one entry per vendor (ApiVendor::ALL)");
+
+        // Order follows ApiVendor::ALL: anthropic, openai, gemini.
+        assert_eq!(entries[0].vendor, "anthropic");
+        assert_eq!(
+            entries[0].state,
+            ConnectionState::Connected {
+                org: Some("Acme (org-123)".to_string())
+            }
+        );
+
+        assert_eq!(entries[1].vendor, "openai");
+        assert_eq!(
+            entries[1].state,
+            ConnectionState::NotConnected,
+            "registry-connected but no key → NotConnected (keychain is source of truth)"
+        );
+
+        assert_eq!(entries[2].vendor, "gemini");
+        assert_eq!(
+            entries[2].state,
+            ConnectionState::Unavailable(costroid_core::GEMINI_UNAVAILABLE_MESSAGE.to_string()),
+            "gemini reuses the pinned message verbatim, never a network call"
+        );
+    }
+
+    #[test]
+    fn format_org_label_renders_name_with_and_without_id() {
+        assert_eq!(
+            format_org_label(OrgLabel {
+                name: "Acme".to_string(),
+                id: Some("org-123".to_string()),
+            }),
+            "Acme (org-123)"
+        );
+        assert_eq!(
+            format_org_label(OrgLabel {
+                name: "Acme".to_string(),
+                id: None,
+            }),
+            "Acme"
+        );
     }
 }

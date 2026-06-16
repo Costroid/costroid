@@ -1,0 +1,22 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_providers(&provider_capabilities_fixture(),\n&provider_statuses_for_tab(), RenderOptions::plain())"
+---
+costroid providers
+claude code (available):
+  api cost: from local logs
+  quota: from the statusLine capture; run setup-statusline (5h, wk)
+  model mix: from local logs
+  auth: no login required
+codex (missing):
+  api cost: from local logs
+  quota: from local logs (5h, wk)
+  model mix: from local logs
+  auth: no login required
+  note: no local data found
+cursor (detected):
+  api cost: no sanctioned source
+  quota: no sanctioned source
+  model mix: from local logs
+  auth: no login required
+  note: BETA - model Composer 2.5 Fast (composer-2.5), logged in; usage unavailable - no sanctioned source; quota unavailable - no sanctioned source
