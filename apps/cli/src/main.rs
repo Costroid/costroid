@@ -344,6 +344,8 @@ fn run_connect_command(vendor: ApiVendor, plain: bool) -> Result<i32> {
         // gemini: print the pinned unavailable line, exit 0, never read/accept a key.
         return connect::gemini_connect(&mut stdout, style);
     }
+    // Warn BEFORE the key is pasted (T9 pin §2.3/§6): an admin key is organization-wide.
+    connect::print_connect_warning(&mut stdout, style, vendor)?;
     let key = read_admin_key(vendor)?;
     let store = CredentialStore::new()?;
     let registry = ConnectionRegistry::open()?;

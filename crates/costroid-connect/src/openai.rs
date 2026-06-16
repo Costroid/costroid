@@ -102,6 +102,13 @@ impl OpenAiAdapter {
     }
 
     /// Fetch the token-usage report for `range`, reading the admin key from `store`.
+    ///
+    /// DORMANT as of v0.4.0: **no production caller** invokes this (the shipped CLI surfaces
+    /// only `cost_report` + the connect-time probe). It hits the same documented, first-party
+    /// platform-admin GET surface as `cost_report` (`GET /v1/organization/usage/completions`,
+    /// T9 pin §2/§3) with the user's own admin key — so lighting it up adds no new
+    /// ToS/network/secret boundary — but a future caller is a deliberate, reviewable step; do
+    /// not wire one in without that review.
     pub fn usage_report(
         &self,
         store: &CredentialStore,

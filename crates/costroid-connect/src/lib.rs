@@ -4,17 +4,17 @@
 //! default** (compiled in only behind a consumer's `connect` Cargo feature — today
 //! `apps/cli`'s, off by default).
 //!
-//! # Status: keychain credential store (T8) + the generic HTTP client (T9a)
+//! # Status: connections shipped (T8 keychain · T9a client · T9b adapters · T10a/T10c callers)
 //!
 //! This crate carries the keychain-backed store for the user's own usage/billing
 //! API keys ([`CredentialStore`]), a *non-secret* on-disk index of which vendors are
-//! linked ([`ConnectionRegistry`]), and — since T9a — the **generic authorized-host
-//! HTTPS client** ([`AuthorizedClient`]): blocking `ureq` + `rustls`, OS-native trust
-//! roots, bound to one explicitly authorized host, redirects disabled, GET-only.
-//! The client has **no caller and no provider knowledge** — the per-provider
-//! usage-API adapters are **T9b**, and no network call can occur without the
-//! explicit, user-initiated `connect` action that lands with the
-//! `costroid connect`/`disconnect` CLI + Connections view in **T10**.
+//! linked ([`ConnectionRegistry`]), the **generic authorized-host HTTPS client**
+//! ([`AuthorizedClient`]): blocking `ureq` + `rustls`, OS-native trust roots, bound to
+//! one explicitly authorized host, redirects disabled, GET-only — and the per-provider
+//! usage-API adapters ([`AnthropicAdapter`]/[`OpenAiAdapter`]; Gemini = first-class
+//! unavailable). Its callers are the `apps/cli` `connect`/`disconnect`/`connections`
+//! CLI (T10a) and the `reconcile` display (T10c): a network call occurs **only** on an
+//! explicit, user-initiated `connect` / `connections --check` / `reconcile` action.
 //!
 //! ## What lives here
 //!
@@ -53,7 +53,8 @@
 //! * `scripts/offline_acceptance.sh` — the default build runs every command under
 //!   network isolation and proves no outbound IP traffic is attempted; its
 //!   feature-on baseline proves a normal `--features connect` run attempts none
-//!   either (the client existing ≠ a call happening — nothing calls it until T10).
+//!   either, and a network-namespace fail-closed check proves the `connect` action
+//!   cannot reach the host (and leaves no `$HOME` residue) when no network exists.
 //!
 //! ## Why the *sync* Secret Service backend (Linux)
 //!
@@ -461,6 +462,27 @@ pub struct OrgLabel {
     pub id: Option<String>,
 }
 
+impl OrgLabel {
+    /// Build a label from **untrusted, server-provided** text, stripping every control
+    /// character (C0, DEL, and C1 — anything [`char::is_control`], incl. `ESC`/CSI). A
+    /// malicious or buggy org name must not be able to inject a terminal escape sequence
+    /// when the label is later printed, nor smuggle a control byte into the on-disk
+    /// registry. Printable non-ASCII (e.g. an accented org name) is preserved here; the
+    /// `--plain` ASCII floor is enforced separately at the render boundary.
+    pub fn from_server(name: impl AsRef<str>, id: Option<String>) -> Self {
+        OrgLabel {
+            name: strip_control_chars(name.as_ref()),
+            id: id.map(|value| strip_control_chars(&value)),
+        }
+    }
+}
+
+/// Remove control characters from untrusted label text — defense against terminal-escape
+/// injection from a server-controlled string.
+fn strip_control_chars(value: &str) -> String {
+    value.chars().filter(|ch| !ch.is_control()).collect()
+}
+
 /// On-disk shape of the connection registry. Holds **only** vendor slugs and non-secret
 /// org labels — never any secret material. A `BTreeSet`/`BTreeMap` keep it deduplicated
 /// and deterministically ordered (so the file is stable across writes).
@@ -493,7 +515,17 @@ pub fn default_registry_path() -> Option<PathBuf> {
 /// The OS keychain cannot be enumerated portably, so this small JSON index answers
 /// "what is connected?" for the Connections view (T10). It stores vendor slugs only —
 /// **no secret ever lands here**; the keys themselves live solely in the keychain.
-/// Writes are atomic (temp file + rename) so a concurrent reader never sees a torn file.
+/// Writes are atomic (temp file + rename) so a concurrent reader never sees a torn file,
+/// and the file is written `0600` (owner-only) on Unix as defense in depth for the
+/// non-secret org label.
+///
+/// Concurrency: each mutation is a load → modify → save with **no inter-process lock**, so
+/// two `connect`/`disconnect` actions racing in parallel could lose one update (a
+/// connected-mark or label in this *non-secret* index — never a key, which lives in the
+/// keychain). That is acceptable: connect/disconnect are interactive, one-at-a-time human
+/// actions, and the keychain (the secret's source of truth) plus the presence gate
+/// (`is_connected && key present`) self-heal any stale mark. Do not drive concurrent
+/// mutations from a script; if that ever becomes a need, take an advisory file lock here.
 pub struct ConnectionRegistry {
     path: PathBuf,
 }
@@ -598,6 +630,18 @@ impl ConnectionRegistry {
             path: tmp.clone(),
             source,
         })?;
+        // Defense in depth: the registry is non-secret, but tighten it to owner-only on Unix
+        // (the org label is mildly sensitive) before the rename, which preserves the mode.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)).map_err(|source| {
+                ConnectError::RegistryIo {
+                    path: tmp.clone(),
+                    source,
+                }
+            })?;
+        }
         fs::rename(&tmp, &self.path).map_err(|source| ConnectError::RegistryIo {
             path: self.path.clone(),
             source,
@@ -878,6 +922,35 @@ mod tests {
         ok(reg.mark_disconnected(ApiVendor::Anthropic));
         assert!(!ok(reg.is_connected(ApiVendor::Anthropic)));
         assert!(ok(reg.label(ApiVendor::Anthropic)).is_none());
+    }
+
+    #[test]
+    fn org_label_from_server_strips_control_chars_keeps_printable() {
+        // Untrusted server text: ESC/CSI, tab, newline, DEL are stripped; printable
+        // (incl. non-ASCII) is preserved — so neither the terminal nor connections.json can
+        // carry an injected escape sequence.
+        let label = OrgLabel::from_server(
+            "\u{1b}[2J\tEvil\nCorp Café",
+            Some("org-\u{7f}42".to_string()),
+        );
+        assert_eq!(label.name, "[2JEvilCorp Café");
+        assert!(!label.name.chars().any(|c| c.is_control()));
+        assert_eq!(label.id.as_deref(), Some("org-42"));
+
+        // Persisted to disk, the registry file carries no escape byte.
+        let dir = TempDir::new("reg-label-sanitize");
+        let path = dir.path.join("connections.json");
+        let reg = ConnectionRegistry::at(path.clone());
+        ok(reg.mark_connected_with_label(ApiVendor::Anthropic, Some(label)));
+        let raw = ok(fs::read_to_string(&path));
+        assert!(
+            !raw.contains('\u{1b}'),
+            "no escape byte in registry: {raw:?}"
+        );
+        assert!(
+            raw.contains("[2JEvilCorp"),
+            "sanitized name persisted: {raw}"
+        );
     }
 
     #[test]

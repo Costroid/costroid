@@ -22,7 +22,10 @@
 use std::io::Write;
 
 use chrono::{DateTime, Duration, Utc};
-use costroid_connect::{ApiVendor, ConnectionRegistry, CredentialStore, DateRange};
+use costroid_connect::{
+    ApiVendor, ConnectionRegistry, CostReportOutcome, CredentialStore, DateRange,
+    VendorReportUnavailable,
+};
 use costroid_core::{reconcile_cost, FocusRecord, LocalCostEstimate, Period};
 
 use crate::connect::AdapterSet;
@@ -63,11 +66,20 @@ pub fn run_reconcile(
         if index > 0 {
             writeln!(out)?;
         }
-        // The fetch reuses the stored key via the adapter (Gemini resolves to the pinned
-        // unavailable WITHOUT any network — handled inside `AdapterSet::cost_report`).
-        let outcome = adapters.cost_report(*vendor, store, window)?;
+        // Build the local estimate first so it always renders, even when the vendor fetch
+        // fails. The fetch reuses the stored key via the adapter (Gemini resolves to the
+        // pinned unavailable WITHOUT any network — handled inside `AdapterSet::cost_report`).
         let scoped = scope_rows(rows, *vendor, window);
         let local = LocalCostEstimate::from_focus_records(&scoped)?;
+        // A hard fetch error (transport / oversized-or-unparseable body / keychain read —
+        // the soft 401/403/429/5xx/4xx outages already degrade to `Unavailable` inside the
+        // adapter) degrades to a per-vendor `FetchFailed` so the local estimate still shows
+        // and the OTHER connected vendors still reconcile — never aborting the whole view.
+        // The reason carries no detail string, so nothing about the error can leak.
+        let outcome = match adapters.cost_report(*vendor, store, window) {
+            Ok(outcome) => outcome,
+            Err(_) => CostReportOutcome::Unavailable(VendorReportUnavailable::FetchFailed),
+        };
         let recon = reconcile_cost(&local, &outcome);
         let section = render::render_reconciliation(&vendor.to_string(), &label, &recon, options);
         write!(out, "{section}")?;
@@ -447,6 +459,91 @@ mod tests {
             rendered.matches("estimate vs invoice").count(),
             1,
             "only the gemini section should render: {rendered}"
+        );
+    }
+
+    #[test]
+    fn reconcile_degrades_one_vendor_fetch_failure_and_still_renders_the_others() {
+        install_mock_keychain();
+        let store = okv(CredentialStore::new());
+        let dir = TempDir::new("reconcile-degrade");
+        let registry = ConnectionRegistry::at(dir.path.join("connections.json"));
+
+        // Both billing vendors connected.
+        okv(store.store(
+            ApiVendor::Anthropic,
+            &SecretString::from("sk-ant-admin-FAKE".to_string()),
+        ));
+        okv(store.store(
+            ApiVendor::OpenAI,
+            &SecretString::from("sk-admin-FAKE".to_string()),
+        ));
+        okv(registry.mark_connected(ApiVendor::Anthropic));
+        okv(registry.mark_connected(ApiVendor::OpenAI));
+
+        // In-window local rows for each vendor's tool.
+        let rows = vec![
+            api_row(
+                utc(2026, 6, 14, 9),
+                "claude-code",
+                "claude-haiku-4-5-20251001",
+                "0.10",
+            ),
+            api_row(utc(2026, 6, 14, 9), "codex", "gpt-5.5", "0.20"),
+        ];
+
+        // All-vendors order is [Anthropic, OpenAI, Gemini]. Anthropic's cost_report gets a
+        // malformed body (a hard parse error → ConnectError); OpenAI's gets a valid empty
+        // costs page. Gemini makes no request.
+        const BAD_BODY: &str = "this is definitely not json";
+        const EMPTY_COSTS: &str =
+            r#"{"object":"page","has_more":false,"next_page":null,"data":[]}"#;
+        let adapters = LoopbackAdapters {
+            server: serve_sequence(vec![ok_json(BAD_BODY), ok_json(EMPTY_COSTS)]),
+        };
+
+        let mut out = Vec::new();
+        let code = okv(run_reconcile(
+            None,
+            fixed_window(),
+            &rows,
+            &adapters,
+            &store,
+            &registry,
+            &mut out,
+            RenderOptions::plain(),
+        ));
+        assert_eq!(code, 0);
+        let rendered = String::from_utf8_lossy(&out);
+
+        // Anthropic degraded to a fetch-failure section — but its local estimate still shows.
+        assert!(
+            rendered.contains("the invoice request could not be completed"),
+            "anthropic fetch failure degrades (does not abort): {rendered}"
+        );
+        assert!(
+            rendered.contains("est ~$0.10"),
+            "anthropic local estimate still surfaces under a fetch failure: {rendered}"
+        );
+        // OpenAI still reconciled — NOT blanked by Anthropic's failure.
+        assert!(
+            rendered.contains("est ~$0.20"),
+            "the other vendor still reconciles: {rendered}"
+        );
+        // Gemini's unavailable section is still present (all-vendors view).
+        assert!(
+            rendered.contains("gemini"),
+            "gemini section present: {rendered}"
+        );
+        // No secret leaked into the degraded output.
+        assert!(
+            !rendered.contains("sk-ant-admin") && !rendered.contains("sk-admin"),
+            "no secret in degraded output: {rendered}"
+        );
+        // Pure ASCII (--plain floor).
+        assert!(
+            rendered.is_ascii(),
+            "plain reconcile must be ASCII: {rendered}"
         );
     }
 

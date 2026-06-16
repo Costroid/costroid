@@ -104,6 +104,102 @@ const CONNECT_GATED_CRATES: &[&str] = &["ureq", "rustls", "keyring"];
 /// thing being gated), but still reached as a *dependency* when `connect` is on.
 const CONNECT_CRATE: &str = "costroid-connect";
 
+/// Every crate `--features connect` legitimately adds to the resolved graph over the
+/// default build, unioned across all shipped targets (`costroid-connect` itself excluded
+/// — it is the gated home). This is an **allowlist**, not a denylist: the `connect` test
+/// asserts the *real* connect-delta is a **subset** of it, so a future dependency bump
+/// that pulls a NEW crate (a socket/TLS/telemetry crate under an unlisted name, say) fails
+/// the gate until a human reviews it and adds it here. That converts "we ban the network
+/// crates we thought of" into "nothing new reaches the network-on build unreviewed".
+///
+/// It includes the zbus / async-`secret-service` ecosystem because the per-target metadata
+/// union reaches it (via dev/build deps + the cross-target union); only `dbus-secret-service`
+/// (the **sync** backend) actually links into the shipped binary (`cargo tree -e normal`),
+/// and the async *runtimes* (`tokio`/`async-io`/`async-std`/`smol`) stay independently and
+/// unconditionally banned by [`ALWAYS_FORBIDDEN_CRATES`] above — so allowlisting the async
+/// *plumbing* here cannot let a runtime slip in. Regenerate after a deliberate dependency
+/// change with the `#[ignore]` `print_connect_delta` test:
+/// `cargo test -p costroid --test offline print_connect_delta -- --ignored --nocapture`.
+const CONNECT_ALLOWED: &[&str] = &[
+    "aes",
+    "async-broadcast",
+    "async-trait",
+    "block-padding",
+    "byteorder",
+    "cbc",
+    "cc",
+    "cipher",
+    "concurrent-queue",
+    "core-foundation",
+    "crossbeam-utils",
+    "dbus",
+    "dbus-secret-service",
+    "endi",
+    "enumflags2",
+    "enumflags2_derive",
+    "event-listener",
+    "event-listener-strategy",
+    "find-msvc-tools",
+    "futures-core",
+    "futures-macro",
+    "futures-sink",
+    "futures-task",
+    "futures-util",
+    "hkdf",
+    "hmac",
+    "http",
+    "httparse",
+    "inout",
+    "keyring",
+    "libdbus-sys",
+    "num",
+    "num-bigint",
+    "num-complex",
+    "num-integer",
+    "num-iter",
+    "num-rational",
+    "openssl-probe",
+    "ordered-stream",
+    "parking",
+    "percent-encoding",
+    "pin-project-lite",
+    "pkg-config",
+    "ring",
+    "rpassword",
+    "rtoolbox",
+    "rustls",
+    "rustls-native-certs",
+    "rustls-pki-types",
+    "rustls-webpki",
+    "schannel",
+    "secrecy",
+    "secret-service",
+    "security-framework",
+    "security-framework-sys",
+    "serde_repr",
+    "sha1",
+    "shlex",
+    "slab",
+    "tracing",
+    "tracing-attributes",
+    "tracing-core",
+    "untrusted",
+    "ureq",
+    "ureq-proto",
+    "utf8-zero",
+    "windows-targets",
+    "windows_x86_64_msvc",
+    "xdg-home",
+    "zbus",
+    "zbus_macros",
+    "zbus_names",
+    "zeroize",
+    "zeroize_derive",
+    "zvariant",
+    "zvariant_derive",
+    "zvariant_utils",
+];
+
 /// The target triples Costroid ships (mirrors `deny.toml` `[graph].targets`). The
 /// reachable graph is resolved once **per target** and unioned (see
 /// [`reachable_crate_names`]).
@@ -227,6 +323,22 @@ fn reachable_for_target(target: &str, extra_args: &[&str]) -> BTreeSet<String> {
         .collect()
 }
 
+/// Maintenance helper (not run in CI) — prints the exact crates `--features connect` adds
+/// over the default build, unioned across all shipped targets. Run it to regenerate
+/// [`CONNECT_ALLOWED`] after a deliberate dependency change:
+/// `cargo test -p costroid --test offline print_connect_delta -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_connect_delta() {
+    let default = reachable_crate_names(&[]);
+    let connect = reachable_crate_names(&["--features", "connect"]);
+    let delta: Vec<&String> = connect.difference(&default).collect();
+    println!("CONNECT_DELTA ({} crates):", delta.len());
+    for name in &delta {
+        println!("  {name}");
+    }
+}
+
 /// Default/local-only build: the gate is **off**, so `costroid-connect` must not be
 /// linked and the graph must contain no networking, TLS, or telemetry crate at all
 /// (the sanctioned trio included).
@@ -294,4 +406,25 @@ fn connect_feature_admits_only_the_sanctioned_trio() {
              full `ureq`/`rustls`/`keyring` trio, so the gate has to pull it in."
         );
     }
+
+    // Subset-allowlist: bound exactly what `connect` *adds* over the default build, so a
+    // future dependency bump that introduces a NEW crate (a socket/TLS/telemetry path, or
+    // anything else) trips this gate for a human to review — rather than silently slipping
+    // past the name-denylist above. `CONNECT_ALLOWED` is the reviewed connect-delta.
+    let default = reachable_crate_names(&[]);
+    let allowed: BTreeSet<&str> = CONNECT_ALLOWED.iter().copied().collect();
+    let unexpected: Vec<&str> = names
+        .difference(&default)
+        .map(String::as_str)
+        .filter(|name| *name != CONNECT_CRATE && !allowed.contains(name))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "`--features connect` introduced crate(s) not in the reviewed allowlist: \
+         {unexpected:?}.\n\
+         Every crate the connect-on graph adds must be reviewed (is it a network / TLS / \
+         telemetry path?) and, if legitimate, added to CONNECT_ALLOWED. Regenerate the \
+         expected delta with: \
+         `cargo test -p costroid --test offline print_connect_delta -- --ignored --nocapture`."
+    );
 }

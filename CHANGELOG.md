@@ -49,8 +49,11 @@ make **zero** network calls, proven by the offline-acceptance harness.
   is linked, local-only by default; `connections --check` re-validates each over the
   network. `gemini` is a recognized vendor with a known answer — it prints "unavailable —
   no sanctioned static-key usage API" and exits without prompting for a key. Every screen
-  has a `--plain` ASCII path with a non-color status cue. Off by default and absent from
-  the local-only build.
+  has a `--plain` ASCII path with a non-color status cue. Before the key is pasted,
+  `connect` warns that an admin key is **organization-wide** — it can read the whole
+  organization's usage and billing — and recommends a dedicated, instantly-revocable key
+  (Anthropic/OpenAI only; `gemini` reads no key and skips the warning). Off by default and
+  absent from the local-only build.
 - **OpenAI `/costs` token-coverage and money-shape, live-confirmed.** A live read of the
   OpenAI Organization usage API confirmed that `usage/completions` **covers Responses-API
   (Codex) traffic**, so Costroid carries no token-undercount caveat for it. The cost
@@ -67,10 +70,11 @@ make **zero** network calls, proven by the offline-acceptance harness.
 - **OS-keychain credential store** in `costroid-connect` — `CredentialStore` keeps your
   own usage/billing API keys only in the OS keychain (via `keyring`, secrets wrapped in
   `secrecy`), alongside a non-secret `ConnectionRegistry` index and the `ApiVendor`
-  billing-vendor axis. Library-only and off by default: no network and no CLI yet — the
-  HTTP client and the `costroid connect`/`disconnect` commands arrive with v0.4.0. The
-  offline-acceptance gate gains a feature-on baseline proving that even a
-  `--features connect` run makes zero network calls and writes no stray files to `$HOME`.
+  billing-vendor axis. Library-only and off by default **when it landed** — the HTTP
+  client, the adapters, and the `costroid connect`/`disconnect`/`reconcile` callers then
+  landed later in this same 0.4.0 line (see the entries above). The offline-acceptance gate
+  gains a feature-on baseline proving that even a `--features connect` run makes zero
+  network calls and writes no stray files to `$HOME`.
 - **Generic authorized-host HTTPS client** in `costroid-connect` — the foundation of the
   opt-in connections feature's network half. A small, blocking, provider-agnostic client
   (`ureq` + `rustls`, no async runtime, no OpenSSL) that is bound in the type to **one**
@@ -78,11 +82,11 @@ make **zero** network calls, proven by the offline-acceptance harness.
   redirects are refused (never followed), proxy env vars are ignored, requests are
   HTTPS-only and GET-only with bounded timeouts and body size, TLS trust comes from your
   **OS-native certificate store** (never a compiled-in bundle), and auth headers ride in
-  redacted secret strings that can never reach logs or error text. **Nothing calls it
-  yet** — there is still no user-facing connect flow and no provider adapter, so every
-  build (default *and* `--features connect`) still performs zero network calls: the
-  strace/offline-acceptance baseline keeps proving the zero-call property, while the
-  forbidden-crates test proves sanctioned-only *linkage* (the full
+  redacted secret strings that can never reach logs or error text. **Nothing called it when
+  it landed** — the provider adapters followed, then the `connect`/`reconcile` callers, all
+  later in this same 0.4.0 line; the **default** build still performs zero network calls
+  (the strace/offline-acceptance baseline keeps proving the zero-call property for it), and
+  the forbidden-crates test proves sanctioned-only *linkage* (the full
   `ureq`/`rustls`/`keyring` trio links only behind `--features connect`, and the default
   build links none of it).
 - **Anthropic + OpenAI usage-API adapters (and a first-class Gemini "unavailable")** in
@@ -93,10 +97,10 @@ make **zero** network calls, proven by the offline-acceptance harness.
   Honesty caveats ride as typed data — Anthropic's totals omit Priority-Tier dollars, and
   OpenAI's per-model dollars are best-effort (and its token lane may not cover the
   Responses API that Codex uses). Gemini has no adapter and reports "unavailable — no
-  sanctioned static-key usage API". **This does not change the default build's behavior
-  at all:** nothing calls the adapters yet (the `costroid connect` flow arrives in
-  v0.4.0), keys ride only in the OS keychain and only in request headers (never a URL,
-  log, or error), and every build still performs zero network calls.
+  sanctioned static-key usage API". **The default build's behavior is unchanged:** nothing
+  called the adapters when they landed (the `connect`/`reconcile` callers followed later in
+  this same 0.4.0 line), keys ride only in the OS keychain and only in request headers
+  (never a URL, log, or error), and the default build still performs zero network calls.
 - **Estimate-vs-invoice reconciliation engine** in `costroid-core` — pure-core logic
   (`costroid-core::reconcile`) that compares Costroid's local **estimate** (Σ tokens ×
   bundled prices — always an estimate) against a vendor's **billed** cost report (the
@@ -105,9 +109,9 @@ make **zero** network calls, proven by the offline-acceptance harness.
   "corrected"; the vendor report's honesty caveats (Anthropic Priority-Tier-absent, OpenAI
   per-model best-effort) are carried through; vendor-side gaps are typed absence, never a
   fabricated `$0`; money stays exact `Decimal` end to end. **Pure core, no network, no
-  `costroid-connect` dependency, and not yet surfaced** — a future caller (the `costroid
-  connect` flow, v0.4.0) fetches the report and hands both sides in; this release only adds
-  the engine, so the default build's behavior is unchanged (still zero network calls).
+  `costroid-connect` dependency.** The engine landed first; the `reconcile` caller (T10c) —
+  which fetches the report and hands both sides in — then landed later in this same 0.4.0
+  line. The default build's behavior is unchanged (still zero network calls).
 - **MSRV CI job** — the documented minimum supported Rust version (Rust 1.88) is now
   built in CI.
 - **Security-advisory CI job** — `cargo deny check advisories` now runs in CI as a
@@ -138,6 +142,12 @@ make **zero** network calls, proven by the offline-acceptance harness.
   — the Cursor detect-only note no longer carries em dashes into plain output, and the
   frontier header / point-note separators no longer carry them into `RenderMode::Ascii`
   output.
+- **Untrusted vendor org labels are sanitized against terminal-escape injection** — an
+  org name returned by a provider on `connect` is stripped of all control characters
+  (C0/C1/DEL/`ESC`) at ingestion before it is stored or printed, and the connect output
+  path also strips control characters and folds any remaining non-ASCII to pure ASCII
+  under `--plain`, so a malicious or buggy label can never smuggle an escape sequence to
+  the terminal or into the on-disk registry.
 
 ## [0.3.0] - 2026-06-06
 

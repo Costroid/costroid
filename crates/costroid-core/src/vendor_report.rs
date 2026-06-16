@@ -635,6 +635,13 @@ pub enum VendorReportUnavailable {
     },
     /// No sanctioned static-key usage API exists for this vendor (Gemini).
     NoSanctionedStaticKeyApi,
+    /// The report could not be fetched for a non-HTTP-status reason — a transport failure,
+    /// an oversized or unparseable body, or a keychain read error. (The status-mapped
+    /// outages — 401/403/429/5xx/other-4xx — have their own variants above, and the soft
+    /// ones already degrade *inside* the fetch; this is the residual **hard** failure that
+    /// a caller surfaces without aborting a multi-vendor view. It carries no detail string,
+    /// so it can never leak a secret or a URL.)
+    FetchFailed,
 }
 
 impl VendorReportUnavailable {
@@ -673,6 +680,9 @@ impl VendorReportUnavailable {
             }
             VendorReportUnavailable::NoSanctionedStaticKeyApi => {
                 GEMINI_UNAVAILABLE_MESSAGE.to_string()
+            }
+            VendorReportUnavailable::FetchFailed => {
+                "the invoice request could not be completed".to_string()
             }
         }
     }

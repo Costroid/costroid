@@ -80,6 +80,11 @@ OUT=""
 
 # Fail if a strace network-trace log shows any outbound IP socket/connect.
 # Allowed: AF_UNIX, AF_NETLINK, and loopback (127.0.0.1 / ::1). None are expected.
+# The `socket(AF_INET…)` check is the AUTHORITATIVE no-egress signal — egress cannot happen
+# without first creating an AF_INET socket, and that single syscall line is robust to
+# `strace -f` thread interleaving. The `connect()` grep below is a SECONDARY diagnostic
+# (nicer output) that can be defeated by `-f` <unfinished>/<resumed> line splits — so it
+# narrows the report, never the guarantee, which rests on the socket-creation check.
 assert_no_inet() { # <strace-log>
   local log="$1"
   if grep -Eq 'socket\(AF_INET6?[,)]' "$log"; then
@@ -272,12 +277,24 @@ if unshare --user --map-root-user --net true 2>/dev/null; then
   # never errs toward a leak: `connect` runs ONLY inside this no-egress netns (never strace,
   # never host networking) or is SKIPPED below — so it can never reach the real host. The
   # *positive* "only the authorized loopback host" is Layer 1's job.
+  action_log="$workdir/connect-action.out"
   printf '%s\n' "$FAKE_KEY" | timeout 60s unshare --user --map-root-user --net \
-    env "${env_args[@]}" "$connect_bin" connect anthropic >/dev/null 2>&1 && rc=0 || rc=$?
+    env "${env_args[@]}" "$connect_bin" connect anthropic >"$action_log" 2>&1 && rc=0 || rc=$?
+  # A nonzero exit alone is not enough — a future pre-network regression (a stdin/arg/panic
+  # failure that never tries the network) would ALSO exit nonzero and pass vacuously. Require
+  # evidence the binary actually REACHED the network attempt and was blocked by the netns: a
+  # transport/DNS/connect diagnostic in its output. (Broad pattern — robust to the exact ureq
+  # error wording. The netns still guarantees no egress regardless; this hardens the TEST.)
+  net_diag='transport|timed out|dns|resolve|lookup|connect|network|unreachable|Could not connect|no route'
   if [ "$rc" -eq 0 ]; then
     echo "FAIL (connect succeeded with no network — must fail closed)"; fail=1
+  elif grep -qiE "$net_diag" "$action_log"; then
+    echo "ok (exit $rc — reached the network attempt, blocked by netns)"
   else
-    echo "ok (exit $rc — no egress possible under netns)"
+    echo "FAIL (exit $rc but no network-reaching diagnostic — may have failed BEFORE the"
+    echo "       network attempt; a pre-network regression must not pass as 'fails closed')"
+    sed 's/^/      /' "$action_log"
+    fail=1
   fi
   printf '  %-52s' "connect failure path: no \$HOME residue"
   if [ "$before_action_fp" != "$(home_fingerprint)" ]; then
@@ -307,6 +324,19 @@ elif grep -rIl -- 'sk-ant-admin' "$home" >/dev/null 2>&1; then
   echo "FAIL (key material found under \$HOME)"; fail=1
 else
   echo "ok (no network; keychain may be absent in a headless env)"
+fi
+
+# Be honest about how strong the dynamic "no network" assertion just was. Only the strace
+# mode OBSERVES syscalls and can catch an unexpected egress (returning 90 above). Under netns
+# the property holds by PREVENTION (egress is impossible), and under `none` the dynamic
+# network assertion is effectively a no-op. In every mode the AUTHORITATIVE no-egress proofs
+# remain: the static resolved-graph test (apps/cli/tests/offline.rs) + the type-level
+# before-I/O host binding (T9a) + the Layer-1 loopback test. Surface the mode so a green
+# local run on a strace-less box is not mistaken for the observed proof.
+if [ "$iso_mode" != strace ]; then
+  echo "  NOTE: isolation mode is '$iso_mode' — the dynamic network assertions above were"
+  echo "        $([ "$iso_mode" = netns ] && echo 'enforced by prevention (netns), not observed' || echo 'NOT enforced dynamically (no strace, no netns)');"
+  echo "        the authoritative no-egress proof is offline.rs + the type-level host binding."
 fi
 
 echo

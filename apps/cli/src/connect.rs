@@ -359,16 +359,55 @@ fn gemini_unavailable_message() -> String {
     VendorReportUnavailable::NoSanctionedStaticKeyApi.message()
 }
 
-/// ASCII-fold the two non-ASCII glyphs the connect copy can carry (the em-dash `—` and
-/// the ellipsis `…`) for `--plain` / a non-UTF-8 terminal, so `--plain` output stays pure
-/// ASCII; on a UTF-8 TTY they are kept. Then write one line.
+/// Write one connect line, sanitized. First strip every control character (defense in
+/// depth: a terminal escape smuggled through a server-provided org label must never reach
+/// the terminal — labels are also stripped at ingestion via [`OrgLabel::from_server`]). On
+/// a UTF-8 (braille) TTY printable Unicode is then kept; for `--plain` / a non-UTF-8
+/// terminal, fold the known glyphs (em-dash `—`, ellipsis `…`) and map any remaining
+/// non-ASCII to `?` so `--plain` output is guaranteed pure ASCII regardless of label content.
 fn emit(out: &mut dyn Write, style: OutputStyle, line: &str) -> io::Result<()> {
-    let folded = if style.ascii {
-        line.replace('—', "-").replace('…', "...")
+    let sanitized: String = line.chars().filter(|ch| !ch.is_control()).collect();
+    let folded: String = if style.ascii {
+        sanitized
+            .replace('—', "-")
+            .replace('…', "...")
+            .chars()
+            .map(|ch| if ch.is_ascii() { ch } else { '?' })
+            .collect()
     } else {
-        line.to_string()
+        sanitized
     };
     writeln!(out, "{folded}")
+}
+
+/// The connect-time blast-radius warning (T9 pin §2.3/§6, ⛔-signed-off): an admin key is
+/// **organization-wide**, so warn at paste time and recommend a dedicated, instantly-
+/// revocable key. Shown for anthropic/openai only — gemini reads no key, so
+/// [`gemini_connect`] never calls this. Routed through [`emit`], so `--plain` stays pure ASCII.
+pub fn print_connect_warning(
+    out: &mut dyn Write,
+    style: OutputStyle,
+    vendor: ApiVendor,
+) -> io::Result<()> {
+    emit(
+        out,
+        style,
+        &format!(
+            "Heads up: a {vendor} admin key is organization-wide — it can read your whole \
+             organization's usage and billing (and, depending on the key, manage members and \
+             keys). Treat it like a root credential."
+        ),
+    )?;
+    emit(
+        out,
+        style,
+        &format!(
+            "Best practice: create a dedicated admin key you can revoke instantly, and revoke it \
+             in the {vendor} console if this machine is ever compromised. Costroid stores it only \
+             in your OS keychain — never on disk, in a config file, or in a log — and sends it \
+             only to {vendor}."
+        ),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +552,57 @@ mod tests {
         );
 
         assert!(String::from_utf8_lossy(&out).contains("Connected anthropic"));
+    }
+
+    #[test]
+    fn connect_warning_is_shown_for_real_vendors_and_absent_for_gemini() {
+        // The mandated org-wide blast-radius warning (T9 pin §2.3/§6) shows for the two
+        // key-taking vendors, and is pure ASCII under --plain.
+        for vendor in [ApiVendor::Anthropic, ApiVendor::OpenAI] {
+            let mut out = Vec::new();
+            okv(print_connect_warning(&mut out, style(), vendor));
+            let text = String::from_utf8_lossy(&out);
+            assert!(
+                text.contains("organization-wide") && text.contains("revoke"),
+                "{vendor} connect must warn about the org-wide admin key + revocation: {text}"
+            );
+            assert!(
+                text.is_ascii(),
+                "plain connect warning must be ASCII: {text}"
+            );
+        }
+        // gemini reads no key, so its connect path must NOT carry the admin-key warning.
+        let mut out = Vec::new();
+        okv(gemini_connect(&mut out, style()));
+        assert!(
+            !String::from_utf8_lossy(&out).contains("organization-wide"),
+            "gemini connect must not show the admin-key warning"
+        );
+    }
+
+    #[test]
+    fn org_label_from_server_is_sanitized_and_renders_safely() {
+        // A hostile, server-controlled org name: a terminal escape + printable non-ASCII.
+        let label = OrgLabel::from_server(
+            "\u{1b}[31mEvil\u{1b}[0m Café",
+            Some("org-\u{1b}123".to_string()),
+        );
+        // Ingestion strips every control char (incl. ESC) but keeps printable non-ASCII.
+        assert!(!label.name.chars().any(|c| c.is_control()));
+        assert!(label.name.contains("Café"));
+        assert!(!somev(label.id.as_ref()).chars().any(|c| c.is_control()));
+
+        // Rendered in --plain (ascii): no control char leaks, and pure ASCII (the café 'é'
+        // folds to '?' at the render boundary so the ASCII floor holds for any label).
+        let mut out = Vec::new();
+        okv(emit(
+            &mut out,
+            style(),
+            &connected_message(ApiVendor::Anthropic, Some(&label)),
+        ));
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.is_ascii(), "plain output must be ASCII: {text}");
+        assert!(!text.contains('\u{1b}'), "no escape leaks: {text}");
     }
 
     #[test]

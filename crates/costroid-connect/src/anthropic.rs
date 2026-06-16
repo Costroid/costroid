@@ -110,6 +110,13 @@ impl AnthropicAdapter {
     }
 
     /// Fetch the token-usage report for `range`, reading the admin key from `store`.
+    ///
+    /// DORMANT as of v0.4.0: **no production caller** invokes this (the shipped CLI surfaces
+    /// only `cost_report` + the connect-time `validate`). It hits the same documented,
+    /// first-party platform-admin GET surface as `cost_report` (`GET
+    /// /v1/organizations/usage_report/messages`, T9 pin §2/§3) with the user's own admin key
+    /// — so lighting it up adds no new ToS/network/secret boundary — but a future caller is a
+    /// deliberate, reviewable step; do not wire one in without that review.
     pub fn usage_report(
         &self,
         store: &CredentialStore,
@@ -241,10 +248,12 @@ impl AnthropicAdapter {
             PageOutcome::Unavailable(reason) => Ok(OrgValidation::Unavailable(reason)),
             PageOutcome::Body(bytes) => {
                 let me: MeResponse = parse_json(&bytes, "organizations/me")?;
-                Ok(OrgValidation::Valid(OrgLabel {
-                    name: me.name,
-                    id: Some(me.id),
-                }))
+                // `me.name`/`me.id` are untrusted server text — strip control chars before
+                // they reach the registry or the terminal (terminal-escape injection guard).
+                Ok(OrgValidation::Valid(OrgLabel::from_server(
+                    me.name,
+                    Some(me.id),
+                )))
             }
         }
     }
