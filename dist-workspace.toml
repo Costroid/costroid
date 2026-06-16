@@ -7,6 +7,9 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
+# Build each app with `-p` (connect-OFF costroid only) — never the whole workspace, so the
+# release runners never compile costroid-connect → keyring → libdbus-sys (no libdbus needed).
+precise-builds = true
 # The installers to generate for each app
 installers = ["shell", "powershell", "npm", "homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
