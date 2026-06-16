@@ -145,6 +145,14 @@ cargo publish -p costroid
 
 Gotchas (learned shipping v0.1.0):
 - **A verified email** on the crates.io account is required before the first publish.
+- **`dist build` builds the whole workspace — keep `precise-builds = true` (learned shipping v0.4.0).**
+  Even though the shipped `costroid` binary is connect-OFF (no `costroid-connect`/`keyring`/`libdbus`),
+  a default `dist build` compiles every workspace member, so it tried to build `costroid-connect →
+  keyring → libdbus-sys` and **failed on the CI Linux runners** (`Package dbus-1 was not found` — the
+  runners have no `libdbus-1-dev`). A *local* `dist build` dry-run does **not** catch this (a dev box
+  has libdbus). `precise-builds = true` in `dist-workspace.toml` makes dist build only `-p costroid`
+  (connect-OFF), so the runners need no system libs. Do not remove it. (If a connect-ON artifact is
+  ever shipped, it would instead need `[dist.dependencies]` apt = `libdbus-1-dev`, `libsecret-1-dev`.)
 - **Bundled assets must live inside the crate.** `costroid-core` `include_str!`s its pricing JSON;
   it lives at `crates/costroid-core/pricing/pricing.v1.json` (not the workspace root) — cargo only
   packages files under the crate dir, so a standalone verify build fails otherwise. Keep any new
