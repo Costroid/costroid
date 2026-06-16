@@ -2,7 +2,7 @@
 
 This is the runbook for cutting a Costroid release. The release **infrastructure** was
 configured and dry-run-verified for v0.1.0 (the release-infrastructure milestone, PR #1) and has
-cut every release since (latest tag: v0.3.0); the **actual** publish is a deliberate,
+cut every release since (latest tag: v0.4.0); the **actual** publish is a deliberate,
 human-triggered action and is intentionally not automated to run on a normal push.
 
 > **Nothing in this repo publishes by itself.** The release workflow
@@ -39,7 +39,7 @@ which governs scope and build sequencing).
 gave it its first internal dependency, `costroid-core`** (the adapters parse into
 `costroid-core::vendor_report`; it needs **no** `costroid-focus`), so it now **publishes after
 `costroid-core`** in the ladder — before `costroid` (the CLI), which depends on it via the `connect`
-feature. It remains unpublished until the v0.4.0 cut (T10b). Still *not yet in the workspace, not yet
+feature. It was first published in the v0.4.0 cut (T10b). Still *not yet in the workspace, not yet
 published:* `costroid-bar` (the egui taskbar app,
 binary `costroid-bar`; depends only on `costroid-core`, the last surface). See
 `docs/PRODUCT-PLAN.md` for the sequencing; the crates.io order below grows to accommodate them when

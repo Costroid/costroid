@@ -23,7 +23,7 @@ Shipping today (v0.4.0):
   - `now` — your Codex **and live Claude** 5-hour and weekly limits with reset countdowns (Claude via its `statusLine`), plus your current API spend by model.
   - `trends` — spend over day / week / month / year, grouped or filtered by model or app.
 - **Cost-vs-quality frontier** (`frontier`) — the published cost-vs-quality frontier (DeepSWE + CursorBench) and where your own spend sits on it; advisory, sourced, **API-cost rows only**.
-- **Local logs only.** Reads what Claude Code, Codex, and Cursor already write to disk. Today's release needs no API keys and no login, and nothing leaves your machine. (Optional, opt-in connections — your own API key, or a sanctioned login — are in progress for v0.4.0; the local-only path always stays the default.)
+- **Local logs only.** Reads what Claude Code, Codex, and Cursor already write to disk. Today's release needs no API keys and no login, and nothing leaves your machine. (Optional, opt-in connections — your own API key — shipped in v0.4.0, with a sanctioned OAuth login still planned; the local-only path always stays the default.)
 - **FOCUS-conformant export** (JSON / CSV) so your cost data is standard and portable.
 - **Statusline mode** for your shell, tmux, or Starship.
 - **`--live`** auto-refreshing view and a **`--plain`** ASCII mode for accessibility and pipes.
