@@ -163,6 +163,78 @@ pub fn trends_summary(snapshot: &EngineSnapshot, options: TrendsOptions) -> Tren
     }
 }
 
+/// The Models tab (T12): per API-billed model, fuse the spend + token mix with the
+/// bench/frontier overlay (cost-vs-quality standing + equal-volume re-pricing). A pure
+/// projection over the existing snapshot — it reuses [`bench_view`] + the same per-row
+/// [`AggregateTotals::add_row`] aggregation and resolved-key grouping `bench_view` performs,
+/// and introduces NO new pricing/bench math. API-cost rows ONLY (the frontier is API-only,
+/// ARCHITECTURE §9.6): a subscription-only model never appears. Spend is **lifetime-scoped**
+/// (all API usage in the snapshot, not period-scoped) — it reconciles with `trends` (lifetime
+/// totals) and the `frontier` overlay, NOT with the period-scoped `now` tab.
+///
+/// Rows are keyed by the **resolved catalog key** (via [`PricingCatalog::resolve_key`]), the
+/// SAME merge `bench_view` uses, so a model's dated snapshots collapse to one row that joins
+/// 1:1 to the overlay by `model_id` — Models and Frontier always agree. A model with no
+/// bundled-benchmark appearance is surfaced as a GAP (`overlay == None`, or matched with empty
+/// `appearances`), never a guessed standing; a benchmarked model can never render as a gap.
+pub fn models_view(snapshot: &EngineSnapshot) -> Result<ModelsView, CoreError> {
+    let bench = bench_view(snapshot)?;
+    let pricing = PricingCatalog::bundled()?;
+
+    // Aggregate API-lane spend + tokens by RESOLVED catalog key — the SAME grouping +
+    // per-row aggregation `bench_view` performs (bench.rs). Keying by the raw `x_model`
+    // instead would split a model's dated fragments (e.g. claude-opus-4-7-20251101 +
+    // -20251201), leaving the second fragment unmatched against the overlay (which merges them
+    // under one key) and rendering a benchmarked model as a gap — the §6 honesty invariant
+    // inverted. `resolve_key` falls back to the raw id for a genuinely unknown model, exactly
+    // as bench_view does, so the two views stay row-for-row identical.
+    let mut by_key: BTreeMap<String, AggregateTotals> = BTreeMap::new();
+    for row in &snapshot.focus_rows {
+        if CostLane::from_access_path(&row.x_access_path) != CostLane::Api {
+            continue;
+        }
+        let key = pricing
+            .resolve_key(&row.x_model)
+            .map(str::to_string)
+            .unwrap_or_else(|| row.x_model.clone());
+        by_key.entry(key).or_default().add_row(row);
+    }
+
+    let mut models: Vec<ModelRow> = by_key
+        .into_iter()
+        .map(|(model, totals)| {
+            // 1:1 join by resolved key: the overlay is keyed by the same resolved key, so a
+            // benchmarked model always matches its appearances (never a fabricated gap).
+            let overlay = bench
+                .overlay
+                .iter()
+                .find(|model_overlay| model_overlay.model_id == model)
+                .cloned();
+            ModelRow {
+                model,
+                totals,
+                overlay,
+            }
+        })
+        .collect();
+    // Highest spend first, then name — mirror `sorted_lane_rows` so the tab orders like trends.
+    models.sort_by(|left, right| {
+        right
+            .totals
+            .billed_cost
+            .cmp(&left.totals.billed_cost)
+            .then_with(|| left.model.cmp(&right.model))
+    });
+
+    Ok(ModelsView {
+        generated_at: snapshot.generated_at,
+        no_api_usage: models.is_empty(),
+        models,
+        disclaimer: bench.disclaimer,
+        providers: bench.providers,
+    })
+}
+
 pub fn period_range_for(period: Period, anchor: DateTime<Utc>) -> PeriodRange {
     let local_anchor = anchor.with_timezone(&Local);
     let local_start = start_of_period_local(period, local_anchor);
@@ -1367,6 +1439,39 @@ pub struct TrendBucket {
     pub totals: AggregateTotals,
 }
 
+/// The Models tab view (T12): per-model API spend + token mix fused with the frontier
+/// overlay. A pure projection over the existing snapshot (no new pricing/bench math). Not
+/// `Deserialize`/`Eq` — it carries the `Serialize`-only [`OverlayModel`] (Decimal/standing),
+/// matching [`BenchView`]; it is a computed view, never persisted.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ModelsView {
+    pub generated_at: DateTime<Utc>,
+    /// Per-model rows, highest API spend first. Empty when there is no API usage.
+    pub models: Vec<ModelRow>,
+    /// True when the user has zero API-billed rows: the tab renders an explicit empty state,
+    /// never a fabricated row (mirrors [`BenchView::no_api_usage`]).
+    pub no_api_usage: bool,
+    /// The bench hedge note + pricing date, so the tab can footnote its estimates.
+    pub disclaimer: BenchDisclaimer,
+    pub providers: Vec<ProviderStatus>,
+}
+
+/// One per-model row: the API-lane spend + token mix (now/trends-consistent
+/// [`AggregateTotals`]) joined to the matching bench [`OverlayModel`]. `overlay == None` (or a
+/// matched overlay with empty `appearances`) means the model is un-benchmarked — a GAP, never
+/// a guessed standing.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ModelRow {
+    /// The resolved catalog key (the frontier overlay's `model_id`) — a model's dated
+    /// snapshots collapse to one key here, so it can differ from the raw `x_model` that
+    /// `now`/`trends` group by; falls back to the raw id for an unknown model.
+    pub model: String,
+    /// API-lane spend + token mix + pricing coverage for this model.
+    pub totals: AggregateTotals,
+    /// The matched frontier overlay (standing + re-pricing), if any.
+    pub overlay: Option<OverlayModel>,
+}
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("bundled pricing JSON is invalid: {0}")]
@@ -1480,6 +1585,149 @@ mod tests {
             limit_windows,
             providers: Vec::new(),
             capabilities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn models_view_includes_api_lane_excludes_subscription() {
+        // The Models tab is API-cost only (the frontier is API-only) — a subscription-lane
+        // use of the same model must not add a second row.
+        let events = [
+            usage_event(ProviderId::Codex, AccessPath::Api, timestamp()),
+            usage_event(
+                ProviderId::ClaudeCode,
+                AccessPath::Subscription,
+                timestamp(),
+            ),
+        ];
+        let focus_rows = match focus_records_from_usage(&events) {
+            Ok(rows) => rows,
+            Err(err) => panic!("events should price: {err}"),
+        };
+        let snapshot = snapshot_with_rows(timestamp(), focus_rows, Vec::new());
+
+        let view = match models_view(&snapshot) {
+            Ok(view) => view,
+            Err(err) => panic!("models view should build: {err}"),
+        };
+
+        assert!(!view.no_api_usage);
+        assert_eq!(view.models.len(), 1, "models: {:?}", view.models);
+        let row = &view.models[0];
+        assert_eq!(row.model, "gpt-5.5");
+        // The token mix carries through from the API-lane usage (10/20/30 in usage_event).
+        assert_eq!(row.totals.tokens.input, 10);
+        assert_eq!(row.totals.tokens.output, 20);
+        assert_eq!(row.totals.tokens.cache_read, 30);
+        // gpt-5.5 is a bundled-benchmark model, so the overlay is matched (a real standing,
+        // never a guessed gap).
+        let overlay = match &row.overlay {
+            Some(overlay) => overlay,
+            None => panic!("gpt-5.5 should match a bench overlay"),
+        };
+        assert_eq!(overlay.model_id, "gpt-5.5");
+    }
+
+    #[test]
+    fn models_view_empty_snapshot_has_no_api_usage() {
+        let view = match models_view(&EngineSnapshot::empty(timestamp())) {
+            Ok(view) => view,
+            Err(err) => panic!("models view should build: {err}"),
+        };
+        assert!(view.no_api_usage);
+        assert!(view.models.is_empty());
+    }
+
+    fn api_usage_event(model: &str, output_tokens: u64) -> UsageEvent {
+        UsageEvent {
+            tool: ProviderId::ClaudeCode,
+            model: model.to_string(),
+            timestamp: timestamp(),
+            input_tokens: 0,
+            output_tokens,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            project: Some("/work/project".to_string()),
+            access_path: AccessPath::Api,
+        }
+    }
+
+    #[test]
+    fn models_view_merges_dated_fragments_so_a_benchmarked_model_is_never_a_gap() {
+        // Two dated snapshots of ONE benchmarked model — `claude-opus-4-7` is in both the
+        // pricing catalog and the bundled benchmarks, and `resolve_key` folds each dated form
+        // onto that base. Keying by the raw `x_model` (the pre-fix bug) would split them and
+        // leave the second fragment unmatched against the resolved-key overlay, rendering a
+        // benchmarked model as "not benchmarked" — the §6 honesty invariant INVERTED. They
+        // must collapse to ONE resolved-key row that joins 1:1 to the overlay.
+        let events = [
+            api_usage_event("claude-opus-4-7-20251101", 1_000_000),
+            api_usage_event("claude-opus-4-7-20251201", 2_000_000),
+        ];
+        let focus_rows = match focus_records_from_usage(&events) {
+            Ok(rows) => rows,
+            Err(err) => panic!("events should price: {err}"),
+        };
+        let api_spend = focus_rows
+            .iter()
+            .filter(|row| CostLane::from_access_path(&row.x_access_path) == CostLane::Api)
+            .fold(Decimal::ZERO, |acc, row| acc + row.billed_cost);
+        let snapshot = snapshot_with_rows(timestamp(), focus_rows, Vec::new());
+
+        let view = match models_view(&snapshot) {
+            Ok(view) => view,
+            Err(err) => panic!("models view should build: {err}"),
+        };
+
+        // ONE row at the resolved catalog key, not two raw fragments.
+        assert_eq!(view.models.len(), 1, "models: {:?}", view.models);
+        let row = &view.models[0];
+        assert_eq!(row.model, "claude-opus-4-7");
+        // Spend is summed across both fragments (so Models reconciles with trends + the
+        // frontier overlay — the repricing-volume skew is gone with the join-key fix).
+        assert!(api_spend > Decimal::ZERO, "fragments should price > 0");
+        assert_eq!(row.totals.billed_cost, api_spend);
+        // The benchmarked model is matched 1:1 to its overlay, with real appearances.
+        let overlay = match &row.overlay {
+            Some(overlay) => overlay,
+            None => panic!("benchmarked claude-opus-4-7 must match an overlay, not a gap"),
+        };
+        assert_eq!(overlay.model_id, "claude-opus-4-7");
+        assert!(
+            !overlay.appearances.is_empty(),
+            "claude-opus-4-7 is on a bundled benchmark"
+        );
+
+        // General invariant (§6): NO model with a bench appearance ever renders as a gap.
+        // Every benchmarked overlay model resolves to exactly one row carrying its appearances.
+        let bench = match bench_view(&snapshot) {
+            Ok(bench) => bench,
+            Err(err) => panic!("bench view should build: {err}"),
+        };
+        for benchmarked in bench
+            .overlay
+            .iter()
+            .filter(|overlay| !overlay.appearances.is_empty())
+        {
+            let matched = match view
+                .models
+                .iter()
+                .find(|row| row.model == benchmarked.model_id)
+            {
+                Some(row) => row,
+                None => panic!("benchmarked {} has no models row", benchmarked.model_id),
+            };
+            match &matched.overlay {
+                Some(joined) => assert!(
+                    !joined.appearances.is_empty(),
+                    "benchmarked {} rendered as a gap (empty appearances)",
+                    benchmarked.model_id
+                ),
+                None => panic!(
+                    "benchmarked {} rendered as a gap (no overlay)",
+                    benchmarked.model_id
+                ),
+            }
         }
     }
 

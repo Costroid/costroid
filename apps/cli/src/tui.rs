@@ -22,8 +22,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_frontier_document, render_now_document, render_providers_document,
-    render_trends_document, RenderOptions, SemanticStyle, StyledDocument, StyledLine,
+    render_frontier_document, render_models_document, render_now_document,
+    render_providers_document, render_trends_document, RenderOptions, SemanticStyle,
+    StyledDocument, StyledLine,
 };
 
 const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -43,14 +44,20 @@ enum Screen {
     Now,
     Trends,
     Providers,
+    Models,
     Frontier,
 }
 
 /// The numbered tab cycle (Q1, §11.5): `1`-`6` jump straight to a tab, `Tab`/`BackTab`
 /// cycle through them. Frontier is intentionally NOT in the cycle — it stays its own
-/// `a`/`esc` overlay. Later Step 5 tabs (Models/History/Budget…) append here, filling the
-/// reserved `4`-`6` slots, with no further `handle_key` change.
-const TAB_SCREENS: [Screen; 3] = [Screen::Now, Screen::Trends, Screen::Providers];
+/// `a`/`esc` overlay. Later Step 5 tabs (History/Budget…) append here, filling the reserved
+/// `5`-`6` slots, with no further `handle_key` change (T12 appended Models at slot `4`).
+const TAB_SCREENS: [Screen; 4] = [
+    Screen::Now,
+    Screen::Trends,
+    Screen::Providers,
+    Screen::Models,
+];
 
 /// Step left (`delta = -1`) or right (`delta = 1`) through [`TAB_SCREENS`], wrapping. A
 /// screen outside the cycle (Frontier) returns to the first tab.
@@ -65,8 +72,8 @@ fn cycle_tab(current: Screen, delta: isize) -> Screen {
     }
 }
 
-/// Map a `1`-`6` digit to its tab, if one exists yet (only `1`-`3` are wired today; the
-/// rest are reserved and inert until a later tab fills them).
+/// Map a `1`-`6` digit to its tab, if one exists yet (`1`-`4` are wired today — slot `4` is
+/// Models; the rest are reserved and inert until a later tab fills them).
 fn tab_for_digit(ch: char) -> Option<Screen> {
     let index = ch.to_digit(10)? as usize;
     index
@@ -357,6 +364,16 @@ impl App {
                         );
                         doc
                     }
+                    Screen::Models => match costroid_core::models_view(&snapshot) {
+                        Ok(view) => render_models_document(&view, options),
+                        Err(error) => {
+                            let mut doc = StyledDocument::new();
+                            doc.push(StyledLine::plain(format!(
+                                "models data unavailable: {error}"
+                            )));
+                            doc
+                        }
+                    },
                     Screen::Frontier => match costroid_core::bench_view(&snapshot) {
                         Ok(view) => render_frontier_document(&view, options),
                         Err(error) => {
@@ -378,6 +395,7 @@ impl App {
             Screen::Now => "now",
             Screen::Trends => "trends",
             Screen::Providers => "providers",
+            Screen::Models => "models",
             Screen::Frontier => "frontier",
         };
         let live = if self.live { "live" } else { "manual" };
@@ -393,7 +411,9 @@ impl App {
             .unwrap_or_default();
         let nav = match self.screen {
             Screen::Frontier => "esc back",
-            Screen::Now | Screen::Trends | Screen::Providers => "1-3/tab switch | a frontier",
+            Screen::Now | Screen::Trends | Screen::Providers | Screen::Models => {
+                "1-4/tab switch | a frontier"
+            }
         };
         format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
     }
@@ -521,7 +541,7 @@ fn draw_app(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
     let popup = centered_rect(74, 14, area);
     let lines = vec![
-        Line::from("1/2/3      now / trends / providers"),
+        Line::from("1/2/3/4    now / trends / providers / models"),
         Line::from("tab/S-tab  cycle tabs"),
         Line::from("d/w/m/y    set trends period"),
         Line::from("g          cycle trends group"),
@@ -1112,32 +1132,36 @@ mod tests {
     }
 
     #[test]
-    fn numbered_keys_and_tab_cycle_reach_providers() {
+    fn numbered_keys_and_tab_cycle_reach_providers_and_models() {
         let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
         assert_eq!(app.screen, Screen::Now);
 
-        // Numbered jumps go straight to a tab.
+        // Numbered jumps go straight to a tab — including `4` (Models, appended in T12).
         assert_eq!(app.handle_key(key(KeyCode::Char('2'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Providers);
+        assert_eq!(app.handle_key(key(KeyCode::Char('4'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Models);
         assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
-        // A reserved digit (no tab there yet) is inert.
-        assert_eq!(app.handle_key(key(KeyCode::Char('4'))), AppAction::Continue);
+        // A still-reserved digit (no tab there yet) is inert.
+        assert_eq!(app.handle_key(key(KeyCode::Char('5'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Now.
+        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Models -> Now.
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Providers);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Models);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // BackTab cycles in reverse.
+        // BackTab cycles in reverse (Now -> Models).
         assert_eq!(app.handle_key(key(KeyCode::BackTab)), AppAction::Continue);
-        assert_eq!(app.screen, Screen::Providers);
+        assert_eq!(app.screen, Screen::Models);
 
         // Frontier is outside the cycle (an a/esc overlay); Tab returns to the first tab.
         assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
@@ -1164,6 +1188,24 @@ mod tests {
         assert!(!frame.contains("coming soon"));
         // Connect is off in the default build: no connection lane.
         assert!(!frame.contains("connections (your own usage API keys)"));
+    }
+
+    #[test]
+    fn frame_snapshot_models_surface() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        assert_eq!(app.handle_key(key(KeyCode::Char('4'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Models);
+        let frame = frame_to_string(&app, 90, 26);
+
+        assert!(frame.contains("models"));
+        // The two API-billed sample models, with the always-estimated spend + token mix.
+        assert!(frame.contains("claude-opus-4.7"));
+        assert!(frame.contains("gpt-5.5"));
+        assert!(frame.contains("spent ~$"));
+        assert!(frame.contains("tokens:"));
+        assert!(frame.contains("frontier:"));
+        // The cost-only hedge note is footnoted (an estimate, never an authoritative bill).
+        assert!(frame.contains("cost-only comparison at equal token volume"));
     }
 
     #[test]

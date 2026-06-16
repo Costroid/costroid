@@ -5,9 +5,9 @@ use std::io::{self, IsTerminal};
 use chrono::{DateTime, Local, Utc};
 use costroid_core::{
     AggregateTotals, BenchFrontier, BenchView, CostLane, CostLaneSummary, FrontierPoint,
-    FrontierStanding, GroupBy, LimitAvailability, LimitSummary, NowSummary, OverlayModel, Period,
-    PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind, RepricingDelta,
-    RepricingStatus, TrendsSummary,
+    FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow, ModelsView, NowSummary,
+    OverlayModel, Period, PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind,
+    RepricingDelta, RepricingStatus, TokenTotals, TrendsSummary,
 };
 use costroid_providers::{AuthMethod, DataSource, LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
@@ -791,16 +791,23 @@ fn plot_points(frontier: &BenchFrontier) -> Vec<PlotPoint> {
         .collect()
 }
 
+/// The compact text for a [`FrontierStanding`] — shared by the frontier point lines and the
+/// Models tab's per-appearance standing. Pure ASCII. (The frontier's *plain* point line uses
+/// a distinct yes/no phrasing, so it intentionally does not route through here.)
+fn frontier_standing_text(standing: &FrontierStanding) -> String {
+    match standing {
+        FrontierStanding::OnFrontier => "on frontier".to_string(),
+        FrontierStanding::Dominated { by } => format!("off (dominated by {by})"),
+        FrontierStanding::CostUnknown => "score only".to_string(),
+    }
+}
+
 fn point_line(point: &FrontierPoint, options: RenderOptions) -> String {
     let cost = match point.cost_per_task_usd {
         Some(value) => format!("@ {}", format_money(&value, Some("USD"), true)),
         None => "@ cost n/a".to_string(),
     };
-    let standing = match &point.standing {
-        FrontierStanding::OnFrontier => "on frontier".to_string(),
-        FrontierStanding::Dominated { by } => format!("off (dominated by {by})"),
-        FrontierStanding::CostUnknown => "score only".to_string(),
-    };
+    let standing = frontier_standing_text(&point.standing);
     let note = point
         .note
         .as_deref()
@@ -1406,6 +1413,203 @@ fn fold_for_ascii(value: &str, options: RenderOptions) -> String {
             .map(|ch| if ch.is_ascii() { ch } else { '?' })
             .collect(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Models tab (T12) — `costroid` TUI tab `4`. Per API-billed model, the spend + token mix
+// (the now/trends-consistent `CostLaneSummary` numbers) fused with the bench/frontier overlay
+// (cost-vs-quality standing + equal-volume re-pricing). API-cost rows ONLY (the frontier is
+// API-only, ARCHITECTURE §9.6). Monochrome (Strong/bold spend only; amber/red reserved for
+// the near-limit state). A model with no bundled-benchmark appearance renders "not
+// benchmarked" — a GAP, never a guessed standing. Local figures are always estimates (the `~`
+// hedge). Mirrors the `render_providers_*` split; plain delimits by labels, never the `─` rule
+// (T11's gotcha).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+pub(crate) fn render_models(view: &ModelsView, options: RenderOptions) -> String {
+    render_models_document(view, options).render(options)
+}
+
+pub(crate) fn render_models_document(view: &ModelsView, options: RenderOptions) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_models_plain_document(view),
+        RenderMode::Braille | RenderMode::Ascii => render_models_visual_document(view, options),
+    }
+}
+
+fn render_models_visual_document(view: &ModelsView, options: RenderOptions) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_header_line(
+        &mut out,
+        mark(options),
+        "models",
+        format_money(&total_models_spend(view), Some("USD"), true),
+        options,
+    );
+    // Scope label (mirrors Now's "period:" line): Models is lifetime-scoped, so it can differ
+    // from the period-scoped Now tab — say so on screen.
+    push_line(&mut out, "scope: all usage (all time)");
+    if view.no_api_usage || view.models.is_empty() {
+        push_rule(&mut out, options);
+        push_line(&mut out, "no API-billed usage to compare");
+    } else {
+        for model in &view.models {
+            push_rule(&mut out, options);
+            out.push(model_spend_line(model));
+            push_line(
+                &mut out,
+                &format!("  tokens: {}", format_token_mix(&model.totals.tokens)),
+            );
+            push_line(
+                &mut out,
+                &format!(
+                    "  frontier: {}",
+                    model_standing_phrase(model.overlay.as_ref())
+                ),
+            );
+            if let Some(phrase) = model_repricing_phrase(model.overlay.as_ref()) {
+                push_line(&mut out, &format!("  {phrase}"));
+            }
+        }
+    }
+    push_rule(&mut out, options);
+    push_models_disclaimer(&mut out, view);
+    push_provider_notes(&mut out, &view.providers);
+    push_empty_provider_guidance(&mut out, &view.providers);
+    out
+}
+
+fn render_models_plain_document(view: &ModelsView) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid models");
+    // Scope label (mirrors Now's "period:" line): lifetime-scoped, unlike the Now tab.
+    push_line(&mut out, "scope: all usage (all time)");
+    if view.no_api_usage || view.models.is_empty() {
+        push_line(&mut out, "no API-billed usage to compare");
+    } else {
+        for model in &view.models {
+            push_line(&mut out, &plain_model_line(model));
+            push_line(
+                &mut out,
+                &format!("  tokens: {}", format_token_mix(&model.totals.tokens)),
+            );
+            push_line(
+                &mut out,
+                &format!(
+                    "  frontier: {}",
+                    model_standing_phrase(model.overlay.as_ref())
+                ),
+            );
+            if let Some(phrase) = model_repricing_phrase(model.overlay.as_ref()) {
+                push_line(&mut out, &format!("  {phrase}"));
+            }
+        }
+    }
+    push_models_disclaimer(&mut out, view);
+    push_provider_notes(&mut out, &view.providers);
+    push_empty_provider_guidance(&mut out, &view.providers);
+    out
+}
+
+fn total_models_spend(view: &ModelsView) -> Decimal {
+    view.models.iter().fold(Decimal::ZERO, |total, model| {
+        total + model.totals.billed_cost
+    })
+}
+
+/// The visual per-model spend line: name (bold) + the always-estimated (`~`) spend (bold) +
+/// the honest pricing-coverage badge (e.g. "(partial pricing)") when some rows were unpriced.
+fn model_spend_line(model: &ModelRow) -> StyledLine {
+    let mut line = StyledLine::new();
+    line.push_styled(model.model.clone(), SemanticStyle::Strong);
+    line.push_plain("  spent ".to_string());
+    line.push_styled(
+        format_money(
+            &model.totals.billed_cost,
+            model.totals.currency.as_deref(),
+            true,
+        ),
+        SemanticStyle::Strong,
+    );
+    let badge = pricing_badge_plain(&model.totals);
+    if !badge.is_empty() {
+        line.push_plain(format!(" ({})", badge.trim_start_matches(", ")));
+    }
+    line
+}
+
+fn plain_model_line(model: &ModelRow) -> String {
+    let mut line = format!(
+        "{}: spent {}",
+        model.model,
+        format_money(
+            &model.totals.billed_cost,
+            model.totals.currency.as_deref(),
+            true
+        )
+    );
+    let badge = pricing_badge_plain(&model.totals);
+    if !badge.is_empty() {
+        line.push_str(&format!(" ({})", badge.trim_start_matches(", ")));
+    }
+    line
+}
+
+/// The token mix for a model: input / output / cache (read+write summed). Pure ASCII
+/// (thousands-grouped), so it renders identically in `--plain`.
+fn format_token_mix(tokens: &TokenTotals) -> String {
+    format!(
+        "{} in / {} out / {} cache",
+        with_thousands(&tokens.input.to_string()),
+        with_thousands(&tokens.output.to_string()),
+        with_thousands(&(tokens.cache_read + tokens.cache_write).to_string()),
+    )
+}
+
+/// A compact frontier-standing summary across a model's bench appearances. No overlay, or a
+/// matched overlay with empty `appearances`, => "not benchmarked" — a GAP, never a fabricated
+/// standing. Pure ASCII (benchmark names + model ids are ASCII catalog data).
+fn model_standing_phrase(overlay: Option<&OverlayModel>) -> String {
+    match overlay {
+        Some(model) if !model.appearances.is_empty() => model
+            .appearances
+            .iter()
+            .map(|appearance| {
+                format!(
+                    "{} {}% - {}",
+                    appearance.benchmark_name,
+                    appearance.score_pct.normalize(),
+                    frontier_standing_text(&appearance.standing)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
+        _ => "not benchmarked".to_string(),
+    }
+}
+
+/// The most-favorable equal-volume re-pricing phrase, if any — reuses the frontier's
+/// `best_delta`/`delta_phrase` (cost-only; INFORM never PRESCRIBE; pure ASCII). `None` when
+/// there is no computed comparison (un-benchmarked, a rate gap, or an unpriced baseline).
+fn model_repricing_phrase(overlay: Option<&OverlayModel>) -> Option<String> {
+    let delta = best_delta(overlay?)?;
+    let phrase = delta_phrase(delta);
+    if phrase.is_empty() {
+        None
+    } else {
+        Some(phrase.trim_start_matches("; ").to_string())
+    }
+}
+
+fn push_models_disclaimer(out: &mut StyledDocument, view: &ModelsView) {
+    push_line(
+        out,
+        &format!(
+            "{} (pricing as of {})",
+            view.disclaimer.note, view.disclaimer.pricing_as_of
+        ),
+    );
 }
 
 fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> StyledLine {
@@ -3600,6 +3804,11 @@ mod tests {
             providers.is_ascii(),
             "ascii providers tab must be pure ASCII: {providers}"
         );
+        let models = render_models(&models_view_fixture(), RenderOptions::ascii(false));
+        assert!(
+            models.is_ascii(),
+            "ascii models tab must be pure ASCII: {models}"
+        );
     }
 
     #[test]
@@ -3662,6 +3871,8 @@ mod tests {
                 &provider_statuses_for_tab(),
                 RenderOptions::plain(),
             ),
+            render_models(&models_view_fixture(), RenderOptions::plain()),
+            render_models(&empty_models_view(), RenderOptions::plain()),
         ];
         for output in outputs {
             assert!(
@@ -3771,6 +3982,160 @@ mod tests {
                 assert!(
                     !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
                     "providers tab must be monochrome (amber/red are reserved): {span:?}"
+                );
+            }
+        }
+    }
+
+    fn models_view_fixture() -> ModelsView {
+        // gpt-5.5: on a benchmark frontier, with a computed equal-volume re-pricing delta
+        // (a cheaper target) — the spend + tokens + standing + repricing all-arms case.
+        let on_frontier = OverlayModel {
+            model_id: "gpt-5.5".to_string(),
+            raw_model: "gpt-5.5".to_string(),
+            billed_cost: Decimal::new(1234, 2),
+            tokens: costroid_core::TokenTotals {
+                input: 1_000,
+                output: 2_000,
+                cache_read: 500,
+                cache_write: 0,
+            },
+            appearances: vec![costroid_core::OverlayAppearance {
+                benchmark_name: "swe-bench".to_string(),
+                score_pct: Decimal::new(72, 0),
+                standing: FrontierStanding::OnFrontier,
+            }],
+            repricing: vec![RepricingDelta {
+                target_model_id: "claude-haiku-4".to_string(),
+                target_label: "claude haiku 4".to_string(),
+                delta_usd: Decimal::new(-400, 2),
+                status: RepricingStatus::Computed,
+                on_frontier_in: vec!["swe-bench".to_string()],
+            }],
+            fully_priced: true,
+        };
+        // claude-opus-4: benchmarked but dominated; partial pricing (a missing-price row) —
+        // exercises the dominated standing + the honest pricing-coverage badge.
+        let dominated = OverlayModel {
+            model_id: "claude-opus-4".to_string(),
+            raw_model: "claude-opus-4".to_string(),
+            billed_cost: Decimal::new(880, 2),
+            tokens: costroid_core::TokenTotals::default(),
+            appearances: vec![costroid_core::OverlayAppearance {
+                benchmark_name: "swe-bench".to_string(),
+                score_pct: Decimal::new(70, 0),
+                standing: FrontierStanding::Dominated {
+                    by: "gpt-5.5".to_string(),
+                },
+            }],
+            repricing: Vec::new(),
+            fully_priced: false,
+        };
+        ModelsView {
+            generated_at: utc(2026, 6, 2, 9, 0),
+            // Pre-sorted by spend desc, as `models_view` emits them.
+            models: vec![
+                ModelRow {
+                    model: "gpt-5.5".to_string(),
+                    totals: totals(1234, 3, 0, 0),
+                    overlay: Some(on_frontier),
+                },
+                ModelRow {
+                    model: "claude-opus-4".to_string(),
+                    totals: totals(880, 2, 1, 0),
+                    overlay: Some(dominated),
+                },
+                // mystery-model: NOT on any benchmark (no overlay match) — the gap case.
+                ModelRow {
+                    model: "mystery-model".to_string(),
+                    totals: totals(210, 3, 0, 0),
+                    overlay: None,
+                },
+            ],
+            no_api_usage: false,
+            disclaimer: costroid_core::BenchDisclaimer {
+                note: "~ cost-only comparison at equal token volume; not a quality claim.",
+                pricing_as_of: "2026-05-01".to_string(),
+            },
+            providers: Vec::new(),
+        }
+    }
+
+    fn empty_models_view() -> ModelsView {
+        ModelsView {
+            generated_at: utc(2026, 6, 2, 9, 0),
+            models: Vec::new(),
+            no_api_usage: true,
+            disclaimer: costroid_core::BenchDisclaimer {
+                note: "~ cost-only comparison at equal token volume; not a quality claim.",
+                pricing_as_of: "2026-05-01".to_string(),
+            },
+            providers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn snapshot_models_braille() {
+        insta::assert_snapshot!(render_models(
+            &models_view_fixture(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_models_ascii() {
+        insta::assert_snapshot!(render_models(
+            &models_view_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_models_plain() {
+        insta::assert_snapshot!(render_models(
+            &models_view_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_models_no_api_usage() {
+        insta::assert_snapshot!(render_models(&empty_models_view(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn models_render_shows_spend_tokens_and_standing_unbenchmarked_is_a_gap() {
+        let output = render_models(&models_view_fixture(), RenderOptions::plain());
+        // Spend is ALWAYS an estimate (the `~` hedge).
+        assert!(output.contains("gpt-5.5: spent ~$12.34"));
+        // Token mix is surfaced.
+        assert!(output.contains("tokens: 10 in / 20 out / 30 cache"));
+        // Frontier standing per benchmark.
+        assert!(output.contains("frontier: swe-bench 72% - on frontier"));
+        assert!(output.contains("frontier: swe-bench 70% - off (dominated by gpt-5.5)"));
+        // Equal-volume re-pricing, cost-only (INFORM, never PRESCRIBE).
+        assert!(output.contains("claude-haiku-4 costs about ~$4.00 less at equal volume"));
+        assert!(!output.to_lowercase().contains("switch to"));
+        // Partial pricing is surfaced honestly, never hidden.
+        assert!(output.contains("claude-opus-4: spent ~$8.80 (partial pricing)"));
+        // An un-benchmarked model is a GAP, never a guessed standing.
+        assert!(output.contains("mystery-model: spent ~$2.10"));
+        assert!(output.contains("frontier: not benchmarked"));
+        // The cost-only hedge note is footnoted.
+        assert!(output.contains("cost-only comparison at equal token volume"));
+    }
+
+    #[test]
+    fn models_document_is_monochrome() {
+        // The Models tab is advisory, so amber/red (Warn/Critical, reserved for the
+        // near-limit/over-budget state) must never appear — bold (Strong) spend is an allowed
+        // non-color cue, mirroring `frontier_document_is_monochrome`.
+        let doc = render_models_document(&models_view_fixture(), RenderOptions::braille(true));
+        for line in &doc.lines {
+            for span in &line.spans {
+                assert!(
+                    !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
+                    "models tab must be monochrome (amber/red are reserved): {span:?}"
                 );
             }
         }
