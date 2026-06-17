@@ -2105,6 +2105,37 @@ fn alert_sentence(alert: &Alert) -> String {
             format_money(spent_usd, Some("USD"), true),
             format_money(target_usd, Some("USD"), true),
         ),
+        // Advisory (T17b): a projection, framed as such — never asserted as a present overrun.
+        Alert::Forecast {
+            projected_month_usd,
+            target_usd,
+            projected_over_by_usd,
+        } => format!(
+            "total budget projected over by {}, {} projected of {}",
+            format_over_by(projected_over_by_usd),
+            format_money(projected_month_usd, Some("USD"), true),
+            format_money(target_usd, Some("USD"), true),
+        ),
+        // Advisory (T17b): a spend spike vs the user's own norm. The "~Nx your $Y norm" multiple is
+        // shown only when it reads honestly (mirrors the Anomalies tab); otherwise "well above".
+        Alert::SpendSpike {
+            date,
+            value_usd,
+            baseline_median_usd,
+            magnitude,
+        } => {
+            let median_display = format_money(baseline_median_usd, Some("USD"), true);
+            let baseline_displays_zero = baseline_median_usd.round_dp(2) == Decimal::ZERO;
+            let comparison = match anomaly_multiple_phrase(*magnitude, baseline_displays_zero) {
+                Some(multiple) => format!("~{multiple}x your {median_display} norm"),
+                None => format!("well above your {median_display} norm"),
+            };
+            format!(
+                "daily spend spike: {} on {}, {comparison}",
+                format_money(value_usd, Some("USD"), true),
+                date.format("%b %d"),
+            )
+        }
     }
 }
 
@@ -2119,7 +2150,8 @@ fn alert_cue(alert: &Alert) -> &'static str {
     }
 }
 
-/// The plain (screen-reader) spelled-out cue, one per severity/class.
+/// The plain (screen-reader) spelled-out cue, one per severity/class. The two advisory sources
+/// (T17b) carry their own heads-up cue, distinct from the hard quota/budget crossings.
 fn alert_plain_cue(alert: &Alert) -> &'static str {
     match alert {
         Alert::Quota {
@@ -2131,6 +2163,8 @@ fn alert_plain_cue(alert: &Alert) -> &'static str {
             ..
         } => " (critical)",
         Alert::Budget { .. } => " (over budget)",
+        Alert::Forecast { .. } => " (projected over budget)",
+        Alert::SpendSpike { .. } => " (spend spike)",
     }
 }
 
@@ -5957,6 +5991,92 @@ mod tests {
         assert_eq!(
             alert_sentence(&budget),
             "total budget over by ~$10.00, spent ~$110.00 of ~$100.00"
+        );
+    }
+
+    #[test]
+    fn forecast_alert_copy_is_framed_as_a_projection() {
+        // Advisory (T17b): the copy says "projected", never asserts a present overrun, and every $
+        // figure is `~`-hedged (a local estimate).
+        let forecast = Alert::Forecast {
+            projected_month_usd: Decimal::new(15_000, 2),
+            target_usd: Decimal::new(10_000, 2),
+            projected_over_by_usd: Decimal::new(5_000, 2),
+        };
+        let sentence = alert_sentence(&forecast);
+        assert_eq!(
+            sentence,
+            "total budget projected over by ~$50.00, ~$150.00 projected of ~$100.00"
+        );
+        assert!(
+            sentence.contains("projected"),
+            "forecast copy must read as a projection: {sentence}"
+        );
+        assert!(sentence.is_ascii(), "{sentence}");
+    }
+
+    #[test]
+    fn spend_spike_alert_copy_cites_the_norm() {
+        // Advisory (T17b): "~Nx your $Y norm" when the multiple reads honestly, both figures hedged.
+        let spike = Alert::SpendSpike {
+            date: anomaly_date(2026, 6, 16),
+            value_usd: Decimal::new(2_000, 2),
+            baseline_median_usd: Decimal::new(250, 2),
+            magnitude: Some(Decimal::new(80, 1)), // 8.0x
+        };
+        let sentence = alert_sentence(&spike);
+        assert_eq!(
+            sentence,
+            "daily spend spike: ~$20.00 on Jun 16, ~8.0x your ~$2.50 norm"
+        );
+        assert!(sentence.is_ascii(), "{sentence}");
+    }
+
+    #[test]
+    fn spend_spike_alert_copy_is_descriptive_when_the_median_displays_zero() {
+        // A "~Nx your $0.00 norm" would be self-contradictory — fall back to "well above" (mirrors
+        // the Anomalies tab honesty guard).
+        let spike = Alert::SpendSpike {
+            date: anomaly_date(2026, 6, 16),
+            value_usd: Decimal::new(500, 2),
+            baseline_median_usd: Decimal::ZERO,
+            magnitude: None,
+        };
+        let sentence = alert_sentence(&spike);
+        assert_eq!(
+            sentence,
+            "daily spend spike: ~$5.00 on Jun 16, well above your ~$0.00 norm"
+        );
+    }
+
+    #[test]
+    fn advisory_alerts_are_non_color_cued_and_ascii_in_plain() {
+        // Once opted in, the advisory alerts render like any alert: a distinct spelled-out plain
+        // cue (never color alone) and pure ASCII.
+        let advisory = vec![
+            Alert::Forecast {
+                projected_month_usd: Decimal::new(15_000, 2),
+                target_usd: Decimal::new(10_000, 2),
+                projected_over_by_usd: Decimal::new(5_000, 2),
+            },
+            Alert::SpendSpike {
+                date: anomaly_date(2026, 6, 16),
+                value_usd: Decimal::new(2_000, 2),
+                baseline_median_usd: Decimal::new(250, 2),
+                magnitude: Some(Decimal::new(80, 1)),
+            },
+        ];
+        // Distinct plain cues, neither colliding with the hard-crossing cues.
+        assert_eq!(alert_plain_cue(&advisory[0]), " (projected over budget)");
+        assert_eq!(alert_plain_cue(&advisory[1]), " (spend spike)");
+        // Neither is critical-tier (advisory = the lighter heads-up tier).
+        assert!(!advisory[0].is_critical() && !advisory[1].is_critical());
+        let plain = render_alerts(&advisory, RenderOptions::plain());
+        assert!(plain.contains("(projected over budget)"), "{plain}");
+        assert!(plain.contains("(spend spike)"), "{plain}");
+        assert!(
+            plain.is_ascii(),
+            "plain advisory output must be ASCII: {plain}"
         );
     }
 

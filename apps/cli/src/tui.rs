@@ -169,6 +169,11 @@ struct App {
     /// The quota alert thresholds (T17), from the config `[alerts]` overrides (canonical defaults
     /// when unset). Consumed by [`costroid_core::active_alerts`] only when `alerts_enabled`.
     alert_thresholds: AlertThresholds,
+    /// The opt-in advisory alert sub-flags (T17b), each already AND-ed with the master `enabled`
+    /// at load (so they are only ever `true` when alerts are enabled too). Drive whether the
+    /// forecast-projection / spend-spike advisory views are built + fed to the detector.
+    alerts_forecast: bool,
+    alerts_anomalies: bool,
     /// The Providers-tab connection lane, gathered once read-only over the existing
     /// keychain/registry (no network). Connect-gated: absent from the default build.
     #[cfg(feature = "connect")]
@@ -208,6 +213,8 @@ impl App {
             budget_targets: BudgetTargets::default(),
             alerts_enabled: false,
             alert_thresholds: AlertThresholds::default(),
+            alerts_forecast: false,
+            alerts_anomalies: false,
             #[cfg(feature = "connect")]
             connections: Vec::new(),
         }
@@ -409,13 +416,29 @@ impl App {
                                 group_by: GroupBy::Model,
                             },
                         );
-                        // The opt-in alert banner (T17), computed from the UNFILTERED summary +
-                        // this month's budget (a filter is a display convenience, never an alert
-                        // scope). Empty when disabled — then the banner is a no-op.
+                        // The opt-in alert banner (T17 + the T17b advisory sources), computed from
+                        // the UNFILTERED summary + this month's budget (a filter is a display
+                        // convenience, never an alert scope). Each advisory view is built ONLY when
+                        // its sub-flag is on. Empty when disabled — then the banner is a no-op.
                         let alerts = if self.alerts_enabled {
                             let budget =
                                 costroid_core::budget_view(&snapshot, &self.budget_targets);
-                            costroid_core::active_alerts(&summary, &budget, &self.alert_thresholds)
+                            let forecast = self
+                                .alerts_forecast
+                                .then(|| costroid_core::forecast_view(&snapshot));
+                            let anomalies = self
+                                .alerts_anomalies
+                                .then(|| costroid_core::anomalies_view(&snapshot));
+                            let advisory = costroid_core::AdvisoryAlerts {
+                                forecast: forecast.as_ref(),
+                                anomalies: anomalies.as_ref(),
+                            };
+                            costroid_core::active_alerts(
+                                &summary,
+                                &budget,
+                                &self.alert_thresholds,
+                                advisory,
+                            )
                         } else {
                             Vec::new()
                         };
@@ -586,6 +609,8 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
             app.budget_targets = loaded.budget_targets();
             app.alerts_enabled = loaded.alerts_enabled();
             app.alert_thresholds = loaded.alert_thresholds();
+            app.alerts_forecast = loaded.alerts_forecast_enabled();
+            app.alerts_anomalies = loaded.alerts_anomalies_enabled();
         }
         Err(error) => app.status = Some(format!("config: {error}")),
     }

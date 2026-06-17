@@ -881,26 +881,36 @@ pub const ALERT_WARN_FRACTION: f64 = 0.80;
 /// [`AlertThresholds::quota_critical_fraction`].
 pub const ALERT_CRITICAL_FRACTION: f64 = 0.95;
 
-/// Detect the active threshold crossings over a point-in-time snapshot (T17) — PURE and
-/// config-neutral: the [`AlertThresholds`] are an INPUT, never read from a file (mirrors
-/// [`budget_view`]). The two alert classes are gathered independently and NEVER mixed:
+/// Detect the active threshold crossings over a point-in-time snapshot — PURE and config-neutral:
+/// the [`AlertThresholds`] and the opt-in [`AdvisoryAlerts`] sources are INPUTS, never read from a
+/// file (mirrors [`budget_view`]). The alert sources are gathered independently and NEVER mixed:
 ///
-/// * **Quota (%)** — one alert per quota window at/above a fraction threshold, fired ONLY off a
-///   fresh, cross-checked [`LimitAvailability::Available`] reading (a token-fraction, or a dollar
+/// * **Quota (%)** (T17) — one alert per quota window at/above a fraction threshold, fired ONLY off
+///   a fresh, cross-checked [`LimitAvailability::Available`] reading (a token-fraction, or a dollar
 ///   `Spend` pool with a known allowance). An `Unverified`/`Estimated`/`Partial`/`Unavailable`
 ///   reading is NEVER alerted (the T15 discipline / ARCHITECTURE §9.2 — degrade, never a confident
 ///   wrong alarm; staleness is already aged-out to `Estimated` upstream by `now_summary`).
-/// * **Budget ($)** — one alert per [`BudgetRow`] STRICTLY over its monthly target (riding
+/// * **Budget ($)** (T17) — one alert per [`BudgetRow`] STRICTLY over its monthly target (riding
 ///   `over_by_usd`), API-lane only.
+/// * **Forecast projection ($, advisory)** (T17b) — fires ONLY when `advisory.forecast` is `Some`
+///   (its opt-in sub-flag is on): a real `SpendForecast::Projected` month-end total that STRICTLY
+///   exceeds an existing, not-already-over `BudgetScope::Total` target. `InsufficientData` (the
+///   noisy early-month state) never fires, and an already-over total is owned by the hard Budget
+///   alert above — never double-alerted. Total-scope only (the forecast projects the total).
+/// * **Spend spike ($, advisory)** (T17b) — fires ONLY when `advisory.anomalies` is `Some`: one
+///   alert per [`AnomalySignal::SpendSpike`] `anomalies_view` produced (already gated upstream on
+///   enough history + the conservative `3.5·MAD` — never fabricated here).
 ///
-/// Forecast projected-hits + anomaly callouts are intentionally NOT alert sources — they stay
-/// advisory on their own tabs (alerting on them is a deferred fast-follow, §12.23). The result is
-/// ordered critical-tier first (so a `--check` / banner headline is the most pressing crossing),
-/// stable within a tier (quota windows in `limits` order, then budgets most-utilized first).
+/// Both advisory variants are `is_critical() == false` (a heads-up, not a hard crossing). The
+/// result is ordered critical-tier first (so a `--check` / banner headline is the most pressing
+/// crossing), a STABLE sort that preserves the insertion order within a tier: CRITICAL quota +
+/// over-budget, then WARN quota, then the forecast projection, then the spend spike. With both
+/// advisory sources off (`AdvisoryAlerts::default()`), the output is byte-identical to T17.
 pub fn active_alerts(
     now: &NowSummary,
     budget: &BudgetView,
     thresholds: &AlertThresholds,
+    advisory: AdvisoryAlerts<'_>,
 ) -> Vec<Alert> {
     let mut alerts: Vec<Alert> = Vec::new();
 
@@ -923,10 +933,68 @@ pub fn active_alerts(
         }
     }
 
-    // Most-pressing first: critical-tier (CRITICAL quota + any over-budget) before WARN quota.
-    // A STABLE sort, so the within-tier order above is preserved.
+    // Advisory: forecast TOTAL-budget projection (T17b) — opt-in via `advisory.forecast`. Pushed
+    // AFTER the hard classes so the stable sort lands it after quota WARN (it is non-critical).
+    if let Some(forecast) = advisory.forecast {
+        if let Some(alert) = forecast_budget_alert(forecast, budget) {
+            alerts.push(alert);
+        }
+    }
+
+    // Advisory: spend-spike anomaly (T17b) — opt-in via `advisory.anomalies`. `anomalies_view`
+    // already gated the spike on enough history + the 3.5·MAD threshold; we never fabricate one.
+    // Model-mix shifts are intentionally NOT alerted (informational, not a cost/quota crossing).
+    if let Some(anomalies) = advisory.anomalies {
+        for anomaly in &anomalies.anomalies {
+            if let AnomalySignal::SpendSpike { date } = &anomaly.signal {
+                alerts.push(Alert::SpendSpike {
+                    date: *date,
+                    value_usd: anomaly.value,
+                    baseline_median_usd: anomaly.baseline_median,
+                    magnitude: anomaly.magnitude,
+                });
+            }
+        }
+    }
+
+    // Most-pressing first: critical-tier (CRITICAL quota + any over-budget) before everything
+    // non-critical (WARN quota, then the advisory sources). A STABLE sort, so the within-tier
+    // insertion order above is preserved.
     alerts.sort_by_key(|alert| if alert.is_critical() { 0 } else { 1 });
     alerts
+}
+
+/// The forecast TOTAL-budget projection advisory alert (T17b), or `None` when it must not fire.
+/// Fires only when ALL hold: the projection is a real [`SpendForecast::Projected`] (never the
+/// early-month [`SpendForecast::InsufficientData`] — no noisy projection); a [`BudgetScope::Total`]
+/// row exists (the user set a total budget) and is NOT already over (`over_by_usd.is_none()` — when
+/// already over, T17's hard [`Alert::Budget`] owns it, so we never double-alert); and the
+/// projection STRICTLY exceeds the total target (a projection exactly at target is not "expected to
+/// exceed"). Total-scope only — `forecast_view` projects the total, not per-tool.
+fn forecast_budget_alert(forecast: &ForecastView, budget: &BudgetView) -> Option<Alert> {
+    let SpendForecast::Projected {
+        projected_month_usd,
+        ..
+    } = &forecast.spend
+    else {
+        return None;
+    };
+    let projected_month_usd = *projected_month_usd;
+    let total = budget
+        .rows
+        .iter()
+        .find(|row| row.scope == BudgetScope::Total)?;
+    if total.over_by_usd.is_some() {
+        return None;
+    }
+    if projected_month_usd <= total.target_usd {
+        return None;
+    }
+    Some(Alert::Forecast {
+        projected_month_usd,
+        target_usd: total.target_usd,
+        projected_over_by_usd: projected_month_usd - total.target_usd,
+    })
 }
 
 /// One quota window's alert, or `None` when it must not fire. Fires ONLY off a fresh,
@@ -2517,6 +2585,24 @@ impl Default for AlertThresholds {
     }
 }
 
+/// The opt-in **advisory** alert sources (T17b), passed to [`active_alerts`] as borrowed,
+/// already-computed views. Each is `Some(view)` only when its OWN default-off sub-flag is on, and
+/// `None` when off — so the master `enabled` switch (enforced upstream by the apps/cli config
+/// layer) still gates the whole feature, these are sub-flags within it. Config-neutral like
+/// [`AlertThresholds`]: core reads no file and computes no view here — the caller decides each flag
+/// and hands in the view. With both `None` (the [`Default`]) `active_alerts` is byte-identical to
+/// its T17 quota+budget output. The borrows let the detector read without cloning; the struct is
+/// `Copy` (two `Option<&_>`), so it is cheap to pass.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AdvisoryAlerts<'a> {
+    /// `Some(forecast)` enables the TOTAL-budget projection source ([`Alert::Forecast`]); `None` =
+    /// off. Total-scope only — [`forecast_view`] projects the total, not per-tool.
+    pub forecast: Option<&'a ForecastView>,
+    /// `Some(anomalies)` enables the spend-spike source ([`Alert::SpendSpike`]); `None` = off. Only
+    /// [`AnomalySignal::SpendSpike`] anomalies alert — model-mix shifts never do.
+    pub anomalies: Option<&'a AnomaliesView>,
+}
+
 /// The severity of a quota alert — WARN (near the limit) vs CRITICAL (very near / at it). Budget
 /// alerts carry no level: a budget alert fires only when STRICTLY over target, an inherently
 /// critical-tier state (see [`Alert::is_critical`]).
@@ -2527,12 +2613,14 @@ pub enum AlertLevel {
     Critical,
 }
 
-/// One active threshold crossing the user opted in to see (T17). The two classes are SEPARATE
-/// variants and are NEVER mixed: a quota window crossing a % threshold vs a budget crossing its
-/// monthly $ target. A computed signal carrying `f64`/`Decimal` — `Serialize`-only, `PartialEq`
-/// (not `Eq`), never persisted (mirrors the Step-5 view types). Its producer [`active_alerts`]
-/// keeps it honest: a quota alert fires ONLY off a fresh, cross-checked
-/// [`LimitAvailability::Available`] reading.
+/// One active alert the user opted in to see. The sources are SEPARATE variants and are NEVER
+/// mixed: the two hard crossings — a quota window over a % threshold ([`Alert::Quota`]) and a
+/// budget over its monthly $ target ([`Alert::Budget`]) — plus the two opt-in advisory heads-ups
+/// (T17b) — a month-end projection over the total budget ([`Alert::Forecast`]) and a daily spend
+/// spike ([`Alert::SpendSpike`]). A computed signal carrying `f64`/`Decimal` — `Serialize`-only,
+/// `PartialEq` (not `Eq`), never persisted (mirrors the Step-5 view types). Its producer
+/// [`active_alerts`] keeps it honest: a quota alert fires ONLY off a fresh, cross-checked
+/// [`LimitAvailability::Available`] reading, the advisory sources only when their sub-flag is on.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "class")]
 pub enum Alert {
@@ -2557,15 +2645,48 @@ pub enum Alert {
         target_usd: Decimal,
         over_by_usd: Decimal,
     },
+    /// A month-end PROJECTION expected to exceed the user's TOTAL budget target — the advisory
+    /// forecast class (T17b), opt-in via [`AdvisoryAlerts::forecast`]. Total-scope only (the
+    /// forecast projects the total, not per-tool); fires only off a real
+    /// [`SpendForecast::Projected`] strictly over a not-already-over total target (see
+    /// [`forecast_budget_alert`]). Advisory-tier: `is_critical()` is false. Every figure is an
+    /// estimate (the `~` hedge is the render layer's).
+    Forecast {
+        /// The projected month-end API-lane spend (an estimate).
+        projected_month_usd: Decimal,
+        /// The TOTAL monthly $ target the projection is expected to exceed.
+        target_usd: Decimal,
+        /// `projected_month_usd − target_usd` — the projected overage (always strictly positive).
+        projected_over_by_usd: Decimal,
+    },
+    /// A daily API-lane spend SPIKE vs the user's own trailing-window norm — the advisory anomaly
+    /// class (T17b), opt-in via [`AdvisoryAlerts::anomalies`]. Mirrors one
+    /// [`AnomalySignal::SpendSpike`] from `anomalies_view` (already gated on enough history + the
+    /// conservative `3.5·MAD`). Advisory-tier: `is_critical()` is false. Every figure is an
+    /// estimate (the `~` hedge is the render layer's).
+    SpendSpike {
+        /// The UTC day that spiked.
+        date: NaiveDate,
+        /// The day's API-lane spend (an estimate).
+        value_usd: Decimal,
+        /// The trailing-window $ median the spike is compared against.
+        baseline_median_usd: Decimal,
+        /// `value ÷ baseline_median` — the "~N× your norm" multiple, `None` when the median is `0`
+        /// (the multiple is undefined; the render falls back to a descriptive phrase).
+        magnitude: Option<Decimal>,
+    },
 }
 
 impl Alert {
     /// True for a critical-tier crossing (a CRITICAL quota reading or any over-budget state) — the
-    /// render uses this to pick the `!!` cue / red style; a WARN quota is the lighter `!` / amber.
+    /// render uses this to pick the `!!` cue / red style; a WARN quota and both advisory sources
+    /// (forecast projection, spend spike) are the lighter `!` / amber heads-up tier.
     pub fn is_critical(&self) -> bool {
         match self {
             Alert::Quota { level, .. } => *level == AlertLevel::Critical,
             Alert::Budget { .. } => true,
+            // Advisory heads-ups, never a hard crossing.
+            Alert::Forecast { .. } | Alert::SpendSpike { .. } => false,
         }
     }
 }
@@ -2623,6 +2744,13 @@ mod tests {
             LocalResult::Ambiguous(_, _) | LocalResult::None => {
                 panic!("test timestamp should be valid")
             }
+        }
+    }
+
+    fn naive_date(year: i32, month: u32, day: u32) -> NaiveDate {
+        match NaiveDate::from_ymd_opt(year, month, day) {
+            Some(date) => date,
+            None => panic!("test date should be valid"),
         }
     }
 
@@ -3083,7 +3211,12 @@ mod tests {
                 available_fraction(0.5),
             ),
         ]);
-        let alerts = active_alerts(&now, &no_budget(), &AlertThresholds::default());
+        let alerts = active_alerts(
+            &now,
+            &no_budget(),
+            &AlertThresholds::default(),
+            AdvisoryAlerts::default(),
+        );
         assert_eq!(alerts.len(), 2, "the 50% window must not fire: {alerts:?}");
         // Critical-tier first.
         match &alerts[0] {
@@ -3148,7 +3281,12 @@ mod tests {
                 },
             ),
         ]);
-        let alerts = active_alerts(&now, &no_budget(), &AlertThresholds::default());
+        let alerts = active_alerts(
+            &now,
+            &no_budget(),
+            &AlertThresholds::default(),
+            AdvisoryAlerts::default(),
+        );
         assert!(
             alerts.is_empty(),
             "no alert may fire off a non-fresh reading: {alerts:?}"
@@ -3169,6 +3307,7 @@ mod tests {
             &now_with_limits(Vec::new()),
             &budget,
             &AlertThresholds::default(),
+            AdvisoryAlerts::default(),
         );
         assert_eq!(
             alerts.len(),
@@ -3221,7 +3360,12 @@ mod tests {
                 },
             ),
         ]);
-        let alerts = active_alerts(&now, &no_budget(), &AlertThresholds::default());
+        let alerts = active_alerts(
+            &now,
+            &no_budget(),
+            &AlertThresholds::default(),
+            AdvisoryAlerts::default(),
+        );
         assert_eq!(
             alerts.len(),
             1,
@@ -3251,7 +3395,12 @@ mod tests {
             available_fraction(0.82),
         )]);
         let budget = budget_with_rows(vec![alert_budget_row(BudgetScope::Total, 10_000, 11_000)]);
-        let alerts = active_alerts(&now, &budget, &AlertThresholds::default());
+        let alerts = active_alerts(
+            &now,
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts::default(),
+        );
         assert_eq!(alerts.len(), 2);
         assert!(matches!(alerts[0], Alert::Budget { .. }), "{alerts:?}");
         assert!(
@@ -3287,7 +3436,7 @@ mod tests {
                 available_fraction(0.95),
             ),
         ]);
-        let alerts = active_alerts(&now, &no_budget(), &thresholds);
+        let alerts = active_alerts(&now, &no_budget(), &thresholds, AdvisoryAlerts::default());
         assert_eq!(alerts.len(), 2);
         // 0.95 ≥ 0.90 → critical (sorts first); 0.60 ≥ 0.50 → warn.
         assert!(matches!(
@@ -3304,6 +3453,361 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // ----- active_alerts advisory sources (T17b) -----
+
+    /// A minimal [`ForecastView`] carrying just the `spend` arm the advisory detector reads.
+    fn forecast_with_spend(spend: SpendForecast) -> ForecastView {
+        ForecastView {
+            generated_at: utc_datetime(2026, 6, 16, 12, 0, 0),
+            no_api_usage: false,
+            spend,
+            daily_actuals: Vec::new(),
+            quota_etas: Vec::new(),
+        }
+    }
+
+    /// A `Projected` month-end spend of `projected_cents` (the rest of the projection is unread by
+    /// the detector, so the basis figures are illustrative).
+    fn projected(projected_cents: i64) -> SpendForecast {
+        SpendForecast::Projected {
+            projected_month_usd: Decimal::new(projected_cents, 2),
+            spend_to_date_usd: Decimal::new(projected_cents / 2, 2),
+            days_elapsed: 16,
+            days_in_month: 30,
+        }
+    }
+
+    /// An [`AnomaliesView`] carrying exactly the supplied anomalies (history gates already passed
+    /// upstream — the detector trusts the view and never re-derives them).
+    fn anomalies_with(anomalies: Vec<Anomaly>) -> AnomaliesView {
+        AnomaliesView {
+            generated_at: utc_datetime(2026, 6, 16, 12, 0, 0),
+            history_days: 12,
+            min_history_days: 7,
+            baseline_days: 14,
+            enough_history: true,
+            no_usage: false,
+            anomalies,
+        }
+    }
+
+    fn spend_spike_anomaly(date: NaiveDate, value_cents: i64, median_cents: i64) -> Anomaly {
+        let value = Decimal::new(value_cents, 2);
+        let median = Decimal::new(median_cents, 2);
+        Anomaly {
+            signal: AnomalySignal::SpendSpike { date },
+            value,
+            baseline_median: median,
+            deviation: value - median,
+            magnitude: (median > Decimal::ZERO).then(|| value / median),
+            baseline_days: 12,
+        }
+    }
+
+    #[test]
+    fn active_alerts_advisory_off_is_byte_identical_to_t17() {
+        // Inputs where BOTH advisory sources WOULD fire if their sub-flag were on: a quota WARN, an
+        // over-budget per-tool row, a not-over Total the projection exceeds, and a spend spike. With
+        // the advisory sources OFF (the Default), the output must be exactly the T17 quota+budget
+        // set — proving the sub-flag IS the opt-in (no advisory variant leaks in).
+        let now = now_with_limits(vec![alert_limit(
+            ProviderId::ClaudeCode,
+            LimitKind::Weekly,
+            available_fraction(0.82),
+        )]);
+        // A per-tool budget OVER (the hard Budget alert) + a Total NOT over (so the forecast source
+        // has an under-target total to project past — an already-over total would suppress it).
+        let budget = budget_with_rows(vec![
+            alert_budget_row(BudgetScope::Tool("codex".to_string()), 5_000, 6_000),
+            alert_budget_row(BudgetScope::Total, 10_000, 4_000),
+        ]);
+        let forecast = forecast_with_spend(projected(50_000));
+        let anomalies = anomalies_with(vec![spend_spike_anomaly(
+            naive_date(2026, 6, 16),
+            2_000,
+            250,
+        )]);
+
+        let baseline = active_alerts(
+            &now,
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts::default(),
+        );
+        let with_views = active_alerts(
+            &now,
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: Some(&forecast),
+                anomalies: Some(&anomalies),
+            },
+        );
+
+        // Default-off is exactly the two hard classes (over-budget critical first, then WARN quota).
+        assert_eq!(baseline.len(), 2, "{baseline:?}");
+        assert!(matches!(baseline[0], Alert::Budget { .. }));
+        assert!(matches!(
+            baseline[1],
+            Alert::Quota {
+                level: AlertLevel::Warn,
+                ..
+            }
+        ));
+        assert!(
+            !baseline
+                .iter()
+                .any(|a| matches!(a, Alert::Forecast { .. } | Alert::SpendSpike { .. })),
+            "advisory sources must NOT fire when off: {baseline:?}"
+        );
+        // Turning the sub-flags on is strictly additive: the first two stay identical, two more append.
+        assert_eq!(with_views[..2], baseline[..]);
+        assert_eq!(with_views.len(), 4, "{with_views:?}");
+    }
+
+    #[test]
+    fn active_alerts_forecast_fires_when_projected_over_an_under_total() {
+        // Projected $500 over a $100 total that is NOT yet over → one advisory Forecast alert.
+        let budget = budget_with_rows(vec![alert_budget_row(BudgetScope::Total, 10_000, 4_000)]);
+        let forecast = forecast_with_spend(projected(50_000));
+        let alerts = active_alerts(
+            &now_with_limits(Vec::new()),
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: Some(&forecast),
+                anomalies: None,
+            },
+        );
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        match &alerts[0] {
+            Alert::Forecast {
+                projected_month_usd,
+                target_usd,
+                projected_over_by_usd,
+            } => {
+                assert_eq!(*projected_month_usd, Decimal::new(50_000, 2));
+                assert_eq!(*target_usd, Decimal::new(10_000, 2));
+                assert_eq!(*projected_over_by_usd, Decimal::new(40_000, 2));
+            }
+            other => panic!("expected a Forecast alert, got {other:?}"),
+        }
+        // Advisory-tier: never critical.
+        assert!(!alerts[0].is_critical());
+    }
+
+    #[test]
+    fn active_alerts_forecast_suppressed_when_insufficient_data() {
+        // The noisy early-month state must never project an alarm.
+        let budget = budget_with_rows(vec![alert_budget_row(BudgetScope::Total, 10_000, 0)]);
+        let forecast = forecast_with_spend(SpendForecast::InsufficientData {
+            spend_to_date_usd: Decimal::new(9_000, 2),
+            days_elapsed: 2,
+            days_in_month: 30,
+            min_days: 3,
+        });
+        let alerts = active_alerts(
+            &now_with_limits(Vec::new()),
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: Some(&forecast),
+                anomalies: None,
+            },
+        );
+        assert!(
+            alerts.is_empty(),
+            "InsufficientData must not fire a forecast alert: {alerts:?}"
+        );
+    }
+
+    #[test]
+    fn active_alerts_forecast_suppressed_when_total_already_over() {
+        // Already over → the hard Budget alert owns it; no double-alert from the forecast source.
+        let budget = budget_with_rows(vec![alert_budget_row(BudgetScope::Total, 10_000, 12_000)]);
+        let forecast = forecast_with_spend(projected(50_000));
+        let alerts = active_alerts(
+            &now_with_limits(Vec::new()),
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: Some(&forecast),
+                anomalies: None,
+            },
+        );
+        assert_eq!(alerts.len(), 1, "exactly the hard budget alert: {alerts:?}");
+        assert!(
+            matches!(alerts[0], Alert::Budget { .. }),
+            "an already-over total is the hard Budget alert, never a forecast: {alerts:?}"
+        );
+    }
+
+    #[test]
+    fn active_alerts_forecast_suppressed_at_or_under_target() {
+        // A projection exactly at, or under, target is not "expected to exceed" → no alert.
+        for projected_cents in [10_000, 9_999] {
+            let budget = budget_with_rows(vec![alert_budget_row(BudgetScope::Total, 10_000, 0)]);
+            let forecast = forecast_with_spend(projected(projected_cents));
+            let alerts = active_alerts(
+                &now_with_limits(Vec::new()),
+                &budget,
+                &AlertThresholds::default(),
+                AdvisoryAlerts {
+                    forecast: Some(&forecast),
+                    anomalies: None,
+                },
+            );
+            assert!(
+                alerts.is_empty(),
+                "projected {projected_cents}c vs $100 target must not fire: {alerts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn active_alerts_forecast_requires_a_total_budget_row() {
+        // Only a per-tool budget (no Total row) → the forecast source has nothing to compare against.
+        let budget = budget_with_rows(vec![alert_budget_row(
+            BudgetScope::Tool("codex".to_string()),
+            10_000,
+            1_000,
+        )]);
+        let forecast = forecast_with_spend(projected(50_000));
+        let alerts = active_alerts(
+            &now_with_limits(Vec::new()),
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: Some(&forecast),
+                anomalies: None,
+            },
+        );
+        assert!(
+            alerts.is_empty(),
+            "no Total budget row → no forecast alert (per-tool forecast is out of scope): {alerts:?}"
+        );
+    }
+
+    #[test]
+    fn active_alerts_spend_spike_fires_when_anomalies_on() {
+        let anomalies = anomalies_with(vec![spend_spike_anomaly(
+            naive_date(2026, 6, 16),
+            2_000,
+            250,
+        )]);
+        let alerts = active_alerts(
+            &now_with_limits(Vec::new()),
+            &no_budget(),
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: None,
+                anomalies: Some(&anomalies),
+            },
+        );
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        match &alerts[0] {
+            Alert::SpendSpike {
+                date,
+                value_usd,
+                baseline_median_usd,
+                magnitude,
+            } => {
+                assert_eq!(*date, naive_date(2026, 6, 16));
+                assert_eq!(*value_usd, Decimal::new(2_000, 2));
+                assert_eq!(*baseline_median_usd, Decimal::new(250, 2));
+                assert_eq!(
+                    *magnitude,
+                    Some(Decimal::new(2_000, 2) / Decimal::new(250, 2))
+                );
+            }
+            other => panic!("expected a SpendSpike alert, got {other:?}"),
+        }
+        assert!(!alerts[0].is_critical());
+    }
+
+    #[test]
+    fn active_alerts_spend_spike_ignores_model_mix_shift() {
+        // Only SpendSpike anomalies alert — a model-mix shift is informational, never a crossing.
+        let anomalies = anomalies_with(vec![Anomaly {
+            signal: AnomalySignal::ModelMixShift {
+                model: "claude-opus-4".to_string(),
+            },
+            value: Decimal::new(60, 2),
+            baseline_median: Decimal::new(20, 2),
+            deviation: Decimal::new(40, 2),
+            magnitude: Some(Decimal::new(3, 0)),
+            baseline_days: 12,
+        }]);
+        let alerts = active_alerts(
+            &now_with_limits(Vec::new()),
+            &no_budget(),
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: None,
+                anomalies: Some(&anomalies),
+            },
+        );
+        assert!(
+            alerts.is_empty(),
+            "a model-mix shift must NOT alert: {alerts:?}"
+        );
+    }
+
+    #[test]
+    fn active_alerts_advisory_sources_sort_after_quota_and_budget() {
+        // A full mix: critical quota + over-budget (critical tier) then WARN quota, forecast,
+        // spend spike (advisory tier). Order: criticals first, then WARN, then forecast, then spike.
+        let now = now_with_limits(vec![
+            alert_limit(
+                ProviderId::ClaudeCode,
+                LimitKind::FiveHour,
+                available_fraction(0.97),
+            ),
+            alert_limit(
+                ProviderId::ClaudeCode,
+                LimitKind::Weekly,
+                available_fraction(0.82),
+            ),
+        ]);
+        let budget = budget_with_rows(vec![alert_budget_row(BudgetScope::Total, 10_000, 4_000)]);
+        let forecast = forecast_with_spend(projected(50_000));
+        let anomalies = anomalies_with(vec![spend_spike_anomaly(
+            naive_date(2026, 6, 16),
+            2_000,
+            250,
+        )]);
+        let alerts = active_alerts(
+            &now,
+            &budget,
+            &AlertThresholds::default(),
+            AdvisoryAlerts {
+                forecast: Some(&forecast),
+                anomalies: Some(&anomalies),
+            },
+        );
+        assert_eq!(alerts.len(), 4, "{alerts:?}");
+        // [0] CRITICAL quota, [1] WARN quota, [2] Forecast, [3] SpendSpike — note: with no
+        // over-budget here, the only critical-tier item is the CRITICAL quota.
+        assert!(matches!(
+            alerts[0],
+            Alert::Quota {
+                level: AlertLevel::Critical,
+                ..
+            }
+        ));
+        assert!(matches!(
+            alerts[1],
+            Alert::Quota {
+                level: AlertLevel::Warn,
+                ..
+            }
+        ));
+        assert!(matches!(alerts[2], Alert::Forecast { .. }), "{alerts:?}");
+        assert!(matches!(alerts[3], Alert::SpendSpike { .. }), "{alerts:?}");
+        assert!(alerts[0].is_critical());
+        assert!(!alerts[1].is_critical() && !alerts[2].is_critical() && !alerts[3].is_critical());
     }
 
     // ----- forecast_view (T15) -----

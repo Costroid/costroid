@@ -273,10 +273,7 @@ fn run_now(render_options: render::RenderOptions) -> Result<()> {
     // config degrades to no alerts (no banner) — the dedicated `costroid alerts` command is the
     // place a config error surfaces, never the `now` view (it must keep rendering).
     let alerts = match config::load() {
-        Ok(config) if config.alerts_enabled() => {
-            let budget = costroid_core::budget_view(&snapshot, &config.budget_targets());
-            costroid_core::active_alerts(&summary, &budget, &config.alert_thresholds())
-        }
+        Ok(config) if config.alerts_enabled() => compute_alerts(&config, &snapshot, &summary),
         _ => Vec::new(),
     };
     print!(
@@ -284,6 +281,30 @@ fn run_now(render_options: render::RenderOptions) -> Result<()> {
         render::render_now_with_alerts(&summary, &alerts, render_options)
     );
     Ok(())
+}
+
+/// Compute the opt-in alerts for a snapshot: the T17 quota + budget crossings, plus the T17b
+/// advisory sources (a TOTAL-budget projection + a spend spike) — each advisory view built ONLY
+/// when its sub-flag is on, then fed to the pure `active_alerts` detector. The caller gates on
+/// `alerts_enabled()` first; this stays self-contained (a disabled sub-flag passes `None`, so the
+/// detector's output is byte-identical to T17). No network, no telemetry — pure-local.
+fn compute_alerts(
+    config: &config::Config,
+    snapshot: &costroid_core::EngineSnapshot,
+    summary: &costroid_core::NowSummary,
+) -> Vec<costroid_core::Alert> {
+    let budget = costroid_core::budget_view(snapshot, &config.budget_targets());
+    let forecast = config
+        .alerts_forecast_enabled()
+        .then(|| costroid_core::forecast_view(snapshot));
+    let anomalies = config
+        .alerts_anomalies_enabled()
+        .then(|| costroid_core::anomalies_view(snapshot));
+    let advisory = costroid_core::AdvisoryAlerts {
+        forecast: forecast.as_ref(),
+        anomalies: anomalies.as_ref(),
+    };
+    costroid_core::active_alerts(summary, &budget, &config.alert_thresholds(), advisory)
 }
 
 /// `costroid alerts [--check]` (T17): opt-in threshold alerts, default OFF. The `enabled` config
@@ -314,8 +335,7 @@ fn run_alerts(args: &AlertsArgs, render_options: render::RenderOptions) -> Resul
         }
     };
     let summary = costroid_core::now_summary(&snapshot, NowOptions::default());
-    let budget = costroid_core::budget_view(&snapshot, &config.budget_targets());
-    let alerts = costroid_core::active_alerts(&summary, &budget, &config.alert_thresholds());
+    let alerts = compute_alerts(&config, &snapshot, &summary);
     if args.check {
         // Cron-friendly: quiet on a clear run, one line on a crossing; the exit code is the signal.
         if !alerts.is_empty() {

@@ -17,10 +17,16 @@
 //! codex = 40.00
 //!
 //! [alerts]
-//! enabled = true        # opt-in; default false (quiet)
+//! enabled = true        # opt-in; default false (quiet) — the master switch
 //! # quota_warn = 0.80   # optional per-class overrides (default 0.80 / 0.95)
 //! # quota_critical = 0.95
+//! # forecast = true     # advisory (T17b): month-end projection over the TOTAL budget; default off
+//! # anomalies = true    # advisory (T17b): a daily spend spike vs your own norm; default off
 //! ```
+//!
+//! `forecast` and `anomalies` are opt-in advisory SUB-flags — each off by default and each still
+//! requiring `enabled = true`. They surface heads-up advisories (a projected total-budget overrun
+//! and a spend spike) in the same banner / `alerts` list as the hard quota and budget crossings.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -69,6 +75,12 @@ pub(crate) struct AlertsConfig {
     /// Optional CRITICAL quota fraction override (default
     /// [`costroid_core::ALERT_CRITICAL_FRACTION`]).
     quota_critical: Option<f64>,
+    /// Opt-in advisory source (T17b): a month-end TOTAL-budget projection over target. Default
+    /// false; the master `enabled` switch is still required for it to do anything.
+    forecast: bool,
+    /// Opt-in advisory source (T17b): a daily spend-spike anomaly vs your own norm. Default false;
+    /// the master `enabled` switch is still required.
+    anomalies: bool,
 }
 
 impl Config {
@@ -85,9 +97,22 @@ impl Config {
         }
     }
 
-    /// Whether the alerts feature is enabled (default false — opt-in).
+    /// Whether the alerts feature is enabled (default false — opt-in). The master switch — it also
+    /// gates the two advisory sub-flags below.
     pub(crate) fn alerts_enabled(&self) -> bool {
         self.alerts.enabled
+    }
+
+    /// Whether the advisory forecast-projection source is on (T17b). Requires BOTH the master
+    /// `enabled` switch and the `forecast` sub-flag — the sub-flag alone does nothing.
+    pub(crate) fn alerts_forecast_enabled(&self) -> bool {
+        self.alerts.enabled && self.alerts.forecast
+    }
+
+    /// Whether the advisory spend-spike source is on (T17b). Requires BOTH the master `enabled`
+    /// switch and the `anomalies` sub-flag.
+    pub(crate) fn alerts_anomalies_enabled(&self) -> bool {
+        self.alerts.enabled && self.alerts.anomalies
     }
 
     /// Project the `[alerts]` overrides into the core's config-neutral [`AlertThresholds`]. An
@@ -522,5 +547,73 @@ mod tests {
             Err(ConfigError::Parse { .. }) => {}
             Err(other) => panic!("expected a Parse error, got {other}"),
         }
+    }
+
+    // ----- advisory sub-flags (T17b) -----
+
+    #[test]
+    fn advisory_subflags_default_off() {
+        // Absent section, and an enabled-but-no-subflags section, both leave BOTH advisory sources off.
+        let dir = TempDir::new();
+        for contents in ["", "[alerts]\nenabled = true\n"] {
+            let path = dir.write(contents);
+            let config = match load_from(&path) {
+                Ok(config) => config,
+                Err(err) => panic!("should default: {err}"),
+            };
+            assert!(
+                !config.alerts_forecast_enabled(),
+                "forecast must default OFF: {contents:?}"
+            );
+            assert!(
+                !config.alerts_anomalies_enabled(),
+                "anomalies must default OFF: {contents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn advisory_subflags_parse_on_when_master_enabled() {
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nenabled = true\nforecast = true\nanomalies = true\n");
+        let config = match load_from(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("advisory sub-flags should parse: {err}"),
+        };
+        assert!(config.alerts_forecast_enabled());
+        assert!(config.alerts_anomalies_enabled());
+    }
+
+    #[test]
+    fn advisory_subflags_require_the_master_switch() {
+        // A sub-flag set WITHOUT the master `enabled` does nothing — `enabled` is still required.
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nforecast = true\nanomalies = true\n");
+        let config = match load_from(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("should parse: {err}"),
+        };
+        assert!(!config.alerts_enabled());
+        assert!(
+            !config.alerts_forecast_enabled(),
+            "forecast must stay off without the master switch"
+        );
+        assert!(
+            !config.alerts_anomalies_enabled(),
+            "anomalies must stay off without the master switch"
+        );
+    }
+
+    #[test]
+    fn advisory_subflags_are_independent() {
+        // Each sub-flag is independent — enabling one does not enable the other.
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nenabled = true\nforecast = true\n");
+        let config = match load_from(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("should parse: {err}"),
+        };
+        assert!(config.alerts_forecast_enabled());
+        assert!(!config.alerts_anomalies_enabled());
     }
 }

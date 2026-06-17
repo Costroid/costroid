@@ -11,6 +11,20 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
+### Added
+
+- **Two opt-in advisory alert sources (a fast-follow to the threshold alerts).** Alongside the hard
+  quota-% and budget-$ crossings, the `[alerts]` config gains two advisory sub-flags — each off by
+  default and each still requiring `enabled = true`: `forecast = true` fires a heads-up when your
+  month-end **projection** would exceed your **total** budget (only off a settled projection — never
+  the noisy first days of the month, and never when you are already over, which the hard budget
+  alert covers), and `anomalies = true` fires on a **daily spend spike** versus your own recent
+  norm. Both are advisory by nature — a softer heads-up that sorts after the quota/budget crossings,
+  carrying a distinct `(projected over budget)` / `(spend spike)` non-color cue — and both surface
+  in the inline banner, the `costroid alerts` list, and the `alerts --check` exit code once opted in.
+  With the sub-flags off, alert output is byte-identical to before. Still pure-local: no daemon, no
+  network, no telemetry, no new dependency.
+
 ## [0.5.0] - 2026-06-17
 
 This release completes the analytical surface: six dedicated TUI tabs over your local data
