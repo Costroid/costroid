@@ -1,0 +1,10 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_history(&history_rows_fixture(), RenderOptions::braille(false))"
+---
+C⠉ costroid                                   history  ~$12.34
+scope: 2 records, newest first (all time)
+export: costroid export --format json|csv  (full FOCUS 1.3 record)
+────────────────────────────────────────────────────────────────
+2026-06-02 10:30  gpt-5.5  1,000,000 output  api  ~$12.34
+2026-06-02 09:00  claude-sonnet-4  500,000 output  subscription

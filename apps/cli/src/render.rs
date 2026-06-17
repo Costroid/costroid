@@ -4,10 +4,11 @@ use std::io::{self, IsTerminal};
 
 use chrono::{DateTime, Local, Utc};
 use costroid_core::{
-    AggregateTotals, BenchFrontier, BenchView, CostLane, CostLaneSummary, FrontierPoint,
-    FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow, ModelsView, NowSummary,
-    OverlayModel, Period, PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind,
-    RepricingDelta, RepricingStatus, TokenTotals, TrendsSummary,
+    AggregateTotals, BenchFrontier, BenchView, CostLane, CostLaneSummary, FocusRecord,
+    FrontierPoint, FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow,
+    ModelsView, NowSummary, OverlayModel, Period, PeriodRange, ProviderCapabilityView,
+    ProviderStatus, ProviderStatusKind, RepricingDelta, RepricingStatus, TokenTotals,
+    TrendsSummary,
 };
 use costroid_providers::{AuthMethod, DataSource, LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
@@ -1610,6 +1611,149 @@ fn push_models_disclaimer(out: &mut StyledDocument, view: &ModelsView) {
             view.disclaimer.note, view.disclaimer.pricing_as_of
         ),
     );
+}
+
+// ---------------------------------------------------------------------------
+// History tab (T13) — `costroid` TUI tab `5`. The full per-turn record: each FOCUS meter
+// row's time, model, token usage, access path, and (for API rows) the always-estimated cost.
+// Usage is read from `x_ConsumedTokens` — the raw count that stays populated even when FOCUS
+// nulls `ConsumedQuantity` on an unpriced row — NEVER `ConsumedQuantity` alone, so no usage is
+// dropped. Newest-first and scrollable (the TUI's first viewport state lives in tui.rs).
+// Informational, so monochrome (Strong/bold model only; amber/red reserved for the near-limit
+// state). The unchanged `costroid export` command is surfaced for the COMPLETE FOCUS 1.3 record
+// (every column, every row) — the tab is a readable view, not a replacement. Mirrors the
+// `render_models_*` split; plain delimits by labels, never the `─` rule (T11's gotcha).
+// ---------------------------------------------------------------------------
+
+/// The pointer to the unchanged `costroid export` command. The tab is a readable list; the
+/// full FOCUS 1.3 record (all columns, all rows) comes from the export. Pure ASCII.
+const HISTORY_EXPORT_HINT: &str =
+    "export: costroid export --format json|csv  (full FOCUS 1.3 record)";
+
+#[cfg(test)]
+pub(crate) fn render_history(rows: &[FocusRecord], options: RenderOptions) -> String {
+    render_history_document(rows, options).render(options)
+}
+
+pub(crate) fn render_history_document(
+    rows: &[FocusRecord],
+    options: RenderOptions,
+) -> StyledDocument {
+    // Newest-first by charge-period start; reference-only ordering, no record clone. A stable
+    // sort keeps same-timestamp meter rows (e.g. a turn's input + output) in their source order.
+    let mut ordered: Vec<&FocusRecord> = rows.iter().collect();
+    ordered.sort_by_key(|record| std::cmp::Reverse(record.charge_period_start));
+    match options.mode {
+        RenderMode::Plain => render_history_plain_document(&ordered),
+        RenderMode::Braille | RenderMode::Ascii => {
+            render_history_visual_document(&ordered, options)
+        }
+    }
+}
+
+fn render_history_visual_document(rows: &[&FocusRecord], options: RenderOptions) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_header_line(
+        &mut out,
+        mark(options),
+        "history",
+        format_money(&history_api_spend(rows), Some("USD"), true),
+        options,
+    );
+    push_line(&mut out, &history_scope_line(rows.len()));
+    push_line(&mut out, HISTORY_EXPORT_HINT);
+    push_rule(&mut out, options);
+    if rows.is_empty() {
+        push_line(&mut out, "no usage recorded yet");
+    } else {
+        for record in rows {
+            out.push(history_row_line(record));
+        }
+    }
+    out
+}
+
+fn render_history_plain_document(rows: &[&FocusRecord]) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid history");
+    push_line(&mut out, &history_scope_line(rows.len()));
+    push_line(&mut out, HISTORY_EXPORT_HINT);
+    if rows.is_empty() {
+        push_line(&mut out, "no usage recorded yet");
+    } else {
+        for record in rows {
+            push_line(&mut out, &plain_history_row(record));
+        }
+    }
+    out
+}
+
+/// The header figure: the always-estimated API-lane cost across the shown rows. Subscription
+/// turns are a flat-fee plan, not a per-token bill (golden rule: limits are not summable
+/// dollars), so only API rows contribute — matching the now/trends API total.
+fn history_api_spend(rows: &[&FocusRecord]) -> Decimal {
+    rows.iter()
+        .filter(|record| record.x_access_path == "api")
+        .fold(Decimal::ZERO, |total, record| total + record.billed_cost)
+}
+
+fn history_scope_line(count: usize) -> String {
+    let noun = if count == 1 { "record" } else { "records" };
+    format!("scope: {count} {noun}, newest first (all time)")
+}
+
+/// `YYYY-MM-DD HH:MM` in UTC (the FOCUS charge period is UTC) — a stable, pure-ASCII stamp.
+fn history_time(record: &FocusRecord) -> String {
+    record
+        .charge_period_start
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
+}
+
+/// The raw token usage for this meter row, read from `x_ConsumedTokens` (always populated, even
+/// when FOCUS nulls `ConsumedQuantity` on an unpriced row) — NEVER `ConsumedQuantity` alone.
+fn history_tokens(record: &FocusRecord) -> String {
+    format!(
+        "{} {}",
+        with_thousands(&record.x_consumed_tokens.trunc().to_string()),
+        record.x_token_type
+    )
+}
+
+/// The trailing per-row detail: token usage + access path, with the always-estimated (`~`) cost
+/// for API rows only (a subscription turn carries no per-token bill). Pure ASCII.
+fn history_detail(record: &FocusRecord) -> String {
+    let mut detail = format!("{}  {}", history_tokens(record), record.x_access_path);
+    if record.x_access_path == "api" {
+        detail.push_str(&format!(
+            "  {}",
+            format_money(
+                &record.billed_cost,
+                Some(record.billing_currency.as_str()),
+                true
+            )
+        ));
+    }
+    detail
+}
+
+/// The visual per-record line: time, the model (bold — an allowed monochrome cue), then the
+/// usage / access-path / cost detail.
+fn history_row_line(record: &FocusRecord) -> StyledLine {
+    let mut line = StyledLine::new();
+    line.push_plain(format!("{}  ", history_time(record)));
+    line.push_styled(record.x_model.clone(), SemanticStyle::Strong);
+    line.push_plain(format!("  {}", history_detail(record)));
+    line
+}
+
+fn plain_history_row(record: &FocusRecord) -> String {
+    format!(
+        "{}  {}  {}",
+        history_time(record),
+        record.x_model,
+        history_detail(record)
+    )
 }
 
 fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> StyledLine {
@@ -3809,6 +3953,11 @@ mod tests {
             models.is_ascii(),
             "ascii models tab must be pure ASCII: {models}"
         );
+        let history = render_history(&history_rows_fixture(), RenderOptions::ascii(false));
+        assert!(
+            history.is_ascii(),
+            "ascii history tab must be pure ASCII: {history}"
+        );
     }
 
     #[test]
@@ -3873,6 +4022,8 @@ mod tests {
             ),
             render_models(&models_view_fixture(), RenderOptions::plain()),
             render_models(&empty_models_view(), RenderOptions::plain()),
+            render_history(&history_rows_fixture(), RenderOptions::plain()),
+            render_history(&[], RenderOptions::plain()),
         ];
         for output in outputs {
             assert!(
@@ -4136,6 +4287,148 @@ mod tests {
                 assert!(
                     !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
                     "models tab must be monochrome (amber/red are reserved): {span:?}"
+                );
+            }
+        }
+    }
+
+    // ----- history surface (T13) -----
+
+    /// One FOCUS meter row for the History fixtures, priced like production then overwritten
+    /// with a known cost — mirrors the tui.rs `sample_record` helper. `tokens` lands on
+    /// `x_ConsumedTokens` (the raw count History reads); `cents` on `billed_cost`.
+    fn history_record(
+        model: &str,
+        when: DateTime<Utc>,
+        token_type: costroid_focus::TokenType,
+        tokens: u64,
+        cents: i64,
+        access: costroid_focus::FocusAccessPath,
+    ) -> FocusRecord {
+        let input = costroid_focus::UnpricedUsage {
+            timestamp: when,
+            tool: "codex".to_string(),
+            model: model.to_string(),
+            token_type,
+            token_count: tokens,
+            project: Some("alpha-app".to_string()),
+            access_path: access,
+            service_name: "OpenAI API".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            host_provider_name: "OpenAI".to_string(),
+            invoice_issuer_name: "OpenAI".to_string(),
+            billing_currency: costroid_focus::DEFAULT_BILLING_CURRENCY.to_string(),
+        };
+        let mut record = match FocusRecord::unpriced_usage(input) {
+            Ok(record) => record,
+            Err(error) => panic!("history fixture record should be valid: {error}"),
+        };
+        let cost = Decimal::new(cents, 2);
+        record.billed_cost = cost;
+        record.effective_cost = cost;
+        record.x_pricing_status = "priced".to_string();
+        record
+    }
+
+    /// A two-lane fixture: a newer API turn (priced) + an older subscription turn (no per-token
+    /// bill), so the snapshots prove newest-first ordering and the api-only cost column.
+    fn history_rows_fixture() -> Vec<FocusRecord> {
+        vec![
+            // Deliberately oldest first in source order, to prove the render sorts newest-first.
+            history_record(
+                "claude-sonnet-4",
+                utc(2026, 6, 2, 9, 0),
+                costroid_focus::TokenType::Output,
+                500_000,
+                0,
+                costroid_focus::FocusAccessPath::Subscription,
+            ),
+            history_record(
+                "gpt-5.5",
+                utc(2026, 6, 2, 10, 30),
+                costroid_focus::TokenType::Output,
+                1_000_000,
+                1234,
+                costroid_focus::FocusAccessPath::Api,
+            ),
+        ]
+    }
+
+    #[test]
+    fn snapshot_history_braille() {
+        insta::assert_snapshot!(render_history(
+            &history_rows_fixture(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_history_ascii() {
+        insta::assert_snapshot!(render_history(
+            &history_rows_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_history_plain() {
+        insta::assert_snapshot!(render_history(
+            &history_rows_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_history_empty() {
+        insta::assert_snapshot!(render_history(&[], RenderOptions::plain()));
+    }
+
+    #[test]
+    fn history_lists_records_newest_first_with_raw_usage_and_api_only_cost() {
+        let output = render_history(&history_rows_fixture(), RenderOptions::plain());
+
+        // Newest-first: the 10:30 API turn precedes the 09:00 subscription turn.
+        let index_of = |needle: &str| match output.find(needle) {
+            Some(at) => at,
+            None => panic!("expected `{needle}` in history output: {output}"),
+        };
+        assert!(
+            index_of("gpt-5.5") < index_of("claude-sonnet-4"),
+            "records render newest-first: {output}"
+        );
+
+        // Usage comes from x_ConsumedTokens (the raw count), never a nulled ConsumedQuantity.
+        assert!(output.contains("1,000,000 output"));
+        assert!(output.contains("500,000 output"));
+
+        // Cost is shown ONLY for API rows, always estimated (the `~` hedge); a subscription
+        // turn carries the access-path label but no per-token dollar figure.
+        assert!(output.contains("api  ~$12.34"));
+        assert!(output.contains("claude-sonnet-4  500,000 output  subscription"));
+        assert!(!output.contains("subscription  ~$"));
+
+        // The count/scope header and the unchanged-export pointer are present.
+        assert!(output.contains("scope: 2 records, newest first (all time)"));
+        assert!(output.contains("costroid export --format json|csv"));
+    }
+
+    #[test]
+    fn history_empty_list_renders_without_panicking() {
+        let output = render_history(&[], RenderOptions::braille(false));
+        assert!(output.contains("scope: 0 records, newest first (all time)"));
+        assert!(output.contains("no usage recorded yet"));
+    }
+
+    #[test]
+    fn history_document_is_monochrome() {
+        // The History tab is informational, so amber/red (Warn/Critical, reserved for the
+        // near-limit state) must never appear — the bold (Strong) model is an allowed cue.
+        let doc = render_history_document(&history_rows_fixture(), RenderOptions::braille(true));
+        for line in &doc.lines {
+            for span in &line.spans {
+                assert!(
+                    !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
+                    "history tab must be monochrome (amber/red are reserved): {span:?}"
                 );
             }
         }

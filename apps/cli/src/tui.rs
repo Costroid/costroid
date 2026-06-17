@@ -22,7 +22,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_frontier_document, render_models_document, render_now_document,
+    render_frontier_document, render_history_document, render_models_document, render_now_document,
     render_providers_document, render_trends_document, RenderOptions, SemanticStyle,
     StyledDocument, StyledLine,
 };
@@ -45,18 +45,21 @@ enum Screen {
     Trends,
     Providers,
     Models,
+    History,
     Frontier,
 }
 
 /// The numbered tab cycle (Q1, §11.5): `1`-`6` jump straight to a tab, `Tab`/`BackTab`
 /// cycle through them. Frontier is intentionally NOT in the cycle — it stays its own
-/// `a`/`esc` overlay. Later Step 5 tabs (History/Budget…) append here, filling the reserved
-/// `5`-`6` slots, with no further `handle_key` change (T12 appended Models at slot `4`).
-const TAB_SCREENS: [Screen; 4] = [
+/// `a`/`esc` overlay. Later Step 5 tabs (Budget…) append here, filling the reserved `6`
+/// slot, with no further `handle_key` change (T12 appended Models at slot `4`, T13 History
+/// at slot `5`).
+const TAB_SCREENS: [Screen; 5] = [
     Screen::Now,
     Screen::Trends,
     Screen::Providers,
     Screen::Models,
+    Screen::History,
 ];
 
 /// Step left (`delta = -1`) or right (`delta = 1`) through [`TAB_SCREENS`], wrapping. A
@@ -72,8 +75,8 @@ fn cycle_tab(current: Screen, delta: isize) -> Screen {
     }
 }
 
-/// Map a `1`-`6` digit to its tab, if one exists yet (`1`-`4` are wired today — slot `4` is
-/// Models; the rest are reserved and inert until a later tab fills them).
+/// Map a `1`-`6` digit to its tab, if one exists yet (`1`-`5` are wired today — slot `4` is
+/// Models, slot `5` is History; slot `6` is reserved and inert until a later tab fills it).
 fn tab_for_digit(ch: char) -> Option<Screen> {
     let index = ch.to_digit(10)? as usize;
     index
@@ -138,6 +141,14 @@ struct App {
     last_collect_at: Option<DateTime<Utc>>,
     status: Option<String>,
     render_options: RenderOptions,
+    /// First visible display row of the active tab's document (0 = top). The TUI's first
+    /// viewport state — introduced for the scrollable History tab (T13), reused by the later
+    /// analytics tabs. Clamped to the content/viewport in [`draw_app`]; reset to 0 on a tab
+    /// switch via [`App::set_screen`].
+    scroll: u16,
+    /// The content area's row count from the last draw, so `PgUp`/`PgDn` page by a real screen.
+    /// Written in [`draw_app`], read by the scroll keys.
+    viewport_rows: u16,
     /// The Providers-tab connection lane, gathered once read-only over the existing
     /// keychain/registry (no network). Connect-gated: absent from the default build.
     #[cfg(feature = "connect")]
@@ -172,9 +183,26 @@ impl App {
             last_collect_at: None,
             status: None,
             render_options,
+            scroll: 0,
+            viewport_rows: 1,
             #[cfg(feature = "connect")]
             connections: Vec::new(),
         }
+    }
+
+    /// Switch tabs, resetting the scroll offset so a new tab always opens at the top (each
+    /// tab's viewport is independent; we don't preserve per-tab scroll).
+    fn set_screen(&mut self, screen: Screen) {
+        if self.screen != screen {
+            self.scroll = 0;
+        }
+        self.screen = screen;
+    }
+
+    /// The `PgUp`/`PgDn` step: a real screen of rows minus one line of overlap (the content
+    /// area height captured by the last [`draw_app`]), always at least one row.
+    fn scroll_page(&self) -> u16 {
+        self.viewport_rows.saturating_sub(1).max(1)
     }
 
     fn refresh<C: SnapshotCollector>(
@@ -225,17 +253,43 @@ impl App {
         match key.code {
             KeyCode::Char('q') => AppAction::Quit,
             KeyCode::Tab => {
-                self.screen = cycle_tab(self.screen, 1);
+                self.set_screen(cycle_tab(self.screen, 1));
                 AppAction::Continue
             }
             KeyCode::BackTab => {
-                self.screen = cycle_tab(self.screen, -1);
+                self.set_screen(cycle_tab(self.screen, -1));
                 AppAction::Continue
             }
             KeyCode::Char(ch @ '1'..='6') => {
                 if let Some(screen) = tab_for_digit(ch) {
-                    self.screen = screen;
+                    self.set_screen(screen);
                 }
+                AppAction::Continue
+            }
+            // Scroll the active tab's document. Clamped in `draw_app` (top at 0, bottom so the
+            // last row stays on screen); `End` rides `u16::MAX` down to the clamped bottom.
+            KeyCode::Up => {
+                self.scroll = self.scroll.saturating_sub(1);
+                AppAction::Continue
+            }
+            KeyCode::Down => {
+                self.scroll = self.scroll.saturating_add(1);
+                AppAction::Continue
+            }
+            KeyCode::PageUp => {
+                self.scroll = self.scroll.saturating_sub(self.scroll_page());
+                AppAction::Continue
+            }
+            KeyCode::PageDown => {
+                self.scroll = self.scroll.saturating_add(self.scroll_page());
+                AppAction::Continue
+            }
+            KeyCode::Home => {
+                self.scroll = 0;
+                AppAction::Continue
+            }
+            KeyCode::End => {
+                self.scroll = u16::MAX;
                 AppAction::Continue
             }
             KeyCode::Char('d') if self.screen == Screen::Trends => {
@@ -270,19 +324,19 @@ impl App {
             }
             KeyCode::Char('a') if self.screen != Screen::Frontier => {
                 self.previous_screen = self.screen;
-                self.screen = Screen::Frontier;
+                self.set_screen(Screen::Frontier);
                 self.status = Some("cost-vs-quality frontier; no network or LLM call".to_string());
                 AppAction::Continue
             }
             KeyCode::Char('n') if self.screen == Screen::Frontier => {
-                self.screen = self.previous_screen;
+                self.set_screen(self.previous_screen);
                 AppAction::Continue
             }
             KeyCode::Esc => {
                 if self.help_open {
                     self.help_open = false;
                 } else if self.screen == Screen::Frontier {
-                    self.screen = self.previous_screen;
+                    self.set_screen(self.previous_screen);
                 }
                 AppAction::Continue
             }
@@ -374,6 +428,12 @@ impl App {
                             doc
                         }
                     },
+                    Screen::History => {
+                        // Same `focus_rows` pipeline now/trends/export use — no re-parse. The
+                        // shared filter applies to the per-record model/project axis.
+                        apply_history_filter(&mut snapshot.focus_rows, &self.filter);
+                        render_history_document(&snapshot.focus_rows, options)
+                    }
                     Screen::Frontier => match costroid_core::bench_view(&snapshot) {
                         Ok(view) => render_frontier_document(&view, options),
                         Err(error) => {
@@ -396,6 +456,7 @@ impl App {
             Screen::Trends => "trends",
             Screen::Providers => "providers",
             Screen::Models => "models",
+            Screen::History => "history",
             Screen::Frontier => "frontier",
         };
         let live = if self.live { "live" } else { "manual" };
@@ -411,8 +472,8 @@ impl App {
             .unwrap_or_default();
         let nav = match self.screen {
             Screen::Frontier => "esc back",
-            Screen::Now | Screen::Trends | Screen::Providers | Screen::Models => {
-                "1-4/tab switch | a frontier"
+            Screen::Now | Screen::Trends | Screen::Providers | Screen::Models | Screen::History => {
+                "1-5/tab switch | a frontier"
             }
         };
         format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
@@ -462,7 +523,7 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
     let now = clock.now();
     session
         .terminal
-        .draw(|frame| draw_app(frame, &app, now))
+        .draw(|frame| draw_app(frame, &mut app, now))
         .context("draw loading screen")?;
     app.refresh(collector, env, now);
 
@@ -470,14 +531,14 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
         let now = clock.now();
         session
             .terminal
-            .draw(|frame| draw_app(frame, &app, now))
+            .draw(|frame| draw_app(frame, &mut app, now))
             .context("draw TUI frame")?;
 
         if app.should_auto_collect(now) {
             app.loading = true;
             session
                 .terminal
-                .draw(|frame| draw_app(frame, &app, now))
+                .draw(|frame| draw_app(frame, &mut app, now))
                 .context("draw refresh loading frame")?;
             app.refresh(collector, env, now);
             continue;
@@ -492,7 +553,7 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
                         let refresh_now = clock.now();
                         session
                             .terminal
-                            .draw(|frame| draw_app(frame, &app, refresh_now))
+                            .draw(|frame| draw_app(frame, &mut app, refresh_now))
                             .context("draw manual refresh loading frame")?;
                         app.refresh(collector, env, refresh_now);
                     }
@@ -513,15 +574,29 @@ fn is_actionable_key(key: KeyEvent) -> bool {
     matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
 }
 
-fn draw_app(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
+fn draw_app(frame: &mut Frame<'_>, app: &mut App, now: DateTime<Utc>) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(area);
     let doc = app.document_for_width(chunks[0].width, now);
+
+    // Clamp the scroll offset to the rendered content: the top is 0, the bottom keeps the last
+    // row on screen. The wrapped-row count is exact for non-wrapping rows (History truncates
+    // nothing it can't fit on one screen line at typical widths) and conservative otherwise, so
+    // the offset can never run past the content into a blank viewport (no panic on short/empty
+    // lists). Done here (not in `handle_key`) because only the draw knows the terminal size.
+    app.viewport_rows = chunks[0].height.max(1);
+    let total_rows = document_display_rows(&doc, chunks[0].width);
+    let max_scroll = total_rows
+        .saturating_sub(chunks[0].height as usize)
+        .min(u16::MAX as usize) as u16;
+    app.scroll = app.scroll.min(max_scroll);
+
     let paragraph = Paragraph::new(styled_document_to_text(&doc, app.render_options))
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll, 0));
     frame.render_widget(paragraph, chunks[0]);
 
     let footer = if app.filter_editing {
@@ -538,17 +613,39 @@ fn draw_app(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     }
 }
 
+/// The number of display rows a [`StyledDocument`] occupies when wrapped to `width` — the sum,
+/// over logical lines, of `ceil(visible_width / width)` (at least one). Matches `ratatui`'s
+/// `Wrap` exactly for lines that don't wrap, and stays at or below the word-wrapped count
+/// otherwise, so it never over-counts (which would let the scroll offset reach a blank
+/// viewport). Used only to clamp [`App::scroll`].
+fn document_display_rows(doc: &StyledDocument, width: u16) -> usize {
+    let width = (width as usize).max(1);
+    doc.lines
+        .iter()
+        .map(|line| {
+            let cols: usize = line
+                .spans
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum();
+            cols.max(1).div_ceil(width)
+        })
+        .sum()
+}
+
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(74, 14, area);
+    let popup = centered_rect(74, 17, area);
     let lines = vec![
-        Line::from("1/2/3/4    now / trends / providers / models"),
+        Line::from("1/2/3/4/5  now / trends / providers / models / history"),
         Line::from("tab/S-tab  cycle tabs"),
+        Line::from("up/dn      scroll  (pgup/pgdn page, home/end ends)"),
         Line::from("d/w/m/y    set trends period"),
         Line::from("g          cycle trends group"),
         Line::from("a          cost-vs-quality frontier"),
         Line::from("esc / n    back from frontier"),
         Line::from("f or /     filter model/app rows"),
         Line::from("r          refresh local logs"),
+        Line::from("export     costroid export --format json|csv (FOCUS 1.3)"),
         Line::from("?          close help"),
         Line::from("q/Ctrl-C   quit"),
     ];
@@ -660,6 +757,24 @@ fn apply_trends_filter(summary: &mut costroid_core::TrendsSummary, filter: &str)
     summary.buckets.retain(|bucket| {
         bucket.group.value.to_ascii_lowercase().contains(&query)
             || display_value(&bucket.group.value).contains(&query)
+    });
+}
+
+/// Apply the shared filter to the per-record History list: keep rows whose model or project
+/// matches (raw or display form), mirroring how `now`/`trends` filter the active group axis.
+/// An empty filter keeps every row.
+fn apply_history_filter(rows: &mut Vec<costroid_core::FocusRecord>, filter: &str) {
+    if filter.trim().is_empty() {
+        return;
+    }
+    let query = filter.to_ascii_lowercase();
+    rows.retain(|row| {
+        row.x_model.to_ascii_lowercase().contains(&query)
+            || display_value(&row.x_model).contains(&query)
+            || row.x_project.as_deref().is_some_and(|project| {
+                project.to_ascii_lowercase().contains(&query)
+                    || display_value(project).contains(&query)
+            })
     });
 }
 
@@ -1046,7 +1161,7 @@ mod tests {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
     }
 
-    fn frame_to_string(app: &App, width: u16, height: u16) -> String {
+    fn frame_to_string(app: &mut App, width: u16, height: u16) -> String {
         let now = utc(2026, 6, 2, 9, 0);
         let backend = TestBackend::new(width, height);
         let mut terminal = match Terminal::new(backend) {
@@ -1132,24 +1247,26 @@ mod tests {
     }
 
     #[test]
-    fn numbered_keys_and_tab_cycle_reach_providers_and_models() {
+    fn numbered_keys_and_tab_cycle_reach_providers_models_and_history() {
         let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
         assert_eq!(app.screen, Screen::Now);
 
-        // Numbered jumps go straight to a tab — including `4` (Models, appended in T12).
+        // Numbered jumps go straight to a tab — `4` Models (T12), `5` History (T13).
         assert_eq!(app.handle_key(key(KeyCode::Char('2'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Providers);
         assert_eq!(app.handle_key(key(KeyCode::Char('4'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Models);
+        assert_eq!(app.handle_key(key(KeyCode::Char('5'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::History);
         assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
-        // A still-reserved digit (no tab there yet) is inert.
-        assert_eq!(app.handle_key(key(KeyCode::Char('5'))), AppAction::Continue);
+        // A still-reserved digit (no tab there yet) is inert — `6` is the new boundary.
+        assert_eq!(app.handle_key(key(KeyCode::Char('6'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Models -> Now.
+        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Models -> History -> Now.
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
@@ -1157,11 +1274,13 @@ mod tests {
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Models);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::History);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // BackTab cycles in reverse (Now -> Models).
+        // BackTab cycles in reverse (Now -> History).
         assert_eq!(app.handle_key(key(KeyCode::BackTab)), AppAction::Continue);
-        assert_eq!(app.screen, Screen::Models);
+        assert_eq!(app.screen, Screen::History);
 
         // Frontier is outside the cycle (an a/esc overlay); Tab returns to the first tab.
         assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
@@ -1175,7 +1294,7 @@ mod tests {
         let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
         assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Providers);
-        let frame = frame_to_string(&app, 90, 26);
+        let frame = frame_to_string(&mut app, 90, 26);
 
         assert!(frame.contains("claude code"));
         assert!(frame.contains("codex"));
@@ -1195,7 +1314,7 @@ mod tests {
         let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
         assert_eq!(app.handle_key(key(KeyCode::Char('4'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Models);
-        let frame = frame_to_string(&app, 90, 26);
+        let frame = frame_to_string(&mut app, 90, 26);
 
         assert!(frame.contains("models"));
         // The two API-billed sample models, with the always-estimated spend + token mix.
@@ -1206,6 +1325,123 @@ mod tests {
         assert!(frame.contains("frontier:"));
         // The cost-only hedge note is footnoted (an estimate, never an authoritative bill).
         assert!(frame.contains("cost-only comparison at equal token volume"));
+    }
+
+    /// A snapshot whose `focus_rows` are `count` distinct API records (`model-00`..) at one
+    /// instant — enough to overflow a small viewport so the History scroll can be exercised.
+    fn history_snapshot(now: DateTime<Utc>, count: usize) -> EngineSnapshot {
+        let mut snapshot = empty_snapshot(now);
+        snapshot.focus_rows = (0..count)
+            .map(|index| sample_record(&format!("model-{index:02}"), 100, "alpha-app"))
+            .collect();
+        snapshot
+    }
+
+    fn app_on_history(snapshot: EngineSnapshot, mode: RenderMode) -> App {
+        let now = utc(2026, 6, 2, 9, 0);
+        let mut app = App::new(
+            StartScreen::Now,
+            Period::Week,
+            GroupBy::Model,
+            false,
+            render_options(mode, false),
+        );
+        app.loading = false;
+        app.snapshot = Some(snapshot);
+        app.last_collect_at = Some(now);
+        assert_eq!(app.handle_key(key(KeyCode::Char('5'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::History);
+        app
+    }
+
+    #[test]
+    fn frame_snapshot_history_surface() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        assert_eq!(app.handle_key(key(KeyCode::Char('5'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::History);
+        let frame = frame_to_string(&mut app, 90, 26);
+
+        assert!(frame.contains("history"));
+        assert!(frame.contains("records"));
+        // Both sample API turns, with the raw token usage (x_ConsumedTokens) + estimated cost.
+        assert!(frame.contains("claude-opus-4.7"));
+        assert!(frame.contains("gpt-5.5"));
+        assert!(frame.contains("1,000,000 output"));
+        assert!(frame.contains("~$24.10"));
+        assert!(frame.contains("api"));
+        // The unchanged `costroid export` command is surfaced for the full FOCUS 1.3 record.
+        assert!(frame.contains("costroid export"));
+    }
+
+    #[test]
+    fn history_scroll_is_clamped_and_never_panics_on_a_short_list() {
+        let now = utc(2026, 6, 2, 9, 0);
+        let mut app = app_on_history(empty_snapshot(now), RenderMode::Ascii);
+
+        // A short (here empty) list can't scroll: every scroll key clamps the offset to 0 and
+        // the frame still renders — no panic, no blank viewport.
+        let base = frame_to_string(&mut app, 60, 12);
+        assert!(base.contains("no usage recorded yet"));
+        assert_eq!(app.scroll, 0);
+
+        for code in [
+            KeyCode::Down,
+            KeyCode::PageDown,
+            KeyCode::End,
+            KeyCode::Up,
+            KeyCode::Home,
+        ] {
+            assert_eq!(app.handle_key(key(code)), AppAction::Continue);
+            let frame = frame_to_string(&mut app, 60, 12);
+            assert_eq!(
+                app.scroll, 0,
+                "a short list clamps scroll to 0 for {code:?}"
+            );
+            assert!(frame.contains("no usage recorded yet"));
+        }
+    }
+
+    #[test]
+    fn history_scrolls_through_a_long_list_clamped_at_both_ends() {
+        let now = utc(2026, 6, 2, 9, 0);
+        let mut app = app_on_history(history_snapshot(now, 40), RenderMode::Braille);
+
+        // At the top, the first record shows and the last is below the fold.
+        let top = frame_to_string(&mut app, 90, 14);
+        assert!(top.contains("model-00"));
+        assert!(!top.contains("model-39"));
+        assert_eq!(app.scroll, 0);
+
+        // End jumps to the bottom: the last record shows, the first scrolls off, offset > 0.
+        assert_eq!(app.handle_key(key(KeyCode::End)), AppAction::Continue);
+        let bottom = frame_to_string(&mut app, 90, 14);
+        assert!(bottom.contains("model-39"));
+        assert!(!bottom.contains("model-00"));
+        let max = app.scroll;
+        assert!(max > 0);
+
+        // Down at the bottom stays clamped — never scrolls past the end into a blank viewport.
+        assert_eq!(app.handle_key(key(KeyCode::Down)), AppAction::Continue);
+        let _ = frame_to_string(&mut app, 90, 14);
+        assert_eq!(
+            app.scroll, max,
+            "Down at the bottom stays clamped to the max offset"
+        );
+
+        // Home returns to the top.
+        assert_eq!(app.handle_key(key(KeyCode::Home)), AppAction::Continue);
+        let home = frame_to_string(&mut app, 90, 14);
+        assert!(home.contains("model-00"));
+        assert_eq!(app.scroll, 0);
+
+        // PageDown pages within the list (more than a line, no further than the bottom).
+        assert_eq!(app.handle_key(key(KeyCode::PageDown)), AppAction::Continue);
+        let _ = frame_to_string(&mut app, 90, 14);
+        assert!(app.scroll > 0 && app.scroll <= max);
+
+        // Switching tabs resets the scroll to the top (each tab's viewport is independent).
+        assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
+        assert_eq!(app.scroll, 0);
     }
 
     #[test]
@@ -1276,8 +1512,8 @@ mod tests {
 
     #[test]
     fn frame_snapshot_now_and_warning_state() {
-        let app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
-        let frame = frame_to_string(&app, 86, 18);
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        let frame = frame_to_string(&mut app, 86, 18);
 
         assert!(frame.contains("C⠉ costroid"));
         assert!(frame.contains("limits"));
@@ -1290,21 +1526,21 @@ mod tests {
     fn frame_snapshot_trends_help_and_filter() {
         let mut app = app_with_snapshot(StartScreen::Trends, RenderMode::Braille);
         app.filter = "opus".to_string();
-        let frame = frame_to_string(&app, 90, 20);
+        let frame = frame_to_string(&mut app, 90, 20);
 
         assert!(frame.contains("claude opus"));
         assert!(!frame.contains("gpt 5.5"));
 
         app.help_open = true;
-        let help_frame = frame_to_string(&app, 90, 20);
+        let help_frame = frame_to_string(&mut app, 90, 20);
         assert!(help_frame.contains("help"));
         assert!(help_frame.contains("frontier"));
     }
 
     #[test]
     fn frame_snapshot_frontier_surface() {
-        let app = app_with_snapshot(StartScreen::Frontier, RenderMode::Braille);
-        let frame = frame_to_string(&app, 90, 26);
+        let mut app = app_with_snapshot(StartScreen::Frontier, RenderMode::Braille);
+        let frame = frame_to_string(&mut app, 90, 26);
 
         assert!(frame.contains("cost vs quality"));
         assert!(frame.contains("DeepSWE"));
@@ -1314,14 +1550,14 @@ mod tests {
     #[test]
     fn frame_snapshot_loading_empty_and_ascii() {
         let now = utc(2026, 6, 2, 9, 0);
-        let loading = App::new(
+        let mut loading = App::new(
             StartScreen::Now,
             Period::Week,
             GroupBy::Model,
             false,
             render_options(RenderMode::Ascii, false),
         );
-        let loading_frame = frame_to_string(&loading, 72, 8);
+        let loading_frame = frame_to_string(&mut loading, 72, 8);
         assert!(loading_frame.contains("reading local provider logs"));
         assert!(loading_frame.contains("|"));
 
@@ -1334,12 +1570,12 @@ mod tests {
         );
         empty.loading = false;
         empty.snapshot = Some(empty_snapshot(now));
-        let empty_frame = frame_to_string(&empty, 90, 18);
+        let empty_frame = frame_to_string(&mut empty, 90, 18);
         assert!(empty_frame.contains("no providers detected"));
         assert!(empty_frame.contains("under WSL"));
 
-        let ascii = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
-        let ascii_frame = frame_to_string(&ascii, 90, 18);
+        let mut ascii = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
+        let ascii_frame = frame_to_string(&mut ascii, 90, 18);
         assert!(ascii_frame.contains("["));
     }
 
