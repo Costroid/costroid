@@ -2575,20 +2575,22 @@ const ANOMALIES_ESTIMATE_NOTE: &str =
 /// Surfaced so the missing third signal reads as a stated limitation, never a silent gap. ASCII.
 const ANOMALIES_QUOTA_DEFERRED_NOTE: &str =
     "quota burn-rate anomalies need multi-day quota history, which local data does not keep - not shown.";
-/// The scope line names the two signals + the comparison basis WITHOUT a day count — each rendered
-/// count below reflects the user's ACTUAL history (the realized baseline days), so the 14-day
-/// window policy is never cited as if it were the realized comparison (the median is over the days
-/// that had data, not the full window). Both signals are **API-lane** (named here so a
-/// subscription-only user is not silently blinded — the mix ratio is API-lane-scoped too, matching
-/// the Budget/Forecast "API-lane spend" scope lines).
+/// The scope line names the two signals' **asymmetric lane scopes** + the comparison basis WITHOUT
+/// a day count — each rendered count below reflects the user's ACTUAL realized baseline days
+/// (per-signal), so the 14-day window policy is never cited as if it were the realized comparison.
+/// The spend spike is **API-lane $** (subscription lanes are not a summable dollar — matching the
+/// Budget/Forecast "API-lane spend" scope); the model mix is **all-lane** token share (a share is
+/// lane-agnostic, so a subscription-only user IS served — T16b). Naming both keeps the asymmetry
+/// honest on screen. ASCII.
 const ANOMALIES_SCOPE_LINE: &str =
-    "scope: API-lane spend + model mix vs your own recent history (estimated)";
-/// The permanent no-coverage state for a user with **no API-lane usage at all** (e.g. a
-/// subscription-only Claude Code Max user). Distinct from the transient "not enough history yet"
-/// thin-history line — both anomaly signals are API-lane-only, so this user never gets a callout;
-/// say so honestly rather than imply more history will fill it in. ASCII.
-const ANOMALIES_NO_API_USAGE: &str =
-    "no API-billed usage - anomaly callouts cover API-lane spend + model mix only (estimated)";
+    "scope: API-lane spend spike + all-lane model mix vs your own recent history (estimated)";
+/// The TRANSIENT zero-state for a user with **no usage recorded at all** (`history_days == 0` — the
+/// all-lane token series is empty). After T16b the model-mix counts every lane, so a
+/// subscription-only user (e.g. Claude Code Max with no API key) IS covered once they accrue enough
+/// token-days — so the copy says it fills in as usage accrues, NOT the old permanent "no API-lane
+/// usage" no-coverage framing. ASCII.
+const ANOMALIES_NO_USAGE: &str =
+    "no usage recorded yet - callouts need a few days of history (estimated)";
 
 #[cfg(test)]
 pub(crate) fn render_anomalies(view: &AnomaliesView, options: RenderOptions) -> String {
@@ -2648,10 +2650,12 @@ fn anomalies_header_label(view: &AnomaliesView) -> String {
 /// The body: the honest insufficient-history state, the honest no-anomalies state, or one marked
 /// line per anomaly. Shared by the visual and plain renderers.
 fn push_anomalies_body(out: &mut StyledDocument, view: &AnomaliesView, options: RenderOptions) {
-    // The PERMANENT no-coverage state first: a no-API-lane (subscription-only) user never gets a
-    // callout, so never tell them their condition is the transient "not enough history yet".
-    if view.no_api_usage {
-        push_line(out, ANOMALIES_NO_API_USAGE);
+    // The TRANSIENT zero-state first: no usage recorded at all. After T16b this is NOT permanent —
+    // a subscription-only user is covered once they accrue enough token-days — so the copy says it
+    // fills in, never the old "API-lane only" permanent framing. (The "N of M days" thin-history
+    // line below is the 1..6-day state.)
+    if view.no_usage {
+        push_line(out, ANOMALIES_NO_USAGE);
         return;
     }
     if !view.enough_history {
@@ -5028,13 +5032,15 @@ mod tests {
             );
         }
         // Anomalies in Ascii: the `*` marker + the callouts must be pure ASCII across the flagged,
-        // collapse, clean, and insufficient states (the `◆` marker is braille-only).
+        // collapse, clean, insufficient, and (T16b) no-usage zero states (the `◆` marker is
+        // braille-only).
         for view in [
             anomalies_view_flagged_fixture(),
             anomalies_view_collapse_fixture(),
             anomalies_view_suppressed_multiples_fixture(),
             anomalies_view_clean_fixture(),
             anomalies_view_insufficient_fixture(),
+            anomalies_view_no_usage_fixture(),
         ] {
             let anomalies = render_anomalies(&view, RenderOptions::ascii(false));
             assert!(
@@ -5130,6 +5136,7 @@ mod tests {
                 &anomalies_view_insufficient_fixture(),
                 RenderOptions::plain(),
             ),
+            render_anomalies(&anomalies_view_no_usage_fixture(), RenderOptions::plain()),
             // Alerts (T17): the inline banner, the `alerts` list (active + clear), the off state.
             render_now_with_alerts(&all_arms_now(), &alerts_fixture(), RenderOptions::plain()),
             render_alerts(&alerts_fixture(), RenderOptions::plain()),
@@ -6280,7 +6287,7 @@ mod tests {
             min_history_days: 7,
             baseline_days: 14,
             enough_history: true,
-            no_api_usage: false,
+            no_usage: false,
             anomalies: vec![
                 Anomaly {
                     signal: AnomalySignal::SpendSpike {
@@ -6316,7 +6323,7 @@ mod tests {
             min_history_days: 7,
             baseline_days: 14,
             enough_history: true,
-            no_api_usage: false,
+            no_usage: false,
             anomalies: vec![Anomaly {
                 signal: AnomalySignal::ModelMixShift {
                     model: "claude-opus-4.7".to_string(),
@@ -6338,7 +6345,7 @@ mod tests {
             min_history_days: 7,
             baseline_days: 14,
             enough_history: true,
-            no_api_usage: false,
+            no_usage: false,
             anomalies: Vec::new(),
         }
     }
@@ -6351,42 +6358,52 @@ mod tests {
             min_history_days: 7,
             baseline_days: 14,
             enough_history: false,
-            no_api_usage: false,
+            no_usage: false,
             anomalies: Vec::new(),
         }
     }
 
-    /// No API-lane usage at all (a subscription-only user) — the PERMANENT no-coverage state, NOT
-    /// the transient "not enough history yet" thin-history line.
-    fn anomalies_view_no_api_usage_fixture() -> AnomaliesView {
+    /// No usage recorded at all (`history_days == 0`) — the TRANSIENT zero-state, distinct from the
+    /// 1..6-day "not enough history yet" thin-history line. After T16b this is NOT permanent: a
+    /// subscription-only user is covered once they accrue enough token-days.
+    fn anomalies_view_no_usage_fixture() -> AnomaliesView {
         AnomaliesView {
             generated_at: utc(2026, 6, 16, 12, 0),
             history_days: 0,
             min_history_days: 7,
             baseline_days: 14,
             enough_history: false,
-            no_api_usage: true,
+            no_usage: true,
             anomalies: Vec::new(),
         }
     }
 
     #[test]
-    fn snapshot_anomalies_no_api_usage_plain() {
+    fn snapshot_anomalies_no_usage_plain() {
         insta::assert_snapshot!(render_anomalies(
-            &anomalies_view_no_api_usage_fixture(),
+            &anomalies_view_no_usage_fixture(),
             RenderOptions::plain()
         ));
     }
 
     #[test]
-    fn anomalies_no_api_usage_is_a_permanent_state_not_transient_thin_history() {
-        // A subscription-only (no-API-lane) user must NOT be told their permanent condition is the
-        // transient "not enough history yet" — the honest no-coverage line stands in its place.
+    fn anomalies_no_usage_is_a_transient_zero_state_not_a_permanent_no_coverage() {
+        // (T16b test #7) After T16b the model-mix counts ALL lanes, so a subscription-only user is
+        // no longer permanently uncovered. The zero-state must read as TRANSIENT (it fills in as
+        // usage accrues), never the retired permanent "no API-billed usage" / "API-lane only"
+        // framing, and never the thin-history "0 of 7 days" line.
         for options in [RenderOptions::plain(), RenderOptions::ascii(false)] {
-            let out = render_anomalies(&anomalies_view_no_api_usage_fixture(), options);
-            assert!(out.contains("no API-billed usage"), "{out}");
-            assert!(!out.contains("not enough history yet"), "{out}");
-            assert!(!out.contains("0 of 7 days"), "{out}");
+            let zero = render_anomalies(&anomalies_view_no_usage_fixture(), options);
+            assert!(zero.contains("no usage recorded yet"), "{zero}");
+            assert!(zero.contains("need a few days of history"), "{zero}");
+            assert!(!zero.contains("no API-billed usage"), "{zero}");
+            assert!(!zero.contains("API-lane only"), "{zero}");
+            assert!(!zero.contains("0 of 7 days"), "{zero}");
+            // A populated view (callouts present, no_usage == false) is NOT in the zero-state
+            // branch: a subscription-only user with history DOES get callouts.
+            let flagged = render_anomalies(&anomalies_view_flagged_fixture(), options);
+            assert!(!flagged.contains("no usage recorded yet"), "{flagged}");
+            assert!(flagged.contains("model mix shift"), "{flagged}");
         }
     }
 
@@ -6478,7 +6495,7 @@ mod tests {
             min_history_days: 7,
             baseline_days: 14,
             enough_history: true,
-            no_api_usage: false,
+            no_usage: false,
             anomalies: vec![
                 // (a) spend spike, $0.00 median -> magnitude None -> "well above" (no multiple).
                 Anomaly {

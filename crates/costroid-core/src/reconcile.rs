@@ -136,10 +136,12 @@ impl LocalCostEstimate {
     }
 }
 
-/// Every **API-lane** FOCUS row — the single place the lane filter lives, so the $ classification
-/// ([`api_lane_day_rows`]/[`api_lane_daily_usd_series`]) and the token series
-/// ([`api_lane_daily_token_series`], T16 Anomalies) all classify a row the SAME way. API-lane
-/// only — the only lane with a $ bill (subscription lanes are not a summable dollar, §12.13).
+/// Every **API-lane** FOCUS row — the single place the **$ lane filter** lives, so the $
+/// classification ([`api_lane_day_rows`]/[`api_lane_daily_usd_series`]) classifies a row the SAME
+/// way. API-lane only — the only lane with a $ bill (subscription lanes are not a summable dollar,
+/// §12.13). The token series ([`all_lane_daily_token_series`], T16b Anomalies model-mix)
+/// deliberately does NOT ride this filter — a token *share* is lane-agnostic, so it counts every
+/// lane (excluding any lane would under-count real usage and blind a subscription-only user).
 fn api_lane_rows(rows: &[FocusRecord]) -> impl Iterator<Item = &FocusRecord> {
     rows.iter()
         .filter(|row| CostLane::from_access_path(&row.x_access_path) == CostLane::Api)
@@ -178,22 +180,31 @@ pub(crate) fn api_lane_daily_usd_series(rows: &[FocusRecord]) -> BTreeMap<NaiveD
     series
 }
 
-/// The per-**UTC-day**, per-model API-lane **consumed-token** series — `day -> (model -> summed
-/// x_ConsumedTokens)`. The token-side analogue of [`api_lane_daily_usd_series`], built for T16
-/// Anomalies' model-mix-shift signal (share-of-tokens per model per day). Rides the SAME
-/// API-lane, UTC-day classification ([`api_lane_rows`]) so the lane filter lives in ONE place;
-/// keyed by `charge_period_start.date_naive()` (UTC), summing the raw `x_ConsumedTokens` count —
-/// exact `Decimal`, the count that survives FOCUS nulling `ConsumedQuantity` on unpriced rows —
-/// ascending by day, then by model (`BTreeMap`).
-pub(crate) fn api_lane_daily_token_series(
+/// The per-**UTC-day**, per-model **all-lane consumed-token** series — `day -> (model -> summed
+/// x_ConsumedTokens)`. The token-side companion of [`api_lane_daily_usd_series`], built for T16b
+/// Anomalies' model-mix-shift signal (share-of-tokens per model per day). Unlike the $ series this
+/// counts **every** lane (Api + Subscription + Unknown): a token *share* is lane-agnostic, so
+/// excluding any lane would under-count real usage and silently blind a subscription-only user
+/// (e.g. Claude Code Max with no API key — T16b). Keyed by `charge_period_start.date_naive()`
+/// (UTC), summing the raw `x_ConsumedTokens` count — exact `Decimal`, the count that survives FOCUS
+/// nulling `ConsumedQuantity` on unpriced rows — ascending by day, then by model (`BTreeMap`).
+/// The model key is normalized via the engine's `non_empty_value` (a blank/whitespace id →
+/// `UNKNOWN_GROUP_VALUE`), matching `GroupBy::Model`, so a malformed row never surfaces as a
+/// blank-named model-mix callout.
+pub(crate) fn all_lane_daily_token_series(
     rows: &[FocusRecord],
 ) -> BTreeMap<NaiveDate, BTreeMap<String, Decimal>> {
     let mut series: BTreeMap<NaiveDate, BTreeMap<String, Decimal>> = BTreeMap::new();
-    for row in api_lane_rows(rows) {
+    for row in rows {
         let day = series
             .entry(row.charge_period_start.date_naive())
             .or_default();
-        *day.entry(row.x_model.clone()).or_insert(Decimal::ZERO) += row.x_consumed_tokens;
+        // Normalize the model id the SAME way `GroupBy::Model` does (`crate::non_empty_value`:
+        // a blank/whitespace id → `UNKNOWN_GROUP_VALUE`), so a malformed/blank model never
+        // surfaces as a blank-named "model mix shift:" callout (T16b review hardening — no
+        // shipping adapter emits a blank model today).
+        *day.entry(crate::non_empty_value(&row.x_model))
+            .or_insert(Decimal::ZERO) += row.x_consumed_tokens;
     }
     series
 }
@@ -974,5 +985,84 @@ mod tests {
     #[test]
     fn daily_series_is_empty_with_no_api_rows() {
         assert!(api_lane_daily_usd_series(&[]).is_empty());
+    }
+
+    // ---- all_lane_daily_token_series (T16b Anomalies model-mix) ---------------
+
+    #[test]
+    fn token_series_buckets_tokens_per_utc_day_and_model() {
+        let rows = vec![
+            // June 1 (UTC): two sonnet rows + one opus → summed per model into the June 1 bucket.
+            api_row(utc(2026, 6, 1, 9, 0), "sonnet", "0.10"),
+            api_row(utc(2026, 6, 1, 18, 0), "opus", "0.20"),
+            api_row(utc(2026, 6, 1, 23, 30), "sonnet", "0.05"),
+            // Early June 2 UTC buckets to its own UTC day.
+            api_row(utc(2026, 6, 2, 0, 30), "opus", "0.40"),
+        ];
+        let series = all_lane_daily_token_series(&rows);
+        // `api_row` emits 1_000 `x_ConsumedTokens` per row.
+        let jun1 = match series.get(&date(2026, 6, 1)) {
+            Some(day) => day,
+            None => panic!("June 1 bucket should exist"),
+        };
+        assert_eq!(jun1.get("sonnet").copied(), Some(Decimal::from(2_000)));
+        assert_eq!(jun1.get("opus").copied(), Some(Decimal::from(1_000)));
+        let jun2 = match series.get(&date(2026, 6, 2)) {
+            Some(day) => day,
+            None => panic!("June 2 bucket should exist"),
+        };
+        assert_eq!(jun2.get("opus").copied(), Some(Decimal::from(1_000)));
+    }
+
+    #[test]
+    fn token_series_includes_subscription_and_unknown_lanes() {
+        // The token side is ALL-LANE (T16b): a token *share* is lane-agnostic, so subscription- and
+        // unknown-lane rows ARE counted here — the inverse of the $ series, which excludes them
+        // (`daily_series_excludes_subscription_and_unknown_lanes`).
+        let mut sub = api_row(utc(2026, 6, 1, 9, 0), "m", "9.99");
+        sub.x_access_path = FocusAccessPath::Subscription.as_str().to_string();
+        let mut unknown = api_row(utc(2026, 6, 1, 9, 0), "m", "5.55");
+        unknown.x_access_path = FocusAccessPath::Unknown.as_str().to_string();
+        let api = api_row(utc(2026, 6, 1, 9, 0), "m", "1.00");
+
+        let series = all_lane_daily_token_series(&[sub, unknown, api]);
+        let jun1 = match series.get(&date(2026, 6, 1)) {
+            Some(day) => day,
+            None => panic!("June 1 bucket should exist"),
+        };
+        // All three rows (1_000 tokens each) contribute — none excluded by lane.
+        assert_eq!(jun1.get("m").copied(), Some(Decimal::from(3_000)));
+    }
+
+    #[test]
+    fn token_series_is_empty_with_no_rows() {
+        assert!(all_lane_daily_token_series(&[]).is_empty());
+    }
+
+    #[test]
+    fn token_series_normalizes_blank_model_to_unknown() {
+        // A blank/whitespace model id buckets under the SAME UNKNOWN_GROUP_VALUE the engine's
+        // GroupBy::Model grouping uses (crate::non_empty_value), so a malformed row never renders a
+        // blank-named "model mix shift:" callout (T16b review hardening). Whitespace-only and empty
+        // ids collapse to the one normalized bucket; a real model alongside stays distinct.
+        let mut blank = api_row(utc(2026, 6, 1, 9, 0), "ignored", "0.10");
+        blank.x_model = "   ".to_string();
+        let mut empty = api_row(utc(2026, 6, 1, 10, 0), "ignored", "0.10");
+        empty.x_model = String::new();
+        let real = api_row(utc(2026, 6, 1, 11, 0), "sonnet", "0.10");
+
+        let series = all_lane_daily_token_series(&[blank, empty, real]);
+        let jun1 = match series.get(&date(2026, 6, 1)) {
+            Some(day) => day,
+            None => panic!("June 1 bucket should exist"),
+        };
+        // Both blank rows (1_000 tokens each) collapse under the normalized "unknown" key.
+        assert_eq!(
+            jun1.get(crate::UNKNOWN_GROUP_VALUE).copied(),
+            Some(Decimal::from(2_000))
+        );
+        assert_eq!(jun1.get("sonnet").copied(), Some(Decimal::from(1_000)));
+        // No raw empty-string key leaks through.
+        assert_eq!(jun1.get(""), None);
     }
 }

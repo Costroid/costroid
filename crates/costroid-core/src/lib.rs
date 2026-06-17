@@ -647,14 +647,19 @@ fn anomaly_model_name(anomaly: &Anomaly) -> &str {
     }
 }
 
-/// The Anomalies tab (T16): proactive, non-alarmist callouts vs the user's OWN recent history —
-/// TWO signals, both off `snapshot.focus_rows`: a daily **spend spike** (API-lane $) and a
-/// **model-mix shift** (a model's share-of-tokens). Each is compared to a robust baseline (the
-/// median + MAD over the trailing [`ANOMALY_BASELINE_DAYS`] UTC days), flagged only past a
-/// conservative `3.5·MAD` (with an absolute floor so a near-flat history never flags trivia), and
-/// suppressed entirely below [`ANOMALY_MIN_HISTORY_DAYS`] days of history. Pure-local,
-/// config-neutral, computed-never-persisted (mirrors [`forecast_view`]); UTC days throughout (the
-/// same calendar the shared series buckets on — never mixing UTC + local).
+/// The Anomalies tab (T16, widened to all-lane model-mix in T16b): proactive, non-alarmist
+/// callouts vs the user's OWN recent history — TWO signals, both off `snapshot.focus_rows`, with
+/// **asymmetric lane scopes**: a daily **spend spike** (**API-lane $** — subscription lanes are not
+/// a summable dollar, §12.13) and a **model-mix shift** (**all-lane** share-of-tokens — a token
+/// share is lane-agnostic, so a subscription-only user is served, T16b). Each is compared to a
+/// robust baseline (the median + MAD over the trailing [`ANOMALY_BASELINE_DAYS`] UTC days), flagged
+/// only past a conservative `3.5·MAD` (with an absolute floor so a near-flat history never flags
+/// trivia). The view-level history basis ([`AnomaliesView::history_days`]) is the **all-lane
+/// token-day** count (the universal basis driving `enough_history` / `no_usage`); the spend spike
+/// keeps its OWN API-lane-$ day gate (≥ [`ANOMALY_MIN_HISTORY_DAYS`]), so the two signals may cite
+/// different realized baselines. Pure-local, config-neutral, computed-never-persisted (mirrors
+/// [`forecast_view`]); UTC days throughout (the same calendar the shared series buckets on — never
+/// mixing UTC + local).
 ///
 /// The quota burn-rate signal the original plan named is DEFERRED: the Claude/Codex `rate_limits`
 /// caches persist a single point-in-time reading, so local data has no multi-day quota series to
@@ -666,63 +671,80 @@ pub fn anomalies_view(snapshot: &EngineSnapshot) -> AnomaliesView {
         .checked_sub_signed(Duration::days(ANOMALY_BASELINE_DAYS - 1))
         .unwrap_or(today);
 
-    // Both series ride the SAME shared API-lane + UTC-day classification (reconcile), scoped to the
-    // trailing window [window_start, today] — a future-dated row (clock skew) past today is dropped.
+    // The spend-spike rides the **API-lane** $ series (subscription lanes are not a summable dollar,
+    // §12.13); the model-mix rides the **all-lane** token series (a token share is lane-agnostic, so
+    // a subscription-only user is served — T16b). Both are scoped to the trailing window
+    // [window_start, today] — a future-dated row (clock skew) past today is dropped.
     let spend_series: BTreeMap<NaiveDate, Decimal> =
         reconcile::api_lane_daily_usd_series(&snapshot.focus_rows)
             .into_iter()
             .filter(|(date, _)| *date >= window_start && *date <= today)
             .collect();
     let token_series: BTreeMap<NaiveDate, BTreeMap<String, Decimal>> =
-        reconcile::api_lane_daily_token_series(&snapshot.focus_rows)
+        reconcile::all_lane_daily_token_series(&snapshot.focus_rows)
             .into_iter()
             .filter(|(date, _)| *date >= window_start && *date <= today)
             .collect();
 
-    let history_days = spend_series.len();
+    // The view-level history basis = the **all-lane token-day** count (the universal basis): it
+    // drives `enough_history`, `no_usage`, and the headline "your N-day norm". The spend spike keeps
+    // its OWN API-lane-$ day count as a separate gate below, so the two signals may cite different
+    // realized baselines.
+    let history_days = token_series.len();
     let mut view = AnomaliesView {
         generated_at: snapshot.generated_at,
         history_days,
         min_history_days: ANOMALY_MIN_HISTORY_DAYS,
         baseline_days: ANOMALY_BASELINE_DAYS as usize,
         enough_history: history_days >= ANOMALY_MIN_HISTORY_DAYS,
-        // Both series ride the same API-lane filter, so an empty spend series means zero API-lane
-        // rows — a permanent no-coverage state, not transient thin history.
-        no_api_usage: spend_series.is_empty(),
+        // No all-lane token usage at all (`history_days == 0`). After T16b a subscription-only user
+        // IS covered once they accrue enough token-days, so this is a TRANSIENT zero-state that
+        // fills in as usage accrues — never the old permanent "no API-lane usage" no-coverage state.
+        no_usage: token_series.is_empty(),
         anomalies: Vec::new(),
     };
     if !view.enough_history {
         return view;
     }
 
-    // "today" for the comparison = the most recent active UTC day in the window (the user's last
-    // actual usage), not necessarily the calendar `today` (which may carry no usage yet).
-    let latest_day = match spend_series.keys().next_back().copied() {
+    // --- Signal 1: spend spike (API-lane $, high-side), gated on its OWN realized day count. ---
+    // It fires only when the API-lane-$ series itself has >= ANOMALY_MIN_HISTORY_DAYS days (a
+    // subscription-only user has an empty $ series, so this is skipped) and cites THAT count as its
+    // baseline — which may differ from the all-lane `history_days`. Its "today" is the most recent
+    // active UTC day in the $ series (the user's last billed day), not the calendar `today`.
+    let spend_days = spend_series.len();
+    if spend_days >= ANOMALY_MIN_HISTORY_DAYS {
+        if let Some(latest_spend_day) = spend_series.keys().next_back().copied() {
+            let spend_values: Vec<Decimal> = spend_series.values().copied().collect();
+            let latest_spend = spend_series
+                .get(&latest_spend_day)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
+            if let Some(found) =
+                detect_anomaly(latest_spend, &spend_values, anomaly_spend_floor_usd(), true)
+            {
+                view.anomalies.push(Anomaly {
+                    signal: AnomalySignal::SpendSpike {
+                        date: latest_spend_day,
+                    },
+                    value: latest_spend,
+                    baseline_median: found.baseline_median,
+                    deviation: found.deviation,
+                    magnitude: found.magnitude,
+                    baseline_days: spend_days,
+                });
+            }
+        }
+    }
+
+    // --- Signal 2: model-mix shift (all-lane tokens, two-sided — a model's share-of-tokens on the
+    // latest active token day vs its own trailing-window median share; catches both a surge and a
+    // collapse). It cites the all-lane `history_days` as its baseline. Its "today" is the most recent
+    // active UTC day in the token series (which, for a subscription-only user, the $ series lacks). ---
+    let latest_day = match token_series.keys().next_back().copied() {
         Some(day) => day,
         None => return view,
     };
-
-    // --- Signal 1: spend spike (high-side). ---
-    let spend_values: Vec<Decimal> = spend_series.values().copied().collect();
-    let latest_spend = spend_series
-        .get(&latest_day)
-        .copied()
-        .unwrap_or(Decimal::ZERO);
-    if let Some(found) =
-        detect_anomaly(latest_spend, &spend_values, anomaly_spend_floor_usd(), true)
-    {
-        view.anomalies.push(Anomaly {
-            signal: AnomalySignal::SpendSpike { date: latest_day },
-            value: latest_spend,
-            baseline_median: found.baseline_median,
-            deviation: found.deviation,
-            magnitude: found.magnitude,
-            baseline_days: history_days,
-        });
-    }
-
-    // --- Signal 2: model-mix shift (two-sided — a model's share-of-tokens today vs its own
-    // trailing-window median share; catches both a surge and a collapse). ---
     let day_totals: BTreeMap<NaiveDate, Decimal> = token_series
         .iter()
         .map(|(date, models)| {
@@ -2396,17 +2418,20 @@ pub enum QuotaEtaUnavailable {
     WindowJustStarted,
 }
 
-/// The Anomalies tab view (T16): proactive callouts vs the user's OWN recent history — two
-/// signals (a daily spend spike + a model-mix shift), each with a magnitude + the compared
-/// window. A pure projection over the snapshot; carries `Decimal` and is `Serialize`-only (not
-/// `Eq`/`Deserialize`) — a computed view, never persisted (mirrors [`ForecastView`]). The
+/// The Anomalies tab view (T16, widened to all-lane model-mix in T16b): proactive callouts vs the
+/// user's OWN recent history — two signals with **asymmetric lane scopes** (a daily spend spike,
+/// **API-lane $**, and a model-mix shift, **all-lane** token share), each with a magnitude + the
+/// compared window. A pure projection over the snapshot; carries `Decimal` and is `Serialize`-only
+/// (not `Eq`/`Deserialize`) — a computed view, never persisted (mirrors [`ForecastView`]). The
 /// quota-burn signal the original plan named is DEFERRED (local data has no multi-day quota
 /// history, §11.5) — surfaced honestly in the render footnote, never faked.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AnomaliesView {
     pub generated_at: DateTime<Utc>,
-    /// Distinct active UTC days of API-lane history within the trailing window — both the
-    /// suppression input and the compared-window size shown to the user.
+    /// Distinct active UTC days of **all-lane token** history within the trailing window (the
+    /// universal basis) — both the suppression input and the compared-window size shown to the
+    /// user. The spend spike additionally has its own API-lane-$ day gate (it may differ); each
+    /// [`Anomaly::baseline_days`] reports the realized window for THAT signal.
     pub history_days: usize,
     /// The minimum-history floor (days); below it `enough_history` is false and `anomalies` is
     /// empty (render the honest "not enough history yet - N of M days" state).
@@ -2416,13 +2441,14 @@ pub struct AnomaliesView {
     /// True when `history_days >= min_history_days` — only then are anomalies computed. Lets the
     /// render distinguish "not enough history yet" from the honest "no anomalies" clean state.
     pub enough_history: bool,
-    /// True when there is **no API-lane usage at all** (`history_days == 0`). Both signals are
-    /// API-lane-only, so this is a PERMANENT no-coverage state (a subscription-only user, e.g. Claude
-    /// Code Max with no API key, never gets a cost/mix anomaly) — distinct from the *transient*
-    /// "not enough history yet" thin-history state, and the render branches on it FIRST so a
-    /// subscription user is never told their permanent condition is about to fill in (mirrors
-    /// [`ForecastView::no_api_usage`] / [`ModelsView::no_api_usage`]).
-    pub no_api_usage: bool,
+    /// True when there is **no usage at all** (`history_days == 0` — the all-lane token series is
+    /// empty). After T16b the model-mix signal counts every lane, so a subscription-only user (e.g.
+    /// Claude Code Max with no API key) IS covered once they accrue enough token-days — this is now
+    /// a **TRANSIENT** zero-state that fills in as usage accrues, NOT the old permanent
+    /// no-coverage state. The render branches on it FIRST with transient "no usage recorded yet"
+    /// copy, distinct from the thin-history "N of M days" line (mirrors the zero-state idea of
+    /// [`ForecastView::no_api_usage`] / [`ModelsView::no_api_usage`], but all-lane and transient).
+    pub no_usage: bool,
     /// The detected anomalies — the spend spike (if any) first, then model-mix shifts most-deviant
     /// first. Empty when there is not enough history OR usage is in line with the norm.
     pub anomalies: Vec<Anomaly>,
@@ -2436,8 +2462,8 @@ pub struct Anomaly {
     /// Which signal fired (and its subject — the day for a spike, the model for a mix shift).
     pub signal: AnomalySignal,
     /// The anomalous value: the day's API-lane spend `$` for a [`AnomalySignal::SpendSpike`], or
-    /// the model's share-of-tokens (`0..=1`) for a [`AnomalySignal::ModelMixShift`] — exact
-    /// [`Decimal`].
+    /// the model's **all-lane** share-of-tokens (`0..=1`) for a [`AnomalySignal::ModelMixShift`] —
+    /// exact [`Decimal`].
     pub value: Decimal,
     /// The baseline: the median of the trailing-window values this is compared against (a `$`
     /// median for a spike, a share median for a mix shift).
@@ -2447,7 +2473,10 @@ pub struct Anomaly {
     /// `value ÷ baseline_median` — the "~N× your norm" multiple, `None` when the median is `0`
     /// (the multiple is undefined; the render falls back to the absolute figures).
     pub magnitude: Option<Decimal>,
-    /// The number of trailing-window days the baseline was computed over (the compared window).
+    /// The number of trailing-window days the baseline was computed over (the compared window) — the
+    /// signal's OWN realized basis: the **API-lane-$** day count for a [`AnomalySignal::SpendSpike`]
+    /// and the **all-lane token-day** count ([`AnomaliesView::history_days`]) for a
+    /// [`AnomalySignal::ModelMixShift`]; the two MAY differ (T16b).
     pub baseline_days: usize,
 }
 
@@ -2456,10 +2485,12 @@ pub struct Anomaly {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnomalySignal {
-    /// A UTC day whose total API-lane spend deviates (high-side) from the trailing-window median.
+    /// A UTC day whose total **API-lane** spend deviates (high-side) from the trailing-window
+    /// median ($ is API-lane only — subscription lanes are not a summable dollar).
     SpendSpike { date: NaiveDate },
-    /// A model whose share-of-tokens on the latest active day deviates from its own
-    /// trailing-window median share.
+    /// A model whose **all-lane** share-of-tokens on the latest active day deviates from its own
+    /// trailing-window median share (a token share is lane-agnostic, so this serves
+    /// subscription-only users too — T16b).
     ModelMixShift { model: String },
 }
 
@@ -3512,6 +3543,19 @@ mod tests {
     /// One API-lane FOCUS meter row for the anomaly tests: a model, a charge time, a raw token
     /// count (→ `x_ConsumedTokens`), and an (overwritten) billed cost.
     fn anomaly_record(model: &str, when: DateTime<Utc>, tokens: u64, cents: i64) -> FocusRecord {
+        anomaly_record_lane(model, when, tokens, cents, FocusAccessPath::Api)
+    }
+
+    /// Like [`anomaly_record`] but on a chosen lane — for the T16b all-lane model-mix tests (a
+    /// subscription-only or mixed user). The $ (spend-spike) series counts only the API lane; the
+    /// token (model-mix) series counts every lane, so a subscription row drives the mix but not the $.
+    fn anomaly_record_lane(
+        model: &str,
+        when: DateTime<Utc>,
+        tokens: u64,
+        cents: i64,
+        access_path: FocusAccessPath,
+    ) -> FocusRecord {
         let mut record = match FocusRecord::unpriced_usage(UnpricedUsage {
             timestamp: when,
             tool: "codex".to_string(),
@@ -3519,7 +3563,7 @@ mod tests {
             token_type: TokenType::Output,
             token_count: tokens,
             project: None,
-            access_path: FocusAccessPath::Api,
+            access_path,
             service_name: "svc".to_string(),
             service_provider_name: "OpenAI".to_string(),
             host_provider_name: "OpenAI".to_string(),
@@ -3567,7 +3611,7 @@ mod tests {
 
     #[test]
     fn anomalies_view_below_seven_days_history_is_suppressed() {
-        // Only 3 distinct days of API-lane history — below the 7-day floor, so NO anomaly is
+        // Only 3 distinct days of all-lane token history — below the 7-day floor, so NO anomaly is
         // surfaced and the honest insufficient-history state is reported instead.
         let now = utc_datetime(2026, 6, 16, 12, 0, 0);
         let rows = vec![
@@ -3580,8 +3624,8 @@ mod tests {
         assert_eq!(view.history_days, 3);
         assert_eq!(view.min_history_days, 7);
         assert!(view.anomalies.is_empty());
-        // Thin history is NOT no-API-usage — the user has 3 API-lane days, just below the floor.
-        assert!(!view.no_api_usage);
+        // Thin history is NOT the zero-state — the user has 3 token-days, just below the floor.
+        assert!(!view.no_usage);
     }
 
     #[test]
@@ -3591,9 +3635,9 @@ mod tests {
         assert!(!view.enough_history);
         assert_eq!(view.history_days, 0);
         assert!(view.anomalies.is_empty());
-        // Zero API-lane rows ⇒ the permanent no-coverage state (a subscription-only user), distinct
-        // from transient thin history.
-        assert!(view.no_api_usage);
+        // Zero rows ⇒ the TRANSIENT zero-state (no usage recorded yet) — it fills in as usage
+        // accrues; distinct from thin history (`history_days` 1..6). (T16b test #5.)
+        assert!(view.no_usage);
     }
 
     #[test]
@@ -3833,18 +3877,258 @@ mod tests {
     }
 
     #[test]
-    fn anomalies_view_ignores_subscription_lane_and_future_rows() {
-        // A subscription-lane spike (not a summable dollar) and a future-dated row (clock skew)
-        // are both excluded — only the flat API-lane history remains, so nothing flags.
+    fn anomalies_view_subscription_only_user_gets_a_model_mix_callout() {
+        // THE T16b HEADLINE WIN (tests #1 + #2): a subscription-only user (Claude Code Max, NO API
+        // key → zero API-lane rows) STILL gets a model-mix callout, because the model-mix signal
+        // counts ALL lanes. model-a held 100% of tokens for seven subscription days, then
+        // claude-opus surges to 100% on the latest day — a mix shift flagged on both. There is no
+        // API-lane $ at all, so `no_usage` is false (all-lane token history is non-empty),
+        // `enough_history` holds, and there is NO spend spike (the $ gate is skipped).
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut rows: Vec<FocusRecord> = (9..=15)
+            .map(|day| {
+                anomaly_record_lane(
+                    "model-a",
+                    utc_datetime(2026, 6, day, 9, 0, 0),
+                    1_000,
+                    100,
+                    FocusAccessPath::Subscription,
+                )
+            })
+            .collect();
+        rows.push(anomaly_record_lane(
+            "claude-opus-4.7",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_000,
+            100,
+            FocusAccessPath::Subscription,
+        ));
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(!view.no_usage, "all-lane token history is non-empty");
+        assert!(view.enough_history);
+        assert_eq!(view.history_days, 8);
+        let shifted: Vec<&str> = view
+            .anomalies
+            .iter()
+            .filter_map(|anomaly| match &anomaly.signal {
+                AnomalySignal::ModelMixShift { model } => Some(model.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            shifted.contains(&"model-a"),
+            "the collapsed model: {shifted:?}"
+        );
+        assert!(
+            shifted.contains(&"claude-opus-4.7"),
+            "the surged model: {shifted:?}"
+        );
+        // #2: a subscription-only user has no API-lane $, so the spend gate is skipped entirely.
+        assert!(
+            !view
+                .anomalies
+                .iter()
+                .any(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. })),
+            "no API-lane $ ⇒ no spend spike: {:?}",
+            view.anomalies
+        );
+        // Each model-mix anomaly cites the all-lane history_days baseline.
+        for anomaly in &view.anomalies {
+            assert_eq!(anomaly.baseline_days, 8);
+        }
+    }
+
+    #[test]
+    fn anomalies_view_model_mix_pools_api_and_subscription_lanes() {
+        // (Test #3) A MIXED user whose mix shift is visible ONLY when the two lanes are POOLED. Each
+        // lane alone is stable (API = 100% model-a every day; subscription = 100% model-b every
+        // day), so the OLD API-lane-only signal would see no shift at all. Pooled, model-b's
+        // share jumps 50% → 90% on the latest day (the subscription lane's volume surges), which the
+        // all-lane model-mix flags on both models. API spend is held flat ($1/day) so no spike.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut rows: Vec<FocusRecord> = Vec::new();
+        for day in 9..=16 {
+            rows.push(anomaly_record_lane(
+                "model-a",
+                utc_datetime(2026, 6, day, 9, 0, 0),
+                1_000,
+                100,
+                FocusAccessPath::Api,
+            ));
+        }
+        for day in 9..=15 {
+            rows.push(anomaly_record_lane(
+                "model-b",
+                utc_datetime(2026, 6, day, 10, 0, 0),
+                1_000,
+                0,
+                FocusAccessPath::Subscription,
+            ));
+        }
+        // The latest day: subscription model-b volume surges (9_000 tokens) → pooled model-b 90%.
+        rows.push(anomaly_record_lane(
+            "model-b",
+            utc_datetime(2026, 6, 16, 10, 0, 0),
+            9_000,
+            0,
+            FocusAccessPath::Subscription,
+        ));
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(view.enough_history);
+        assert_eq!(view.history_days, 8);
+        let shifted: Vec<&str> = view
+            .anomalies
+            .iter()
+            .filter_map(|anomaly| match &anomaly.signal {
+                AnomalySignal::ModelMixShift { model } => Some(model.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            shifted.contains(&"model-b"),
+            "pooled model-b surged: {shifted:?}"
+        );
+        assert!(
+            shifted.contains(&"model-a"),
+            "pooled model-a collapsed: {shifted:?}"
+        );
+        assert!(
+            !view
+                .anomalies
+                .iter()
+                .any(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. })),
+            "flat API $ ⇒ no spend spike: {:?}",
+            view.anomalies
+        );
+    }
+
+    #[test]
+    fn anomalies_view_signals_cite_their_own_realized_baseline_days() {
+        // (Test #4) The two signals cite DIFFERENT realized baselines: the spend spike cites its OWN
+        // API-lane-$ day count, the model-mix cites the all-lane token-day count. Subscription
+        // model-a runs the full 14-day window (14 all-lane token-days) while API usage exists on
+        // only the last 7 days (7 API-lane-$ days). Both fire: a $ spike on the latest day and a
+        // model-mix shift (model-b surges).
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut rows: Vec<FocusRecord> = Vec::new();
+        // 14 subscription days (Jun 3..16) of model-a → 14 all-lane token-days, $0.
+        for day in 3..=16 {
+            rows.push(anomaly_record_lane(
+                "model-a",
+                utc_datetime(2026, 6, day, 8, 0, 0),
+                1_000,
+                0,
+                FocusAccessPath::Subscription,
+            ));
+        }
+        // 7 API days (Jun 10..16) of model-a: flat $1, then a $20 spike on the latest day.
+        for day in 10..=15 {
+            rows.push(anomaly_record_lane(
+                "model-a",
+                utc_datetime(2026, 6, day, 9, 0, 0),
+                1_000,
+                100,
+                FocusAccessPath::Api,
+            ));
+        }
+        rows.push(anomaly_record_lane(
+            "model-a",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_000,
+            2_000,
+            FocusAccessPath::Api,
+        ));
+        // A model-b API surge on the latest day → a pooled model-mix shift.
+        rows.push(anomaly_record_lane(
+            "model-b",
+            utc_datetime(2026, 6, 16, 9, 30, 0),
+            9_000,
+            100,
+            FocusAccessPath::Api,
+        ));
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert_eq!(
+            view.history_days, 14,
+            "all-lane token-days span the full window"
+        );
+        let spike = view
+            .anomalies
+            .iter()
+            .find(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. }))
+            .unwrap_or_else(|| panic!("expected a spend spike: {:?}", view.anomalies));
+        assert_eq!(
+            spike.baseline_days, 7,
+            "the spend spike cites its OWN API-lane-$ day count"
+        );
+        let mix = view
+            .anomalies
+            .iter()
+            .find(|anomaly| matches!(anomaly.signal, AnomalySignal::ModelMixShift { .. }))
+            .unwrap_or_else(|| panic!("expected a model-mix shift: {:?}", view.anomalies));
+        assert_eq!(
+            mix.baseline_days, 14,
+            "the model-mix cites the all-lane token-day count"
+        );
+        assert_ne!(
+            spike.baseline_days, mix.baseline_days,
+            "the two signals' realized baselines differ here"
+        );
+    }
+
+    #[test]
+    fn anomalies_view_api_only_user_both_signals_share_one_baseline() {
+        // (Test #6) No-regression for the T16 API-only persona: with usage on the API lane ONLY, the
+        // API-lane-$ day count == the all-lane token-day count, so both signals fire AND cite the
+        // SAME baseline (= history_days). Seven flat $1 gpt-5.5 days, then a $20 claude-opus surge.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut rows: Vec<FocusRecord> = (9..=15)
+            .map(|day| anomaly_record("gpt-5.5", utc_datetime(2026, 6, day, 9, 0, 0), 1_000, 100))
+            .collect();
+        rows.push(anomaly_record(
+            "claude-opus-4.7",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            5_000,
+            2_000,
+        ));
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(!view.no_usage);
+        assert_eq!(view.history_days, 8);
+        let spike = view
+            .anomalies
+            .iter()
+            .find(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. }))
+            .unwrap_or_else(|| panic!("expected a spend spike: {:?}", view.anomalies));
+        let mix = view
+            .anomalies
+            .iter()
+            .find(|anomaly| matches!(anomaly.signal, AnomalySignal::ModelMixShift { .. }))
+            .unwrap_or_else(|| panic!("expected a model-mix shift: {:?}", view.anomalies));
+        assert_eq!(spike.baseline_days, 8);
+        assert_eq!(mix.baseline_days, 8);
+        assert_eq!(spike.baseline_days, view.history_days);
+    }
+
+    #[test]
+    fn anomalies_view_spend_spike_excludes_subscription_and_windows_out_future_rows() {
+        // The spend spike is API-lane-$ only, so a huge SUBSCRIPTION-lane charge must never enter
+        // the $ series (no phantom spike); a future-dated row (clock skew) is windowed out of BOTH
+        // series. Post-T16b the subscription row DOES enter the all-lane token series, but as the
+        // same model (gpt-5.5) it does not shift the mix — so nothing flags either way.
         let now = utc_datetime(2026, 6, 16, 12, 0, 0);
         let mut rows: Vec<FocusRecord> = (9..=16)
             .map(|day| anomaly_record("gpt-5.5", utc_datetime(2026, 6, day, 9, 0, 0), 1_000, 100))
             .collect();
-        // A huge SUBSCRIPTION-lane charge on the latest day — must never enter the $ series.
-        let mut sub = anomaly_record("gpt-5.5", utc_datetime(2026, 6, 16, 10, 0, 0), 1_000, 9_900);
-        sub.x_access_path = "subscription".to_string();
+        // A huge SUBSCRIPTION-lane charge on the latest day — must never enter the $ (spend) series
+        // (if it did, Jun 16 would read ~$100 and a spike would fire).
+        let sub = anomaly_record_lane(
+            "gpt-5.5",
+            utc_datetime(2026, 6, 16, 10, 0, 0),
+            1_000,
+            9_900,
+            FocusAccessPath::Subscription,
+        );
         rows.push(sub);
-        // A future-dated API spike past `today` — excluded from the window.
+        // A future-dated API spike past `today` — excluded from the window (both series).
         rows.push(anomaly_record(
             "gpt-5.5",
             utc_datetime(2026, 6, 20, 9, 0, 0),
@@ -3853,10 +4137,13 @@ mod tests {
         ));
         let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
         assert!(view.enough_history);
-        assert_eq!(view.history_days, 8, "Jun 9..16 API-lane days only");
+        assert_eq!(
+            view.history_days, 8,
+            "Jun 9..16 token-days (the subscription row overlaps Jun 16; the future row is windowed out)"
+        );
         assert!(
             view.anomalies.is_empty(),
-            "subscription + future rows must not drive an anomaly: {:?}",
+            "the subscription $ + future rows must not drive an anomaly (same model → no mix shift): {:?}",
             view.anomalies
         );
     }

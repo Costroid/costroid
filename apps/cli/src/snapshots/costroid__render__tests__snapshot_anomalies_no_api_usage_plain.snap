@@ -1,9 +1,0 @@
----
-source: apps/cli/src/render.rs
-expression: "render_anomalies(&anomalies_view_no_api_usage_fixture(),\nRenderOptions::plain())"
----
-costroid anomalies
-scope: API-lane spend + model mix vs your own recent history (estimated)
-no API-billed usage - anomaly callouts cover API-lane spend + model mix only (estimated)
-quota burn-rate anomalies need multi-day quota history, which local data does not keep - not shown.
-figures are local estimates (your tokens x current prices), vs your own recent history.
