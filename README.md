@@ -1,8 +1,6 @@
 # Costroid
 
-`C ⠉` — a pixel **C** beside the braille cell ⠉ (dots 1 and 4, the two top dots: a meter at full).
-
-> Local-first, FOCUS-native cost and limit visibility for your AI coding tools.
+> Local-first, FOCUS-native cost and limit visibility for your AI coding tools — right in your terminal.
 
 ![status](https://img.shields.io/badge/status-early_development-orange)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
@@ -13,15 +11,17 @@ It's the kind of tool that should be free and open, so it is.
 
 ## Status
 
-**Early development.** Costroid's **v0.4.0** release adds the opt-in **connections** line — connect your own Anthropic or OpenAI usage/billing API key (`costroid connect`/`disconnect`/`connections`) and reconcile your local cost estimate against the vendor's billed invoice (`costroid reconcile`). It stays **off by default**: all network and credential code lives in the feature-gated `costroid-connect` crate, the default binary doesn't even link it, keys live only in your OS keychain, and the default build still makes **zero** network calls. It builds on live Claude subscription quota (5-hour + weekly via Claude Code's `statusLine`, shipped in v0.3.0) and the local cost lane (the `now`, `trends`, `statusline`, and `export` commands, the cost-vs-quality `frontier` view, Cursor detect-and-defer, and WSL Windows-root auto-detection, shipped in v0.2.0). Install it via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). Commands and flags may still evolve.
+**Early development.** Costroid's **v0.5.0** release adds the **analytical TUI tabs and opt-in alerts**: six dedicated, keyboard-navigable tabs over your local data — **Providers**, **Models**, **History**, **Budget**, **Forecast**, and **Anomalies** — plus opt-in threshold **alerts** (`costroid alerts` / `--check` + an inline banner) that fire when a quota window crosses 80% / 95% or a budget goes over its monthly $ target. Alerts are **off by default**, pure-local, no daemon. It builds on the opt-in **connections** line (your own Anthropic/OpenAI usage-API key + `costroid reconcile`, off by default, v0.4.0), live Claude subscription quota (5-hour + weekly via Claude Code's `statusLine`, v0.3.0), and the local cost lane (`now`, `trends`, `statusline`, `export`, the cost-vs-quality `frontier` view, Cursor detect-and-defer, WSL Windows-root auto-detection, v0.2.0). The default build still reads only local logs and makes **zero** network calls. Install via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid` — or build from source (see [Quickstart](#quickstart)). Commands and flags may still evolve.
 
 ## What Costroid does
 
-Shipping today (v0.4.0):
+Shipping today (v0.5.0):
 
 - **Two views in one tool.**
   - `now` — your Codex **and live Claude** 5-hour and weekly limits with reset countdowns (Claude via its `statusLine`), plus your current API spend by model.
   - `trends` — spend over day / week / month / year, grouped or filtered by model or app.
+- **Six analytical tabs** (number `1`–`8` or Tab / Shift-Tab) — **Providers** (each tool's data source, auth, and what's available vs unavailable), **Models** (per-model API spend + token mix fused with the frontier), **History** (the full per-turn FOCUS record, newest-first, scrollable), **Budget** (your monthly $ targets vs actual API-lane spend, with a pace cue), **Forecast** (run-rate month-end projection + per-quota burn ETAs, hedged), and **Anomalies** (spend-spike + model-mix-shift callouts vs your own recent history).
+- **Opt-in threshold alerts** (`alerts` / `alerts --check`) — an inline banner + a cron-friendly exit-code check when a quota window crosses 80% / 95% or a budget goes over target; **off by default**, no daemon, no network.
 - **Cost-vs-quality frontier** (`frontier`) — the published cost-vs-quality frontier (DeepSWE + CursorBench) and where your own spend sits on it; advisory, sourced, **API-cost rows only**.
 - **Local logs only.** Reads what Claude Code, Codex, and Cursor already write to disk. Today's release needs no API keys and no login, and nothing leaves your machine. (Optional, opt-in connections — your own API key — shipped in v0.4.0, with a sanctioned OAuth login still planned; the local-only path always stays the default.)
 - **FOCUS-conformant export** (JSON / CSV) so your cost data is standard and portable.
@@ -38,7 +38,7 @@ Where Costroid is headed:
 - **Live Claude quota** — **shipped in v0.3.0.** Claude Code's `statusLine` hook hands Costroid your real 5-hour and weekly limits locally — no login, no token reuse. `costroid setup-statusline` wires it up and captures the data, and the now-screen and statusline render those limits (with a color-free `? unverified` cue and a labeled estimate fallback when a reading can't be trusted, never a confident wrong number).
 - **Cost-vs-quality frontier** (`costroid frontier`) — **shipped in v0.2.0.** Plots the published cost-vs-quality frontier and where your own spend sits on it; advisory and sourced, never "just use the cheapest."
 - **Connections (your own key, opt-in) — shipped in v0.4.0.** Optional, default-off, feature-gated connections fetch live numbers no local log carries — your own Anthropic or OpenAI usage-API key, and a sanctioned OAuth login where the provider offers one. Costroid never reuses a session or token against an undocumented endpoint, so a provider with no sanctioned source — Cursor today, and Gemini, which exposes no static-key usage API — stays detect-only and shows "unavailable" until an official API exists. Tokens live only in your OS keychain and are used strictly between your device and the provider; `connect` warns at paste time that an admin key is organization-wide and recommends a dedicated, instantly-revocable one. v0.4.0 ships it all — the feature-gated `costroid-connect` crate, its OS-keychain credential store, the generic authorized-host HTTPS client, the Anthropic + OpenAI usage-API adapters, the estimate-vs-invoice reconciliation engine, the **`costroid connect`/`disconnect`/`connections` CLI** (stdin-only key entry, instant revoke), and the **`costroid reconcile` view** that puts your local estimate side by side with the vendor's billed invoice (signed variance per day and model, honest about every gap, never presenting the estimate as the bill) — all off by default, with the default build still making zero network calls.
-- **Analytical tabs + alerts** — the Providers, Models, History, Budget, Forecast, and Anomalies TUI tabs land alongside opt-in **threshold alerts** (`costroid alerts` / `--check` + an inline banner): a quota window crossing 80% / 95% or a budget going over its monthly $ target, default off, pure-local, no daemon. All six tabs and the alerts surface are built; the release cut closes out the line.
+- **Analytical tabs + alerts** — **shipped in v0.5.0.** The Providers, Models, History, Budget, Forecast, and Anomalies TUI tabs land alongside opt-in **threshold alerts** (`costroid alerts` / `--check` + an inline banner): a quota window crossing 80% / 95% or a budget going over its monthly $ target, default off, pure-local, no daemon.
 - **Taskbar / menu-bar app** — a planned `costroid-bar` surface built in egui (no webview), the richest and last surface; everything it shows the core already computes.
 - **Maybe later** — an MCP server (query your costs from inside your AI agent) remains a speculative, uncommitted future surface.
 - A separate, team-oriented **web platform** for company-wide cost management is planned as its own project.
@@ -57,7 +57,7 @@ cargo install --path apps/cli
 
 ### Packaged installers
 
-> **v0.4.0 is published** — all commands below work today. Built and released by [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries carry build-provenance attestations + checksums but are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
+> **v0.5.0 is published** — all commands below work today. Built and released by [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries carry build-provenance attestations + checksums but are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
 
 macOS / Linux (shell):
 

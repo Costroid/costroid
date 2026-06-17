@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme.workspace = true
 description = "Local-first, FOCUS-native cost and limit visibility for your AI coding tools, right in your terminal."
 keywords = ["finops", "cost", "tui", "cli", "ai"]
 categories = ["command-line-utilities", "visualization"]

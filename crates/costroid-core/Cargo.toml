@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme.workspace = true
 description = "Costroid data pipeline and aggregation engine: normalizes local AI-tool usage into estimated FOCUS cost records."
 documentation = "https://docs.rs/costroid-core"
 keywords = ["finops", "cost", "focus", "aggregation", "ai"]

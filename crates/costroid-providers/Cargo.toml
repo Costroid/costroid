@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme.workspace = true
 description = "Local log parsers and provider interfaces for Claude Code, Codex, and Cursor AI-tool usage data."
 documentation = "https://docs.rs/costroid-providers"
 keywords = ["finops", "cost", "claude", "codex", "cursor"]

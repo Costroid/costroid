@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme.workspace = true
 description = "Costroid's opt-in network + credential boundary: the single crate where all HTTP and OS-keychain access lives, feature-gated and off by default."
 documentation = "https://docs.rs/costroid-connect"
 keywords = ["finops", "cost", "keychain", "oauth", "ai"]

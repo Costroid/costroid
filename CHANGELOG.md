@@ -11,8 +11,30 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-17
+
+This release completes the analytical surface: six dedicated TUI tabs over your local data
+plus opt-in threshold alerts — all pure-local, no network in the default build, no telemetry,
+every figure a labeled estimate.
+
 ### Added
 
+- **Six analytical TUI tabs, reachable by number (`1`–`8`) or Tab / Shift-Tab.** Alongside
+  `now` and `trends`: **Providers** (each tool's data source, auth method, and what is available
+  vs unavailable), **Models** (per-model API spend + token mix fused with the cost-vs-quality
+  frontier; un-benchmarked models shown as gaps, never guessed), **History** (the full per-turn
+  FOCUS record — time, model, tokens, access path, API-only estimated cost — newest-first and
+  scrollable), **Budget** (your monthly $ target(s) vs actual API-lane spend, with a fill bar, a
+  pace cue, and an honest over-budget state), **Forecast** (a linear run-rate month-end $
+  projection + per-quota-window burn ETAs — both hedged estimates that degrade to "unavailable"
+  rather than show a confident wrong number), and **Anomalies** (proactive, non-alarmist
+  spend-spike + model-mix-shift callouts vs your own recent history). Every tab renders in
+  `--plain` ASCII and never relies on color alone.
+- **First user-config file — a read-only TOML at `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml`.**
+  Non-secret (credentials stay keychain-only), forward-compatible, and never written by Costroid
+  (no writer, no `set` command). Today it carries `[budget]` monthly $ targets (API-lane only) and
+  the `[alerts]` opt-in. Money is exact decimal, never a float; an absent file is the zero-config
+  default and a malformed file surfaces a clear status line, never a crash.
 - **`costroid alerts` — opt-in threshold alerts (default OFF, no daemon, no new dependency).**
   Surfaces two never-mixed crossing classes from your local data: a **quota window** at/above its
   warning (80%) or critical (95%) threshold — fired only off a fresh, cross-checked reading, never
