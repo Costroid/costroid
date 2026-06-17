@@ -1,0 +1,11 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_anomalies(&anomalies_view_flagged_fixture(),\nRenderOptions::braille(false))"
+---
+C⠉ costroid                                   anomalies  2 flagged
+scope: API-lane spend + model mix vs your own recent history (estimated)
+◆ spend spike: ~$20.00 on Jun 16, ~8.0x your ~$2.50 12-day median (estimated)
+◆ model mix shift: gpt-5.5 at 70% of tokens, ~3.5x your 20% 12-day median (estimated)
+────────────────────────────────────────────────────────────────
+quota burn-rate anomalies need multi-day quota history, which local data does not keep - not shown.
+figures are local estimates (your tokens x current prices), vs your own recent history.

@@ -4,12 +4,13 @@ use std::io::{self, IsTerminal};
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use costroid_core::{
-    AggregateTotals, BenchFrontier, BenchView, BudgetExcludedTool, BudgetExclusion, BudgetPace,
-    BudgetRow, BudgetScope, BudgetView, CostLane, CostLaneSummary, FocusRecord, ForecastView,
-    FrontierPoint, FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow,
-    ModelsView, NowSummary, OverlayModel, Period, PeriodRange, ProviderCapabilityView,
-    ProviderStatus, ProviderStatusKind, QuotaEta, QuotaEtaOutcome, QuotaEtaUnavailable,
-    RepricingDelta, RepricingStatus, SpendForecast, TokenTotals, TrendsSummary,
+    AggregateTotals, AnomaliesView, Anomaly, AnomalySignal, BenchFrontier, BenchView,
+    BudgetExcludedTool, BudgetExclusion, BudgetPace, BudgetRow, BudgetScope, BudgetView, CostLane,
+    CostLaneSummary, FocusRecord, ForecastView, FrontierPoint, FrontierStanding, GroupBy,
+    LimitAvailability, LimitSummary, ModelRow, ModelsView, NowSummary, OverlayModel, Period,
+    PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind, QuotaEta,
+    QuotaEtaOutcome, QuotaEtaUnavailable, RepricingDelta, RepricingStatus, SpendForecast,
+    TokenTotals, TrendsSummary,
 };
 use costroid_providers::{AuthMethod, DataSource, LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
@@ -2304,6 +2305,228 @@ fn quota_eta_unavailable_text(reason: QuotaEtaUnavailable) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Anomalies tab (T16) — `costroid` TUI tab `8`. Proactive, non-alarmist callouts vs the user's
+// OWN recent history: two signals (a daily spend spike + a model-mix shift), each compared to a
+// robust median+MAD baseline over the trailing 14 UTC days, suppressed below a 7-day floor. An
+// ADVISORY tab: MONOCHROME (amber/red is reserved for the near-limit/over-budget meter state,
+// which the anomalies tab has none of — it is advisory text). Each callout carries a NON-COLOR
+// marker (`◆`/`*`) that survives `--plain`, never color. The quota burn-rate signal is DEFERRED
+// (local data keeps no multi-day quota history) — surfaced honestly in the footnote, never faked.
+// Mirrors the `render_forecast_*` split; plain delimits by labels, never the `─` rule (T11 gotcha).
+// ---------------------------------------------------------------------------
+
+/// The standing reminder that the anomaly figures are local estimates vs the user's own history.
+/// ASCII.
+const ANOMALIES_ESTIMATE_NOTE: &str =
+    "figures are local estimates (your tokens x current prices), vs your own recent history.";
+/// The honest disclosure that the quota burn-rate signal is deferred — local data keeps only a
+/// single point-in-time quota reading, so there is no multi-day series to difference (§11.5 T16).
+/// Surfaced so the missing third signal reads as a stated limitation, never a silent gap. ASCII.
+const ANOMALIES_QUOTA_DEFERRED_NOTE: &str =
+    "quota burn-rate anomalies need multi-day quota history, which local data does not keep - not shown.";
+/// The scope line names the two signals + the comparison basis WITHOUT a day count — each rendered
+/// count below reflects the user's ACTUAL history (the realized baseline days), so the 14-day
+/// window policy is never cited as if it were the realized comparison (the median is over the days
+/// that had data, not the full window). Both signals are **API-lane** (named here so a
+/// subscription-only user is not silently blinded — the mix ratio is API-lane-scoped too, matching
+/// the Budget/Forecast "API-lane spend" scope lines).
+const ANOMALIES_SCOPE_LINE: &str =
+    "scope: API-lane spend + model mix vs your own recent history (estimated)";
+/// The permanent no-coverage state for a user with **no API-lane usage at all** (e.g. a
+/// subscription-only Claude Code Max user). Distinct from the transient "not enough history yet"
+/// thin-history line — both anomaly signals are API-lane-only, so this user never gets a callout;
+/// say so honestly rather than imply more history will fill it in. ASCII.
+const ANOMALIES_NO_API_USAGE: &str =
+    "no API-billed usage - anomaly callouts cover API-lane spend + model mix only (estimated)";
+
+#[cfg(test)]
+pub(crate) fn render_anomalies(view: &AnomaliesView, options: RenderOptions) -> String {
+    render_anomalies_document(view, options).render(options)
+}
+
+pub(crate) fn render_anomalies_document(
+    view: &AnomaliesView,
+    options: RenderOptions,
+) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_anomalies_plain_document(view),
+        RenderMode::Braille | RenderMode::Ascii => render_anomalies_visual_document(view, options),
+    }
+}
+
+fn render_anomalies_visual_document(
+    view: &AnomaliesView,
+    options: RenderOptions,
+) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_header_line(
+        &mut out,
+        mark(options),
+        "anomalies",
+        anomalies_header_label(view),
+        options,
+    );
+    push_line(&mut out, ANOMALIES_SCOPE_LINE);
+    push_anomalies_body(&mut out, view, options);
+    push_rule(&mut out, options);
+    push_line(&mut out, ANOMALIES_QUOTA_DEFERRED_NOTE);
+    push_line(&mut out, ANOMALIES_ESTIMATE_NOTE);
+    out
+}
+
+fn render_anomalies_plain_document(view: &AnomaliesView) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid anomalies");
+    push_line(&mut out, ANOMALIES_SCOPE_LINE);
+    push_anomalies_body(&mut out, view, RenderOptions::plain());
+    push_line(&mut out, ANOMALIES_QUOTA_DEFERRED_NOTE);
+    push_line(&mut out, ANOMALIES_ESTIMATE_NOTE);
+    out
+}
+
+/// The right-hand header label: the count of callouts when there are any, else empty (no
+/// fabricated figure above an empty/insufficient state).
+fn anomalies_header_label(view: &AnomaliesView) -> String {
+    if !view.enough_history || view.anomalies.is_empty() {
+        String::new()
+    } else {
+        format!("{} flagged", view.anomalies.len())
+    }
+}
+
+/// The body: the honest insufficient-history state, the honest no-anomalies state, or one marked
+/// line per anomaly. Shared by the visual and plain renderers.
+fn push_anomalies_body(out: &mut StyledDocument, view: &AnomaliesView, options: RenderOptions) {
+    // The PERMANENT no-coverage state first: a no-API-lane (subscription-only) user never gets a
+    // callout, so never tell them their condition is the transient "not enough history yet".
+    if view.no_api_usage {
+        push_line(out, ANOMALIES_NO_API_USAGE);
+        return;
+    }
+    if !view.enough_history {
+        push_line(
+            out,
+            &format!(
+                "not enough history yet - {} of {} days (estimated)",
+                view.history_days, view.min_history_days
+            ),
+        );
+        return;
+    }
+    if view.anomalies.is_empty() {
+        push_line(
+            out,
+            &format!(
+                "no anomalies - usage in line with your {}-day norm (estimated)",
+                view.history_days
+            ),
+        );
+        return;
+    }
+    for anomaly in &view.anomalies {
+        push_line(out, &anomaly_line(anomaly, options));
+    }
+}
+
+/// The non-color callout marker — a glyph (never color) that survives `--plain`: a filled diamond
+/// in braille, a pure-ASCII `*` elsewhere (the proactive insight voice, mirroring [`insight_line`]).
+fn anomaly_marker(options: RenderOptions) -> &'static str {
+    match options.mode {
+        RenderMode::Braille => "◆ ",
+        RenderMode::Ascii | RenderMode::Plain => "* ",
+    }
+}
+
+/// One anomaly's proactive, hedged callout line — always `~`-hedged + `(estimated)`-tagged, with
+/// the compared `N-day` window named. The "~N.Nx your norm" multiple is shown ONLY when it would
+/// read honestly (see [`anomaly_multiple_phrase`]); otherwise the descriptive ("well above" / "up
+/// from") phrasing is used so the line never contradicts its own displayed baseline.
+fn anomaly_line(anomaly: &Anomaly, options: RenderOptions) -> String {
+    let marker = anomaly_marker(options);
+    match &anomaly.signal {
+        AnomalySignal::SpendSpike { date } => {
+            let median_display = format_money(&anomaly.baseline_median, Some("USD"), true);
+            // The displayed $ baseline rounds to zero when it is below half a cent (`format_money`
+            // is 2dp) — a "~Nx your $0.00" line would be self-contradictory.
+            let baseline_displays_zero = anomaly.baseline_median.round_dp(2) == Decimal::ZERO;
+            let comparison =
+                match anomaly_multiple_phrase(anomaly.magnitude, baseline_displays_zero) {
+                    Some(multiple) => {
+                        format!(
+                            "~{multiple}x your {median_display} {}-day median",
+                            anomaly.baseline_days
+                        )
+                    }
+                    None => {
+                        format!(
+                            "well above your {median_display} {}-day median",
+                            anomaly.baseline_days
+                        )
+                    }
+                };
+            format!(
+                "{marker}spend spike: {} on {}, {comparison} (estimated)",
+                format_money(&anomaly.value, Some("USD"), true),
+                date.format("%b %d"),
+            )
+        }
+        AnomalySignal::ModelMixShift { model } => {
+            let today_share = percent(anomaly.value.to_f64().unwrap_or(0.0));
+            let median_share = percent(anomaly.baseline_median.to_f64().unwrap_or(0.0));
+            let comparison = if anomaly.value > anomaly.baseline_median {
+                // The displayed share baseline rounds to "0%" when it is below half a percent
+                // (`percent` is 0dp) — a "~Nx your 0% median" line would be self-contradictory.
+                // Key off the EXACT displayed string so the guard can never diverge from the shown
+                // percent (the f64 round `percent` uses differs from Decimal banker's-rounding at the
+                // 0.5% boundary — keying off `median_share` keeps them identical).
+                let baseline_displays_zero = median_share == "0%";
+                match anomaly_multiple_phrase(anomaly.magnitude, baseline_displays_zero) {
+                    Some(multiple) => {
+                        format!(
+                            "~{multiple}x your {median_share} {}-day median",
+                            anomaly.baseline_days
+                        )
+                    }
+                    None => {
+                        format!(
+                            "up from your {median_share} {}-day median",
+                            anomaly.baseline_days
+                        )
+                    }
+                }
+            } else {
+                format!(
+                    "down from your {} {}-day median",
+                    median_share, anomaly.baseline_days
+                )
+            };
+            format!("{marker}model mix shift: {model} at {today_share} of tokens, {comparison} (estimated)")
+        }
+    }
+}
+
+/// The "~N.Nx" multiple to show for a callout, or `None` to fall back to the descriptive
+/// (no-multiple) phrasing. Suppressed when there is no magnitude (the median was `0`), when the
+/// DISPLAYED baseline rounds to zero (a multiple over a shown "$0.00"/"0%" is self-contradictory —
+/// finding #1), or when the multiple rounds to `1.0x` (a flagged-but-tiny move — e.g. a $1 bump on
+/// a tight-history high-spend user; honest to describe, misleading to quantify as "~1.0x" — finding
+/// #4). All money/share math stays exact [`Decimal`]; only the final label is text.
+fn anomaly_multiple_phrase(
+    magnitude: Option<Decimal>,
+    baseline_displays_zero: bool,
+) -> Option<String> {
+    let multiple = magnitude?;
+    if baseline_displays_zero {
+        return None;
+    }
+    let rounded = multiple.round_dp(1);
+    if rounded <= Decimal::ONE {
+        return None;
+    }
+    Some(rounded.to_string())
+}
+
 fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> StyledLine {
     let api = sorted_lane_rows(&summary.current_costs, CostLane::Api);
     let api_total = sum_costs(&api);
@@ -4533,6 +4756,21 @@ mod tests {
                 "ascii forecast tab must be pure ASCII: {forecast}"
             );
         }
+        // Anomalies in Ascii: the `*` marker + the callouts must be pure ASCII across the flagged,
+        // collapse, clean, and insufficient states (the `◆` marker is braille-only).
+        for view in [
+            anomalies_view_flagged_fixture(),
+            anomalies_view_collapse_fixture(),
+            anomalies_view_suppressed_multiples_fixture(),
+            anomalies_view_clean_fixture(),
+            anomalies_view_insufficient_fixture(),
+        ] {
+            let anomalies = render_anomalies(&view, RenderOptions::ascii(false));
+            assert!(
+                anomalies.is_ascii(),
+                "ascii anomalies tab must be pure ASCII: {anomalies}"
+            );
+        }
     }
 
     #[test]
@@ -4608,6 +4846,17 @@ mod tests {
             ),
             render_forecast(
                 &forecast_view_eta_unavailable_fixture(),
+                RenderOptions::plain(),
+            ),
+            render_anomalies(&anomalies_view_flagged_fixture(), RenderOptions::plain()),
+            render_anomalies(&anomalies_view_collapse_fixture(), RenderOptions::plain()),
+            render_anomalies(
+                &anomalies_view_suppressed_multiples_fixture(),
+                RenderOptions::plain(),
+            ),
+            render_anomalies(&anomalies_view_clean_fixture(), RenderOptions::plain()),
+            render_anomalies(
+                &anomalies_view_insufficient_fixture(),
                 RenderOptions::plain(),
             ),
         ];
@@ -5528,6 +5777,344 @@ mod tests {
                     assert!(
                         !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
                         "forecast tab must be monochrome (amber/red are reserved): {span:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // ----- Anomalies tab (T16) -----
+
+    fn anomaly_date(year: i32, month: u32, day: u32) -> NaiveDate {
+        match NaiveDate::from_ymd_opt(year, month, day) {
+            Some(date) => date,
+            None => panic!("test date should be valid"),
+        }
+    }
+
+    /// Two anomalies vs a 14-day baseline over 12 days of history: a spend spike (~$20 vs a $2.50
+    /// median) and a model-mix shift (gpt-5.5 surged to 70% from a 20% median share).
+    fn anomalies_view_flagged_fixture() -> AnomaliesView {
+        AnomaliesView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            history_days: 12,
+            min_history_days: 7,
+            baseline_days: 14,
+            enough_history: true,
+            no_api_usage: false,
+            anomalies: vec![
+                Anomaly {
+                    signal: AnomalySignal::SpendSpike {
+                        date: anomaly_date(2026, 6, 16),
+                    },
+                    value: Decimal::new(2_000, 2),
+                    baseline_median: Decimal::new(250, 2),
+                    deviation: Decimal::new(1_750, 2),
+                    magnitude: Some(Decimal::new(80, 1)),
+                    baseline_days: 12,
+                },
+                Anomaly {
+                    signal: AnomalySignal::ModelMixShift {
+                        model: "gpt-5.5".to_string(),
+                    },
+                    value: Decimal::new(70, 2),
+                    baseline_median: Decimal::new(20, 2),
+                    deviation: Decimal::new(50, 2),
+                    magnitude: Some(Decimal::new(35, 1)),
+                    baseline_days: 12,
+                },
+            ],
+        }
+    }
+
+    /// A model that COLLAPSED (today 0% from a 50% median) — exercises the `down from` phrasing.
+    /// (The surge-with-no-median and displayed-zero/`~1.0x` suppression branches are covered by
+    /// `anomalies_suppress_misleading_multiples` below.)
+    fn anomalies_view_collapse_fixture() -> AnomaliesView {
+        AnomaliesView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            history_days: 9,
+            min_history_days: 7,
+            baseline_days: 14,
+            enough_history: true,
+            no_api_usage: false,
+            anomalies: vec![Anomaly {
+                signal: AnomalySignal::ModelMixShift {
+                    model: "claude-opus-4.7".to_string(),
+                },
+                value: Decimal::ZERO,
+                baseline_median: Decimal::new(50, 2),
+                deviation: Decimal::new(50, 2),
+                magnitude: Some(Decimal::ZERO),
+                baseline_days: 9,
+            }],
+        }
+    }
+
+    /// Enough history, nothing anomalous — the honest "in line with your norm" clean state.
+    fn anomalies_view_clean_fixture() -> AnomaliesView {
+        AnomaliesView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            history_days: 10,
+            min_history_days: 7,
+            baseline_days: 14,
+            enough_history: true,
+            no_api_usage: false,
+            anomalies: Vec::new(),
+        }
+    }
+
+    /// Below the 7-day floor — the honest insufficient-history state (no callouts).
+    fn anomalies_view_insufficient_fixture() -> AnomaliesView {
+        AnomaliesView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            history_days: 3,
+            min_history_days: 7,
+            baseline_days: 14,
+            enough_history: false,
+            no_api_usage: false,
+            anomalies: Vec::new(),
+        }
+    }
+
+    /// No API-lane usage at all (a subscription-only user) — the PERMANENT no-coverage state, NOT
+    /// the transient "not enough history yet" thin-history line.
+    fn anomalies_view_no_api_usage_fixture() -> AnomaliesView {
+        AnomaliesView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            history_days: 0,
+            min_history_days: 7,
+            baseline_days: 14,
+            enough_history: false,
+            no_api_usage: true,
+            anomalies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn snapshot_anomalies_no_api_usage_plain() {
+        insta::assert_snapshot!(render_anomalies(
+            &anomalies_view_no_api_usage_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn anomalies_no_api_usage_is_a_permanent_state_not_transient_thin_history() {
+        // A subscription-only (no-API-lane) user must NOT be told their permanent condition is the
+        // transient "not enough history yet" — the honest no-coverage line stands in its place.
+        for options in [RenderOptions::plain(), RenderOptions::ascii(false)] {
+            let out = render_anomalies(&anomalies_view_no_api_usage_fixture(), options);
+            assert!(out.contains("no API-billed usage"), "{out}");
+            assert!(!out.contains("not enough history yet"), "{out}");
+            assert!(!out.contains("0 of 7 days"), "{out}");
+        }
+    }
+
+    #[test]
+    fn snapshot_anomalies_braille() {
+        insta::assert_snapshot!(render_anomalies(
+            &anomalies_view_flagged_fixture(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_anomalies_ascii() {
+        insta::assert_snapshot!(render_anomalies(
+            &anomalies_view_flagged_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_anomalies_plain() {
+        insta::assert_snapshot!(render_anomalies(
+            &anomalies_view_flagged_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_anomalies_clean_plain() {
+        insta::assert_snapshot!(render_anomalies(
+            &anomalies_view_clean_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_anomalies_insufficient_history_plain() {
+        insta::assert_snapshot!(render_anomalies(
+            &anomalies_view_insufficient_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn anomalies_callouts_are_hedged_and_name_the_compared_window() {
+        // The proactive, non-alarmist voice: each callout is `~`-hedged, `(estimated)`-tagged,
+        // names the compared N-day window, and carries a NON-COLOR marker that survives `--plain`.
+        let output = render_anomalies(&anomalies_view_flagged_fixture(), RenderOptions::plain());
+        assert!(
+            output.contains(
+                "* spend spike: ~$20.00 on Jun 16, ~8.0x your ~$2.50 12-day median (estimated)"
+            ),
+            "{output}"
+        );
+        assert!(
+            output.contains(
+                "* model mix shift: gpt-5.5 at 70% of tokens, ~3.5x your 20% 12-day median (estimated)"
+            ),
+            "{output}"
+        );
+        // The header right-hand label counts the callouts (visual surface).
+        let braille = render_anomalies(
+            &anomalies_view_flagged_fixture(),
+            RenderOptions::braille(false),
+        );
+        assert!(braille.contains("2 flagged"), "{braille}");
+    }
+
+    #[test]
+    fn anomalies_collapse_reads_down_from_the_norm() {
+        let output = render_anomalies(&anomalies_view_collapse_fixture(), RenderOptions::plain());
+        assert!(
+            output.contains(
+                "* model mix shift: claude-opus-4.7 at 0% of tokens, down from your 50% 9-day median (estimated)"
+            ),
+            "{output}"
+        );
+    }
+
+    /// A populated view that exercises the three "suppress the misleading multiple" render paths:
+    /// (a) a spend spike off a `$0.00` median (`magnitude: None` — the median==0 honesty path);
+    /// (b) a model surge off a sub-half-percent median that DISPLAYS as `0%` (finding #1 — a
+    ///     `magnitude: Some` whose displayed baseline is zero); and
+    /// (c) a spend spike whose multiple rounds to `1.0x` on a high-spend tight history (finding #4).
+    fn anomalies_view_suppressed_multiples_fixture() -> AnomaliesView {
+        AnomaliesView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            history_days: 8,
+            min_history_days: 7,
+            baseline_days: 14,
+            enough_history: true,
+            no_api_usage: false,
+            anomalies: vec![
+                // (a) spend spike, $0.00 median -> magnitude None -> "well above" (no multiple).
+                Anomaly {
+                    signal: AnomalySignal::SpendSpike {
+                        date: anomaly_date(2026, 6, 16),
+                    },
+                    value: Decimal::new(500, 2),
+                    baseline_median: Decimal::ZERO,
+                    deviation: Decimal::new(500, 2),
+                    magnitude: None,
+                    baseline_days: 8,
+                },
+                // (b) model surge from a 0.3% median (displays "0%") with a finite multiple ->
+                //     "up from" (the multiple is suppressed so it never reads "~150x your 0%").
+                Anomaly {
+                    signal: AnomalySignal::ModelMixShift {
+                        model: "gpt-5.5".to_string(),
+                    },
+                    value: Decimal::new(45, 2),
+                    baseline_median: Decimal::new(3, 3), // 0.003 = 0.3% -> "0%"
+                    deviation: Decimal::new(447, 3),
+                    magnitude: Some(Decimal::from(150)),
+                    baseline_days: 8,
+                },
+                // (c) spend spike whose multiple rounds to 1.0x over a $50 median -> "well above".
+                Anomaly {
+                    signal: AnomalySignal::SpendSpike {
+                        date: anomaly_date(2026, 6, 15),
+                    },
+                    value: Decimal::new(5_120, 2),
+                    baseline_median: Decimal::new(5_000, 2),
+                    deviation: Decimal::new(120, 2),
+                    magnitude: Some(Decimal::new(10, 1)), // 1.0x
+                    baseline_days: 8,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn anomalies_suppress_misleading_multiples() {
+        // Every callout must read honestly: no multiple over a displayed-zero baseline, and no
+        // bare "~1.0x" — the descriptive phrasing is used instead. None of these lines may contain
+        // an "x your" multiple clause.
+        let output = render_anomalies(
+            &anomalies_view_suppressed_multiples_fixture(),
+            RenderOptions::plain(),
+        );
+        assert!(
+            output.contains(
+                "* spend spike: ~$5.00 on Jun 16, well above your ~$0.00 8-day median (estimated)"
+            ),
+            "magnitude None spend spike must read 'well above', not a multiple: {output}"
+        );
+        assert!(
+            output.contains(
+                "* model mix shift: gpt-5.5 at 45% of tokens, up from your 0% 8-day median (estimated)"
+            ),
+            "a surge off a displayed-0% median must read 'up from', never '~150.0x your 0%': {output}"
+        );
+        assert!(
+            output.contains("* spend spike: ~$51.20 on Jun 15, well above your ~$50.00 8-day median (estimated)"),
+            "a ~1.0x bump must read 'well above', not the misleading '~1.0x': {output}"
+        );
+        // The self-contradictory shapes must NEVER appear.
+        assert!(
+            !output.contains("x your 0%"),
+            "no multiple over a displayed 0%: {output}"
+        );
+        assert!(
+            !output.contains("x your ~$0.00"),
+            "no multiple over a displayed $0.00: {output}"
+        );
+        assert!(
+            !output.contains("~1.0x"),
+            "no bare ~1.0x multiple: {output}"
+        );
+    }
+
+    #[test]
+    fn anomalies_clean_and_insufficient_states_are_honest() {
+        let clean = render_anomalies(&anomalies_view_clean_fixture(), RenderOptions::plain());
+        assert!(
+            clean.contains("no anomalies - usage in line with your 10-day norm (estimated)"),
+            "{clean}"
+        );
+        let thin = render_anomalies(
+            &anomalies_view_insufficient_fixture(),
+            RenderOptions::plain(),
+        );
+        assert!(
+            thin.contains("not enough history yet - 3 of 7 days (estimated)"),
+            "{thin}"
+        );
+        // The deferred quota-burn signal is disclosed on every state, never faked.
+        assert!(thin.contains("quota burn-rate anomalies need multi-day quota history"));
+    }
+
+    #[test]
+    fn anomalies_document_is_monochrome() {
+        // The Anomalies tab is advisory, so amber/red (Warn/Critical) must never appear — the
+        // non-color cue is the `◆`/`*` marker, never color (mirrors `forecast_document_is_monochrome`).
+        for view in [
+            anomalies_view_flagged_fixture(),
+            anomalies_view_collapse_fixture(),
+            anomalies_view_suppressed_multiples_fixture(),
+            anomalies_view_clean_fixture(),
+            anomalies_view_insufficient_fixture(),
+        ] {
+            let doc = render_anomalies_document(&view, RenderOptions::braille(true));
+            for line in &doc.lines {
+                for span in &line.spans {
+                    assert!(
+                        !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
+                        "anomalies tab must be monochrome (amber/red are reserved): {span:?}"
                     );
                 }
             }

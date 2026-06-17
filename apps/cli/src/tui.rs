@@ -22,8 +22,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_budget_document, render_forecast_document, render_frontier_document,
-    render_history_document, render_models_document, render_now_document,
+    render_anomalies_document, render_budget_document, render_forecast_document,
+    render_frontier_document, render_history_document, render_models_document, render_now_document,
     render_providers_document, render_trends_document, RenderOptions, SemanticStyle,
     StyledDocument, StyledLine,
 };
@@ -49,16 +49,17 @@ enum Screen {
     History,
     Budget,
     Forecast,
+    Anomalies,
     Frontier,
 }
 
-/// The numbered tab cycle (Q1, §11.5): `1`-`7` jump straight to a tab, `Tab`/`BackTab`
+/// The numbered tab cycle (Q1, §11.5): `1`-`8` jump straight to a tab, `Tab`/`BackTab`
 /// cycle through them. Frontier is intentionally NOT in the cycle — it stays its own
-/// `a`/`esc` overlay. T15 added Forecast at slot `7` — the first tab past the original digit
-/// range, so it extended `handle_key`'s digit match to `'1'..='7'`; T16 (Anomalies) will take
-/// slot `8` and extend it to `'1'..='8'`. T12 appended Models at slot `4`, T13 History at slot
-/// `5`, T14 Budget at slot `6`, T15 Forecast at slot `7`.
-const TAB_SCREENS: [Screen; 7] = [
+/// `a`/`esc` overlay. T12 appended Models at slot `4`, T13 History at slot `5`, T14 Budget at
+/// slot `6`, T15 Forecast at slot `7` (the first tab past the original digit range, extending
+/// `handle_key`'s digit match to `'1'..='7'`), and T16 Anomalies at slot `8` (extending it to
+/// `'1'..='8'`).
+const TAB_SCREENS: [Screen; 8] = [
     Screen::Now,
     Screen::Trends,
     Screen::Providers,
@@ -66,6 +67,7 @@ const TAB_SCREENS: [Screen; 7] = [
     Screen::History,
     Screen::Budget,
     Screen::Forecast,
+    Screen::Anomalies,
 ];
 
 /// Step left (`delta = -1`) or right (`delta = 1`) through [`TAB_SCREENS`], wrapping. A
@@ -81,9 +83,8 @@ fn cycle_tab(current: Screen, delta: isize) -> Screen {
     }
 }
 
-/// Map a `1`-`7` digit to its tab, if one exists yet (`1`-`7` are all wired today — slot `4`
-/// is Models, `5` is History, `6` is Budget, `7` is Forecast; T16 extends the digit range to
-/// slot `8`).
+/// Map a `1`-`8` digit to its tab, if one exists (`1`-`8` are all wired — slot `4` is Models,
+/// `5` is History, `6` is Budget, `7` is Forecast, `8` is Anomalies).
 fn tab_for_digit(ch: char) -> Option<Screen> {
     let index = ch.to_digit(10)? as usize;
     index
@@ -272,7 +273,7 @@ impl App {
                 self.set_screen(cycle_tab(self.screen, -1));
                 AppAction::Continue
             }
-            KeyCode::Char(ch @ '1'..='7') => {
+            KeyCode::Char(ch @ '1'..='8') => {
                 if let Some(screen) = tab_for_digit(ch) {
                     self.set_screen(screen);
                 }
@@ -460,6 +461,14 @@ impl App {
                         let view = costroid_core::forecast_view(&snapshot);
                         render_forecast_document(&view, options)
                     }
+                    Screen::Anomalies => {
+                        // Pure-local: median+MAD callouts vs the user's OWN recent history (two
+                        // signals — spend spike + model-mix shift), suppressed below a 7-day
+                        // floor. No network, no quota reading consulted (the quota-burn signal is
+                        // deferred — local data keeps no multi-day quota history).
+                        let view = costroid_core::anomalies_view(&snapshot);
+                        render_anomalies_document(&view, options)
+                    }
                     Screen::Frontier => match costroid_core::bench_view(&snapshot) {
                         Ok(view) => render_frontier_document(&view, options),
                         Err(error) => {
@@ -485,6 +494,7 @@ impl App {
             Screen::History => "history",
             Screen::Budget => "budget",
             Screen::Forecast => "forecast",
+            Screen::Anomalies => "anomalies",
             Screen::Frontier => "frontier",
         };
         let live = if self.live { "live" } else { "manual" };
@@ -506,7 +516,8 @@ impl App {
             | Screen::Models
             | Screen::History
             | Screen::Budget
-            | Screen::Forecast => "1-7/tab switch | a frontier",
+            | Screen::Forecast
+            | Screen::Anomalies => "1-8/tab switch | a frontier",
         };
         format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
     }
@@ -677,6 +688,7 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
     let lines = vec![
         Line::from("1-6 now / trends / providers / models / history / budget"),
         Line::from("7          forecast (projected spend + quota ETAs)"),
+        Line::from("8          anomalies (vs your own recent history)"),
         Line::from("tab/S-tab  cycle tabs"),
         Line::from("up/dn      scroll  (pgup/pgdn page, home/end ends)"),
         Line::from("d/w/m/y    set trends period"),
@@ -1287,12 +1299,12 @@ mod tests {
     }
 
     #[test]
-    fn numbered_keys_and_tab_cycle_reach_providers_models_history_budget_and_forecast() {
+    fn numbered_keys_and_tab_cycle_reach_providers_models_history_budget_forecast_and_anomalies() {
         let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
         assert_eq!(app.screen, Screen::Now);
 
         // Numbered jumps go straight to a tab — `4` Models (T12), `5` History (T13), `6` Budget
-        // (T14), `7` Forecast (T15 — the first tab past the original digit range).
+        // (T14), `7` Forecast (T15), `8` Anomalies (T16 — the last numbered slot).
         assert_eq!(app.handle_key(key(KeyCode::Char('2'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
@@ -1305,13 +1317,15 @@ mod tests {
         assert_eq!(app.screen, Screen::Budget);
         assert_eq!(app.handle_key(key(KeyCode::Char('7'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Forecast);
+        assert_eq!(app.handle_key(key(KeyCode::Char('8'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Anomalies);
         assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
-        // `8` has no tab yet (T16 fills slot 8) — inert, the new boundary.
-        assert_eq!(app.handle_key(key(KeyCode::Char('8'))), AppAction::Continue);
+        // `9` has no tab — inert, the new boundary.
+        assert_eq!(app.handle_key(key(KeyCode::Char('9'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // Tab cycles forward, wrapping Now -> ... -> Budget -> Forecast -> Now.
+        // Tab cycles forward, wrapping Now -> ... -> Forecast -> Anomalies -> Now.
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
@@ -1325,11 +1339,13 @@ mod tests {
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Forecast);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Anomalies);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // BackTab cycles in reverse (Now -> Forecast).
+        // BackTab cycles in reverse (Now -> Anomalies).
         assert_eq!(app.handle_key(key(KeyCode::BackTab)), AppAction::Continue);
-        assert_eq!(app.screen, Screen::Forecast);
+        assert_eq!(app.screen, Screen::Anomalies);
 
         // Frontier is outside the cycle (an a/esc overlay); Tab returns to the first tab.
         assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
@@ -1453,6 +1469,103 @@ mod tests {
         let frame = frame_to_string(&mut app, 90, 26);
         assert!(frame.contains("no budget set"));
         assert!(frame.contains("config.toml"));
+    }
+
+    #[test]
+    fn frame_snapshot_anomalies_surface() {
+        // `8` reaches the Anomalies tab. The sample snapshot has a single day of history, so the
+        // tab shows the honest insufficient-history state (never a fabricated callout), and the
+        // deferred quota-burn signal is disclosed honestly rather than faked.
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        assert_eq!(app.handle_key(key(KeyCode::Char('8'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Anomalies);
+        let frame = frame_to_string(&mut app, 90, 26);
+
+        assert!(frame.contains("anomalies"));
+        assert!(frame.contains("not enough history yet"));
+        assert!(frame.contains("quota burn-rate anomalies need multi-day quota history"));
+        // The footer enumerates the full numbered range now that slot 8 is wired.
+        assert!(frame.contains("1-8/tab switch"));
+    }
+
+    /// One dated API-lane FOCUS record for the anomalies integration test: a model, a UTC day, a
+    /// raw token count (→ `x_ConsumedTokens`), and an (overwritten) billed cost.
+    fn dated_record(model: &str, when: DateTime<Utc>, tokens: u64, cents: i64) -> FocusRecord {
+        let input = UnpricedUsage {
+            timestamp: when,
+            tool: "codex".to_string(),
+            model: model.to_string(),
+            token_type: TokenType::Output,
+            token_count: tokens,
+            project: None,
+            access_path: FocusAccessPath::Api,
+            service_name: "OpenAI API".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            host_provider_name: "OpenAI".to_string(),
+            invoice_issuer_name: "OpenAI".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        };
+        let mut record = match FocusRecord::unpriced_usage(input) {
+            Ok(record) => record,
+            Err(error) => panic!("test record should be valid: {error}"),
+        };
+        let cost = rust_decimal::Decimal::new(cents, 2);
+        record.billed_cost = cost;
+        record.effective_cost = cost;
+        record
+    }
+
+    #[test]
+    fn frame_anomalies_with_history_shows_real_callouts_end_to_end() {
+        // The engine -> render contract through the REAL TUI path: a multi-day snapshot driven
+        // through `anomalies_view` -> `render_anomalies_document` must surface a $-unit spend spike
+        // AND a %-unit model-mix shift correctly (catches any value-as-share vs value-as-dollar
+        // drift). gpt-5.5 holds the mix for 7 flat ~$1 days, then claude-opus surges + spends $20
+        // on the latest day. NOTE: `frame_to_string` renders at a fixed `now` = 2026-06-02, so the
+        // history must sit in the trailing window ending that UTC day.
+        let now = utc(2026, 6, 2, 9, 0);
+        let mut rows: Vec<FocusRecord> = (25..=31)
+            .map(|day| dated_record("gpt-5.5", utc(2026, 5, day, 9, 0), 1_000, 100))
+            .collect();
+        rows.push(dated_record(
+            "claude-opus-4.7",
+            utc(2026, 6, 2, 9, 0),
+            1_000,
+            2_000,
+        ));
+
+        let mut app = App::new(
+            StartScreen::Now,
+            Period::Week,
+            GroupBy::Model,
+            false,
+            render_options(RenderMode::Ascii, false),
+        );
+        app.loading = false;
+        app.snapshot = Some(EngineSnapshot {
+            generated_at: now,
+            usage_events: Vec::new(),
+            focus_rows: rows,
+            limit_windows: Vec::new(),
+            providers: Vec::new(),
+            capabilities: Vec::new(),
+        });
+        app.last_collect_at = Some(now);
+        assert_eq!(app.handle_key(key(KeyCode::Char('8'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Anomalies);
+        let frame = frame_to_string(&mut app, 100, 26);
+
+        // The spend spike renders in DOLLARS ($20 latest vs a $1 norm), dated the latest active day.
+        assert!(frame.contains("spend spike"), "{frame}");
+        assert!(frame.contains("~$20.00 on Jun 02"), "{frame}");
+        // The model-mix shift renders in PERCENT of tokens (claude-opus surged to 100%).
+        assert!(frame.contains("model mix shift"), "{frame}");
+        assert!(frame.contains("of tokens"), "{frame}");
+        // No fabricated quota signal — the deferral is disclosed honestly.
+        assert!(
+            frame.contains("quota burn-rate anomalies need multi-day quota history"),
+            "{frame}"
+        );
     }
 
     #[test]
@@ -1614,9 +1727,12 @@ mod tests {
         assert!(!frame.contains("gpt 5.5"));
 
         app.help_open = true;
-        let help_frame = frame_to_string(&mut app, 90, 20);
+        let help_frame = frame_to_string(&mut app, 90, 22);
         assert!(help_frame.contains("help"));
         assert!(help_frame.contains("frontier"));
+        // The forecast (slot 7) and anomalies (slot 8) help lines are enumerated.
+        assert!(help_frame.contains("forecast (projected spend + quota ETAs)"));
+        assert!(help_frame.contains("anomalies (vs your own recent history)"));
     }
 
     #[test]

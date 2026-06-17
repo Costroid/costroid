@@ -136,22 +136,27 @@ impl LocalCostEstimate {
     }
 }
 
+/// Every **API-lane** FOCUS row — the single place the lane filter lives, so the $ classification
+/// ([`api_lane_day_rows`]/[`api_lane_daily_usd_series`]) and the token series
+/// ([`api_lane_daily_token_series`], T16 Anomalies) all classify a row the SAME way. API-lane
+/// only — the only lane with a $ bill (subscription lanes are not a summable dollar, §12.13).
+fn api_lane_rows(rows: &[FocusRecord]) -> impl Iterator<Item = &FocusRecord> {
+    rows.iter()
+        .filter(|row| CostLane::from_access_path(&row.x_access_path) == CostLane::Api)
+}
+
 /// The shared **API-lane + UTC-day** row classification: yield each API-lane row as a
 /// `(UTC day, model, estimated $)` tuple, keyed by `charge_period_start.date_naive()`. Both
 /// the per-`(day, model)` estimate ([`LocalCostEstimate::from_focus_records`]) and the per-day
 /// series ([`api_lane_daily_usd_series`]) build on this so the lane filter + UTC-day bucketing
-/// live in ONE place. API-lane only — the only lane with a $ bill (subscription lanes are not a
-/// summable dollar, §12.13); the `$` is the estimated `billed_cost`, exact [`Decimal`].
+/// live in ONE place. The `$` is the estimated `billed_cost`, exact [`Decimal`].
 fn api_lane_day_rows(rows: &[FocusRecord]) -> impl Iterator<Item = (NaiveDate, &str, Decimal)> {
-    rows.iter().filter_map(|row| {
-        if CostLane::from_access_path(&row.x_access_path) != CostLane::Api {
-            return None;
-        }
-        Some((
+    api_lane_rows(rows).map(|row| {
+        (
             row.charge_period_start.date_naive(),
             row.x_model.as_str(),
             row.billed_cost,
-        ))
+        )
     })
 }
 
@@ -169,6 +174,26 @@ pub(crate) fn api_lane_daily_usd_series(rows: &[FocusRecord]) -> BTreeMap<NaiveD
     let mut series: BTreeMap<NaiveDate, Decimal> = BTreeMap::new();
     for (date, _model, cost) in api_lane_day_rows(rows) {
         *series.entry(date).or_insert(Decimal::ZERO) += cost;
+    }
+    series
+}
+
+/// The per-**UTC-day**, per-model API-lane **consumed-token** series — `day -> (model -> summed
+/// x_ConsumedTokens)`. The token-side analogue of [`api_lane_daily_usd_series`], built for T16
+/// Anomalies' model-mix-shift signal (share-of-tokens per model per day). Rides the SAME
+/// API-lane, UTC-day classification ([`api_lane_rows`]) so the lane filter lives in ONE place;
+/// keyed by `charge_period_start.date_naive()` (UTC), summing the raw `x_ConsumedTokens` count —
+/// exact `Decimal`, the count that survives FOCUS nulling `ConsumedQuantity` on unpriced rows —
+/// ascending by day, then by model (`BTreeMap`).
+pub(crate) fn api_lane_daily_token_series(
+    rows: &[FocusRecord],
+) -> BTreeMap<NaiveDate, BTreeMap<String, Decimal>> {
+    let mut series: BTreeMap<NaiveDate, BTreeMap<String, Decimal>> = BTreeMap::new();
+    for row in api_lane_rows(rows) {
+        let day = series
+            .entry(row.charge_period_start.date_naive())
+            .or_default();
+        *day.entry(row.x_model.clone()).or_insert(Decimal::ZERO) += row.x_consumed_tokens;
     }
     series
 }

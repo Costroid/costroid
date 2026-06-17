@@ -526,6 +526,273 @@ fn project_quota_eta(
     }
 }
 
+// ---------------------------------------------------------------------------
+// The Anomalies engine (T16)
+// ---------------------------------------------------------------------------
+
+/// The trailing window (UTC days, ending today) the anomaly baselines are computed over — the
+/// user's OWN recent history. 14 days balances responsiveness against a stable median for spiky,
+/// right-skewed AI spend.
+const ANOMALY_BASELINE_DAYS: i64 = 14;
+/// The minimum number of distinct active UTC days (within the window) before ANY anomaly is
+/// surfaced. Below it the baseline is too thin to call anything anomalous, so the tab shows an
+/// honest "not enough history yet" state rather than fabricate a verdict (§11.5 T16).
+const ANOMALY_MIN_HISTORY_DAYS: usize = 7;
+
+/// The conservative MAD multiplier `k`: flag only when the deviation exceeds `k · MAD`. 3.5 is
+/// deliberately high so the tab stays proactive, never alarmist (MAD beats mean±σ on spiky spend).
+/// Built as an exact [`Decimal`] (3.5) so the whole detector is exact math, never `f64` (`new` is
+/// not `const`, so this is a fn, mirroring the bundled-const style).
+fn anomaly_k() -> Decimal {
+    Decimal::new(35, 1)
+}
+/// The absolute daily-$ deviation floor. When the trailing spend is near-flat its MAD is `0`, so
+/// `k · MAD` is `0` and ANY change would flag — taking `max(k·MAD, floor)` keeps a trivial change
+/// from flagging while still surfacing a real jump on a flat history (the §12.22 MAD=0 guard).
+/// Tunable.
+fn anomaly_spend_floor_usd() -> Decimal {
+    Decimal::ONE
+}
+/// The absolute share-of-tokens deviation floor (0.15 = 15 percentage points) — the MAD=0 guard
+/// for the model-mix signal, same role as [`anomaly_spend_floor_usd`]. Tunable.
+fn anomaly_share_floor() -> Decimal {
+    Decimal::new(15, 2)
+}
+
+/// The median of a slice of [`Decimal`]s (a sorted copy; the mean of the two middle elements for
+/// an even count). `None` for an empty slice — never panics, never `unwrap`s.
+fn decimal_median(values: &[Decimal]) -> Option<Decimal> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let mid = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        sorted.get(mid).copied()
+    } else {
+        match (sorted.get(mid.wrapping_sub(1)), sorted.get(mid)) {
+            (Some(low), Some(high)) => low
+                .checked_add(*high)
+                .and_then(|sum| sum.checked_div(Decimal::from(2)))
+                .or(Some(*high)),
+            _ => None,
+        }
+    }
+}
+
+/// The median absolute deviation (MAD): `median(|xᵢ − median|)`. `None` for an empty slice. A
+/// near-flat series yields `0`, so a caller MUST guard the `0` with an absolute floor before
+/// using it as a threshold (the §12.22 MAD=0 pitfall) — done in [`detect_anomaly`].
+fn decimal_mad(values: &[Decimal], median: Decimal) -> Option<Decimal> {
+    if values.is_empty() {
+        return None;
+    }
+    let deviations: Vec<Decimal> = values
+        .iter()
+        .map(|value| value.checked_sub(median).unwrap_or(Decimal::ZERO).abs())
+        .collect();
+    decimal_median(&deviations)
+}
+
+/// The shared fields a flagged anomaly carries, returned by [`detect_anomaly`].
+struct AnomalyMatch {
+    baseline_median: Decimal,
+    deviation: Decimal,
+    magnitude: Option<Decimal>,
+}
+
+/// Decide whether `value` is anomalous vs the `baseline` series, using a robust baseline (median +
+/// MAD), the conservative `k = 3.5` multiplier, and an absolute `floor` (the MAD=0 guard). When
+/// `high_side_only`, only `value > median` flags (a spend spike — so a partial current day can
+/// only spike UP, never read as an unusual drop); otherwise either direction flags (a model-mix
+/// shift). Returns the matched fields, or `None` when within the norm / the baseline is empty.
+///
+/// The threshold is `max(k·MAD, floor)` and the test is `deviation > threshold` — a comparison,
+/// never a division by MAD, so there is no divide-by-zero.
+fn detect_anomaly(
+    value: Decimal,
+    baseline: &[Decimal],
+    floor: Decimal,
+    high_side_only: bool,
+) -> Option<AnomalyMatch> {
+    let median = decimal_median(baseline)?;
+    let mad = decimal_mad(baseline, median)?;
+    let signed = value.checked_sub(median)?;
+    let deviation = signed.abs();
+    let scaled = mad.checked_mul(anomaly_k()).unwrap_or(mad);
+    let threshold = scaled.max(floor);
+    let direction_ok = !high_side_only || signed > Decimal::ZERO;
+    if deviation <= threshold || !direction_ok {
+        return None;
+    }
+    let magnitude = if median > Decimal::ZERO {
+        value.checked_div(median)
+    } else {
+        None
+    };
+    Some(AnomalyMatch {
+        baseline_median: median,
+        deviation,
+        magnitude,
+    })
+}
+
+/// The model id a model-mix anomaly names (for a deterministic sort tiebreak); `""` for any other
+/// signal.
+fn anomaly_model_name(anomaly: &Anomaly) -> &str {
+    match &anomaly.signal {
+        AnomalySignal::ModelMixShift { model } => model.as_str(),
+        AnomalySignal::SpendSpike { .. } => "",
+    }
+}
+
+/// The Anomalies tab (T16): proactive, non-alarmist callouts vs the user's OWN recent history —
+/// TWO signals, both off `snapshot.focus_rows`: a daily **spend spike** (API-lane $) and a
+/// **model-mix shift** (a model's share-of-tokens). Each is compared to a robust baseline (the
+/// median + MAD over the trailing [`ANOMALY_BASELINE_DAYS`] UTC days), flagged only past a
+/// conservative `3.5·MAD` (with an absolute floor so a near-flat history never flags trivia), and
+/// suppressed entirely below [`ANOMALY_MIN_HISTORY_DAYS`] days of history. Pure-local,
+/// config-neutral, computed-never-persisted (mirrors [`forecast_view`]); UTC days throughout (the
+/// same calendar the shared series buckets on — never mixing UTC + local).
+///
+/// The quota burn-rate signal the original plan named is DEFERRED: the Claude/Codex `rate_limits`
+/// caches persist a single point-in-time reading, so local data has no multi-day quota series to
+/// difference (§11.5 T16). This view consults NO quota reading; the deferral is surfaced honestly
+/// in the render footnote, never as a fabricated signal.
+pub fn anomalies_view(snapshot: &EngineSnapshot) -> AnomaliesView {
+    let today = snapshot.generated_at.date_naive();
+    let window_start = today
+        .checked_sub_signed(Duration::days(ANOMALY_BASELINE_DAYS - 1))
+        .unwrap_or(today);
+
+    // Both series ride the SAME shared API-lane + UTC-day classification (reconcile), scoped to the
+    // trailing window [window_start, today] — a future-dated row (clock skew) past today is dropped.
+    let spend_series: BTreeMap<NaiveDate, Decimal> =
+        reconcile::api_lane_daily_usd_series(&snapshot.focus_rows)
+            .into_iter()
+            .filter(|(date, _)| *date >= window_start && *date <= today)
+            .collect();
+    let token_series: BTreeMap<NaiveDate, BTreeMap<String, Decimal>> =
+        reconcile::api_lane_daily_token_series(&snapshot.focus_rows)
+            .into_iter()
+            .filter(|(date, _)| *date >= window_start && *date <= today)
+            .collect();
+
+    let history_days = spend_series.len();
+    let mut view = AnomaliesView {
+        generated_at: snapshot.generated_at,
+        history_days,
+        min_history_days: ANOMALY_MIN_HISTORY_DAYS,
+        baseline_days: ANOMALY_BASELINE_DAYS as usize,
+        enough_history: history_days >= ANOMALY_MIN_HISTORY_DAYS,
+        // Both series ride the same API-lane filter, so an empty spend series means zero API-lane
+        // rows — a permanent no-coverage state, not transient thin history.
+        no_api_usage: spend_series.is_empty(),
+        anomalies: Vec::new(),
+    };
+    if !view.enough_history {
+        return view;
+    }
+
+    // "today" for the comparison = the most recent active UTC day in the window (the user's last
+    // actual usage), not necessarily the calendar `today` (which may carry no usage yet).
+    let latest_day = match spend_series.keys().next_back().copied() {
+        Some(day) => day,
+        None => return view,
+    };
+
+    // --- Signal 1: spend spike (high-side). ---
+    let spend_values: Vec<Decimal> = spend_series.values().copied().collect();
+    let latest_spend = spend_series
+        .get(&latest_day)
+        .copied()
+        .unwrap_or(Decimal::ZERO);
+    if let Some(found) =
+        detect_anomaly(latest_spend, &spend_values, anomaly_spend_floor_usd(), true)
+    {
+        view.anomalies.push(Anomaly {
+            signal: AnomalySignal::SpendSpike { date: latest_day },
+            value: latest_spend,
+            baseline_median: found.baseline_median,
+            deviation: found.deviation,
+            magnitude: found.magnitude,
+            baseline_days: history_days,
+        });
+    }
+
+    // --- Signal 2: model-mix shift (two-sided — a model's share-of-tokens today vs its own
+    // trailing-window median share; catches both a surge and a collapse). ---
+    let day_totals: BTreeMap<NaiveDate, Decimal> = token_series
+        .iter()
+        .map(|(date, models)| {
+            let total = models.values().copied().fold(Decimal::ZERO, |acc, tokens| {
+                acc.checked_add(tokens).unwrap_or(acc)
+            });
+            (*date, total)
+        })
+        .collect();
+    // Every model that appears anywhere in the window (BTreeSet → deterministic order).
+    let mut models: BTreeSet<&str> = BTreeSet::new();
+    for day in token_series.values() {
+        for model in day.keys() {
+            models.insert(model.as_str());
+        }
+    }
+    let latest_total = day_totals
+        .get(&latest_day)
+        .copied()
+        .unwrap_or(Decimal::ZERO);
+    let mut mix_anomalies: Vec<Anomaly> = Vec::new();
+    if latest_total > Decimal::ZERO {
+        for model in models {
+            // The model's share-of-tokens on each active day (0 on a day with usage where the
+            // model was absent — a genuine 0 share, so a surge from never-used still flags).
+            let shares: Vec<Decimal> = day_totals
+                .iter()
+                .filter(|(_, total)| **total > Decimal::ZERO)
+                .map(|(date, total)| {
+                    let model_tokens = token_series
+                        .get(date)
+                        .and_then(|models| models.get(model))
+                        .copied()
+                        .unwrap_or(Decimal::ZERO);
+                    model_tokens.checked_div(*total).unwrap_or(Decimal::ZERO)
+                })
+                .collect();
+            let latest_model_tokens = token_series
+                .get(&latest_day)
+                .and_then(|models| models.get(model))
+                .copied()
+                .unwrap_or(Decimal::ZERO);
+            let latest_share = latest_model_tokens
+                .checked_div(latest_total)
+                .unwrap_or(Decimal::ZERO);
+            if let Some(found) = detect_anomaly(latest_share, &shares, anomaly_share_floor(), false)
+            {
+                mix_anomalies.push(Anomaly {
+                    signal: AnomalySignal::ModelMixShift {
+                        model: model.to_string(),
+                    },
+                    value: latest_share,
+                    baseline_median: found.baseline_median,
+                    deviation: found.deviation,
+                    magnitude: found.magnitude,
+                    baseline_days: history_days,
+                });
+            }
+        }
+    }
+    // Most-deviant model-mix shift first (deterministic: deviation desc, then model name).
+    mix_anomalies.sort_by(|a, b| {
+        b.deviation
+            .cmp(&a.deviation)
+            .then_with(|| anomaly_model_name(a).cmp(anomaly_model_name(b)))
+    });
+    view.anomalies.extend(mix_anomalies);
+    view
+}
+
 /// A stable sort key for a budget scope: per-tool rows first (ordered by id), the overall
 /// total last on a tie.
 fn budget_scope_key(scope: &BudgetScope) -> (u8, &str) {
@@ -2009,6 +2276,73 @@ pub enum QuotaEtaUnavailable {
     WindowJustStarted,
 }
 
+/// The Anomalies tab view (T16): proactive callouts vs the user's OWN recent history — two
+/// signals (a daily spend spike + a model-mix shift), each with a magnitude + the compared
+/// window. A pure projection over the snapshot; carries `Decimal` and is `Serialize`-only (not
+/// `Eq`/`Deserialize`) — a computed view, never persisted (mirrors [`ForecastView`]). The
+/// quota-burn signal the original plan named is DEFERRED (local data has no multi-day quota
+/// history, §11.5) — surfaced honestly in the render footnote, never faked.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AnomaliesView {
+    pub generated_at: DateTime<Utc>,
+    /// Distinct active UTC days of API-lane history within the trailing window — both the
+    /// suppression input and the compared-window size shown to the user.
+    pub history_days: usize,
+    /// The minimum-history floor (days); below it `enough_history` is false and `anomalies` is
+    /// empty (render the honest "not enough history yet - N of M days" state).
+    pub min_history_days: usize,
+    /// The trailing-baseline window length (UTC days) — the "your N-day norm" the callouts cite.
+    pub baseline_days: usize,
+    /// True when `history_days >= min_history_days` — only then are anomalies computed. Lets the
+    /// render distinguish "not enough history yet" from the honest "no anomalies" clean state.
+    pub enough_history: bool,
+    /// True when there is **no API-lane usage at all** (`history_days == 0`). Both signals are
+    /// API-lane-only, so this is a PERMANENT no-coverage state (a subscription-only user, e.g. Claude
+    /// Code Max with no API key, never gets a cost/mix anomaly) — distinct from the *transient*
+    /// "not enough history yet" thin-history state, and the render branches on it FIRST so a
+    /// subscription user is never told their permanent condition is about to fill in (mirrors
+    /// [`ForecastView::no_api_usage`] / [`ModelsView::no_api_usage`]).
+    pub no_api_usage: bool,
+    /// The detected anomalies — the spend spike (if any) first, then model-mix shifts most-deviant
+    /// first. Empty when there is not enough history OR usage is in line with the norm.
+    pub anomalies: Vec<Anomaly>,
+}
+
+/// One detected anomaly: a value in the user's recent history that deviates from their OWN
+/// trailing-window median by more than the conservative `3.5·MAD` threshold (with an absolute
+/// floor so a near-flat history's `MAD=0` never flags trivia). Every figure is an estimate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Anomaly {
+    /// Which signal fired (and its subject — the day for a spike, the model for a mix shift).
+    pub signal: AnomalySignal,
+    /// The anomalous value: the day's API-lane spend `$` for a [`AnomalySignal::SpendSpike`], or
+    /// the model's share-of-tokens (`0..=1`) for a [`AnomalySignal::ModelMixShift`] — exact
+    /// [`Decimal`].
+    pub value: Decimal,
+    /// The baseline: the median of the trailing-window values this is compared against (a `$`
+    /// median for a spike, a share median for a mix shift).
+    pub baseline_median: Decimal,
+    /// `|value − baseline_median|` — the absolute deviation that cleared the threshold.
+    pub deviation: Decimal,
+    /// `value ÷ baseline_median` — the "~N× your norm" multiple, `None` when the median is `0`
+    /// (the multiple is undefined; the render falls back to the absolute figures).
+    pub magnitude: Option<Decimal>,
+    /// The number of trailing-window days the baseline was computed over (the compared window).
+    pub baseline_days: usize,
+}
+
+/// Which anomaly signal fired (T16 ships two; the quota-burn signal is deferred — local data has
+/// no multi-day quota history, §11.5).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnomalySignal {
+    /// A UTC day whose total API-lane spend deviates (high-side) from the trailing-window median.
+    SpendSpike { date: NaiveDate },
+    /// A model whose share-of-tokens on the latest active day deviates from its own
+    /// trailing-window median share.
+    ModelMixShift { model: String },
+}
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("bundled pricing JSON is invalid: {0}")]
@@ -2650,6 +2984,360 @@ mod tests {
             ),
             "a just-started window has no burn rate: {:?}",
             etas[0].outcome
+        );
+    }
+
+    // ----- anomalies_view (T16) -----
+
+    /// One API-lane FOCUS meter row for the anomaly tests: a model, a charge time, a raw token
+    /// count (→ `x_ConsumedTokens`), and an (overwritten) billed cost.
+    fn anomaly_record(model: &str, when: DateTime<Utc>, tokens: u64, cents: i64) -> FocusRecord {
+        let mut record = match FocusRecord::unpriced_usage(UnpricedUsage {
+            timestamp: when,
+            tool: "codex".to_string(),
+            model: model.to_string(),
+            token_type: TokenType::Output,
+            token_count: tokens,
+            project: None,
+            access_path: FocusAccessPath::Api,
+            service_name: "svc".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            host_provider_name: "OpenAI".to_string(),
+            invoice_issuer_name: "OpenAI".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        }) {
+            Ok(record) => record,
+            Err(err) => panic!("anomaly record should build: {err}"),
+        };
+        let cost = Decimal::new(cents, 2);
+        record.billed_cost = cost;
+        record.effective_cost = cost;
+        record
+    }
+
+    #[test]
+    fn decimal_median_handles_empty_odd_and_even() {
+        assert_eq!(decimal_median(&[]), None);
+        assert_eq!(
+            decimal_median(&[Decimal::new(3, 0), Decimal::new(1, 0), Decimal::new(2, 0)]),
+            Some(Decimal::new(2, 0))
+        );
+        // Even count → mean of the two middle elements: median([1,2,3,4]) = 2.5.
+        assert_eq!(
+            decimal_median(&[
+                Decimal::new(1, 0),
+                Decimal::new(2, 0),
+                Decimal::new(3, 0),
+                Decimal::new(4, 0)
+            ]),
+            Some(Decimal::new(25, 1))
+        );
+    }
+
+    #[test]
+    fn decimal_mad_is_zero_for_a_flat_series_and_never_panics() {
+        let flat = vec![Decimal::new(5, 0); 6];
+        let median = match decimal_median(&flat) {
+            Some(value) => value,
+            None => panic!("non-empty series has a median"),
+        };
+        assert_eq!(decimal_mad(&flat, median), Some(Decimal::ZERO));
+        assert_eq!(decimal_mad(&[], Decimal::ZERO), None);
+    }
+
+    #[test]
+    fn anomalies_view_below_seven_days_history_is_suppressed() {
+        // Only 3 distinct days of API-lane history — below the 7-day floor, so NO anomaly is
+        // surfaced and the honest insufficient-history state is reported instead.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let rows = vec![
+            anomaly_record("gpt-5.5", utc_datetime(2026, 6, 14, 9, 0, 0), 1_000, 100),
+            anomaly_record("gpt-5.5", utc_datetime(2026, 6, 15, 9, 0, 0), 1_000, 100),
+            anomaly_record("gpt-5.5", utc_datetime(2026, 6, 16, 9, 0, 0), 1_000, 5_000),
+        ];
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(!view.enough_history);
+        assert_eq!(view.history_days, 3);
+        assert_eq!(view.min_history_days, 7);
+        assert!(view.anomalies.is_empty());
+        // Thin history is NOT no-API-usage — the user has 3 API-lane days, just below the floor.
+        assert!(!view.no_api_usage);
+    }
+
+    #[test]
+    fn anomalies_view_empty_snapshot_is_suppressed() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let view = anomalies_view(&snapshot_with_rows(now, Vec::new(), Vec::new()));
+        assert!(!view.enough_history);
+        assert_eq!(view.history_days, 0);
+        assert!(view.anomalies.is_empty());
+        // Zero API-lane rows ⇒ the permanent no-coverage state (a subscription-only user), distinct
+        // from transient thin history.
+        assert!(view.no_api_usage);
+    }
+
+    #[test]
+    fn anomalies_view_flags_a_spend_spike_vs_the_users_own_norm() {
+        // Seven flat ~$1 days then a $20 latest day (today). The robust median stays $1, so the
+        // spike clears the conservative 3.5*MAD threshold and is flagged ~20x the norm.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut rows: Vec<FocusRecord> = (9..=15)
+            .map(|day| anomaly_record("gpt-5.5", utc_datetime(2026, 6, day, 9, 0, 0), 1_000, 100))
+            .collect();
+        rows.push(anomaly_record(
+            "gpt-5.5",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_000,
+            2_000,
+        ));
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(view.enough_history);
+        let spike = view
+            .anomalies
+            .iter()
+            .find(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. }))
+            .unwrap_or_else(|| panic!("expected a spend spike: {:?}", view.anomalies));
+        match spike.signal {
+            AnomalySignal::SpendSpike { date } => {
+                assert_eq!(
+                    date,
+                    match NaiveDate::from_ymd_opt(2026, 6, 16) {
+                        Some(date) => date,
+                        None => panic!("valid date"),
+                    }
+                );
+            }
+            ref other => panic!("expected a spend spike, got {other:?}"),
+        }
+        assert_eq!(spike.value, Decimal::new(2_000, 2)); // $20.00 latest
+        assert_eq!(spike.baseline_median, Decimal::ONE); // $1.00 median
+        assert_eq!(spike.magnitude, Some(Decimal::from(20))); // ~20x the norm
+    }
+
+    #[test]
+    fn anomalies_view_flat_history_does_not_flag_a_trivial_change_but_does_flag_a_real_jump() {
+        // MAD=0 guard: a near-flat history (MAD 0) must NOT flag a sub-floor change, but MUST
+        // still flag a jump that clears the absolute floor.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let flat: Vec<FocusRecord> = (9..=15)
+            .map(|day| anomaly_record("gpt-5.5", utc_datetime(2026, 6, day, 9, 0, 0), 1_000, 500))
+            .collect();
+
+        // Latest day $5.50 — a $0.50 deviation, below the $1 floor → NOT flagged.
+        let mut trivial = flat.clone();
+        trivial.push(anomaly_record(
+            "gpt-5.5",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_000,
+            550,
+        ));
+        let trivial_view = anomalies_view(&snapshot_with_rows(now, trivial, Vec::new()));
+        assert!(trivial_view.enough_history);
+        assert!(
+            !trivial_view
+                .anomalies
+                .iter()
+                .any(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. })),
+            "a sub-floor change on a flat history must not flag: {:?}",
+            trivial_view.anomalies
+        );
+
+        // Latest day $50 — a $45 deviation, well over the floor → flagged even with MAD=0.
+        let mut real = flat;
+        real.push(anomaly_record(
+            "gpt-5.5",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_000,
+            5_000,
+        ));
+        let real_view = anomalies_view(&snapshot_with_rows(now, real, Vec::new()));
+        assert!(
+            real_view
+                .anomalies
+                .iter()
+                .any(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. })),
+            "a real jump on a flat history must flag even when MAD=0: {:?}",
+            real_view.anomalies
+        );
+    }
+
+    #[test]
+    fn anomalies_view_model_mix_mad_zero_share_floor_guards_both_ways() {
+        // A near-flat 50/50 mix for eight days (each model's share MAD is 0). A sub-15-point
+        // wobble on the latest day must NOT flag (the share floor), but a >15-point shift MUST —
+        // the model-mix counterpart of the spend MAD=0 guard test. Spend is held flat ($1/record)
+        // so only the mix signal is in play.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut base: Vec<FocusRecord> = Vec::new();
+        for day in 9..=15 {
+            base.push(anomaly_record(
+                "model-a",
+                utc_datetime(2026, 6, day, 9, 0, 0),
+                1_000,
+                100,
+            ));
+            base.push(anomaly_record(
+                "model-b",
+                utc_datetime(2026, 6, day, 9, 0, 0),
+                1_000,
+                100,
+            ));
+        }
+
+        // Latest day 55/45 — an 11-point wobble, below the 0.15 share floor → NOT flagged.
+        let mut wobble = base.clone();
+        wobble.push(anomaly_record(
+            "model-a",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_100,
+            100,
+        ));
+        wobble.push(anomaly_record(
+            "model-b",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            900,
+            100,
+        ));
+        let wobble_view = anomalies_view(&snapshot_with_rows(now, wobble, Vec::new()));
+        assert!(wobble_view.enough_history);
+        assert!(
+            !wobble_view
+                .anomalies
+                .iter()
+                .any(|anomaly| matches!(anomaly.signal, AnomalySignal::ModelMixShift { .. })),
+            "a sub-floor mix wobble must not flag: {:?}",
+            wobble_view.anomalies
+        );
+
+        // Latest day 85/15 — a 35-point shift, over the floor → flagged on both models.
+        let mut shift = base;
+        shift.push(anomaly_record(
+            "model-a",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_700,
+            100,
+        ));
+        shift.push(anomaly_record(
+            "model-b",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            300,
+            100,
+        ));
+        let shift_view = anomalies_view(&snapshot_with_rows(now, shift, Vec::new()));
+        let shifted: Vec<&str> = shift_view
+            .anomalies
+            .iter()
+            .filter_map(|anomaly| match &anomaly.signal {
+                AnomalySignal::ModelMixShift { model } => Some(model.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            shifted.contains(&"model-a"),
+            "the surged model: {shifted:?}"
+        );
+        assert!(
+            shifted.contains(&"model-b"),
+            "the dropped model: {shifted:?}"
+        );
+    }
+
+    #[test]
+    fn anomalies_view_flags_a_model_mix_shift_both_ways() {
+        // gpt-5.5 carried 100% of tokens for seven days, then claude-opus-4.7 takes 100% on the
+        // latest day — a mix shift flagged on BOTH the collapsing and the surging model. Spend is
+        // held flat ($1/day) so the spend signal stays quiet and this isolates the mix signal.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut rows: Vec<FocusRecord> = (9..=15)
+            .map(|day| anomaly_record("gpt-5.5", utc_datetime(2026, 6, day, 9, 0, 0), 1_000, 100))
+            .collect();
+        rows.push(anomaly_record(
+            "claude-opus-4.7",
+            utc_datetime(2026, 6, 16, 9, 0, 0),
+            1_000,
+            100,
+        ));
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(view.enough_history);
+        // No spend spike (flat $1/day).
+        assert!(
+            !view
+                .anomalies
+                .iter()
+                .any(|anomaly| matches!(anomaly.signal, AnomalySignal::SpendSpike { .. })),
+            "flat spend must not flag a spend spike: {:?}",
+            view.anomalies
+        );
+        let shifted: Vec<&str> = view
+            .anomalies
+            .iter()
+            .filter_map(|anomaly| match &anomaly.signal {
+                AnomalySignal::ModelMixShift { model } => Some(model.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            shifted.contains(&"gpt-5.5"),
+            "the collapsed model: {shifted:?}"
+        );
+        assert!(
+            shifted.contains(&"claude-opus-4.7"),
+            "the surged model: {shifted:?}"
+        );
+    }
+
+    #[test]
+    fn anomalies_view_in_line_usage_reports_no_anomalies() {
+        // Eight days of steady ~$5 spend, single model — enough history, nothing anomalous.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let costs = [500, 520, 480, 510, 490, 505, 495, 500];
+        let rows: Vec<FocusRecord> = costs
+            .iter()
+            .enumerate()
+            .map(|(index, cents)| {
+                anomaly_record(
+                    "gpt-5.5",
+                    utc_datetime(2026, 6, 9 + index as u32, 9, 0, 0),
+                    1_000,
+                    *cents,
+                )
+            })
+            .collect();
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(view.enough_history);
+        assert!(
+            view.anomalies.is_empty(),
+            "steady usage should surface no anomalies: {:?}",
+            view.anomalies
+        );
+    }
+
+    #[test]
+    fn anomalies_view_ignores_subscription_lane_and_future_rows() {
+        // A subscription-lane spike (not a summable dollar) and a future-dated row (clock skew)
+        // are both excluded — only the flat API-lane history remains, so nothing flags.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let mut rows: Vec<FocusRecord> = (9..=16)
+            .map(|day| anomaly_record("gpt-5.5", utc_datetime(2026, 6, day, 9, 0, 0), 1_000, 100))
+            .collect();
+        // A huge SUBSCRIPTION-lane charge on the latest day — must never enter the $ series.
+        let mut sub = anomaly_record("gpt-5.5", utc_datetime(2026, 6, 16, 10, 0, 0), 1_000, 9_900);
+        sub.x_access_path = "subscription".to_string();
+        rows.push(sub);
+        // A future-dated API spike past `today` — excluded from the window.
+        rows.push(anomaly_record(
+            "gpt-5.5",
+            utc_datetime(2026, 6, 20, 9, 0, 0),
+            1_000,
+            9_900,
+        ));
+        let view = anomalies_view(&snapshot_with_rows(now, rows, Vec::new()));
+        assert!(view.enough_history);
+        assert_eq!(view.history_days, 8, "Jun 9..16 API-lane days only");
+        assert!(
+            view.anomalies.is_empty(),
+            "subscription + future rows must not drive an anomaly: {:?}",
+            view.anomalies
         );
     }
 

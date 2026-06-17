@@ -1,0 +1,9 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_anomalies(&anomalies_view_insufficient_fixture(),\nRenderOptions::plain())"
+---
+costroid anomalies
+scope: API-lane spend + model mix vs your own recent history (estimated)
+not enough history yet - 3 of 7 days (estimated)
+quota burn-rate anomalies need multi-day quota history, which local data does not keep - not shown.
+figures are local estimates (your tokens x current prices), vs your own recent history.
