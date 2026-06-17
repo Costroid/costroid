@@ -6,7 +6,9 @@ use std::time::Duration as StdDuration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use costroid_core::{BudgetTargets, EngineSnapshot, GroupBy, NowOptions, Period, TrendsOptions};
+use costroid_core::{
+    AlertThresholds, BudgetTargets, EngineSnapshot, GroupBy, NowOptions, Period, TrendsOptions,
+};
 use costroid_providers::HostEnv;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -23,7 +25,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::render::{
     render_anomalies_document, render_budget_document, render_forecast_document,
-    render_frontier_document, render_history_document, render_models_document, render_now_document,
+    render_frontier_document, render_history_document, render_models_document,
     render_providers_document, render_trends_document, RenderOptions, SemanticStyle,
     StyledDocument, StyledLine,
 };
@@ -161,6 +163,12 @@ struct App {
     /// Budget tab (T14). Defaults to no budgets (the "no budget set" empty state) when the file
     /// is absent or malformed; the load happens in [`run_with_dependencies`], not in tests.
     budget_targets: BudgetTargets,
+    /// Whether the opt-in alert banner is shown atop the Now tab (T17). Default false; loaded
+    /// (read-only) from the config `[alerts] enabled` alongside `budget_targets`.
+    alerts_enabled: bool,
+    /// The quota alert thresholds (T17), from the config `[alerts]` overrides (canonical defaults
+    /// when unset). Consumed by [`costroid_core::active_alerts`] only when `alerts_enabled`.
+    alert_thresholds: AlertThresholds,
     /// The Providers-tab connection lane, gathered once read-only over the existing
     /// keychain/registry (no network). Connect-gated: absent from the default build.
     #[cfg(feature = "connect")]
@@ -198,6 +206,8 @@ impl App {
             scroll: 0,
             viewport_rows: 1,
             budget_targets: BudgetTargets::default(),
+            alerts_enabled: false,
+            alert_thresholds: AlertThresholds::default(),
             #[cfg(feature = "connect")]
             connections: Vec::new(),
         }
@@ -399,8 +409,18 @@ impl App {
                                 group_by: GroupBy::Model,
                             },
                         );
+                        // The opt-in alert banner (T17), computed from the UNFILTERED summary +
+                        // this month's budget (a filter is a display convenience, never an alert
+                        // scope). Empty when disabled — then the banner is a no-op.
+                        let alerts = if self.alerts_enabled {
+                            let budget =
+                                costroid_core::budget_view(&snapshot, &self.budget_targets);
+                            costroid_core::active_alerts(&summary, &budget, &self.alert_thresholds)
+                        } else {
+                            Vec::new()
+                        };
                         apply_now_filter(&mut summary, &self.filter);
-                        render_now_document(&summary, options)
+                        crate::render::render_now_with_alerts_document(&summary, &alerts, options)
                     }
                     Screen::Trends => {
                         let mut summary = costroid_core::trends_summary(
@@ -557,11 +577,16 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
         config.live,
         config.render_options,
     );
-    // Load the user budget config once (read-only TOML; no network). A missing file is the
-    // zero-config default (no budgets); a malformed file degrades to no budgets + a status line,
-    // never a crash — the Budget tab then shows the honest "no budget set" state.
+    // Load the user config once (read-only TOML; no network). A missing file is the zero-config
+    // default (no budgets, alerts off); a malformed file degrades to those defaults + a status
+    // line, never a crash — the Budget tab then shows the honest "no budget set" state and the
+    // Now tab shows no alert banner.
     match crate::config::load() {
-        Ok(loaded) => app.budget_targets = loaded.budget_targets(),
+        Ok(loaded) => {
+            app.budget_targets = loaded.budget_targets();
+            app.alerts_enabled = loaded.alerts_enabled();
+            app.alert_thresholds = loaded.alert_thresholds();
+        }
         Err(error) => app.status = Some(format!("config: {error}")),
     }
     // Gather the Providers-tab connection lane once, read-only over the existing

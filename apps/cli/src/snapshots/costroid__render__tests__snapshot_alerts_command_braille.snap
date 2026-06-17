@@ -1,0 +1,8 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_alerts(&alerts_fixture(), RenderOptions::braille(false))"
+---
+C⠉ costroid  alerts
+  claude code 5-hour limit at 97%, resets in 41m !!
+  codex budget over by ~$10.00, spent ~$60.00 of ~$50.00 !!
+  claude code weekly limit at 82%, resets in 2d 4h !

@@ -1,0 +1,30 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_now_with_alerts(&priced_now(), &alerts_fixture(),\nRenderOptions::braille(true))"
+---
+C⠉ [1malerts[0m
+  [31;1mclaude code 5-hour limit at 97%, resets in 41m !![0m
+  [31;1mcodex budget over by ~$10.00, spent ~$60.00 of ~$50.00 !![0m
+  [33;1mclaude code weekly limit at 82%, resets in 2d 4h ![0m
+────────────────────────────────────────────────────────────────
+C⠉ costroid                                   this week  [1m~$42.18[0m
+────────────────────────────────────────────────────────────────
+limits
+  claude code  5h  unavailable: no captured reading; run `costroid setup-statusline`
+  codex        5h  [1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀[0m  78%  resets 41m
+  codex        wk  [33;1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀[0m  92% !  resets 2d 6h
+  cursor       wk  [31;1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇[0m  97% !!  partial: limit data incomplete
+────────────────────────────────────────────────────────────────
+api costs (this week)
+  claude opus 4.7     [1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿[0m  [1m~$24.10[0m
+  gpt 5.5             [1m⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀[0m  [1m~$11.30[0m
+  sonnet 4.6          [1m⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$6.78[0m
+────────────────────────────────────────────────────────────────
+subscription API-equivalent value (estimate, not bill)
+  gpt 5.5             [1m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unpriced/partial]
+────────────────────────────────────────────────────────────────
+unknown-access usage (partial)
+  mystery model       [1m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unknown model/unpriced]
+────────────────────────────────────────────────────────────────
+◆ cursor wk at 97%, resets unknown.
+provider cursor missing: no local data found

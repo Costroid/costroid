@@ -5,8 +5,8 @@
 //! build reads a newer file (and vice-versa) without error.
 //!
 //! **Secrets never live here** — credentials are keychain-only (`costroid-connect`). Today the
-//! file carries only `[budget]` targets (monthly $ caps, API-lane only); money is
-//! `rust_decimal::Decimal`, never f64.
+//! file carries `[budget]` targets (monthly $ caps, API-lane only; money is
+//! `rust_decimal::Decimal`, never f64) and the `[alerts]` opt-in (T17, default off).
 //!
 //! ```toml
 //! [budget]
@@ -15,6 +15,11 @@
 //! [budget.per_tool]
 //! claude-code = 60.00
 //! codex = 40.00
+//!
+//! [alerts]
+//! enabled = true        # opt-in; default false (quiet)
+//! # quota_warn = 0.80   # optional per-class overrides (default 0.80 / 0.95)
+//! # quota_critical = 0.95
 //! ```
 
 use std::collections::BTreeMap;
@@ -22,7 +27,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use costroid_core::BudgetTargets;
+use costroid_core::{AlertThresholds, BudgetTargets};
 use rust_decimal::Decimal;
 use serde::de::{self, Deserializer, Visitor};
 use serde::Deserialize;
@@ -34,6 +39,7 @@ use serde::Deserialize;
 #[serde(default)]
 pub(crate) struct Config {
     pub(crate) budget: BudgetConfig,
+    pub(crate) alerts: AlertsConfig,
 }
 
 /// The `[budget]` section: optional monthly $ caps. API-lane only — a flat-fee subscription is
@@ -45,6 +51,24 @@ pub(crate) struct BudgetConfig {
     total_monthly_usd: Option<Money>,
     /// Per-tool monthly caps, keyed by the `x_Tool` id (`claude-code`/`codex`/`cursor`).
     per_tool: BTreeMap<String, Money>,
+}
+
+/// The `[alerts]` section (T17): opt-in threshold alerts, OFF by default. `enabled` is the master
+/// switch for the whole feature — the inline `now` banner AND the `costroid alerts` /
+/// `alerts --check` command. The optional per-class quota overrides default to the core's
+/// canonical near-limit fractions (0.80 / 0.95) when unset. Budget alerts carry no threshold here:
+/// the crossing is the monthly $ target itself (an over-budget [`costroid_core::BudgetRow`]).
+/// Forward-compat: `#[serde(default)]`, so an absent section ⇒ off and a newer file is tolerated.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct AlertsConfig {
+    /// Master switch. Default false — alerts are opt-in and quiet.
+    enabled: bool,
+    /// Optional WARN quota fraction override (default [`costroid_core::ALERT_WARN_FRACTION`]).
+    quota_warn: Option<f64>,
+    /// Optional CRITICAL quota fraction override (default
+    /// [`costroid_core::ALERT_CRITICAL_FRACTION`]).
+    quota_critical: Option<f64>,
 }
 
 impl Config {
@@ -60,6 +84,40 @@ impl Config {
                 .collect(),
         }
     }
+
+    /// Whether the alerts feature is enabled (default false — opt-in).
+    pub(crate) fn alerts_enabled(&self) -> bool {
+        self.alerts.enabled
+    }
+
+    /// Project the `[alerts]` overrides into the core's config-neutral [`AlertThresholds`]. An
+    /// override is applied only when finite and strictly positive (a `NaN`/`inf`/zero/negative
+    /// value falls back to the canonical default), so the pure detector never sees a threshold it
+    /// can't reason about.
+    pub(crate) fn alert_thresholds(&self) -> AlertThresholds {
+        let mut thresholds = AlertThresholds::default();
+        if let Some(warn) = sane_fraction(self.alerts.quota_warn) {
+            thresholds.quota_warn_fraction = warn;
+        }
+        if let Some(critical) = sane_fraction(self.alerts.quota_critical) {
+            thresholds.quota_critical_fraction = critical;
+        }
+        // Cross-field sanity: a self-contradictory pair (warn > critical) would make CRITICAL fire
+        // below the user's intended WARN floor and leave WARN unreachable. Reject the whole pair back
+        // to the canonical defaults — mirroring sane_fraction's per-field discipline, so the detector
+        // never sees an inverted pair it can't reason about.
+        if thresholds.quota_warn_fraction > thresholds.quota_critical_fraction {
+            thresholds = AlertThresholds::default();
+        }
+        thresholds
+    }
+}
+
+/// Accept a user-supplied fraction override only when finite and strictly positive; anything else
+/// (`NaN`/`inf`/zero/negative) falls back to the canonical default. A value above `1.0` is left
+/// as-is — a legitimate way to silence a class (the threshold can never be reached).
+fn sane_fraction(value: Option<f64>) -> Option<f64> {
+    value.filter(|fraction| fraction.is_finite() && *fraction > 0.0)
 }
 
 /// A monthly $ amount parsed from TOML into an exact [`Decimal`]. Accepts a TOML integer
@@ -336,5 +394,133 @@ mod tests {
             Err(err) => panic!("empty file should default: {err}"),
         };
         assert!(config.budget_targets().is_empty());
+    }
+
+    // ----- [alerts] (T17) -----
+
+    #[test]
+    fn alerts_default_off_with_canonical_thresholds() {
+        // No file, and a budget-only file, both yield alerts OFF + the canonical default thresholds.
+        let dir = TempDir::new();
+        for contents in ["", "[budget]\ntotal_monthly_usd = 100\n"] {
+            let path = dir.write(contents);
+            let config = match load_from(&path) {
+                Ok(config) => config,
+                Err(err) => panic!("should default: {err}"),
+            };
+            assert!(
+                !config.alerts_enabled(),
+                "alerts must default OFF: {contents:?}"
+            );
+            let thresholds = config.alert_thresholds();
+            assert_eq!(
+                thresholds.quota_warn_fraction,
+                costroid_core::ALERT_WARN_FRACTION
+            );
+            assert_eq!(
+                thresholds.quota_critical_fraction,
+                costroid_core::ALERT_CRITICAL_FRACTION
+            );
+        }
+    }
+
+    #[test]
+    fn alerts_enabled_parses_and_keeps_default_thresholds() {
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nenabled = true\n");
+        let config = match load_from(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("alerts config should parse: {err}"),
+        };
+        assert!(config.alerts_enabled());
+        let thresholds = config.alert_thresholds();
+        assert_eq!(
+            thresholds.quota_warn_fraction,
+            costroid_core::ALERT_WARN_FRACTION
+        );
+        assert_eq!(
+            thresholds.quota_critical_fraction,
+            costroid_core::ALERT_CRITICAL_FRACTION
+        );
+    }
+
+    #[test]
+    fn alerts_threshold_overrides_apply() {
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nenabled = true\nquota_warn = 0.5\nquota_critical = 0.9\n");
+        let config = match load_from(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("alert overrides should parse: {err}"),
+        };
+        let thresholds = config.alert_thresholds();
+        assert_eq!(thresholds.quota_warn_fraction, 0.5);
+        assert_eq!(thresholds.quota_critical_fraction, 0.9);
+    }
+
+    #[test]
+    fn alerts_hostile_threshold_overrides_fall_back_to_defaults() {
+        // Zero / negative are not sane fractions → the canonical default stands (never breaks the
+        // detector). A present-but-odd value is not a parse error.
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nquota_warn = 0.0\nquota_critical = -0.5\n");
+        let config = match load_from(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("odd-but-valid values should parse: {err}"),
+        };
+        let thresholds = config.alert_thresholds();
+        assert_eq!(
+            thresholds.quota_warn_fraction,
+            costroid_core::ALERT_WARN_FRACTION
+        );
+        assert_eq!(
+            thresholds.quota_critical_fraction,
+            costroid_core::ALERT_CRITICAL_FRACTION
+        );
+    }
+
+    #[test]
+    fn alerts_inverted_threshold_pair_falls_back_to_defaults() {
+        // warn > critical is self-contradictory (CRITICAL would fire below the WARN floor and WARN
+        // would be dead) — the whole pair falls back to the canonical defaults, never a nonsense pair.
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nenabled = true\nquota_warn = 0.9\nquota_critical = 0.5\n");
+        let config = match load_from(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("inverted-but-valid values should parse: {err}"),
+        };
+        let thresholds = config.alert_thresholds();
+        assert_eq!(
+            thresholds.quota_warn_fraction,
+            costroid_core::ALERT_WARN_FRACTION
+        );
+        assert_eq!(
+            thresholds.quota_critical_fraction,
+            costroid_core::ALERT_CRITICAL_FRACTION
+        );
+        // A single low-critical override that inverts against the DEFAULT warn also falls back.
+        let path2 = dir.write("[alerts]\nenabled = true\nquota_critical = 0.5\n");
+        let config2 = match load_from(&path2) {
+            Ok(config) => config,
+            Err(err) => panic!("should parse: {err}"),
+        };
+        let t2 = config2.alert_thresholds();
+        assert_eq!(t2.quota_warn_fraction, costroid_core::ALERT_WARN_FRACTION);
+        assert_eq!(
+            t2.quota_critical_fraction,
+            costroid_core::ALERT_CRITICAL_FRACTION
+        );
+    }
+
+    #[test]
+    fn malformed_alerts_value_is_a_typed_error_not_a_panic() {
+        // `enabled` must be a bool — a string is a typed Parse error (the non-crash contract),
+        // never a panic.
+        let dir = TempDir::new();
+        let path = dir.write("[alerts]\nenabled = \"yes\"\n");
+        match load_from(&path) {
+            Ok(config) => panic!("malformed alerts should error, got {config:?}"),
+            Err(ConfigError::Parse { .. }) => {}
+            Err(other) => panic!("expected a Parse error, got {other}"),
+        }
     }
 }

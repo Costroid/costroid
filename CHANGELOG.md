@@ -11,6 +11,29 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
+### Added
+
+- **`costroid alerts` — opt-in threshold alerts (default OFF, no daemon, no new dependency).**
+  Surfaces two never-mixed crossing classes from your local data: a **quota window** at/above its
+  warning (80%) or critical (95%) threshold — fired only off a fresh, cross-checked reading, never
+  an unverified/estimated/stale one — and a **budget** strictly over its monthly $ target (API-lane
+  only). Quota copy is quota-extension framing ("claude code weekly limit at 92%, resets in 2d");
+  budget copy is dollars, always labeled an estimate. Delivery is two built-in surfaces: an inline
+  banner shown atop the `now` view (amber/red, but always paired with a `!`/`!!` or spelled-out
+  non-color cue, so it survives `--plain`/`NO_COLOR`), and `costroid alerts` — a human list with
+  honest "alerts off" / "no active alerts" states. `costroid alerts --check` is cron-friendly: it
+  prints at most one line and sets the exit code (0 = clear, 1 = a crossing, 2 = a config/collect
+  error). Enable it (and optionally override the per-class thresholds) in the config file:
+  ```toml
+  [alerts]
+  enabled = true
+  # quota_warn = 0.80      # optional overrides (defaults shown)
+  # quota_critical = 0.95
+  ```
+  Forecast projected-hits and anomaly callouts stay advisory on their own tabs — alerting on them
+  is a deferred follow-up. Pure-local: no network, no telemetry, no desktop notifications in this
+  baseline (an OS-notification path is deferred behind a future Cargo feature + config opt-in).
+
 ## [0.4.0] - 2026-06-16
 
 The 0.4.0 connections line: the `costroid connect`/`disconnect`/`connections` CLI now

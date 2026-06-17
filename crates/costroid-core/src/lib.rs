@@ -845,6 +845,126 @@ fn period_elapsed_fraction(range: &PeriodRange, at: DateTime<Utc>) -> f64 {
     elapsed as f64 / total as f64
 }
 
+// ---------------------------------------------------------------------------
+// The alerts crossing-detector (T17)
+// ---------------------------------------------------------------------------
+
+/// The quota fraction at/above which a WARN alert fires — the canonical near-limit *warning*
+/// threshold (`0.80`). The apps/cli limit-meter + budget render alias this exact value (its
+/// `WARN_FRACTION`), and it is the default of [`AlertThresholds::quota_warn_fraction`], so the
+/// meter the user sees and the alert that fires share ONE number — never forked into a third set.
+pub const ALERT_WARN_FRACTION: f64 = 0.80;
+/// The quota fraction at/above which a CRITICAL alert fires — the canonical near-limit *critical*
+/// threshold (`0.95`). Aliased by the apps/cli render `CRITICAL_FRACTION`; the default of
+/// [`AlertThresholds::quota_critical_fraction`].
+pub const ALERT_CRITICAL_FRACTION: f64 = 0.95;
+
+/// Detect the active threshold crossings over a point-in-time snapshot (T17) — PURE and
+/// config-neutral: the [`AlertThresholds`] are an INPUT, never read from a file (mirrors
+/// [`budget_view`]). The two alert classes are gathered independently and NEVER mixed:
+///
+/// * **Quota (%)** — one alert per quota window at/above a fraction threshold, fired ONLY off a
+///   fresh, cross-checked [`LimitAvailability::Available`] reading (a token-fraction, or a dollar
+///   `Spend` pool with a known allowance). An `Unverified`/`Estimated`/`Partial`/`Unavailable`
+///   reading is NEVER alerted (the T15 discipline / ARCHITECTURE §9.2 — degrade, never a confident
+///   wrong alarm; staleness is already aged-out to `Estimated` upstream by `now_summary`).
+/// * **Budget ($)** — one alert per [`BudgetRow`] STRICTLY over its monthly target (riding
+///   `over_by_usd`), API-lane only.
+///
+/// Forecast projected-hits + anomaly callouts are intentionally NOT alert sources — they stay
+/// advisory on their own tabs (alerting on them is a deferred fast-follow, §12.23). The result is
+/// ordered critical-tier first (so a `--check` / banner headline is the most pressing crossing),
+/// stable within a tier (quota windows in `limits` order, then budgets most-utilized first).
+pub fn active_alerts(
+    now: &NowSummary,
+    budget: &BudgetView,
+    thresholds: &AlertThresholds,
+) -> Vec<Alert> {
+    let mut alerts: Vec<Alert> = Vec::new();
+
+    // Quota class — % crossings off FRESH, cross-checked readings ONLY.
+    for limit in &now.limits {
+        if let Some(alert) = quota_alert(limit, thresholds) {
+            alerts.push(alert);
+        }
+    }
+
+    // Budget class — $ crossings: STRICTLY over the monthly target (BudgetView's own over-state).
+    for row in &budget.rows {
+        if let Some(over_by_usd) = row.over_by_usd {
+            alerts.push(Alert::Budget {
+                scope: row.scope.clone(),
+                spent_usd: row.spent_usd,
+                target_usd: row.target_usd,
+                over_by_usd,
+            });
+        }
+    }
+
+    // Most-pressing first: critical-tier (CRITICAL quota + any over-budget) before WARN quota.
+    // A STABLE sort, so the within-tier order above is preserved.
+    alerts.sort_by_key(|alert| if alert.is_critical() { 0 } else { 1 });
+    alerts
+}
+
+/// One quota window's alert, or `None` when it must not fire. Fires ONLY off a fresh,
+/// cross-checked [`LimitAvailability::Available`] reading whose consumed fraction clears a
+/// threshold — every other availability arm (and a dollar pool with no allowance) yields `None`.
+fn quota_alert(limit: &LimitSummary, thresholds: &AlertThresholds) -> Option<Alert> {
+    let (fraction, reset_in_seconds) = match &limit.availability {
+        LimitAvailability::Available {
+            measure,
+            reset_in_seconds,
+            ..
+        } => (alert_fraction(measure)?, *reset_in_seconds),
+        // Unverified / Estimated / Partial / Unavailable: never a confident alarm.
+        _ => return None,
+    };
+    let level = alert_level(fraction, thresholds)?;
+    Some(Alert::Quota {
+        tool: limit.tool,
+        kind: limit.kind,
+        level,
+        fraction,
+        reset_in_seconds,
+    })
+}
+
+/// The consumed fraction a fresh quota reading represents, for thresholding. A token-fraction is
+/// the fraction directly; a dollar `Spend` pool is `used / included` when the allowance is known
+/// (and positive) — the share of the included credit consumed; a pure-overage pool (no allowance)
+/// has no fraction to threshold, so it never alerts. A non-finite result is rejected.
+fn alert_fraction(measure: &LimitMeasure) -> Option<f64> {
+    let fraction = match measure {
+        LimitMeasure::TokenFraction(fraction) => *fraction,
+        LimitMeasure::Spend {
+            used_usd,
+            included_usd,
+        } => {
+            let included = (*included_usd)?;
+            if included <= Decimal::ZERO {
+                return None;
+            }
+            (*used_usd / included).to_f64()?
+        }
+    };
+    fraction.is_finite().then_some(fraction)
+}
+
+/// WARN vs CRITICAL vs no-alert for a consumed fraction, given the thresholds. CRITICAL is checked
+/// first so it wins at a boundary; below the WARN threshold there is no alert. A non-finite or
+/// out-of-range threshold (a hostile config) simply never matches — `f64` comparison is total
+/// against the finite `fraction`, so there is no panic.
+fn alert_level(fraction: f64, thresholds: &AlertThresholds) -> Option<AlertLevel> {
+    if fraction >= thresholds.quota_critical_fraction {
+        Some(AlertLevel::Critical)
+    } else if fraction >= thresholds.quota_warn_fraction {
+        Some(AlertLevel::Warn)
+    } else {
+        None
+    }
+}
+
 pub fn period_range_for(period: Period, anchor: DateTime<Utc>) -> PeriodRange {
     let local_anchor = anchor.with_timezone(&Local);
     let local_start = start_of_period_local(period, local_anchor);
@@ -2343,6 +2463,82 @@ pub enum AnomalySignal {
     ModelMixShift { model: String },
 }
 
+/// The config-neutral INPUT to [`active_alerts`] (T17): the quota fraction thresholds at which a
+/// WARN / CRITICAL alert fires. Core never reads a file — the apps/cli config layer maps its
+/// `[alerts]` TOML section into this (defaults when unset). Budget alerts need no fraction here —
+/// they ride [`BudgetView`]'s own STRICT over-target state, so the two alert classes never share a
+/// threshold. Carries `f64`, so `PartialEq` not `Eq`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AlertThresholds {
+    /// Fire a WARN quota alert at/above this consumed fraction (default [`ALERT_WARN_FRACTION`]).
+    pub quota_warn_fraction: f64,
+    /// Fire a CRITICAL quota alert at/above this consumed fraction (default
+    /// [`ALERT_CRITICAL_FRACTION`]).
+    pub quota_critical_fraction: f64,
+}
+
+impl Default for AlertThresholds {
+    fn default() -> Self {
+        Self {
+            quota_warn_fraction: ALERT_WARN_FRACTION,
+            quota_critical_fraction: ALERT_CRITICAL_FRACTION,
+        }
+    }
+}
+
+/// The severity of a quota alert — WARN (near the limit) vs CRITICAL (very near / at it). Budget
+/// alerts carry no level: a budget alert fires only when STRICTLY over target, an inherently
+/// critical-tier state (see [`Alert::is_critical`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertLevel {
+    Warn,
+    Critical,
+}
+
+/// One active threshold crossing the user opted in to see (T17). The two classes are SEPARATE
+/// variants and are NEVER mixed: a quota window crossing a % threshold vs a budget crossing its
+/// monthly $ target. A computed signal carrying `f64`/`Decimal` — `Serialize`-only, `PartialEq`
+/// (not `Eq`), never persisted (mirrors the Step-5 view types). Its producer [`active_alerts`]
+/// keeps it honest: a quota alert fires ONLY off a fresh, cross-checked
+/// [`LimitAvailability::Available`] reading.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "class")]
+pub enum Alert {
+    /// A quota window at/above a fraction threshold (the % class). `fraction` is the consumed
+    /// share (a token-fraction directly, or `used/included` for a dollar credit pool); `level` is
+    /// WARN vs CRITICAL per the [`AlertThresholds`]. The render frames this as quota-extension,
+    /// never money.
+    Quota {
+        tool: ProviderId,
+        kind: LimitKind,
+        level: AlertLevel,
+        fraction: f64,
+        /// Seconds until the window resets — so the copy can name the reset wait.
+        reset_in_seconds: i64,
+    },
+    /// A budget scope STRICTLY over its monthly $ target (the $ class) — rides [`BudgetRow`]'s
+    /// `over_by_usd` (API-lane only). Every figure is an estimate (the `~` hedge is the render
+    /// layer's).
+    Budget {
+        scope: BudgetScope,
+        spent_usd: Decimal,
+        target_usd: Decimal,
+        over_by_usd: Decimal,
+    },
+}
+
+impl Alert {
+    /// True for a critical-tier crossing (a CRITICAL quota reading or any over-budget state) — the
+    /// render uses this to pick the `!!` cue / red style; a WARN quota is the lighter `!` / amber.
+    pub fn is_critical(&self) -> bool {
+        match self {
+            Alert::Quota { level, .. } => *level == AlertLevel::Critical,
+            Alert::Budget { .. } => true,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("bundled pricing JSON is invalid: {0}")]
@@ -2753,6 +2949,330 @@ mod tests {
             view.rows[1].scope,
             BudgetScope::Tool("claude-code".to_string())
         );
+    }
+
+    // ----- active_alerts (T17) -----
+
+    /// A finalized quota [`LimitSummary`] with an explicit availability — the detector reads the
+    /// finalized summary (not a raw window), so the tests build it directly.
+    fn alert_limit(
+        tool: ProviderId,
+        kind: LimitKind,
+        availability: LimitAvailability,
+    ) -> LimitSummary {
+        LimitSummary {
+            tool,
+            plan: None,
+            kind,
+            label: None,
+            captured_at: utc_datetime(2026, 6, 16, 12, 0, 0),
+            availability,
+        }
+    }
+
+    fn available_fraction(fraction: f64) -> LimitAvailability {
+        LimitAvailability::Available {
+            measure: LimitMeasure::TokenFraction(fraction),
+            resets_at: utc_datetime(2026, 6, 16, 17, 0, 0),
+            reset_in_seconds: 3_600,
+        }
+    }
+
+    fn now_with_limits(limits: Vec<LimitSummary>) -> NowSummary {
+        let at = utc_datetime(2026, 6, 16, 12, 0, 0);
+        NowSummary {
+            generated_at: at,
+            cost_period: period_range_for(Period::Week, at),
+            group_by: GroupBy::Model,
+            limits,
+            current_costs: Vec::new(),
+            providers: Vec::new(),
+        }
+    }
+
+    /// A [`BudgetRow`] mirroring [`budget_row`]'s over/fraction derivation (target > 0).
+    fn alert_budget_row(scope: BudgetScope, target_cents: i64, spent_cents: i64) -> BudgetRow {
+        let target = Decimal::new(target_cents, 2);
+        let spent = Decimal::new(spent_cents, 2);
+        BudgetRow {
+            scope,
+            target_usd: target,
+            spent_usd: spent,
+            fraction: (spent / target).to_f64().unwrap_or(0.0),
+            over_by_usd: (spent > target).then_some(spent - target),
+            pace: if spent > target {
+                BudgetPace::OverBudget
+            } else {
+                BudgetPace::OnTrack
+            },
+        }
+    }
+
+    fn budget_with_rows(rows: Vec<BudgetRow>) -> BudgetView {
+        BudgetView {
+            generated_at: utc_datetime(2026, 6, 16, 12, 0, 0),
+            rows,
+            excluded_tools: Vec::new(),
+            no_budget_set: false,
+            spent_total_usd: Decimal::ZERO,
+            month_elapsed_fraction: 0.5,
+        }
+    }
+
+    fn no_budget() -> BudgetView {
+        budget_with_rows(Vec::new())
+    }
+
+    #[test]
+    fn alert_thresholds_default_matches_canonical_near_limit_fractions() {
+        // The detector's defaults ARE the render meter's WARN/CRITICAL (never a forked third set).
+        let defaults = AlertThresholds::default();
+        assert_eq!(defaults.quota_warn_fraction, ALERT_WARN_FRACTION);
+        assert_eq!(defaults.quota_critical_fraction, ALERT_CRITICAL_FRACTION);
+        assert_eq!(ALERT_WARN_FRACTION, 0.80);
+        assert_eq!(ALERT_CRITICAL_FRACTION, 0.95);
+    }
+
+    #[test]
+    fn active_alerts_fires_quota_warn_and_critical_off_available_only() {
+        let now = now_with_limits(vec![
+            alert_limit(
+                ProviderId::ClaudeCode,
+                LimitKind::Weekly,
+                available_fraction(0.82),
+            ),
+            alert_limit(
+                ProviderId::ClaudeCode,
+                LimitKind::FiveHour,
+                available_fraction(0.97),
+            ),
+            alert_limit(
+                ProviderId::Codex,
+                LimitKind::FiveHour,
+                available_fraction(0.5),
+            ),
+        ]);
+        let alerts = active_alerts(&now, &no_budget(), &AlertThresholds::default());
+        assert_eq!(alerts.len(), 2, "the 50% window must not fire: {alerts:?}");
+        // Critical-tier first.
+        match &alerts[0] {
+            Alert::Quota {
+                kind,
+                level,
+                fraction,
+                ..
+            } => {
+                assert_eq!(*kind, LimitKind::FiveHour);
+                assert_eq!(*level, AlertLevel::Critical);
+                assert!((fraction - 0.97).abs() < 1e-9);
+            }
+            other => panic!("expected a critical quota alert first, got {other:?}"),
+        }
+        match &alerts[1] {
+            Alert::Quota { kind, level, .. } => {
+                assert_eq!(*kind, LimitKind::Weekly);
+                assert_eq!(*level, AlertLevel::Warn);
+            }
+            other => panic!("expected a warn quota alert second, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_alerts_never_fires_off_unverified_estimated_partial_or_unavailable() {
+        // Each reading is at/above CRITICAL, yet NONE is a fresh cross-checked `Available` — so the
+        // detector stays silent (the T15 discipline / ARCHITECTURE §9.2).
+        let now = now_with_limits(vec![
+            alert_limit(
+                ProviderId::ClaudeCode,
+                LimitKind::Weekly,
+                LimitAvailability::Unverified {
+                    measure: LimitMeasure::TokenFraction(0.99),
+                    resets_at: None,
+                    reset_in_seconds: None,
+                },
+            ),
+            alert_limit(
+                ProviderId::ClaudeCode,
+                LimitKind::FiveHour,
+                LimitAvailability::Estimated {
+                    volume_tokens: 9_000_000,
+                    estimated_usd: Some(Decimal::new(1_000, 2)),
+                },
+            ),
+            alert_limit(
+                ProviderId::Codex,
+                LimitKind::FiveHour,
+                LimitAvailability::Partial {
+                    measure: Some(LimitMeasure::TokenFraction(0.99)),
+                    resets_at: None,
+                    reset_in_seconds: None,
+                    reason: "no reset".to_string(),
+                },
+            ),
+            alert_limit(
+                ProviderId::Codex,
+                LimitKind::Weekly,
+                LimitAvailability::Unavailable {
+                    reason: "no data".to_string(),
+                },
+            ),
+        ]);
+        let alerts = active_alerts(&now, &no_budget(), &AlertThresholds::default());
+        assert!(
+            alerts.is_empty(),
+            "no alert may fire off a non-fresh reading: {alerts:?}"
+        );
+    }
+
+    #[test]
+    fn active_alerts_fires_budget_over_only_when_strictly_over_target() {
+        let budget = budget_with_rows(vec![
+            // Over by $10.00.
+            alert_budget_row(BudgetScope::Tool("codex".to_string()), 5_000, 6_000),
+            // Exactly at budget — NOT over (strict `spent > target`), so no alert.
+            alert_budget_row(BudgetScope::Total, 10_000, 10_000),
+            // Comfortably under.
+            alert_budget_row(BudgetScope::Tool("claude-code".to_string()), 6_000, 1_500),
+        ]);
+        let alerts = active_alerts(
+            &now_with_limits(Vec::new()),
+            &budget,
+            &AlertThresholds::default(),
+        );
+        assert_eq!(
+            alerts.len(),
+            1,
+            "only the strictly-over row fires: {alerts:?}"
+        );
+        match &alerts[0] {
+            Alert::Budget {
+                scope,
+                over_by_usd,
+                spent_usd,
+                target_usd,
+            } => {
+                assert_eq!(*scope, BudgetScope::Tool("codex".to_string()));
+                assert_eq!(*over_by_usd, Decimal::new(1_000, 2));
+                assert_eq!(*spent_usd, Decimal::new(6_000, 2));
+                assert_eq!(*target_usd, Decimal::new(5_000, 2));
+            }
+            other => panic!("expected a budget alert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_alerts_spend_measure_uses_used_over_included_and_skips_no_allowance() {
+        let now = now_with_limits(vec![
+            // 9.60 / 10.00 = 0.96 → critical.
+            alert_limit(
+                ProviderId::Cursor,
+                LimitKind::Monthly,
+                LimitAvailability::Available {
+                    measure: LimitMeasure::Spend {
+                        used_usd: Decimal::new(960, 2),
+                        included_usd: Some(Decimal::new(1_000, 2)),
+                    },
+                    resets_at: utc_datetime(2026, 6, 30, 0, 0, 0),
+                    reset_in_seconds: 1_209_600,
+                },
+            ),
+            // No allowance (pure overage) → no fraction → never alerts, even at large usage.
+            alert_limit(
+                ProviderId::Cursor,
+                LimitKind::BillingCycle,
+                LimitAvailability::Available {
+                    measure: LimitMeasure::Spend {
+                        used_usd: Decimal::new(9_999, 2),
+                        included_usd: None,
+                    },
+                    resets_at: utc_datetime(2026, 6, 30, 0, 0, 0),
+                    reset_in_seconds: 1_209_600,
+                },
+            ),
+        ]);
+        let alerts = active_alerts(&now, &no_budget(), &AlertThresholds::default());
+        assert_eq!(
+            alerts.len(),
+            1,
+            "only the with-allowance pool fires: {alerts:?}"
+        );
+        match &alerts[0] {
+            Alert::Quota {
+                kind,
+                level,
+                fraction,
+                ..
+            } => {
+                assert_eq!(*kind, LimitKind::Monthly);
+                assert_eq!(*level, AlertLevel::Critical);
+                assert!((fraction - 0.96).abs() < 1e-9);
+            }
+            other => panic!("expected a critical spend-pool quota alert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_alerts_orders_critical_tier_first_across_classes() {
+        // A WARN quota + an over-budget: the budget (critical-tier) sorts ahead of the warn quota.
+        let now = now_with_limits(vec![alert_limit(
+            ProviderId::ClaudeCode,
+            LimitKind::Weekly,
+            available_fraction(0.82),
+        )]);
+        let budget = budget_with_rows(vec![alert_budget_row(BudgetScope::Total, 10_000, 11_000)]);
+        let alerts = active_alerts(&now, &budget, &AlertThresholds::default());
+        assert_eq!(alerts.len(), 2);
+        assert!(matches!(alerts[0], Alert::Budget { .. }), "{alerts:?}");
+        assert!(
+            matches!(
+                alerts[1],
+                Alert::Quota {
+                    level: AlertLevel::Warn,
+                    ..
+                }
+            ),
+            "{alerts:?}"
+        );
+        // is_critical agrees with the ordering.
+        assert!(alerts[0].is_critical());
+        assert!(!alerts[1].is_critical());
+    }
+
+    #[test]
+    fn active_alerts_honors_custom_thresholds() {
+        let thresholds = AlertThresholds {
+            quota_warn_fraction: 0.50,
+            quota_critical_fraction: 0.90,
+        };
+        let now = now_with_limits(vec![
+            alert_limit(
+                ProviderId::Codex,
+                LimitKind::Weekly,
+                available_fraction(0.60),
+            ),
+            alert_limit(
+                ProviderId::Codex,
+                LimitKind::FiveHour,
+                available_fraction(0.95),
+            ),
+        ]);
+        let alerts = active_alerts(&now, &no_budget(), &thresholds);
+        assert_eq!(alerts.len(), 2);
+        // 0.95 ≥ 0.90 → critical (sorts first); 0.60 ≥ 0.50 → warn.
+        assert!(matches!(
+            alerts[0],
+            Alert::Quota {
+                level: AlertLevel::Critical,
+                ..
+            }
+        ));
+        assert!(matches!(
+            alerts[1],
+            Alert::Quota {
+                level: AlertLevel::Warn,
+                ..
+            }
+        ));
     }
 
     // ----- forecast_view (T15) -----

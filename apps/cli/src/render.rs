@@ -4,9 +4,9 @@ use std::io::{self, IsTerminal};
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use costroid_core::{
-    AggregateTotals, AnomaliesView, Anomaly, AnomalySignal, BenchFrontier, BenchView,
-    BudgetExcludedTool, BudgetExclusion, BudgetPace, BudgetRow, BudgetScope, BudgetView, CostLane,
-    CostLaneSummary, FocusRecord, ForecastView, FrontierPoint, FrontierStanding, GroupBy,
+    AggregateTotals, Alert, AlertLevel, AnomaliesView, Anomaly, AnomalySignal, BenchFrontier,
+    BenchView, BudgetExcludedTool, BudgetExclusion, BudgetPace, BudgetRow, BudgetScope, BudgetView,
+    CostLane, CostLaneSummary, FocusRecord, ForecastView, FrontierPoint, FrontierStanding, GroupBy,
     LimitAvailability, LimitSummary, ModelRow, ModelsView, NowSummary, OverlayModel, Period,
     PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind, QuotaEta,
     QuotaEtaOutcome, QuotaEtaUnavailable, RepricingDelta, RepricingStatus, SpendForecast,
@@ -30,8 +30,11 @@ const COST_BAR_WIDTH: usize = 12;
 const DEFAULT_RENDER_WIDTH: usize = 64;
 const LIMIT_BAR_WIDTH: usize = 12;
 const STATUS_BAR_WIDTH: usize = 4;
-const WARN_FRACTION: f64 = 0.80;
-const CRITICAL_FRACTION: f64 = 0.95;
+// The near-limit meter/budget thresholds ALIAS the canonical core consts (T17) — ONE source, never
+// a forked literal: the meter color the user sees and the alert that fires at the same fraction can
+// never drift. The alert detector's `AlertThresholds` default these same two values.
+const WARN_FRACTION: f64 = costroid_core::ALERT_WARN_FRACTION;
+const CRITICAL_FRACTION: f64 = costroid_core::ALERT_CRITICAL_FRACTION;
 /// A reading at least this old (capture time vs. the summary's `generated_at`) carries an
 /// always-on "as of HH:MM" freshness stamp (STATUSLINE-CAPTURE-BRIEF §8): every Claude
 /// reading is a cached push and every Codex window is only as fresh as its latest rollout
@@ -283,6 +286,10 @@ fn locale_value(env: &EnvSnapshot) -> Option<&str> {
         .find(|value| !value.is_empty())
 }
 
+// The plain string form of the now view. The production `now` path renders through
+// `render_now_with_alerts` (which prepends the opt-in alert banner, T17), so this bare form is now
+// only a test convenience for the now-document snapshots / ASCII-purity gates.
+#[cfg(test)]
 pub(crate) fn render_now(summary: &NowSummary, options: RenderOptions) -> String {
     render_now_document(summary, options).render(options)
 }
@@ -1153,6 +1160,30 @@ pub(crate) fn render_now_document(summary: &NowSummary, options: RenderOptions) 
     }
 }
 
+/// The `now` document with the opt-in alert banner (T17) prepended ATOP it. When `alerts` is empty
+/// (the feature is off, or no crossing is active) this is byte-identical to [`render_now_document`].
+/// The shared composition for both the plain CLI (`costroid`) and the TUI Now tab.
+pub(crate) fn render_now_with_alerts_document(
+    summary: &NowSummary,
+    alerts: &[Alert],
+    options: RenderOptions,
+) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_alert_banner(&mut out, alerts, options);
+    out.lines
+        .extend(render_now_document(summary, options).lines);
+    out
+}
+
+/// String form of [`render_now_with_alerts_document`] — used by the plain CLI `now` path.
+pub(crate) fn render_now_with_alerts(
+    summary: &NowSummary,
+    alerts: &[Alert],
+    options: RenderOptions,
+) -> String {
+    render_now_with_alerts_document(summary, alerts, options).render(options)
+}
+
 pub(crate) fn render_trends_document(
     summary: &TrendsSummary,
     options: RenderOptions,
@@ -2008,6 +2039,225 @@ fn push_budget_empty_state(out: &mut StyledDocument) {
     push_line(out, "[budget.per_tool]");
     push_line(out, "claude-code = 60.00");
     push_line(out, "codex = 40.00");
+}
+
+// ---------------------------------------------------------------------------
+// Alerts (T17) — the inline `now` banner + the `costroid alerts` / `alerts --check` surface.
+// Opt-in, default OFF. The detector (`costroid_core::active_alerts`) produces the data; THIS layer
+// owns the copy. Quota alerts use quota-extension framing (NEVER money); budget alerts are dollars.
+// Sentence case, no emoji, one crossing per line. Amber/red is ALLOWED for the crossing state (like
+// Budget) but is NEVER alone — every styled line carries a `!`/`!!` (visual) or a spelled-out
+// `(near limit)`/`(critical)`/`(over budget)` (plain) cue, so it survives `--plain`/`NO_COLOR`. The
+// `alerts --check` line and every Plain byte are pure ASCII.
+// ---------------------------------------------------------------------------
+
+/// The one-line enable hint shown when the alerts feature is off. Pure ASCII (the canonical path;
+/// the resolver may honor `$XDG_CONFIG_HOME`, but the hint uses the documented location — mirrors
+/// [`BUDGET_CONFIG_HINT`]).
+const ALERTS_OFF_HINT: &str = "alerts are off - enable them in ~/.config/costroid/config.toml";
+
+/// The readable window phrase for a quota alert — quota-extension framing, never an abbreviation.
+fn alert_window_phrase(kind: LimitKind) -> &'static str {
+    match kind {
+        LimitKind::FiveHour => "5-hour",
+        LimitKind::Weekly => "weekly",
+        LimitKind::Daily => "daily",
+        LimitKind::Monthly => "monthly",
+        LimitKind::BillingCycle => "billing-cycle",
+    }
+}
+
+/// The budget scope phrase for a budget alert ($ framing).
+fn alert_budget_scope(scope: &BudgetScope) -> String {
+    match scope {
+        BudgetScope::Total => "total budget".to_string(),
+        BudgetScope::Tool(tool) => format!("{tool} budget"),
+    }
+}
+
+/// One alert's human sentence WITHOUT a severity cue (the cue is appended per-mode). Quota copy is
+/// quota-extension framing ("... limit at N%, resets in T") — NEVER money; budget copy is dollars,
+/// always `~`-hedged (the figures are local estimates). Pure ASCII in ASCII/Plain modes.
+fn alert_sentence(alert: &Alert) -> String {
+    match alert {
+        Alert::Quota {
+            tool,
+            kind,
+            fraction,
+            reset_in_seconds,
+            ..
+        } => format!(
+            "{} {} limit at {}, resets in {}",
+            provider_name(*tool),
+            alert_window_phrase(*kind),
+            percent(*fraction),
+            reset_countdown(*reset_in_seconds),
+        ),
+        Alert::Budget {
+            scope,
+            spent_usd,
+            target_usd,
+            over_by_usd,
+        } => format!(
+            "{} over by {}, spent {} of {}",
+            alert_budget_scope(scope),
+            format_over_by(over_by_usd),
+            format_money(spent_usd, Some("USD"), true),
+            format_money(target_usd, Some("USD"), true),
+        ),
+    }
+}
+
+/// The visual (braille/ascii) non-color cue: `!` for a WARN quota, `!!` for any critical-tier
+/// crossing (a CRITICAL quota or an over-budget). `!!` carries the over-budget state without a
+/// redundant "OVER" (the budget sentence already says "over by").
+fn alert_cue(alert: &Alert) -> &'static str {
+    if alert.is_critical() {
+        " !!"
+    } else {
+        " !"
+    }
+}
+
+/// The plain (screen-reader) spelled-out cue, one per severity/class.
+fn alert_plain_cue(alert: &Alert) -> &'static str {
+    match alert {
+        Alert::Quota {
+            level: AlertLevel::Warn,
+            ..
+        } => " (near limit)",
+        Alert::Quota {
+            level: AlertLevel::Critical,
+            ..
+        } => " (critical)",
+        Alert::Budget { .. } => " (over budget)",
+    }
+}
+
+/// The semantic style of an alert line: amber (Warn) vs red (Critical / over-budget). Shares the
+/// near-/over-limit palette the meter + Budget use (so the alert color matches the meter color).
+fn alert_style(alert: &Alert) -> SemanticStyle {
+    if alert.is_critical() {
+        SemanticStyle::Critical
+    } else {
+        SemanticStyle::Warn
+    }
+}
+
+/// Push one styled line per alert into `out`, mode-aware — the shared body of the inline banner
+/// AND `costroid alerts`. Visual: an amber/red sentence + the `!`/`!!` cue; plain: an uncolored
+/// sentence + the spelled-out cue.
+fn push_alert_lines(out: &mut StyledDocument, alerts: &[Alert], options: RenderOptions) {
+    for alert in alerts {
+        let sentence = alert_sentence(alert);
+        match options.mode {
+            RenderMode::Plain => {
+                push_line(out, &format!("  {sentence}{}", alert_plain_cue(alert)));
+            }
+            RenderMode::Braille | RenderMode::Ascii => {
+                let mut line = StyledLine::new();
+                line.push_plain("  ");
+                line.push_styled(
+                    format!("{sentence}{}", alert_cue(alert)),
+                    alert_style(alert),
+                );
+                out.push(line);
+            }
+        }
+    }
+}
+
+/// The inline alert banner shown ATOP the `now` view when alerts are enabled and at least one is
+/// active (T17). No-op when `alerts` is empty (disabled OR clear). Amber/red is allowed (the
+/// crossing state) but ALWAYS paired with a textual cue (`!`/`!!` visual, spelled-out plain), so it
+/// survives `--plain`/`NO_COLOR`. A separating rule sits below it in the visual modes — Plain
+/// delimits by the `alerts:` / `costroid now` labels, never the multi-byte `─` rule (T11 gotcha).
+pub(crate) fn push_alert_banner(
+    out: &mut StyledDocument,
+    alerts: &[Alert],
+    options: RenderOptions,
+) {
+    if alerts.is_empty() {
+        return;
+    }
+    match options.mode {
+        RenderMode::Plain => {
+            push_line(out, "alerts:");
+            push_alert_lines(out, alerts, options);
+        }
+        RenderMode::Braille | RenderMode::Ascii => {
+            let mut header = StyledLine::new();
+            header.push_plain(format!("{} ", mark(options)));
+            header.push_styled("alerts", SemanticStyle::Strong);
+            out.push(header);
+            push_alert_lines(out, alerts, options);
+            push_rule(out, options);
+        }
+    }
+}
+
+/// `costroid alerts` — the human list (header + one line per active crossing, or the honest "no
+/// active alerts" clean state). The OFF state is [`render_alerts_off`]; the caller branches on the
+/// config `enabled` flag first.
+pub(crate) fn render_alerts(alerts: &[Alert], options: RenderOptions) -> String {
+    let mut out = StyledDocument::new();
+    push_alerts_header(&mut out, options);
+    if alerts.is_empty() {
+        push_line(&mut out, "no active alerts");
+    } else {
+        push_alert_lines(&mut out, alerts, options);
+    }
+    out.render(options)
+}
+
+/// `costroid alerts` when the feature is OFF (the default): the honest off state + the one-line
+/// enable hint + a copy-paste `[alerts]` stanza. Pure ASCII.
+pub(crate) fn render_alerts_off(options: RenderOptions) -> String {
+    let mut out = StyledDocument::new();
+    push_alerts_header(&mut out, options);
+    push_line(&mut out, ALERTS_OFF_HINT);
+    push_line(&mut out, "");
+    push_line(&mut out, "[alerts]");
+    push_line(&mut out, "enabled = true");
+    out.render(options)
+}
+
+fn push_alerts_header(out: &mut StyledDocument, options: RenderOptions) {
+    match options.mode {
+        RenderMode::Plain => push_line(out, "costroid alerts"),
+        RenderMode::Braille | RenderMode::Ascii => {
+            let mut header = StyledLine::new();
+            header.push_plain(format!("{} costroid", mark(options)));
+            header.push_styled("  alerts", SemanticStyle::Strong);
+            out.push(header);
+        }
+    }
+}
+
+/// The single cron-friendly line for `alerts --check`. Always pure ASCII, no color — a cron log or
+/// pipe target. One alert → its sentence; several → a count + the most-pressing headline (the
+/// detector already orders critical-tier first). An empty slice yields `""` (the caller never
+/// prints it — a clear run is silent).
+pub(crate) fn alert_check_line(alerts: &[Alert]) -> String {
+    match alerts.first() {
+        None => String::new(),
+        Some(headline) if alerts.len() == 1 => format!("costroid: {}", alert_sentence(headline)),
+        Some(headline) => format!(
+            "costroid: {} active alerts; most pressing: {}",
+            alerts.len(),
+            alert_sentence(headline),
+        ),
+    }
+}
+
+/// The `alerts --check` exit code: `0` when clear (no active alert), `1` when any crossing fired —
+/// the cron contract. (A config / collect error is the caller's separate, distinct non-`1` code.)
+pub(crate) fn alerts_check_exit_code(alerts: &[Alert]) -> i32 {
+    if alerts.is_empty() {
+        0
+    } else {
+        1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4743,6 +4993,27 @@ mod tests {
             budget.is_ascii(),
             "ascii budget tab must be pure ASCII: {budget}"
         );
+        // Alerts (T17): the inline banner (atop now), the `alerts` list, and the off state must all
+        // be pure ASCII in Ascii mode (the `!`/`!!` cues are ASCII; no `─`/`◆`/em-dash).
+        let alerts_banner = render_now_with_alerts(
+            &all_arms_now(),
+            &alerts_fixture(),
+            RenderOptions::ascii(false),
+        );
+        assert!(
+            alerts_banner.is_ascii(),
+            "ascii alert banner must be pure ASCII: {alerts_banner}"
+        );
+        let alerts_cmd = render_alerts(&alerts_fixture(), RenderOptions::ascii(false));
+        assert!(
+            alerts_cmd.is_ascii(),
+            "ascii alerts command must be pure ASCII: {alerts_cmd}"
+        );
+        let alerts_off = render_alerts_off(RenderOptions::ascii(false));
+        assert!(
+            alerts_off.is_ascii(),
+            "ascii alerts-off must be pure ASCII: {alerts_off}"
+        );
         // Forecast in Ascii: the projected sparkline glyph (`~`) + the ascii actual ramp must
         // both be pure ASCII, across the projected / insufficient / no-usage states.
         for view in [
@@ -4859,6 +5130,11 @@ mod tests {
                 &anomalies_view_insufficient_fixture(),
                 RenderOptions::plain(),
             ),
+            // Alerts (T17): the inline banner, the `alerts` list (active + clear), the off state.
+            render_now_with_alerts(&all_arms_now(), &alerts_fixture(), RenderOptions::plain()),
+            render_alerts(&alerts_fixture(), RenderOptions::plain()),
+            render_alerts(&[], RenderOptions::plain()),
+            render_alerts_off(RenderOptions::plain()),
         ];
         for output in outputs {
             assert!(
@@ -5525,6 +5801,209 @@ mod tests {
         assert!(
             saw_colored,
             "the over/near fixture should exercise an amber/red state"
+        );
+    }
+
+    // ----- Alerts (T17) -----
+
+    /// One of each alert class/level — a CRITICAL quota, an over-budget, a WARN quota — ordered
+    /// critical-tier first, exactly as `active_alerts` would emit them.
+    fn alerts_fixture() -> Vec<Alert> {
+        vec![
+            Alert::Quota {
+                tool: ProviderId::ClaudeCode,
+                kind: LimitKind::FiveHour,
+                level: AlertLevel::Critical,
+                fraction: 0.97,
+                reset_in_seconds: 2_460, // 41m
+            },
+            Alert::Budget {
+                scope: BudgetScope::Tool("codex".to_string()),
+                spent_usd: Decimal::new(6_000, 2),
+                target_usd: Decimal::new(5_000, 2),
+                over_by_usd: Decimal::new(1_000, 2),
+            },
+            Alert::Quota {
+                tool: ProviderId::ClaudeCode,
+                kind: LimitKind::Weekly,
+                level: AlertLevel::Warn,
+                fraction: 0.82,
+                reset_in_seconds: 187_200, // 2d 4h
+            },
+        ]
+    }
+
+    #[test]
+    fn render_thresholds_are_the_one_core_source_never_forked() {
+        // The meter/budget WARN/CRITICAL fractions ALIAS the core consts, and the alert detector's
+        // defaults are those same consts — so the meter color, the budget state, and the alert that
+        // fires can never drift to different numbers (the T17 "one source, not a forked set" rule).
+        assert_eq!(WARN_FRACTION, costroid_core::ALERT_WARN_FRACTION);
+        assert_eq!(CRITICAL_FRACTION, costroid_core::ALERT_CRITICAL_FRACTION);
+        let defaults = costroid_core::AlertThresholds::default();
+        assert_eq!(WARN_FRACTION, defaults.quota_warn_fraction);
+        assert_eq!(CRITICAL_FRACTION, defaults.quota_critical_fraction);
+    }
+
+    #[test]
+    fn snapshot_alerts_now_banner_braille() {
+        insta::assert_snapshot!(render_now_with_alerts(
+            &priced_now(),
+            &alerts_fixture(),
+            RenderOptions::braille(true)
+        ));
+    }
+
+    #[test]
+    fn snapshot_alerts_now_banner_ascii() {
+        insta::assert_snapshot!(render_now_with_alerts(
+            &priced_now(),
+            &alerts_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_alerts_now_banner_plain() {
+        insta::assert_snapshot!(render_now_with_alerts(
+            &priced_now(),
+            &alerts_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn alerts_banner_empty_is_byte_identical_to_plain_now() {
+        // The off/clear state: no active alert => no banner => the now view is unchanged.
+        for options in [
+            RenderOptions::plain(),
+            RenderOptions::braille(false),
+            RenderOptions::ascii(false),
+        ] {
+            assert_eq!(
+                render_now_with_alerts(&priced_now(), &[], options),
+                render_now(&priced_now(), options),
+                "an empty alert slice must leave the now view unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_alerts_command_plain() {
+        insta::assert_snapshot!(render_alerts(&alerts_fixture(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn snapshot_alerts_command_braille() {
+        insta::assert_snapshot!(render_alerts(
+            &alerts_fixture(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn alerts_command_clear_state_is_honest() {
+        let output = render_alerts(&[], RenderOptions::plain());
+        assert!(output.contains("no active alerts"), "{output}");
+        assert!(output.is_ascii(), "{output}");
+    }
+
+    #[test]
+    fn alerts_command_off_state_points_at_config() {
+        let output = render_alerts_off(RenderOptions::plain());
+        assert!(output.contains("alerts are off"), "{output}");
+        assert!(
+            output.contains("~/.config/costroid/config.toml"),
+            "{output}"
+        );
+        assert!(output.contains("[alerts]"), "{output}");
+        assert!(output.contains("enabled = true"), "{output}");
+        assert!(output.is_ascii(), "{output}");
+    }
+
+    #[test]
+    fn quota_alert_copy_uses_quota_extension_framing_never_money() {
+        // Voice rule: a quota alert frames the limit/quota, NEVER dollars ("save money").
+        let quota = Alert::Quota {
+            tool: ProviderId::ClaudeCode,
+            kind: LimitKind::Weekly,
+            level: AlertLevel::Warn,
+            fraction: 0.82,
+            reset_in_seconds: 187_200,
+        };
+        let sentence = alert_sentence(&quota);
+        assert_eq!(sentence, "claude code weekly limit at 82%, resets in 2d 4h");
+        assert!(
+            !sentence.contains('$'),
+            "quota copy must not use money framing: {sentence}"
+        );
+    }
+
+    #[test]
+    fn budget_alert_copy_is_dollars() {
+        let budget = Alert::Budget {
+            scope: BudgetScope::Total,
+            spent_usd: Decimal::new(11_000, 2),
+            target_usd: Decimal::new(10_000, 2),
+            over_by_usd: Decimal::new(1_000, 2),
+        };
+        assert_eq!(
+            alert_sentence(&budget),
+            "total budget over by ~$10.00, spent ~$110.00 of ~$100.00"
+        );
+    }
+
+    #[test]
+    fn alert_check_line_and_exit_code() {
+        // No alerts: exit 0, no line (the caller prints nothing — a clear run is silent).
+        assert_eq!(alerts_check_exit_code(&[]), 0);
+        assert_eq!(alert_check_line(&[]), "");
+        // One alert: exit 1, the sentence verbatim, ASCII.
+        let one = vec![alerts_fixture().remove(0)];
+        assert_eq!(alerts_check_exit_code(&one), 1);
+        assert_eq!(
+            alert_check_line(&one),
+            "costroid: claude code 5-hour limit at 97%, resets in 41m"
+        );
+        // Several: exit 1, a count + the most-pressing headline; always pure ASCII.
+        let several = alerts_fixture();
+        assert_eq!(alerts_check_exit_code(&several), 1);
+        let line = alert_check_line(&several);
+        assert!(line.contains("3 active alerts"), "{line}");
+        assert!(
+            line.contains("most pressing: claude code 5-hour limit at 97%"),
+            "{line}"
+        );
+        assert!(line.is_ascii(), "the cron line must be pure ASCII: {line}");
+    }
+
+    #[test]
+    fn alerts_banner_pairs_color_with_a_textual_cue() {
+        // Like Budget: amber/red is allowed, but a colored line ALWAYS carries a `!`/`!!` cue.
+        let mut doc = StyledDocument::new();
+        push_alert_banner(&mut doc, &alerts_fixture(), RenderOptions::braille(true));
+        let mut saw_colored = false;
+        for line in &doc.lines {
+            let colored = line
+                .spans
+                .iter()
+                .any(|span| matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical));
+            if colored {
+                saw_colored = true;
+                let text: String = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_str())
+                    .collect();
+                assert!(
+                    text.contains('!'),
+                    "a colored alert line must carry a non-color cue: {text:?}"
+                );
+            }
+        }
+        assert!(
+            saw_colored,
+            "the fixture should exercise an amber/red alert state"
         );
     }
 

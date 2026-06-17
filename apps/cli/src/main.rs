@@ -12,8 +12,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use costroid_core::{GroupBy, NowOptions, Period, TrendsOptions};
 use costroid_providers::HostEnv;
 use render::{
-    detect_render_options, render_frontier, render_now, render_statusline, render_trends,
-    RenderMode,
+    detect_render_options, render_frontier, render_statusline, render_trends, RenderMode,
 };
 
 #[cfg(feature = "connect")]
@@ -42,6 +41,8 @@ enum Command {
     /// Wire Claude Code's `statusLine` to capture live 5h/7d quota into a local cache.
     SetupStatusline(SetupStatuslineArgs),
     Export(ExportArgs),
+    /// Show active threshold alerts (opt-in; default off). `--check` is a cron-friendly exit code.
+    Alerts(AlertsArgs),
     /// Connect a vendor's usage/billing API with your own admin key (stored in the OS keychain).
     #[cfg(feature = "connect")]
     Connect(VendorArgs),
@@ -157,6 +158,14 @@ struct ExportArgs {
     format: ExportFormat,
 }
 
+#[derive(Debug, Parser)]
+struct AlertsArgs {
+    /// Cron mode: print at most one line and set the exit code (0 = clear, 1 = a crossing,
+    /// 2 = a config / collect error). Quiet on a clear run (no output) — cron-friendly.
+    #[arg(long)]
+    check: bool,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum PeriodArg {
     Day,
@@ -219,6 +228,9 @@ fn main() -> Result<()> {
         Some(Command::Export(args)) => {
             run_export(args.format)?;
         }
+        Some(Command::Alerts(args)) => {
+            std::process::exit(run_alerts(args, render_options)?);
+        }
         #[cfg(feature = "connect")]
         Some(Command::Connect(args)) => {
             std::process::exit(run_connect_command(args.vendor.into(), cli.plain)?);
@@ -257,8 +269,63 @@ fn run_now(render_options: render::RenderOptions) -> Result<()> {
     let env = HostEnv::detect();
     let snapshot = costroid_core::collect_local_snapshot(&env)?;
     let summary = costroid_core::now_summary(&snapshot, NowOptions::default());
-    print!("{}", render_now(&summary, render_options));
+    // The opt-in alert banner (T17): computed only when enabled in config. A missing/malformed
+    // config degrades to no alerts (no banner) — the dedicated `costroid alerts` command is the
+    // place a config error surfaces, never the `now` view (it must keep rendering).
+    let alerts = match config::load() {
+        Ok(config) if config.alerts_enabled() => {
+            let budget = costroid_core::budget_view(&snapshot, &config.budget_targets());
+            costroid_core::active_alerts(&summary, &budget, &config.alert_thresholds())
+        }
+        _ => Vec::new(),
+    };
+    print!(
+        "{}",
+        render::render_now_with_alerts(&summary, &alerts, render_options)
+    );
     Ok(())
+}
+
+/// `costroid alerts [--check]` (T17): opt-in threshold alerts, default OFF. The `enabled` config
+/// flag is the master switch (also gates the inline `now` banner). Exit codes for `--check`: `0`
+/// clear (or off), `1` a crossing, `2` a config / collect error (a distinct cron signal, never
+/// conflated with a crossing). Pure-local — no network, no telemetry.
+fn run_alerts(args: &AlertsArgs, render_options: render::RenderOptions) -> Result<i32> {
+    let config = match config::load() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return Ok(2);
+        }
+    };
+    if !config.alerts_enabled() {
+        // Master switch off (the default): the human form says so; `--check` is silently clear.
+        if !args.check {
+            print!("{}", render::render_alerts_off(render_options));
+        }
+        return Ok(0);
+    }
+    let env = HostEnv::detect();
+    let snapshot = match costroid_core::collect_local_snapshot(&env) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("alerts: {error}");
+            return Ok(2);
+        }
+    };
+    let summary = costroid_core::now_summary(&snapshot, NowOptions::default());
+    let budget = costroid_core::budget_view(&snapshot, &config.budget_targets());
+    let alerts = costroid_core::active_alerts(&summary, &budget, &config.alert_thresholds());
+    if args.check {
+        // Cron-friendly: quiet on a clear run, one line on a crossing; the exit code is the signal.
+        if !alerts.is_empty() {
+            println!("{}", render::alert_check_line(&alerts));
+        }
+        Ok(render::alerts_check_exit_code(&alerts))
+    } else {
+        print!("{}", render::render_alerts(&alerts, render_options));
+        Ok(0)
+    }
 }
 
 fn run_trends(args: &TrendsArgs, render_options: render::RenderOptions) -> Result<()> {

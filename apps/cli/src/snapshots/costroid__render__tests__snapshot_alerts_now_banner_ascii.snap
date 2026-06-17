@@ -1,0 +1,30 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_now_with_alerts(&priced_now(), &alerts_fixture(),\nRenderOptions::ascii(false))"
+---
+costroid alerts
+  claude code 5-hour limit at 97%, resets in 41m !!
+  codex budget over by ~$10.00, spent ~$60.00 of ~$50.00 !!
+  claude code weekly limit at 82%, resets in 2d 4h !
+----------------------------------------------------------------
+costroid costroid                                   this week  ~$42.18
+----------------------------------------------------------------
+limits
+  claude code  5h  unavailable: no captured reading; run `costroid setup-statusline`
+  codex        5h  [#########---]  78%  resets 41m
+  codex        wk  [###########-]  92% !  resets 2d 6h
+  cursor       wk  [###########+]  97% !!  partial: limit data incomplete
+----------------------------------------------------------------
+api costs (this week)
+  claude opus 4.7     [############]       ~$24.10
+  gpt 5.5             [#####+------]       ~$11.30
+  sonnet 4.6          [###---------]        ~$6.78
+----------------------------------------------------------------
+subscription API-equivalent value (estimate, not bill)
+  gpt 5.5             [------------]        ~$0.00  [unpriced/partial]
+----------------------------------------------------------------
+unknown-access usage (partial)
+  mystery model       [------------]        ~$0.00  [unknown model/unpriced]
+----------------------------------------------------------------
+* cursor wk at 97%, resets unknown.
+provider cursor missing: no local data found

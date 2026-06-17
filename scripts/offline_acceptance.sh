@@ -154,6 +154,20 @@ check "frontier (--plain)" 10 "costroid frontier" -- "$bin" frontier --plain
 # statusline, plain
 check "statusline (--plain)" 5 "costroid" -- "$bin" statusline --plain
 
+# alerts (T17): opt-in, default OFF — the human form prints the honest off state (no config in the
+# isolated $HOME), and the cron `--check` exits 0 (clear) silently. Both are pure-local: no network.
+check "alerts (--plain, default off)" 5 "alerts" -- "$bin" alerts --plain
+printf '  %-52s' "alerts --check (default off, exit 0)"
+alerts_rc=0
+iso_run "$bin" alerts --check && alerts_rc=0 || alerts_rc=$?
+if [ "$alerts_rc" -eq 90 ]; then
+  echo "NETWORK VIOLATION"; fail=1
+elif [ "$alerts_rc" -ne 0 ]; then
+  echo "FAIL (alerts --check off should exit 0, got $alerts_rc)"; fail=1
+else
+  echo "ok"
+fi
+
 # export csv: header + at least one row, contains a FOCUS cost column
 check "export --format csv" 20 "Cost" -- "$bin" export --format csv
 
