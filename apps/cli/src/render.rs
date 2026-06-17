@@ -4,11 +4,11 @@ use std::io::{self, IsTerminal};
 
 use chrono::{DateTime, Local, Utc};
 use costroid_core::{
-    AggregateTotals, BenchFrontier, BenchView, CostLane, CostLaneSummary, FocusRecord,
-    FrontierPoint, FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow,
-    ModelsView, NowSummary, OverlayModel, Period, PeriodRange, ProviderCapabilityView,
-    ProviderStatus, ProviderStatusKind, RepricingDelta, RepricingStatus, TokenTotals,
-    TrendsSummary,
+    AggregateTotals, BenchFrontier, BenchView, BudgetExcludedTool, BudgetExclusion, BudgetPace,
+    BudgetRow, BudgetScope, BudgetView, CostLane, CostLaneSummary, FocusRecord, FrontierPoint,
+    FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow, ModelsView, NowSummary,
+    OverlayModel, Period, PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind,
+    RepricingDelta, RepricingStatus, TokenTotals, TrendsSummary,
 };
 use costroid_providers::{AuthMethod, DataSource, LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
@@ -1756,6 +1756,258 @@ fn plain_history_row(record: &FocusRecord) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Budget tab (T14) — `costroid` TUI tab `6`. Compare the user's monthly $ target(s) (read from
+// the config TOML, API-lane only) against ACTUAL API-lane spend this month — the local estimate
+// (always `~`-hedged; `costroid reconcile` is the invoice-true surface). A fill bar + pace cue +
+// an honest over-budget state. This is the ONE tab where amber/red is allowed — but ONLY paired
+// with a non-color textual cue (`!`/`!!`/`OVER`, spelled out in `--plain`). A flat-fee
+// subscription never gets a $ comparison (§170); the empty state points at the config file.
+// Mirrors the `render_models_*` split; plain delimits by labels, never the `─` rule (T11 gotcha).
+// ---------------------------------------------------------------------------
+
+/// The config-file hint shown when no budget is set, and in the over/near cues. Pure ASCII
+/// (the documented path; the resolver may honor `$XDG_CONFIG_HOME`, but the hint uses the
+/// canonical location).
+const BUDGET_CONFIG_HINT: &str = "no budget set - set targets in ~/.config/costroid/config.toml";
+/// The standing reminder that the figures are local estimates, not the invoice. Pure ASCII.
+const BUDGET_ESTIMATE_NOTE: &str = "figures are local estimates (your tokens x current prices); \
+     run `costroid reconcile` to compare against the provider invoice.";
+
+#[cfg(test)]
+pub(crate) fn render_budget(view: &BudgetView, options: RenderOptions) -> String {
+    render_budget_document(view, options).render(options)
+}
+
+pub(crate) fn render_budget_document(view: &BudgetView, options: RenderOptions) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_budget_plain_document(view),
+        RenderMode::Braille | RenderMode::Ascii => render_budget_visual_document(view, options),
+    }
+}
+
+fn render_budget_visual_document(view: &BudgetView, options: RenderOptions) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_header_line(
+        &mut out,
+        mark(options),
+        "budget",
+        format_money(&view.spent_total_usd, Some("USD"), true),
+        options,
+    );
+    push_line(&mut out, &budget_scope_line(view));
+    if view.no_budget_set {
+        push_rule(&mut out, options);
+        push_budget_empty_state(&mut out);
+        return out;
+    }
+    let mut any = false;
+    for row in &view.rows {
+        push_rule(&mut out, options);
+        out.push(budget_row_meter_line(row, options));
+        push_line(&mut out, &format!("  {}", budget_pace_line(row, view)));
+        if let Some(over) = &row.over_by_usd {
+            push_line(&mut out, &format!("  over by {}", format_over_by(over)));
+        }
+        any = true;
+    }
+    if !view.excluded_tools.is_empty() {
+        push_rule(&mut out, options);
+        for excluded in &view.excluded_tools {
+            push_line(&mut out, &budget_excluded_line(excluded));
+        }
+        any = true;
+    }
+    if !any {
+        push_rule(&mut out, options);
+        push_line(&mut out, BUDGET_NO_USABLE_TARGETS);
+    }
+    push_rule(&mut out, options);
+    push_line(&mut out, BUDGET_ESTIMATE_NOTE);
+    out
+}
+
+fn render_budget_plain_document(view: &BudgetView) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid budget");
+    push_line(&mut out, &budget_scope_line(view));
+    if view.no_budget_set {
+        push_budget_empty_state(&mut out);
+        return out;
+    }
+    let mut any = false;
+    for row in &view.rows {
+        push_line(&mut out, &plain_budget_row(row));
+        push_line(&mut out, &format!("  {}", budget_pace_line(row, view)));
+        any = true;
+    }
+    for excluded in &view.excluded_tools {
+        push_line(&mut out, &budget_excluded_line(excluded));
+        any = true;
+    }
+    if !any {
+        push_line(&mut out, BUDGET_NO_USABLE_TARGETS);
+    }
+    push_line(&mut out, BUDGET_ESTIMATE_NOTE);
+    out
+}
+
+const BUDGET_NO_USABLE_TARGETS: &str =
+    "no usable budget targets - check ~/.config/costroid/config.toml";
+
+/// The on-screen scope label: what spend is being compared (API-lane, this month) and how far
+/// through the month we are — the pace reference. Mirrors Now's `period:` line.
+fn budget_scope_line(view: &BudgetView) -> String {
+    format!(
+        "scope: API-lane spend this month ({} of month elapsed)",
+        percent(view.month_elapsed_fraction)
+    )
+}
+
+/// The visual per-budget line: scope (bold) + spent/target (always `~`-estimated) + a
+/// state-colored fill meter + the percent and the non-color state cue (`!`/`!!`/`OVER`). The
+/// meter clamps to 100%, so an over-budget bar reads full — the spelled-out cue carries the
+/// over-state that color/length cannot.
+fn budget_row_meter_line(row: &BudgetRow, options: RenderOptions) -> StyledLine {
+    let state = budget_state(row);
+    let mut line = StyledLine::new();
+    line.push_styled(budget_scope_label(&row.scope), SemanticStyle::Strong);
+    line.push_plain(format!(
+        "  {} / {}  ",
+        format_money(&row.spent_usd, Some("USD"), true),
+        format_money(&row.target_usd, Some("USD"), true),
+    ));
+    // The fill bar is colored by the SAME state the cue uses (one source of truth), so the bar,
+    // the percent, and the spelled-out cue can never disagree at a boundary.
+    line.spans.push(StyledSpan::styled(
+        positional_meter_text(row.fraction, LIMIT_BAR_WIDTH, options),
+        state_style(state),
+    ));
+    // Percent + the non-color cue, colored by state so a near-/over-budget number reads amber/red
+    // — but the `!`/`!!`/`OVER` text means color is never the only signal.
+    line.push_styled(
+        format!(" {}{}", percent(row.fraction), state_cue(state)),
+        state_style(state),
+    );
+    line
+}
+
+/// The display state of a budget row, derived from the core's HONEST fields so the cue, the
+/// `over by` figure, and the pace always agree. Crucially, "over" is keyed on
+/// `over_by_usd.is_some()` (core's STRICT `spent > target`), NOT on `limit_state`'s
+/// `fraction >= 1.0` — so a row at exactly 100% reads "at budget" (Critical), never "OVER, over
+/// by $0.00". (`limit_state` stays `>= 1.0`-over for the live-quota meters, where an exhausted
+/// quota IS over; budgets want the strict boundary.)
+fn budget_state(row: &BudgetRow) -> LimitState {
+    if row.over_by_usd.is_some() {
+        LimitState::Over
+    } else if row.fraction >= CRITICAL_FRACTION {
+        LimitState::Critical
+    } else if row.fraction >= WARN_FRACTION {
+        LimitState::Warn
+    } else {
+        LimitState::Normal
+    }
+}
+
+/// The plain (screen-reader) per-budget line: `<scope>: ~$X / ~$Y budget (NN%)<cue>`, where the
+/// cue spells out the near/at/over state in pure ASCII (and, when over, the dollar overshoot) —
+/// no color, no glyphs. Matches the card's `$X / $Y budget (over by $Z)` contract.
+fn plain_budget_row(row: &BudgetRow) -> String {
+    format!(
+        "{}: {} / {} budget ({}){}",
+        budget_scope_label(&row.scope),
+        format_money(&row.spent_usd, Some("USD"), true),
+        format_money(&row.target_usd, Some("USD"), true),
+        percent(row.fraction),
+        budget_plain_suffix(row),
+    )
+}
+
+/// Format a strictly-positive budget overshoot, guarding the sub-cent case so a real overshoot
+/// never renders as the self-contradictory `~$0.00`. `over` is core's strict `spent > target`,
+/// so it is always > 0; when it rounds below a cent (what `format_money` would show as `~$0.00`),
+/// render `<$0.01` instead — still an honest "less than a cent over budget".
+fn format_over_by(over: &Decimal) -> String {
+    if over.round_dp(2) == Decimal::ZERO {
+        "<$0.01".to_string()
+    } else {
+        format_money(over, Some("USD"), true)
+    }
+}
+
+/// The pure-ASCII state suffix for a plain budget line: empty when comfortably under, the
+/// spelled-out `!`/`!!` near/at cue otherwise, and `!! OVER, over by ~$Z` once STRICTLY over
+/// budget. Uses the same [`budget_state`] as the visual line, so exactly-100% reads "at budget".
+fn budget_plain_suffix(row: &BudgetRow) -> String {
+    match budget_state(row) {
+        LimitState::Normal => String::new(),
+        LimitState::Warn => " ! near budget".to_string(),
+        LimitState::Critical => " !! at budget".to_string(),
+        // Over implies `over_by_usd.is_some()` by construction (see `budget_state`), so the
+        // overshoot is always real here — the `unwrap_or` is a defensive floor, never hit.
+        LimitState::Over => format!(
+            " !! OVER, over by {}",
+            format_over_by(&row.over_by_usd.unwrap_or(Decimal::ZERO))
+        ),
+    }
+}
+
+fn budget_pace_line(row: &BudgetRow, view: &BudgetView) -> String {
+    format!(
+        "pace: {} used vs {} of month elapsed ({})",
+        percent(row.fraction),
+        percent(view.month_elapsed_fraction),
+        budget_pace_phrase(row.pace),
+    )
+}
+
+fn budget_pace_phrase(pace: BudgetPace) -> &'static str {
+    match pace {
+        BudgetPace::OnTrack => "on track",
+        BudgetPace::AheadOfPace => "ahead of pace",
+        BudgetPace::OverBudget => "over budget",
+    }
+}
+
+/// The label for a budget scope: the tool id, or "total (all tools)" for the overall cap. Tool
+/// ids are ASCII catalog values, so this renders identically in `--plain`.
+fn budget_scope_label(scope: &BudgetScope) -> String {
+    match scope {
+        BudgetScope::Total => "total (all tools)".to_string(),
+        BudgetScope::Tool(tool) => tool.clone(),
+    }
+}
+
+/// The honest note for a budgeted tool with no API lane (§170): no API bill to budget, so no $
+/// comparison is shown. Distinguishes a flat-fee *subscription* (assertable) from a merely
+/// *unclassified* install (no subscription claim). Pure ASCII.
+fn budget_excluded_line(excluded: &BudgetExcludedTool) -> String {
+    match excluded.reason {
+        BudgetExclusion::FlatFeeSubscription => format!(
+            "{}: flat-fee subscription - no $ budget applies (not API-billed)",
+            excluded.tool
+        ),
+        BudgetExclusion::NotApiBilled => format!(
+            "{}: no API-billed usage - a $ budget tracks API spend only",
+            excluded.tool
+        ),
+    }
+}
+
+/// The empty state: point the user at the config file with a copy-paste-able schema. Pure ASCII
+/// (no `─` rule, no glyphs), so it reads identically in `--plain`.
+fn push_budget_empty_state(out: &mut StyledDocument) {
+    push_line(out, BUDGET_CONFIG_HINT);
+    push_line(out, "");
+    push_line(out, "[budget]");
+    push_line(out, "total_monthly_usd = 100.00");
+    push_line(out, "");
+    push_line(out, "[budget.per_tool]");
+    push_line(out, "claude-code = 60.00");
+    push_line(out, "codex = 40.00");
+}
+
 fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> StyledLine {
     let api = sorted_lane_rows(&summary.current_costs, CostLane::Api);
     let api_total = sum_costs(&api);
@@ -2593,13 +2845,21 @@ fn limit_meter(fraction: f64, width: usize, options: RenderOptions) -> String {
 }
 
 fn limit_meter_span(fraction: f64, width: usize, options: RenderOptions) -> StyledSpan {
-    let state = limit_state(fraction);
-    let styled = match state {
+    StyledSpan::styled(
+        positional_meter_text(fraction, width, options),
+        state_style(limit_state(fraction)),
+    )
+}
+
+/// The semantic style for a near-/over-limit state: Normal stays bold (a non-color cue),
+/// Warn is amber, Critical/Over are red. Shared by the limit meter and the Budget tab — the
+/// two places where amber/red is allowed, always paired with a non-color textual cue.
+fn state_style(state: LimitState) -> SemanticStyle {
+    match state {
         LimitState::Normal => SemanticStyle::Strong,
         LimitState::Warn => SemanticStyle::Warn,
         LimitState::Critical | LimitState::Over => SemanticStyle::Critical,
-    };
-    StyledSpan::styled(positional_meter_text(fraction, width, options), styled)
+    }
 }
 
 fn cost_bar_span(
@@ -3958,6 +4218,11 @@ mod tests {
             history.is_ascii(),
             "ascii history tab must be pure ASCII: {history}"
         );
+        let budget = render_budget(&budget_view_fixture(), RenderOptions::ascii(false));
+        assert!(
+            budget.is_ascii(),
+            "ascii budget tab must be pure ASCII: {budget}"
+        );
     }
 
     #[test]
@@ -4024,6 +4289,8 @@ mod tests {
             render_models(&empty_models_view(), RenderOptions::plain()),
             render_history(&history_rows_fixture(), RenderOptions::plain()),
             render_history(&[], RenderOptions::plain()),
+            render_budget(&budget_view_fixture(), RenderOptions::plain()),
+            render_budget(&empty_budget_view(), RenderOptions::plain()),
         ];
         for output in outputs {
             assert!(
@@ -4432,6 +4699,265 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ----- budget surface (T14) -----
+
+    fn budget_row_fixture(
+        scope: BudgetScope,
+        spent: i64,
+        target: i64,
+        fraction: f64,
+        over: Option<i64>,
+        pace: BudgetPace,
+    ) -> BudgetRow {
+        BudgetRow {
+            scope,
+            target_usd: Decimal::new(target, 2),
+            spent_usd: Decimal::new(spent, 2),
+            fraction,
+            over_by_usd: over.map(|cents| Decimal::new(cents, 2)),
+            pace,
+        }
+    }
+
+    /// A budget view with an over-budget tool, a near-budget total, a comfortable tool, and a
+    /// flat-fee tool withheld from comparison — so the snapshots prove the OVER cue, the
+    /// amber/red-with-text states, the pace line, and the §170 excluded-tool note in one fixture.
+    fn budget_view_fixture() -> BudgetView {
+        BudgetView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            rows: vec![
+                budget_row_fixture(
+                    BudgetScope::Tool("codex".to_string()),
+                    6_000,
+                    5_000,
+                    1.2,
+                    Some(1_000),
+                    BudgetPace::OverBudget,
+                ),
+                budget_row_fixture(
+                    BudgetScope::Total,
+                    8_400,
+                    10_000,
+                    0.84,
+                    None,
+                    BudgetPace::AheadOfPace,
+                ),
+                budget_row_fixture(
+                    BudgetScope::Tool("claude-code".to_string()),
+                    1_500,
+                    6_000,
+                    0.25,
+                    None,
+                    BudgetPace::OnTrack,
+                ),
+            ],
+            excluded_tools: vec![BudgetExcludedTool {
+                tool: "cursor".to_string(),
+                reason: BudgetExclusion::FlatFeeSubscription,
+            }],
+            no_budget_set: false,
+            spent_total_usd: Decimal::new(8_400, 2),
+            month_elapsed_fraction: 0.5,
+        }
+    }
+
+    fn empty_budget_view() -> BudgetView {
+        BudgetView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            rows: Vec::new(),
+            excluded_tools: Vec::new(),
+            no_budget_set: true,
+            spent_total_usd: Decimal::ZERO,
+            month_elapsed_fraction: 0.5,
+        }
+    }
+
+    #[test]
+    fn snapshot_budget_braille() {
+        insta::assert_snapshot!(render_budget(
+            &budget_view_fixture(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_budget_ascii() {
+        insta::assert_snapshot!(render_budget(
+            &budget_view_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_budget_plain() {
+        insta::assert_snapshot!(render_budget(
+            &budget_view_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_budget_no_budget_set() {
+        insta::assert_snapshot!(render_budget(&empty_budget_view(), RenderOptions::plain()));
+    }
+
+    #[test]
+    fn budget_over_by_below_a_cent_renders_less_than_a_cent_not_zero() {
+        // A real sub-cent overshoot (core's strict `spent > target`): `format_money` rounds it to
+        // "~$0.00", so `format_over_by` shows the honest "<$0.01" instead — guarding the
+        // self-contradictory "!! OVER, over by ~$0.00".
+        assert_eq!(format_over_by(&Decimal::new(3, 4)), "<$0.01"); // $0.0003 over
+        assert_eq!(format_over_by(&Decimal::new(4, 3)), "<$0.01"); // $0.004 over
+                                                                   // A whole-cent or larger overshoot still uses the ~-hedged dollar amount.
+        assert_eq!(format_over_by(&Decimal::new(1, 2)), "~$0.01"); // $0.01
+        assert_eq!(format_over_by(&Decimal::new(1_000, 2)), "~$10.00"); // $10.00
+    }
+
+    #[test]
+    fn budget_over_row_renders_over_cue_and_overshoot_amount() {
+        let output = render_budget(&budget_view_fixture(), RenderOptions::plain());
+        // The over-cap state spells out OVER (a non-color cue) + the dollar overshoot.
+        assert!(
+            output.contains("codex: ~$60.00 / ~$50.00 budget (120%)"),
+            "{output}"
+        );
+        assert!(output.contains("!! OVER, over by ~$10.00"), "{output}");
+        // A comfortable budget shows no alarm cue.
+        assert!(
+            output.contains("claude-code: ~$15.00 / ~$60.00 budget (25%)"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("claude-code: ~$15.00 / ~$60.00 budget (25%) !"),
+            "{output}"
+        );
+        // The pace cue is present.
+        assert!(
+            output.contains("pace: 120% used vs 50% of month elapsed (over budget)"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn budget_flat_fee_tool_gets_no_dollar_comparison() {
+        let output = render_budget(&budget_view_fixture(), RenderOptions::plain());
+        assert!(
+            output.contains("cursor: flat-fee subscription - no $ budget applies (not API-billed)"),
+            "{output}"
+        );
+        // No $ comparison line for the flat-fee tool.
+        assert!(
+            !output.contains("cursor: ~$"),
+            "flat-fee tool must not show a $ budget: {output}"
+        );
+    }
+
+    #[test]
+    fn budget_exactly_at_budget_reads_at_budget_not_over() {
+        // The exactly-100% boundary: spent == target (fraction 1.0, over_by None). The row must
+        // read "at budget" (Critical), NEVER "OVER" or "over by ~$0.00" — the cue, the missing
+        // over-by line, and a non-over pace must agree (the budget_state boundary fix).
+        let view = BudgetView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            rows: vec![budget_row_fixture(
+                BudgetScope::Tool("codex".to_string()),
+                5_000,
+                5_000,
+                1.0,
+                None,
+                BudgetPace::AheadOfPace,
+            )],
+            excluded_tools: Vec::new(),
+            no_budget_set: false,
+            spent_total_usd: Decimal::new(5_000, 2),
+            month_elapsed_fraction: 0.5,
+        };
+        let output = render_budget(&view, RenderOptions::plain());
+        assert!(
+            output.contains("codex: ~$50.00 / ~$50.00 budget (100%) !! at budget"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("OVER"),
+            "exactly-at-budget must not say OVER: {output}"
+        );
+        assert!(
+            !output.contains("over by"),
+            "exactly-at-budget has no overshoot: {output}"
+        );
+    }
+
+    #[test]
+    fn budget_not_api_billed_tool_gets_no_dollar_comparison_or_subscription_claim() {
+        // A budgeted tool with only unclassified (UnknownAccess) usage gets the honest
+        // "not API-billed" note — no $ comparison, and (unlike the subscription case) no
+        // "subscription" assertion we can't back up.
+        let view = BudgetView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            rows: Vec::new(),
+            excluded_tools: vec![BudgetExcludedTool {
+                tool: "codex".to_string(),
+                reason: BudgetExclusion::NotApiBilled,
+            }],
+            no_budget_set: false,
+            spent_total_usd: Decimal::ZERO,
+            month_elapsed_fraction: 0.5,
+        };
+        let output = render_budget(&view, RenderOptions::plain());
+        assert!(
+            output.contains("codex: no API-billed usage - a $ budget tracks API spend only"),
+            "{output}"
+        );
+        assert!(!output.contains("codex: ~$"), "no $ comparison: {output}");
+        assert!(
+            !output.contains("subscription"),
+            "no unbacked subscription claim: {output}"
+        );
+    }
+
+    #[test]
+    fn budget_empty_state_points_to_config_file() {
+        let output = render_budget(&empty_budget_view(), RenderOptions::plain());
+        assert!(
+            output.contains("no budget set - set targets in ~/.config/costroid/config.toml"),
+            "{output}"
+        );
+        // The copy-paste schema is shown so the user knows the format.
+        assert!(output.contains("[budget]"));
+        assert!(output.contains("total_monthly_usd = 100.00"));
+        assert!(output.contains("[budget.per_tool]"));
+    }
+
+    #[test]
+    fn budget_over_state_pairs_color_with_a_textual_cue() {
+        // The Budget tab is the ONE tab allowed amber/red — but color is NEVER alone. Where a
+        // span is styled Warn/Critical, the same visual line must carry a non-color cue (!/!!/OVER).
+        let doc = render_budget_document(&budget_view_fixture(), RenderOptions::braille(true));
+        let mut saw_colored = false;
+        for line in &doc.lines {
+            let colored = line
+                .spans
+                .iter()
+                .any(|span| matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical));
+            if colored {
+                saw_colored = true;
+                let text: String = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_str())
+                    .collect();
+                assert!(
+                    text.contains('!'),
+                    "a colored budget line must also carry a non-color cue: {text:?}"
+                );
+            }
+        }
+        assert!(
+            saw_colored,
+            "the over/near fixture should exercise an amber/red state"
+        );
     }
 
     #[cfg(feature = "connect")]

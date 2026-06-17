@@ -6,7 +6,7 @@ use std::time::Duration as StdDuration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use costroid_core::{EngineSnapshot, GroupBy, NowOptions, Period, TrendsOptions};
+use costroid_core::{BudgetTargets, EngineSnapshot, GroupBy, NowOptions, Period, TrendsOptions};
 use costroid_providers::HostEnv;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -22,9 +22,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_frontier_document, render_history_document, render_models_document, render_now_document,
-    render_providers_document, render_trends_document, RenderOptions, SemanticStyle,
-    StyledDocument, StyledLine,
+    render_budget_document, render_frontier_document, render_history_document,
+    render_models_document, render_now_document, render_providers_document, render_trends_document,
+    RenderOptions, SemanticStyle, StyledDocument, StyledLine,
 };
 
 const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -46,20 +46,22 @@ enum Screen {
     Providers,
     Models,
     History,
+    Budget,
     Frontier,
 }
 
 /// The numbered tab cycle (Q1, §11.5): `1`-`6` jump straight to a tab, `Tab`/`BackTab`
 /// cycle through them. Frontier is intentionally NOT in the cycle — it stays its own
-/// `a`/`esc` overlay. Later Step 5 tabs (Budget…) append here, filling the reserved `6`
-/// slot, with no further `handle_key` change (T12 appended Models at slot `4`, T13 History
-/// at slot `5`).
-const TAB_SCREENS: [Screen; 5] = [
+/// `a`/`esc` overlay. T14 filled the last digit-reachable slot (`6` Budget); later analytics
+/// tabs (T15/T16 at slots `7`/`8`) extend the `'1'..='6'` digit range in `handle_key`. T12
+/// appended Models at slot `4`, T13 History at slot `5`, T14 Budget at slot `6`.
+const TAB_SCREENS: [Screen; 6] = [
     Screen::Now,
     Screen::Trends,
     Screen::Providers,
     Screen::Models,
     Screen::History,
+    Screen::Budget,
 ];
 
 /// Step left (`delta = -1`) or right (`delta = 1`) through [`TAB_SCREENS`], wrapping. A
@@ -75,8 +77,8 @@ fn cycle_tab(current: Screen, delta: isize) -> Screen {
     }
 }
 
-/// Map a `1`-`6` digit to its tab, if one exists yet (`1`-`5` are wired today — slot `4` is
-/// Models, slot `5` is History; slot `6` is reserved and inert until a later tab fills it).
+/// Map a `1`-`6` digit to its tab, if one exists yet (`1`-`6` are all wired today — slot `4`
+/// is Models, `5` is History, `6` is Budget; T15/T16 extend the digit range to slots `7`/`8`).
 fn tab_for_digit(ch: char) -> Option<Screen> {
     let index = ch.to_digit(10)? as usize;
     index
@@ -149,6 +151,10 @@ struct App {
     /// The content area's row count from the last draw, so `PgUp`/`PgDn` page by a real screen.
     /// Written in [`draw_app`], read by the scroll keys.
     viewport_rows: u16,
+    /// The user's monthly budget targets, loaded once (read-only) from the config TOML for the
+    /// Budget tab (T14). Defaults to no budgets (the "no budget set" empty state) when the file
+    /// is absent or malformed; the load happens in [`run_with_dependencies`], not in tests.
+    budget_targets: BudgetTargets,
     /// The Providers-tab connection lane, gathered once read-only over the existing
     /// keychain/registry (no network). Connect-gated: absent from the default build.
     #[cfg(feature = "connect")]
@@ -185,6 +191,7 @@ impl App {
             render_options,
             scroll: 0,
             viewport_rows: 1,
+            budget_targets: BudgetTargets::default(),
             #[cfg(feature = "connect")]
             connections: Vec::new(),
         }
@@ -434,6 +441,13 @@ impl App {
                         apply_history_filter(&mut snapshot.focus_rows, &self.filter);
                         render_history_document(&snapshot.focus_rows, options)
                     }
+                    Screen::Budget => {
+                        // Pure-local: compares the config-loaded monthly targets against this
+                        // month's API-lane estimate. No network — `costroid reconcile` is the
+                        // invoice-true surface.
+                        let view = costroid_core::budget_view(&snapshot, &self.budget_targets);
+                        render_budget_document(&view, options)
+                    }
                     Screen::Frontier => match costroid_core::bench_view(&snapshot) {
                         Ok(view) => render_frontier_document(&view, options),
                         Err(error) => {
@@ -457,6 +471,7 @@ impl App {
             Screen::Providers => "providers",
             Screen::Models => "models",
             Screen::History => "history",
+            Screen::Budget => "budget",
             Screen::Frontier => "frontier",
         };
         let live = if self.live { "live" } else { "manual" };
@@ -472,9 +487,12 @@ impl App {
             .unwrap_or_default();
         let nav = match self.screen {
             Screen::Frontier => "esc back",
-            Screen::Now | Screen::Trends | Screen::Providers | Screen::Models | Screen::History => {
-                "1-5/tab switch | a frontier"
-            }
+            Screen::Now
+            | Screen::Trends
+            | Screen::Providers
+            | Screen::Models
+            | Screen::History
+            | Screen::Budget => "1-6/tab switch | a frontier",
         };
         format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
     }
@@ -514,6 +532,13 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
         config.live,
         config.render_options,
     );
+    // Load the user budget config once (read-only TOML; no network). A missing file is the
+    // zero-config default (no budgets); a malformed file degrades to no budgets + a status line,
+    // never a crash — the Budget tab then shows the honest "no budget set" state.
+    match crate::config::load() {
+        Ok(loaded) => app.budget_targets = loaded.budget_targets(),
+        Err(error) => app.status = Some(format!("config: {error}")),
+    }
     // Gather the Providers-tab connection lane once, read-only over the existing
     // keychain/registry (no network), so live refreshes never re-read the keychain.
     #[cfg(feature = "connect")]
@@ -636,7 +661,7 @@ fn document_display_rows(doc: &StyledDocument, width: u16) -> usize {
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
     let popup = centered_rect(74, 17, area);
     let lines = vec![
-        Line::from("1/2/3/4/5  now / trends / providers / models / history"),
+        Line::from("1/2/3/4/5/6 now / trends / providers / models / history / budget"),
         Line::from("tab/S-tab  cycle tabs"),
         Line::from("up/dn      scroll  (pgup/pgdn page, home/end ends)"),
         Line::from("d/w/m/y    set trends period"),
@@ -1247,11 +1272,11 @@ mod tests {
     }
 
     #[test]
-    fn numbered_keys_and_tab_cycle_reach_providers_models_and_history() {
+    fn numbered_keys_and_tab_cycle_reach_providers_models_history_and_budget() {
         let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
         assert_eq!(app.screen, Screen::Now);
 
-        // Numbered jumps go straight to a tab — `4` Models (T12), `5` History (T13).
+        // Numbered jumps go straight to a tab — `4` Models (T12), `5` History (T13), `6` Budget (T14).
         assert_eq!(app.handle_key(key(KeyCode::Char('2'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
@@ -1260,13 +1285,15 @@ mod tests {
         assert_eq!(app.screen, Screen::Models);
         assert_eq!(app.handle_key(key(KeyCode::Char('5'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::History);
+        assert_eq!(app.handle_key(key(KeyCode::Char('6'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Budget);
         assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
-        // A still-reserved digit (no tab there yet) is inert — `6` is the new boundary.
-        assert_eq!(app.handle_key(key(KeyCode::Char('6'))), AppAction::Continue);
+        // `7` has no tab yet (T15/T16 fill slots 7/8) — inert, the new boundary.
+        assert_eq!(app.handle_key(key(KeyCode::Char('7'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Models -> History -> Now.
+        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Models -> History -> Budget -> Now.
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
@@ -1276,11 +1303,13 @@ mod tests {
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::History);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Budget);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // BackTab cycles in reverse (Now -> History).
+        // BackTab cycles in reverse (Now -> Budget).
         assert_eq!(app.handle_key(key(KeyCode::BackTab)), AppAction::Continue);
-        assert_eq!(app.screen, Screen::History);
+        assert_eq!(app.screen, Screen::Budget);
 
         // Frontier is outside the cycle (an a/esc overlay); Tab returns to the first tab.
         assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
@@ -1371,6 +1400,39 @@ mod tests {
         assert!(frame.contains("api"));
         // The unchanged `costroid export` command is surfaced for the full FOCUS 1.3 record.
         assert!(frame.contains("costroid export"));
+    }
+
+    #[test]
+    fn frame_snapshot_budget_surface() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        // The sample snapshot's API spend ($24.10 + $11.30 = $35.40, all tool "codex") this month,
+        // budgeted under a $30 codex cap (over) and a $100 total cap (under).
+        app.budget_targets = BudgetTargets {
+            total_monthly_usd: Some(rust_decimal::Decimal::new(10_000, 2)),
+            per_tool: [("codex".to_string(), rust_decimal::Decimal::new(3_000, 2))]
+                .into_iter()
+                .collect(),
+        };
+        assert_eq!(app.handle_key(key(KeyCode::Char('6'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Budget);
+        let frame = frame_to_string(&mut app, 90, 26);
+
+        assert!(frame.contains("budget"));
+        assert!(frame.contains("codex"));
+        // codex spend exceeds its $30 cap -> the spelled-out OVER cue (color is never alone).
+        assert!(frame.contains("OVER"));
+        assert!(frame.contains("pace:"));
+    }
+
+    #[test]
+    fn frame_budget_with_no_config_shows_no_budget_set() {
+        // Default app (no config loaded) -> the honest empty state pointing at the config file.
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        assert_eq!(app.handle_key(key(KeyCode::Char('6'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Budget);
+        let frame = frame_to_string(&mut app, 90, 26);
+        assert!(frame.contains("no budget set"));
+        assert!(frame.contains("config.toml"));
     }
 
     #[test]

@@ -1,0 +1,14 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_budget(&empty_budget_view(), RenderOptions::plain())"
+---
+costroid budget
+scope: API-lane spend this month (50% of month elapsed)
+no budget set - set targets in ~/.config/costroid/config.toml
+
+[budget]
+total_monthly_usd = 100.00
+
+[budget.per_tool]
+claude-code = 60.00
+codex = 40.00

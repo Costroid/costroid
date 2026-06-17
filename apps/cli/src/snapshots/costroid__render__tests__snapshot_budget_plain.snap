@@ -1,0 +1,14 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_budget(&budget_view_fixture(), RenderOptions::plain())"
+---
+costroid budget
+scope: API-lane spend this month (50% of month elapsed)
+codex: ~$60.00 / ~$50.00 budget (120%) !! OVER, over by ~$10.00
+  pace: 120% used vs 50% of month elapsed (over budget)
+total (all tools): ~$84.00 / ~$100.00 budget (84%) ! near budget
+  pace: 84% used vs 50% of month elapsed (ahead of pace)
+claude-code: ~$15.00 / ~$60.00 budget (25%)
+  pace: 25% used vs 50% of month elapsed (on track)
+cursor: flat-fee subscription - no $ budget applies (not API-billed)
+figures are local estimates (your tokens x current prices); run `costroid reconcile` to compare against the provider invoice.

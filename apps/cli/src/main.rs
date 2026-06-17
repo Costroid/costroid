@@ -1,3 +1,4 @@
+mod config;
 #[cfg(feature = "connect")]
 mod connect;
 #[cfg(feature = "connect")]

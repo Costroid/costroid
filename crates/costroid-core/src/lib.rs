@@ -1,6 +1,6 @@
 //! Costroid data pipeline and aggregation interfaces.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Utc};
 use costroid_focus::{
@@ -233,6 +233,179 @@ pub fn models_view(snapshot: &EngineSnapshot) -> Result<ModelsView, CoreError> {
         disclaimer: bench.disclaimer,
         providers: bench.providers,
     })
+}
+
+/// The Budget tab (T14): compare the user's monthly $ target(s) against ACTUAL API-lane
+/// spend in the current calendar month — the local estimate (always `~`-hedged), NOT an
+/// invoice (`costroid reconcile` is the invoice-true surface). Pure + **config-neutral**:
+/// the targets are an INPUT ([`BudgetTargets`]); core never reads a file.
+///
+/// **API-lane ONLY** (§170, lanes-never-summed): subscription rows never contribute a dollar
+/// (limits are not a summable bill), and a budgeted tool that has local usage but NO API lane is
+/// surfaced in [`BudgetView::excluded_tools`] — never as a fabricated `$0 / target` row. That
+/// covers both a flat-fee *subscription* tool (subscription-lane rows) and a tool whose rows are
+/// merely *unclassified* (the `UnknownAccess` lane — e.g. a Codex/Claude install with no
+/// rate-limit/credential signal): neither is API-billed, so a $ budget can't apply. A tool with
+/// NO local usage at all is left as a legitimate `$0 / target` row (the user may be planning
+/// ahead). Spend is scoped to the current month so it can be compared against a *monthly* cap;
+/// the not-API-billed classification looks at the tool's whole local history (its billing
+/// *nature*, not just this month). Every figure is an estimate.
+pub fn budget_view(snapshot: &EngineSnapshot, targets: &BudgetTargets) -> BudgetView {
+    let month = period_range_for(Period::Month, snapshot.generated_at);
+
+    let mut month_api_by_tool: BTreeMap<String, Decimal> = BTreeMap::new();
+    let mut month_api_total = Decimal::ZERO;
+    // Lifetime classification (the tool's billing *nature*): does it ever bill via API, and what
+    // non-API usage does it have (a flat-fee subscription, or merely unclassified rows)? Drives
+    // the §170 not-API-billed guard below.
+    let mut tools_with_api: BTreeSet<String> = BTreeSet::new();
+    let mut tools_with_subscription: BTreeSet<String> = BTreeSet::new();
+    let mut tools_with_unknown: BTreeSet<String> = BTreeSet::new();
+
+    for row in &snapshot.focus_rows {
+        match CostLane::from_access_path(&row.x_access_path) {
+            CostLane::Api => {
+                tools_with_api.insert(row.x_tool.clone());
+                if month.contains(row.charge_period_start) {
+                    *month_api_by_tool
+                        .entry(row.x_tool.clone())
+                        .or_insert(Decimal::ZERO) += row.billed_cost;
+                    month_api_total += row.billed_cost;
+                }
+            }
+            CostLane::SubscriptionEstimate => {
+                tools_with_subscription.insert(row.x_tool.clone());
+            }
+            CostLane::UnknownAccess => {
+                tools_with_unknown.insert(row.x_tool.clone());
+            }
+        }
+    }
+
+    let month_elapsed_fraction = period_elapsed_fraction(&month, snapshot.generated_at);
+
+    let mut rows: Vec<BudgetRow> = Vec::new();
+    let mut excluded_tools: Vec<BudgetExcludedTool> = Vec::new();
+
+    for (tool, target) in &targets.per_tool {
+        // A non-positive cap is meaningless (it would divide by zero) — skip it rather than
+        // fabricate a row.
+        if *target <= Decimal::ZERO {
+            continue;
+        }
+        // §170 guard: a tool with local usage but NO API lane has no API bill to budget —
+        // withhold the $ comparison. Distinguish a flat-fee subscription (assertable) from a
+        // merely-unclassified install (honest "not API-billed", no subscription claim). A tool
+        // with NO local usage at all is NOT excluded: it stays a legitimate $0/target row.
+        if !tools_with_api.contains(tool) {
+            let has_subscription = tools_with_subscription.contains(tool);
+            if has_subscription || tools_with_unknown.contains(tool) {
+                let reason = if has_subscription {
+                    BudgetExclusion::FlatFeeSubscription
+                } else {
+                    BudgetExclusion::NotApiBilled
+                };
+                excluded_tools.push(BudgetExcludedTool {
+                    tool: tool.clone(),
+                    reason,
+                });
+                continue;
+            }
+        }
+        let spent = month_api_by_tool
+            .get(tool)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        rows.push(budget_row(
+            BudgetScope::Tool(tool.clone()),
+            *target,
+            spent,
+            month_elapsed_fraction,
+        ));
+    }
+
+    if let Some(total) = targets.total_monthly_usd {
+        if total > Decimal::ZERO {
+            rows.push(budget_row(
+                BudgetScope::Total,
+                total,
+                month_api_total,
+                month_elapsed_fraction,
+            ));
+        }
+    }
+
+    // Most-utilized budget first (the most-pressing on top); ties broken by scope key for a
+    // stable order. `fraction` is finite (target > 0, spent >= 0), so the compare sees no NaN.
+    rows.sort_by(|left, right| {
+        right
+            .fraction
+            .partial_cmp(&left.fraction)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| budget_scope_key(&left.scope).cmp(&budget_scope_key(&right.scope)))
+    });
+    excluded_tools.sort_by(|left, right| left.tool.cmp(&right.tool));
+
+    BudgetView {
+        generated_at: snapshot.generated_at,
+        no_budget_set: targets.is_empty(),
+        rows,
+        excluded_tools,
+        spent_total_usd: month_api_total,
+        month_elapsed_fraction,
+    }
+}
+
+/// A stable sort key for a budget scope: per-tool rows first (ordered by id), the overall
+/// total last on a tie.
+fn budget_scope_key(scope: &BudgetScope) -> (u8, &str) {
+    match scope {
+        BudgetScope::Tool(tool) => (0, tool.as_str()),
+        BudgetScope::Total => (1, "total"),
+    }
+}
+
+/// How much over its time-proportional share a budget may be used before its pace reads as
+/// "ahead of pace" — a small slack so an exactly-linear spend isn't flagged.
+const BUDGET_PACE_EPSILON: f64 = 0.01;
+
+fn budget_row(
+    scope: BudgetScope,
+    target: Decimal,
+    spent: Decimal,
+    month_elapsed_fraction: f64,
+) -> BudgetRow {
+    let fraction = (spent / target).to_f64().unwrap_or(0.0);
+    let over_by_usd = if spent > target {
+        Some(spent - target)
+    } else {
+        None
+    };
+    let pace = if fraction > 1.0 {
+        BudgetPace::OverBudget
+    } else if fraction > month_elapsed_fraction + BUDGET_PACE_EPSILON {
+        BudgetPace::AheadOfPace
+    } else {
+        BudgetPace::OnTrack
+    };
+    BudgetRow {
+        scope,
+        target_usd: target,
+        spent_usd: spent,
+        fraction,
+        over_by_usd,
+        pace,
+    }
+}
+
+/// The fraction (0..=1) of a period elapsed at `at` — the budget pace reference line.
+fn period_elapsed_fraction(range: &PeriodRange, at: DateTime<Utc>) -> f64 {
+    let total = (range.end - range.start).num_seconds();
+    if total <= 0 {
+        return 0.0;
+    }
+    let elapsed = (at - range.start).num_seconds().clamp(0, total);
+    elapsed as f64 / total as f64
 }
 
 pub fn period_range_for(period: Period, anchor: DateTime<Utc>) -> PeriodRange {
@@ -1472,6 +1645,109 @@ pub struct ModelRow {
     pub overlay: Option<OverlayModel>,
 }
 
+/// The config-neutral INPUT to [`budget_view`] (T14): the user's monthly $ targets, parsed by
+/// the apps/cli config layer from its TOML. Core never reads a file — it takes these as data.
+/// Money is [`Decimal`] (never f64); per-tool keys are the `x_Tool` ids
+/// (`claude-code`/`codex`/`cursor`). API-lane only — a flat-fee subscription is never given a
+/// $ target (§170). `Deserialize` so the config layer can map into it directly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetTargets {
+    /// An optional overall monthly cap across all API-lane spend.
+    pub total_monthly_usd: Option<Decimal>,
+    /// Optional per-tool monthly caps, keyed by the `x_Tool` id.
+    pub per_tool: BTreeMap<String, Decimal>,
+}
+
+impl BudgetTargets {
+    /// True when the user set no target at all — the tab renders the honest "no budget set"
+    /// empty state rather than a fabricated comparison.
+    pub fn is_empty(&self) -> bool {
+        self.total_monthly_usd.is_none() && self.per_tool.is_empty()
+    }
+}
+
+/// Which spend a [`BudgetRow`] caps: one specific tool (by `x_Tool` id) or the overall total.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetScope {
+    /// The overall monthly cap across every tool's API-lane spend.
+    Total,
+    /// A single tool's monthly cap, by `x_Tool` id.
+    Tool(String),
+}
+
+/// The pace of a budget vs. how far through the month we are — a lightweight reference cue
+/// (NOT the full month-end projection, which is the Forecast tab, T15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetPace {
+    /// Spending no faster than the month is elapsing (used share <= elapsed share).
+    OnTrack,
+    /// Spending faster than the month elapses (used share > elapsed share) — trending to exceed.
+    AheadOfPace,
+    /// Already over the monthly target.
+    OverBudget,
+}
+
+/// One budget comparison: used vs. target for the current month, API-lane only. Every figure
+/// is a local estimate (the `~` hedge is applied at the render layer).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BudgetRow {
+    pub scope: BudgetScope,
+    /// The monthly $ cap the user set.
+    pub target_usd: Decimal,
+    /// Actual API-lane spend so far this month (an estimate).
+    pub spent_usd: Decimal,
+    /// `spent / target` as a fraction; can exceed 1.0 when over budget.
+    pub fraction: f64,
+    /// `spent - target` when *strictly* over budget; `None` at or under (so an exactly-at-budget
+    /// row is "at budget", never "over by $0.00").
+    pub over_by_usd: Option<Decimal>,
+    pub pace: BudgetPace,
+}
+
+/// A budgeted tool withheld from a $ comparison (§170): it has local usage but no API lane, so a
+/// $ budget — which tracks API spend — cannot honestly apply. The `reason` keeps the tab from
+/// asserting "subscription" when the billing path is merely unclassified.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BudgetExcludedTool {
+    /// The `x_Tool` id the user budgeted.
+    pub tool: String,
+    pub reason: BudgetExclusion,
+}
+
+/// Why a budgeted tool is withheld from the $ comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetExclusion {
+    /// Flat-fee subscription usage (subscription-lane rows present, no API lane).
+    FlatFeeSubscription,
+    /// Local usage exists but none is API-billed and its billing path is unclassified (e.g. a
+    /// Codex/Claude install with no rate-limit/credential signal — its rows land in the
+    /// `UnknownAccess` lane). Honest: not asserted to be a subscription, only that it is not
+    /// API-billed, so a $ budget can't apply.
+    NotApiBilled,
+}
+
+/// The Budget tab view (T14): the active budget comparisons + the tools withheld from a $
+/// comparison + the honest empty state. A pure projection over the snapshot; carries `f64`
+/// (not `Eq`) and is `Serialize`-only — a computed view, never persisted (mirrors [`ModelsView`]).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BudgetView {
+    pub generated_at: DateTime<Utc>,
+    /// The active budgets (per-tool + total), most-utilized first. Empty when none apply.
+    pub rows: Vec<BudgetRow>,
+    /// Tools the user budgeted that have local usage but no API lane, so a $ comparison is
+    /// withheld (§170). Sorted by tool id; the tab notes each with its honest reason.
+    pub excluded_tools: Vec<BudgetExcludedTool>,
+    /// True when the user set no targets at all — render the "no budget set" empty state.
+    pub no_budget_set: bool,
+    /// Total API-lane spend this month across all tools (an estimate) — the header figure.
+    pub spent_total_usd: Decimal,
+    /// The fraction (0..=1) of the current month elapsed — the pace reference line.
+    pub month_elapsed_fraction: f64,
+}
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("bundled pricing JSON is invalid: {0}")]
@@ -1636,6 +1912,252 @@ mod tests {
         };
         assert!(view.no_api_usage);
         assert!(view.models.is_empty());
+    }
+
+    // ----- budget_view (T14) -----
+
+    /// One FOCUS meter row for the budget tests: a known tool, access path, charge timestamp,
+    /// and (overwritten) billed cost. Mid-month timestamps keep the local-anchored month range
+    /// off any boundary regardless of the test host's timezone.
+    fn budget_record(
+        tool: &str,
+        access_path: FocusAccessPath,
+        when: DateTime<Utc>,
+        cents: i64,
+    ) -> FocusRecord {
+        let mut record = match FocusRecord::unpriced_usage(UnpricedUsage {
+            timestamp: when,
+            tool: tool.to_string(),
+            model: "gpt-5.5".to_string(),
+            token_type: TokenType::Output,
+            token_count: 1_000,
+            project: None,
+            access_path,
+            service_name: "svc".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            host_provider_name: "OpenAI".to_string(),
+            invoice_issuer_name: "OpenAI".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        }) {
+            Ok(record) => record,
+            Err(err) => panic!("budget record should build: {err}"),
+        };
+        let cost = Decimal::new(cents, 2);
+        record.billed_cost = cost;
+        record.effective_cost = cost;
+        record
+    }
+
+    fn budget_targets(total: Option<i64>, per_tool: &[(&str, i64)]) -> BudgetTargets {
+        BudgetTargets {
+            total_monthly_usd: total.map(|cents| Decimal::new(cents, 2)),
+            per_tool: per_tool
+                .iter()
+                .map(|(tool, cents)| (tool.to_string(), Decimal::new(*cents, 2)))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn budget_view_empty_targets_is_no_budget_set() {
+        let snapshot = snapshot_with_rows(timestamp(), Vec::new(), Vec::new());
+        let view = budget_view(&snapshot, &BudgetTargets::default());
+        assert!(view.no_budget_set);
+        assert!(view.rows.is_empty());
+        assert!(view.excluded_tools.is_empty());
+    }
+
+    #[test]
+    fn budget_view_compares_current_month_api_lane_spend() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let rows = vec![
+            budget_record(
+                "codex",
+                FocusAccessPath::Api,
+                utc_datetime(2026, 6, 10, 12, 0, 0),
+                1_500,
+            ),
+            // A LAST-month API row must NOT count toward the monthly budget.
+            budget_record(
+                "codex",
+                FocusAccessPath::Api,
+                utc_datetime(2026, 5, 10, 12, 0, 0),
+                9_900,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = budget_view(&snapshot, &budget_targets(None, &[("codex", 5_000)]));
+
+        assert!(!view.no_budget_set);
+        assert_eq!(view.rows.len(), 1);
+        let row = &view.rows[0];
+        assert_eq!(row.scope, BudgetScope::Tool("codex".to_string()));
+        // Only the in-month $15.00 counts, not last month's $99.00.
+        assert_eq!(row.spent_usd, Decimal::new(1_500, 2));
+        assert_eq!(row.target_usd, Decimal::new(5_000, 2));
+        assert!(row.over_by_usd.is_none());
+        assert_eq!(view.spent_total_usd, Decimal::new(1_500, 2));
+    }
+
+    #[test]
+    fn budget_view_total_sums_api_only_never_subscription() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let when = utc_datetime(2026, 6, 10, 12, 0, 0);
+        let rows = vec![
+            budget_record("codex", FocusAccessPath::Api, when, 2_000),
+            budget_record("claude-code", FocusAccessPath::Api, when, 1_000),
+            // A subscription row is a flat-fee plan, NOT a summable dollar — excluded.
+            budget_record("claude-code", FocusAccessPath::Subscription, when, 9_900),
+        ];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = budget_view(&snapshot, &budget_targets(Some(10_000), &[]));
+
+        assert_eq!(view.rows.len(), 1);
+        assert_eq!(view.rows[0].scope, BudgetScope::Total);
+        // $20.00 + $10.00 API only; the $99.00 subscription row never contributes.
+        assert_eq!(view.rows[0].spent_usd, Decimal::new(3_000, 2));
+        assert_eq!(view.spent_total_usd, Decimal::new(3_000, 2));
+    }
+
+    #[test]
+    fn budget_view_flat_fee_subscription_tool_is_guarded_not_compared() {
+        // A tool billed ONLY via a flat-fee subscription (no API rows, ever) must not get a $
+        // comparison (§170) — it is surfaced in excluded_tools, never as a $0/target row.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let rows = vec![budget_record(
+            "cursor",
+            FocusAccessPath::Subscription,
+            utc_datetime(2026, 6, 10, 12, 0, 0),
+            0,
+        )];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = budget_view(&snapshot, &budget_targets(None, &[("cursor", 5_000)]));
+
+        assert!(
+            view.rows.is_empty(),
+            "a flat-fee tool gets no $ row: {:?}",
+            view.rows
+        );
+        assert_eq!(
+            view.excluded_tools,
+            vec![BudgetExcludedTool {
+                tool: "cursor".to_string(),
+                reason: BudgetExclusion::FlatFeeSubscription,
+            }]
+        );
+        assert!(!view.no_budget_set);
+    }
+
+    #[test]
+    fn budget_view_unknown_access_only_tool_is_excluded_as_not_api_billed() {
+        // A tool whose local rows are all UnknownAccess (no API, no subscription — e.g. a Codex
+        // install with no rate-limit signal) is NOT API-billed, so it gets the honest
+        // "not API-billed" exclusion, never a fabricated $0/target row (and never a fabricated
+        // "subscription" claim).
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let rows = vec![budget_record(
+            "codex",
+            FocusAccessPath::Unknown,
+            utc_datetime(2026, 6, 10, 12, 0, 0),
+            0,
+        )];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = budget_view(&snapshot, &budget_targets(None, &[("codex", 4_000)]));
+
+        assert!(
+            view.rows.is_empty(),
+            "an unknown-access tool gets no $ row: {:?}",
+            view.rows
+        );
+        assert_eq!(
+            view.excluded_tools,
+            vec![BudgetExcludedTool {
+                tool: "codex".to_string(),
+                reason: BudgetExclusion::NotApiBilled,
+            }]
+        );
+    }
+
+    #[test]
+    fn budget_view_tool_with_no_usage_at_all_is_a_legitimate_zero_row() {
+        // A budgeted tool with NO local usage of any kind is NOT excluded — it stays a real
+        // $0/target row (the user may be planning ahead before any API spend).
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let snapshot = snapshot_with_rows(now, Vec::new(), Vec::new());
+        let view = budget_view(&snapshot, &budget_targets(None, &[("codex", 4_000)]));
+
+        assert!(view.excluded_tools.is_empty());
+        assert_eq!(view.rows.len(), 1);
+        assert_eq!(view.rows[0].spent_usd, Decimal::ZERO);
+    }
+
+    #[test]
+    fn budget_view_tool_with_api_usage_is_compared_even_if_also_subscription() {
+        // A tool used BOTH via API and subscription IS budgetable — the API lane is compared,
+        // the subscription lane ignored (lanes never summed). Not flat-fee.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let when = utc_datetime(2026, 6, 10, 12, 0, 0);
+        let rows = vec![
+            budget_record("claude-code", FocusAccessPath::Api, when, 1_200),
+            budget_record("claude-code", FocusAccessPath::Subscription, when, 9_900),
+        ];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = budget_view(&snapshot, &budget_targets(None, &[("claude-code", 5_000)]));
+
+        assert!(view.excluded_tools.is_empty());
+        assert_eq!(view.rows.len(), 1);
+        assert_eq!(view.rows[0].spent_usd, Decimal::new(1_200, 2));
+    }
+
+    #[test]
+    fn budget_view_over_budget_sets_over_by_and_pace() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let rows = vec![budget_record(
+            "codex",
+            FocusAccessPath::Api,
+            utc_datetime(2026, 6, 10, 12, 0, 0),
+            6_000,
+        )];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = budget_view(&snapshot, &budget_targets(None, &[("codex", 5_000)]));
+
+        let row = &view.rows[0];
+        assert_eq!(row.over_by_usd, Some(Decimal::new(1_000, 2)));
+        assert!(row.fraction > 1.0);
+        assert_eq!(row.pace, BudgetPace::OverBudget);
+    }
+
+    #[test]
+    fn budget_view_skips_nonpositive_targets() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let snapshot = snapshot_with_rows(now, Vec::new(), Vec::new());
+        // A 0 (or negative) cap is meaningless — skipped, never a divide-by-zero.
+        let view = budget_view(&snapshot, &budget_targets(Some(0), &[("codex", -100)]));
+        assert!(view.rows.is_empty());
+        assert!(view.excluded_tools.is_empty());
+        // The user DID set targets, so it is not the "no budget set" empty state.
+        assert!(!view.no_budget_set);
+    }
+
+    #[test]
+    fn budget_view_orders_most_utilized_first() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let when = utc_datetime(2026, 6, 10, 12, 0, 0);
+        let rows = vec![
+            budget_record("claude-code", FocusAccessPath::Api, when, 1_000),
+            budget_record("codex", FocusAccessPath::Api, when, 4_800),
+        ];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = budget_view(
+            &snapshot,
+            &budget_targets(None, &[("codex", 5_000), ("claude-code", 5_000)]),
+        );
+        // codex (96%) outranks claude-code (20%).
+        assert_eq!(view.rows[0].scope, BudgetScope::Tool("codex".to_string()));
+        assert_eq!(
+            view.rows[1].scope,
+            BudgetScope::Tool("claude-code".to_string())
+        );
     }
 
     fn api_usage_event(model: &str, output_tokens: u64) -> UsageEvent {

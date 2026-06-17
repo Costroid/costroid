@@ -365,7 +365,7 @@ Done only when **all** hold: (1) the four-command gate above is **green**; (2) t
 - [x] **T11** Providers tab — ✅ **DONE 2026-06-16** (gate green: default `cargo test --workspace` cli 97 + core 85, 0 failed; `--features connect-test-support` cli 117; clippy `-D warnings` clean on default + `connect` + `connect-test-support`; fmt clean; offline.rs both tiers green — connect-delta still the reviewed allowlist). The FIRST production consumer of `Capability`: a new `Screen::Providers` tab renders, per provider, each lane's honest source + auth + quota shape + detection health via the owned `ProviderCapabilityView` core seam (captured for every provider before the `Box<dyn Provider>` set is consumed); Cursor renders `detected` + "no sanctioned source" (never "coming soon"). Lands the numbered-tab model T12/T13 inherit (1–6 jumps + Tab/BackTab cycle; Frontier stays its a/esc overlay; footer + help enumerate tabs). Under `--features connect` only, a read-only connection lane (org label + connected/not via the dual gate; Gemini reuses the pinned `GEMINI_UNAVAILABLE_MESSAGE` verbatim; NEVER key material; NO new network). braille/ascii/plain snapshots committed + ASCII-purity gates extended. See §11.5 ✅ T11. (M · Prereq T3 ✅)
 - [x] **T12** Models tab — ✅ **DONE 2026-06-16** (gate green: default `cargo test --workspace` cli 104 + core 88, 0 failed; `--features connect-test-support` cli 126; clippy `-D warnings` clean on default + `connect` + `connect-test-support`; fmt clean; offline.rs both tiers green). A new `Screen::Models` tab (number `4` + the Tab cycle, appended to `TAB_SCREENS` — no `handle_key` change, exactly the T11 template) fuses per-model API spend + token mix (the now/trends-consistent `CostLaneSummary`) with the bench/frontier overlay (standing + equal-volume re-pricing) via the new pure-core `models_view`/`ModelsView`/`ModelRow` composite (reuses `summarize_rows` + `bench_view`, NO new pricing/bench math). API-cost rows only; spend ALWAYS `~`-hedged; un-benchmarked models render "not benchmarked" (a gap, never guessed); monochrome (`models_document_is_monochrome`). braille/ascii/plain snapshots committed + ASCII-purity gates extended. See §11.5 ✅ T12. (S · Prereq T11 ✅)
 - [x] **T13** History tab — ✅ **DONE 2026-06-17** (gate green: default `cargo test --workspace` cli 114 + core 88, 0 failed; `--features connect-test-support` cli 136; clippy `-D warnings` clean on default + `connect` + `connect-test-support`; fmt clean; offline.rs both tiers green — connect-delta unchanged, no new crate). A new `Screen::History` tab (number `5` + the Tab cycle, appended to `TAB_SCREENS` — exactly the T11 template) renders the full per-turn FOCUS record (time · model · token usage from `x_ConsumedTokens` · access path · API-only estimated cost), newest-first. Lands the TUI's FIRST scroll/viewport state — an `App::scroll` offset + Up/Down/PgUp/PgDn/Home/End, clamped in `draw_app` (no panic on empty/short lists), reset on tab switch — which the analytics tabs (T14–T16) reuse. The unchanged `costroid export` is surfaced in-tab + in help (no in-TUI file write — the pinned default). Monochrome (`history_document_is_monochrome`); braille/ascii/plain + empty snapshots committed + ASCII-purity gates extended. See §11.5 ✅ T13. (M · Prereq T11 ✅ + T12 ✅)
-- [ ] **T14** Budget — 📋 **carded §12.20** (L · Prereq T11 — the FIRST user-config file, TOML)
+- [x] **T14** Budget — ✅ **DONE 2026-06-17** (gate green: default `cargo test --workspace` cli 133 + core 98, 0 failed; `--features connect-test-support` cli 155; clippy `-D warnings` clean on default + `connect` + `connect-test-support`; fmt clean; offline.rs both tiers green — `toml` lands in BOTH graphs so the connect-delta is unchanged; `cargo deny check licenses bans` ok with `toml`; an independent adversarial-review workflow fixed 2 honesty bugs — see §11.5). The FIRST user-config file: a read-only, non-secret TOML at `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml` (`apps/cli/src/config.rs` — path resolver + forward-compat serde + a LOADER: absent ⇒ zero-config default, malformed ⇒ a typed non-panic error surfaced as a TUI status line). A new `Screen::Budget` tab (number `6` + the Tab cycle, appended to `TAB_SCREENS` — NO `handle_key` change, exactly the T11 template) compares the config's monthly $ target(s) against the **current month's API-lane spend** via the new pure, config-neutral `budget_view`/`BudgetTargets`/`BudgetView` core seam (a fill meter + pace cue + the honest over-budget state). API-lane ONLY; a flat-fee subscription gets NO $ comparison (§170 — surfaced in `flat_fee_tools`); every figure `~`-hedged. The ONE tab allowed amber/red — but ONLY paired with a non-color cue (`!`/`!!`/`OVER`, spelled out in `--plain`); empty state points at the config file. NO writer/`set` command, NO network/invoice enrichment (use the local estimate; `costroid reconcile` is invoice-true). braille/ascii/plain + no-budget snapshots committed + ASCII-purity gates extended; adds the permissive `toml` dep. See §11.5 ✅ T14. (L · Prereq T11 ✅ — the FIRST user-config file, TOML)
 - [ ] **T15** Forecast — 📋 **carded §12.21** (L · Prereq T11)
 - [ ] **T16** Anomalies — 📋 **carded §12.22** (L–XL · Prereq T11 + T15's daily-series helper)
 - [ ] **T17** Alerts — 📋 **carded §12.23** (L · ⛔ · Prereq T14 config) → **closes Step 5 / 0.5.0**
@@ -447,6 +447,16 @@ When you reach a backlogged task, pin its 📌 and have a planning agent expand 
 ### 11.5 Decisions & limitations (living log)
 
 *New decisions/constraints land here as tasks run — agents append (newest first), dated by the task that surfaced them. This is where "a new decision/limitation" goes.*
+
+**✅ T14 DONE — Budget tab + the FIRST user-config file (2026-06-17).** The fourth Step 5 analytical tab, and the first to introduce a hand-edited user config. Gate green (default `cargo test --workspace` **cli 133 + core 98**, 0 failed; `--features connect-test-support` **cli 155**; clippy `-D warnings` on default + `connect` + `connect-test-support`; fmt; offline.rs both tiers — connect-delta unchanged; `cargo deny check licenses bans` ok with `toml`). Built fresh-context + an independent adversarial-review workflow (5 dimensions × per-finding verify) that surfaced + fixed 2 honesty bugs before close-out (see the 🔧 bullet below).
+- **Config layer = `apps/cli/src/config.rs` (read-only, non-secret TOML).** Path `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml` (resolver mirrors `costroid-connect`'s `default_registry_path`, rooted at CONFIG not STATE). `load_from(path)` is the testable seam; `load()` resolves the default path. **Absent file ⇒ the zero-config default (no budgets), NOT an error**; a present-but-malformed file ⇒ a typed `ConfigError` (`Read`/`Parse`) whose `Display` is a single status-bar line — surfaced as the TUI status (`config: …`), **never a crash**. Forward-compat: `#[serde(default)]` everywhere + serde's default unknown-key tolerance (NO `deny_unknown_fields`), so an older build reads a newer file. **Schema EXACTLY as pinned (Q2):** `[budget] total_monthly_usd` (optional) + `[budget.per_tool]` keyed by the `x_Tool` ids. **Money is `Decimal`, never f64** — a custom `Money` newtype's `deserialize_any` accepts a TOML integer / float / quoted string (integers + quoted strings exact; a bare float transits f64 via `Decimal::from_f64_retain`, documented as "quote for exactness"). **READ-ONLY: NO writer/saver, NO `budget set` command** (a CLI-surface ⛔ + unpinned UX — deliberately not built).
+- **Core seam = `budget_view(&EngineSnapshot, &BudgetTargets) -> BudgetView` (pure, config-neutral; `crates/costroid-core`).** Core never reads a file — `BudgetTargets { total_monthly_usd, per_tool }` is the INPUT (the apps/cli config layer maps its TOML into it). `BudgetView { rows, excluded_tools, no_budget_set, spent_total_usd, month_elapsed_fraction }` over `BudgetRow { scope, target_usd, spent_usd, fraction, over_by_usd, pace }`. **API-lane ONLY (§170, lanes-never-summed):** spend is the **current calendar month's** API-lane `billed_cost` (via the existing `period_range_for(Period::Month, …)` — same month definition now/trends use), per `x_Tool` + an optional total; subscription rows never contribute a dollar. **Not-API-billed guard:** a budgeted tool that has *lifetime* local usage but NO API lane is surfaced in `excluded_tools: Vec<BudgetExcludedTool { tool, reason }>` — never a fabricated `$0/target` row. The `reason` distinguishes `FlatFeeSubscription` (subscription-lane rows) from `NotApiBilled` (only `UnknownAccess` rows — e.g. a Codex/Claude install with no rate-limit/credential signal, which the providers tag `AccessPath::Unknown`), so the tab never *asserts* "subscription" it can't back up. A tool with NO local usage at all stays a legitimate `$0/target` row (planning ahead). Non-positive caps are skipped (no divide-by-zero). Rows sort most-utilized first. `pace` = a lightweight `OnTrack`/`AheadOfPace`/`OverBudget` comparison of used-share vs month-elapsed-share — **NOT** the full month-end projection (that is the Forecast tab, T15; T14 builds NO shared per-day series helper). `Serialize`-only / not `Eq` (carries `f64`), a computed view never persisted (mirrors `ModelsView`).
+- **Render = `render_budget_document` (braille/ascii/plain split, `apps/cli/src/render.rs`).** A fill meter, the spent/target money (always `~`-hedged), the percent + cue, the pace line, and the over-by amount. **Budget is the ONE tab where amber/red is allowed — but NEVER color-alone:** every Warn/Critical span is paired with a spelled-out `!`/`!!`/`OVER` cue (the `meter_segments` clamp at 1.0 means an over-bar reads full, so the textual `OVER` carries the over-state). The row's display state comes from a `budget_state(row)` helper that keys "over" on the core's STRICT `over_by_usd.is_some()` (NOT `limit_state`'s `>= 1.0`), so the bar color, the cue, the over-by line, and the pace all agree at the boundary (extracted a shared `state_style` from `limit_meter_span`). `--plain` = `<scope>: ~$X / ~$Y budget (NN%) … !! OVER, over by ~$Z`. The empty state spells out "no budget set - set targets in ~/.config/costroid/config.toml" + a copy-paste schema. T11's "`push_rule` skipped in Plain" gotcha honored. braille/ascii/plain + no-budget snapshots committed; `render_budget` added to BOTH `*_mode_output_is_pure_ascii` gates; a `budget_over_state_pairs_color_with_a_textual_cue` test enforces no-color-alone (so NO `budget_document_is_monochrome` — Budget is the deliberate amber/red exception).
+- **Tab wiring = the exact T11 template, APPENDed (no machinery change).** `Screen::Budget` + a `TAB_SCREENS` **slot-`6`** entry (the LAST digit-reachable slot — `handle_key` already matched `'1'..='6'`, so NO `handle_key` change; `7` is now the inert boundary) + a `document_for_width` arm + footer/help label + the `App::budget_targets` field (loaded once in `run_with_dependencies`, read-only, no network; absent/malformed ⇒ default + status). Reachable by digit `6` + the Tab/BackTab cycle.
+- **Dep: the permissive `toml` (`=1.1.2`, MIT/Apache-2.0, parse-only, deny-allowlist-clean).** Added to `apps/cli` as a NON-optional default dep, so it lands in BOTH the default and `--features connect` graphs → the offline connect-delta subset is **unchanged** (no `CONNECT_ALLOWED` edit). The default/local-only build still makes **zero** network calls (`toml` is parse-only; strace/offline gates unaffected). `serde` (derive) also added to `apps/cli` directly (was only transitive via `serde_json`).
+- **🔧 Adversarial-review fixes (2026-06-17, post-build, gate re-green: default cli 133 + core 98, connect-test-support cli 155; fmt + clippy [default/`connect`/`connect-test-support`] clean).** A fresh-context review workflow (5 dimensions × per-finding verify, separate from the builder's pass) confirmed the load-bearing invariants clean (scope fence, no-network, library no-panic, config robustness/forward-compat, tab nav, ASCII purity) and surfaced **2 verified honesty bugs**, both fixed: **(1) the exactly-100% boundary** — `limit_state` treats `fraction >= 1.0` as `Over`, but core sets `over_by_usd`/`OverBudget` pace only on the STRICT `spent > target`, so a row at exactly-at-budget rendered a self-contradiction ("`!! OVER, over by ~$0.00`" beside an on-track pace). **Fix:** the render derives its state from a `budget_state(row)` that keys "over" on `over_by_usd.is_some()` (not `limit_state`), so exactly-100% reads "`!! at budget`" (Critical), and the bar/cue/over-by/pace agree (regression test `budget_exactly_at_budget_reads_at_budget_not_over`). **(2) the flat-fee guard missed `UnknownAccess` rows** — it required a `subscription` tag, but Codex tags ALL rows `AccessPath::Unknown` when `codex_has_rate_limits()` is false and Claude does so with no API key + no credentials, so a genuinely flat-fee user got a misleading `~$0.00 / target` row. **Fix:** the guard now excludes any budgeted tool with local usage but NO API lane, and `excluded_tools` carries a `reason` (`FlatFeeSubscription` vs the honest `NotApiBilled`) so the unclassified case never asserts "subscription" (regression tests `budget_view_unknown_access_only_tool_is_excluded_as_not_api_billed` + the legitimate-`$0`-row counter-test). The lighter findings (a stale diff comment, the empty-state hint hardcoding the canonical config path vs an `$XDG_CONFIG_HOME` override, user-supplied tool-id ASCII passthrough — consistent with the existing model/project-name carve-out) were left as documented nits.
+- **🔧 Independent coordinator review (2026-06-17, read-only, 6 dimensions × verify — separate from the builder's pass): SHIP-WITH-NITS.** It **independently confirmed** the builder's 2 fixes are real + non-vacuously tested, and that the config-loader can't panic on hostile input (absent⇒default, malformed/odd-types⇒typed `ConfigError`, NaN/inf guarded), the config is non-secret + CONFIG-dir + read-only (no writer/`budget set`), the §170 API-lane guard holds, and the default build stays zero-network (`toml` parse-only). It surfaced **1 additional LOW the builder's pass missed — the sub-cent overshoot:** `over_by_usd` is exact (strict `spent > target`) but `format_money` rounds to 2dp, so a real ~$50.0003-over-$50 row rendered the self-contradictory "`!! OVER, over by ~$0.00`". **Fix (applied):** a `format_over_by` helper renders `<$0.01` when the overshoot rounds below a cent (both the meter + plain sites), with a regression test (`budget_over_by_below_a_cent_renders_less_than_a_cent_not_zero`); gate re-green (361 workspace / 158 connect-test-support). Two nits left as documented: a `0`/negative-only target shows the terser "no usable targets" copy (honest, untested branch); the empty-state hint hardcodes `~/.config` under an `$XDG_CONFIG_HOME` override (knowingly-accepted; render is config-neutral). Read-only review guardrail held — zero tree mutations.
+- **For T15/T16:** the config layer (`apps/cli/src/config.rs`) + the `budget_view` composite-view shape exist; `TAB_SCREENS` now holds 6 tabs, the digit range is full at `'1'..='6'` — **T15/T16 extend `handle_key`'s digit match to reach slots `7`/`8`**. **For T17:** EXTEND `Config`/the `[budget]` section (or a new `[alerts]` section) for alert prefs — the forward-compat serde already ignores unknown sections, so an older build tolerates a newer alerts config.
 
 **✅ T13 DONE — History tab + the TUI's first scroll/viewport state (2026-06-17).** The third Step 5 analytical tab — a scrollable, newest-first per-turn FOCUS record ("the full record") — and the first to add real scroll state, which T14–T16 reuse. Gate green (default `cargo test --workspace` **cli 114 + core 88**, 0 failed; `--features connect-test-support` **cli 136**; clippy `-D warnings` on default + `connect` + `connect-test-support`; fmt; offline.rs both tiers — connect-delta unchanged, no new crate).
 - **Tab wiring = the exact T11 template, APPENDed (no machinery change).** `Screen::History` + a `TAB_SCREENS` **slot-`5`** entry (Models took `4`) + a `document_for_width` arm + footer/help label; reachable by digit `5` + the Tab/BackTab cycle; `6` is the new reserved-inert digit. No `handle_key` change for tab nav — `tab_for_digit`/`cycle_tab` pick it up automatically.
@@ -1699,42 +1709,71 @@ Your job is to PIN + CARD it, not to build it:
   Anomalies) build on the tab model + the scroll machinery this lands; T17 Alerts closes Step 5.
 ```
 
-### 12.20 — T14 · Budget · L · 📌 RESOLVED (§11.5: TOML config) · Prereq: T11
+### 12.20 — T14 · Budget · L · 📌 RESOLVED (§11.5: TOML config) · Prereq: T11 ✅ (+ T12/T13 templates) · **use workflows (L)**
 
 > **📌 RESOLVED (Eren-confirmed 2026-06-16, §11.5):** the FIRST user-config file = **TOML** at
 > `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml`, owned by `apps/cli`, non-secret (never
-> keychain), atomic temp+rename + forward-compat serde. Schema: `[budget] total_monthly_usd` (optional)
-> + `[budget.per_tool]` keyed by tool, money as `rust_decimal::Decimal`. Adds the permissive `toml`
-> crate (pre-approved here; deny-allowlist-clean). **API-lane only — NEVER a $ target for a flat-fee
-> subscription** (§170). Introducing the first config file + the `toml` dep is the only build-time
-> heads-up (already human-approved).
+> keychain), forward-compat serde. Schema: `[budget] total_monthly_usd` (optional) + `[budget.per_tool]`
+> keyed by **tool** (the `x_Tool` ids `claude-code`/`codex`/`cursor`), money as `rust_decimal::Decimal`.
+> Adds the permissive `toml` crate (pre-approved here; deny-allowlist-clean). **API-lane only — NEVER a $
+> target for a flat-fee subscription** (§170). Introducing the first config file + the `toml` dep is the
+> only build-time heads-up (already human-approved — keep the schema EXACTLY as pinned; if you must
+> deviate, STOP and ask).
+>
+> **Slot + scoping (read before building):** Budget fills **`TAB_SCREENS` slot 6** — the LAST
+> digit-reachable slot (`handle_key` already matches `'1'..='6'`, so NO `handle_key` change; T15/T16 at
+> slots 7/8 will extend that range, not you). **T14 config is READ-ONLY:** load the TOML the user
+> hand-edits; build NO writer/saver and NO `budget set` command (that's a CLI-surface ⛔ + unpinned UX —
+> not T14); config absent ⇒ today's zero-config behavior + an honest "no budget set" state. **NO network /
+> NO invoice enrichment:** the Budget tab compares against the **local API-lane estimate** (always
+> `~`-hedged) — the invoice-true comparison already lives in `costroid reconcile` (T10c); putting a
+> connect fetch in the local-only TUI render loop is out of scope (deferred, not dropped).
 
 ```
-**Goal:** a Budget tab comparing user-set monthly $ target(s) against ACTUAL API-lane spend, with a fill
-  bar + pace cue, preferring the reconciled invoice $ where a vendor is connected. Introduces the FIRST
-  user-config file (TOML).
-**Spec:** §11.5 "📌 STEP 5 PINNED" (Q2); §170 (never a $ budget for a flat-fee subscription); the
-  connections.json atomic/forward-compat idiom at connect/src/lib.rs:490-531 (mirror it, rooted at
-  CONFIG not STATE, non-secret).
-**Files:** apps/cli (NEW config module + XDG_CONFIG_HOME path resolver, toml dep in apps/cli/Cargo.toml);
-  crates/costroid-core/src/lib.rs (budget-vs-actual compute over the CostLaneSummary Api lane + optional
-  reconcile UsdAmount); apps/cli/src/render.rs (render_budget_document; reuse meter_segments/
-  cost_bar_span :2018-2096, add an over-cap cue mirroring " !! OVER"); apps/cli/src/tui.rs
-  (Screen::Budget); optional connect-gated AdapterSet::cost_report enrich via apps/cli/src/
-  reconcile.rs:233.
-**Scope fence:** the budget config + compute + tab ONLY. API/overage lane ONLY (never subscription $).
-  NO new network in the default path (the invoice enrich is the EXISTING user-initiated connect seam,
-  feature-gated). Config absence = today's zero-config behavior. Decimal money, never f64.
-**Deliverables:** the config struct + loader/saver (forward-compat serde, atomic write, TOML); the
-  flat-fee-subscription guard (reject/ignore a subscription-keyed budget); the budget-vs-actual core fn
-  (prefer the reconciled invoice where connected, fall back to the local estimate + carry the estimate
-  label); render_budget_document with the over-cap textual cue (amber/red ALLOWED here ONLY paired with
-  the non-color cue) + a --plain `$X / $Y budget (over by $Z)` line; braille/ascii/plain snapshots +
-  ASCII-purity inclusion; cargo deny green with toml added.
-**Done when:** workspace green; clippy/fmt; no unwrap/expect/panic; budget compares the API lane only and
-  refuses a subscription $ target; over-budget renders the non-color OVER cue; config round-trips and
-  absence = zero-config default; cargo deny passes (toml allowlist-clean); snapshots + ASCII purity pass.
-**Next:** the config layer exists → T17 Alerts extends it for thresholds/opt-in.
+**Goal:** a Budget tab comparing user-set monthly $ target(s) against ACTUAL API-lane spend (the local
+  `~`-estimate), with a fill bar + pace cue + an honest over-budget state. Introduces the FIRST
+  user-config file (read-only TOML).
+**Spec:** §11.5 "📌 STEP 5 PINNED" (Q2) + the as-built §11.5 ✅ T11/T12/T13 (the landed tab template, the
+  on-screen scope/count header, the monochrome-EXCEPT-this-tab note below, the render_<tab>_document
+  split, the "push_rule skipped in Plain" gotcha); §170 (never a $ budget for a flat-fee subscription);
+  the connections.json forward-compat/atomic idiom (costroid-connect) as the persistence shape reference
+  (but CONFIG dir, non-secret, read-only here). Verify every symbol/line in code (canon) — T11–T13
+  shifted line numbers.
+**Files:** apps/cli (NEW config module, e.g. `apps/cli/src/config.rs` — the XDG_CONFIG_HOME path resolver
+  + the serde config struct + a LOADER (absent file ⇒ default, malformed ⇒ a clear non-crash error);
+  `toml` dep in apps/cli/Cargo.toml); crates/costroid-core (a pure, **config-neutral** budget-vs-actual
+  compute that takes the targets as INPUT — core never reads a file: a `BudgetTargets` input + a
+  `budget_view(snapshot, &targets) -> BudgetView` over the `CostLane::Api` per-tool/total spend);
+  apps/cli/src/render.rs (`render_budget_document` braille/ascii/plain; reuse `meter_segments`
+  (render.rs:2656) / `cost_bar_span` (:2605) / `positional_meter_text` (:2622) + `WARN_FRACTION 0.80` /
+  `CRITICAL_FRACTION 0.95` (:31-32); add an over-cap textual cue — `meter_segments` clamps to 1.0, so
+  >100% needs a spelled-out `OVER` cue); apps/cli/src/tui.rs (`Screen::Budget` + a `TAB_SCREENS` slot-6
+  entry + a `document_for_width` arm + footer/help label — NO `handle_key` change, `'6'` already maps).
+**Scope fence:** the read-only budget config + the config-neutral core compute + the tab ONLY. API/overage
+  lane ONLY (never subscription $; a flat-fee subscription gets NO $ target). NO writer/saver, NO
+  `budget set` command (CLI-surface ⛔). NO network / NO invoice enrichment in the tab (use the LOCAL
+  estimate; `costroid reconcile` already does invoice-true). NO `handle_key`/tab-machinery change beyond
+  appending slot 6. Decimal money, never f64. Config absent ⇒ zero-config default.
+**Deliverables:** the config path resolver + serde struct + LOADER (forward-compat `#[serde(default)]`,
+  absent ⇒ default, malformed ⇒ a typed non-panic error surfaced as a status line, never a crash); the
+  config-neutral `BudgetTargets`/`BudgetView` + `budget_view` core fn over the API lane (per-tool keyed
+  by `x_Tool`, + an optional total), every figure `~`-hedged; the flat-fee guard (a subscription-only
+  tool never gets a $ comparison); `render_budget_document` — a fill bar per budget (used vs target),
+  a pace cue, and the over-cap cue: **amber/red IS allowed on this tab (the near/over-budget state) but
+  ONLY paired with a non-color textual cue** (`!`/`!!`/`OVER`, spelled out in `--plain`), with a --plain
+  `$X / $Y budget (over by $Z)` line; the honest "no budget set — set targets in
+  ~/.config/costroid/config.toml" empty state; braille/ascii/plain snapshots (incl. a no-budget and an
+  over-budget snapshot) + inclusion in the `*_mode_output_is_pure_ascii` gates; `cargo deny` green with
+  `toml` added.
+**Done when:** workspace green (default + `--features connect-test-support`); clippy/fmt clean; no
+  unwrap/expect/panic; budget compares the API lane ONLY and never assigns a $ target to a flat-fee
+  subscription; the config loads (absent ⇒ zero-config default, malformed ⇒ a clear non-crash status);
+  over-budget renders the non-color `OVER` cue; the default build adds NO network call (strace/offline
+  unaffected — `toml` is parse-only); `cargo deny check` passes (toml allowlist-clean); snapshots +
+  ASCII-purity pass; Budget reachable by `6` + the Tab cycle + in help/footer.
+**Next:** the config layer exists → T15 Forecast / T16 Anomalies (the next analytics tabs — they'll need
+  to extend the `'1'..='6'` digit range to reach slots 7/8) → T17 Alerts EXTENDS this config for
+  thresholds/opt-in and closes Step 5.
 ```
 
 ### 12.21 — T15 · Forecast · L · 📌 RESOLVED (§11.5: linear run-rate) · Prereq: T11
