@@ -1,0 +1,13 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_forecast(&forecast_view_eta_unavailable_fixture(),\nRenderOptions::ascii(false))"
+---
+costroid costroid                                   forecast  
+scope: API-lane spend this month + quota burn (estimated)
+no API usage recorded - nothing to forecast yet
+----------------------------------------------------------------
+quota:
+claude code weekly: ETA unavailable (no fresh verified usage reading)
+codex 5h: ETA unavailable (window just started)
+----------------------------------------------------------------
+figures are local estimates (your tokens x current prices), projected - not the vendor invoice.

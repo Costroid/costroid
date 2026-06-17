@@ -105,12 +105,8 @@ impl LocalCostEstimate {
     /// uses for human-facing day grouping.
     pub fn from_focus_records(rows: &[FocusRecord]) -> Result<Self, MoneyParseError> {
         let mut estimate = LocalCostEstimate::new();
-        for row in rows {
-            if CostLane::from_access_path(&row.x_access_path) != CostLane::Api {
-                continue;
-            }
-            let date = row.charge_period_start.date_naive();
-            estimate.add(date, &row.x_model, UsdAmount::from_usd(row.billed_cost))?;
+        for (date, model, cost) in api_lane_day_rows(rows) {
+            estimate.add(date, model, UsdAmount::from_usd(cost))?;
         }
         Ok(estimate)
     }
@@ -138,6 +134,43 @@ impl LocalCostEstimate {
             None => UsdAmount::ZERO,
         }
     }
+}
+
+/// The shared **API-lane + UTC-day** row classification: yield each API-lane row as a
+/// `(UTC day, model, estimated $)` tuple, keyed by `charge_period_start.date_naive()`. Both
+/// the per-`(day, model)` estimate ([`LocalCostEstimate::from_focus_records`]) and the per-day
+/// series ([`api_lane_daily_usd_series`]) build on this so the lane filter + UTC-day bucketing
+/// live in ONE place. API-lane only — the only lane with a $ bill (subscription lanes are not a
+/// summable dollar, §12.13); the `$` is the estimated `billed_cost`, exact [`Decimal`].
+fn api_lane_day_rows(rows: &[FocusRecord]) -> impl Iterator<Item = (NaiveDate, &str, Decimal)> {
+    rows.iter().filter_map(|row| {
+        if CostLane::from_access_path(&row.x_access_path) != CostLane::Api {
+            return None;
+        }
+        Some((
+            row.charge_period_start.date_naive(),
+            row.x_model.as_str(),
+            row.billed_cost,
+        ))
+    })
+}
+
+/// The per-**UTC-day** API-lane estimated-$ series — the shared daily series the Forecast (T15)
+/// and Anomalies (T16) tabs build on, the generalization of
+/// [`LocalCostEstimate::from_focus_records`]'s lane+date bucketing (it collapses the per-model
+/// detail to a per-day total). Keyed by `charge_period_start.date_naive()` (the same UTC-midnight
+/// buckets the vendor reports use), summing the estimated `billed_cost` (exact [`Decimal`], never
+/// `f64`); ascending by day (`BTreeMap`).
+///
+/// A caller projecting a month-end run-rate off this series **must** keep its month-boundary +
+/// elapsed-days math on the SAME UTC calendar — never mix a UTC-day sum with a local-month
+/// elapsed fraction (§11.5 T15 consistency rule).
+pub(crate) fn api_lane_daily_usd_series(rows: &[FocusRecord]) -> BTreeMap<NaiveDate, Decimal> {
+    let mut series: BTreeMap<NaiveDate, Decimal> = BTreeMap::new();
+    for (date, _model, cost) in api_lane_day_rows(rows) {
+        *series.entry(date).or_insert(Decimal::ZERO) += cost;
+    }
+    series
 }
 
 // ---------------------------------------------------------------------------
@@ -871,5 +904,50 @@ mod tests {
         ok(estimate.add(d, "m", usd("0.10")));
         ok(estimate.add(d, "m", usd("0.20")));
         assert_eq!(estimate.day_total(d), usd("0.30"));
+    }
+
+    // ---- api_lane_daily_usd_series (shared by Forecast/Anomalies) ------------
+
+    #[test]
+    fn daily_series_sums_api_lane_per_utc_day_across_models() {
+        let rows = vec![
+            // June 1 (UTC): two models on the same day → summed into one day total.
+            api_row(utc(2026, 6, 1, 9, 0), "sonnet", "0.10"),
+            api_row(utc(2026, 6, 1, 18, 0), "opus", "0.20"),
+            // Late June 1 UTC + early June 2 UTC bucket to their own UTC days.
+            api_row(utc(2026, 6, 1, 23, 30), "sonnet", "0.05"),
+            api_row(utc(2026, 6, 2, 0, 30), "opus", "0.40"),
+        ];
+        let series = api_lane_daily_usd_series(&rows);
+        assert_eq!(
+            series.get(&date(2026, 6, 1)).copied(),
+            Some(usd("0.35").as_usd())
+        );
+        assert_eq!(
+            series.get(&date(2026, 6, 2)).copied(),
+            Some(usd("0.40").as_usd())
+        );
+    }
+
+    #[test]
+    fn daily_series_excludes_subscription_and_unknown_lanes() {
+        let mut sub = api_row(utc(2026, 6, 1, 9, 0), "m", "9.99");
+        sub.x_access_path = FocusAccessPath::Subscription.as_str().to_string();
+        let mut unknown = api_row(utc(2026, 6, 1, 9, 0), "m", "5.55");
+        unknown.x_access_path = FocusAccessPath::Unknown.as_str().to_string();
+        let api = api_row(utc(2026, 6, 1, 9, 0), "m", "1.00");
+
+        let series = api_lane_daily_usd_series(&[sub, unknown, api]);
+        // Only the API-lane row contributes, and only its UTC day is present.
+        assert_eq!(series.len(), 1);
+        assert_eq!(
+            series.get(&date(2026, 6, 1)).copied(),
+            Some(usd("1.00").as_usd())
+        );
+    }
+
+    #[test]
+    fn daily_series_is_empty_with_no_api_rows() {
+        assert!(api_lane_daily_usd_series(&[]).is_empty());
     }
 }

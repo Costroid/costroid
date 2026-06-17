@@ -1,0 +1,11 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_forecast(&forecast_view_insufficient_fixture(), RenderOptions::plain())"
+---
+costroid forecast
+scope: API-lane spend this month + quota burn (estimated)
+insufficient data to project - 2 of 30 days elapsed (need 3+) (estimated)
+spend so far ~$5.00 over 2 of 30 days (estimated)
+quota:
+codex weekly: resets before you hit it (estimated)
+figures are local estimates (your tokens x current prices), projected - not the vendor invoice.

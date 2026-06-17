@@ -356,6 +356,176 @@ pub fn budget_view(snapshot: &EngineSnapshot, targets: &BudgetTargets) -> Budget
     }
 }
 
+/// The minimum number of days of the current (UTC) month that must have elapsed before a linear
+/// run-rate projection is trustworthy. Below it, the Forecast tab shows an honest insufficient-data
+/// state rather than extrapolate a wild month-end off one or two days (§11.5 T15 — the 3-day floor).
+const MIN_FORECAST_DAYS: u32 = 3;
+
+/// The Forecast tab (T15): project this month's API-lane $ spend and per-quota-window exhaustion
+/// ETAs, all labeled estimates — "~$X projected API spend this month" + "hit your weekly Claude
+/// limit ~Friday". A pure projection over the snapshot; **config-neutral**, **pure-local**, no
+/// network.
+///
+/// **$ projection = a linear run-rate over the elapsed month**
+/// (`spend_to_date / days_elapsed × days_in_month`) off the shared per-**UTC-day** API-lane $
+/// series ([`reconcile::api_lane_daily_usd_series`]). The numerator (spend-to-date) AND the
+/// denominator (days-elapsed/in-month) are taken from the SAME **UTC** calendar as that series —
+/// never mixing a UTC-day sum with the local-month boundaries `budget_view` uses (§11.5 T15
+/// consistency rule). Suppressed below the [`MIN_FORECAST_DAYS`]-day floor → an honest
+/// insufficient-data state; every figure is an estimate (the `~` hedge is the render layer's).
+///
+/// **Quota ETA = a linear burn** from the current [`LimitMeasure::TokenFraction`] to `resets_at`,
+/// projected ONLY off a fresh, cross-checked [`LimitAvailability::Available`] token-fraction
+/// reading (it rides [`now_summary`], which already runs the sanitize/cross-check/stale-age-out
+/// ladder). Every other arm — `Unverified`/`Estimated`/`Partial`/`Unavailable`, or a dollar
+/// `Spend` measure — degrades to "ETA unavailable", never a confident wrong ETA (ARCHITECTURE §9.2).
+pub fn forecast_view(snapshot: &EngineSnapshot) -> ForecastView {
+    let now = snapshot.generated_at;
+    let today = now.date_naive();
+    let (year, month) = (today.year(), today.month());
+    let days_in_month = days_in_month_utc(year, month);
+    let days_elapsed = today.day();
+
+    // The shared per-UTC-day API-lane $ series (T16 Anomalies reuses the same helper). Because it
+    // buckets by UTC day, every month figure below stays UTC too (the consistency rule).
+    let series = reconcile::api_lane_daily_usd_series(&snapshot.focus_rows);
+    let no_api_usage = series.is_empty();
+
+    // This month's actual per-day spend (ascending) + the spend-to-date numerator — same UTC
+    // calendar as days_elapsed/days_in_month. A future-dated row (clock skew) past `today` is
+    // excluded from spend-to-date.
+    let mut daily_actuals: Vec<ForecastDay> = Vec::new();
+    let mut spend_to_date = Decimal::ZERO;
+    for (&date, &amount) in &series {
+        if date.year() == year && date.month() == month && date <= today {
+            daily_actuals.push(ForecastDay {
+                date,
+                spent_usd: amount,
+            });
+            spend_to_date += amount;
+        }
+    }
+
+    let spend = if days_elapsed >= MIN_FORECAST_DAYS {
+        // spend_to_date × days_in_month ÷ days_elapsed (days_elapsed ≥ 3, so never ÷0). Exact
+        // Decimal with checked ops; an implausible overflow falls back to the spend-to-date.
+        let projected_month_usd = spend_to_date
+            .checked_mul(Decimal::from(days_in_month))
+            .and_then(|scaled| scaled.checked_div(Decimal::from(days_elapsed)))
+            .unwrap_or(spend_to_date);
+        SpendForecast::Projected {
+            projected_month_usd,
+            spend_to_date_usd: spend_to_date,
+            days_elapsed,
+            days_in_month,
+        }
+    } else {
+        SpendForecast::InsufficientData {
+            spend_to_date_usd: spend_to_date,
+            days_elapsed,
+            days_in_month,
+            min_days: MIN_FORECAST_DAYS,
+        }
+    };
+
+    // Ride the same now-view limits the Now tab renders — the sanitize/cross-check/stale-age-out
+    // ladder already ran, so a stale/unverified/estimated reading is degraded for free.
+    let quota_etas = now_summary(snapshot, NowOptions::default())
+        .limits
+        .iter()
+        .map(|limit| quota_eta(limit, now))
+        .collect();
+
+    ForecastView {
+        generated_at: now,
+        no_api_usage,
+        spend,
+        daily_actuals,
+        quota_etas,
+    }
+}
+
+/// The number of days in the given **UTC** calendar month = (first of next month) − (first of
+/// this month). Falls back to 30 (never panics) on an impossible date.
+fn days_in_month_utc(year: i32, month: u32) -> u32 {
+    let first_this = NaiveDate::from_ymd_opt(year, month, 1);
+    let first_next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    };
+    match (first_this, first_next) {
+        (Some(this), Some(next)) => (next - this).num_days().clamp(28, 31) as u32,
+        _ => 30,
+    }
+}
+
+/// Project one window's exhaustion ETA, riding the finalized [`LimitSummary`]. ONLY a fresh,
+/// cross-checked [`LimitAvailability::Available`] token-fraction reading is projectable; every
+/// other arm (incl. a dollar `Spend` measure) degrades to a typed "unavailable" — never a
+/// confident wrong ETA (§11.5 T15 / ARCHITECTURE §9.2).
+fn quota_eta(limit: &LimitSummary, now: DateTime<Utc>) -> QuotaEta {
+    let outcome = match &limit.availability {
+        LimitAvailability::Available {
+            measure: LimitMeasure::TokenFraction(fraction),
+            resets_at,
+            reset_in_seconds,
+        } => project_quota_eta(limit.kind, *fraction, *resets_at, *reset_in_seconds, now),
+        _ => QuotaEtaOutcome::Unavailable {
+            reason: QuotaEtaUnavailable::ReadingNotProjectable,
+        },
+    };
+    QuotaEta {
+        tool: limit.tool,
+        kind: limit.kind,
+        outcome,
+    }
+}
+
+/// The linear-burn projection for a fresh token-fraction reading: the `fraction` was consumed
+/// over the window's elapsed time (`window_duration − reset_in_seconds`); at that rate, project
+/// when it reaches `1.0` and compare against the reset. All in seconds-space so no wild
+/// `DateTime` is ever built (the constructed instant is bounded by `reset_in_seconds`).
+fn project_quota_eta(
+    kind: LimitKind,
+    fraction: f64,
+    resets_at: DateTime<Utc>,
+    reset_in_seconds: i64,
+    now: DateTime<Utc>,
+) -> QuotaEtaOutcome {
+    let window_secs = window_duration(kind).num_seconds() as f64;
+    let reset_in = reset_in_seconds.max(0) as f64;
+    let elapsed = window_secs - reset_in;
+    if elapsed <= 0.0 {
+        // The reset covers the whole window (just started) or a clock skew — too little elapsed
+        // time to estimate a burn rate.
+        return QuotaEtaOutcome::Unavailable {
+            reason: QuotaEtaUnavailable::WindowJustStarted,
+        };
+    }
+    if fraction <= 0.0 {
+        // No usage yet — nothing to extrapolate; at zero burn the window resets first.
+        return QuotaEtaOutcome::ResetsFirst {
+            resets_at,
+            fraction,
+        };
+    }
+    if fraction >= 1.0 {
+        // Already at/over the limit — effectively hit now.
+        return QuotaEtaOutcome::ProjectedHit { at: now, fraction };
+    }
+    let secs_to_full = (1.0 - fraction) * elapsed / fraction;
+    if secs_to_full < reset_in {
+        let at = now + Duration::seconds(secs_to_full.round() as i64);
+        QuotaEtaOutcome::ProjectedHit { at, fraction }
+    } else {
+        QuotaEtaOutcome::ResetsFirst {
+            resets_at,
+            fraction,
+        }
+    }
+}
+
 /// A stable sort key for a budget scope: per-tool rows first (ordered by id), the overall
 /// total last on a tie.
 fn budget_scope_key(scope: &BudgetScope) -> (u8, &str) {
@@ -1748,6 +1918,97 @@ pub struct BudgetView {
     pub month_elapsed_fraction: f64,
 }
 
+/// The Forecast tab view (T15): a month-end $ spend projection + per-quota-window exhaustion
+/// ETAs, every figure a labeled estimate. A pure projection over the snapshot; carries `f64`/
+/// `Decimal` and is `Serialize`-only (not `Eq`/`Deserialize`) — a computed view, never persisted
+/// (mirrors [`BudgetView`]/[`ModelsView`]).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ForecastView {
+    pub generated_at: DateTime<Utc>,
+    /// True when the snapshot has zero API-lane rows at all: render the honest "nothing to
+    /// forecast yet" empty state rather than a fabricated $0 projection. Quota ETAs (a separate,
+    /// subscription-window axis) may still be present.
+    pub no_api_usage: bool,
+    /// The month-end $ spend projection, or the honest insufficient-data state below the floor.
+    pub spend: SpendForecast,
+    /// Per-**UTC-day** actual API-lane spend for the current month so far (ascending) — the
+    /// sparkline series. Empty when there is no spend this month.
+    pub daily_actuals: Vec<ForecastDay>,
+    /// One projected exhaustion ETA per quota window (parallel to the Now view's limits); each is
+    /// a projected instant, a "resets before you hit it", or a typed "unavailable" (degrade,
+    /// never a confident wrong ETA).
+    pub quota_etas: Vec<QuotaEta>,
+}
+
+/// One UTC day's actual API-lane estimated spend — a sparkline datum.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ForecastDay {
+    pub date: NaiveDate,
+    /// The day's summed API-lane estimate (exact [`Decimal`]; always an estimate).
+    pub spent_usd: Decimal,
+}
+
+/// The month-end $ projection (always an estimate), or the honest below-floor state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpendForecast {
+    /// Enough of the month elapsed (`days_elapsed >= MIN_FORECAST_DAYS`) to extrapolate the
+    /// run-rate: `projected_month_usd = spend_to_date_usd / days_elapsed × days_in_month`, all on
+    /// the UTC calendar (numerator + denominator share one calendar).
+    Projected {
+        projected_month_usd: Decimal,
+        spend_to_date_usd: Decimal,
+        days_elapsed: u32,
+        days_in_month: u32,
+    },
+    /// Too little of the month has elapsed (`days_elapsed < min_days`) for a stable run-rate —
+    /// the projection is suppressed in favor of this honest state.
+    InsufficientData {
+        spend_to_date_usd: Decimal,
+        days_elapsed: u32,
+        days_in_month: u32,
+        min_days: u32,
+    },
+}
+
+/// One quota window's projected exhaustion ETA (T15). Projected ONLY off a fresh, cross-checked
+/// [`LimitAvailability::Available`] token-fraction; every other availability arm degrades to
+/// [`QuotaEtaOutcome::Unavailable`] (ARCHITECTURE §9.2 — degrade, never a confident wrong ETA).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QuotaEta {
+    pub tool: ProviderId,
+    pub kind: LimitKind,
+    pub outcome: QuotaEtaOutcome,
+}
+
+/// A quota window's ETA outcome: a projected exhaustion instant, a "resets first", or a typed
+/// "unavailable". Carries `f64` so it is `PartialEq` but not `Eq`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaEtaOutcome {
+    /// At the current burn rate the window is projected to exhaust at `at` — before it resets.
+    ProjectedHit { at: DateTime<Utc>, fraction: f64 },
+    /// At the current burn rate the window resets (`resets_at`) before it would exhaust.
+    ResetsFirst {
+        resets_at: DateTime<Utc>,
+        fraction: f64,
+    },
+    /// No trustworthy projection — a typed reason (never a confident guess).
+    Unavailable { reason: QuotaEtaUnavailable },
+}
+
+/// Why a quota ETA could not be projected — typed, so the render names the honest reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaEtaUnavailable {
+    /// The reading is not a fresh, cross-checked `Available` token-fraction — it is
+    /// `Unverified`/`Estimated`/`Partial`/`Unavailable`, or a dollar `Spend` measure. Degraded
+    /// per ARCHITECTURE §9.2 (stale is already aged-out to `Estimated` upstream).
+    ReadingNotProjectable,
+    /// Too little of the window has elapsed (or a clock skew) to estimate a burn rate.
+    WindowJustStarted,
+}
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("bundled pricing JSON is invalid: {0}")]
@@ -2157,6 +2418,238 @@ mod tests {
         assert_eq!(
             view.rows[1].scope,
             BudgetScope::Tool("claude-code".to_string())
+        );
+    }
+
+    // ----- forecast_view (T15) -----
+
+    /// A Verified token-fraction quota window for the forecast quota-ETA tests.
+    fn token_window(
+        tool: ProviderId,
+        kind: LimitKind,
+        fraction: f64,
+        resets_at: Option<DateTime<Utc>>,
+        captured_at: DateTime<Utc>,
+        status: LimitStatus,
+    ) -> LimitWindow {
+        LimitWindow {
+            tool,
+            plan: None,
+            kind,
+            measure: Some(LimitMeasure::TokenFraction(fraction)),
+            resets_at,
+            captured_at,
+            status,
+            label: None,
+        }
+    }
+
+    #[test]
+    fn forecast_view_projects_month_run_rate_on_the_utc_calendar() {
+        // June 16 (UTC) → 16 of 30 days elapsed. spend-to-date is the in-month API-lane sum, and
+        // the projection scales it to the full month: 20 × 30 / 16 = $37.50. The numerator and
+        // denominator are BOTH UTC (the consistency rule) — last-month and future rows excluded.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let rows = vec![
+            budget_record(
+                "codex",
+                FocusAccessPath::Api,
+                utc_datetime(2026, 6, 5, 9, 0, 0),
+                500,
+            ),
+            budget_record(
+                "claude-code",
+                FocusAccessPath::Api,
+                utc_datetime(2026, 6, 10, 9, 0, 0),
+                1_500,
+            ),
+            // Last month — different UTC month, excluded.
+            budget_record(
+                "codex",
+                FocusAccessPath::Api,
+                utc_datetime(2026, 5, 30, 9, 0, 0),
+                9_900,
+            ),
+            // After today — a future-dated row is excluded from spend-to-date.
+            budget_record(
+                "codex",
+                FocusAccessPath::Api,
+                utc_datetime(2026, 6, 20, 9, 0, 0),
+                5_000,
+            ),
+            // Subscription lane never contributes a dollar.
+            budget_record(
+                "claude-code",
+                FocusAccessPath::Subscription,
+                utc_datetime(2026, 6, 8, 9, 0, 0),
+                2_000,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = forecast_view(&snapshot);
+
+        assert!(!view.no_api_usage);
+        match view.spend {
+            SpendForecast::Projected {
+                projected_month_usd,
+                spend_to_date_usd,
+                days_elapsed,
+                days_in_month,
+            } => {
+                assert_eq!(spend_to_date_usd, Decimal::new(2_000, 2)); // $20.00
+                assert_eq!(days_elapsed, 16);
+                assert_eq!(days_in_month, 30);
+                assert_eq!(projected_month_usd, Decimal::new(3_750, 2)); // $37.50
+            }
+            other => panic!("expected a projection, got {other:?}"),
+        }
+        // The per-day actuals are this month's spend days, ascending (the future row excluded).
+        assert_eq!(view.daily_actuals.len(), 2);
+        assert_eq!(view.daily_actuals[0].date.day(), 5);
+        assert_eq!(view.daily_actuals[1].date.day(), 10);
+        assert_eq!(view.daily_actuals[0].spent_usd, Decimal::new(500, 2));
+        assert_eq!(view.daily_actuals[1].spent_usd, Decimal::new(1_500, 2));
+    }
+
+    #[test]
+    fn forecast_view_below_three_day_floor_is_insufficient_data() {
+        // Only 2 of the month's days have elapsed (June 2 UTC) — below the 3-day floor, so the $
+        // projection is suppressed in favor of the honest insufficient-data state.
+        let now = utc_datetime(2026, 6, 2, 12, 0, 0);
+        let rows = vec![budget_record(
+            "codex",
+            FocusAccessPath::Api,
+            utc_datetime(2026, 6, 1, 9, 0, 0),
+            500,
+        )];
+        let snapshot = snapshot_with_rows(now, rows, Vec::new());
+        let view = forecast_view(&snapshot);
+
+        match view.spend {
+            SpendForecast::InsufficientData {
+                spend_to_date_usd,
+                days_elapsed,
+                days_in_month,
+                min_days,
+            } => {
+                assert_eq!(spend_to_date_usd, Decimal::new(500, 2));
+                assert_eq!(days_elapsed, 2);
+                assert_eq!(days_in_month, 30);
+                assert_eq!(min_days, 3);
+            }
+            other => panic!("expected insufficient data, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forecast_view_no_api_usage_is_flagged() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let view = forecast_view(&snapshot_with_rows(now, Vec::new(), Vec::new()));
+        assert!(view.no_api_usage);
+        assert!(view.daily_actuals.is_empty());
+    }
+
+    #[test]
+    fn forecast_view_quota_eta_projects_only_off_a_fresh_available_token_fraction() {
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let half_week = Duration::seconds(302_400); // 3.5 days left in a 7-day window
+        let limits = vec![
+            // Codex weekly, 90% with half the week left → projected to hit BEFORE the reset.
+            token_window(
+                ProviderId::Codex,
+                LimitKind::Weekly,
+                0.9,
+                Some(now + half_week),
+                now,
+                LimitStatus::Verified,
+            ),
+            // Codex 5h, 10% with most of the window left → resets before you hit it.
+            token_window(
+                ProviderId::Codex,
+                LimitKind::FiveHour,
+                0.1,
+                Some(now + Duration::minutes(240)),
+                now,
+                LimitStatus::Verified,
+            ),
+            // An Unverified reading is NOT projectable — degrade.
+            token_window(
+                ProviderId::Codex,
+                LimitKind::Weekly,
+                0.5,
+                Some(now + half_week),
+                now,
+                LimitStatus::Unverified,
+            ),
+            // A stale reading (reset already passed) ages out upstream → not projectable.
+            token_window(
+                ProviderId::Codex,
+                LimitKind::Weekly,
+                0.5,
+                Some(now - Duration::minutes(5)),
+                now,
+                LimitStatus::Verified,
+            ),
+        ];
+        let snapshot = snapshot_with_rows(now, Vec::new(), limits);
+        let etas = forecast_view(&snapshot).quota_etas;
+        assert_eq!(etas.len(), 4);
+
+        assert!(
+            matches!(etas[0].outcome, QuotaEtaOutcome::ProjectedHit { fraction, .. } if fraction == 0.9),
+            "weekly 90% should project a hit: {:?}",
+            etas[0].outcome
+        );
+        assert!(
+            matches!(etas[1].outcome, QuotaEtaOutcome::ResetsFirst { .. }),
+            "5h 10% should reset first: {:?}",
+            etas[1].outcome
+        );
+        assert!(
+            matches!(
+                etas[2].outcome,
+                QuotaEtaOutcome::Unavailable {
+                    reason: QuotaEtaUnavailable::ReadingNotProjectable
+                }
+            ),
+            "an unverified reading is not projectable: {:?}",
+            etas[2].outcome
+        );
+        assert!(
+            matches!(
+                etas[3].outcome,
+                QuotaEtaOutcome::Unavailable {
+                    reason: QuotaEtaUnavailable::ReadingNotProjectable
+                }
+            ),
+            "a stale reading is aged out, not projectable: {:?}",
+            etas[3].outcome
+        );
+    }
+
+    #[test]
+    fn forecast_view_quota_eta_just_started_window_is_unavailable() {
+        // A window whose reset is a full window-length away has zero elapsed time — no burn rate.
+        let now = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let limits = vec![token_window(
+            ProviderId::Codex,
+            LimitKind::FiveHour,
+            0.4,
+            Some(now + Duration::hours(5)),
+            now,
+            LimitStatus::Verified,
+        )];
+        let snapshot = snapshot_with_rows(now, Vec::new(), limits);
+        let etas = forecast_view(&snapshot).quota_etas;
+        assert!(
+            matches!(
+                etas[0].outcome,
+                QuotaEtaOutcome::Unavailable {
+                    reason: QuotaEtaUnavailable::WindowJustStarted
+                }
+            ),
+            "a just-started window has no burn rate: {:?}",
+            etas[0].outcome
         );
     }
 

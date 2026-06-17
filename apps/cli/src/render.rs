@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 use std::env;
 use std::io::{self, IsTerminal};
 
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Datelike, Local, Utc};
 use costroid_core::{
     AggregateTotals, BenchFrontier, BenchView, BudgetExcludedTool, BudgetExclusion, BudgetPace,
-    BudgetRow, BudgetScope, BudgetView, CostLane, CostLaneSummary, FocusRecord, FrontierPoint,
-    FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow, ModelsView, NowSummary,
-    OverlayModel, Period, PeriodRange, ProviderCapabilityView, ProviderStatus, ProviderStatusKind,
-    RepricingDelta, RepricingStatus, TokenTotals, TrendsSummary,
+    BudgetRow, BudgetScope, BudgetView, CostLane, CostLaneSummary, FocusRecord, ForecastView,
+    FrontierPoint, FrontierStanding, GroupBy, LimitAvailability, LimitSummary, ModelRow,
+    ModelsView, NowSummary, OverlayModel, Period, PeriodRange, ProviderCapabilityView,
+    ProviderStatus, ProviderStatusKind, QuotaEta, QuotaEtaOutcome, QuotaEtaUnavailable,
+    RepricingDelta, RepricingStatus, SpendForecast, TokenTotals, TrendsSummary,
 };
 use costroid_providers::{AuthMethod, DataSource, LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
@@ -2008,6 +2009,301 @@ fn push_budget_empty_state(out: &mut StyledDocument) {
     push_line(out, "codex = 40.00");
 }
 
+// ---------------------------------------------------------------------------
+// Forecast tab (T15) — `costroid` TUI tab `7`. Project this month's API-lane $ spend (a linear
+// run-rate over the elapsed UTC month) + per-quota-window exhaustion ETAs (a linear burn off the
+// fresh token-fraction reading), every figure a labeled estimate. An ADVISORY tab: monochrome
+// (amber/red is reserved for the near-limit/over-budget meter state, which the forecast has none
+// of — it is advisory text + a sparkline). The quota ETA degrades to "unavailable" on any
+// reading that is not a fresh, cross-checked `Available` token-fraction — never a confident wrong
+// ETA. Mirrors the `render_budget_*` split; plain delimits by labels, never the `─` rule (T11
+// gotcha).
+// ---------------------------------------------------------------------------
+
+/// The standing reminder that the forecast figures are local estimates, not the invoice. ASCII.
+const FORECAST_ESTIMATE_NOTE: &str =
+    "figures are local estimates (your tokens x current prices), projected - not the vendor invoice.";
+/// The label width that aligns the `actual` / `projected` sparkline rows.
+const FORECAST_SERIES_LABEL_WIDTH: usize = 10;
+
+#[cfg(test)]
+pub(crate) fn render_forecast(view: &ForecastView, options: RenderOptions) -> String {
+    render_forecast_document(view, options).render(options)
+}
+
+pub(crate) fn render_forecast_document(
+    view: &ForecastView,
+    options: RenderOptions,
+) -> StyledDocument {
+    match options.mode {
+        RenderMode::Plain => render_forecast_plain_document(view),
+        RenderMode::Braille | RenderMode::Ascii => render_forecast_visual_document(view, options),
+    }
+}
+
+fn render_forecast_visual_document(view: &ForecastView, options: RenderOptions) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_header_line(
+        &mut out,
+        mark(options),
+        "forecast",
+        forecast_header_money(view)
+            .map(|money| format_money(&money, Some("USD"), true))
+            .unwrap_or_default(),
+        options,
+    );
+    push_line(&mut out, FORECAST_SCOPE_LINE);
+    if view.no_api_usage {
+        push_line(&mut out, FORECAST_NO_USAGE);
+    } else {
+        for line in forecast_spend_lines(view) {
+            push_line(&mut out, &line);
+        }
+        // The actual-vs-projected sparkline (visual only): actual daily spend (one cell per
+        // elapsed day), then the flat projected run-rate for the remaining days, distinguished by
+        // glyph — never color.
+        if let Some((actual, projected)) = forecast_series_glyphs(view, options) {
+            push_rule(&mut out, options);
+            push_line(
+                &mut out,
+                &format!(
+                    "{:<width$}{actual}",
+                    "actual",
+                    width = FORECAST_SERIES_LABEL_WIDTH
+                ),
+            );
+            if let Some(projected) = projected {
+                push_line(
+                    &mut out,
+                    &format!(
+                        "{:<width$}{projected}",
+                        "projected",
+                        width = FORECAST_SERIES_LABEL_WIDTH
+                    ),
+                );
+            }
+        }
+    }
+    push_rule(&mut out, options);
+    push_forecast_quota_section(&mut out, view);
+    push_rule(&mut out, options);
+    push_line(&mut out, FORECAST_ESTIMATE_NOTE);
+    out
+}
+
+fn render_forecast_plain_document(view: &ForecastView) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid forecast");
+    push_line(&mut out, FORECAST_SCOPE_LINE);
+    if view.no_api_usage {
+        push_line(&mut out, FORECAST_NO_USAGE);
+    } else {
+        for line in forecast_spend_lines(view) {
+            push_line(&mut out, &line);
+        }
+    }
+    push_forecast_quota_section(&mut out, view);
+    push_line(&mut out, FORECAST_ESTIMATE_NOTE);
+    out
+}
+
+const FORECAST_SCOPE_LINE: &str = "scope: API-lane spend this month + quota burn (estimated)";
+const FORECAST_NO_USAGE: &str = "no API usage recorded - nothing to forecast yet";
+
+/// The header figure: the projected month-end total when we can project, else the spend-to-date
+/// (both always an estimate at the render layer). `None` when there is **no API usage at all** —
+/// the header then carries no dollar figure, so the visual surface never renders a fabricated
+/// `~$0.00` above the "nothing to forecast yet" body (the §12.21 never-fabricate-$0 empty-state
+/// rule; the plain renderer already omits the header figure unconditionally).
+fn forecast_header_money(view: &ForecastView) -> Option<Decimal> {
+    if view.no_api_usage {
+        return None;
+    }
+    Some(match &view.spend {
+        SpendForecast::Projected {
+            projected_month_usd,
+            ..
+        } => *projected_month_usd,
+        SpendForecast::InsufficientData {
+            spend_to_date_usd, ..
+        } => *spend_to_date_usd,
+    })
+}
+
+/// The two text spend lines (projected / spend-so-far, or the honest below-floor state), the
+/// `--plain`-surviving actual-vs-projected distinction. Always `~`-hedged + `(estimated)`-tagged.
+fn forecast_spend_lines(view: &ForecastView) -> Vec<String> {
+    match &view.spend {
+        SpendForecast::Projected {
+            projected_month_usd,
+            spend_to_date_usd,
+            days_elapsed,
+            days_in_month,
+        } => vec![
+            format!(
+                "projected {} by {} (estimated)",
+                format_money(projected_month_usd, Some("USD"), true),
+                forecast_month_end_label(view.generated_at, *days_in_month),
+            ),
+            format!(
+                "spend so far {} over {} of {} days (estimated)",
+                format_money(spend_to_date_usd, Some("USD"), true),
+                days_elapsed,
+                days_in_month,
+            ),
+        ],
+        SpendForecast::InsufficientData {
+            spend_to_date_usd,
+            days_elapsed,
+            days_in_month,
+            min_days,
+        } => vec![
+            format!(
+                "insufficient data to project - {} of {} days elapsed (need {}+) (estimated)",
+                days_elapsed, days_in_month, min_days,
+            ),
+            format!(
+                "spend so far {} over {} of {} days (estimated)",
+                format_money(spend_to_date_usd, Some("USD"), true),
+                days_elapsed,
+                days_in_month,
+            ),
+        ],
+    }
+}
+
+/// The last calendar day of the projection's (UTC) month, e.g. `Jun 30`. Month-end days are
+/// 28-31, so `%b %d` carries no leading-zero surprise; English `%b` is ASCII. Falls back to a
+/// generic label (never a panic) on an impossible date.
+fn forecast_month_end_label(generated_at: DateTime<Utc>, days_in_month: u32) -> String {
+    let today = generated_at.date_naive();
+    match chrono::NaiveDate::from_ymd_opt(today.year(), today.month(), days_in_month) {
+        Some(end) => end.format("%b %d").to_string(),
+        None => "month end".to_string(),
+    }
+}
+
+/// Build the actual + projected sparkline glyph strings (visual modes only; `None` in Plain).
+/// `actual` is one cell per elapsed day (zero-filled days included), self-normalized by the
+/// existing [`sparkline`]; `projected` is a flat run of a distinct glyph for the remaining days —
+/// present ONLY when we can project (the `Projected` state). The two glyph sets differ so actual
+/// vs projected is told apart WITHOUT color.
+fn forecast_series_glyphs(
+    view: &ForecastView,
+    options: RenderOptions,
+) -> Option<(String, Option<String>)> {
+    if options.mode == RenderMode::Plain {
+        return None;
+    }
+    let (days_elapsed, days_in_month, projecting) = match &view.spend {
+        SpendForecast::Projected {
+            days_elapsed,
+            days_in_month,
+            ..
+        } => (*days_elapsed, *days_in_month, true),
+        SpendForecast::InsufficientData {
+            days_elapsed,
+            days_in_month,
+            ..
+        } => (*days_elapsed, *days_in_month, false),
+    };
+    let actual = sparkline(&forecast_actual_series(view, days_elapsed), options);
+    let projected = if projecting {
+        let remaining = days_in_month.saturating_sub(days_elapsed) as usize;
+        Some(forecast_projected_glyphs(remaining, options))
+    } else {
+        None
+    };
+    Some((actual, projected))
+}
+
+/// A dense per-elapsed-day actual-spend series (one [`Decimal`] per day `1..=days_elapsed`,
+/// zero-filled), placing each day's estimate at its day-of-month index — so `actual` + `projected`
+/// together span the whole month.
+fn forecast_actual_series(view: &ForecastView, days_elapsed: u32) -> Vec<Decimal> {
+    let mut series = vec![Decimal::ZERO; days_elapsed as usize];
+    for day in &view.daily_actuals {
+        let index = day.date.day().saturating_sub(1) as usize;
+        if index < series.len() {
+            series[index] += day.spent_usd;
+        }
+    }
+    series
+}
+
+/// The flat projected run-rate continuation as a distinct glyph run (a middle dashed braille
+/// cell, or `~` in Ascii — never the actual bar glyphs, so actual vs projected reads by GLYPH not
+/// color). Empty in Plain (handled upstream).
+fn forecast_projected_glyphs(remaining: usize, options: RenderOptions) -> String {
+    match options.mode {
+        RenderMode::Plain => String::new(),
+        RenderMode::Ascii => "~".repeat(remaining),
+        RenderMode::Braille => braille_cell(&[4, 5]).to_string().repeat(remaining),
+    }
+}
+
+/// The quota section: a `quota:` header, then one honest line per window — a projected hit
+/// weekday, a "resets before you hit it", or a typed "ETA unavailable (reason)". Pure ASCII.
+fn push_forecast_quota_section(out: &mut StyledDocument, view: &ForecastView) {
+    if view.quota_etas.is_empty() {
+        push_line(out, "quota: no quota windows tracked");
+        return;
+    }
+    push_line(out, "quota:");
+    for eta in &view.quota_etas {
+        push_line(out, &forecast_quota_line(eta));
+    }
+}
+
+/// One quota window's forecast line, e.g. `claude code weekly: projected to hit ~Friday
+/// (UTC, estimated)`. The hit weekday is formatted in UTC and **labeled `UTC`** — the instant is
+/// deterministic (the freshness-stamp convention) and the explicit marker keeps a near-midnight
+/// projection from silently naming the wrong local weekday for an off-UTC user; the unavailable
+/// arms name the typed reason.
+fn forecast_quota_line(eta: &QuotaEta) -> String {
+    let window = format!(
+        "{} {}",
+        provider_name(eta.tool),
+        forecast_kind_word(eta.kind)
+    );
+    match &eta.outcome {
+        QuotaEtaOutcome::ProjectedHit { at, .. } => {
+            format!(
+                "{window}: projected to hit ~{} (UTC, estimated)",
+                at.format("%A")
+            )
+        }
+        QuotaEtaOutcome::ResetsFirst { .. } => {
+            format!("{window}: resets before you hit it (estimated)")
+        }
+        QuotaEtaOutcome::Unavailable { reason } => {
+            format!(
+                "{window}: ETA unavailable ({})",
+                quota_eta_unavailable_text(*reason)
+            )
+        }
+    }
+}
+
+/// A readable window-length word for the forecast quota lines (fuller than the meter's terse
+/// `limit_kind` abbreviations, since the forecast has room).
+fn forecast_kind_word(kind: LimitKind) -> &'static str {
+    match kind {
+        LimitKind::FiveHour => "5h",
+        LimitKind::Weekly => "weekly",
+        LimitKind::Daily => "daily",
+        LimitKind::Monthly => "monthly",
+        LimitKind::BillingCycle => "billing cycle",
+    }
+}
+
+fn quota_eta_unavailable_text(reason: QuotaEtaUnavailable) -> &'static str {
+    match reason {
+        QuotaEtaUnavailable::ReadingNotProjectable => "no fresh verified usage reading",
+        QuotaEtaUnavailable::WindowJustStarted => "window just started",
+    }
+}
+
 fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> StyledLine {
     let api = sorted_lane_rows(&summary.current_costs, CostLane::Api);
     let api_total = sum_costs(&api);
@@ -3465,8 +3761,9 @@ mod tests {
     use chrono::{Duration, LocalResult, NaiveDate, TimeZone, Utc};
     use costroid_core::{
         reconcile_cost, AggregateTotals, CostLaneSummary, CostLineItem, CostReportCaveats,
-        CostReportOutcome, GroupKey, LimitSummary, LocalCostEstimate, NowSummary, PeriodRange,
-        PricingCoverage, ProviderStatus, TrendsSummary, VendorCostDay, VendorCostReport,
+        CostReportOutcome, ForecastDay, GroupKey, LimitSummary, LocalCostEstimate, NowSummary,
+        PeriodRange, PricingCoverage, ProviderStatus, TrendsSummary, VendorCostDay,
+        VendorCostReport,
     };
     use rust_decimal::Decimal;
 
@@ -4223,6 +4520,19 @@ mod tests {
             budget.is_ascii(),
             "ascii budget tab must be pure ASCII: {budget}"
         );
+        // Forecast in Ascii: the projected sparkline glyph (`~`) + the ascii actual ramp must
+        // both be pure ASCII, across the projected / insufficient / no-usage states.
+        for view in [
+            forecast_view_projected_fixture(),
+            forecast_view_insufficient_fixture(),
+            forecast_view_eta_unavailable_fixture(),
+        ] {
+            let forecast = render_forecast(&view, RenderOptions::ascii(false));
+            assert!(
+                forecast.is_ascii(),
+                "ascii forecast tab must be pure ASCII: {forecast}"
+            );
+        }
     }
 
     #[test]
@@ -4291,6 +4601,15 @@ mod tests {
             render_history(&[], RenderOptions::plain()),
             render_budget(&budget_view_fixture(), RenderOptions::plain()),
             render_budget(&empty_budget_view(), RenderOptions::plain()),
+            render_forecast(&forecast_view_projected_fixture(), RenderOptions::plain()),
+            render_forecast(
+                &forecast_view_insufficient_fixture(),
+                RenderOptions::plain(),
+            ),
+            render_forecast(
+                &forecast_view_eta_unavailable_fixture(),
+                RenderOptions::plain(),
+            ),
         ];
         for output in outputs {
             assert!(
@@ -4958,6 +5277,261 @@ mod tests {
             saw_colored,
             "the over/near fixture should exercise an amber/red state"
         );
+    }
+
+    // ----- Forecast tab (T15) -----
+
+    fn forecast_day(year: i32, month: u32, day: u32, cents: i64) -> ForecastDay {
+        ForecastDay {
+            date: match NaiveDate::from_ymd_opt(year, month, day) {
+                Some(date) => date,
+                None => panic!("test date should be valid"),
+            },
+            spent_usd: Decimal::new(cents, 2),
+        }
+    }
+
+    /// A projected forecast: June 16 (UTC), 16 of 30 days elapsed, ~$37.50 projected, with one
+    /// of each quota outcome (projected-hit Friday, resets-first, ETA-unavailable).
+    fn forecast_view_projected_fixture() -> ForecastView {
+        ForecastView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            no_api_usage: false,
+            spend: SpendForecast::Projected {
+                projected_month_usd: Decimal::new(3_750, 2),
+                spend_to_date_usd: Decimal::new(2_000, 2),
+                days_elapsed: 16,
+                days_in_month: 30,
+            },
+            daily_actuals: vec![
+                forecast_day(2026, 6, 5, 500),
+                forecast_day(2026, 6, 10, 1_000),
+                forecast_day(2026, 6, 14, 500),
+            ],
+            quota_etas: vec![
+                QuotaEta {
+                    tool: ProviderId::ClaudeCode,
+                    kind: LimitKind::Weekly,
+                    // 2026-06-19 is a Friday — pins the card's "~Friday" headline.
+                    outcome: QuotaEtaOutcome::ProjectedHit {
+                        at: utc(2026, 6, 19, 8, 0),
+                        fraction: 0.85,
+                    },
+                },
+                QuotaEta {
+                    tool: ProviderId::ClaudeCode,
+                    kind: LimitKind::FiveHour,
+                    outcome: QuotaEtaOutcome::ResetsFirst {
+                        resets_at: utc(2026, 6, 16, 14, 0),
+                        fraction: 0.2,
+                    },
+                },
+                QuotaEta {
+                    tool: ProviderId::Codex,
+                    kind: LimitKind::Weekly,
+                    outcome: QuotaEtaOutcome::Unavailable {
+                        reason: QuotaEtaUnavailable::ReadingNotProjectable,
+                    },
+                },
+            ],
+        }
+    }
+
+    /// Below the 3-day floor: only 2 of 30 days elapsed, so the projection is suppressed.
+    fn forecast_view_insufficient_fixture() -> ForecastView {
+        ForecastView {
+            generated_at: utc(2026, 6, 2, 12, 0),
+            no_api_usage: false,
+            spend: SpendForecast::InsufficientData {
+                spend_to_date_usd: Decimal::new(500, 2),
+                days_elapsed: 2,
+                days_in_month: 30,
+                min_days: 3,
+            },
+            daily_actuals: vec![forecast_day(2026, 6, 1, 500)],
+            quota_etas: vec![QuotaEta {
+                tool: ProviderId::Codex,
+                kind: LimitKind::Weekly,
+                outcome: QuotaEtaOutcome::ResetsFirst {
+                    resets_at: utc(2026, 6, 5, 0, 0),
+                    fraction: 0.1,
+                },
+            }],
+        }
+    }
+
+    /// Every quota window degraded to a typed "ETA unavailable" — no API usage either.
+    fn forecast_view_eta_unavailable_fixture() -> ForecastView {
+        ForecastView {
+            generated_at: utc(2026, 6, 16, 12, 0),
+            no_api_usage: true,
+            spend: SpendForecast::Projected {
+                projected_month_usd: Decimal::ZERO,
+                spend_to_date_usd: Decimal::ZERO,
+                days_elapsed: 16,
+                days_in_month: 30,
+            },
+            daily_actuals: Vec::new(),
+            quota_etas: vec![
+                QuotaEta {
+                    tool: ProviderId::ClaudeCode,
+                    kind: LimitKind::Weekly,
+                    outcome: QuotaEtaOutcome::Unavailable {
+                        reason: QuotaEtaUnavailable::ReadingNotProjectable,
+                    },
+                },
+                QuotaEta {
+                    tool: ProviderId::Codex,
+                    kind: LimitKind::FiveHour,
+                    outcome: QuotaEtaOutcome::Unavailable {
+                        reason: QuotaEtaUnavailable::WindowJustStarted,
+                    },
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn snapshot_forecast_braille() {
+        insta::assert_snapshot!(render_forecast(
+            &forecast_view_projected_fixture(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_forecast_ascii() {
+        insta::assert_snapshot!(render_forecast(
+            &forecast_view_projected_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_forecast_plain() {
+        insta::assert_snapshot!(render_forecast(
+            &forecast_view_projected_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_forecast_insufficient_data_plain() {
+        insta::assert_snapshot!(render_forecast(
+            &forecast_view_insufficient_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_forecast_eta_unavailable_plain() {
+        insta::assert_snapshot!(render_forecast(
+            &forecast_view_eta_unavailable_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn snapshot_forecast_no_usage_ascii() {
+        // Pins the no-API-usage VISUAL surface (the default TTY): the header carries NO dollar
+        // figure — never a fabricated `~$0.00` above "nothing to forecast yet" (§12.21).
+        insta::assert_snapshot!(render_forecast(
+            &forecast_view_eta_unavailable_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn forecast_projected_line_is_hedged_and_names_a_weekday() {
+        // The plain-surviving actual-vs-projected distinction: a `projected ~$X by <date>` line
+        // and a per-window `projected to hit ~<weekday>` line, both hedged `(estimated)`.
+        let output = render_forecast(&forecast_view_projected_fixture(), RenderOptions::plain());
+        assert!(
+            output.contains("projected ~$37.50 by Jun 30 (estimated)"),
+            "{output}"
+        );
+        assert!(
+            output.contains("spend so far ~$20.00 over 16 of 30 days (estimated)"),
+            "{output}"
+        );
+        assert!(
+            output.contains("claude code weekly: projected to hit ~Friday (UTC, estimated)"),
+            "{output}"
+        );
+        assert!(
+            output.contains("claude code 5h: resets before you hit it (estimated)"),
+            "{output}"
+        );
+        assert!(
+            output.contains("codex weekly: ETA unavailable (no fresh verified usage reading)"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn forecast_below_floor_shows_insufficient_data_not_a_projection() {
+        let output = render_forecast(
+            &forecast_view_insufficient_fixture(),
+            RenderOptions::plain(),
+        );
+        assert!(
+            output.contains("insufficient data to project - 2 of 30 days elapsed (need 3+)"),
+            "{output}"
+        );
+        // No fabricated month-end projection below the floor.
+        assert!(!output.contains("projected ~$"), "{output}");
+    }
+
+    #[test]
+    fn forecast_no_api_usage_renders_empty_state() {
+        let output = render_forecast(
+            &forecast_view_eta_unavailable_fixture(),
+            RenderOptions::plain(),
+        );
+        assert!(
+            output.contains("no API usage recorded - nothing to forecast yet"),
+            "{output}"
+        );
+        assert!(
+            output.contains("codex 5h: ETA unavailable (window just started)"),
+            "{output}"
+        );
+        // render-1 regression guard: the VISUAL (default-TTY) surface must NOT fabricate a
+        // `~$0.00` header above the empty-state body — the no-usage header carries no figure.
+        let visual = render_forecast(
+            &forecast_view_eta_unavailable_fixture(),
+            RenderOptions::ascii(false),
+        );
+        assert!(
+            !visual.contains("$0.00"),
+            "no-usage visual header must carry no fabricated $0.00: {visual}"
+        );
+        assert!(
+            visual.contains("no API usage recorded - nothing to forecast yet"),
+            "{visual}"
+        );
+    }
+
+    #[test]
+    fn forecast_document_is_monochrome() {
+        // The Forecast tab is advisory, so amber/red (Warn/Critical, reserved for the
+        // near-limit/over-budget meter state) must never appear — bold (Strong) is the only
+        // allowed non-color cue, mirroring `models_document_is_monochrome`.
+        for view in [
+            forecast_view_projected_fixture(),
+            forecast_view_insufficient_fixture(),
+            forecast_view_eta_unavailable_fixture(),
+        ] {
+            let doc = render_forecast_document(&view, RenderOptions::braille(true));
+            for line in &doc.lines {
+                for span in &line.spans {
+                    assert!(
+                        !matches!(span.style, SemanticStyle::Warn | SemanticStyle::Critical),
+                        "forecast tab must be monochrome (amber/red are reserved): {span:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[cfg(feature = "connect")]

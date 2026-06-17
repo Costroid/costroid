@@ -1,0 +1,13 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_forecast(&forecast_view_projected_fixture(), RenderOptions::plain())"
+---
+costroid forecast
+scope: API-lane spend this month + quota burn (estimated)
+projected ~$37.50 by Jun 30 (estimated)
+spend so far ~$20.00 over 16 of 30 days (estimated)
+quota:
+claude code weekly: projected to hit ~Friday (UTC, estimated)
+claude code 5h: resets before you hit it (estimated)
+codex weekly: ETA unavailable (no fresh verified usage reading)
+figures are local estimates (your tokens x current prices), projected - not the vendor invoice.

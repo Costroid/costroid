@@ -22,9 +22,10 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_budget_document, render_frontier_document, render_history_document,
-    render_models_document, render_now_document, render_providers_document, render_trends_document,
-    RenderOptions, SemanticStyle, StyledDocument, StyledLine,
+    render_budget_document, render_forecast_document, render_frontier_document,
+    render_history_document, render_models_document, render_now_document,
+    render_providers_document, render_trends_document, RenderOptions, SemanticStyle,
+    StyledDocument, StyledLine,
 };
 
 const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -47,21 +48,24 @@ enum Screen {
     Models,
     History,
     Budget,
+    Forecast,
     Frontier,
 }
 
-/// The numbered tab cycle (Q1, §11.5): `1`-`6` jump straight to a tab, `Tab`/`BackTab`
+/// The numbered tab cycle (Q1, §11.5): `1`-`7` jump straight to a tab, `Tab`/`BackTab`
 /// cycle through them. Frontier is intentionally NOT in the cycle — it stays its own
-/// `a`/`esc` overlay. T14 filled the last digit-reachable slot (`6` Budget); later analytics
-/// tabs (T15/T16 at slots `7`/`8`) extend the `'1'..='6'` digit range in `handle_key`. T12
-/// appended Models at slot `4`, T13 History at slot `5`, T14 Budget at slot `6`.
-const TAB_SCREENS: [Screen; 6] = [
+/// `a`/`esc` overlay. T15 added Forecast at slot `7` — the first tab past the original digit
+/// range, so it extended `handle_key`'s digit match to `'1'..='7'`; T16 (Anomalies) will take
+/// slot `8` and extend it to `'1'..='8'`. T12 appended Models at slot `4`, T13 History at slot
+/// `5`, T14 Budget at slot `6`, T15 Forecast at slot `7`.
+const TAB_SCREENS: [Screen; 7] = [
     Screen::Now,
     Screen::Trends,
     Screen::Providers,
     Screen::Models,
     Screen::History,
     Screen::Budget,
+    Screen::Forecast,
 ];
 
 /// Step left (`delta = -1`) or right (`delta = 1`) through [`TAB_SCREENS`], wrapping. A
@@ -77,8 +81,9 @@ fn cycle_tab(current: Screen, delta: isize) -> Screen {
     }
 }
 
-/// Map a `1`-`6` digit to its tab, if one exists yet (`1`-`6` are all wired today — slot `4`
-/// is Models, `5` is History, `6` is Budget; T15/T16 extend the digit range to slots `7`/`8`).
+/// Map a `1`-`7` digit to its tab, if one exists yet (`1`-`7` are all wired today — slot `4`
+/// is Models, `5` is History, `6` is Budget, `7` is Forecast; T16 extends the digit range to
+/// slot `8`).
 fn tab_for_digit(ch: char) -> Option<Screen> {
     let index = ch.to_digit(10)? as usize;
     index
@@ -267,7 +272,7 @@ impl App {
                 self.set_screen(cycle_tab(self.screen, -1));
                 AppAction::Continue
             }
-            KeyCode::Char(ch @ '1'..='6') => {
+            KeyCode::Char(ch @ '1'..='7') => {
                 if let Some(screen) = tab_for_digit(ch) {
                     self.set_screen(screen);
                 }
@@ -448,6 +453,13 @@ impl App {
                         let view = costroid_core::budget_view(&snapshot, &self.budget_targets);
                         render_budget_document(&view, options)
                     }
+                    Screen::Forecast => {
+                        // Pure-local: a linear run-rate $ projection + per-window quota-burn ETAs,
+                        // all labeled estimates. No network — degrades to "unavailable" rather
+                        // than a confident wrong ETA.
+                        let view = costroid_core::forecast_view(&snapshot);
+                        render_forecast_document(&view, options)
+                    }
                     Screen::Frontier => match costroid_core::bench_view(&snapshot) {
                         Ok(view) => render_frontier_document(&view, options),
                         Err(error) => {
@@ -472,6 +484,7 @@ impl App {
             Screen::Models => "models",
             Screen::History => "history",
             Screen::Budget => "budget",
+            Screen::Forecast => "forecast",
             Screen::Frontier => "frontier",
         };
         let live = if self.live { "live" } else { "manual" };
@@ -492,7 +505,8 @@ impl App {
             | Screen::Providers
             | Screen::Models
             | Screen::History
-            | Screen::Budget => "1-6/tab switch | a frontier",
+            | Screen::Budget
+            | Screen::Forecast => "1-7/tab switch | a frontier",
         };
         format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
     }
@@ -659,9 +673,10 @@ fn document_display_rows(doc: &StyledDocument, width: u16) -> usize {
 }
 
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(74, 17, area);
+    let popup = centered_rect(74, 18, area);
     let lines = vec![
-        Line::from("1/2/3/4/5/6 now / trends / providers / models / history / budget"),
+        Line::from("1-6 now / trends / providers / models / history / budget"),
+        Line::from("7          forecast (projected spend + quota ETAs)"),
         Line::from("tab/S-tab  cycle tabs"),
         Line::from("up/dn      scroll  (pgup/pgdn page, home/end ends)"),
         Line::from("d/w/m/y    set trends period"),
@@ -1272,11 +1287,12 @@ mod tests {
     }
 
     #[test]
-    fn numbered_keys_and_tab_cycle_reach_providers_models_history_and_budget() {
+    fn numbered_keys_and_tab_cycle_reach_providers_models_history_budget_and_forecast() {
         let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
         assert_eq!(app.screen, Screen::Now);
 
-        // Numbered jumps go straight to a tab — `4` Models (T12), `5` History (T13), `6` Budget (T14).
+        // Numbered jumps go straight to a tab — `4` Models (T12), `5` History (T13), `6` Budget
+        // (T14), `7` Forecast (T15 — the first tab past the original digit range).
         assert_eq!(app.handle_key(key(KeyCode::Char('2'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Char('3'))), AppAction::Continue);
@@ -1287,13 +1303,15 @@ mod tests {
         assert_eq!(app.screen, Screen::History);
         assert_eq!(app.handle_key(key(KeyCode::Char('6'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Budget);
+        assert_eq!(app.handle_key(key(KeyCode::Char('7'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Forecast);
         assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
-        // `7` has no tab yet (T15/T16 fill slots 7/8) — inert, the new boundary.
-        assert_eq!(app.handle_key(key(KeyCode::Char('7'))), AppAction::Continue);
+        // `8` has no tab yet (T16 fills slot 8) — inert, the new boundary.
+        assert_eq!(app.handle_key(key(KeyCode::Char('8'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // Tab cycles forward, wrapping Now -> Trends -> Providers -> Models -> History -> Budget -> Now.
+        // Tab cycles forward, wrapping Now -> ... -> Budget -> Forecast -> Now.
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
@@ -1305,11 +1323,13 @@ mod tests {
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Budget);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Forecast);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // BackTab cycles in reverse (Now -> Budget).
+        // BackTab cycles in reverse (Now -> Forecast).
         assert_eq!(app.handle_key(key(KeyCode::BackTab)), AppAction::Continue);
-        assert_eq!(app.screen, Screen::Budget);
+        assert_eq!(app.screen, Screen::Forecast);
 
         // Frontier is outside the cycle (an a/esc overlay); Tab returns to the first tab.
         assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
