@@ -153,6 +153,18 @@ Gotchas (learned shipping v0.1.0):
   has libdbus). `precise-builds = true` in `dist-workspace.toml` makes dist build only `-p costroid`
   (connect-OFF), so the runners need no system libs. Do not remove it. (If a connect-ON artifact is
   ever shipped, it would instead need `[dist.dependencies]` apt = `libdbus-1-dev`, `libsecret-1-dev`.)
+- **`dist build --artifacts=local` on a single host can't cross-compile the other-OS targets (learned shipping v0.5.0).**
+  Run bare on a Linux dev box it errors `Cross-compilation from x86_64-unknown-linux-gnu to
+  aarch64-apple-darwin is not supported` — `--artifacts=local` tries every target the config lists. This
+  is **harmless** (CI builds each target on its own native runner). For a real local sanity build, pin the
+  host target: `dist build --artifacts=local --target x86_64-unknown-linux-gnu`. The macOS/Windows
+  archives are only ever produced in CI.
+- **Every crate needs a `readme` to show one on crates.io (learned shipping v0.5.0).** crates.io only
+  auto-detects a README in the crate's OWN dir; with a workspace-root README and no `readme` field, every
+  crate published with **no README**. Fixed via `readme = "README.md"` in `[workspace.package]` +
+  `readme.workspace = true` on each crate — cargo then packages the root README into every crate (verify
+  with `cargo package -p <crate> --list | grep README.md`). cargo-dist also bundles that README into the
+  per-target archives and the npm package.
 - **Bundled assets must live inside the crate.** `costroid-core` `include_str!`s its pricing JSON;
   it lives at `crates/costroid-core/pricing/pricing.v1.json` (not the workspace root) — cargo only
   packages files under the crate dir, so a standalone verify build fails otherwise. Keep any new
