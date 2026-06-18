@@ -2,24 +2,25 @@
 //! cockpit for AI-coding-tool cost and limits, a pure consumer of `costroid-core`: every
 //! figure the engine already computes, from local data, no network, no telemetry.
 //!
-//! T18 stands up the running shell (tray + window + worker-thread refresh); the Overview
-//! meters (T19) and the live panels (T20) fill it in next.
+//! T18 stood up the running shell (tray + window + worker-thread refresh); T19 added the
+//! Overview meters; T20 adds the tab strip, the opt-in alert banner, and the four live panels
+//! (Budget/Forecast/Anomalies/Providers) over the shared `costroid-config` schema.
 
+mod anomalies;
 mod app;
+mod banner;
+mod budget;
 mod fonts;
+mod forecast;
 mod format;
 mod glyph;
 mod meter;
 mod overview;
+mod providers;
 mod refresh;
 mod severity;
+mod tabs;
 mod tray;
-
-// Mirror apps/cli's off-by-default `connect` feature so a future (T20) read-only
-// Providers connection display can link `costroid-connect`. T18 wires no connect action
-// and no network — this only proves the gate compiles both ways.
-#[cfg(feature = "connect")]
-use costroid_connect as _;
 
 use anyhow::Result;
 

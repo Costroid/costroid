@@ -1,8 +1,14 @@
-//! The first user-config file (T14): a non-secret TOML at
+//! The shared Costroid user-config crate: a non-secret TOML at
 //! `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml`, hand-edited by the user and
 //! **read-only** here — Costroid never writes it (no writer, no `budget set` command). It is
 //! forward-compatible: every section/field defaults and unknown keys are ignored, so an older
 //! build reads a newer file (and vice-versa) without error.
+//!
+//! Both apps consume this one schema + loader: the `costroid` CLI/TUI (T14/T17) and the
+//! `costroid-bar` taskbar (Step 6, T20) — extracted out of `apps/cli/src/config.rs` so the bar
+//! gets the same `[budget]`/`[alerts]` parsing without depending on `apps/cli`. A pure leaf of the
+//! workspace: it depends only on `costroid-core` (for the config-neutral [`AlertThresholds`] /
+//! [`BudgetTargets`] input types) + `serde`/`toml`/`rust_decimal`; it links no network/keychain code.
 //!
 //! **Secrets never live here** — credentials are keychain-only (`costroid-connect`). Today the
 //! file carries `[budget]` targets (monthly $ caps, API-lane only; money is
@@ -43,16 +49,16 @@ use serde::Deserialize;
 /// `deny_unknown_fields`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
-pub(crate) struct Config {
-    pub(crate) budget: BudgetConfig,
-    pub(crate) alerts: AlertsConfig,
+pub struct Config {
+    budget: BudgetConfig,
+    alerts: AlertsConfig,
 }
 
 /// The `[budget]` section: optional monthly $ caps. API-lane only — a flat-fee subscription is
 /// never given a $ target (the core [`budget_view`](costroid_core::budget_view) enforces this).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
-pub(crate) struct BudgetConfig {
+struct BudgetConfig {
     /// An optional overall monthly cap across all API-lane spend.
     total_monthly_usd: Option<Money>,
     /// Per-tool monthly caps, keyed by the `x_Tool` id (`claude-code`/`codex`/`cursor`).
@@ -67,7 +73,7 @@ pub(crate) struct BudgetConfig {
 /// Forward-compat: `#[serde(default)]`, so an absent section ⇒ off and a newer file is tolerated.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
-pub(crate) struct AlertsConfig {
+struct AlertsConfig {
     /// Master switch. Default false — alerts are opt-in and quiet.
     enabled: bool,
     /// Optional WARN quota fraction override (default [`costroid_core::ALERT_WARN_FRACTION`]).
@@ -85,7 +91,7 @@ pub(crate) struct AlertsConfig {
 
 impl Config {
     /// Project the parsed config into the core's config-neutral budget input.
-    pub(crate) fn budget_targets(&self) -> BudgetTargets {
+    pub fn budget_targets(&self) -> BudgetTargets {
         BudgetTargets {
             total_monthly_usd: self.budget.total_monthly_usd.map(|money| money.0),
             per_tool: self
@@ -99,19 +105,19 @@ impl Config {
 
     /// Whether the alerts feature is enabled (default false — opt-in). The master switch — it also
     /// gates the two advisory sub-flags below.
-    pub(crate) fn alerts_enabled(&self) -> bool {
+    pub fn alerts_enabled(&self) -> bool {
         self.alerts.enabled
     }
 
     /// Whether the advisory forecast-projection source is on (T17b). Requires BOTH the master
     /// `enabled` switch and the `forecast` sub-flag — the sub-flag alone does nothing.
-    pub(crate) fn alerts_forecast_enabled(&self) -> bool {
+    pub fn alerts_forecast_enabled(&self) -> bool {
         self.alerts.enabled && self.alerts.forecast
     }
 
     /// Whether the advisory spend-spike source is on (T17b). Requires BOTH the master `enabled`
     /// switch and the `anomalies` sub-flag.
-    pub(crate) fn alerts_anomalies_enabled(&self) -> bool {
+    pub fn alerts_anomalies_enabled(&self) -> bool {
         self.alerts.enabled && self.alerts.anomalies
     }
 
@@ -119,7 +125,7 @@ impl Config {
     /// override is applied only when finite and strictly positive (a `NaN`/`inf`/zero/negative
     /// value falls back to the canonical default), so the pure detector never sees a threshold it
     /// can't reason about.
-    pub(crate) fn alert_thresholds(&self) -> AlertThresholds {
+    pub fn alert_thresholds(&self) -> AlertThresholds {
         let mut thresholds = AlertThresholds::default();
         if let Some(warn) = sane_fraction(self.alerts.quota_warn) {
             thresholds.quota_warn_fraction = warn;
@@ -195,7 +201,7 @@ impl<'de> Deserialize<'de> for Money {
 /// `None` when neither `$XDG_CONFIG_HOME` nor `$HOME` yields a base directory (treated as "no
 /// config" — the zero-config default, never an error). Mirrors `costroid-connect`'s
 /// `default_registry_path`, but rooted at the *config* dir (this file is non-secret).
-pub(crate) fn config_path() -> Option<PathBuf> {
+pub fn config_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
@@ -204,9 +210,9 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 }
 
 /// A config-load failure. A *missing* file is NOT one of these — it yields the zero-config
-/// default. These are surfaced as a TUI status line (never a crash).
+/// default. These are surfaced as a TUI/taskbar status line (never a crash).
 #[derive(Debug)]
-pub(crate) enum ConfigError {
+pub enum ConfigError {
     /// The file exists but could not be read.
     Read {
         path: PathBuf,
@@ -243,7 +249,7 @@ impl std::error::Error for ConfigError {}
 
 /// Load the user config from the resolved default path. A missing file (or an unresolved path)
 /// yields the zero-config default (no budgets) — only a present-but-malformed file is an error.
-pub(crate) fn load() -> Result<Config, ConfigError> {
+pub fn load() -> Result<Config, ConfigError> {
     match config_path() {
         Some(path) => load_from(&path),
         None => Ok(Config::default()),
@@ -252,7 +258,7 @@ pub(crate) fn load() -> Result<Config, ConfigError> {
 
 /// Load the config from an explicit path — the testable seam (no env access). A missing file =>
 /// default; an unreadable file or invalid TOML => a typed [`ConfigError`].
-pub(crate) fn load_from(path: &Path) -> Result<Config, ConfigError> {
+pub fn load_from(path: &Path) -> Result<Config, ConfigError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),

@@ -35,6 +35,10 @@ connect-test-support = ["connect", "costroid-connect/test-support"]
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+# The shared user-config crate (T20): the `[budget]`/`[alerts]` TOML schema + loader, extracted
+# from this crate's old `src/config.rs` so the taskbar (`apps/bar`) shares it. Local-only (toml +
+# serde + rust_decimal), no network/keychain.
+costroid-config.workspace = true
 costroid-connect = { workspace = true, optional = true }
 costroid-core.workspace = true
 costroid-providers.workspace = true
@@ -44,11 +48,6 @@ rpassword = { version = "=7.5.4", optional = true }
 rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Parse-only TOML for the first user config file (T14, `[budget]` targets). Permissive
-# (MIT/Apache-2.0), no network, deny-allowlist-clean; read-only here — Costroid never writes
-# config, so default features are off and only `parse` + `serde` (deserialize) are enabled —
-# the `display`/`toml_writer` serialize half is left out.
-toml = { version = "=1.1.2", default-features = false, features = ["parse", "serde"] }
 
 [dev-dependencies]
 costroid-focus.workspace = true

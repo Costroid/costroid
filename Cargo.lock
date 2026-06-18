@@ -888,6 +888,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "costroid-config",
  "costroid-connect",
  "costroid-core",
  "costroid-focus",
@@ -899,7 +900,6 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "toml 1.1.2+spec-1.1.0",
 ]
 
 [[package]]
@@ -908,12 +908,23 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "costroid-config",
  "costroid-connect",
  "costroid-core",
  "eframe",
  "egui",
  "gtk",
  "tray-icon",
+]
+
+[[package]]
+name = "costroid-config"
+version = "0.5.0"
+dependencies = [
+ "costroid-core",
+ "rust_decimal",
+ "serde",
+ "toml 1.1.2+spec-1.1.0",
 ]
 
 [[package]]

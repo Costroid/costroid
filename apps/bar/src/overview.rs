@@ -7,9 +7,10 @@
 //! honest across all five availability arms (`meter.rs`). The active-alerts banner and the
 //! four live panels are T20; this card is the meters + the spend header only.
 
-use costroid_core::NowSummary;
+use costroid_core::{CostLane, CostLaneSummary, NowSummary, ProviderStatusKind};
 
 use crate::app::{color_of, ASH, BONE, SIGNAL};
+use crate::format::{provider_label, provider_status_word};
 use crate::meter::{self, MeterModel};
 
 /// The Overview's GPU-free model: the period-spend display string + one meter per window.
@@ -87,6 +88,127 @@ fn draw_spend_header(ui: &mut egui::Ui, spend_display: &str) {
                 .color(color_of(ASH)),
         );
     });
+}
+
+/// The Overview tab's lower region: the now per-model API-cost breakdown + the non-`Available`
+/// provider notes (STEP6-TASKBAR-DESIGN §4/§5; the persistent header above is the spend, meters,
+/// and banner). Pure data — money stays `Decimal` in core (the bar receives the finished
+/// `~`-hedged string), so the bar names no money type.
+#[derive(Debug, Clone)]
+pub struct NowBreakdown {
+    /// One API-lane row per model, highest spend first: the model id + the `~`-hedged $ estimate.
+    pub costs: Vec<NowCostRow>,
+    /// One note per non-`Available` provider (Cursor's detect-and-defer, a partial/missing/error
+    /// provider) — inline + non-fatal, mirroring the CLI now-screen's `push_provider_notes`.
+    pub notes: Vec<String>,
+}
+
+/// One model's API-lane spend for the Overview breakdown.
+#[derive(Debug, Clone)]
+pub struct NowCostRow {
+    pub model: String,
+    /// The `~`-hedged + estimate-labeled spend (e.g. `"~$24.10"`).
+    pub spend_display: String,
+}
+
+impl NowBreakdown {
+    pub fn from_summary(summary: &NowSummary) -> NowBreakdown {
+        // API-lane rows only (a subscription/unknown lane is never a summable $ — §170); highest
+        // spend first, ties broken by model name, exactly as the CLI's `sorted_lane_rows`. The
+        // `Decimal` `billed_cost` is compared + formatted through core, never named in the bar.
+        let mut rows: Vec<&CostLaneSummary> = summary
+            .current_costs
+            .iter()
+            .filter(|row| row.lane == CostLane::Api)
+            .collect();
+        rows.sort_by(|left, right| {
+            right
+                .totals
+                .billed_cost
+                .cmp(&left.totals.billed_cost)
+                .then_with(|| left.group.value.cmp(&right.group.value))
+        });
+        let costs = rows
+            .into_iter()
+            .map(|row| NowCostRow {
+                model: row.group.value.clone(),
+                spend_display: costroid_core::format_money_usd(&row.totals.billed_cost, true),
+            })
+            .collect();
+
+        // Non-Available providers surface as inline notes (mirrors `render.rs::push_provider_notes`).
+        let notes = summary
+            .providers
+            .iter()
+            .filter(|provider| provider.status != ProviderStatusKind::Available)
+            .map(|provider| {
+                let message = provider
+                    .message
+                    .as_deref()
+                    .unwrap_or("local data incomplete");
+                format!(
+                    "provider {} {}: {message}",
+                    provider_label(provider.provider),
+                    provider_status_word(provider.status),
+                )
+            })
+            .collect();
+
+        NowBreakdown { costs, notes }
+    }
+}
+
+/// Draw the Overview tab's lower region: the per-model API-cost rows (or an honest empty line)
+/// followed by any provider notes. Cost rows never carry a severity cue (amber is for limits,
+/// not spend — DESIGN-SYSTEM "API cost bar"); the dollar is always `~`-hedged + estimate-labeled.
+pub fn draw_breakdown(ui: &mut egui::Ui, breakdown: &NowBreakdown) {
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("api spend by model (this week)")
+                .monospace()
+                .color(color_of(ASH)),
+        );
+    });
+    if breakdown.costs.is_empty() {
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("no api-billed usage this week")
+                    .monospace()
+                    .color(color_of(ASH)),
+            );
+        });
+    } else {
+        for row in &breakdown.costs {
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(format!("{:<22}", row.model))
+                        .monospace()
+                        .color(color_of(BONE)),
+                );
+                ui.label(
+                    egui::RichText::new(&row.spend_display)
+                        .monospace()
+                        .strong()
+                        .color(color_of(BONE)),
+                );
+            });
+        }
+    }
+    for note in &breakdown.notes {
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(note)
+                    .monospace()
+                    .size(11.0)
+                    .color(color_of(ASH)),
+            );
+        });
+    }
 }
 
 /// A thin Signal-lime accent rule under the header — the Overview's single, sparing use of

@@ -2,6 +2,7 @@
 members = [
     "apps/bar",
     "apps/cli",
+    "crates/costroid-config",
     "crates/costroid-connect",
     "crates/costroid-core",
     "crates/costroid-focus",
@@ -40,6 +41,15 @@ rustls-native-certs = "=0.8.4"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150", features = ["raw_value"] }
 thiserror = "=2.0.18"
+# Parse-only TOML for the shared user config (`costroid-config`, T14/T20 `[budget]`/`[alerts]`).
+# Permissive (MIT/Apache-2.0), no network, deny-allowlist-clean; read-only — Costroid never writes
+# config, so default features are off and only `parse` + `serde` (deserialize) are enabled (the
+# `display`/`toml_writer` serialize half is left out). Moved here from `apps/cli` in T20 so both
+# apps' config crate shares one pin.
+toml = { version = "=1.1.2", default-features = false, features = [
+    "parse",
+    "serde",
+] }
 ureq = { version = "=3.3.0", default-features = false, features = [
     "rustls-no-provider",
     "_ring",
@@ -48,6 +58,7 @@ ureq = { version = "=3.3.0", default-features = false, features = [
 # Internal deps carry both `path` (used for local workspace builds) and `version`
 # (required by crates.io: a path-only dependency is rejected on publish). Cargo
 # uses the path locally and records only the version in the published manifest.
+costroid-config = { path = "crates/costroid-config", version = "0.5.0" }
 costroid-connect = { path = "crates/costroid-connect", version = "0.5.0" }
 costroid-core = { path = "crates/costroid-core", version = "0.5.0" }
 costroid-focus = { path = "crates/costroid-focus", version = "0.5.0" }

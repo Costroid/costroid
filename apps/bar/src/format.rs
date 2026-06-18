@@ -7,7 +7,7 @@
 //! is a possible T19 cleanup.)
 
 use chrono::{DateTime, Utc};
-use costroid_core::{LimitAvailability, LimitKind, ProviderId};
+use costroid_core::{LimitAvailability, LimitKind, ProviderId, ProviderStatus, ProviderStatusKind};
 
 use crate::severity::Constraint;
 
@@ -40,6 +40,27 @@ pub fn kind_label(kind: LimitKind) -> &'static str {
 /// `"92%"`, matching `render.rs::percent`.
 pub fn percent(fraction: f64) -> String {
     format!("{:.0}%", (fraction * 100.0).round())
+}
+
+/// The detection-health word for a provider status kind, matching `render.rs::provider_status`.
+pub fn provider_status_word(kind: ProviderStatusKind) -> &'static str {
+    match kind {
+        ProviderStatusKind::Available => "available",
+        ProviderStatusKind::Detected => "detected",
+        ProviderStatusKind::Partial => "partial",
+        ProviderStatusKind::Missing => "missing",
+        ProviderStatusKind::Error => "error",
+    }
+}
+
+/// The detection-health word joining a provider's [`ProviderStatus`] (if collected) to its
+/// capability — a provider with no status row reads "not detected" rather than a fabricated
+/// state. Mirrors `render.rs::provider_state_word`.
+pub fn provider_state_word(status: Option<&ProviderStatus>) -> &'static str {
+    match status {
+        Some(status) => provider_status_word(status.status),
+        None => "not detected",
+    }
 }
 
 /// Compact, two-largest-non-zero-units reset countdown, matching

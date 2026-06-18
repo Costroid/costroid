@@ -22,8 +22,8 @@ path = "src/main.rs"
 [features]
 # Mirror apps/cli: the connections subsystem is opt-in and OFF by default, so the
 # default taskbar build links no network/keychain crate (forbidden-crates parity).
-# T18 only proves the gate compiles both ways; the read-only Providers connection
-# display (display-only, no actions, no network) lands in T20.
+# T20 wires the read-only Providers connection display (display-only, no actions, no
+# network — local keychain/registry reads only) behind this gate.
 connect = ["dep:costroid-connect"]
 
 [dependencies]
@@ -32,6 +32,10 @@ anyhow.workspace = true
 # `DateTime<Utc>` the engine stamps onto every reading; same pin as the rest of the
 # workspace.
 chrono.workspace = true
+# The shared user-config crate (T20): the read-only `[budget]`/`[alerts]` TOML schema +
+# loader, consumed by the banner + the Budget/Forecast/Anomalies panels. Local-only
+# (toml + serde + rust_decimal), no network/keychain — a DEFAULT dep.
+costroid-config.workspace = true
 costroid-connect = { workspace = true, optional = true }
 costroid-core.workspace = true
 eframe.workspace = true

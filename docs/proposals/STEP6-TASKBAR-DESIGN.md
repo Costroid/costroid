@@ -264,11 +264,18 @@ The plan rates Step 6 **XL / "poor" for auto-mode** (§308) and a **human-gated 
   eframe app, the `tray-icon` (state-encoded, non-color-safe) + tooltip, the toggle-window, the
   worker-thread `collect_local_snapshot` refresh loop, the connect feature gate. *The ⛔ dependency-
   license review lands here.*
-- **T19 — Overview + meters + alert banner:** the header (period spend + the quota meters across all five
-  availability arms + "as of" stamp) + the `active_alerts` banner; the `SemanticStyle`→egui palette +
-  the mandatory non-color cue; AccessKit labels for these.
-- **T20 — the four live panels:** Budget, Forecast, Anomalies, Providers — each mapping its core view to
-  egui, honest degraded states throughout.
+- **T19 — Overview + meters** ✅ **DONE 2026-06-18** (committed, gate green): the header (period spend + the
+  quota meters across all five availability arms + "as of" stamp), PAINTED dots; the Carbon palette + the
+  mandatory non-color (dot-density) cue. **The alert banner SPLIT OUT to T20** (it needs config — see §13 /
+  PRODUCT-PLAN §12.27 re-scope). AccessKit labels deferred to T21.
+- **T20 — shared `costroid-config` crate + the alert banner + the four live panels** ✅ **DONE 2026-06-18**
+  (gate green; see PRODUCT-PLAN §11.5 ✅ T20 + §13 below) (carded PRODUCT-PLAN
+  §12.28, XL, four phases): **(A)** extract `crates/costroid-config` (move `apps/cli/src/config.rs` → a shared
+  library both apps consume, zero CLI behavior change — the banner/Budget/Providers all need config, and the bar
+  must not depend on `apps/cli`); **(B)** the tab strip over the persistent header; **(C)** the opt-in
+  `active_alerts` banner (each line tagged with its 0–8 dot-grid step, not `!`/`!!`); **(D)** Budget, Forecast,
+  Anomalies, Providers — each mapping ONE core view fn to egui, honest degraded states throughout (the Providers
+  connection lane display-only + zero-network).
 - **T21 — AccessKit pass + cross-platform + offline/deny/release wiring (⛔ release):** the a11y audit,
   the supported-desktop matrix, the offline-acceptance/forbidden-crates extension to the new binary, the
   `cargo deny` confirmation, and the cargo-dist second-binary release wiring + the v0.6.0 cut.
@@ -303,6 +310,24 @@ relicensed from OFL); Neue Haas Grotesk not bundled. Warm SYNC ramp = not used i
   engine and `apps/bar` names no money type (no `rust_decimal` dep; `Decimal`s flow through by inference). The
   `Estimated` arm carries the estimate-labeled `~$` suffix exactly as the CLI does. **Signal-lime** is used
   sparingly in T19 (a thin header accent rule); the active-tab/selected-row lime arrives with T20's tab strip.
+- **Shared config + the `rust_decimal`-free banner/panels — ✅ T20:** the `[budget]`/`[alerts]` config was
+  extracted into a new shared **`crates/costroid-config`** library (a pure refactor, CLI byte-identical) so the
+  banner + Budget/Providers panels read it without the bar depending on `apps/cli`. The bar stays money-type-free,
+  so beyond T19's two helpers `costroid-core` gained four more **pure display** helpers the panels/banner route
+  Decimal→string through — `forecast_daily_fractions` (sparkline scaling), `format_over_by_usd` (the `<$0.01`
+  over-by guard), `decimal_share_percent` (model-mix share %), `anomaly_multiple_phrase` (the `~Nx`/None multiple)
+  — plus a `DataSource`/`AuthMethod`/`Capability` re-export so the core-only bar can read `ProviderCapabilityView`.
+  The sentence/line ASSEMBLY stays in the bar (mirroring the CLI's `alert_sentence`/`anomaly_line`); bar tests use
+  `Default::default()` zero-`Decimal` fixtures (so the bar names no money type even in tests), with the real value
+  formatting value-tested in core. **Severity in the bar is the painted 0–8 dot grid, never `!`/`!!`:** the banner
+  tags each line with a 3×3 badge at `is_critical → 8` (high) else `4` (mid); the Budget meter reuses `meter::paint`
+  with the fill LENGTH = utilization and a budget-STATE tint (`budget_step`, keyed on the STRICT `over_by_usd`). The
+  Overview tab's lower region renders the per-model breakdown as text rows (no cyan cost bar — kept to one normalize
+  helper). **Cadence:** config + the display-only connection lane re-read on a manual refresh only, never the auto-timer.
+  **Coordinator-review fix (2026-06-18):** the header refresh control is a **painted** circular arrow
+  (`app.rs::draw_refresh_button`), NOT a `⟳` glyph — the bundled JetBrains Mono has no U+27F3/U+21BB/U+21BA and no
+  fallback family, so a typeset arrow rendered tofu; this is the same "paint, don't typeset" rule the meters/badges
+  follow. (A config-error status line also moved off Signal-lime → Ash — lime is active/selected/"live" only.)
 - **egui renderer — ✅ T18: `glow`** (not `wgpu`) — it trims the transitive tree and licenses cleaner (no
   `wgpu-hal`/`naga` graphics stack), confirmed by `cargo tree`/`cargo deny`.
 - **egui persistence for window size/pos — ✅ T18:** eframe `persist_window: true` + the `persistence`

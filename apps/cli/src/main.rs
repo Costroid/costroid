@@ -1,4 +1,3 @@
-mod config;
 #[cfg(feature = "connect")]
 mod connect;
 #[cfg(feature = "connect")]
@@ -272,7 +271,7 @@ fn run_now(render_options: render::RenderOptions) -> Result<()> {
     // The opt-in alert banner (T17): computed only when enabled in config. A missing/malformed
     // config degrades to no alerts (no banner) — the dedicated `costroid alerts` command is the
     // place a config error surfaces, never the `now` view (it must keep rendering).
-    let alerts = match config::load() {
+    let alerts = match costroid_config::load() {
         Ok(config) if config.alerts_enabled() => compute_alerts(&config, &snapshot, &summary),
         _ => Vec::new(),
     };
@@ -289,7 +288,7 @@ fn run_now(render_options: render::RenderOptions) -> Result<()> {
 /// `alerts_enabled()` first; this stays self-contained (a disabled sub-flag passes `None`, so the
 /// detector's output is byte-identical to T17). No network, no telemetry — pure-local.
 fn compute_alerts(
-    config: &config::Config,
+    config: &costroid_config::Config,
     snapshot: &costroid_core::EngineSnapshot,
     summary: &costroid_core::NowSummary,
 ) -> Vec<costroid_core::Alert> {
@@ -312,7 +311,7 @@ fn compute_alerts(
 /// clear (or off), `1` a crossing, `2` a config / collect error (a distinct cron signal, never
 /// conflated with a crossing). Pure-local — no network, no telemetry.
 fn run_alerts(args: &AlertsArgs, render_options: render::RenderOptions) -> Result<i32> {
-    let config = match config::load() {
+    let config = match costroid_config::load() {
         Ok(config) => config,
         Err(error) => {
             eprintln!("config: {error}");

@@ -1,15 +1,34 @@
-//! The eframe app shell: the toggle window, the worker-thread refresh wiring, and the
-//! tray glue. T18 draws a MINIMAL placeholder (the `C⠉` mark + wordmark + freshness +
-//! a refresh button) that proves the refresh loop works; the Overview meters (T19) and
-//! the live panels (T20) fill the window next.
+//! The eframe app shell: the persistent spend+meters+banner header, the tab strip over the four
+//! live panels, the worker-thread refresh wiring, the config state, and the tray glue.
+//!
+//! The window is the live cockpit (STEP6-TASKBAR-DESIGN §4): a persistent header (period spend +
+//! the painted quota meters + the opt-in alert banner) above a `[Overview] [Budget] [Forecast]
+//! [Anomalies] [Providers]` tab strip that switches the lower region. Every figure the core already
+//! computes — the bar is a pure consumer, no new network, no telemetry. One `Cockpit` model is
+//! rebuilt per refresh (from the snapshot + the read-only `[budget]`/`[alerts]` config) and the draw
+//! is a pure function of it, so the whole window is headless-testable.
 
 use std::time::Instant;
 
+use costroid_config::Config;
+use costroid_core::{
+    active_alerts, anomalies_view, budget_view, forecast_view, AdvisoryAlerts, Alert,
+    AnomaliesView, BudgetView, ForecastView, ProviderCapabilityView, ProviderStatus,
+};
+
+use crate::anomalies;
+use crate::banner;
+use crate::budget;
+use crate::forecast;
 use crate::format;
 use crate::glyph;
-use crate::overview::{self, OverviewModel};
-use crate::refresh::{due_for_refresh, Phase, RefreshState, RefreshWorker, REFRESH_INTERVAL};
+use crate::overview::{self, NowBreakdown, OverviewModel};
+use crate::providers;
+use crate::refresh::{
+    due_for_refresh, Loaded, Phase, RefreshState, RefreshWorker, REFRESH_INTERVAL,
+};
 use crate::severity::{most_constrained_available, Constraint};
+use crate::tabs::{self, Tab};
 use crate::tray::{self, TrayAction, TrayController};
 
 /// Launch the taskbar. Blocks on the eframe event loop until the user quits.
@@ -17,8 +36,8 @@ pub fn run() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Costroid")
-            .with_inner_size([360.0, 250.0])
-            .with_min_inner_size([300.0, 190.0]),
+            .with_inner_size([380.0, 420.0])
+            .with_min_inner_size([320.0, 240.0]),
         // Remember window size/position across sessions (eframe persistence).
         persist_window: true,
         ..Default::default()
@@ -31,8 +50,8 @@ pub fn run() -> anyhow::Result<()> {
     .map_err(|err| anyhow::anyhow!("failed to start the taskbar: {err}"))
 }
 
-/// The brand's neutral colors as egui values. Shared with the Overview (`meter.rs` /
-/// `overview.rs`) so the whole window renders in one palette.
+/// The brand's neutral colors as egui values. Shared with the Overview/panels so the whole window
+/// renders in one palette.
 pub(crate) fn color_of(rgba: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
 }
@@ -43,10 +62,12 @@ const SLATE: [u8; 4] = [0x16, 0x18, 0x1c, 0xff];
 pub(crate) const BONE: [u8; 4] = [0xe9, 0xe7, 0xdf, 0xff];
 /// Muted/secondary text (brand "Ash").
 pub(crate) const ASH: [u8; 4] = [0x88, 0x87, 0x80, 0xff];
-/// The "live"/active accent (brand "Signal" lime) — used sparingly (STEP6-TASKBAR-DESIGN
-/// §0/§6: only the active/selected/"live" highlight). The active-tab/selected-row uses
-/// land in T20; the Overview uses it only as the live header's thin accent rule.
+/// The "live"/active accent (brand "Signal" lime) — used sparingly (STEP6-TASKBAR-DESIGN §0/§6:
+/// only the active/selected/"live" highlight — the active tab + the Overview's header rule).
 pub(crate) const SIGNAL: [u8; 4] = [0xc8, 0xff, 0x3d, 0xff];
+/// The cold cyan-blue data ramp's mid tone (brand "COSTROID·CLI" `#378ADD` — "logs, data, raw
+/// compute"). Used for cost/spend data viz (the Forecast sparkline); never amber (amber is limits).
+pub(crate) const DATA_CYAN: [u8; 4] = [0x37, 0x8a, 0xdd, 0xff];
 
 fn carbon_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
@@ -56,16 +77,83 @@ fn carbon_visuals() -> egui::Visuals {
     visuals
 }
 
-/// The plain data the shell renders — decoupled from the app/tray/threads so the draw
-/// path is unit-testable with a headless egui pass.
-struct ShellView {
+/// The render-ready cockpit model — every panel's pure data, rebuilt once per refresh from one
+/// snapshot + the read-only config. The draw is a pure function of this, so the window is
+/// headless-testable. No `Decimal` is named here (money stays in core's view types / display
+/// strings).
+pub(crate) struct Cockpit {
+    /// The persistent header: period spend + the painted quota meters.
+    overview: OverviewModel,
+    /// The Overview tab's lower region: the now per-model cost breakdown + provider notes.
+    breakdown: NowBreakdown,
+    /// The opt-in alert banner's active crossings (empty when alerts are off OR clear).
+    alerts: Vec<Alert>,
+    budget: BudgetView,
+    forecast: ForecastView,
+    anomalies: AnomaliesView,
+    capabilities: Vec<ProviderCapabilityView>,
+    statuses: Vec<ProviderStatus>,
+    /// The display-only connection lane (read-only keychain/registry, no network), filled by the
+    /// app after build under `--features connect`. Empty in the default build.
+    #[cfg(feature = "connect")]
+    connections: Vec<providers::ConnectionEntry>,
+}
+
+impl Cockpit {
+    /// Build the cockpit from one snapshot + the user config. The advisory forecast/anomaly views
+    /// are always computed (the panels show them regardless of the alert flags); they feed the
+    /// banner ONLY when their opt-in sub-flag is on, exactly mirroring the CLI's `compute_alerts`.
+    fn build(loaded: &Loaded, config: &Config) -> Cockpit {
+        let summary = &loaded.summary;
+        let snapshot = &loaded.snapshot;
+        let budget = budget_view(snapshot, &config.budget_targets());
+        let forecast = forecast_view(snapshot);
+        let anomalies = anomalies_view(snapshot);
+        let alerts = if config.alerts_enabled() {
+            let advisory = AdvisoryAlerts {
+                forecast: config.alerts_forecast_enabled().then_some(&forecast),
+                anomalies: config.alerts_anomalies_enabled().then_some(&anomalies),
+            };
+            active_alerts(summary, &budget, &config.alert_thresholds(), advisory)
+        } else {
+            Vec::new()
+        };
+        Cockpit {
+            overview: OverviewModel::from_summary(summary),
+            breakdown: NowBreakdown::from_summary(summary),
+            alerts,
+            budget,
+            forecast,
+            anomalies,
+            capabilities: snapshot.capabilities.clone(),
+            statuses: snapshot.providers.clone(),
+            #[cfg(feature = "connect")]
+            connections: Vec::new(),
+        }
+    }
+}
+
+/// The plain data the shell renders — decoupled from the app/tray/threads so the draw is
+/// unit-testable with a headless egui pass.
+struct ShellView<'a> {
     /// The most-constrained severity step (`0..=8`) the mark fills to.
     step: u8,
     /// The wordmark sub-line: freshness, "refreshing…", or "refresh failed — …".
     status: String,
-    /// The Overview body (spend header + quota meters), or `None` before the first
-    /// snapshot has loaded (the status line carries the loading state).
-    overview: Option<OverviewModel>,
+    /// A config-load error (a malformed `config.toml`), shown as an in-window status line — never
+    /// a crash (STEP6-TASKBAR-DESIGN §8).
+    config_status: Option<String>,
+    /// The selected tab.
+    tab: Tab,
+    /// The cockpit, or `None` before the first snapshot has loaded.
+    cockpit: Option<&'a Cockpit>,
+}
+
+/// What the user did this frame in the window chrome (the refresh button, a tab click).
+#[derive(Default)]
+struct ShellAction {
+    refresh_clicked: bool,
+    tab_clicked: Option<Tab>,
 }
 
 struct BarApp {
@@ -75,6 +163,16 @@ struct BarApp {
     actions: std::sync::mpsc::Receiver<TrayAction>,
     visible: bool,
     quitting: bool,
+    /// The read-only `[budget]`/`[alerts]` config (zero-config default when absent), reloaded on a
+    /// manual refresh; a malformed file degrades to the default + `config_status`.
+    config: Config,
+    config_status: Option<String>,
+    tab: Tab,
+    cockpit: Option<Cockpit>,
+    /// The display-only connection lane, gathered read-only on startup + manual refresh (no
+    /// network). Default build: an empty, unused field.
+    #[cfg(feature = "connect")]
+    connections: Vec<providers::ConnectionEntry>,
 }
 
 impl BarApp {
@@ -94,6 +192,8 @@ impl BarApp {
         let tray = tray::spawn(&idle, &format::tooltip(None));
         let actions = tray::spawn_event_bridge(ctx);
 
+        let (config, config_status) = load_config();
+
         Self {
             worker,
             state,
@@ -101,6 +201,12 @@ impl BarApp {
             actions,
             visible: true,
             quitting: false,
+            config,
+            config_status,
+            tab: Tab::Overview,
+            cockpit: None,
+            #[cfg(feature = "connect")]
+            connections: providers::gather_connections(),
         }
     }
 
@@ -111,15 +217,13 @@ impl BarApp {
             .and_then(|loaded| most_constrained_available(&loaded.summary))
     }
 
-    fn shell_view(&self) -> ShellView {
-        let constraint = self.constraint();
+    fn shell_view(&self) -> ShellView<'_> {
         ShellView {
-            step: constraint.as_ref().map_or(0, Constraint::step),
+            step: self.constraint().as_ref().map_or(0, Constraint::step),
             status: self.status_line(),
-            overview: self
-                .state
-                .loaded()
-                .map(|loaded| OverviewModel::from_summary(&loaded.summary)),
+            config_status: self.config_status.clone(),
+            tab: self.tab,
+            cockpit: self.cockpit.as_ref(),
         }
     }
 
@@ -136,8 +240,22 @@ impl BarApp {
         )
     }
 
-    /// Push the current glance (icon + tooltip) to the tray. Called once per refresh, so
-    /// re-rasterizing the small 64×64 glyph each time is negligible.
+    /// Rebuild the cockpit from the latest snapshot + the current config + the gathered connections.
+    fn rebuild_cockpit(&mut self) {
+        if let Some(loaded) = self.state.loaded() {
+            // `mut` is only used under `--features connect` (to fill the connection lane); the
+            // default build never mutates it.
+            #[cfg_attr(not(feature = "connect"), allow(unused_mut))]
+            let mut cockpit = Cockpit::build(loaded, &self.config);
+            #[cfg(feature = "connect")]
+            {
+                cockpit.connections = self.connections.clone();
+            }
+            self.cockpit = Some(cockpit);
+        }
+    }
+
+    /// Push the current glance (icon + tooltip) to the tray. Called once per refresh.
     fn sync_tray(&self) {
         let constraint = self.constraint();
         let step = constraint.as_ref().map_or(0, Constraint::step);
@@ -147,9 +265,25 @@ impl BarApp {
         );
     }
 
-    fn request_refresh(&mut self) {
+    /// An automatic refresh (the ~30 s timer): re-collect the snapshot only — config + connections
+    /// are NOT re-read off the timer (battery-friendly; STEP6-TASKBAR-DESIGN §8).
+    fn request_auto_refresh(&mut self) {
         self.worker.request();
         self.state.mark_requested();
+    }
+
+    /// A user-initiated refresh (the button / `r` / tray "Refresh now" / window-show): re-read the
+    /// config and re-gather the read-only connection lane, then re-collect the snapshot. A malformed
+    /// config degrades to `config_status`, never a crash.
+    fn request_manual_refresh(&mut self) {
+        let (config, config_status) = load_config();
+        self.config = config;
+        self.config_status = config_status;
+        #[cfg(feature = "connect")]
+        {
+            self.connections = providers::gather_connections();
+        }
+        self.request_auto_refresh();
     }
 
     fn set_visible(&mut self, ctx: &egui::Context, visible: bool) {
@@ -157,8 +291,8 @@ impl BarApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
         if visible {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            // Refresh on show so the glance is fresh.
-            self.request_refresh();
+            // Opening the window is user-initiated: refresh config + data so the glance is fresh.
+            self.request_manual_refresh();
         }
     }
 
@@ -166,8 +300,17 @@ impl BarApp {
         match action {
             TrayAction::Toggle => self.set_visible(ctx, !self.visible),
             TrayAction::Show => self.set_visible(ctx, true),
-            TrayAction::Refresh => self.request_refresh(),
+            TrayAction::Refresh => self.request_manual_refresh(),
             TrayAction::Quit => self.quit(ctx),
+        }
+    }
+
+    /// `q` while the window is shown: hide to the tray when one exists (quit-to-tray), else exit.
+    fn quit_or_hide(&mut self, ctx: &egui::Context) {
+        if self.tray.is_active() {
+            self.set_visible(ctx, false);
+        } else {
+            self.quit(ctx);
         }
     }
 
@@ -176,20 +319,70 @@ impl BarApp {
         self.tray.shutdown();
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
+
+    /// Read tab-navigation / refresh / quit keys (digit 1–5, arrows, Tab, `r`, `q`), consuming each
+    /// so egui's own focus handling never double-acts on them. Mirrors the TUI keybindings.
+    fn handle_keys(&mut self, ctx: &egui::Context) {
+        let mut nav: Option<Tab> = None;
+        let mut refresh = false;
+        let mut hide = false;
+        ctx.input_mut(|input| {
+            use egui::{Key, Modifiers};
+            let digits = [
+                (Key::Num1, 1usize),
+                (Key::Num2, 2),
+                (Key::Num3, 3),
+                (Key::Num4, 4),
+                (Key::Num5, 5),
+            ];
+            for (key, digit) in digits {
+                if input.consume_key(Modifiers::NONE, key) {
+                    if let Some(tab) = Tab::from_digit(digit) {
+                        nav = Some(tab);
+                    }
+                }
+            }
+            if input.consume_key(Modifiers::NONE, Key::ArrowRight)
+                || input.consume_key(Modifiers::NONE, Key::Tab)
+            {
+                nav = Some(self.tab.next());
+            }
+            if input.consume_key(Modifiers::NONE, Key::ArrowLeft)
+                || input.consume_key(Modifiers::SHIFT, Key::Tab)
+            {
+                nav = Some(self.tab.prev());
+            }
+            if input.consume_key(Modifiers::NONE, Key::R) {
+                refresh = true;
+            }
+            if input.consume_key(Modifiers::NONE, Key::Q) {
+                hide = true;
+            }
+        });
+        if let Some(tab) = nav {
+            self.tab = tab;
+        }
+        if refresh {
+            self.request_manual_refresh();
+        }
+        if hide {
+            self.quit_or_hide(ctx);
+        }
+    }
 }
 
 impl eframe::App for BarApp {
-    // Non-drawing state work. eframe calls `logic` before each `ui` AND while the window
-    // is hidden whenever a repaint is requested — so the auto-timer and tray actions keep
-    // running off-screen (no painting happens here).
+    // Non-drawing state work. Runs before each `ui` AND while the window is hidden whenever a
+    // repaint is requested — so the auto-timer and tray actions keep running off-screen.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 1. Apply any fresh worker outcomes, then resync the tray glance.
+        // 1. Apply any fresh worker outcomes, then rebuild the cockpit + resync the tray.
         let mut got_outcome = false;
         while let Some(outcome) = self.worker.poll() {
             self.state.apply(outcome, Instant::now());
             got_outcome = true;
         }
         if got_outcome {
+            self.rebuild_cockpit();
             self.sync_tray();
         }
 
@@ -198,8 +391,8 @@ impl eframe::App for BarApp {
             self.handle_action(action, ctx);
         }
 
-        // 3. Closing the window hides it to the tray (when a tray exists); a real Quit
-        //    comes from the tray menu. With no tray, allow the close so the app can exit.
+        // 3. Closing the window hides it to the tray (when a tray exists); a real Quit comes from
+        //    the tray menu. With no tray, allow the close so the app can exit.
         if ctx.input(|i| i.viewport().close_requested()) && self.tray.is_active() && !self.quitting
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -212,19 +405,34 @@ impl eframe::App for BarApp {
             self.state.since_last_completed(),
             REFRESH_INTERVAL,
         ) {
-            self.request_refresh();
+            self.request_auto_refresh();
         }
 
         // 5. Heartbeat so the auto-timer still fires while the window is hidden/idle.
         ctx.request_repaint_after(REFRESH_INTERVAL);
     }
 
-    // Drawing. The given `ui` is already inside eframe's central panel (no margin/bg).
+    // Drawing. The given `ui` is already inside eframe's central panel.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.handle_keys(&ctx);
         let view = self.shell_view();
-        if draw_shell(ui, &view) {
-            self.request_refresh();
+        let action = draw_shell(ui, &view);
+        if let Some(tab) = action.tab_clicked {
+            self.tab = tab;
         }
+        if action.refresh_clicked {
+            self.request_manual_refresh();
+        }
+    }
+}
+
+/// Load the user config, mapping a load error to an in-window status string (never a crash). A
+/// missing file is the zero-config default (no budgets, alerts off) — not an error.
+fn load_config() -> (Config, Option<String>) {
+    match costroid_config::load() {
+        Ok(config) => (config, None),
+        Err(error) => (Config::default(), Some(format!("config: {error}"))),
     }
 }
 
@@ -246,11 +454,12 @@ fn status_text(
     }
 }
 
-/// Draw the window shell: the `C⠉` mark + wordmark + freshness status (the chrome T18 set
-/// up), then the Overview body (spend header + quota meters), then the manual refresh.
-/// Returns whether the refresh button was clicked. Pure of app/tray/thread state, so a
-/// headless egui pass can exercise it.
-fn draw_shell(ui: &mut egui::Ui, view: &ShellView) -> bool {
+/// Draw the window: the fixed mark+wordmark+status header (with the refresh button + any config
+/// error), then the scrollable cockpit — the persistent spend+meters+banner header, the tab strip,
+/// and the selected panel. Returns what the user clicked. Pure of app/tray/thread state.
+fn draw_shell(ui: &mut egui::Ui, view: &ShellView) -> ShellAction {
+    let mut action = ShellAction::default();
+
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
@@ -260,34 +469,132 @@ fn draw_shell(ui: &mut egui::Ui, view: &ShellView) -> bool {
             ui.label(egui::RichText::new("costroid").strong().size(20.0));
             ui.label(egui::RichText::new(&view.status).color(color_of(ASH)));
         });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(8.0);
+            if draw_refresh_button(ui) {
+                action.refresh_clicked = true;
+            }
+        });
     });
-    ui.add_space(10.0);
-    ui.separator();
-    ui.add_space(6.0);
-    match &view.overview {
-        Some(overview) => overview::draw(ui, overview),
-        // Before the first snapshot lands the status line already says "starting…" /
-        // "refreshing…"; show a quiet body note so the window is never blank.
-        None => {
-            ui.horizontal(|ui| {
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new("loading local data…").color(color_of(ASH)));
-            });
-        }
+    if let Some(config_status) = &view.config_status {
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            // A malformed config is a degraded state, not a "live" one — render it in muted Ash
+            // (the secondary ink the status sub-line uses), never Signal-lime, which the brand
+            // reserves for the active/selected/"live" highlight (pin §0/§6). The message text
+            // carries the meaning, so this stays never-color-alone.
+            ui.label(
+                egui::RichText::new(config_status)
+                    .monospace()
+                    .size(11.0)
+                    .color(color_of(ASH)),
+            );
+        });
     }
-    ui.add_space(10.0);
-    let mut clicked = false;
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
-        if ui.button("Refresh").clicked() {
-            clicked = true;
-        }
-    });
-    clicked
+    ui.add_space(8.0);
+    ui.separator();
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| match view.cockpit {
+            None => {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("loading local data…").color(color_of(ASH)));
+                });
+            }
+            Some(cockpit) => {
+                // Persistent header: period spend + the painted quota meters, then the banner.
+                overview::draw(ui, &cockpit.overview);
+                banner::draw(ui, &cockpit.alerts);
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+                if let Some(tab) = tabs::draw_strip(ui, view.tab) {
+                    action.tab_clicked = Some(tab);
+                }
+                ui.add_space(6.0);
+                draw_panel(ui, view.tab, cockpit);
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("1-5 tabs · r refresh · q hide")
+                            .monospace()
+                            .size(10.0)
+                            .color(color_of(ASH)),
+                    );
+                });
+            }
+        });
+
+    action
 }
 
-/// Paint the `C⠉` mark — the letter `C` plus the 3×3 dot grid filled to `step`, using the
-/// same geometry as the tray bitmap (`glyph.rs`).
+/// Dispatch the lower region to the selected tab's panel.
+fn draw_panel(ui: &mut egui::Ui, tab: Tab, cockpit: &Cockpit) {
+    match tab {
+        Tab::Overview => overview::draw_breakdown(ui, &cockpit.breakdown),
+        Tab::Budget => budget::draw(ui, &cockpit.budget),
+        Tab::Forecast => forecast::draw(ui, &cockpit.forecast),
+        Tab::Anomalies => anomalies::draw(ui, &cockpit.anomalies),
+        Tab::Providers => {
+            providers::draw(ui, &cockpit.capabilities, &cockpit.statuses);
+            #[cfg(feature = "connect")]
+            providers::draw_connection_lane(ui, &cockpit.connections);
+        }
+    }
+}
+
+/// A painted refresh affordance — a circular arrow drawn with the same painter idiom as the `C⠉`
+/// mark (`draw_mark`), NOT a typeset glyph. The bundled JetBrains Mono has no refresh-arrow glyph
+/// (U+27F3 `⟳` / U+21BB `↻` / U+21BA `↺` are all absent from its cmap) and `fonts.rs` installs it as
+/// the *only* family with no fallback, so a glyph button would render tofu — exactly the failure mode
+/// the crate paints around ("paint, don't typeset" — `fonts.rs` / pin §13). Returns whether clicked.
+fn draw_refresh_button(ui: &mut egui::Ui) -> bool {
+    let side = 22.0;
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::click());
+    let response = response.on_hover_text("Refresh now");
+    let painter = ui.painter_at(rect);
+
+    // Brighten on hover (Bone), else the muted Ash the header chrome uses.
+    let ink = color_of(if response.hovered() { BONE } else { ASH });
+    let center = rect.center();
+    let radius = side * 0.30;
+
+    // A ~290° open arc as a painted polyline, leaving a gap for the arrowhead.
+    let start = 150.0_f32.to_radians();
+    let sweep = 290.0_f32.to_radians();
+    let steps = 24;
+    let points: Vec<egui::Pos2> = (0..=steps)
+        .map(|i| {
+            let theta = start + sweep * (i as f32 / steps as f32);
+            center + egui::vec2(theta.cos(), theta.sin()) * radius
+        })
+        .collect();
+    painter.add(egui::Shape::line(points, egui::Stroke::new(1.6, ink)));
+
+    // The arrowhead at the arc's end, pointing along the sweep (the tangent direction).
+    let end = start + sweep;
+    let at = center + egui::vec2(end.cos(), end.sin()) * radius;
+    let tangent = egui::vec2(-end.sin(), end.cos());
+    let radial = egui::vec2(end.cos(), end.sin());
+    let head = side * 0.18;
+    let tip = at + tangent * head;
+    let left = at - tangent * (head * 0.2) + radial * (head * 0.7);
+    let right = at - tangent * (head * 0.2) - radial * (head * 0.7);
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, left, right],
+        ink,
+        egui::Stroke::NONE,
+    ));
+
+    response.clicked()
+}
+
+/// Paint the `C⠉` mark — the letter `C` plus the 3×3 dot grid filled to `step`, using the same
+/// geometry as the tray bitmap (`glyph.rs`).
 fn draw_mark(ui: &mut egui::Ui, step: u8) {
     let side = 44.0;
     let (rect, _response) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
@@ -320,6 +627,18 @@ fn draw_mark(ui: &mut egui::Ui, step: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{DateTime, Utc};
+    use costroid_core::{
+        EngineSnapshot, GroupBy, LimitAvailability, LimitKind, LimitMeasure, LimitSummary,
+        NowOptions, NowSummary, PeriodRange, ProviderId,
+    };
+
+    fn ts(secs: i64) -> DateTime<Utc> {
+        match DateTime::from_timestamp(secs, 0) {
+            Some(dt) => dt,
+            None => panic!("invalid test timestamp"),
+        }
+    }
 
     #[test]
     fn color_of_opaque_matches_rgb() {
@@ -353,37 +672,9 @@ mod tests {
         assert_eq!(status_text(None, false, Phase::Idle, None), "starting…");
     }
 
-    #[test]
-    fn draw_shell_headless_tick_does_not_panic() {
-        // A headless egui pass exercises the paint path with no window/GPU — both before a
-        // snapshot loads (no overview) and with one present.
-        let ctx = egui::Context::default();
-        crate::fonts::install(&ctx);
-        for overview in [None, Some(sample_overview())] {
-            for step in [0u8, 4, 8] {
-                let view = ShellView {
-                    step,
-                    status: "updated 12:00 · estimates".to_owned(),
-                    overview: overview.clone(),
-                };
-                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    let _ = draw_shell(ui, &view);
-                });
-            }
-        }
-    }
-
-    /// A small Overview model (one Available meter) for the headless shell test.
-    fn sample_overview() -> OverviewModel {
-        use chrono::DateTime;
-        use costroid_core::{
-            GroupBy, LimitAvailability, LimitKind, LimitMeasure, LimitSummary, NowSummary,
-            PeriodRange, ProviderId,
-        };
-        let at = match DateTime::from_timestamp(1_900_000_000, 0) {
-            Some(dt) => dt,
-            None => panic!("invalid test timestamp"),
-        };
+    /// A snapshot with one Available limit window (no API rows) — enough to build a cockpit.
+    fn sample_loaded() -> Loaded {
+        let at = ts(1_900_000_000);
         let summary = NowSummary {
             generated_at: at,
             cost_period: PeriodRange { start: at, end: at },
@@ -403,6 +694,58 @@ mod tests {
             current_costs: Vec::new(),
             providers: Vec::new(),
         };
-        OverviewModel::from_summary(&summary)
+        let snapshot = EngineSnapshot {
+            generated_at: at,
+            usage_events: Vec::new(),
+            focus_rows: Vec::new(),
+            limit_windows: Vec::new(),
+            providers: Vec::new(),
+            capabilities: Vec::new(),
+        };
+        Loaded { snapshot, summary }
+    }
+
+    fn sample_cockpit() -> Cockpit {
+        Cockpit::build(&sample_loaded(), &Config::default())
+    }
+
+    #[test]
+    fn cockpit_build_with_default_config_raises_no_alerts() {
+        // Default config = alerts OFF → the banner slice is empty (no fabricated crossing).
+        let cockpit = sample_cockpit();
+        assert!(cockpit.alerts.is_empty());
+        assert_eq!(cockpit.overview.meters.len(), 1);
+    }
+
+    #[test]
+    fn draw_shell_headless_tick_does_not_panic() {
+        // A headless egui pass exercises the whole shell — before a snapshot loads (no cockpit) and
+        // with one present — across every tab.
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let cockpit = sample_cockpit();
+        for cockpit_ref in [None, Some(&cockpit)] {
+            for tab in Tab::ALL {
+                let view = ShellView {
+                    step: 4,
+                    status: "updated 12:00 · estimates".to_owned(),
+                    config_status: Some("config: invalid config ...".to_owned()),
+                    tab,
+                    cockpit: cockpit_ref,
+                };
+                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let _ = draw_shell(ui, &view);
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn now_options_default_is_weekly() {
+        // The bar collects with NowOptions::default() (Week) — the breakdown header says "this week".
+        assert_eq!(
+            NowOptions::default().cost_period,
+            costroid_core::Period::Week
+        );
     }
 }

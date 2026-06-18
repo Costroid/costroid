@@ -5,10 +5,12 @@ what your AI coding tools cost and how close you are to your subscription limits
 pure consumer of `costroid-core`: every figure it shows the engine already computes, from
 local data, with no extra network call and no telemetry.
 
-> **Status: scaffold (T18 / Step 6, v0.6.0 in progress).** Today the binary stands up the
-> shell — a tray icon (the `C⠉` dot-grid showing your most-constrained quota meter), a
-> toggle window, and a background refresh loop. The Overview meters (T19) and the live
-> panels (T20) fill the window next.
+> **Status: live cockpit (T18→T20 built / Step 6, v0.6.0 in progress).** The tray glance (the
+> `C⠉` dot-grid of your most-constrained quota meter), the toggle window, and the background
+> refresh loop are up (T18); the window now shows the Overview — the period-spend header + the
+> painted dot/braille quota meters (T19) — plus the tab strip, the opt-in alert banner, and the
+> four live panels: Budget, Forecast, Anomalies, Providers (T20). The AccessKit pass, the
+> cross-platform supported-desktop matrix, and the release wiring are T21 (the v0.6.0 cut).
 
 ## Scope — "glance + live cockpit"
 

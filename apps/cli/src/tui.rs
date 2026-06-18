@@ -604,7 +604,7 @@ fn run_with_dependencies<C: SnapshotCollector, K: Clock>(
     // default (no budgets, alerts off); a malformed file degrades to those defaults + a status
     // line, never a crash — the Budget tab then shows the honest "no budget set" state and the
     // Now tab shows no alert banner.
-    match crate::config::load() {
+    match costroid_config::load() {
         Ok(loaded) => {
             app.budget_targets = loaded.budget_targets();
             app.alerts_enabled = loaded.alerts_enabled();

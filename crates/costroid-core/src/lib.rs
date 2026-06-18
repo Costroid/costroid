@@ -15,18 +15,22 @@ use costroid_focus::{
 // reaches it here rather than taking a direct `focus` edge.
 pub use costroid_focus::FocusRecord;
 use costroid_providers::{
-    default_providers, read_cursor_config, AccessPath, AuthMethod, Capability, CursorConfig,
-    DataSource, LimitStatus, LimitWindow, Provider, UsageEvent,
+    default_providers, read_cursor_config, AccessPath, CursorConfig, LimitStatus, LimitWindow,
+    Provider, UsageEvent,
 };
 // Re-export the provider-layer types that appear in this crate's PUBLIC API — the
-// parameter type of `collect_local_snapshot`/`now_summary` callers need (`HostEnv`)
-// and the field types of the public `LimitSummary`/`LimitAvailability`
-// (`ProviderId`/`LimitKind`/`LimitMeasure`). Without this a "core-only" consumer
+// parameter type of `collect_local_snapshot`/`now_summary` callers need (`HostEnv`),
+// the field types of the public `LimitSummary`/`LimitAvailability`
+// (`ProviderId`/`LimitKind`/`LimitMeasure`), and the `DataSource`/`AuthMethod`/
+// `Capability` lane descriptors carried by the public `ProviderCapabilityView` (so the
+// Providers tab can match on each lane's source). Without this a "core-only" consumer
 // (the Step 6 taskbar `apps/bar`, which depends only on `costroid-core` —
 // ARCHITECTURE §5) could not name the engine's own public surface and would be forced
 // into a direct `costroid-providers` edge. Same rationale as the `FocusRecord`
 // re-export above; the rest of `costroid-providers` stays an internal dependency.
-pub use costroid_providers::{HostEnv, LimitKind, LimitMeasure, ProviderId};
+pub use costroid_providers::{
+    AuthMethod, Capability, DataSource, HostEnv, LimitKind, LimitMeasure, ProviderId,
+};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -157,6 +161,31 @@ pub fn now_api_spend_display(summary: &NowSummary) -> String {
     format_money_usd(&total, true)
 }
 
+/// Normalize a Forecast view's daily actual spends to `0.0..=1.0` fractions of the series max —
+/// the input a `rust_decimal`-free consumer (the Step 6 taskbar `apps/bar`) needs to paint the
+/// daily-spend sparkline without naming `Decimal`. Output is parallel to `days` (one fraction per
+/// day, in order). An empty series, or one whose max is `0` (no spend yet), yields all-zero
+/// fractions — an honest flat baseline, never a `0/0`. Pure display scaling: no pricing/forecast
+/// math (the projection itself is [`forecast_view`]); each `Decimal` stays in the engine.
+pub fn forecast_daily_fractions(days: &[ForecastDay]) -> Vec<f64> {
+    let max = days
+        .iter()
+        .map(|day| day.spent_usd)
+        .max()
+        .unwrap_or(Decimal::ZERO);
+    if max <= Decimal::ZERO {
+        return vec![0.0; days.len()];
+    }
+    days.iter()
+        .map(|day| {
+            (day.spent_usd / max)
+                .to_f64()
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
 /// Format a USD [`Decimal`] for display as `"$X.XX"` — or `"~$X.XX"` when `estimated` —
 /// rounded to cents, with thousands separators.
 ///
@@ -176,6 +205,49 @@ pub fn format_money_usd(amount: &Decimal, estimated: bool) -> String {
         cents.push('0');
     }
     format!("{prefix}${}.{cents}", group_thousands(whole))
+}
+
+/// Format a strictly-positive budget/forecast overshoot as `"~$Z"`, guarding the sub-cent case so
+/// a real overshoot never renders as the self-contradictory `~$0.00`: an overshoot that rounds
+/// below a cent renders `"<$0.01"` instead (an honest "less than a cent over"). A `Decimal`→string
+/// display route for the `rust_decimal`-free taskbar (the over-by value stays `Decimal` in core).
+/// Mirrors the CLI's private `format_over_by` (`apps/cli/src/render.rs`).
+pub fn format_over_by_usd(over: &Decimal) -> String {
+    if over.round_dp(2) == Decimal::ZERO {
+        "<$0.01".to_string()
+    } else {
+        format_money_usd(over, true)
+    }
+}
+
+/// Format a `0.0..=1.0` token-share [`Decimal`] as a whole-percent string (`"NN%"`), for the
+/// `rust_decimal`-free taskbar's Anomalies model-mix callouts (the share stays `Decimal` in core).
+/// Mirrors the CLI's `percent(share.to_f64())` exactly (round-half, 0 dp).
+pub fn decimal_share_percent(share: &Decimal) -> String {
+    format!("{:.0}%", (share.to_f64().unwrap_or(0.0) * 100.0).round())
+}
+
+/// The "~N.Nx your norm" multiple to show for an anomaly/spend-spike callout, or `None` to fall
+/// back to the descriptive (no-multiple) phrasing. Suppressed when there is no magnitude (the
+/// median was `0`), when the DISPLAYED baseline rounds to zero (a multiple over a shown
+/// `$0.00`/`0%` would be self-contradictory — the caller passes whether its OWN displayed baseline
+/// is zero), or when the multiple rounds to `1.0x` (a flagged-but-tiny move, honest to describe but
+/// misleading to quantify). All math stays exact [`Decimal`]; only the final label is a string — a
+/// `Decimal`→string route for the `rust_decimal`-free taskbar. Mirrors the CLI's private
+/// `anomaly_multiple_phrase`.
+pub fn anomaly_multiple_phrase(
+    magnitude: Option<&Decimal>,
+    baseline_displays_zero: bool,
+) -> Option<String> {
+    let multiple = magnitude?;
+    if baseline_displays_zero {
+        return None;
+    }
+    let rounded = multiple.round_dp(1);
+    if rounded <= Decimal::ONE {
+        return None;
+    }
+    Some(rounded.to_string())
 }
 
 /// Insert `,` thousands separators into a (possibly signed) integer string. Mirrors the
@@ -4065,6 +4137,81 @@ mod tests {
         let view = forecast_view(&snapshot_with_rows(now, Vec::new(), Vec::new()));
         assert!(view.no_api_usage);
         assert!(view.daily_actuals.is_empty());
+    }
+
+    #[test]
+    fn forecast_daily_fractions_normalizes_to_the_series_max() {
+        let day = |d: u32, cents: i64| ForecastDay {
+            date: match NaiveDate::from_ymd_opt(2026, 6, d) {
+                Some(date) => date,
+                None => panic!("valid date"),
+            },
+            spent_usd: Decimal::new(cents, 2),
+        };
+        // Max is the $4.00 day → it normalizes to 1.0; the others scale linearly.
+        let days = vec![day(1, 100), day(2, 400), day(3, 200), day(4, 0)];
+        let fractions = forecast_daily_fractions(&days);
+        assert_eq!(fractions.len(), 4);
+        assert!((fractions[0] - 0.25).abs() < 1e-9, "{:?}", fractions);
+        assert!((fractions[1] - 1.0).abs() < 1e-9);
+        assert!((fractions[2] - 0.5).abs() < 1e-9);
+        assert_eq!(fractions[3], 0.0);
+        // Every fraction is bounded to [0, 1].
+        assert!(fractions.iter().all(|f| (0.0..=1.0).contains(f)));
+    }
+
+    #[test]
+    fn forecast_daily_fractions_handles_empty_and_all_zero() {
+        // Empty → empty; an all-zero series → all-zero fractions (an honest flat baseline, never a 0/0).
+        assert!(forecast_daily_fractions(&[]).is_empty());
+        let zeros = vec![
+            ForecastDay {
+                date: match NaiveDate::from_ymd_opt(2026, 6, 1) {
+                    Some(date) => date,
+                    None => panic!("valid date"),
+                },
+                spent_usd: Decimal::ZERO,
+            };
+            3
+        ];
+        assert_eq!(forecast_daily_fractions(&zeros), vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn format_over_by_usd_guards_the_sub_cent_case() {
+        // A real overshoot below a cent renders "<$0.01", never the contradictory "~$0.00".
+        assert_eq!(format_over_by_usd(&Decimal::new(1, 3)), "<$0.01"); // $0.001
+        assert_eq!(format_over_by_usd(&Decimal::ZERO), "<$0.01");
+        // A genuine overshoot renders the `~`-hedged estimate.
+        assert_eq!(format_over_by_usd(&Decimal::new(1050, 2)), "~$10.50");
+    }
+
+    #[test]
+    fn decimal_share_percent_rounds_like_the_cli() {
+        assert_eq!(decimal_share_percent(&Decimal::ZERO), "0%");
+        assert_eq!(decimal_share_percent(&Decimal::new(925, 3)), "93%"); // 0.925 -> 93%
+        assert_eq!(decimal_share_percent(&Decimal::ONE), "100%");
+    }
+
+    #[test]
+    fn anomaly_multiple_phrase_suppresses_unhelpful_multiples() {
+        // No magnitude (median was 0) -> None.
+        assert_eq!(anomaly_multiple_phrase(None, false), None);
+        // Displayed baseline is zero -> None (a multiple over "$0.00"/"0%" is self-contradictory).
+        assert_eq!(
+            anomaly_multiple_phrase(Some(&Decimal::new(30, 1)), true),
+            None
+        );
+        // Rounds to <= 1.0x -> None (a flagged-but-tiny move).
+        assert_eq!(
+            anomaly_multiple_phrase(Some(&Decimal::new(104, 2)), false),
+            None
+        );
+        // A genuine multiple is shown to 1 dp.
+        assert_eq!(
+            anomaly_multiple_phrase(Some(&Decimal::new(35, 1)), false),
+            Some("3.5".to_string())
+        );
     }
 
     #[test]
