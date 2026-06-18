@@ -5,12 +5,15 @@ what your AI coding tools cost and how close you are to your subscription limits
 pure consumer of `costroid-core`: every figure it shows the engine already computes, from
 local data, with no extra network call and no telemetry.
 
-> **Status: live cockpit (T18→T20 built / Step 6, v0.6.0 in progress).** The tray glance (the
+> **Status: Step 6 complete — release-ready at v0.6.0 (T18→T21 built).** The tray glance (the
 > `C⠉` dot-grid of your most-constrained quota meter), the toggle window, and the background
-> refresh loop are up (T18); the window now shows the Overview — the period-spend header + the
+> refresh loop are up (T18); the window shows the Overview — the period-spend header + the
 > painted dot/braille quota meters (T19) — plus the tab strip, the opt-in alert banner, and the
-> four live panels: Budget, Forecast, Anomalies, Providers (T20). The AccessKit pass, the
-> cross-platform supported-desktop matrix, and the release wiring are T21 (the v0.6.0 cut).
+> four live panels: Budget, Forecast, Anomalies, Providers (T20). T21 turned **AccessKit on**
+> (a screen reader announces each painted meter, alert, and tab), documented the
+> cross-platform matrix below, extended the offline/forbidden-crates/deny guarantees to this
+> binary, and wired the cargo-dist release. The actual v0.6.0 tag + publish is the maintainer's
+> manual cut.
 
 ## Scope — "glance + live cockpit"
 
@@ -34,10 +37,35 @@ network or keychain crate.
 
 ## Platforms
 
-macOS menu-bar extra · Windows system tray · Linux tray via StatusNotifierItem /
-AppIndicator. The Linux tray is fragile across desktop environments; where it is
-unavailable the app degrades to **window-only** rather than failing. The tested-desktop
-matrix is finalized in T21.
+The taskbar uses a toggle window (not a popover) plus a native tray; the window is the robust
+core and the tray is a best-effort glance that **degrades to window-only** wherever it cannot
+be created (no crash). The honest support matrix:
+
+| Platform | Tray mechanism | Status |
+|---|---|---|
+| **Linux** (X11 / Wayland) | StatusNotifierItem / AppIndicator on a dedicated GTK-3 thread (`tray-icon` → `libappindicator`) | **Built + run on the Linux dev box.** Tray visibility depends on the desktop having an **SNI host** (KDE Plasma natively; GNOME needs the *AppIndicator/KStatusNotifierItem* extension; bare wlroots/Sway via `waybar`/`status-notifier-item`). Where no SNI host is present, the app runs **window-only**. |
+| **macOS** | Menu-bar extra, pumped by eframe's event loop | **Compiles; UNVERIFIED.** No macOS hardware in the build environment — the code path is built but not field-tested. |
+| **Windows** | System tray (notification area), pumped by eframe's event loop | **Compiles; UNVERIFIED.** No Windows hardware in the build environment — built but not field-tested. |
+
+Degradation is deliberate and tested: if `gtk::init()` or the tray build fails (Linux), or the
+tray cannot be created (macOS/Windows), `costroid-bar` logs a one-line note to stderr and runs
+**window-only** — never a crash (`src/tray.rs`).
+
+**Linux interaction note:** AppIndicator left-click-to-toggle is unreliable across environments,
+so the **right-click menu's "Open Costroid"** is the canonical way to show the window on Linux
+(left-click toggle works where the SNI host forwards activation, e.g. KDE).
+
+**Accessibility:** AccessKit is on — Linux AT-SPI (`accesskit_unix`), macOS NSAccessibility, and
+Windows UI Automation. The painted widgets (the quota meters, the alert badges, the tray mark,
+the refresh button, the forecast sparkline) carry accessible names, so a screen reader announces
+each; the never-color-alone dot-density cue holds throughout. The Linux AT-SPI backend speaks
+local D-Bus (AF_UNIX) only — never network (proven by `scripts/offline_acceptance.sh` + the
+per-binary static allowlist in `apps/cli/tests/offline.rs`).
+
+**Release shape (v0.6.0):** because the macOS/Windows tray paths are unverified, `costroid-bar`
+ships as downloadable binary **archives** + `cargo install costroid-bar` (crates.io). The
+one-click **npm/Homebrew** installers stay **CLI-only** (`costroid`) until the desktop matrix is
+field-verified; the GUI joins them in a later 0.6.x once macOS/Windows are confirmed.
 
 ## Fonts
 

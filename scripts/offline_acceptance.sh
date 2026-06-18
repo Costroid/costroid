@@ -7,6 +7,14 @@
 # proving the tool collects, costs, exports, renders, and emits a statusline using
 # only bundled pricing — with no network access and no telemetry.
 #
+# Since T21 it ALSO proves the second binary, `costroid-bar` (the egui taskbar), makes no
+# network call: a one-shot `--self-check` runs the full local data path under the same
+# isolation (no `AF_INET`), and — when a headless X server is available — the real
+# window + AccessKit path runs under xvfb too. The bar's AccessKit subtree
+# (`accesskit_unix → zbus → async-io`) is local AT-SPI/D-Bus IPC, never network; the
+# per-binary static allowlist (`apps/cli/tests/offline.rs`) is the authoritative proof that
+# subtree links no network/TLS/telemetry crate, and this run is its behavioral counterpart.
+#
 # The opt-in connections subsystem (`--features connect`, PRODUCT-PLAN Step 4) is the
 # single place network is ever allowed. Its dynamic proof has two halves: the T8
 # feature-ON baseline RUNS BELOW (a normal `--features connect` run leaks no network
@@ -353,9 +361,54 @@ if [ "$iso_mode" != strace ]; then
   echo "        the authoritative no-egress proof is offline.rs + the type-level host binding."
 fi
 
+# ============================================================================
+# costroid-bar — the taskbar binary's runtime no-network proof (T21)
+# ============================================================================
+# The egui taskbar is a pure core consumer (no new data path/network/telemetry). Its
+# AccessKit backend (`accesskit_unix → zbus → async-io`) is local AT-SPI/D-Bus IPC, not
+# network — admitted for the bar only via the reviewed BAR_ACCESSKIT_ALLOWED subtree in
+# apps/cli/tests/offline.rs (the static, authoritative no-network proof for that subtree).
+# This is its dynamic counterpart: the bar's one-shot `--self-check` exercises the FULL local
+# data path (collect_local_snapshot + now_summary + every panel's *_view compute + the
+# read-only config) and exits, under the same isolation — asserting NO AF_INET socket. An
+# optional xvfb run then exercises the real window + AccessKit init when a display is available.
+echo "==> Building costroid-bar (default — AccessKit on, connect OFF) for the taskbar no-network proof"
+cargo build -q -p costroid-bar
+bar_bin="$repo_root/target/debug/costroid-bar"
+
+printf '  %-52s' "bar --self-check runs offline (no AF_INET)"
+bar_rc=0; iso_run "$bar_bin" --self-check || bar_rc=$?
+if [ "$bar_rc" -eq 90 ]; then echo "NETWORK VIOLATION"; fail=1
+elif [ "$bar_rc" -ne 0 ]; then echo "FAIL (exit $bar_rc)"; fail=1
+elif [ "${#OUT}" -lt 5 ] || ! grep -qiF "self-check ok" <<<"$OUT"; then
+  echo "FAIL (unexpected self-check output: ${OUT:0:80})"; fail=1
+else echo "ok"; fi
+
+# Optional: exercise the FULL window + AccessKit path under a headless X server, if available.
+# This opens the real eframe window (winit/glow + accesskit_winit → accesskit_unix), so any
+# AF_INET egress from GUI/AccessKit init is caught by strace. The assertion is the no-AF_INET
+# trace; the exit code (timeout-killed 124, or a clean exit) does not matter. Degrades honestly
+# when no xvfb / non-strace mode — the static allowlist + the --self-check above remain authoritative.
+printf '  %-52s' "bar GUI (xvfb) opens with no AF_INET"
+if command -v xvfb-run >/dev/null 2>&1 && [ "$iso_mode" = strace ]; then
+  bar_log="$workdir/strace.bar-gui"
+  timeout --signal=INT 25s xvfb-run -a strace -f -e trace=network -qq -o "$bar_log" \
+    env "${env_args[@]}" "$bar_bin" >/dev/null 2>&1 || true
+  if [ -f "$bar_log" ] && ! assert_no_inet "$bar_log" >/dev/null 2>&1; then
+    echo "NETWORK VIOLATION"; fail=1
+  else
+    echo "ok (no AF_INET in the GUI/AccessKit path)"
+  fi
+  rm -f "$bar_log"
+else
+  echo "SKIPPED"
+  echo "        (no xvfb-run or non-strace mode; the per-binary static allowlist (offline.rs)"
+  echo "         + the --self-check run above are the authoritative no-network proof for the bar.)"
+fi
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "==> OFFLINE ACCEPTANCE: FAILED"
   exit 1
 fi
-echo "==> OFFLINE ACCEPTANCE (default build, connect OFF): PASSED (all commands ran offline, no network, no telemetry)"
+echo "==> OFFLINE ACCEPTANCE (default build, connect OFF + costroid-bar): PASSED (all commands ran offline, no network, no telemetry)"

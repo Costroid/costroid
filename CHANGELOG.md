@@ -11,8 +11,35 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-18
+
+This release ships the **`costroid-bar` taskbar** — the last surface — an always-on tray glance
+plus a small live cockpit window for what your AI coding tools cost and how close you are to your
+subscription limits. It is a pure consumer of the same local data the CLI reads: no new network
+call, no telemetry. It also lands two opt-in advisory alert sources and a wider anomaly model-mix.
+
 ### Added
 
+- **`costroid-bar` — the egui taskbar (Step 6, the last surface).** A new binary alongside the
+  `costroid` CLI:
+  - a **tray icon** — the `C⠉` mark whose 3×3 braille dots ARE your most-constrained quota meter,
+    in the 9-step dot-density warning language (non-color-safe by construction), with a full
+    tooltip; left-click toggles the window, right-click opens an Open / Refresh / Quit menu;
+  - a small, resizable **toggle window** that remembers its size/position and refreshes on show;
+  - an **Overview** — this-period spend (always `~`-hedged + estimate-labeled) above the painted
+    dot/braille quota meters, honest across all five availability arms (a degraded reading is never
+    dressed as a confident fill), plus the opt-in alert banner;
+  - four **live panels** — Budget, Forecast, Anomalies, Providers — each mapping one core view; the
+    Providers panel can *display* read-only connection state under `--features connect` (connecting/
+    reconciling stay in the CLI, so the taskbar adds no credential or network surface);
+  - a **shared `costroid-config` crate** — the `[budget]`/`[alerts]` TOML schema, now read by both
+    the CLI and the taskbar from one source.
+  - **Accessibility:** AccessKit is on — a screen reader announces each painted meter, alert badge,
+    tab, the tray mark, the refresh button, and the forecast sparkline; the never-color-alone
+    dot-density cue holds throughout. The Linux AT-SPI backend speaks local D-Bus only — never
+    network (proven by the offline-acceptance harness + the per-binary static dependency allowlist).
+  - **Trends, Models, History, and Frontier stay in the `costroid` CLI** (they are cramped in a tray
+    window and the TUI serves them well).
 - **Two opt-in advisory alert sources (a fast-follow to the threshold alerts).** Alongside the hard
   quota-% and budget-$ crossings, the `[alerts]` config gains two advisory sub-flags — each off by
   default and each still requiring `enabled = true`: `forecast = true` fires a heads-up when your
@@ -24,6 +51,18 @@ against your provider invoice, which is the source of truth.
   in the inline banner, the `costroid alerts` list, and the `alerts --check` exit code once opted in.
   With the sub-flags off, alert output is byte-identical to before. Still pure-local: no daemon, no
   network, no telemetry, no new dependency.
+- **Anomalies model-mix now spans every lane.** The Anomalies model-mix-shift callout previously read
+  the API-billed lane only, so a subscription-only user (e.g. Claude Code Max with no API key) saw no
+  model-mix callouts. It now measures all-lane token share, so those users get callouts too, while the
+  spend-spike stays API-lane dollars (subscription usage is not a summable bill).
+
+### Release
+
+- **`costroid-bar` ships as downloadable binary archives + `cargo install costroid-bar` (crates.io).**
+  Because the macOS/Windows tray paths compile but are not yet field-verified, the one-click
+  npm/Homebrew installers stay **CLI-only** (`costroid`) this cut; the GUI joins them in a later
+  0.6.x once the desktop matrix is confirmed. The release toolchain is now ≥ 1.92 (the taskbar's
+  MSRV); the `costroid` CLI + library crates keep their 1.88 MSRV promise.
 
 ## [0.5.0] - 2026-06-17
 

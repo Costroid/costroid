@@ -199,8 +199,18 @@ fn paint_sparkline(ui: &mut egui::Ui, fractions: &[f64]) {
     let height = 22.0_f32;
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        let (rect, _response) =
+        let (rect, response) =
             ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+        // The painted dots carry no text — name the sparkline for AccessKit (T21). The projected /
+        // spend-to-date figures are accessible labels in the lines above.
+        let days = fractions.len();
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Image,
+                true,
+                format!("daily api spend sparkline, last {days} days"),
+            )
+        });
         let painter = ui.painter_at(rect);
         let lit = color_of(DATA_CYAN);
         let dim = color_of(crate::glyph::EMPTY_DOT);

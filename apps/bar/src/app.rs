@@ -50,6 +50,46 @@ pub fn run() -> anyhow::Result<()> {
     .map_err(|err| anyhow::anyhow!("failed to start the taskbar: {err}"))
 }
 
+/// A one-shot, no-GUI self-check (`costroid-bar --self-check`). It exercises the bar's full
+/// data path — `collect_local_snapshot` + `now_summary` + every panel's `*_view` compute (via
+/// `Cockpit::build`) + the read-only config and (under `--features connect`) the keychain
+/// connection lane — then prints a summary and exits, WITHOUT opening a window. This is what the
+/// runtime no-network proof drives (`scripts/offline_acceptance.sh`): the data path is where any
+/// accidental egress would happen, and running it under strace/netns proves no `AF_INET` socket.
+/// It needs no display, so it runs headless in CI; the full window/AccessKit path's no-network
+/// property rests on the per-binary static allowlist (`apps/cli/tests/offline.rs`) — the
+/// AccessKit subtree links no network/TLS/telemetry crate — plus an optional xvfb GUI run.
+pub fn self_check() -> anyhow::Result<()> {
+    let env = costroid_core::HostEnv::detect();
+    let snapshot = costroid_core::collect_local_snapshot(&env)
+        .map_err(|err| anyhow::anyhow!("could not read local data: {err}"))?;
+    let summary = costroid_core::now_summary(&snapshot, costroid_core::NowOptions::default());
+    let loaded = Loaded { snapshot, summary };
+
+    let (config, config_status) = load_config();
+    let cockpit = Cockpit::build(&loaded, &config);
+    // The display-only connection lane is a read-only keychain/registry join — NO network. Touch
+    // it so the self-check covers that path too (it is a no-op in the default build).
+    #[cfg(feature = "connect")]
+    let connections = providers::gather_connections().len();
+    #[cfg(not(feature = "connect"))]
+    let connections = 0usize;
+
+    println!(
+        "costroid-bar self-check ok — {} limit window(s), {} active alert(s), {} connection \
+         entr(ies), connect={}{}",
+        cockpit.overview.meters.len(),
+        cockpit.alerts.len(),
+        connections,
+        cfg!(feature = "connect"),
+        match config_status {
+            Some(status) => format!(" ({status})"),
+            None => String::new(),
+        },
+    );
+    Ok(())
+}
+
 /// The brand's neutral colors as egui values. Shared with the Overview/panels so the whole window
 /// renders in one palette.
 pub(crate) fn color_of(rgba: [u8; 4]) -> egui::Color32 {
@@ -556,6 +596,9 @@ fn draw_refresh_button(ui: &mut egui::Ui) -> bool {
     let side = 22.0;
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::click());
     let response = response.on_hover_text("Refresh now");
+    // The button is painted (no glyph), so name it for AccessKit as a button (T21).
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Refresh now"));
     let painter = ui.painter_at(rect);
 
     // Brighten on hover (Bone), else the muted Ash the header chrome uses.
@@ -597,7 +640,16 @@ fn draw_refresh_button(ui: &mut egui::Ui) -> bool {
 /// geometry as the tray bitmap (`glyph.rs`).
 fn draw_mark(ui: &mut egui::Ui, step: u8) {
     let side = 44.0;
-    let (rect, _response) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+    // The mark is painted (no text), so its meaning — the most-constrained limit severity — is
+    // attached as an AccessKit name (T21).
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Label,
+            true,
+            format!("Costroid — most-constrained limit, severity {step} of 8"),
+        )
+    });
     let painter = ui.painter_at(rect);
 
     // The `C` (left third), drawn as text in the bundled mono font.
@@ -738,6 +790,78 @@ mod tests {
                 });
             }
         }
+    }
+
+    #[test]
+    fn accesskit_tree_announces_the_painted_widgets() {
+        // T21 a11y smoke: with AccessKit enabled, a headless pass builds the accessibility tree
+        // without panic AND the painted widgets (the mark, the refresh button, the quota meter, the
+        // alert badge) carry names — so a screen reader announces each. egui core always builds the
+        // tree once `enable_accesskit` is called (the eframe `accesskit` feature only wires the
+        // platform AT-SPI backend), so this runs regardless of the feature flag.
+        use costroid_core::{Alert, AlertLevel, LimitKind, ProviderId};
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        ctx.enable_accesskit();
+
+        let mut cockpit = sample_cockpit();
+        // Force one active alert so the banner badge is painted + named.
+        cockpit.alerts.push(Alert::Quota {
+            tool: ProviderId::ClaudeCode,
+            kind: LimitKind::FiveHour,
+            level: AlertLevel::Critical,
+            fraction: 0.97,
+            reset_in_seconds: 3600,
+        });
+        let view = ShellView {
+            step: 7,
+            status: "updated 12:00 · estimates".to_owned(),
+            config_status: None,
+            tab: Tab::Overview,
+            cockpit: Some(&cockpit),
+        };
+
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = draw_shell(ui, &view);
+        });
+        let update = match output.platform_output.accesskit_update {
+            Some(update) => update,
+            None => panic!("the AccessKit tree must build when accesskit is enabled"),
+        };
+        assert!(
+            update.nodes.len() > 5,
+            "expected a populated a11y tree, got {} nodes",
+            update.nodes.len()
+        );
+        // Collect every node's accessible text. egui maps a `Label`-role widget's text onto the
+        // node `value`, and other roles (Button/ProgressIndicator/Image) onto the node `label`.
+        let mut text = String::new();
+        for (_, node) in &update.nodes {
+            if let Some(label) = node.label() {
+                text.push_str(label);
+                text.push('\n');
+            }
+            if let Some(value) = node.value() {
+                text.push_str(value);
+                text.push('\n');
+            }
+        }
+        assert!(
+            text.contains("most-constrained limit"),
+            "the painted mark must be named:\n{text}"
+        );
+        assert!(
+            text.contains("Refresh now"),
+            "the painted refresh button must be named:\n{text}"
+        );
+        assert!(
+            text.contains("claude code"),
+            "the painted quota meter must carry its line:\n{text}"
+        );
+        assert!(
+            text.contains("critical alert"),
+            "the painted alert badge must announce its severity:\n{text}"
+        );
     }
 
     #[test]

@@ -144,10 +144,15 @@ fn alert_budget_scope(scope: &BudgetScope) -> String {
 
 /// Paint a compact 3×3 dot-grid severity badge filled to `step` — the brand's 0–8 warning system
 /// (§0), the same dot primitive as the tray mark + the meters (`glyph.rs`). The dot COUNT is the
-/// grayscale-safe cue; the ramp tint is secondary.
+/// grayscale-safe cue; the ramp tint is secondary. The badge carries no text, so its severity word
+/// is attached as an AccessKit name (T21); the alert sentence beside it is an accessible label.
 fn paint_severity_badge(ui: &mut egui::Ui, step: u8) {
     let side = 16.0;
-    let (rect, _response) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+    let severity = if step >= 8 { "critical" } else { "warning" };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{severity} alert"))
+    });
     let painter = ui.painter_at(rect);
 
     let filled = glyph::dots_filled(step);

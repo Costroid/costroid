@@ -19,7 +19,19 @@ categories = ["gui", "visualization"]
 name = "costroid-bar"
 path = "src/main.rs"
 
+# AccessKit (T21) is ON by default — accessibility is required, not optional (CLAUDE.md
+# golden rules). It is expressed as a DEFAULT feature (rather than baked into the workspace
+# `eframe` feature list) so the offline gate can resolve the bar graph both with and without
+# it: `apps/cli/tests/offline.rs` computes the accesskit local-IPC delta as
+# `default − (default \ accesskit)` and asserts it is a subset of the reviewed
+# `BAR_ACCESSKIT_ALLOWED` allowlist. `eframe/accesskit` → `egui-winit/accesskit` →
+# `accesskit_winit` → (Linux) `accesskit_unix → zbus → async-io` — local AT-SPI/D-Bus IPC,
+# NOT network. async-io stays banned everywhere else (the CLI graph is async-io-free); here it
+# is admitted only as the reviewed subtree AND backed by the runtime no-`AF_INET` proof in
+# `scripts/offline_acceptance.sh`. ⛔ security-boundary carve-out (PRODUCT-PLAN §12.29 / §11.5).
 [features]
+default = ["accesskit"]
+accesskit = ["eframe/accesskit"]
 # Mirror apps/cli: the connections subsystem is opt-in and OFF by default, so the
 # default taskbar build links no network/keychain crate (forbidden-crates parity).
 # T20 wires the read-only Providers connection display (display-only, no actions, no
@@ -51,3 +63,29 @@ gtk.workspace = true
 
 [lints]
 workspace = true
+
+# cargo-dist per-package release config (T21 / PRODUCT-PLAN §12.29 pin decision 2).
+[package.metadata.dist]
+# Ship the taskbar as downloadable binary ARCHIVES + crates.io (`cargo install costroid-bar`)
+# only — the one-click npm/Homebrew (and curl|sh / irm) installers stay CLI-only (`costroid`)
+# until the macOS/Windows tray matrix is field-verified. The CLI keeps all four installers.
+installers = []
+# The GTK3 tray stack links system libraries (it cannot fully static-link), so the bar skips the
+# `x86_64-unknown-linux-musl` fully-static target the CLI ships; it builds the dynamically-linked
+# gnu / macOS / Windows targets. (macOS/Windows compile but are unverified on the dev box — they
+# ship as archives only, per the pin.)
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+
+# The Linux tray links system GTK3 + libxdo + AppIndicator — install their dev headers on the
+# Linux build runners before compiling the bar (mirrors the CI pre-pr/offline-acceptance fix; the
+# `costroid` CLI links none of this, so its build needs no system libs).
+[package.metadata.dist.dependencies.apt]
+libgtk-3-dev = '*'
+libxdo-dev = '*'
+libayatana-appindicator3-dev = '*'

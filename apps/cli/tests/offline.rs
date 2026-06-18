@@ -1,4 +1,5 @@
-//! Offline guarantee — static proof (re-scoped for the connections subsystem, T7).
+//! Offline guarantee — static proof, **per-binary** (re-scoped for the connections
+//! subsystem in T7; split per-binary in T21 for the AccessKit carve-out).
 //!
 //! Costroid's **default, local-only build reads local logs only and must make no
 //! network call and emit no telemetry, ever.** The strongest guarantee is
@@ -6,37 +7,45 @@
 //! contains no HTTP/TLS/socket client and no telemetry SDK, so there is nothing in
 //! the shipped binary that *could* phone home.
 //!
-//! Network code is allowed in exactly one place — the feature-gated `costroid-connect`
-//! crate (PRODUCT-PLAN §2c / Step 4), **off by default**. So the guarantee is now
-//! two-tier:
+//! Costroid ships **two binaries** whose graphs differ, so the guarantee is resolved
+//! **per binary** (the BFS roots at one package, not the whole workspace):
 //!
-//! * **Default build (`connect` off)** — forbids *everything* that can reach the
-//!   network or emit telemetry, including the sanctioned trio (`ureq`/`rustls`/
-//!   `keyring`). `costroid-connect` must not even be linked. This is the local-only
-//!   product that ships today.
-//! * **`--features connect`** — admits **only** the sanctioned trio that the
-//!   connections subsystem will use; async runtimes, non-rustls TLS (OpenSSL), other
-//!   HTTP clients, and *all* telemetry stay forbidden in this build too.
+//! * **`costroid` (the CLI)** — the local-only product. Its graph forbids *everything*
+//!   that can reach the network or emit telemetry, including the sanctioned trio
+//!   (`ureq`/`rustls`/`keyring`) and **`async-io`** — there is no async runtime in the
+//!   CLI. `--features connect` then admits **only** the sanctioned trio. This is the
+//!   byte-for-byte guarantee that has held since T7; turning the bar's AccessKit on
+//!   (T21) does NOT touch it (the bar's local-IPC subtree is unreachable from the CLI).
+//! * **`costroid-bar` (the taskbar)** — a GUI binary. egui's AccessKit backend
+//!   (`accesskit_unix → zbus → async-io`) is **local AT-SPI/D-Bus IPC, not network**,
+//!   but `async-io` is in [`ALWAYS_FORBIDDEN_CRATES`]. T21 admits exactly that reviewed
+//!   local-IPC subtree for the bar via [`BAR_ACCESSKIT_ALLOWED`] — and **every**
+//!   network/TLS/telemetry crate stays forbidden even here. The static name-ban is
+//!   backed by a *runtime* no-`AF_INET` proof for the `costroid-bar` binary in
+//!   `scripts/offline_acceptance.sh`, turning the allowlist into a behavioral
+//!   no-network guarantee for the AccessKit subtree.
 //!
 //! Why the *resolved* graph and not `cargo metadata`'s `packages` array: `packages`
 //! is a feature-independent superset (it lists optional dependencies whether or not
 //! their feature is on), so it cannot tell the default build apart from the
-//! `connect` build. Walking the resolved graph for an explicit feature set is what
-//! makes the distinction real — a crate gated behind `connect` is absent here when
-//! the feature is off and present when it is on.
+//! `connect`/`accesskit` build. Walking the resolved graph for an explicit feature set
+//! is what makes the distinction real — a crate gated behind `connect` is absent when
+//! the feature is off and present when it is on, and the accesskit subtree is present
+//! only when the bar's (default) `accesskit` feature is enabled.
 //!
-//! The dynamic counterpart — running every command under network isolation and
-//! proving no outbound connection is attempted — lives in
+//! The dynamic counterpart — running every command (and the bar) under network
+//! isolation and proving no outbound connection is attempted — lives in
 //! `scripts/offline_acceptance.sh`. Together they make "no network, no telemetry"
-//! airtight.
+//! airtight for both binaries.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::process::Command;
 
 /// Crates that grant the ability to make outbound network calls or emit telemetry
-/// and are **never** permitted in any Costroid build — not even inside
-/// `costroid-connect`. They encode the project's standing choices: blocking `ureq`
-/// (so no async runtime), `rustls` (so no OpenSSL), and zero telemetry.
+/// and are **never** permitted in the CLI build — not even inside `costroid-connect`.
+/// They encode the project's standing choices: blocking `ureq` (so no async runtime),
+/// `rustls` (so no OpenSSL), and zero telemetry. (The bar admits exactly the reviewed
+/// `async-io` local-IPC subtree — [`BAR_ACCESSKIT_ALLOWED`] — and nothing else here.)
 const ALWAYS_FORBIDDEN_CRATES: &[&str] = &[
     // HTTP / networking clients & servers other than the sanctioned `ureq`
     "reqwest",
@@ -63,7 +72,9 @@ const ALWAYS_FORBIDDEN_CRATES: &[&str] = &[
     "ssh2",
     "libssh2-sys",
     "russh",
-    // async runtimes that pull in network I/O (Costroid's HTTP is blocking `ureq`)
+    // async runtimes that pull in network I/O (Costroid's HTTP is blocking `ureq`).
+    // `async-io` is banned in the CLI; the bar admits it ONLY as part of the reviewed
+    // AccessKit local-IPC subtree (BAR_ACCESSKIT_ALLOWED) + the runtime no-AF_INET proof.
     "tokio",
     "async-std",
     "smol",
@@ -104,26 +115,45 @@ const CONNECT_GATED_CRATES: &[&str] = &["ureq", "rustls", "keyring"];
 /// thing being gated), but still reached as a *dependency* when `connect` is on.
 const CONNECT_CRATE: &str = "costroid-connect";
 
+/// The CLI binary package — the local-only product. Its reachable graph is the
+/// byte-for-byte async-io/network/telemetry-free guarantee.
+const CLI_CRATE: &str = "costroid";
+
+/// The taskbar binary package — the GUI that admits the reviewed AccessKit local-IPC
+/// subtree ([`BAR_ACCESSKIT_ALLOWED`]) and nothing else network-shaped.
+const BAR_CRATE: &str = "costroid-bar";
+
 /// Every crate `--features connect` legitimately adds to the resolved graph over the
-/// default build, unioned across all shipped targets (`costroid-connect` itself excluded
-/// — it is the gated home). This is an **allowlist**, not a denylist: the `connect` test
-/// asserts the *real* connect-delta is a **subset** of it, so a future dependency bump
-/// that pulls a NEW crate (a socket/TLS/telemetry crate under an unlisted name, say) fails
-/// the gate until a human reviews it and adds it here. That converts "we ban the network
-/// crates we thought of" into "nothing new reaches the network-on build unreviewed".
+/// default build (rooted at the SAME binary), unioned across all shipped targets
+/// (`costroid-connect` itself excluded — it is the gated home). This is an
+/// **allowlist**, not a denylist: the `connect` test asserts the *real* connect-delta
+/// is a **subset** of it, so a future dependency bump that pulls a NEW crate (a
+/// socket/TLS/telemetry crate under an unlisted name, say) fails the gate until a human
+/// reviews it and adds it here. That converts "we ban the network crates we thought of"
+/// into "nothing new reaches the network-on build unreviewed".
 ///
 /// It includes the zbus / async-`secret-service` ecosystem because the per-target metadata
 /// union reaches it (via dev/build deps + the cross-target union); only `dbus-secret-service`
 /// (the **sync** backend) actually links into the shipped binary (`cargo tree -e normal`),
 /// and the async *runtimes* (`tokio`/`async-io`/`async-std`/`smol`) stay independently and
 /// unconditionally banned by [`ALWAYS_FORBIDDEN_CRATES`] above — so allowlisting the async
-/// *plumbing* here cannot let a runtime slip in. Regenerate after a deliberate dependency
-/// change with the `#[ignore]` `print_connect_delta` test:
+/// *plumbing* here cannot let a runtime slip in.
+///
+/// It is the **union** of both binaries' connect-deltas (`costroid` and `costroid-bar`): the
+/// T21 per-binary split shrank each reference graph, so support crates the old whole-workspace
+/// default already carried (the RustCrypto primitives `sha2`/`digest`/`block-buffer`/
+/// `crypto-common`/`generic-array`/`typenum`/`subtle`/`cpufeatures` for the encrypted
+/// secret-service session, `base64`, `nix` syscall bindings, `jobserver` for `cc`) now show up
+/// in the delta where they were previously masked. Each was reviewed: NONE is a
+/// network/TLS/telemetry path. Regenerate after a deliberate dependency change with the
+/// `#[ignore]` `print_connect_delta` test:
 /// `cargo test -p costroid --test offline print_connect_delta -- --ignored --nocapture`.
 const CONNECT_ALLOWED: &[&str] = &[
     "aes",
     "async-broadcast",
     "async-trait",
+    "base64",
+    "block-buffer",
     "block-padding",
     "byteorder",
     "cbc",
@@ -131,9 +161,12 @@ const CONNECT_ALLOWED: &[&str] = &[
     "cipher",
     "concurrent-queue",
     "core-foundation",
+    "cpufeatures",
     "crossbeam-utils",
+    "crypto-common",
     "dbus",
     "dbus-secret-service",
+    "digest",
     "endi",
     "enumflags2",
     "enumflags2_derive",
@@ -145,13 +178,16 @@ const CONNECT_ALLOWED: &[&str] = &[
     "futures-sink",
     "futures-task",
     "futures-util",
+    "generic-array",
     "hkdf",
     "hmac",
     "http",
     "httparse",
     "inout",
+    "jobserver",
     "keyring",
     "libdbus-sys",
+    "nix",
     "num",
     "num-bigint",
     "num-complex",
@@ -178,11 +214,14 @@ const CONNECT_ALLOWED: &[&str] = &[
     "security-framework-sys",
     "serde_repr",
     "sha1",
+    "sha2",
     "shlex",
     "slab",
+    "subtle",
     "tracing",
     "tracing-attributes",
     "tracing-core",
+    "typenum",
     "untrusted",
     "ureq",
     "ureq-proto",
@@ -200,6 +239,84 @@ const CONNECT_ALLOWED: &[&str] = &[
     "zvariant_utils",
 ];
 
+/// Every crate the bar's (default) `accesskit` feature adds to the `costroid-bar` graph
+/// over the same build with the feature off, unioned across all shipped targets. This is
+/// the reviewed **AccessKit local-IPC subtree** — egui's `accesskit_winit` →
+/// `accesskit_unix → zbus → async-io` (Linux AT-SPI/D-Bus), `accesskit_windows` →
+/// `windows-*` (UI Automation), `accesskit_macos` (NSAccessibility) — none of which is
+/// network egress, and the lone [`ALWAYS_FORBIDDEN_CRATES`] member among them, `async-io`,
+/// is a local epoll/kqueue reactor used here only for the D-Bus AF_UNIX socket (proven at
+/// RUNTIME by `scripts/offline_acceptance.sh`'s no-`AF_INET` check).
+///
+/// It is a **subset-allowlist**, exactly like [`CONNECT_ALLOWED`]: the bar test asserts the
+/// real accesskit delta is a SUBSET of it, so a future egui/accesskit bump that pulls a NEW
+/// crate (an HTTP/TLS/telemetry path under an unlisted name) fails the gate until a human
+/// reviews it. Every genuine network/TLS/telemetry crate is absent from this list, so one
+/// slipping into the subtree trips the gate. Regenerate after a deliberate dependency change
+/// with the `#[ignore]` `print_bar_accesskit_delta` test:
+/// `cargo test -p costroid --test offline print_bar_accesskit_delta -- --ignored --nocapture`.
+const BAR_ACCESSKIT_ALLOWED: &[&str] = &[
+    "accesskit_atspi_common",
+    "accesskit_consumer",
+    "accesskit_macos",
+    "accesskit_unix",
+    "accesskit_windows",
+    "accesskit_winit",
+    "async-broadcast",
+    "async-channel",
+    "async-executor",
+    "async-io",
+    "async-lock",
+    "async-process",
+    "async-recursion",
+    "async-signal",
+    "async-task",
+    "async-trait",
+    "atomic-waker",
+    "atspi",
+    "atspi-common",
+    "atspi-proxies",
+    "blocking",
+    "concurrent-queue",
+    "endi",
+    "enumflags2",
+    "enumflags2_derive",
+    "event-listener",
+    "event-listener-strategy",
+    "fastrand",
+    "futures-lite",
+    "hex",
+    "ordered-stream",
+    "parking",
+    "phf",
+    "phf_generator",
+    "phf_macros",
+    "phf_shared",
+    "piper",
+    "serde_repr",
+    "signal-hook-registry",
+    "siphasher",
+    "windows",
+    "windows-collections",
+    "windows-core",
+    "windows-future",
+    "windows-implement",
+    "windows-interface",
+    "windows-numerics",
+    "windows-result",
+    "windows-strings",
+    "windows-threading",
+    "zbus",
+    "zbus-lockstep",
+    "zbus-lockstep-macros",
+    "zbus_macros",
+    "zbus_names",
+    "zbus_xml",
+    "zvariant",
+    "zvariant_derive",
+    "zvariant_utils",
+];
+
 /// The target triples Costroid ships (mirrors `deny.toml` `[graph].targets`). The
 /// reachable graph is resolved once **per target** and unioned (see
 /// [`reachable_crate_names`]).
@@ -212,9 +329,14 @@ const SHIPPED_TARGETS: &[&str] = &[
     "x86_64-pc-windows-msvc",
 ];
 
-/// Names of every crate reachable in the **resolved** dependency graph from Costroid's
-/// own crates — every workspace member except `costroid-connect` — under the given
-/// extra cargo args (e.g. `--features connect`), unioned across every shipped target.
+/// Names of every crate reachable in the **resolved** dependency graph from the given
+/// root package(s), under the given extra cargo args (e.g. `--features connect` or
+/// `--no-default-features`), unioned across every shipped target.
+///
+/// Rooting at one named binary (rather than every workspace member) is what makes the
+/// guarantee **per-binary**: the CLI graph is resolved from `costroid` alone (so the bar's
+/// AccessKit local-IPC subtree is unreachable and cannot pollute it), and the bar graph
+/// from `costroid-bar` alone.
 ///
 /// Resolving **per target** (`--filter-platform`) rather than via one unfiltered
 /// `cargo metadata` is deliberate: the unfiltered resolve is an all-targets *superset*
@@ -225,16 +347,16 @@ const SHIPPED_TARGETS: &[&str] = &[
 /// can't trip the ban; unioning all six triples still catches a network dependency
 /// gated to any single platform. `--locked` ties the check to the committed
 /// `Cargo.lock`, so it is fully offline and deterministic.
-fn reachable_crate_names(extra_args: &[&str]) -> BTreeSet<String> {
+fn reachable_crate_names(roots: &[&str], extra_args: &[&str]) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for target in SHIPPED_TARGETS {
-        names.extend(reachable_for_target(target, extra_args));
+        names.extend(reachable_for_target(target, roots, extra_args));
     }
     names
 }
 
 /// The resolved reachable set for a single target triple (see [`reachable_crate_names`]).
-fn reachable_for_target(target: &str, extra_args: &[&str]) -> BTreeSet<String> {
+fn reachable_for_target(target: &str, roots: &[&str], extra_args: &[&str]) -> BTreeSet<String> {
     let mut args = vec![
         "metadata",
         "--format-version",
@@ -289,7 +411,7 @@ fn reachable_for_target(target: &str, extra_args: &[&str]) -> BTreeSet<String> {
         edges.insert(id, deps);
     }
 
-    // Roots: every workspace member except the gated network home.
+    // Roots: the workspace members whose package name is in `roots`.
     let members = match meta["workspace_members"].as_array() {
         Some(members) => members,
         None => panic!("`cargo metadata` output had no `workspace_members` array"),
@@ -300,7 +422,11 @@ fn reachable_for_target(target: &str, extra_args: &[&str]) -> BTreeSet<String> {
         let Some(id) = member.as_str() else {
             continue;
         };
-        if id_to_name.get(id).copied() != Some(CONNECT_CRATE) && visited.insert(id) {
+        let is_root = id_to_name
+            .get(id)
+            .copied()
+            .is_some_and(|name| roots.contains(&name));
+        if is_root && visited.insert(id) {
             queue.push_back(id);
         }
     }
@@ -323,58 +449,63 @@ fn reachable_for_target(target: &str, extra_args: &[&str]) -> BTreeSet<String> {
         .collect()
 }
 
-/// Maintenance helper (not run in CI) — prints the exact crates `--features connect` adds
-/// over the default build, unioned across all shipped targets. Run it to regenerate
-/// [`CONNECT_ALLOWED`] after a deliberate dependency change:
-/// `cargo test -p costroid --test offline print_connect_delta -- --ignored --nocapture`.
-#[test]
-#[ignore]
-fn print_connect_delta() {
-    let default = reachable_crate_names(&[]);
-    let connect = reachable_crate_names(&["--features", "connect"]);
-    let delta: Vec<&String> = connect.difference(&default).collect();
-    println!("CONNECT_DELTA ({} crates):", delta.len());
-    for name in &delta {
-        println!("  {name}");
-    }
+/// Forbidden crates (from `forbidden`) that are present in `names` and NOT excused by the
+/// reviewed `allow` list — the load-bearing assertion both binaries share.
+fn forbidden_hits<'a>(
+    names: &BTreeSet<String>,
+    forbidden: impl IntoIterator<Item = &'a str>,
+    allow: &[&str],
+) -> Vec<&'a str> {
+    let allowed: BTreeSet<&str> = allow.iter().copied().collect();
+    forbidden
+        .into_iter()
+        .filter(|crate_name| names.contains(*crate_name) && !allowed.contains(crate_name))
+        .collect()
 }
 
-/// Default/local-only build: the gate is **off**, so `costroid-connect` must not be
-/// linked and the graph must contain no networking, TLS, or telemetry crate at all
-/// (the sanctioned trio included).
+// =====================================================================================
+// CLI binary (`costroid`) — the local-only product, byte-for-byte async-io/network-free
+// =====================================================================================
+
+/// Default CLI build: the gate is **off**, so `costroid-connect` must not be linked and
+/// the graph must contain no networking, TLS, async-runtime, or telemetry crate at all
+/// (the sanctioned trio AND `async-io` included — there is no async runtime in the CLI).
 #[test]
-fn default_build_links_no_network_tls_or_telemetry_crate() {
-    let names = reachable_crate_names(&[]);
+fn cli_default_build_links_no_network_tls_or_telemetry_crate() {
+    let names = reachable_crate_names(&[CLI_CRATE], &[]);
 
     assert!(
         !names.contains(CONNECT_CRATE),
-        "the default build must not link `{CONNECT_CRATE}` — the `connect` feature \
+        "the default CLI build must not link `{CONNECT_CRATE}` — the `connect` feature \
          must be off by default so the local-only build links no network/keychain code."
     );
 
-    let hits: Vec<&str> = ALWAYS_FORBIDDEN_CRATES
-        .iter()
-        .chain(CONNECT_GATED_CRATES.iter())
-        .copied()
-        .filter(|crate_name| names.contains(*crate_name))
-        .collect();
+    // No allowlist for the CLI: every forbidden crate (incl. `async-io`) must be absent.
+    let hits = forbidden_hits(
+        &names,
+        ALWAYS_FORBIDDEN_CRATES
+            .iter()
+            .chain(CONNECT_GATED_CRATES.iter())
+            .copied(),
+        &[],
+    );
     assert!(
         hits.is_empty(),
-        "the default/local-only build forbids networking/TLS/telemetry dependencies, \
-         but the resolved graph contains: {hits:?}.\n\
-         Costroid must read local logs only and make no network call. Network code \
+        "the default/local-only CLI build forbids networking/TLS/async-runtime/telemetry \
+         dependencies, but the resolved graph contains: {hits:?}.\n\
+         Costroid's CLI must read local logs only and make no network call. Network code \
          belongs solely in `costroid-connect`, behind the off-by-default `connect` \
          feature — if a crate must move there, update CONNECT_GATED_CRATES, deny.toml, \
          and the `connect`-build test together."
     );
 }
 
-/// `--features connect`: the connections subsystem is linked, so the sanctioned trio
+/// `--features connect` (CLI): the connections subsystem is linked, so the sanctioned trio
 /// (`ureq`/`rustls`/`keyring`) is permitted — but async runtimes, OpenSSL, other HTTP
 /// clients, and *all* telemetry stay forbidden even here.
 #[test]
-fn connect_feature_admits_only_the_sanctioned_trio() {
-    let names = reachable_crate_names(&["--features", "connect"]);
+fn cli_connect_feature_admits_only_the_sanctioned_trio() {
+    let names = reachable_crate_names(&[CLI_CRATE], &["--features", "connect"]);
 
     assert!(
         names.contains(CONNECT_CRATE),
@@ -382,16 +513,11 @@ fn connect_feature_admits_only_the_sanctioned_trio() {
          actually wired to the connections subsystem."
     );
 
-    let hits: Vec<&str> = ALWAYS_FORBIDDEN_CRATES
-        .iter()
-        .copied()
-        .filter(|crate_name| names.contains(*crate_name))
-        .collect();
+    let hits = forbidden_hits(&names, ALWAYS_FORBIDDEN_CRATES.iter().copied(), &[]);
     assert!(
         hits.is_empty(),
-        "even with `connect` on, Costroid forbids async runtimes, non-rustls TLS \
-         (OpenSSL), other HTTP clients, and all telemetry, but the resolved graph \
-         contains: {hits:?}.\n\
+        "even with `connect` on, the CLI forbids async runtimes, non-rustls TLS (OpenSSL), \
+         other HTTP clients, and all telemetry, but the resolved graph contains: {hits:?}.\n\
          The connections subsystem uses only `ureq` + `rustls` + `keyring`."
     );
     // T8 landed the keychain (`keyring`) and T9a the HTTP client (`ureq` + `rustls`):
@@ -407,11 +533,11 @@ fn connect_feature_admits_only_the_sanctioned_trio() {
         );
     }
 
-    // Subset-allowlist: bound exactly what `connect` *adds* over the default build, so a
+    // Subset-allowlist: bound exactly what `connect` *adds* over the default CLI build, so a
     // future dependency bump that introduces a NEW crate (a socket/TLS/telemetry path, or
     // anything else) trips this gate for a human to review — rather than silently slipping
     // past the name-denylist above. `CONNECT_ALLOWED` is the reviewed connect-delta.
-    let default = reachable_crate_names(&[]);
+    let default = reachable_crate_names(&[CLI_CRATE], &[]);
     let allowed: BTreeSet<&str> = CONNECT_ALLOWED.iter().copied().collect();
     let unexpected: Vec<&str> = names
         .difference(&default)
@@ -427,4 +553,157 @@ fn connect_feature_admits_only_the_sanctioned_trio() {
          expected delta with: \
          `cargo test -p costroid --test offline print_connect_delta -- --ignored --nocapture`."
     );
+}
+
+// =====================================================================================
+// Taskbar binary (`costroid-bar`) — admits ONLY the reviewed AccessKit local-IPC subtree
+// =====================================================================================
+
+/// Default bar build: AccessKit is on (the bar's default feature), so the graph DOES contain
+/// `async-io` — but only as part of the reviewed local-IPC subtree. `costroid-connect` must
+/// not be linked, and every network/TLS/telemetry crate stays forbidden; the only forbidden
+/// crate excused is the reviewed accesskit subtree ([`BAR_ACCESSKIT_ALLOWED`]). The real
+/// accesskit delta is asserted to be a SUBSET of that allowlist (fail-closed).
+#[test]
+fn bar_default_build_admits_only_the_reviewed_accesskit_subtree() {
+    let names = reachable_crate_names(&[BAR_CRATE], &[]);
+
+    assert!(
+        !names.contains(CONNECT_CRATE),
+        "the default `{BAR_CRATE}` build must not link `{CONNECT_CRATE}` — the bar's `connect` \
+         feature is off by default, so the GUI links no network/keychain code."
+    );
+
+    // Every network/TLS/telemetry/async-runtime crate is forbidden EXCEPT the reviewed
+    // AccessKit local-IPC subtree (in practice just `async-io` from this list).
+    let hits = forbidden_hits(
+        &names,
+        ALWAYS_FORBIDDEN_CRATES
+            .iter()
+            .chain(CONNECT_GATED_CRATES.iter())
+            .copied(),
+        BAR_ACCESSKIT_ALLOWED,
+    );
+    assert!(
+        hits.is_empty(),
+        "the default `{BAR_CRATE}` build forbids every network/TLS/telemetry crate (only the \
+         reviewed AccessKit local-IPC subtree is excused), but the resolved graph contains: \
+         {hits:?}.\n\
+         If a crate is a legitimate part of the local-IPC AccessKit subtree, review it and add \
+         it to BAR_ACCESSKIT_ALLOWED; otherwise it is a real egress path and must be removed."
+    );
+
+    // Positive check: AccessKit really is on (mirrors the connect test asserting the trio is
+    // present) — the local AT-SPI reactor `async-io` is in the bar graph, so the carve-out is
+    // load-bearing and not vacuous.
+    assert!(
+        names.contains("async-io"),
+        "AccessKit must be ON in the default `{BAR_CRATE}` build (its `accesskit` default \
+         feature), so its local-IPC `async-io` reactor is linked — accessibility is required."
+    );
+
+    // Subset-allowlist: bound exactly what the bar's `accesskit` feature ADDS over the same
+    // build with it off, so a future egui/accesskit bump that pulls a NEW crate trips the gate.
+    let no_accesskit = reachable_crate_names(&[BAR_CRATE], &["--no-default-features"]);
+    let allowed: BTreeSet<&str> = BAR_ACCESSKIT_ALLOWED.iter().copied().collect();
+    let unexpected: Vec<&str> = names
+        .difference(&no_accesskit)
+        .map(String::as_str)
+        .filter(|name| !allowed.contains(name))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "the bar's `accesskit` feature introduced crate(s) not in the reviewed allowlist: \
+         {unexpected:?}.\n\
+         Every crate the accesskit-on graph adds must be reviewed (is it a network / TLS / \
+         telemetry path, or local AT-SPI/UI-Automation IPC?) and, if legitimate, added to \
+         BAR_ACCESSKIT_ALLOWED. Regenerate the expected delta with: \
+         `cargo test -p costroid --test offline print_bar_accesskit_delta -- --ignored --nocapture`."
+    );
+}
+
+/// `--features connect` (bar): the display-only connection lane links `costroid-connect`, so
+/// the sanctioned trio is permitted. AccessKit stays on (default), so `async-io` is still
+/// admitted via the reviewed subtree — but every OTHER network/TLS/telemetry crate stays
+/// forbidden, and the connect-delta over the default bar build is bounded by `CONNECT_ALLOWED`.
+#[test]
+fn bar_connect_build_forbids_network_except_the_reviewed_subtrees() {
+    let names = reachable_crate_names(&[BAR_CRATE], &["--features", "connect"]);
+
+    assert!(
+        names.contains(CONNECT_CRATE),
+        "`--features connect` must link `{CONNECT_CRATE}` in the bar too — otherwise the gate \
+         is not wired to the display-only connection lane."
+    );
+
+    // The connect trio (CONNECT_GATED_CRATES) is now expected; among the ALWAYS_FORBIDDEN set,
+    // only the reviewed accesskit subtree (`async-io`) may appear.
+    let hits = forbidden_hits(
+        &names,
+        ALWAYS_FORBIDDEN_CRATES.iter().copied(),
+        BAR_ACCESSKIT_ALLOWED,
+    );
+    assert!(
+        hits.is_empty(),
+        "even with `connect` on, the bar forbids async runtimes, non-rustls TLS, other HTTP \
+         clients, and all telemetry (only the reviewed AccessKit subtree is excused), but the \
+         resolved graph contains: {hits:?}."
+    );
+    for gated in CONNECT_GATED_CRATES {
+        assert!(
+            names.contains(*gated),
+            "`--features connect` must link `{gated}` in the bar — the connection lane shares \
+             the CLI's credential store, which depends on the `ureq`/`rustls`/`keyring` trio."
+        );
+    }
+
+    // The connect-delta over the DEFAULT bar build (accesskit already on in both) must be a
+    // subset of the reviewed CONNECT_ALLOWED — the same connect subtree the CLI admits.
+    let bar_default = reachable_crate_names(&[BAR_CRATE], &[]);
+    let allowed: BTreeSet<&str> = CONNECT_ALLOWED.iter().copied().collect();
+    let unexpected: Vec<&str> = names
+        .difference(&bar_default)
+        .map(String::as_str)
+        .filter(|name| *name != CONNECT_CRATE && !allowed.contains(name))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "`--features connect` introduced crate(s) into the bar not in the reviewed allowlist: \
+         {unexpected:?}.\n\
+         Review each (network / TLS / telemetry?) and, if legitimate, add it to CONNECT_ALLOWED."
+    );
+}
+
+// =====================================================================================
+// Maintenance helpers (not run in CI) — regenerate the allowlists after a deliberate dep change
+// =====================================================================================
+
+/// Prints the exact crates `--features connect` adds to the CLI over the default build,
+/// unioned across all shipped targets. Run to regenerate [`CONNECT_ALLOWED`]:
+/// `cargo test -p costroid --test offline print_connect_delta -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_connect_delta() {
+    let default = reachable_crate_names(&[CLI_CRATE], &[]);
+    let connect = reachable_crate_names(&[CLI_CRATE], &["--features", "connect"]);
+    let delta: Vec<&String> = connect.difference(&default).collect();
+    println!("CONNECT_DELTA ({} crates):", delta.len());
+    for name in &delta {
+        println!("  {name}");
+    }
+}
+
+/// Prints the exact crates the bar's `accesskit` (default) feature adds, unioned across all
+/// shipped targets. Run to regenerate [`BAR_ACCESSKIT_ALLOWED`]:
+/// `cargo test -p costroid --test offline print_bar_accesskit_delta -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_bar_accesskit_delta() {
+    let with = reachable_crate_names(&[BAR_CRATE], &[]);
+    let without = reachable_crate_names(&[BAR_CRATE], &["--no-default-features"]);
+    let delta: Vec<&String> = with.difference(&without).collect();
+    println!("BAR_ACCESSKIT_DELTA ({} crates):", delta.len());
+    for name in &delta {
+        println!("  {name}");
+    }
 }

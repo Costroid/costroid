@@ -276,9 +276,14 @@ The plan rates Step 6 **XL / "poor" for auto-mode** (§308) and a **human-gated 
   `active_alerts` banner (each line tagged with its 0–8 dot-grid step, not `!`/`!!`); **(D)** Budget, Forecast,
   Anomalies, Providers — each mapping ONE core view fn to egui, honest degraded states throughout (the Providers
   connection lane display-only + zero-network).
-- **T21 — AccessKit pass + cross-platform + offline/deny/release wiring (⛔ release):** the a11y audit,
-  the supported-desktop matrix, the offline-acceptance/forbidden-crates extension to the new binary, the
-  `cargo deny` confirmation, and the cargo-dist second-binary release wiring + the v0.6.0 cut.
+- **T21 — AccessKit + cross-platform + offline/deny/release wiring** (carded PRODUCT-PLAN §12.29, XL, ⛔
+  security-boundary + ⛔ release; two decisions PINNED, see §13): the a11y pass (AccessKit **ON everywhere**, with
+  the Linux `accesskit_unix → zbus → async-io` local-IPC subtree admitted via a reviewed `apps/bar`-only allowlist +
+  a runtime no-network proof — the CLI's no-async/no-network guarantee stays intact), the honest supported-desktop
+  matrix, the offline-acceptance/forbidden-crates extension to the `costroid-bar` binary, the `cargo deny`
+  confirmation, and the cargo-dist second-binary release wiring (**bar = archives + crates.io; npm/Homebrew stay
+  CLI-only** until the desktop matrix is field-verified) → the v0.6.0 cut (the maintainer's manual tag-push +
+  `cargo publish`).
 
 Each card is built fresh-context + the §11.1 independent-review loop, exactly as T11–T17/T16b/T17b were.
 
@@ -337,7 +342,12 @@ relicensed from OFL); Neue Haas Grotesk not bundled. Warm SYNC ramp = not used i
   `apps/bar` now an `offline.rs` root, AccessKit-on turns the default gate RED, so **T18 ships AccessKit OFF.**
   T21 (the AccessKit card) must reconcile the required AccessKit obligation with the no-async-runtime invariant
   — e.g. a reviewed `apps/bar` subtree allowlist (`CONNECT_ALLOWED` precedent) or an explicit policy carve-out
-  — then re-enable it.
+  — then re-enable it. **✅ RESOLVED — pinned for T21 (Eren-confirmed 2026-06-18, PRODUCT-PLAN §12.29 / §11.5 📌
+  T21):** AccessKit **ON everywhere**; `accesskit_unix → zbus → async-io` is local AT-SPI/D-Bus IPC (not network),
+  so admit it via a NEW reviewed **`apps/bar`-only** allowlist (`BAR_ACCESSKIT_ALLOWED`) with `offline.rs` made
+  **per-binary** (the `costroid` CLI graph stays byte-for-byte async-io/network-free) AND add a **runtime** no-`AF_INET`
+  proof for the `costroid-bar` binary to `scripts/offline_acceptance.sh` — a behavioral no-network guarantee for the
+  subtree, never a blanket un-ban. ⛔ security-boundary sign-off in T21.
 - **⚠ NEW (T18) — MSRV:** `eframe`/`egui` 0.34 require **Rust 1.92** (> the workspace's 1.88). `apps/bar`
   declares `rust-version = "1.92"`, and the CI MSRV job now **excludes `apps/bar`** (`cargo check --workspace
   --all-targets --exclude costroid-bar`) so the CLI + libraries stay tested at 1.88 (no CLI MSRV bump); T21/
@@ -355,3 +365,31 @@ relicensed from OFL); Neue Haas Grotesk not bundled. Warm SYNC ramp = not used i
   re-evaluates** when `tray-icon` ships a gtk4 / gtk-free Linux backend. NOTE: a bar dep change must run the
   ONLINE `cargo deny check advisories`, not just `licenses bans` (the offline gate misses this — the T18 gap).
 - cargo-dist two-binary packaging (same release vs separate) + installer/Homebrew/npm implications — **T21.**
+- **✅ T21 build-time learnings (the Step 6 capstone, 2026-06-18 — AccessKit on + per-binary offline + release):**
+  - **AccessKit is wired via a DEFAULT `apps/bar` feature, not the workspace eframe list.** egui core ALWAYS
+    builds the a11y tree (the `accesskit` crate is a non-optional egui dep — `pub use accesskit;`); the
+    `accesskit` *feature* lives on the backend (`eframe/accesskit → egui-winit/accesskit → accesskit_winit →`
+    Linux `accesskit_unix → zbus → async-io`). So `apps/bar` declares `default = ["accesskit"]`,
+    `accesskit = ["eframe/accesskit"]` — ON in every normal build, yet metadata-toggleable so `offline.rs` can
+    compute the off-reference. Attaching names is **feature-independent code** (`Response::widget_info` is always
+    present; egui maps a `Label`-role widget's text to the node `value`, other roles to `label`).
+  - **`offline.rs` is now PER-BINARY (root the BFS at one named package).** The CLI root excludes the bar's
+    accesskit subtree entirely (byte-for-byte intact); the bar admits the reviewed **59-crate**
+    `BAR_ACCESSKIT_ALLOWED` (only `async-io` from the forbidden families). The full-delta subset check uses
+    `cargo metadata --no-default-features` (valid at the virtual-workspace root in cargo 1.96; the bar's only
+    default feature is `accesskit`, so it cleanly isolates the subtree). **Side effect:** the per-binary split
+    shrank each reference graph, so `CONNECT_ALLOWED` grew by +11 support crates (RustCrypto primitives for the
+    encrypted secret-service session, `base64`/`nix`/`jobserver`) that the old whole-workspace default masked —
+    all reviewed, none a network path. Regenerate via the `#[ignore]` `print_connect_delta` /
+    `print_bar_accesskit_delta` helpers.
+  - **Runtime no-network proof = a `costroid-bar --self-check` one-shot.** No display needed; it runs the full
+    data path + every `*_view` + the read-only connection lane and exits, so strace/netns prove no `AF_INET`.
+    An optional `xvfb` full-window run exercises the real winit/AccessKit init when a headless display exists;
+    the static per-binary allowlist is authoritative otherwise.
+  - **`cargo deny` over the accesskit subtree needed NO new entry** — fully permissive + advisory-clean (unlike
+    the GTK3 stack). Still run the ONLINE `advisories` (the T18 lesson) after the graph move.
+  - **Release (pin decision 2):** the bar's `[package.metadata.dist]` = `installers = []` (archives + crates.io
+    only), a **5-target** subset (**drop `x86_64-unknown-linux-musl`** — GTK3 cannot static-link), and
+    `[package.metadata.dist.dependencies.apt]` for the Linux GTK3/xdo/AppIndicator headers (they flow into the
+    runtime `matrix.packages_install`, NOT the generated `release.yml`). `dist build --artifacts=local --target
+    x86_64-unknown-linux-gnu` builds a working bar locally. `release.yml` is `dist generate`d (never hand-edit).

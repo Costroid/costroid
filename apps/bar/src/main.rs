@@ -37,6 +37,11 @@ fn main() -> Result<()> {
                 print_help();
                 return Ok(());
             }
+            // A one-shot, no-GUI self-check that exercises the full local data path and exits — the
+            // runtime no-network proof drives this headless (scripts/offline_acceptance.sh).
+            "--self-check" => {
+                return app::self_check();
+            }
             other => {
                 eprintln!("costroid-bar: unrecognized argument '{other}'. Try --help.");
                 std::process::exit(2);
@@ -49,8 +54,10 @@ fn main() -> Result<()> {
 fn print_help() {
     println!(
         "costroid-bar — the Costroid taskbar (tray glance + live cockpit).\n\n\
-         USAGE:\n    costroid-bar [--version] [--help]\n\n\
-         Run with no arguments to launch the tray + window. Quotas, spend, and alerts\n\
+         USAGE:\n    costroid-bar [--version] [--help] [--self-check]\n\n\
+         --self-check runs a one-shot, no-GUI local-data pass (collect + render models) and\n\
+         exits — used by the offline-acceptance proof. Run with no arguments to launch the\n\
+         tray + window. Quotas, spend, and alerts\n\
          come from local data via costroid-core — no network, no telemetry. Connect and\n\
          reconcile stay in the `costroid` CLI; deep analysis (trends / models / history /\n\
          frontier) lives there too."

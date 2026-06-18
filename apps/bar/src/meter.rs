@@ -321,6 +321,15 @@ fn meter_segments(fraction: f64, width: usize) -> Segments {
 /// Paint one meter row: the aligned label, the painted fill (when any), the detail + stamp,
 /// and an optional Claude caveat sub-line.
 pub fn paint(ui: &mut egui::Ui, model: &MeterModel) {
+    let detail = if model.stamp.is_empty() {
+        model.detail.clone()
+    } else {
+        format!("{}  {}", model.detail, model.stamp)
+    };
+    // The painted dot fill is otherwise invisible to a screen reader, so the meter's full line
+    // (label + detail) is attached to it as an AccessKit name below (T21 accessibility pass); the
+    // adjacent text labels carry the same content for sighted users.
+    let accessible = format!("{} {}", model.label.trim_end(), detail);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         ui.label(
@@ -330,19 +339,19 @@ pub fn paint(ui: &mut egui::Ui, model: &MeterModel) {
         );
         match &model.fill {
             MeterFill::Confident { fraction, step } => {
-                paint_bar(ui, *fraction, color_of(glyph::step_fill_color(*step)));
+                paint_bar(
+                    ui,
+                    *fraction,
+                    color_of(glyph::step_fill_color(*step)),
+                    &accessible,
+                );
             }
             MeterFill::Unverified { fraction } => {
                 // Neutral ink — an unverified fill shows density, never a confident tint.
-                paint_bar(ui, *fraction, color_of(glyph::MARK_INK));
+                paint_bar(ui, *fraction, color_of(glyph::MARK_INK), &accessible);
             }
             MeterFill::None => {}
         }
-        let detail = if model.stamp.is_empty() {
-            model.detail.clone()
-        } else {
-            format!("{}  {}", model.detail, model.stamp)
-        };
         ui.label(egui::RichText::new(detail).monospace().color(color_of(ASH)));
     });
     if let Some(caveat) = model.caveat {
@@ -359,10 +368,14 @@ pub fn paint(ui: &mut egui::Ui, model: &MeterModel) {
 }
 
 /// Paint the dot-grid fill bar to the consumed `fraction`, lit dots in `lit`, track dots dim.
-fn paint_bar(ui: &mut egui::Ui, fraction: f64, lit: egui::Color32) {
+/// `name` is the meter's accessible label (T21): the painted dots carry no text, so the line is
+/// attached to the allocated rect as an AccessKit progress-indicator node.
+fn paint_bar(ui: &mut egui::Ui, fraction: f64, lit: egui::Color32, name: &str) {
     ui.add_space(6.0);
-    let (rect, _response) =
+    let (rect, response) =
         ui.allocate_exact_size(egui::vec2(METER_W, METER_H), egui::Sense::hover());
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, true, name));
     let painter = ui.painter_at(rect);
     let empty = color_of(glyph::EMPTY_DOT);
     let seg = meter_segments(fraction, METER_CELLS);
