@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/bar",
     "apps/cli",
     "crates/costroid-connect",
     "crates/costroid-core",
@@ -51,6 +52,33 @@ costroid-connect = { path = "crates/costroid-connect", version = "0.5.0" }
 costroid-core = { path = "crates/costroid-core", version = "0.5.0" }
 costroid-focus = { path = "crates/costroid-focus", version = "0.5.0" }
 costroid-providers = { path = "crates/costroid-providers", version = "0.5.0" }
+
+# The egui taskbar GUI stack (Step 6 / `apps/bar` only — the default `costroid` CLI
+# never links these). All MIT/Apache-2.0, no webview/Tauri. The `glow` (OpenGL)
+# renderer is chosen over `wgpu` — it trims the transitive tree and licenses cleaner
+# (no `naga`/`wgpu-hal`/graphics-backend stack). Several default features are OFF:
+#   * `accesskit` — egui's Linux AccessKit backend (`accesskit_unix`) pulls `zbus`
+#     → `async-io`, which the offline/forbidden-crates gate bans workspace-wide;
+#     AccessKit wiring + the gate's bar-subtree extension are T21's card.
+#   * `default_fonts` — pulls `epaint_default_fonts`, whose license carries `OFL-1.1`
+#     + `Ubuntu-font-1.0` (not on the deny allowlist). The taskbar bundles its own
+#     JetBrains Mono (Apache-2.0) instead, so the bundled fonts are unneeded.
+# `persistence` gives eframe window size/position memory across sessions (pulls `ron`
+# + `home`, both permissive, no network). Pinned exact (`=`), matching the convention.
+eframe = { version = "=0.34.3", default-features = false, features = [
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
+# `default-features = false` drops egui's own `default_fonts` feature too — otherwise the
+# direct egui dep re-enables `epaint_default_fonts` (OFL-1.1/Ubuntu-font-1.0) that the
+# eframe-side trim removed. The taskbar supplies its own JetBrains Mono.
+egui = { version = "=0.34.3", default-features = false }
+# gtk3-rs — only the Linux tray links it (its own GTK loop on a dedicated thread).
+# Same major.minor `tray-icon` depends on, so the graph unifies to one GTK.
+gtk = "=0.18.2"
+tray-icon = "=0.24.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

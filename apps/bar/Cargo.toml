@@ -1,0 +1,49 @@
+[package]
+name = "costroid-bar"
+version.workspace = true
+edition.workspace = true
+# The egui/eframe 0.34 stack requires Rust 1.92, above the workspace MSRV (1.88) the
+# CLI + library crates keep — so `apps/bar` declares its own honest MSRV rather than
+# inheriting. The CI MSRV (1.88) job excludes this crate (`--exclude costroid-bar`),
+# so the shipped CLI keeps its 1.88 MSRV; T21/release may revisit (PRODUCT-PLAN §11.5).
+rust-version = "1.92"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "Costroid taskbar — an always-on tray glance + live cockpit for your AI coding-tool costs and limits."
+keywords = ["finops", "cost", "tray", "gui", "ai"]
+categories = ["gui", "visualization"]
+
+[[bin]]
+name = "costroid-bar"
+path = "src/main.rs"
+
+[features]
+# Mirror apps/cli: the connections subsystem is opt-in and OFF by default, so the
+# default taskbar build links no network/keychain crate (forbidden-crates parity).
+# T18 only proves the gate compiles both ways; the read-only Providers connection
+# display (display-only, no actions, no network) lands in T20.
+connect = ["dep:costroid-connect"]
+
+[dependencies]
+anyhow.workspace = true
+# Freshness math + the "as of HH:MM" stamp on the tray tooltip operate on the
+# `DateTime<Utc>` the engine stamps onto every reading; same pin as the rest of the
+# workspace.
+chrono.workspace = true
+costroid-connect = { workspace = true, optional = true }
+costroid-core.workspace = true
+eframe.workspace = true
+egui.workspace = true
+tray-icon.workspace = true
+
+# The Linux tray (StatusNotifierItem/AppIndicator) runs on its own GTK main loop on a
+# dedicated thread — winit (eframe's event loop) does not pump GTK. `gtk` (gtk3-rs) is
+# the same version `tray-icon` links, so the graph unifies to one GTK. macOS/Windows
+# pump the tray through eframe's own event loop and need no extra crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk.workspace = true
+
+[lints]
+workspace = true

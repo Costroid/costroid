@@ -16,9 +16,17 @@ use costroid_focus::{
 pub use costroid_focus::FocusRecord;
 use costroid_providers::{
     default_providers, read_cursor_config, AccessPath, AuthMethod, Capability, CursorConfig,
-    DataSource, HostEnv, LimitKind, LimitMeasure, LimitStatus, LimitWindow, Provider, ProviderId,
-    UsageEvent,
+    DataSource, LimitStatus, LimitWindow, Provider, UsageEvent,
 };
+// Re-export the provider-layer types that appear in this crate's PUBLIC API — the
+// parameter type of `collect_local_snapshot`/`now_summary` callers need (`HostEnv`)
+// and the field types of the public `LimitSummary`/`LimitAvailability`
+// (`ProviderId`/`LimitKind`/`LimitMeasure`). Without this a "core-only" consumer
+// (the Step 6 taskbar `apps/bar`, which depends only on `costroid-core` —
+// ARCHITECTURE §5) could not name the engine's own public surface and would be forced
+// into a direct `costroid-providers` edge. Same rationale as the `FocusRecord`
+// re-export above; the rest of `costroid-providers` stays an internal dependency.
+pub use costroid_providers::{HostEnv, LimitKind, LimitMeasure, ProviderId};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};

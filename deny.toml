@@ -45,6 +45,19 @@ allow = [
     "CC0-1.0",
     "WTFPL",
 ]
+# MPL-2.0 is admitted ONLY via the SCOPED per-crate exception below — NOT a blanket
+# `allow` — so a NEW MPL-2.0 crate still FAILS `cargo deny check licenses` until a human
+# reviews and lists it (the project's fail-closed allowlist convention, mirroring
+# CONNECT_ALLOWED / the forbidden-crates tier). The sole MPL-2.0 crate in the resolved
+# graph is `option-ext` (Step 6 taskbar `apps/bar`: `tray-icon → dirs → dirs-sys →
+# option-ext` — verified the sole ingress AND the only MPL crate via `cargo tree -i
+# option-ext`). MPL-2.0 is file-level (weak) copyleft — NOT in the prohibited
+# GPL/AGPL/LGPL/SSPL set (CLAUDE.md golden rules); for this unmodified upstream leaf
+# utility it imposes no obligation on Costroid's own Apache-2.0 source. ⛔ Admitted under
+# the T18 deps-license human gate (PRODUCT-PLAN §12.26 / §11.5).
+exceptions = [
+    { name = "option-ext", allow = ["MPL-2.0"] },
+]
 confidence-threshold = 0.9
 
 [bans]

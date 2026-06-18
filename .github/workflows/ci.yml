@@ -18,10 +18,12 @@ jobs:
           components: clippy, rustfmt
 
       # `cargo {clippy,test} --workspace` builds the `costroid-connect` member, whose
-      # Linux keychain backend (sync Secret Service) links C libdbus (T8). The default
-      # `costroid` binary never links it, but the workspace build does.
-      - name: Install keychain build deps (libdbus, libsecret)
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libsecret-1-dev
+      # Linux keychain backend (sync Secret Service) links C libdbus (T8) — AND, since T18,
+      # the `apps/bar` egui taskbar, whose `gtk` (gtk3-rs `-sys` crates, pkg-config probe
+      # `gtk+-3.0`) + `tray-icon` (links `xdo`) deps need GTK3 + libxdo dev headers. The
+      # default `costroid` binary links none of this, but the `--workspace` build does.
+      - name: "Install build deps (keychain libdbus/libsecret + GUI tray GTK3/xdo/appindicator)"
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libsecret-1-dev libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -57,8 +59,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The documented MSRV (Cargo.toml `rust-version = "1.88"`) is enforced here, per
-      # CLAUDE.md ("document and test the MSRV in CI") — every other job tracks stable.
+      # The documented MSRV (`[workspace.package] rust-version = "1.88"`) is enforced here,
+      # per CLAUDE.md ("document and test the MSRV in CI") — every other job tracks stable.
+      # `apps/bar` (the egui taskbar, T18) is EXCLUDED: its egui/eframe 0.34 stack requires
+      # Rust 1.92, so the crate declares its own `rust-version = "1.92"` and is checked by
+      # the stable jobs, not this 1.88 gate. The shipped `costroid` CLI + the library crates
+      # keep the 1.88 MSRV. (T21/release may revisit raising the whole workspace to 1.92.)
       - name: Install Rust 1.88 (MSRV)
         uses: dtolnay/rust-toolchain@1.88
 
@@ -66,8 +72,8 @@ jobs:
       - name: Install keychain build deps (libdbus, libsecret)
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libsecret-1-dev
 
-      - name: Check (workspace, all targets, on the MSRV toolchain)
-        run: cargo check --workspace --all-targets
+      - name: Check (workspace minus apps/bar, all targets, on the MSRV toolchain)
+        run: cargo check --workspace --all-targets --exclude costroid-bar
 
   focus-conformance:
     name: FOCUS 1.3 validator

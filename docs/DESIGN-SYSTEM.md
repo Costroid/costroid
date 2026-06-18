@@ -6,11 +6,23 @@ One thing to internalize up front, because it shapes every component: **a termin
 
 ## Brand basics
 
-- **Mark.** A pixel `C` beside the braille cell `⠉` (dots 1 and 4 — the two top dots, i.e. a meter at full). The mark reads `C⠉`.
+Costroid must read as a **distinctive dot/braille terminal-native financial instrument — not a generic
+dashboard.** This is the master visual identity (Eren-confirmed 2026-06-17); interaction *feel* takes from
+high-quality terminal tools (Claude Code, Mistral — never their assets/branding/colors/logos/layouts).
+
+**Surfaces & projection (read first).** A terminal cell has a single foreground color (see the note atop
+this doc), so the full brand palette + the "solid colored dots" look land only on **raster surfaces** —
+the **egui taskbar** (`apps/bar`, Step 6 — `docs/proposals/STEP6-TASKBAR-DESIGN.md`), the website, and
+marketing. The **terminal (CLI/TUI) renders a monochrome *projection*** of this identity: bright/dim cells
++ the single amber/red accent + a text cue. Both surfaces share the same braille primitive, the same
+`C⠉` mark, the same voice, and the same warning *semantics* — only the realization differs.
+
+- **Mark.** A pixel `C` beside the braille cell `⠉` (dots 1 and 4 — the two top dots, i.e. a meter at full). The mark reads `C⠉`. On raster surfaces the mark's dots double as a live meter (the taskbar tray icon).
 - **Wordmark.** `costroid`, lowercase, with `cost` in the strong weight/primary color and `roid` muted. Carry this split into the UI: dollar figures and the active metric use the strong weight; labels and context are muted.
-- **Palette.** Monochrome — black / grey / white, adapting to the terminal theme via foreground/dim. A **single amber accent**, reserved exclusively for the warning/near-limit state. No other colors. (Critical/over-limit may use red as an intensification of the warning state; still always paired with a non-color cue.)
-- **Font.** JetBrains Mono. Braille glyphs render in any monospace with braille coverage (JetBrains Mono, Cascadia Code, DejaVu); the ASCII fallback covers terminals without it.
-- **Tone of the visuals.** Sparse and precise. Dots are the accent and the data; keep surrounding typography clean. Don't drown the screen in braille.
+- **Palette (master).** Parent neutrals — **Carbon `#0B0C0E`** / **Slate `#16181C`** / **Graphite `#2C2C2A`** (backgrounds, darkest→dark), **Ash `#888780`** (muted text), **Bone `#E9E7DF`** (primary text), **Pure `#FFFFFF`**. Accent — **Signal `#C8FF3D`** (lime), the *active/selected/"live"* highlight, used **sparingly**. Data/cost ramp — **COSTROID·CLI (cold) cyan-blue** `#042C53 #185FA5 #378ADD #85B7EB` ("logs, data, raw compute"). The **COSTROID·SYNC (warm) coral** ramp `#712B13 #D85A30 #F0997B #F5C4B3` is the sibling SYNC surface's identity — **not used in the Costroid CLI/taskbar** (Eren-confirmed 2026-06-17). **Terminal projection:** monochrome (foreground/dim) + the single amber accent (critical→red), never the full palette — the terminal is one-color-per-cell.
+- **Warning system — a 9-step DOT-DENSITY scale (`0 idle → 8 critical`), the universal non-color-safe severity cue.** Severity is encoded by the **count/fill of dots in a 3×3 grid** (plus a color progression: idle→green→yellow→orange→red→brown→black), so it reads in grayscale and for color-blind users — it IS the "never rely on color alone" guarantee. Map a consumed quota fraction / alert level onto `0–8`. **Raster (taskbar/web):** the colored dot grid. **Terminal:** the existing bright/dim meter + amber/red + the `!`/`!!`/`OVER` (and `? unverified`) text cue (Limit meter states, below) — the same severity *semantics*, the terminal's monochrome realization.
+- **Typography.** **JetBrains Mono** for everything measurable — numbers, costs, CLI text, all braille glyphs, tabular nums ("anything measurable is mono"). **Neue Haas Grotesk** for display/UI chrome on **web/marketing only** — it is a **commercial font and must NOT be bundled** in the Apache-2.0 binaries, so the **shipped CLI + taskbar use JetBrains Mono for chrome too** (Eren-confirmed 2026-06-17). Braille glyphs render in any monospace with braille coverage (JetBrains Mono, Cascadia Code, DejaVu); the ASCII fallback covers terminals without it.
+- **Tone of the visuals.** Sparse and precise. Dots are the accent and the data; keep surrounding typography clean. Don't drown the screen in braille. Compact, terminal-native, minimal motion.
 
 ## The braille rendering primitive
 
