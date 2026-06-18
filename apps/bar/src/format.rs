@@ -11,6 +11,12 @@ use costroid_core::{LimitAvailability, LimitKind, ProviderId};
 
 use crate::severity::Constraint;
 
+/// Age past which an in-window quota reading carries the "as of HH:MM" stamp — mirrors the
+/// CLI's `LIMIT_FRESHNESS_STAMP_MINUTES` (brief §8): a reading at least this many minutes
+/// older than the render must show its age, so an hours-old cached number never renders as
+/// a bare, confident meter.
+pub const LIMIT_FRESHNESS_STAMP_MINUTES: i64 = 10;
+
 /// Lower-case provider name, matching `render.rs::provider_name`.
 pub fn provider_label(provider: ProviderId) -> &'static str {
     match provider {
@@ -79,6 +85,44 @@ pub fn as_of(captured_at: DateTime<Utc>) -> String {
     }
 }
 
+/// The in-window freshness stamp for a quota reading: `"as of HH:MM"` (UTC) once the
+/// reading is at least [`LIMIT_FRESHNESS_STAMP_MINUTES`] older than the render, `""` while
+/// still fresh, or `"capture time unknown"` for the UNIX-epoch sentinel (no observation
+/// instant recorded — never a confident `as of 00:00`). Mirrors the CLI's `freshness_stamp`
+/// (brief §8); unlike the always-on [`as_of`] the tray tooltip uses, this one is empty for a
+/// fresh reading so the in-window meter only stamps an aged number.
+pub fn freshness_stamp(captured_at: DateTime<Utc>, generated_at: DateTime<Utc>) -> String {
+    if captured_at.timestamp() == 0 {
+        return "capture time unknown".to_string();
+    }
+    if (generated_at - captured_at).num_minutes() >= LIMIT_FRESHNESS_STAMP_MINUTES {
+        format!("as of {}", captured_at.format("%H:%M"))
+    } else {
+        String::new()
+    }
+}
+
+/// Group a (possibly signed) integer string with `,` thousands separators (e.g. `"12345"`
+/// → `"12,345"`, `"-1000"` → `"-1,000"`). Mirrors the CLI's `with_thousands` exactly,
+/// including stripping a leading `-` before grouping so the sign never gets a stray comma.
+/// Used for the `Estimated` arm's local token volume (always non-negative), but the sign
+/// handling keeps it a faithful mirror.
+pub fn with_thousands(value: &str) -> String {
+    let (sign, digits) = value
+        .strip_prefix('-')
+        .map(|digits| ("-", digits))
+        .unwrap_or(("", value));
+    let mut reversed = String::new();
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            reversed.push(',');
+        }
+        reversed.push(ch);
+    }
+    let grouped: String = reversed.chars().rev().collect();
+    format!("{sign}{grouped}")
+}
+
 /// The tray tooltip: the precise most-constrained line, e.g.
 /// `"claude code 5h — 92% used · resets in 41m · as of 15:32"`, or an honest idle line
 /// when no window is fresh-`Available` (STEP6-TASKBAR-DESIGN §3).
@@ -137,6 +181,32 @@ mod tests {
         assert_eq!(reset_countdown(2 * 3600 + 14 * 60), "2h 14m");
         assert_eq!(reset_countdown(3 * 86400 + 4 * 3600), "3d 4h");
         assert_eq!(reset_countdown(3 * 3600), "3h");
+    }
+
+    #[test]
+    fn freshness_stamp_only_past_the_threshold() {
+        // 1970-01-01 08:00:00 UTC captured; render 8 minutes later → still fresh, no stamp.
+        let captured = ts(8 * 3600);
+        assert_eq!(freshness_stamp(captured, ts(8 * 3600 + 8 * 60)), "");
+        // 12 minutes later → past the 10-minute threshold → stamped at capture time.
+        assert_eq!(
+            freshness_stamp(captured, ts(8 * 3600 + 12 * 60)),
+            "as of 08:00"
+        );
+        // The epoch sentinel discloses the unknown age, never a confident "as of 00:00".
+        assert_eq!(freshness_stamp(ts(0), ts(8 * 3600)), "capture time unknown");
+    }
+
+    #[test]
+    fn with_thousands_groups_in_threes() {
+        assert_eq!(with_thousands("0"), "0");
+        assert_eq!(with_thousands("999"), "999");
+        assert_eq!(with_thousands("1000"), "1,000");
+        assert_eq!(with_thousands("1234567"), "1,234,567");
+        // The sign is stripped before grouping (mirrors the CLI), so a 3*k-digit negative
+        // never gets a stray comma right after the minus.
+        assert_eq!(with_thousands("-123"), "-123");
+        assert_eq!(with_thousands("-1234"), "-1,234");
     }
 
     #[test]

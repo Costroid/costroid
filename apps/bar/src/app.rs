@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use crate::format;
 use crate::glyph;
+use crate::overview::{self, OverviewModel};
 use crate::refresh::{due_for_refresh, Phase, RefreshState, RefreshWorker, REFRESH_INTERVAL};
 use crate::severity::{most_constrained_available, Constraint};
 use crate::tray::{self, TrayAction, TrayController};
@@ -30,15 +31,22 @@ pub fn run() -> anyhow::Result<()> {
     .map_err(|err| anyhow::anyhow!("failed to start the taskbar: {err}"))
 }
 
-/// The brand's neutral colors as egui values.
-fn color_of(rgba: [u8; 4]) -> egui::Color32 {
+/// The brand's neutral colors as egui values. Shared with the Overview (`meter.rs` /
+/// `overview.rs`) so the whole window renders in one palette.
+pub(crate) fn color_of(rgba: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
 }
 
 const CARBON: [u8; 4] = [0x0b, 0x0c, 0x0e, 0xff];
 const SLATE: [u8; 4] = [0x16, 0x18, 0x1c, 0xff];
-const BONE: [u8; 4] = [0xe9, 0xe7, 0xdf, 0xff];
-const ASH: [u8; 4] = [0x88, 0x87, 0x80, 0xff];
+/// Primary ink (brand "Bone").
+pub(crate) const BONE: [u8; 4] = [0xe9, 0xe7, 0xdf, 0xff];
+/// Muted/secondary text (brand "Ash").
+pub(crate) const ASH: [u8; 4] = [0x88, 0x87, 0x80, 0xff];
+/// The "live"/active accent (brand "Signal" lime) — used sparingly (STEP6-TASKBAR-DESIGN
+/// §0/§6: only the active/selected/"live" highlight). The active-tab/selected-row uses
+/// land in T20; the Overview uses it only as the live header's thin accent rule.
+pub(crate) const SIGNAL: [u8; 4] = [0xc8, 0xff, 0x3d, 0xff];
 
 fn carbon_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
@@ -55,8 +63,9 @@ struct ShellView {
     step: u8,
     /// The wordmark sub-line: freshness, "refreshing…", or "refresh failed — …".
     status: String,
-    /// The most-constrained line the tray tooltip also shows (or the idle line).
-    constraint_line: String,
+    /// The Overview body (spend header + quota meters), or `None` before the first
+    /// snapshot has loaded (the status line carries the loading state).
+    overview: Option<OverviewModel>,
 }
 
 struct BarApp {
@@ -107,7 +116,10 @@ impl BarApp {
         ShellView {
             step: constraint.as_ref().map_or(0, Constraint::step),
             status: self.status_line(),
-            constraint_line: format::tooltip(constraint.as_ref()),
+            overview: self
+                .state
+                .loaded()
+                .map(|loaded| OverviewModel::from_summary(&loaded.summary)),
         }
     }
 
@@ -234,8 +246,10 @@ fn status_text(
     }
 }
 
-/// Draw the minimal placeholder shell; returns whether the refresh button was clicked.
-/// Pure of app/tray/thread state, so a headless egui pass can exercise it.
+/// Draw the window shell: the `C⠉` mark + wordmark + freshness status (the chrome T18 set
+/// up), then the Overview body (spend header + quota meters), then the manual refresh.
+/// Returns whether the refresh button was clicked. Pure of app/tray/thread state, so a
+/// headless egui pass can exercise it.
 fn draw_shell(ui: &mut egui::Ui, view: &ShellView) -> bool {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -250,7 +264,17 @@ fn draw_shell(ui: &mut egui::Ui, view: &ShellView) -> bool {
     ui.add_space(10.0);
     ui.separator();
     ui.add_space(6.0);
-    ui.label(&view.constraint_line);
+    match &view.overview {
+        Some(overview) => overview::draw(ui, overview),
+        // Before the first snapshot lands the status line already says "starting…" /
+        // "refreshing…"; show a quiet body note so the window is never blank.
+        None => {
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("loading local data…").color(color_of(ASH)));
+            });
+        }
+    }
     ui.add_space(10.0);
     let mut clicked = false;
     ui.horizontal(|ui| {
@@ -331,19 +355,54 @@ mod tests {
 
     #[test]
     fn draw_shell_headless_tick_does_not_panic() {
-        // A headless egui pass exercises the paint path with no window/GPU.
+        // A headless egui pass exercises the paint path with no window/GPU — both before a
+        // snapshot loads (no overview) and with one present.
         let ctx = egui::Context::default();
         crate::fonts::install(&ctx);
-        for step in [0u8, 4, 8] {
-            let view = ShellView {
-                step,
-                status: "updated 12:00 · estimates".to_owned(),
-                constraint_line: "claude code 5h — 90% used · resets in 1h · as of 12:00"
-                    .to_owned(),
-            };
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-                let _ = draw_shell(ui, &view);
-            });
+        for overview in [None, Some(sample_overview())] {
+            for step in [0u8, 4, 8] {
+                let view = ShellView {
+                    step,
+                    status: "updated 12:00 · estimates".to_owned(),
+                    overview: overview.clone(),
+                };
+                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let _ = draw_shell(ui, &view);
+                });
+            }
         }
+    }
+
+    /// A small Overview model (one Available meter) for the headless shell test.
+    fn sample_overview() -> OverviewModel {
+        use chrono::DateTime;
+        use costroid_core::{
+            GroupBy, LimitAvailability, LimitKind, LimitMeasure, LimitSummary, NowSummary,
+            PeriodRange, ProviderId,
+        };
+        let at = match DateTime::from_timestamp(1_900_000_000, 0) {
+            Some(dt) => dt,
+            None => panic!("invalid test timestamp"),
+        };
+        let summary = NowSummary {
+            generated_at: at,
+            cost_period: PeriodRange { start: at, end: at },
+            group_by: GroupBy::Model,
+            limits: vec![LimitSummary {
+                tool: ProviderId::ClaudeCode,
+                plan: None,
+                kind: LimitKind::FiveHour,
+                label: None,
+                captured_at: at,
+                availability: LimitAvailability::Available {
+                    measure: LimitMeasure::TokenFraction(0.5),
+                    resets_at: at,
+                    reset_in_seconds: 3600,
+                },
+            }],
+            current_costs: Vec::new(),
+            providers: Vec::new(),
+        };
+        OverviewModel::from_summary(&summary)
     }
 }

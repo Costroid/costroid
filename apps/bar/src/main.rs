@@ -9,6 +9,8 @@ mod app;
 mod fonts;
 mod format;
 mod glyph;
+mod meter;
+mod overview;
 mod refresh;
 mod severity;
 mod tray;

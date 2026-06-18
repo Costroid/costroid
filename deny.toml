@@ -98,6 +98,24 @@ deny = [
 # Not part of the offline gate (needs the RustSec DB); checked in CI's dedicated
 # online `advisories` job, which runs `cargo deny check advisories`.
 yanked = "warn"
+# Step 6 (T18) taskbar `apps/bar` deps with NO safe upgrade. Each is an `unmaintained`
+# advisory (informational — NOT a vulnerability/`yanked`); a NEW advisory or any real
+# vuln in this tree still fails the gate (this list is the minimal known set, not a
+# blanket suppression). The GTK3 (gtk-rs) bindings are archived but are the ONLY Linux
+# backend `tray-icon` 0.24 has (tray-icon → libappindicator/muda → gtk 0.18); no gtk4
+# tray exists yet. They are confined to `apps/bar` — the shipped `costroid` CLI + the
+# library crates never link GTK. Revisit when `tray-icon` ships a gtk4 / gtk-free Linux
+# backend (pin §13 / T21 cross-platform).
+ignore = [
+    "RUSTSEC-2024-0412", # gdk          — gtk-rs GTK3 bindings unmaintained
+    "RUSTSEC-2024-0413", # atk          — gtk-rs GTK3 bindings unmaintained
+    "RUSTSEC-2024-0415", # gtk          — gtk-rs GTK3 bindings unmaintained
+    "RUSTSEC-2024-0416", # atk-sys      — gtk-rs GTK3 bindings unmaintained
+    "RUSTSEC-2024-0418", # gdk-sys      — gtk-rs GTK3 bindings unmaintained
+    "RUSTSEC-2024-0419", # gtk3-macros  — gtk-rs GTK3 bindings unmaintained
+    "RUSTSEC-2024-0420", # gtk-sys      — gtk-rs GTK3 bindings unmaintained
+    "RUSTSEC-2024-0370", # proc-macro-error — unmaintained build-time macro (via glib-macros → gtk)
+]
 
 [sources]
 unknown-registry = "deny"

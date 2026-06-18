@@ -288,6 +288,21 @@ relicensed from OFL); Neue Haas Grotesk not bundled. Warm SYNC ramp = not used i
   round-with-min-visibility-floor, 8 reserved for ≥100%) and the step→color ramp *hexes* were chosen at build
   time (the pin fixed the named colors, not the exact values) — T19's in-window braille meters should reuse
   `severity_step` + this geometry so the language stays identical edge-to-edge, and may refine the hexes.
+- **In-window braille meter — ✅ T19:** §6's "row of braille cells … in JetBrains Mono so the cells align"
+  assumed braille glyph coverage that the bundled JetBrains Mono lacks (T18 `fonts.rs`), so the meter is a
+  **PAINTED** `W = 12` row of 2×4 dot cells (`apps/bar/src/meter.rs::paint_bar`, `painter.circle_filled` —
+  the same primitive as the tray mark), NOT typeset braille. Fill **length** = the TUI's `meter_segments`
+  (floor + boundary half-cell + min-visibility); fill **tint** = the 0–8 ramp (`severity_step` +
+  `glyph::step_fill_color`). The never-color-alone cue is the dot **density**; the ramp tint is secondary. It
+  reuses `glyph.rs`'s color toolkit + `severity_step` (the geometry is meter-specific — `glyph`'s 3×3
+  `dot_centers`/`DOT_RADIUS` are the mark-grid's). All five `LimitAvailability` arms render honestly per the
+  CLI's `render_limit_line`; no degraded arm paints a confident fill (§6).
+- **Money display for a `rust_decimal`-free bar — ✅ T19:** the period-spend header + every `$` route through
+  two new pure `costroid-core` helpers — `now_api_spend_display(&NowSummary)` (the `~`-hedged API-lane spend,
+  mirroring the CLI now-header) and `format_money_usd(&Decimal, estimated)` — so money stays `Decimal` in the
+  engine and `apps/bar` names no money type (no `rust_decimal` dep; `Decimal`s flow through by inference). The
+  `Estimated` arm carries the estimate-labeled `~$` suffix exactly as the CLI does. **Signal-lime** is used
+  sparingly in T19 (a thin header accent rule); the active-tab/selected-row lime arrives with T20's tab strip.
 - **egui renderer — ✅ T18: `glow`** (not `wgpu`) — it trims the transitive tree and licenses cleaner (no
   `wgpu-hal`/`naga` graphics stack), confirmed by `cargo tree`/`cargo deny`.
 - **egui persistence for window size/pos — ✅ T18:** eframe `persist_window: true` + the `persistence`
@@ -309,4 +324,9 @@ relicensed from OFL); Neue Haas Grotesk not bundled. Warm SYNC ramp = not used i
   thread and degrades to window-only on failure; macOS/Windows tray paths compile but are unverified on the
   Linux dev box. Linux appindicator left-click-activate is unreliable → the menu's "Open Costroid" is the show
   path.)
+- **⚠ NEW (post-T18) — GTK3 `unmaintained` RustSec advisories ignored:** the Linux tray's archived gtk-rs
+  GTK3 stack (atk/gdk/gtk/`*-sys`/gtk3-macros + `proc-macro-error`) trips 8 `unmaintained` advisories with no
+  safe upgrade; the IDs are in `deny.toml` `[advisories].ignore` (justified, confined to `apps/bar`). **T21
+  re-evaluates** when `tray-icon` ships a gtk4 / gtk-free Linux backend. NOTE: a bar dep change must run the
+  ONLINE `cargo deny check advisories`, not just `licenses bans` (the offline gate misses this — the T18 gap).
 - cargo-dist two-binary packaging (same release vs separate) + installer/Homebrew/npm implications — **T21.**

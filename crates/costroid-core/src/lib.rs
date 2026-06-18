@@ -138,6 +138,64 @@ pub fn now_summary(snapshot: &EngineSnapshot, options: NowOptions) -> NowSummary
     }
 }
 
+/// The API-lane spend of a now-summary, formatted as the `~`-hedged USD estimate the
+/// now-header leads with (e.g. `"~$42.18"`).
+///
+/// Money stays [`Decimal`] inside the engine; a consumer that must not depend on
+/// `rust_decimal` (the Step 6 taskbar `apps/bar`, a core-only consumer — ARCHITECTURE §5)
+/// receives the finished display string rather than the raw `Decimal`. This mirrors the
+/// CLI now-header exactly (`apps/cli/src/render.rs`): the sum of the [`CostLane::Api`]
+/// rows' `billed_cost`, formatted by `format_money(.., "USD", estimated = true)`. The
+/// period spend is always an estimate (your tokens × current prices), never the
+/// authoritative bill — so it is always `~`-hedged.
+pub fn now_api_spend_display(summary: &NowSummary) -> String {
+    let total = summary
+        .current_costs
+        .iter()
+        .filter(|row| row.lane == CostLane::Api)
+        .fold(Decimal::ZERO, |sum, row| sum + row.totals.billed_cost);
+    format_money_usd(&total, true)
+}
+
+/// Format a USD [`Decimal`] for display as `"$X.XX"` — or `"~$X.XX"` when `estimated` —
+/// rounded to cents, with thousands separators.
+///
+/// The single `Decimal`→display path kept in the engine for `rust_decimal`-free consumers
+/// (`apps/bar`, which displays money but never computes it): money stays `Decimal` in core
+/// and the bar only renders the string. Mirrors the CLI's private `format_money` USD path
+/// (`apps/cli/src/render.rs`).
+pub fn format_money_usd(amount: &Decimal, estimated: bool) -> String {
+    let prefix = if estimated { "~" } else { "" };
+    let rounded = amount.round_dp(2).to_string();
+    let (whole, fraction) = match rounded.split_once('.') {
+        Some((whole, fraction)) => (whole, fraction),
+        None => (rounded.as_str(), ""),
+    };
+    let mut cents = fraction.chars().take(2).collect::<String>();
+    while cents.len() < 2 {
+        cents.push('0');
+    }
+    format!("{prefix}${}.{cents}", group_thousands(whole))
+}
+
+/// Insert `,` thousands separators into a (possibly signed) integer string. Mirrors the
+/// CLI's `with_thousands`.
+fn group_thousands(value: &str) -> String {
+    let (sign, digits) = value
+        .strip_prefix('-')
+        .map(|digits| ("-", digits))
+        .unwrap_or(("", value));
+    let mut reversed = String::new();
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            reversed.push(',');
+        }
+        reversed.push(ch);
+    }
+    let grouped = reversed.chars().rev().collect::<String>();
+    format!("{sign}{grouped}")
+}
+
 pub fn trends_summary(snapshot: &EngineSnapshot, options: TrendsOptions) -> TrendsSummary {
     let mut buckets = BTreeMap::<(PeriodRange, CostLane, GroupKey), AggregateTotals>::new();
 
@@ -2820,6 +2878,69 @@ mod tests {
             providers: Vec::new(),
             capabilities: Vec::new(),
         }
+    }
+
+    fn api_cost_row(group: &str, billed: Decimal) -> CostLaneSummary {
+        CostLaneSummary {
+            group: GroupKey {
+                kind: GroupBy::Model,
+                value: group.to_string(),
+            },
+            lane: CostLane::Api,
+            totals: AggregateTotals {
+                billed_cost: billed,
+                ..AggregateTotals::default()
+            },
+        }
+    }
+
+    fn now_summary_with_costs(current_costs: Vec<CostLaneSummary>) -> NowSummary {
+        let at = timestamp();
+        NowSummary {
+            generated_at: at,
+            cost_period: PeriodRange { start: at, end: at },
+            group_by: GroupBy::Model,
+            limits: Vec::new(),
+            current_costs,
+            providers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn format_money_usd_groups_rounds_and_hedges() {
+        assert_eq!(format_money_usd(&Decimal::new(4218, 2), true), "~$42.18");
+        assert_eq!(format_money_usd(&Decimal::new(4218, 2), false), "$42.18");
+        // Thousands separators, no hedge.
+        assert_eq!(
+            format_money_usd(&Decimal::new(123456, 2), false),
+            "$1,234.56"
+        );
+        // Zero pads to two decimals and still hedges.
+        assert_eq!(format_money_usd(&Decimal::ZERO, true), "~$0.00");
+        // A whole-dollar value pads cents.
+        assert_eq!(format_money_usd(&Decimal::from(7), true), "~$7.00");
+    }
+
+    #[test]
+    fn now_api_spend_display_sums_api_lane_only() {
+        // Two API-lane rows sum; a subscription-lane row is excluded from the dollar total.
+        let mut subscription = api_cost_row("claude-opus", Decimal::new(9999, 2));
+        subscription.lane = CostLane::SubscriptionEstimate;
+        let summary = now_summary_with_costs(vec![
+            api_cost_row("gpt-5.5", Decimal::new(1250, 2)),
+            api_cost_row("claude-sonnet", Decimal::new(3000, 2)),
+            subscription,
+        ]);
+        assert_eq!(now_api_spend_display(&summary), "~$42.50");
+    }
+
+    #[test]
+    fn now_api_spend_display_is_zero_when_no_api_usage() {
+        // No fabricated absence: zero API spend is the honest sum, hedged.
+        assert_eq!(
+            now_api_spend_display(&now_summary_with_costs(Vec::new())),
+            "~$0.00"
+        );
     }
 
     #[test]
