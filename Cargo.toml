@@ -16,6 +16,11 @@ members = [
     # (no internal deps) that `costroid-core` will consume at M3.
     "crates/costroid-power",
     "crates/costroid-providers",
+    # The local SQLite usage store (M1). A metadata-only (R4) persistent ledger of FOCUS
+    # rows; SQLite via `rusqlite` (`bundled`) — DuckDB was rejected at M0. A leaf crate
+    # (deps: costroid-focus) consumed only behind the CLI's off-by-default `store`
+    # feature — never linked into the default CLI/bar/server graph.
+    "crates/costroid-store",
 ]
 resolver = "2"
 
@@ -36,6 +41,11 @@ crossterm = "=0.29.0"
 csv = "=1.4.0"
 ratatui = "=0.30.0"
 rust_decimal = { version = "=1.42.0", features = ["serde"] }
+# The local SQLite usage store (`costroid-store`, M1) — bundled C amalgamation (no system
+# SQLite required), MSRV-1.88 clean, all-permissive transitive licenses (deny-allowlist
+# clean). Behind the off-by-default `store` feature; NOT reachable from the default
+# CLI/bar/server graph. DuckDB was rejected at M0; SQLite is locked.
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
 # The sanctioned HTTP stack (T9a) — linked ONLY by `costroid-connect`, which itself is
 # linked only behind the apps' off-by-default `connect` feature. `ureq` is pinned
 # exact with default features OFF and precisely two features on:
@@ -82,6 +92,10 @@ costroid-focus = { path = "crates/costroid-focus", version = "0.6.0" }
 # task), so no published crate may depend on it yet — it is consumed only locally via this path.
 costroid-power = { path = "crates/costroid-power", version = "0.6.0" }
 costroid-providers = { path = "crates/costroid-providers", version = "0.6.0" }
+# `costroid-store` is `publish = false` for now (M1 scaffold; the publish-ladder bump is an
+# M6 task), so no published crate may depend on it yet — it is consumed only locally via
+# this path, behind the CLI's off-by-default `store` feature.
+costroid-store = { path = "crates/costroid-store", version = "0.6.0" }
 
 # The egui taskbar GUI stack (Step 6 / `apps/bar` only — the default `costroid` CLI
 # never links these). All MIT/Apache-2.0, no webview/Tauri. The `glow` (OpenGL)
