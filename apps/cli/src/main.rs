@@ -40,6 +40,9 @@ enum Command {
     /// Wire Claude Code's `statusLine` to capture live 5h/7d quota into a local cache.
     SetupStatusline(SetupStatuslineArgs),
     Export(ExportArgs),
+    /// Import a foreign FOCUS export (v1.2) and re-emit it as Costroid's FOCUS 1.3 ledger
+    /// (the `cloud_api` lane). Pure local parse — no network.
+    Import(ImportArgs),
     /// Show active threshold alerts (opt-in; default off). `--check` is a cron-friendly exit code.
     Alerts(AlertsArgs),
     /// Connect a vendor's usage/billing API with your own admin key (stored in the OS keychain).
@@ -158,6 +161,35 @@ struct ExportArgs {
 }
 
 #[derive(Debug, Parser)]
+struct ImportArgs {
+    /// The foreign file's serialization (FOCUS CSV or a JSON array of FOCUS rows).
+    #[arg(long, value_enum, default_value_t = ImportFormat::FocusCsv)]
+    format: ImportFormat,
+    /// The source FOCUS spec version. `auto` detects it (defaulting to 1.2 with a stderr
+    /// caveat when the file carries no version marker); `1.2` asserts it (no caveat).
+    #[arg(long, value_enum, default_value_t = ImportVersion::Auto)]
+    version: ImportVersion,
+    /// The serialization of the re-emitted Costroid FOCUS 1.3 ledger.
+    #[arg(long, value_enum, default_value_t = ExportFormat::Json)]
+    out: ExportFormat,
+    /// Path to the foreign FOCUS export file.
+    path: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ImportFormat {
+    FocusCsv,
+    FocusJson,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ImportVersion {
+    Auto,
+    #[value(name = "1.2")]
+    V1_2,
+}
+
+#[derive(Debug, Parser)]
 struct AlertsArgs {
     /// Cron mode: print at most one line and set the exit code (0 = clear, 1 = a crossing,
     /// 2 = a config / collect error). Quiet on a clear run (no output) — cron-friendly.
@@ -226,6 +258,9 @@ fn main() -> Result<()> {
         }
         Some(Command::Export(args)) => {
             run_export(args.format)?;
+        }
+        Some(Command::Import(args)) => {
+            run_import(args)?;
         }
         Some(Command::Alerts(args)) => {
             std::process::exit(run_alerts(args, render_options)?);
@@ -407,6 +442,42 @@ fn run_export(format: ExportFormat) -> Result<()> {
     let env = HostEnv::detect();
     let rows = costroid_core::focus_records_from_local_logs(&env)?;
     let output = match format {
+        ExportFormat::Json => costroid_core::export_focus_json(rows)?,
+        ExportFormat::Csv => costroid_core::export_focus_csv(&rows)?,
+    };
+    print!("{output}");
+    Ok(())
+}
+
+fn run_import(args: &ImportArgs) -> Result<()> {
+    use anyhow::Context;
+    use costroid_providers::focus_import::{import_focus_csv, import_focus_json};
+
+    let data = std::fs::read_to_string(&args.path)
+        .with_context(|| format!("reading FOCUS import file {}", args.path.display()))?;
+
+    let import = match args.format {
+        ImportFormat::FocusCsv => import_focus_csv(&data),
+        ImportFormat::FocusJson => import_focus_json(&data),
+    }
+    .with_context(|| format!("importing FOCUS file {}", args.path.display()))?;
+
+    // Honesty (R6): when the version was ASSUMED (no marker) and the user did not assert
+    // it, surface the caveat on stderr — never silently presume a version. `--version 1.2`
+    // is the user asserting it, so the caveat is suppressed.
+    if import.detection.assumed_default && matches!(args.version, ImportVersion::Auto) {
+        eprintln!(
+            "note: no FOCUS version marker found — assuming FOCUS {} \
+             (pass --version 1.2 to assert it)",
+            import.detection.version.as_str()
+        );
+    }
+
+    let rows =
+        costroid_core::focus_records_from_v12_import(&import.events, &import.detection.version)
+            .context("normalizing imported FOCUS rows to the 1.3 ledger")?;
+
+    let output = match args.out {
         ExportFormat::Json => costroid_core::export_focus_json(rows)?,
         ExportFormat::Csv => costroid_core::export_focus_csv(&rows)?,
     };
