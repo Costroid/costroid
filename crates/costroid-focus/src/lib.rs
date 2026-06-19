@@ -178,6 +178,24 @@ impl FocusAccessPath {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum LedgerLane {
+    DeveloperTool,
+    CloudApi,
+    LocalInference,
+}
+
+impl LedgerLane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DeveloperTool => "developer_tool",
+            Self::CloudApi => "cloud_api",
+            Self::LocalInference => "local_inference",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TokenType {
     Input,
     Output,
@@ -198,6 +216,7 @@ impl TokenType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnpricedUsage {
+    pub lane: LedgerLane,
     pub timestamp: DateTime<Utc>,
     pub tool: String,
     pub model: String,
@@ -319,6 +338,8 @@ pub struct FocusRecord {
     pub allocated_tags: Option<String>,
 
     // Custom (x_ prefix per FOCUS).
+    #[serde(rename = "x_Lane")]
+    pub x_lane: String,
     #[serde(rename = "x_Model")]
     pub x_model: String,
     #[serde(rename = "x_TokenType")]
@@ -431,6 +452,7 @@ impl FocusRecord {
             allocated_resource_id: None,
             allocated_resource_name: None,
             allocated_tags: None,
+            x_lane: input.lane.as_str().to_string(),
             x_model: input.model,
             x_token_type: token_type.to_string(),
             x_access_path: input.access_path.as_str().to_string(),
@@ -468,6 +490,7 @@ pub fn to_csv_string(rows: &[FocusRecord]) -> Result<String, FocusError> {
     // keeping only its header line — the serde field order stays the single source
     // of truth (no hand-maintained column list to drift).
     let placeholder = FocusRecord::unpriced_usage(UnpricedUsage {
+        lane: LedgerLane::DeveloperTool,
         timestamp: DateTime::UNIX_EPOCH,
         tool: String::new(),
         model: String::new(),
@@ -524,6 +547,7 @@ mod tests {
 
     fn record() -> FocusRecord {
         let input = UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: timestamp(),
             tool: "codex".to_string(),
             model: "example-model".to_string(),
@@ -621,6 +645,7 @@ mod tests {
     #[test]
     fn charge_period_start_is_truncated_to_whole_seconds() {
         let mut input = UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: timestamp(),
             tool: "codex".to_string(),
             model: "m".to_string(),
@@ -784,7 +809,7 @@ mod tests {
             assert!(fields.contains(&required), "missing column {required}");
         }
         assert!(header.ends_with(
-            "x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens"
+            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens"
         ));
     }
 
@@ -805,5 +830,39 @@ mod tests {
             Err(err) => panic!("csv should serialize: {err}"),
         };
         assert_eq!(empty.lines().next(), populated.lines().next());
+    }
+
+    #[test]
+    fn lane_is_serialized_on_x_lane_column() {
+        let base = UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
+            timestamp: timestamp(),
+            tool: "codex".to_string(),
+            model: "example-model".to_string(),
+            token_type: TokenType::Input,
+            token_count: 1_500,
+            project: Some("/work/project".to_string()),
+            access_path: FocusAccessPath::Api,
+            service_name: "Codex".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            host_provider_name: "OpenAI".to_string(),
+            invoice_issuer_name: "OpenAI".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        };
+
+        let dev_input = base.clone();
+        let Ok(dev) = FocusRecord::unpriced_usage(dev_input) else {
+            panic!("developer-tool record should build");
+        };
+        assert_eq!(dev.x_lane, "developer_tool");
+
+        let cloud_input = UnpricedUsage {
+            lane: LedgerLane::CloudApi,
+            ..base
+        };
+        let Ok(cloud) = FocusRecord::unpriced_usage(cloud_input) else {
+            panic!("cloud-api record should build");
+        };
+        assert_eq!(cloud.x_lane, "cloud_api");
     }
 }

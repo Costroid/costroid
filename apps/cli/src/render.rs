@@ -6004,6 +6004,7 @@ mod tests {
         access: costroid_focus::FocusAccessPath,
     ) -> FocusRecord {
         let input = costroid_focus::UnpricedUsage {
+            lane: costroid_focus::LedgerLane::DeveloperTool,
             timestamp: when,
             tool: "codex".to_string(),
             model: model.to_string(),

@@ -180,7 +180,7 @@ mod tests {
         install_mock_keychain, ok_json, serve_sequence, MockServer,
     };
     use costroid_connect::{ConnectError, CostReportOutcome, OrgValidation, SecretString};
-    use costroid_focus::{FocusAccessPath, TokenType, UnpricedUsage};
+    use costroid_focus::{FocusAccessPath, LedgerLane, TokenType, UnpricedUsage};
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
@@ -263,6 +263,7 @@ mod tests {
     /// An API-lane FOCUS row for `tool` at a UTC instant with a billed estimate.
     fn api_row(at: DateTime<Utc>, tool: &str, model: &str, billed: &str) -> FocusRecord {
         let mut row = okv(FocusRecord::unpriced_usage(UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: at,
             tool: tool.to_string(),
             model: model.to_string(),
