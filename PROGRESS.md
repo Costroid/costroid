@@ -280,6 +280,25 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-19 (e) — M1 EVENT-MODEL + STORE HALF DONE (T2–T12 committed).** Branch `costroid-next`,
+  16 commits. Each task: fresh-context build → independent review → green → commit. **Three real
+  bugs caught by the per-task independent review + fixed before commit** (the dev-loop working):
+  T6 an ungated `history_api_spend` cross-lane $-summer; T5 a source-priced row left `missing_price`;
+  T11 the store dropped `list_cost`/priced-SKU columns (export not byte-identical) — all fixed +
+  regression-tested. Done: T2 x_Lane · T4 canonical events · T5 dispatch · T6 lane-guard
+  (`287389e`) · T7 R14 serde · T8 aggregate_rows · **T9–T12 costroid-store** (`bdc13cd`, `edfea88`):
+  SQLite/rusqlite bundled behind off-by-default `store` feature; R4 metadata-whitelist schema
+  (v2, fail-closed); faithful replay (priced row round-trips byte-identical); `STORE_ALLOWED`
+  fail-closed offline guard (exact 12-crate delta, no forbidden/over-broad entry — the security-
+  sensitive guard the human flagged for the M1 boundary) + runtime no-AF_INET proof; MSRV 1.88 +
+  deny clean; default CLI/bar/server graphs store-free. **Next: the FOCUS-import half** — T13
+  (FOCUS v1.2 version-detection seam + reader, providers, against SYNTHETIC fixtures) → T14 (core
+  source-priced import bridge, reusing T5's `cloud_usage_to_focus`) → T15 (collector sidechain
+  attribution + golden tests) → T16 (R4 no-`..` structural test) → T17 (deciding test: conformance
+  CSV+JSON+synthetic-v1.2 legs) → T19 (public `import` CLI, human-approved). **T18** (real-AWS v1.2
+  sample) blocked on **C1** (human researching a license-clean schema+sample to vendor). Verify:
+  run the gate block at the top of this file; the human runs the full fresh-eyes review at the M1
+  milestone boundary before merge.
 - **2026-06-19 (d) — M1 execution: T2–T10 committed (each: fresh-context build → independent
   review → green → commit).** Branch `costroid-next`. Done: **T2** x_Lane (`c1f955d`) · **T4**
   canonical event model (`08a65d4`) · **T5** focus_records_from_canonical dispatch (`af7d9ef`) ·
