@@ -264,13 +264,13 @@ A period sparkline, then the breakdown cost bars, then an insight line.
 The interactive TUI frames the content between two one-line bars (`draw_app` in `tui.rs`):
 
 ```
- 1 now  2 trends 3 providers 4 models 5 history 6 budget 7 forecast 8 anomalies   ← tab strip
-C⠉ costroid                                   this week  $42.18                    ← screen header
+1 now 2 trends 3 prov 4 models 5 history 6 budget 7 fcast 8 anom 9 actv  ← tab strip
+C⠉ costroid                                   this week  $42.18           ← screen header
  …content…
- now  live  ·  1-8/tab switch  ·  a frontier  ·  r refresh  ·  ? help  ·  q quit   ← hint bar
+ now  live  ·  1-9/tab switch  ·  a frontier  ·  r refresh  ·  ? help  ·  q quit  ← hint bar
 ```
 
-- **Tab strip (top).** The eight numbered tabs; the **active** tab is a reverse-video **lime chip** (` 1 now `), the rest **Ash-muted** `N name`. Reverse-video is a **non-color** cue, so the active tab is legible under `NO_COLOR` too. Compacted to fit an 80-column terminal (≈79 cols, all eight always visible). The `a`/`esc` Frontier overlay appends its own chip when active.
+- **Tab strip (top).** The nine numbered tabs; the **active** tab is a reverse-video **lime chip** (` 1 now `), the rest **Ash-muted** `N name`. Reverse-video is a **non-color** cue, so the active tab is legible under `NO_COLOR` too. Single-space separators plus a strip-only clip of the four over-long labels (`providers`→`prov`, `forecast`→`fcast`, `anomalies`→`anom`, `activity`→`actv`, via `tab_strip_label`) keep all nine tabs inside an 80-column terminal (≈73 cols worst case, all nine always visible). The **full** name still shows in the footer's current-screen chip, the `?` help, and the screen header, so every abbreviation is disambiguated. The `a`/`esc` Frontier overlay appends its own chip when active.
 - **Hint bar (bottom).** The current screen as a lime chip, a `live`/`manual` badge (lime when live), then the **contextual** keybindings — keys in **lime**, labels **muted** — mirroring the screenshots' `d to day · w to week` hint row (the Trends tab adds `d/w/m/y period` + `g group`). An active filter / transient status is appended muted.
 
 ### Activity heatmap & Stats (the `9 activity` tab, as built 2026-06-19)

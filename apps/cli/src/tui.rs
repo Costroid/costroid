@@ -56,12 +56,12 @@ enum Screen {
     Frontier,
 }
 
-/// The numbered tab cycle (Q1, §11.5): `1`-`8` jump straight to a tab, `Tab`/`BackTab`
+/// The numbered tab cycle (Q1, §11.5): `1`-`9` jump straight to a tab, `Tab`/`BackTab`
 /// cycle through them. Frontier is intentionally NOT in the cycle — it stays its own
 /// `a`/`esc` overlay. T12 appended Models at slot `4`, T13 History at slot `5`, T14 Budget at
 /// slot `6`, T15 Forecast at slot `7` (the first tab past the original digit range, extending
-/// `handle_key`'s digit match to `'1'..='7'`), and T16 Anomalies at slot `8` (extending it to
-/// `'1'..='8'`).
+/// `handle_key`'s digit match to `'1'..='7'`), T16 Anomalies at slot `8` (extending it to
+/// `'1'..='8'`), and the Activity heatmap at slot `9` (extending it to `'1'..='9'`).
 const TAB_SCREENS: [Screen; 9] = [
     Screen::Now,
     Screen::Trends,
@@ -696,7 +696,9 @@ fn draw_app(frame: &mut Frame<'_>, app: &mut App, now: DateTime<Utc>) {
     }
 }
 
-/// The short display label for a tab (the tab strip + footer share it).
+/// The full display label for a tab (the footer current-screen chip, the help, and the
+/// screen header share it). The tab *strip* uses [`tab_strip_label`] instead, which clips
+/// the over-long labels so all nine numbered tabs fit an 80-column terminal.
 fn tab_label(screen: Screen) -> &'static str {
     match screen {
         Screen::Now => "now",
@@ -712,6 +714,22 @@ fn tab_label(screen: Screen) -> &'static str {
     }
 }
 
+/// The compact label used in the numbered tab strip only: the four over-long labels are
+/// clipped (`providers`→`prov`, `forecast`→`fcast`, `anomalies`→`anom`, `activity`→`actv`)
+/// so all nine tabs fit an 80-column terminal (≈73 cols worst case). The full name still
+/// shows in the footer's current-screen chip, the `?` help, and the screen header, so the
+/// abbreviation is always disambiguated.
+fn tab_strip_label(screen: Screen) -> &'static str {
+    match screen {
+        Screen::Providers => "prov",
+        Screen::Forecast => "fcast",
+        Screen::Anomalies => "anom",
+        Screen::Activity => "actv",
+        // The rest (≤6 chars) already fit, so they share their full label.
+        other => tab_label(other),
+    }
+}
+
 /// The highlight for the ACTIVE tab/segment: the Accent (lime) color PLUS reverse-video, so the
 /// active tab reads as a filled chip even under `NO_COLOR` (where the color collapses to default
 /// but the reverse highlight remains) — color is never the only cue.
@@ -719,15 +737,17 @@ fn active_chip_style(options: RenderOptions) -> RatatuiStyle {
     ratatui_style(SemanticStyle::Accent, options).add_modifier(Modifier::REVERSED)
 }
 
-/// The numbered tab strip drawn across the top — `1 now  2 trends  …  8 anomalies` — with the
-/// active tab a lime chip and the rest Ash-muted. The `a`/`esc` Frontier overlay (not in the
-/// numbered cycle) appends its own chip when active.
+/// The numbered tab strip drawn across the top — `1 now  2 trends  …  9 actv` — with the
+/// active tab a lime chip and the rest Ash-muted (strip labels are clipped via
+/// [`tab_strip_label`]). The `a`/`esc` Frontier overlay (not in the numbered cycle) appends
+/// its own chip when active.
 fn render_tab_bar(app: &App) -> Line<'static> {
     let options = app.render_options;
     let active_style = active_chip_style(options);
     let muted = ratatui_style(SemanticStyle::Muted, options);
-    // Single-space separators + a chip envelope only on the ACTIVE tab keeps all eight numbered
-    // tabs inside an 80-column terminal (≈79 cols worst case); inactive tabs are bare `N name`.
+    // Single-space separators + a chip envelope only on the ACTIVE tab + `tab_strip_label`'s
+    // clipping of the four over-long labels keep all nine numbered tabs inside an 80-column
+    // terminal (≈73 cols worst case); inactive tabs are bare `N name`.
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (index, screen) in TAB_SCREENS.iter().enumerate() {
         if index > 0 {
@@ -735,12 +755,12 @@ fn render_tab_bar(app: &App) -> Line<'static> {
         }
         if app.screen == *screen {
             spans.push(Span::styled(
-                format!(" {} {} ", index + 1, tab_label(*screen)),
+                format!(" {} {} ", index + 1, tab_strip_label(*screen)),
                 active_style,
             ));
         } else {
             spans.push(Span::styled(
-                format!("{} {}", index + 1, tab_label(*screen)),
+                format!("{} {}", index + 1, tab_strip_label(*screen)),
                 muted,
             ));
         }
@@ -1506,8 +1526,12 @@ mod tests {
             "tab strip missing trends: {frame}"
         );
         assert!(
-            frame.contains("8 anomalies"),
+            frame.contains("8 anom"),
             "tab strip missing anomalies: {frame}"
+        );
+        assert!(
+            frame.contains("9 actv"),
+            "tab strip missing activity: {frame}"
         );
         // Footer hint row: keys + labels.
         assert!(frame.contains("switch"), "footer should hint nav: {frame}");
@@ -1527,6 +1551,26 @@ mod tests {
         assert!(
             trends_frame.contains("group"),
             "trends footer should hint group: {trends_frame}"
+        );
+    }
+
+    /// Regression guard for the 80-column tab-strip fit: with nine numbered tabs the strip
+    /// must still render every tab — including the last (`9 actv`) — inside an 80-column
+    /// terminal (no right-edge clipping). `tab_strip_label` clips the over-long labels to keep
+    /// the worst case ≈73 cols; if a future tab/label pushes it past 80 this fails.
+    #[test]
+    fn tab_strip_fits_eighty_columns() {
+        // Activity (the rightmost tab) active = the widest layout (its chip adds two columns).
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        app.screen = Screen::Activity;
+        let frame = frame_to_string(&mut app, 80, 24);
+        assert!(
+            frame.contains("1 now"),
+            "first tab clipped at 80 cols: {frame}"
+        );
+        assert!(
+            frame.contains("9 actv"),
+            "last tab clipped off the strip at 80 cols: {frame}"
         );
     }
 
