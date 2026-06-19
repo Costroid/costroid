@@ -46,6 +46,18 @@ pub const SERVICE_CATEGORY_AI: &str = "AI and Machine Learning";
 pub const SERVICE_SUBCATEGORY_GENERATIVE_AI: &str = "Generative AI";
 pub const PRICING_STATUS_MISSING_PRICE: &str = "missing_price";
 
+/// `x_AttributionConfidence` on a row whose tool/model/project attribution is trusted —
+/// the default for a mainline (non-sidechain) turn.
+pub const ATTRIBUTION_CONFIDENT: &str = "confident";
+/// `x_AttributionConfidence` on a row Costroid keeps counting but cannot fully trust the
+/// attribution of — today, a sub-agent (sidechain) turn (its model/project may be the
+/// orchestrator's, not the sub-agent's). Annotated honestly, never dropped.
+pub const ATTRIBUTION_UNCERTAIN: &str = "uncertain";
+/// `x_CollectorVersion` — the Costroid version that produced a row, stamped on every
+/// FOCUS record so a replayed/exported ledger records which normalization logic minted
+/// it (token-attribution methodology can shift between versions; see `docs/limitations.md`).
+pub const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Placeholder `BillingAccountId`. FOCUS requires `BillingAccountId` to be
 /// non-null, but Costroid is a local estimator with no billing-account identity.
 /// This obviously-non-billing sentinel is a documented deviation; Costroid never
@@ -405,6 +417,20 @@ pub struct FocusRecord {
     /// content.
     #[serde(rename = "x_FocusInputVersion")]
     pub x_focus_input_version: Option<String>,
+    /// `true` when this row came from a sub-agent (sidechain) turn. Costroid keeps
+    /// counting sidechain usage; this flags it (its attribution is less certain). A bool
+    /// like `x_Estimated` — never content.
+    #[serde(rename = "x_Sidechain")]
+    pub x_sidechain: bool,
+    /// How much to trust this row's tool/model/project attribution —
+    /// [`ATTRIBUTION_CONFIDENT`] / [`ATTRIBUTION_UNCERTAIN`]. A flat scalar string like
+    /// `x_AccessPath` (never a tagged enum on the wire).
+    #[serde(rename = "x_AttributionConfidence")]
+    pub x_attribution_confidence: String,
+    /// The Costroid version that minted this row ([`COLLECTOR_VERSION`]). Bounded version
+    /// string — never content.
+    #[serde(rename = "x_CollectorVersion")]
+    pub x_collector_version: String,
 }
 
 impl FocusRecord {
@@ -509,6 +535,11 @@ impl FocusRecord {
             x_consumed_tokens: consumed_tokens,
             // Not an imported row by default — set by the core FOCUS-import bridge only.
             x_focus_input_version: None,
+            // Mainline (non-sidechain), confident attribution by default — the dev-tool
+            // collector (`push_meter_records`) overrides these for a sidechain turn.
+            x_sidechain: false,
+            x_attribution_confidence: ATTRIBUTION_CONFIDENT.to_string(),
+            x_collector_version: COLLECTOR_VERSION.to_string(),
         })
     }
 }
@@ -891,7 +922,7 @@ mod tests {
             assert!(fields.contains(&required), "missing column {required}");
         }
         assert!(header.ends_with(
-            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion"
+            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion,x_Sidechain,x_AttributionConfidence,x_CollectorVersion"
         ));
     }
 

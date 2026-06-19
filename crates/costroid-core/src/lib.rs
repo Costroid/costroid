@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Utc};
 use costroid_focus::{
     to_csv_string, to_json_string, FocusAccessPath, FocusError, LedgerLane, TokenType,
-    UnpricedUsage, DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD,
+    UnpricedUsage, ATTRIBUTION_UNCERTAIN, DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD,
     PRICING_STATUS_MISSING_PRICE, PRICING_UNIT_TOKENS,
 };
 // Re-export FOCUS's record type from the engine crate: the apps depend on `core`, not on
@@ -1622,6 +1622,14 @@ fn push_meter_records(
             None => {}
         }
 
+        // Sidechain attribution (T15): keep counting the row, annotate its confidence. A
+        // sub-agent turn's tool/model/project may be the orchestrator's, so its
+        // attribution is "uncertain" — never dropped (see docs/limitations.md).
+        if event.is_sidechain {
+            row.x_sidechain = true;
+            row.x_attribution_confidence = ATTRIBUTION_UNCERTAIN.to_string();
+        }
+
         records.push(row);
     }
 
@@ -3200,6 +3208,7 @@ mod tests {
             cache_write_tokens: 0,
             project: Some("/work/project".to_string()),
             access_path,
+            is_sidechain: false,
         }
     }
 
@@ -5496,6 +5505,7 @@ mod tests {
             cache_write_tokens: 0,
             project: Some("/work/project".to_string()),
             access_path: AccessPath::Api,
+            is_sidechain: false,
         }
     }
 
@@ -5654,6 +5664,7 @@ mod tests {
             cache_write_tokens: 0,
             project: Some("/work/project".to_string()),
             access_path: AccessPath::Api,
+            is_sidechain: false,
         };
 
         let rows = match focus_records_from_usage(&[event]) {
@@ -5714,6 +5725,7 @@ mod tests {
             cache_write_tokens: 0,
             project: None,
             access_path: AccessPath::Api,
+            is_sidechain: false,
         };
         let rows = match focus_records_from_usage(&[event]) {
             Ok(value) => value,
@@ -5759,6 +5771,7 @@ mod tests {
             cache_write_tokens: 1_000_000,
             project: None,
             access_path: AccessPath::Subscription,
+            is_sidechain: false,
         };
 
         let rows = match focus_records_from_usage(&[event]) {
@@ -5790,6 +5803,7 @@ mod tests {
             cache_write_tokens: 1_000_000,
             project: None,
             access_path: AccessPath::Api,
+            is_sidechain: false,
         };
 
         let rows = match focus_records_from_usage(&[event]) {
@@ -5825,6 +5839,7 @@ mod tests {
             cache_write_tokens: 0,
             project: None,
             access_path: AccessPath::Unknown,
+            is_sidechain: false,
         };
 
         let rows = match focus_records_from_usage(&[event]) {
@@ -5863,6 +5878,7 @@ mod tests {
                 cache_write_tokens: 0,
                 project: None,
                 access_path: AccessPath::Api,
+                is_sidechain: false,
             },
             UsageEvent {
                 tool: ProviderId::ClaudeCode,
@@ -5874,6 +5890,7 @@ mod tests {
                 cache_write_tokens: 1_000_000,
                 project: None,
                 access_path: AccessPath::Subscription,
+                is_sidechain: false,
             },
         ];
         let rows = match focus_records_from_usage(&events) {
@@ -5936,6 +5953,7 @@ mod tests {
             cache_write_tokens: 1_000_000,
             project: None,
             access_path: AccessPath::Subscription,
+            is_sidechain: false,
         };
         let rows = match focus_records_from_usage(&[event]) {
             Ok(value) => value,
@@ -5990,6 +6008,7 @@ mod tests {
             cache_write_tokens: 0,
             project: None,
             access_path: AccessPath::Api,
+            is_sidechain: false,
         };
         let rows = match focus_records_from_usage(&[event]) {
             Ok(value) => value,
@@ -6031,6 +6050,7 @@ mod tests {
                 cache_write_tokens: 0,
                 project: None,
                 access_path: AccessPath::Subscription,
+                is_sidechain: false,
             };
             let rows = match focus_records_from_usage(&[event]) {
                 Ok(value) => value,
@@ -6062,6 +6082,7 @@ mod tests {
             cache_write_tokens: 1_000_000,
             project: None,
             access_path: AccessPath::Subscription,
+            is_sidechain: false,
         };
         let rows = match focus_records_from_usage(&[event]) {
             Ok(value) => value,
@@ -6181,6 +6202,7 @@ mod tests {
                 cache_write_tokens: 0,
                 project: None,
                 access_path: AccessPath::Api,
+                is_sidechain: false,
             },
             UsageEvent {
                 tool: ProviderId::Codex,
@@ -6192,6 +6214,7 @@ mod tests {
                 cache_write_tokens: 0,
                 project: None,
                 access_path: AccessPath::Subscription,
+                is_sidechain: false,
             },
         ]) {
             Ok(value) => value,

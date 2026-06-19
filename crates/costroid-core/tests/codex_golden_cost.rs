@@ -109,6 +109,7 @@ fn sonnet_multi_meter_costs_004() {
         cache_write_tokens: 10_174,
         project: Some("/home/example/project".to_string()),
         access_path: AccessPath::Api,
+        is_sidechain: false,
     };
     let rows = match focus_records_from_usage(&[event]) {
         Ok(value) => value,

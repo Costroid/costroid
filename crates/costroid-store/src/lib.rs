@@ -40,7 +40,7 @@ use thiserror::Error;
 /// The schema version of the [`usage_rows`](USAGE_ROWS_TABLE) layout. Bumped whenever
 /// the persisted column set changes so a future replay/migration step can tell shapes
 /// apart. Stamped into [`STORE_META_TABLE`] on open.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// The one persisted table.
 pub const USAGE_ROWS_TABLE: &str = "usage_rows";
@@ -105,6 +105,10 @@ pub const USAGE_ROWS_COLUMNS: &[&str] = &[
     // Import provenance — the FOCUS spec version a row was imported from (nullable; a
     // bounded version string like "1.2", null on non-imported rows). Never content.
     "x_focus_input_version",
+    // Collector attribution taxonomy — all bounded enum/flag/version strings, never content.
+    "x_sidechain",              // INTEGER 0/1
+    "x_attribution_confidence", // "confident" / "uncertain"
+    "x_collector_version",      // the Costroid version that minted the row
 ];
 
 /// `CREATE TABLE` DDL for the [`usage_rows`](USAGE_ROWS_TABLE) metadata-allowlist table.
@@ -147,7 +151,10 @@ pub fn usage_rows_ddl() -> String {
             sku_meter TEXT,\n  \
             pricing_category TEXT,\n  \
             pricing_unit TEXT,\n  \
-            x_focus_input_version TEXT\n\
+            x_focus_input_version TEXT,\n  \
+            x_sidechain INTEGER NOT NULL,\n  \
+            x_attribution_confidence TEXT NOT NULL,\n  \
+            x_collector_version TEXT NOT NULL\n\
         )"
     )
 }
@@ -269,11 +276,12 @@ impl Store {
                     pricing_currency_contracted_unit_price, service_name, \
                     service_provider_name, host_provider_name, invoice_issuer_name, \
                     sku_id, sku_price_id, sku_meter, pricing_category, pricing_unit, \
-                    x_focus_input_version\
+                    x_focus_input_version, x_sidechain, x_attribution_confidence, \
+                    x_collector_version\
                 ) VALUES (\
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, \
-                    ?29, ?30, ?31, ?32\
+                    ?29, ?30, ?31, ?32, ?33, ?34, ?35\
                 )"
             ))?;
 
@@ -311,6 +319,9 @@ impl Store {
                     row.pricing_category,
                     row.pricing_unit,
                     row.x_focus_input_version,
+                    i64::from(row.x_sidechain),
+                    row.x_attribution_confidence,
+                    row.x_collector_version,
                 ])?;
             }
         }
@@ -363,7 +374,8 @@ impl Store {
                 pricing_currency_contracted_unit_price, service_name, \
                 service_provider_name, host_provider_name, invoice_issuer_name, sku_id, \
                 sku_price_id, sku_meter, pricing_category, pricing_unit, \
-                x_focus_input_version \
+                x_focus_input_version, x_sidechain, x_attribution_confidence, \
+                x_collector_version \
              FROM {USAGE_ROWS_TABLE} ORDER BY id"
         ))?;
 
@@ -412,6 +424,9 @@ impl Store {
         let pricing_category: Option<String> = row.get(29)?;
         let pricing_unit: Option<String> = row.get(30)?;
         let x_focus_input_version: Option<String> = row.get(31)?;
+        let x_sidechain: i64 = row.get(32)?;
+        let x_attribution_confidence: String = row.get(33)?;
+        let x_collector_version: String = row.get(34)?;
 
         // Enums via the single-source-of-truth inverse: a malformed stored enum is a
         // typed Reconstruct error, never a panic or a silent default.
@@ -512,6 +527,12 @@ impl Store {
         // Import provenance (nullable): None on a non-imported row, Some("1.2") on a
         // FOCUS-v1.2-imported one. Restore verbatim so an imported row round-trips.
         record.x_focus_input_version = x_focus_input_version;
+        // Collector attribution taxonomy: restore verbatim so a sidechain/uncertain row
+        // (and the collector version that minted it) round-trips instead of reverting to
+        // the unpriced_usage defaults (false / "confident" / current version).
+        record.x_sidechain = x_sidechain != 0;
+        record.x_attribution_confidence = x_attribution_confidence;
+        record.x_collector_version = x_collector_version;
 
         Ok(record)
     }
@@ -855,6 +876,10 @@ mod tests {
         // Import provenance — a cloud row imported from a FOCUS v1.2 export. Non-default
         // (None on a directly-collected row) so the round-trip below is non-vacuous.
         rec.x_focus_input_version = Some("1.2".to_string());
+        // A DISTINCT (non-current) collector version — proves the round-trip restores the
+        // STORED value, not the current COLLECTOR_VERSION const (a row minted by an older
+        // Costroid must replay as that older version).
+        rec.x_collector_version = "0.5.0-test".to_string();
         rec
     }
 
@@ -872,9 +897,14 @@ mod tests {
             panic!("in-memory store should open");
         };
 
+        // A sidechain (sub-agent) dev-tool row: non-default x_sidechain + uncertain
+        // attribution, so the collector taxonomy round-trip is non-vacuous.
+        let mut sidechain_dev = record(LedgerLane::DeveloperTool, 1_234); // estimated, "12.34"
+        sidechain_dev.x_sidechain = true;
+        sidechain_dev.x_attribution_confidence = "uncertain".to_string();
         let originals = vec![
-            record(LedgerLane::DeveloperTool, 1_234), // estimated dev-tool row, "12.34"
-            priced_cloud_record(),                    // source-priced cloud_api row
+            sidechain_dev,         // estimated dev-tool sidechain row
+            priced_cloud_record(), // source-priced cloud_api row
         ];
 
         let Ok(count) = store.ingest(&originals) else {
@@ -933,6 +963,10 @@ mod tests {
             Some("1.2".to_string()),
             "import provenance round-trips (not lost on replay)"
         );
+        assert_eq!(
+            cloud.x_collector_version, "0.5.0-test",
+            "the STORED collector version is restored, not the current const"
+        );
         // Guard the unpriced (dev-tool) row's null columns survived as null too — the
         // restore must not fabricate Some on a row where apply_pricing never ran.
         let dev = &reconstructed[0];
@@ -943,6 +977,11 @@ mod tests {
         assert_eq!(
             dev.x_focus_input_version, None,
             "a directly-collected (non-imported) row stays None"
+        );
+        assert!(dev.x_sidechain, "the sidechain flag round-trips");
+        assert_eq!(
+            dev.x_attribution_confidence, "uncertain",
+            "uncertain attribution round-trips (not reverted to the confident default)"
         );
     }
 

@@ -7543,6 +7543,7 @@ mod tests {
             cache_write_tokens: 0,
             project: Some("/work/proj".to_string()),
             access_path: access,
+            is_sidechain: false,
         }
     }
 
