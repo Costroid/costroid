@@ -280,6 +280,21 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-19 (d) — M1 execution: T2–T10 committed (each: fresh-context build → independent
+  review → green → commit).** Branch `costroid-next`. Done: **T2** x_Lane (`c1f955d`) · **T4**
+  canonical event model (`08a65d4`) · **T5** focus_records_from_canonical dispatch (`af7d9ef`) ·
+  **T6** lane-separation $-guard (`287389e`, dual-reviewed — the review CAUGHT + I fixed an ungated
+  `history_api_spend`; human-approved with the `aggregate_activity` hygiene gate folded in) · **T7**
+  R14 serde round-trips (`7d637e3`) · **T8** public `aggregate_rows` (`fa78cb7`) · **T9+T10**
+  costroid-store foundation (`bdc13cd` — SQLite/rusqlite bundled behind off-by-default `store`
+  feature; R4 metadata-whitelist schema, fail-closed; MSRV 1.88 + deny clean; default CLI store-free).
+  T3 = no-op (lean). **Next: T11** (store ingest→replay via `aggregate_rows`→export round-trip) →
+  **T12** (`STORE_ALLOWED` offline guard — SECURITY-SENSITIVE: a fail-closed subset like
+  `SERVER_ALLOWED`/`CONNECT_ALLOWED`, the human will scrutinize this at the M1 boundary) → T13–T17
+  (FOCUS v1.2 import seam + collectors + R4 structural test + deciding test) → T19 (import CLI).
+  **T18** (real-AWS v1.2 sample) blocked on **C1** (human is researching a license-clean
+  schema+sample to vendor). Review cadence: per-task independent review (mine); the human runs the
+  full fresh-eyes review at the **M1 milestone boundary** before merge.
 - **2026-06-19 (c) — M1 EXECUTION started; T2 done.** Sign-offs locked (`b2c7f34`): lean column
   set, import CLI approved, synthetic/C1-later, Parquet deferred. **T2 committed (`c1f955d`)** — the
   `x_Lane` three-lane discriminator + `LedgerLane` enum, threaded through all 13 `UnpricedUsage` sites
