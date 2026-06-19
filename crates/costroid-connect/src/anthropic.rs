@@ -8,7 +8,7 @@
 //! [`AuthorizedClient`] does the I/O, and all date/money mechanics live in
 //! `costroid-core` (so connect stays a thin HTTP+JSON layer with no `chrono`/`rust_decimal`).
 //!
-//! Pinned by `docs/proposals/T9-PIN-PROPOSAL.md` §2 (⛔ signed off 2026-06-10):
+//! Pinned by `docs/ROADMAP.md` (⛔ signed off 2026-06-10):
 //!
 //! * Host `api.anthropic.com`; auth **`x-api-key: <admin key>` + `anthropic-version:
 //!   2023-06-01`** (never `Authorization: Bearer`); key class **`sk-ant-admin…`**.

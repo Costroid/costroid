@@ -8,7 +8,7 @@
 //! `connect` / `connections --check` / `reconcile` action (its first callers landed
 //! in T10a/T10c; the default build links none of it).
 //!
-//! The pinned posture (PRODUCT-PLAN §12.11 — do not weaken):
+//! The pinned posture (ARCHITECTURE — do not weaken):
 //!
 //! * **HTTPS-only, GET-only.** The only request method exposed is [`AuthorizedClient::get`];
 //!   a non-`https://` URL is a typed error.
@@ -378,7 +378,7 @@ fn validate_authorized_host(host: &str) -> Result<String, ConnectError> {
     if bad {
         return Err(ConnectError::InvalidHost {
             // The example hostname stays neutral: this generic layer compiles in
-            // zero provider knowledge (PRODUCT-PLAN §12.11 scope fence).
+            // zero provider knowledge (ARCHITECTURE scope fence).
             reason: "the authorized host must be a bare hostname like `example.com` \
                      (no scheme, port, path, or userinfo)"
                 .to_string(),

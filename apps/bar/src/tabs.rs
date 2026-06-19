@@ -1,7 +1,7 @@
 //! The cockpit tab strip: `[Overview] [Budget] [Forecast] [Anomalies] [Providers]`.
 //!
 //! The strip sits over the persistent spend+meters+banner header and switches the lower
-//! window region between the five live views (STEP6-TASKBAR-DESIGN §4). The active tab is the
+//! window region between the five live views (DESIGN-SYSTEM). The active tab is the
 //! brand's **Signal-lime** accent — the one sparing decorative use of lime (§0/§6: lime marks
 //! the active/selected/"live" element). Lime is **decorative, never the sole signal**: the
 //! active tab is also `strong`-weighted, so the selection survives grayscale. Keyboard nav
@@ -10,7 +10,7 @@
 
 use crate::app::{color_of, ASH, CARBON, SIGNAL};
 
-/// One of the five live cockpit views (STEP6-TASKBAR-DESIGN §1, scope "Glance + live
+/// One of the five live cockpit views (DESIGN-SYSTEM, scope "Glance + live
 /// cockpit"). `Trends`/`Models`/`History`/`Frontier` are the deferred post-0.6.0 fast-follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {

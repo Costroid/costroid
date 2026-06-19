@@ -146,7 +146,7 @@ pub fn with_thousands(value: &str) -> String {
 
 /// The tray tooltip: the precise most-constrained line, e.g.
 /// `"claude code 5h — 92% used · resets in 41m · as of 15:32"`, or an honest idle line
-/// when no window is fresh-`Available` (STEP6-TASKBAR-DESIGN §3).
+/// when no window is fresh-`Available` (DESIGN-SYSTEM).
 pub fn tooltip(constraint: Option<&Constraint>) -> String {
     match constraint {
         Some(c) => constraint_line(c),

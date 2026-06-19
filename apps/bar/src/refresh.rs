@@ -2,7 +2,7 @@
 //!
 //! `collect_local_snapshot` is synchronous local-file I/O; running it on the egui frame
 //! would hitch the UI, so it runs on a dedicated **worker thread** that hands a fresh
-//! `EngineSnapshot` + `NowSummary` back over a channel (STEP6-TASKBAR-DESIGN §8). The
+//! `EngineSnapshot` + `NowSummary` back over a channel (DESIGN-SYSTEM). The
 //! worker is a pure executor — it refreshes on request only; the *cadence* (the ~30 s
 //! timer + window-show + manual ⟳) is the UI's, decided by the pure `due_for_refresh`
 //! predicate, so the timing is deterministic and unit-testable.
@@ -16,7 +16,7 @@ use costroid_core::{
 };
 
 /// Background refresh cadence — slow and battery-friendly, since the bar is always-on
-/// (far slower than the TUI's 2 s `--live`); STEP6-TASKBAR-DESIGN §8.
+/// (far slower than the TUI's 2 s `--live`); DESIGN-SYSTEM
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// A successful collection: the snapshot and its derived now-summary. One snapshot fans
@@ -27,7 +27,7 @@ pub struct Loaded {
 }
 
 /// The outcome of one refresh. `Err` carries a short, user-facing reason so a failed
-/// collect degrades to a visible status, never a panic (STEP6-TASKBAR-DESIGN §8 / §11).
+/// collect degrades to a visible status, never a panic (DESIGN-SYSTEM).
 pub enum RefreshOutcome {
     Ok(Box<Loaded>),
     Err(String),

@@ -9,7 +9,7 @@
 //! The connection lane (your own usage-API keys) is **display-only and does ZERO network** — it is
 //! a read-only join over the local OS keychain + the non-secret connection registry
 //! (`is_connected` AND key-present, the dual gate), NEVER a `--check` probe, NEVER key material, and
-//! NO connect/disconnect/reconcile action (those stay in the CLI; STEP6-TASKBAR-DESIGN §9). It is
+//! NO connect/disconnect/reconcile action (those stay in the CLI; DESIGN-SYSTEM). It is
 //! compiled only under `--features connect`; the default build links no `costroid-connect` symbol.
 
 use costroid_core::{

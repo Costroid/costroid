@@ -5,7 +5,7 @@
 //! provider-neutral [`costroid_core::vendor_report`] values, and surfaces the documented
 //! unavailable states as first-class data.
 //!
-//! Pinned by `docs/proposals/T9-PIN-PROPOSAL.md` §3 (⛔ signed off 2026-06-10):
+//! Pinned by `docs/ROADMAP.md` (⛔ signed off 2026-06-10):
 //!
 //! * Host `api.openai.com`; auth **`Authorization: Bearer <key>`** (no version header);
 //!   key class **`sk-admin-…`** (project/standard keys cannot call these endpoints);

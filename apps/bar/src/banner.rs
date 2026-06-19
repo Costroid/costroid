@@ -1,7 +1,7 @@
 //! The opt-in alert banner — `active_alerts`, painted in the brand's dot-grid language.
 //!
 //! When the user has enabled `[alerts]` and at least one crossing is active, the banner sits atop
-//! the Overview (STEP6-TASKBAR-DESIGN §7). It mirrors the CLI's `push_alert_banner`/`alert_line`
+//! the Overview (DESIGN-SYSTEM). It mirrors the CLI's `push_alert_banner`/`alert_line`
 //! SEMANTICS — one human sentence per active alert, sentence-case, hedged, quota framed as
 //! quota-extension and budgets in dollars — with one brand difference: severity is the **0–8
 //! dot-grid step** (§0), NOT the terminal `!`/`!!` badges. The dot DENSITY is the never-color-alone
@@ -19,7 +19,7 @@ use crate::app::color_of;
 use crate::format::{percent, provider_label, reset_countdown};
 use crate::glyph;
 
-/// The dot-grid severity step for an alert line (STEP6-TASKBAR-DESIGN §7: "critical/over-budget =
+/// The dot-grid severity step for an alert line (DESIGN-SYSTEM: "critical/over-budget =
 /// high step, warn/advisory = mid"). The two-tier split is exactly the core's `Alert::is_critical`
 /// (a CRITICAL quota reading or any over-budget crossing) vs the lighter tier (a WARN quota and the
 /// two advisory heads-ups). High = the full 8 grid (critical red); mid = step 4 (orange).

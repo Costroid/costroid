@@ -54,7 +54,7 @@ allow = [
 # option-ext`). MPL-2.0 is file-level (weak) copyleft — NOT in the prohibited
 # GPL/AGPL/LGPL/SSPL set (CLAUDE.md golden rules); for this unmodified upstream leaf
 # utility it imposes no obligation on Costroid's own Apache-2.0 source. ⛔ Admitted under
-# the T18 deps-license human gate (PRODUCT-PLAN §12.26 / §11.5).
+# the T18 deps-license human gate (ARCHITECTURE).
 exceptions = [
     { name = "option-ext", allow = ["MPL-2.0"] },
 ]
@@ -68,7 +68,7 @@ wildcards = "allow"
 # These three are banned everywhere, with no `wrappers` exception — not even
 # `costroid-connect` may pull them in.
 #
-# The connections subsystem (PRODUCT-PLAN Step 4) is allowed to link three crates —
+# The connections subsystem (ARCHITECTURE) is allowed to link three crates —
 # `ureq` (blocking HTTP), `rustls` (its TLS), `keyring` (the OS keychain) — and ONLY
 # through `costroid-connect`. `wrappers` permits a banned crate solely when its
 # direct parent is in the list; any other crate taking a direct dependency on them is

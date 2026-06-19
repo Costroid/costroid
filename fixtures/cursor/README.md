@@ -1,6 +1,6 @@
 # Cursor Fixtures
 
-Cursor is **detect-only** (live quota is **discovery-gated** — PRODUCT-PLAN §8). The Cursor CLI
+Cursor is **detect-only** (live quota is **discovery-gated** — ROADMAP). The Cursor CLI
 keeps **no** token usage, cost, or quota on disk — Cursor serves those live server-side, and
 Costroid does **not** call Cursor's internal endpoints. A live fetch is pursued only if Cursor
 publishes a sanctioned, documented per-user API/OAuth — **never** by reusing a local session

@@ -1,7 +1,7 @@
 //! The Overview: this-period API spend above the painted quota meters.
 //!
 //! The Overview is the window body — a pure consumer of `costroid_core::now_summary`
-//! (STEP6-TASKBAR-DESIGN §4/§5). It adds no compute: the period spend is the engine's
+//! (DESIGN-SYSTEM). It adds no compute: the period spend is the engine's
 //! `now_api_spend_display` (money stays `Decimal` in core; the bar only displays the
 //! hedged string), and each quota meter is a `MeterModel` over one `now_summary` window,
 //! honest across all five availability arms (`meter.rs`). The active-alerts banner and the
@@ -110,7 +110,7 @@ fn draw_spend_header(ui: &mut egui::Ui, spend_display: &str) {
 }
 
 /// The Overview tab's lower region: the now per-model API-cost breakdown + the non-`Available`
-/// provider notes (STEP6-TASKBAR-DESIGN §4/§5; the persistent header above is the spend, meters,
+/// provider notes (DESIGN-SYSTEM; the persistent header above is the spend, meters,
 /// and banner). Pure data — money stays `Decimal` in core (the bar receives the finished
 /// `~`-hedged string), so the bar names no money type.
 #[derive(Debug, Clone)]

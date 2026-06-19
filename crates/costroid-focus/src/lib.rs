@@ -462,7 +462,7 @@ pub fn to_csv_string(rows: &[FocusRecord]) -> Result<String, FocusError> {
         return Ok(csv);
     }
     // Zero rows: the csv crate emits its header only with the first record, but the
-    // export contract (DATA-MODEL "Export shapes") is "the first row is the exact
+    // export contract (ARCHITECTURE "Export shapes") is "the first row is the exact
     // FOCUS column-name header" — for an empty export too, so consumers always see
     // the schema. Derive the header by serializing a throwaway placeholder row and
     // keeping only its header line — the serde field order stays the single source
@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn zero_row_csv_export_still_emits_the_header() {
-        // The documented contract (DATA-MODEL "Export shapes"): the first row is the
+        // The documented contract (ARCHITECTURE "Export shapes"): the first row is the
         // exact FOCUS column-name header — even for an empty export, so consumers
         // always see the schema rather than an empty file.
         let empty = match to_csv_string(&[]) {

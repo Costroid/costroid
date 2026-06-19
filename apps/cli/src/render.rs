@@ -36,7 +36,7 @@ const STATUS_BAR_WIDTH: usize = 4;
 const WARN_FRACTION: f64 = costroid_core::ALERT_WARN_FRACTION;
 const CRITICAL_FRACTION: f64 = costroid_core::ALERT_CRITICAL_FRACTION;
 /// A reading at least this old (capture time vs. the summary's `generated_at`) carries an
-/// always-on "as of HH:MM" freshness stamp (STATUSLINE-CAPTURE-BRIEF §8): every Claude
+/// always-on "as of HH:MM" freshness stamp (ARCHITECTURE): every Claude
 /// reading is a cached push and every Codex window is only as fresh as its latest rollout
 /// entry, so a hours-old reading must never render as a bare, confident meter. Tunable.
 const LIMIT_FRESHNESS_STAMP_MINUTES: i64 = 10;
@@ -1521,7 +1521,7 @@ fn fold_for_ascii(value: &str, options: RenderOptions) -> String {
 // Models tab (T12) — `costroid` TUI tab `4`. Per API-billed model, the spend + token mix
 // (the now/trends-consistent `CostLaneSummary` numbers) fused with the bench/frontier overlay
 // (cost-vs-quality standing + equal-volume re-pricing). API-cost rows ONLY (the frontier is
-// API-only, ARCHITECTURE §9.6). Monochrome (Strong/bold spend only; amber/red reserved for
+// API-only, ARCHITECTURE). Monochrome (Strong/bold spend only; amber/red reserved for
 // the near-limit state). A model with no bundled-benchmark appearance renders "not
 // benchmarked" — a GAP, never a guessed standing. Local figures are always estimates (the `~`
 // hedge). Mirrors the `render_providers_*` split; plain delimits by labels, never the `─` rule

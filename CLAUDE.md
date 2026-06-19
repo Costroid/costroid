@@ -1,254 +1,120 @@
 # Costroid agent operating manual
 
-Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — both subscription limits (Claude Code and Codex 5-hour and weekly caps, with reset countdowns) and real API-bill dollars by model — by default entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace. This file is the operating manual for any coding agent (and human contributor) working in this repo: read it before doing anything. Scope and build sequencing are governed by `docs/PRODUCT-PLAN.md` — the step-by-step production plan and going-forward source of truth for what to build and in what order; `docs/ARCHITECTURE.md` remains the technical source of truth but defers scope/sequencing to PRODUCT-PLAN. See **[Doc map & canon order](#doc-map--canon-order)** below for which doc owns what, and how conflicts resolve — **when a doc disagrees with the code, the code wins.** Read the relevant `docs/` file before implementing the area it covers. These `docs/` specs are tracked in the repository — read them on disk.
+Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — subscription limits (Claude Code / Codex 5-hour + weekly caps with reset countdowns) and real API-bill dollars by model — by default entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace (Apache-2.0, edition 2021), **feature-complete at v0.6.0**. This file is the operating manual: read it before doing anything. Scope/status + deferred adapters live in [`docs/ROADMAP.md`](docs/ROADMAP.md); the technical canon is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) + [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md). **When a doc disagrees with the code, the code wins** — verify any symbol/path/flag in the code before relying on it; never invent one.
 
 ---
 
-## Golden rules — read first, non-negotiable
+## Golden rules — non-negotiable
 
-These are hard constraints. If a task seems to require breaking one, **stop and ask the human** instead.
+If a task seems to require breaking one, **stop and ask the human**.
 
-- **Follow the build steps in `docs/PRODUCT-PLAN.md`.** Surfaces ship in sequence — cost lane, then Claude `statusLine` capture, then the generalized quota model, then connections, then analytical tabs/alerts, then the egui taskbar (the last surface). (Cursor live quota is **not** in this sequence — it is discovery-gated, PRODUCT-PLAN §8.) Don't jump ahead of the step you're on, and don't build a later step's adapter or surface speculatively.
-- **Three providers ship today: Claude Code, Codex, Cursor.** GitHub Copilot and Antigravity CLI are *planned* additions via the `Capability` descriptor on the `Provider` trait — but only after a live-install discovery confirms each one's real data/auth/quota shape. Never build either adapter speculatively. (The provider layer is pluggable so adding one is *easy*; that is not permission to guess at one's shape.)
-- **Never build the web platform here.** It is a separate, separately-licensed repo. This repo is the local developer tool only.
-- **No chat / LLM-chat interface.** Costroid surfaces proactive, plain-language insight; it is not a chatbot and embeds no conversational LLM UI.
-- **The default / local-only build makes no network calls** — still *enforced* by the strace offline-acceptance test plus the forbidden-crates test. Network happens **only** through the `costroid-connect` crate, behind a Cargo feature **and** an explicit, user-initiated `connect` action to a provider endpoint the user authorized.
-- **No telemetry.** Ever, by default. Any update check must be opt-in, clearly disclosed, individually disableable, and off by default.
-- **Secrets live only in the OS keychain** (via the `keyring` crate). Never read passwords. Never write tokens or credentials to disk, config files, or logs. Never route credentials through any server.
-- **Local cost is always an estimate** (your tokens × current prices). Never present it as the authoritative bill; design for reconciliation against the provider invoice, which is the source of truth.
-- **Keep the core permissive.** This repo is Apache-2.0. Do not add any copyleft (GPL / AGPL / LGPL / SSPL) dependency. Verify a dependency's license is permissive (MIT / Apache-2.0 / BSD / ISC / Zlib / Unicode) before adding it.
-- **Accessibility is required, not optional.** Every visual has a `--plain` ASCII equivalent; never rely on color alone (the amber warning state needs a second, non-color cue); `--plain` output must be screen-reader-friendly.
-- **No `unwrap()`, `expect()`, or `panic!` in library crates.** Propagate errors. (Tests may use `panic!`/assertions — but not `unwrap`/`expect`: the workspace clippy lints deny those even in test code.)
+- **Default build makes ZERO network calls.** Enforced by the strace offline-acceptance test + a two-tier forbidden-crates test. All network + credential code lives **only** in `costroid-connect`, feature-gated (`--features connect`) and **off by default**; a call happens **only** on an explicit user-initiated `connect` / `connections --check` / `reconcile` action, as an HTTPS-only GET to the one authorized provider host (`ureq`+`rustls`, OS-native trust roots, no cert pinning). Never add network code outside `costroid-connect`.
+- **No telemetry, ever, by default.** Any update check must be opt-in, disclosed, individually disableable, off by default.
+- **Secrets live only in the OS keychain** (`keyring`). Never write tokens/credentials to disk, config, or logs; never read passwords; never route credentials through a server.
+- **Cost is always an estimate** (your tokens × current prices) — never the authoritative bill; design for reconciliation against the provider invoice.
+- **Permissive licenses only.** No copyleft (GPL / AGPL / LGPL / SSPL). Verify a new dep is MIT / Apache-2.0 / BSD / ISC / Zlib / Unicode before adding it.
+- **Accessibility is required.** Every visual has a `--plain` ASCII (screen-reader-friendly) equivalent; **never rely on color alone** — every color carries a shape/text cue (the 0–8 dot-density warning ramp is the non-color cue).
+- **No `unwrap()` / `expect()` / `panic!` in library crates.** Propagate errors. (Tests may `panic!`/assert but not `unwrap`/`expect` — clippy denies those even in test code.)
+- **No web platform, no chat/LLM-chat interface** here — this repo is the local developer tool only.
 
 ---
 
-## Doc map & canon order
+## Workspace layout
 
-The single source for navigating these docs and resolving conflicts between them. **PRODUCT-PLAN.md §12.0 (the per-task header) references this block — keep the two in sync by editing only here.**
+```
+costroid/
+├─ crates/
+│  ├─ costroid-focus/      FOCUS schema types + serde — pure data, no business logic
+│  ├─ costroid-providers/  Provider trait + Capability descriptor + Claude Code/Codex/Cursor adapters + WSL-aware log discovery
+│  ├─ costroid-core/       engine: orchestration, cost calc, bundled pricing, bench/frontier, vendor_report, reconcile, display helpers
+│  ├─ costroid-config/     shared read-only [budget]/[alerts] TOML schema + loader (both apps; no writer)
+│  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default
+├─ apps/
+│  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline + setup-statusline + --live + alerts + connect/disconnect/connections + reconcile
+│  └─ bar/                 binary `costroid-bar` — egui/eframe + tray-icon taskbar
+└─ .github/workflows/      CI + cargo-dist release pipeline
+```
 
-**Doc map — which doc is authoritative for what.** Read the *one* that owns the area you're touching, not all of them: the docs carry planned + historical content, and reading the wrong section breeds wrong assumptions.
+(No `costroid-mcp` — name intentionally unclaimed.)
 
-- **`docs/PRODUCT-PLAN.md`** — scope, sequencing, the build steps (§3), the hard invariants (§6), the per-task cards (§12), and the decisions/limitations log (§11.5). Owns *what* to build and *in what order*; **§11.5 is the freshest "what actually shipped"** and where new decisions get logged.
-- **`docs/ARCHITECTURE.md`** — the technical canon: crate boundaries + dependency direction (§5), the security/credential boundary + auth ladder (§8), the degrade-never-crash + Claude `rate_limits` sanitize/cross-check rules (§9.2), data flow, render mechanics (§7).
-- **`docs/DATA-MODEL.md`** — the data shapes: FOCUS columns, the Rust structs (`UsageEvent` / `FocusRecord` / `LimitWindow` / `LimitMeasure` / `LimitStatus` / core `LimitAvailability`), per-provider field paths, the bundled pricing JSON schema, export shapes.
-- **`docs/DESIGN-SYSTEM.md`** — rendering/UX detail + **the canonical color design language**: the `SemanticStyle` palette (the semantic-style table — `Data`/`DataDim`/`Muted`/`Accent`/`Strong`/`Series`/`Heat`/`Warn`/`Critical`), the shared compose helpers (`push_header_line`/`push_section`/`push_meter`/`push_insight`/…), braille dot math, the meter/bar/sparkline/heatmap components, the tab strip + hint bar, the ASCII/`--plain` substitutes, the always-on non-color cue, voice. **Every new visual follows this** — color via `SemanticStyle` only, never raw ANSI/`ratatui::Color`.
-- **A task's Spec** (named in its §12 card, e.g. `docs/STATUSLINE-CAPTURE-BRIEF.md`) — read it fully when the card says so; it IS that task's design.
-- **User-facing docs** (`README.md`, `SECURITY.md`, `CHANGELOG.md`) are *downstream*, not input canon — update them only when a change shifts user-facing behavior/interface (Definition of Done).
+**Per-crate responsibility:**
+- `costroid-focus` — FOCUS record types + (de)serialization only; no internal deps.
+- `costroid-providers` — the `Provider` trait + `Capability` descriptor, the three adapters, WSL-aware log discovery; emits provider-neutral `UsageEvent`/`LimitWindow`; no internal deps.
+- `costroid-core` — the engine: orchestrates providers, normalizes to FOCUS, computes estimated cost, houses bench/frontier, the provider-neutral `vendor_report` types, the pure `reconcile` estimate-vs-invoice engine, and money/share display helpers. No UI code, no `costroid-connect` dep.
+- `costroid-config` — pure local-only leaf: the `[budget]`/`[alerts]` TOML schema + loader so both apps share one schema; no network/keychain/writer (missing file = zero-config default).
+- `costroid-connect` — all network + credential code, feature-gated off by default: the OS-keychain `CredentialStore`, the non-secret `ConnectionRegistry`, the authorized-host HTTPS client (`AuthorizedClient`, HTTPS-only/GET-only, redirects+proxies disabled, off-host refused before I/O), and the Anthropic + OpenAI usage-API adapters parsing into `costroid-core::vendor_report` (Gemini = first-class unavailable). Secrets wrapped in `secrecy::SecretString`.
+- `apps/cli` — `clap` parsing, the Ratatui TUI, the statusline emitter (`--capture-only`/`--wrap`), `setup-statusline` (`--undo`), `--live`, the opt-in `alerts`/`alerts --check`, and the feature-gated `connect`/`disconnect`/`connections` + `reconcile`.
+- `apps/bar` — `costroid-bar`: a pure core consumer (no new data path/compute/telemetry). Tray glance + live cockpit; the Providers lane is display-only + zero-network. AccessKit on; never color-alone.
 
-**Canon order — how to resolve any conflict, and the #1 way to avoid hallucinating.**
+**TUI:** 9 numbered tabs — 1 now, 2 trends, 3 providers, 4 models, 5 history, 6 budget, 7 forecast, 8 anomalies, 9 activity — plus the `a`/`esc` Frontier overlay. Colorful via the `SemanticStyle` palette; `--plain`/`NO_COLOR` strip all color.
 
-- For anything **already built, the CODE on disk is canon.** When a doc disagrees with the code, the **code wins**; PRODUCT-PLAN §11.5 records what actually shipped (newer than ARCHITECTURE / DATA-MODEL / the brief).
-- For anything **not yet built, design intent lives in the docs:** PRODUCT-PLAN §3/§6 + the §12 card own scope/sequencing/invariants; ARCHITECTURE owns the technical design; the per-task Spec owns that task's design.
-- Either way, before relying on **any** doc statement about *current* behavior ("X returns unavailable", "Y is not built", or that a type/field/path/flag/function exists), **verify it in the code first** (grep/read it) — never invent or assume a symbol. Fix any drift you find as part of keeping the plan current.
+**Taskbar:** tray glance (most-constrained quota meter in the dot-density warning language) + a live cockpit window (Overview meters, opt-in alert banner, Budget/Forecast/Anomalies/Providers panels). Ships as binary archives + `cargo install costroid-bar` (no npm/Homebrew/musl); macOS/Windows tray paths compile but are NOT field-verified.
 
 ---
 
-## Environment & setup
+## Conventions
 
-**Prerequisites (local-only build):** Rust via `rustup` (with `clippy` and `rustfmt` components), plus `build-essential`, `pkg-config`, and `git`. The keyring deps (`libdbus-1-dev`, `libsecret-1-dev`) are needed now: T8 landed `costroid-connect`'s keychain store, whose Linux backend (the sync Secret Service path) links C libdbus — so a full `cargo test --workspace` / `cargo clippy --workspace` (and any `--features connect` build) requires them. The default `costroid` binary never links that code, but the workspace build does; CI installs both (see `.github/workflows/ci.yml`). The egui taskbar (Step 6) is built on `eframe`/`egui` + the `tray-icon` crate (no Tauri, no webview); its deps land with that step.
+- **Dependency direction:** `apps → core → {providers, focus}`; `apps → config → core`; `connect → core` (behind the apps' off-by-default `connect` feature). No cycles. `costroid-focus`/`costroid-providers` have no internal deps.
+- **crates.io publish ladder:** focus → providers → core → config → connect → costroid → costroid-bar (see [`RELEASING.md`](RELEASING.md)).
+- **Errors:** `thiserror` for typed errors in library crates; `anyhow` only in the binaries (`apps/`).
+- **MSRV:** 1.88 (libs + CLI), 1.92 (the bar). Tracked + tested in CI.
+- **Lockfile:** commit `Cargo.lock` (Costroid ships a binary). `.gitignore` ignores `/target`, not `Cargo.lock`.
+- **Dependencies:** lean, well-maintained, permissive; `rustls` not OpenSSL. `cargo deny` is a required CI gate (`deny.toml`): licenses + bans offline; advisories online.
+- **Config:** TOML under XDG (e.g. `~/.config/costroid/config.toml`), zero-config defaults; **secrets never go in config** — keychain only.
+- **Commits:** small, focused, conventional-commit style.
 
-**WSL:**
-- Work on the **Linux filesystem** (`~/costroid`), never under `/mnt/c` — cross-mount builds are slow and file-watching is flaky.
-- Path discovery must be **WSL-aware**: when the AI tools run on Windows, their logs live under `/mnt/c/Users/<user>/...` as seen from WSL; when they run inside WSL, under `~`. Handle both.
-- The CLI and TUI develop and run fine in WSL.
+**Auth source ladder** (only tiers 0–3 are ever built; tier 4 is the ToS line):
+0. Local artifacts — provider logs on disk (the default path).
+1. Sanctioned push/hook — Claude Code `statusLine` `rate_limits` capture.
+2. Sanctioned OAuth (e.g. GitHub; deferred) — system browser + loopback redirect, PKCE.
+3. Your own API key — Anthropic/OpenAI usage APIs (user's own admin-class key).
+4. **Never** reuse a credential/session/cookie against an undocumented/internal endpoint — account-ban path + ToS violation; that datum stays "unavailable."
 
-**Canonical commands** — run these; do not invent variants:
+Providers today: Claude Code + Codex (full), Cursor (detect-only; cost/quota "unavailable"). Deferred/discovery-gated (never built speculatively): Cursor live quota, GitHub Copilot, Antigravity, Gemini own-key — see [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+---
+
+## Canonical commands
 
 ```bash
-# Build
-cargo build                              # debug
-cargo build --release                    # release
-
-# Test
-cargo test --workspace
-
-# Lint (warnings are errors)
-cargo clippy --workspace --all-targets -- -D warnings
-
-# Format
-cargo fmt --all -- --check               # check (use in CI / before commit)
-cargo fmt --all                          # apply
-
-# Run the CLI during development (apps/cli is the `costroid` package)
-cargo run -p costroid -- <args>
+cargo build                                              # debug
+cargo build --release                                   # release
+cargo test --workspace                                  # test
+cargo clippy --workspace --all-targets -- -D warnings   # lint (warnings = errors)
+cargo fmt --all -- --check                              # format check (cargo fmt --all to apply)
+cargo run -p costroid -- <args>                         # run the CLI in dev
 
 # Pre-PR gate — all three must pass
 cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
-**Release** uses cargo-dist (the installed binary is `dist`; invoke as `dist …` or `cargo dist …`):
-
-```bash
-cargo install cargo-dist                 # provides the `dist` binary
-dist init                                 # one-time bootstrap — ALREADY RUN (dist-workspace.toml + release.yml exist); rerun only to change dist config
-dist build                                # build installers/archives locally to verify
-# Releases are then cut by pushing a version tag; CI builds and publishes the installers,
-# the Homebrew tap, and the npm wrapper, each artifact checksummed + build-provenance-attested.
-# The crates are published to crates.io separately (`cargo publish`, in dependency order — see
-# RELEASING.md). (Scoop is not supported by cargo-dist.)
-```
-
-CI runs the pre-PR gate (fmt + clippy + test) on every push and PR.
+A full `cargo test`/`clippy --workspace` (and any `--features connect` build) needs `libdbus-1-dev` + `libsecret-1-dev` for the keychain backend; CI installs them. Releases use cargo-dist (tag-triggered) + crates.io — see [`RELEASING.md`](RELEASING.md).
 
 ---
 
-## Repo conventions
+## Definition of Done (every change)
 
-**Workspace layout:**
-
-```
-costroid/
-├─ Cargo.toml              workspace
-├─ crates/
-│  ├─ costroid-core/       engine: orchestration, cost calc, bundled pricing, bench/recommend (frontier), vendor-report parse (T9b) + estimate↔invoice reconcile (T9c)
-│  ├─ costroid-focus/      FOCUS schema types + serde — no business logic
-│  ├─ costroid-providers/  Provider trait + Claude Code/Codex/Cursor adapters + WSL-aware log discovery
-│  ├─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default (skeleton T7; keychain credential store T8; generic authorized-host HTTP client T9a; Anthropic+OpenAI usage-API adapters T9b; connect-time `validate()`/`OrgValidation` + non-secret `OrgLabel` + the `test-support` loopback harness T10a; callers = the apps/cli `connect` CLI (T10a) + the `reconcile` display via `AdapterSet::cost_report` (T10c); all Step 4 / v0.4.0)
-│  └─ costroid-config/     shared read-only user-config (the `[budget]`/`[alerts]` TOML schema + loader) for BOTH apps (T20, Step 6); local-only leaf, depends on `costroid-core` + serde/toml/rust_decimal; no network/keychain
-├─ apps/
-│  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline (`--capture-only` / `--wrap`) + `setup-statusline` (`--undo`) + --live + `alerts` (`--check`, opt-in, default off) + connect/disconnect/connections + reconcile (last two feature-gated)
-│  └─ bar/                 binary `costroid-bar` — egui/eframe + `tray-icon` taskbar app (Step 6 / v0.6.0); tray glance + live cockpit (Overview/Budget/Forecast/Anomalies/Providers), depends on `costroid-core` + `costroid-config` (+ `costroid-connect` under its own `connect` feature, display-only)
-└─ .github/workflows/      CI + cargo-dist release pipeline
-```
-
-No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` carries real behavior today — T8 (the skeleton landed in T7) added the keychain credential store (`CredentialStore` / `ConnectionRegistry` / `ApiVendor`), T9a added the generic authorized-host HTTP client (`AuthorizedClient` on `ureq`+`rustls`), **T9b added the Anthropic + OpenAI usage-API adapters** (`AnthropicAdapter`/`OpenAiAdapter` parsing into `costroid-core::vendor_report`; Gemini = first-class unavailable), and **T10a wired the first caller** — the `apps/cli` `connect`/`disconnect`/`connections` CLI (+ Anthropic's connect-time `validate()` → `/v1/organizations/me`, a non-secret `OrgLabel` on `RegistryFile`, and a `test-support` loopback harness). **T10c then added the second caller** — the `apps/cli` `reconcile` display, which fetches a connected vendor's `cost_report` (via a new `AdapterSet::cost_report` seam) and surfaces T9c's `CostReconciliation` on screen. A network call now occurs **only** on an explicit `connect` / `connections --check` / `reconcile` action (behind `--features connect`); the default build and every other command still make zero. `apps/bar` lands at Step 6 — see `docs/PRODUCT-PLAN.md` §2c/§2d and ARCHITECTURE §5.
-
-**What belongs where:**
-- `costroid-core` — the engine. Orchestrates providers, normalizes to FOCUS via `costroid-focus`, computes estimated cost, and houses the `bench`/`recommend` (frontier) module — plus, since Step 4, the provider-neutral `vendor_report` types the connect adapters parse into (T9b) and the pure-core `reconcile` estimate-vs-invoice engine (T9c). No terminal/UI code, and **no `costroid-connect` dependency** (direction is `connect → core`).
-- `costroid-focus` — FOCUS record types and (de)serialization only. Pure data; depends on nothing internal.
-- `costroid-providers` — the `Provider` trait (plus the `Capability` descriptor — landed in T3: the `DataSource`/`AuthMethod` enums + the `Capability` struct + a required `capability()` trait method, declared by all three adapters), the three adapters that ship today, and WSL-aware log discovery. No internal dependencies today (it emits the provider-neutral `UsageEvent`/`LimitWindow`, not FOCUS rows — a `costroid-focus` dep may return if it ever consumes FOCUS types directly).
-- `costroid-connect` — **all** network + credential code; feature-gated and **off by default**, with the `connect` feature gated on the **apps** (`apps/cli`, and since T20 `apps/bar` too — its read-only Providers connection display), not the virtual workspace root. **T8 landed its first behavior:** the OS-keychain credential store (`CredentialStore`) + a non-secret `ConnectionRegistry` + the `ApiVendor` billing-vendor axis, on `keyring` (sync Secret Service backend, OS keychain only) with secrets wrapped in `secrecy::SecretString`. **T9a (DONE 2026-06-10, ⛔-approved) added the network half's foundation:** the generic authorized-host HTTPS client (`AuthorizedClient` / `AuthHeader` / `HttpResponse` / `RequestLimits`) on blocking `ureq` + `rustls` (no async runtime), OS-native trust roots via `rustls-native-certs` (never `webpki-roots`), HTTPS-only + GET-only, redirects and proxies disabled, off-host requests refused in the type before I/O. **T9b added the Anthropic + OpenAI usage-API adapters** (`AnthropicAdapter`/`OpenAiAdapter`) that read a stored admin key and parse the vendor reports into `costroid-core::vendor_report` (Gemini = first-class unavailable) — so the crate gained its **first internal dependency, `costroid-core`** (direction `connect → core`; not `costroid-focus`/`rust_decimal`/`chrono` — all money/date mechanics live in core). **T10a wired the adapters' first caller** — the `apps/cli` `connect`/`disconnect`/`connections` CLI — and added Anthropic's connect-time `validate()` (`GET /v1/organizations/me`, zero billing), the `OrgValidation` outcome, a non-secret `OrgLabel` on `RegistryFile` (+ `ConnectionRegistry::{mark_connected_with_label,label}`), and a feature-gated `test-support` loopback harness. A network call now happens only on an explicit `connect` / `connections --check` / `reconcile` action (the `reconcile` caller landed in T10c); the default build still makes none. All at Step 4 (v0.4.0).
-- `costroid-config` — the shared **read-only** user-config crate (T20, Step 6): the `[budget]`/`[alerts]` TOML schema + loader, extracted verbatim from `apps/cli/src/config.rs` so **both apps** consume one schema (the bar must not depend on `apps/cli`). Pure local-only leaf — `pub` `Config` + its projection methods (`budget_targets`/`alerts_enabled`/`alerts_forecast_enabled`/`alerts_anomalies_enabled`/`alert_thresholds`) + `load`/`load_from`/`config_path` + `ConfigError`; the inner `BudgetConfig`/`AlertsConfig`/`Money` stay private. Depends on `costroid-core` + `serde`/`toml`/`rust_decimal`; **no network/keychain, no writer** (a missing file is the zero-config default). No `unwrap`/`expect`/`panic!` (it is a library).
-- `apps/cli` — argument parsing (`clap`), the Ratatui TUI, the statusline emitter (incl. the `statusline --capture-only` capture writer and the `statusline --wrap '<cmd>'` escape hatch), `setup-statusline` (Claude Code `settings.json` wiring with backup + `--undo`), `--live`, the opt-in `alerts`/`alerts --check` threshold-alert command + inline `now` banner (T17, default off; reads the core `active_alerts` detector), the feature-gated `connect`/`disconnect`/`connections` + `reconcile` commands (off by default, behind `--features connect`), and all rendering. Reads the `[alerts]`/`[budget]` config via the shared `costroid-config` crate (T20 — `config.rs` was extracted there). Depends on `costroid-core` + `costroid-config` (and, under `--features connect`, `costroid-connect`).
-- `apps/bar` — binary `costroid-bar`: the egui/eframe + `tray-icon` taskbar app (Step 6); a pure **core consumer** (no new data path/compute/telemetry). The tray glance + the live cockpit (persistent spend + painted dot/braille quota meters + the opt-in `active_alerts` banner, over a tab strip → Overview/Budget/Forecast/Anomalies/Providers panels, each ONE core view fn). The bar source **names no `rust_decimal`** (money/share/multiple → string via `costroid-core` display helpers — `format_money_usd`/`format_over_by_usd`/`decimal_share_percent`/`anomaly_multiple_phrase`/`forecast_daily_fractions`/`now_api_spend_display`). The Providers connection lane is **display-only + zero-network** (local keychain/registry reads only, behind the bar's own `connect` feature). **AccessKit is ON (T21)** — via the bar's **default** `accesskit` feature (`eframe/accesskit`); the painted widgets (meters, banner badges, forecast sparkline, the `C⠉` mark, the refresh button) carry accessible names so a screen reader announces each. The Linux `accesskit_unix → zbus → async-io` subtree is local AT-SPI/D-Bus IPC (NOT network), admitted **only for `apps/bar`** via the reviewed per-binary `BAR_ACCESSKIT_ALLOWED` allowlist in `apps/cli/tests/offline.rs` + a runtime no-`AF_INET` proof in `scripts/offline_acceptance.sh`; the `costroid` CLI graph stays byte-for-byte async-io/network-free. Never color-alone (the 0–8 dot-grid density is the cue). The bar's MSRV is **1.92** (the CLI/libs keep **1.88**); it ships as binary archives + crates.io (no npm/Homebrew this cut). Depends on `costroid-core` + `costroid-config` (+ `costroid-connect` under `--features connect`).
-
-**Dependency direction:** `apps → core → {providers, focus}`, and `apps → config → core` (T20; `costroid-config` is an acyclic leaf consuming only core's input types). `apps/bar → {core, config}`; `apps/cli → {core, config, providers}`. The `connect` feature lives on the apps, so when it is on, `app → costroid-connect → core` (the app gates connect; connect publishes after core). No cycles. `costroid-focus` and `costroid-providers` have no internal dependencies (the FOCUS normalization of provider events happens in `costroid-core`; the once-declared `providers → focus` edge was unused and removed in the 2026-06-10 fix pass). (Since **T9b**, `costroid-connect` depends on **`costroid-core`** — the usage-API adapters parse into `costroid-core::vendor_report` — plus `keyring`/`secrecy`/`serde`/`serde_json`/`thiserror`/`ureq`/`rustls-native-certs`; it does **not** depend on `costroid-focus` (no shape needs it) and names neither `rust_decimal` nor `chrono` directly — all money/date mechanics live in core. Direction stays `connect → core`, never `core → connect`.)
-
-**Errors:** `thiserror` for typed errors in library crates; `anyhow` only in the binaries (`apps/`). No `unwrap`/`expect`/`panic!` in library code.
-
-**Logging (planned convention — not wired yet):** `tracing` for local diagnostics only — never networked, never telemetry; quiet by default, with `-v`/`-vv` raising verbosity. Today nothing links `tracing` and the CLI defines no verbosity flags; adopt this shape when diagnostics are first needed.
-
-**Edition & MSRV:** Rust edition 2021. Track the latest stable Rust; document and test the MSRV in CI.
-
-**Lockfile:** commit `Cargo.lock` — Costroid is an application (it ships the `costroid` binary), so the lockfile is tracked for reproducible, verifiable builds; ensure `.gitignore` ignores `/target` but not `Cargo.lock`.
-
-**Dependencies:** prefer lean, well-maintained, permissively-licensed crates. Use `rustls`, not OpenSSL, for TLS. `cargo deny` is a **required** CI gate (policy in `deny.toml`): licenses + bans run offline in the `license` job; advisories run in a dedicated online `advisories` job.
-
-**Config (planned convention — no config system is built yet):** when one lands, it is a TOML config under the XDG config dir (e.g. `~/.config/costroid/config.toml`), with sensible zero-config defaults; today everything runs zero-config on built-in consts. **Secrets never go in config** — keychain only.
-
-**Commits:** small and focused; conventional-commit style preferred.
-
----
-
-## Definition of Done (apply to every change)
-
-- [ ] `cargo build` clean and `cargo test --workspace` passes.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` is clean.
-- [ ] `cargo fmt --all -- --check` is clean.
+- [ ] `cargo build` clean; `cargo test --workspace` passes.
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- [ ] `cargo fmt --all -- --check` clean.
 - [ ] No `unwrap`/`expect`/`panic!` introduced in library code.
-- [ ] New behavior is covered by tests (use fixture logs, never real user data).
+- [ ] New behavior covered by tests (fixture logs, never real user data).
 - [ ] Docs (`README.md` / `CLAUDE.md` / `docs/*`) updated if behavior or interface changed.
-- [ ] No new copyleft dependency; new dependency licenses verified permissive.
-- [ ] Any new visual follows the `docs/DESIGN-SYSTEM.md` design language: color via the `SemanticStyle` palette (never raw ANSI/`ratatui::Color`), reusing the shared compose helpers; has a `--plain` ASCII equivalent; and does not rely on color alone (every color carries a shape/text cue).
-- [ ] No telemetry; the default/local-only build introduces no network call (any network stays inside `costroid-connect`, feature-gated and behind an explicit user-initiated `connect`).
-- [ ] Change stays on the current build step (`docs/PRODUCT-PLAN.md` §3).
+- [ ] No new copyleft dependency; new dep licenses verified permissive.
+- [ ] Any new visual follows [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md): color via the `SemanticStyle` palette (never raw ANSI/`ratatui::Color`), reusing the shared compose helpers; has a `--plain` ASCII equivalent; never relies on color alone.
+- [ ] No telemetry; the default/local-only build introduces no network call (network stays in `costroid-connect`, feature-gated, behind explicit user-initiated `connect`).
 
 ---
 
-## Build status & scope (the build steps)
+## Decide vs. ask
 
-Scope and sequencing are governed by `docs/PRODUCT-PLAN.md` §3 — the step-by-step production plan. Build the step you're on; don't jump ahead, and don't build a later step's adapter or surface speculatively. The last cut release is **v0.3.0** (tagged 2026-06-06 — the quota milestone: Claude live quota end to end + the generalized quota model, T2 + T4 + T6); since then, on the 0.4.0 connections line, **T7 (the `costroid-connect` skeleton + re-scoped no-network guarantee) and T8 (the keychain credential store — `CredentialStore`/`ConnectionRegistry`/`ApiVendor`, off by default) have landed, and T9a (the generic authorized-host HTTP client) has landed — DONE 2026-06-10, ⛔-approved** (endpoint/auth pins ⛔-signed-off 2026-06-10 — `docs/proposals/T9-PIN-PROPOSAL.md`). **T9b (the two per-provider usage-API adapters — Anthropic + OpenAI — + the Gemini first-class-unavailable state) is DONE 2026-06-13** (gate green, 264 tests, both ⛔ gates cleared — Gate 1 secret-handling approved; Gate 2 live-confirmed at the envelope level, populated-row checks logged as standing follow-ups since the org had no raw-API usage). **T9c (the estimate-vs-invoice reconciliation engine, pure `costroid-core::reconcile`) is DONE 2026-06-13** (gate green, 280 tests). **T10a (the `connect`/`disconnect`/`connections` CLI + connect-time key validation + the connect-action test) is DONE 2026-06-15** — **the FIRST caller of `costroid-connect` and the FIRST real network in the product** (opt-in, behind `--features connect` + an explicit `connect`/`connections --check` action; the default build still makes zero network calls), with **⛔ GATE 2b CLEARED** (the own-key live-confirm: money units confirmed, Responses-API/Codex coverage confirmed → `responses_api_coverage_unconfirmed = false`, the OpenAI `/costs` string/scientific/over-scale money-shape fix landed, real-body fixtures pinned). **T10c (the `costroid reconcile` estimate-vs-invoice display surfacing T9c) is DONE 2026-06-15** (gate green; `costroid reconcile [--vendor anthropic|openai] [--period …]` on the injectable `AdapterSet::cost_report` seam — loopback-tested — vendor-+window-scoped local rows, the honest pure-core renderer snapshot-tested in braille/ascii/plain; **no new secret/network boundary** — it reuses T10a's stored key + authorized client, and the default build still links none of it). A **connection-flow safety review + hardening pass** then landed (2026-06-16, gate green): the `--features connect` forbidden-crates tier became a reviewed **subset-allowlist** (`CONNECT_ALLOWED` in `apps/cli/tests/offline.rs` — a NEW networking/TLS crate now fails the gate until a human reviews it), a connect-time blast-radius **WARNING** is printed before the key is pasted (`print_connect_warning`, anthropic/openai only), untrusted server org labels are sanitized (`OrgLabel::from_server` + `strip_control_chars`) and `--plain` connect output is guaranteed pure ASCII, a per-vendor hard fetch failure degrades to the new `VendorReportUnavailable::FetchFailed` (one vendor failing no longer aborts a multi-vendor `reconcile`), `connections.json` is written `0600` on Unix, and the no-certificate-pinning (OS-trust-store) model is now disclosed (SECURITY.md + the `costroid-connect` crate doc were trued). **The ⛔ legal review of the connection flows is CLEARED** via a maintainer self-attestation (2026-06-16 — `docs/proposals/T10b-LEGAL-REVIEW.md` §10; a maintainer risk-acceptance, NOT counsel's opinion), so **T10b (cut v0.4.0) is now UNBLOCKED — only the release mechanics remain**. Verify current behavior in the code (canon) before trusting any item below.
-
-### Built and shipped (v0.1.0 → v0.2.0)
-
-1. **Core + workspace.** `costroid-core` / `costroid-focus` / `costroid-providers` (Claude + Codex), verified to the cent vs ccusage. *Shipped (v0.1.0).*
-2. **TUI + full cost picture.** `now` / `trends`, subscription + API, filter, per-lane totals, export; Cursor **detection only** (beta); subscription quota graceful. (The TOML config file remains planned — zero-config today.) *Shipped (v0.1.0; the Cursor detect-and-defer (beta) + WSL Windows-root auto-detect refinements landed in v0.2.0).*
-3. **Frontier / recommendation view (`costroid frontier`).** The `bench` module: the cost-vs-quality frontier + the user's position, scoped to what the data honestly supports; advisory, sourced, **API-cost rows only**. *Shipped (v0.2.0).*
-4. **Status-line emitter.** `costroid statusline` (tmux / Starship / Claude Code `statusLine`). *Emitter shipped (v0.1.0).*
-
-### Planned — the spine
-
-The full step sequence (goals, deliverables, acceptance, and the generalized-quota + `Capability` design) is owned by `docs/PRODUCT-PLAN.md` §3 — read it there rather than restating it here (a duplicated list drifts). The arc by release: **0.2.0 (shipped)** the built cost lane → **0.3.0 (tagged, T2+T4+T6)** Claude `statusLine` capture (flagship) + the generalized quota model → **0.4.0 (in progress; T7 skeleton + T8 keychain + T9a HTTP client + T9b adapters + T9c reconciliation engine + T10a connect/disconnect/connections CLI + T10c `reconcile` display all DONE — the first caller + first real network landed 2026-06-15, the `reconcile` display 2026-06-15; only the v0.4.0 release cut remains)** connections (`costroid-connect`) → **0.5.0** analytical tabs + alerts → **0.6.0** the egui taskbar (`apps/bar`, the last surface). (Cursor live quota is discovery-gated — PRODUCT-PLAN §8 — not a numbered release.)
-
-### Acceptance criteria (the local cost + quota product)
-
-- [x] Workspace builds; `cargo install --path apps/cli` installs a working `costroid` binary.
-- [x] Detects installed providers (Claude Code, Codex, Cursor) by locating their local data, including WSL→Windows paths; degrades gracefully when a provider is absent.
-- [x] `costroid` (the **now** screen): shows current API spend by model **and** 5-hour + weekly subscription limits with reset countdowns, from local data, with **no network calls** (Claude's 5h/7d via the `statusLine` cache — T4 landed the *reader* (sanitize + cross-check), T5 the *writer* (`setup-statusline` + `statusline --capture-only`, atomic no-secret cache), and T6 the *render* (all five `LimitAvailability` arms, the `? unverified` cue, the `Spend` dollar line, the "as of HH:MM" stamp, and the claude.ai chat caveat) — so Claude live quota now surfaces end to end; Codex's from local windows today; Cursor quota is detect-and-defer).
-- [x] `costroid trends`: `--period day|week|month|year` and `--group model|app|total` both work.
-- [x] `costroid --live`: refreshes in place; `q`/Ctrl-C exits cleanly; works over SSH and inside tmux.
-- [x] `costroid statusline`: emits a compact one-line status suitable for a shell prompt, tmux, or Starship; `costroid setup-statusline` wires Claude Code's `statusLine` for live quota.
-- [x] `costroid frontier`: shows the cost-vs-quality frontier and the user's position; advisory, sourced, **API-cost rows only**; un-benchmarked models shown as gaps, never guessed.
-- [x] `costroid export`: emits FOCUS 1.3-conformant records (`--format json|csv`) that validate against the schema in `docs/DATA-MODEL.md`.
-- [x] `--plain`: every screen renders in ASCII, no color, no braille, identical data, screen-reader-friendly.
-- [x] Pricing comes from bundled curated JSON; the tool works fully offline; all cost figures are labeled estimates.
-- [x] Subscription limits and API costs are modeled separately (limits are not summable dollars); a model used both ways appears in both, marked by access path.
-- [x] Live Claude quota from the `statusLine` `rate_limits` field is **sanitized + cross-checked** and degrades to "unavailable"/"unverified", never a confident wrong number (ARCHITECTURE §9.2).
-- [x] Zero telemetry; zero unauthorized network calls.
-- [x] Ships via cargo-dist (shell + PowerShell installers + Homebrew tap + npm wrapper, each artifact checksummed and build-provenance-attested; tag-triggered release in CI) and crates.io (`cargo install costroid` / `cargo binstall costroid`). (Scoop unsupported by cargo-dist — see RELEASING.md.)
-- [x] CI green: fmt + clippy + test + MSRV check + FOCUS-conformance + `cargo deny` (licenses + bans, offline, in the `license` job; advisories in a dedicated **online** `advisories` job) + the strace offline-acceptance test (which proves the default/local-only build makes zero network calls — re-scoped in T7 to the default/local path, T8 added a feature-on baseline that asserts a normal `--features connect` run leaks no network and writes no `$HOME` residue — since T9a that build links the HTTP client, so the baseline also proves the client existing ≠ a call happening — and T10a replaced the connect-ACTION STUB with a netns fail-closed check: `connect anthropic` with a fake key cannot reach the host and writes no `$HOME` residue, `disconnect` makes no network call; the positive "only the authorized loopback host, secret to the keychain only" is the Layer-1 `cargo test --features connect-test-support` loopback test) + the forbidden-crates test (a two-tier resolved-graph check since T7: the default build forbids the sanctioned `ureq`/`rustls`/`keyring` trio — and since T9a actively asserts all three ARE linked under `--features connect`; since the 2026-06-16 hardening the `connect` tier is a reviewed **subset-allowlist** — the real connect-over-default delta must be a subset of `CONNECT_ALLOWED` in `apps/cli/tests/offline.rs`, so a NEW unlisted networking/TLS/telemetry crate fails the gate until a human reviews and lists it).
-
-**Acceptance test:** on a machine with real Claude Code / Codex / Cursor logs and **networking disabled**, `costroid`, `costroid trends --period month --group model`, `costroid frontier`, `costroid export --format json`, and `costroid --plain` all produce correct output.
-
-### Connections & live quota (Step 4, opt-in) — the auth source ladder
-
-Network + credential code lives **only** in `costroid-connect` (feature-gated, off by default), and every source is chosen by descending an explicit ladder, most-sanctioned first — **only tiers 0–3 are ever built; tier 4 is the ToS line** (see `docs/PRODUCT-PLAN.md` §5):
-
-0. **Local artifacts** — provider logs on disk (today's default path).
-1. **Sanctioned push / hook** — Claude's `statusLine` `rate_limits` capture.
-2. **Sanctioned OAuth** (GitHub; deferred) — first-party, system browser + loopback redirect, PKCE.
-3. **Your own API key** — Anthropic/OpenAI *usage* APIs, the user's own (admin-class) key. (Gemini: **deferred** — no sanctioned static-key usage API exists, so `ApiVendor::Gemini` renders "unavailable"; the ⛔-signed-off pins live in `docs/proposals/T9-PIN-PROPOSAL.md`.)
-4. **Never** reuse any credential, session, or token against a non-sanctioned, undocumented, or internal endpoint (this includes reusing a local Cursor session against `api2.cursor.sh`), and never read browser cookies — that's an account-ban path and a ToS violation; that datum stays "unavailable," never fetched.
-
-**Step 4 (v0.4.0) — Connections.**
-
-- [x] `costroid connect/disconnect <provider>` plus a `connections` view that lists what is linked and supports instant disconnect/revoke; nothing is stored outside the keychain. *(T10a DONE 2026-06-15 — `apps/cli`'s `connect`/`disconnect`/`connections [--check]` CLI, behind `--features connect`; the revocable Connections view is the `connections` subcommand. The richer Providers TUI tab is Step 5.)*
-- [x] Tokens/keys stored **only** in the OS keychain (`keyring`); HTTP via `ureq` + `rustls`, strictly device↔provider, never via a server. *(All three halves now wired: T8's `CredentialStore` (secrecy-wrapped); T9a's authorized-host client; T9b's adapters; **T10a's caller** reads the key from stdin only → validates → stores ONLY in the keychain → rides the wire ONLY as an `AuthHeader`.)*
-- [x] All network calls limited to provider endpoints the user authorized; still no telemetry. *(Network happens **only** on an explicit `connect` / `connections --check` / `reconcile` action to the authorized host (bounded by the `AuthorizedClient` type), behind `--features connect`; `disconnect`, plain `connections`, and every default-build command make zero network. Verified by the T10a Layer-2 netns fail-closed check + the Layer-1 loopback test + the strace default tier.)*
-
-**Step 5 (v0.5.0) — alerts.**
-
-- [ ] Threshold notifications fire when a window crosses warning/critical; quiet or off by default; user-configurable.
-
-**Acceptance test (Step 4):** a user with no prior session can connect via the browser/own key, see live quotas, revoke access, and confirm (e.g. by inspecting the keychain and the filesystem) that no secret was written to disk, config, or logs.
-
-### Deferred — discovery-gated provider adapters (PRODUCT-PLAN §8)
-
-Planned, but only after a live-install discovery confirms each one's real data/auth/quota shape — never built speculatively, each added via the `Capability` descriptor on the `Provider` trait:
-
-- **Cursor live quota** — Cursor serves usage/quota server-side only. It has a sanctioned `cursor-agent /statusline` hook and a documented Admin/Analytics usage API, but **neither carries an individual's quota** (statusline = session metadata only; Admin API = team-admin/enterprise-only) — so Cursor stays detect-only and its cost/quota are "unavailable." A live fetch is pursued **only if** Cursor publishes a documented per-user API/OAuth — or adds a quota field to its existing `/statusline` (the unlock to watch) — **never** by reusing a local Cursor session against its undocumented `api2.cursor.sh` RPC (a ToS violation). Quota shape (monthly $-credit pool + overage; daily token rate-limit on free tier) already maps to the generalized model; only a sanctioned source is missing.
-- **GitHub Copilot** — as of 2026-06-01, **AI Credits** (dollar-denominated monthly pool + overage) **replaced** premium requests; request-count is the **legacy** model. **A completely ToS-safe path is identified** (verified 2026-06-05): the user's **own classic PAT** (fine-grained PATs are unsupported on the billing endpoints) or `gh` OAuth → the documented `GET /users/{username}/settings/billing/ai_credit/usage` → AI-credit consumption + $-by-model; the Copilot CLI `statusLine` hook adds session cost. **User-billed only** (enterprise-billed → "unavailable"). **Never** the internal `api.github.com/copilot_internal/user`. Not promised until a live-install check confirms the endpoint on a personal plan.
-- **Antigravity CLI** — split (verified 2026-06-05; $ lane corrected 2026-06-10): the **Gemini-API $ lane is ToS-safe but NOT implementable under T9's own-key constraint** (a Gemini key authenticates inference only — it reads no usage/billing data programmatically; the AI Studio cost views are browser UI, not API; the BigQuery billing export is OAuth-class) — a post-T9 "Gemini (advanced)" connector at best, per the ⛔-signed-off `docs/proposals/T9-PIN-PROPOSAL.md`; the **"compute-effort" subscription quota has no sanctioned source** (Hooks aren't fed quota; transcripts are content only; IDE `.pb` is keychain-encrypted; the only quota source is the internal `GetUserStatus` RPC via a reused token = ban path) → quota stays "unavailable."
-
-### Speculative / unbuilt
-
-- **MCP server** (`costroid-mcp`) — speculative; the crates.io name is intentionally left unclaimed (no placeholder). Not built. The recommendation engine it would have exposed is built into the frontier view.
-
----
-
-## Working style — decide vs. ask
-
-**Decide on your own:** implementation details, internal refactors, test design, formatting, module structure, and choosing among permissive, well-maintained crates.
+**Decide on your own:** implementation details, internal refactors, test design, formatting, module structure, and choosing among permissive well-maintained crates.
 
 **Ask the human first before:**
-- adding any dependency that is non-permissive, copyleft, or unusual in license;
+- adding any non-permissive/copyleft/unusual-license dependency;
 - changing the public CLI surface or any export/output schema;
 - anything touching authentication, secret handling, or the keychain;
-- making the default/local-only build perform a network call, adding network code outside `costroid-connect`, or adding anything that could phone home;
-- expanding scope beyond the build steps in `docs/PRODUCT-PLAN.md` §3, or building a deferred provider adapter (Copilot, Antigravity) before its discovery lands.
+- making the default/local-only build perform a network call, adding network code outside `costroid-connect`, or anything that could phone home;
+- building a deferred provider adapter (Copilot, Antigravity, Cursor/Gemini live) before its discovery lands.
 
-**Always:** keep commits small, update docs in the same change when behavior shifts, write tests against fixture logs (never real user data), build every visual in the `docs/DESIGN-SYSTEM.md` design language (the `SemanticStyle` palette + shared compose helpers — never raw ANSI/`ratatui::Color`), provide a `--plain` path for every visual, never rely on color alone, and source pricing/model data at build time rather than hardcoding figures that drift.
-
----
-
-## Quick reference
-
-```bash
-cargo build                                          # build
-cargo test --workspace                               # test
-cargo clippy --workspace --all-targets -- -D warnings  # lint (deny warnings)
-cargo fmt --all -- --check                           # format check
-cargo run -p costroid -- <args>                      # run the CLI
-```
-
-follow the PRODUCT-PLAN steps · three providers today (Copilot + Antigravity discovery-gated later) · local logs + sanctioned `statusLine` push · network only via `costroid-connect` (feature-gated, off by default, user-initiated) · the default/local-only build makes no network calls · no telemetry · secrets in keychain · `--plain` for everything · cost is an estimate.
+**Always:** keep commits small; update docs in the same change when behavior shifts; write tests against fixture logs (never real user data); build every visual in the [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md) language; provide a `--plain` path for every visual; never rely on color alone; source pricing/model data at build time rather than hardcoding figures that drift.

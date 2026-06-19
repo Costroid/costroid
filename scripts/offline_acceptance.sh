@@ -15,7 +15,7 @@
 # per-binary static allowlist (`apps/cli/tests/offline.rs`) is the authoritative proof that
 # subtree links no network/TLS/telemetry crate, and this run is its behavioral counterpart.
 #
-# The opt-in connections subsystem (`--features connect`, PRODUCT-PLAN Step 4) is the
+# The opt-in connections subsystem (`--features connect`, ARCHITECTURE) is the
 # single place network is ever allowed. Its dynamic proof has two halves: the T8
 # feature-ON baseline RUNS BELOW (a normal `--features connect` run leaks no network
 # and writes no secret/file residue to $HOME — and since T9a that build links the

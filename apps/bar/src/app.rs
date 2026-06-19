@@ -1,7 +1,7 @@
 //! The eframe app shell: the persistent spend+meters+banner header, the tab strip over the four
 //! live panels, the worker-thread refresh wiring, the config state, and the tray glue.
 //!
-//! The window is the live cockpit (STEP6-TASKBAR-DESIGN §4): a persistent header (period spend +
+//! The window is the live cockpit (DESIGN-SYSTEM): a persistent header (period spend +
 //! the painted quota meters + the opt-in alert banner) above a `[Overview] [Budget] [Forecast]
 //! [Anomalies] [Providers]` tab strip that switches the lower region. Every figure the core already
 //! computes — the bar is a pure consumer, no new network, no telemetry. One `Cockpit` model is
@@ -103,7 +103,7 @@ const SLATE: [u8; 4] = [0x16, 0x18, 0x1c, 0xff];
 pub(crate) const BONE: [u8; 4] = [0xe9, 0xe7, 0xdf, 0xff];
 /// Muted/secondary text (brand "Ash").
 pub(crate) const ASH: [u8; 4] = [0x88, 0x87, 0x80, 0xff];
-/// The "live"/active accent (brand "Signal" lime) — used sparingly (STEP6-TASKBAR-DESIGN §0/§6:
+/// The "live"/active accent (brand "Signal" lime) — used sparingly (DESIGN-SYSTEM:
 /// only the active/selected/"live" highlight — the active tab + the Overview's header rule).
 pub(crate) const SIGNAL: [u8; 4] = [0xc8, 0xff, 0x3d, 0xff];
 /// The cold cyan-blue data ramp's mid tone (brand "COSTROID·CLI" `#378ADD` — "logs, data, raw
@@ -233,7 +233,7 @@ struct ShellView<'a> {
     /// The wordmark sub-line: freshness, "refreshing…", or "refresh failed — …".
     status: String,
     /// A config-load error (a malformed `config.toml`), shown as an in-window status line — never
-    /// a crash (STEP6-TASKBAR-DESIGN §8).
+    /// a crash (DESIGN-SYSTEM).
     config_status: Option<String>,
     /// The selected tab.
     tab: Tab,
@@ -358,7 +358,7 @@ impl BarApp {
     }
 
     /// An automatic refresh (the ~30 s timer): re-collect the snapshot only — config + connections
-    /// are NOT re-read off the timer (battery-friendly; STEP6-TASKBAR-DESIGN §8).
+    /// are NOT re-read off the timer (battery-friendly; DESIGN-SYSTEM).
     fn request_auto_refresh(&mut self) {
         self.worker.request();
         self.state.mark_requested();

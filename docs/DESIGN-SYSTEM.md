@@ -1,376 +1,130 @@
 # Design system
 
-This document specifies Costroid's visual language and TUI/CLI UX in enough detail to implement: the brand, the braille rendering primitive, each component's dot math and states, the two screens, the accessibility fallbacks, and the voice. The render-mode plumbing (`Braille` / `Ascii` / `Plain`, capability detection, terminal restore) is in [ARCHITECTURE.md](ARCHITECTURE.md); this document defines what gets drawn.
+Costroid's visual language: the semantic palette, the braille primitive, the components, the accessibility fallbacks, and the voice. **The CLI/TUI renders in color**; the egui taskbar (`apps/bar`) renders the same language in true-color. The render-mode plumbing (`Braille`/`Ascii`/`Plain`, capability detection, terminal restore) lives in [ARCHITECTURE.md](ARCHITECTURE.md); this doc defines *what gets drawn*.
 
-One thing to internalize up front, because it shapes every component: **a terminal cell has a single foreground color.** Braille gives sub-cell *shape and texture* (2×4 dots per character) but not sub-cell *color*. So in the terminal, "used vs remaining" is expressed by **glyph shape** (full `⣿` vs light `⣀`) **and, where a color terminal allows it, by color** (a cyan data fill over a dim-cyan track). The shape is the load-bearing cue — it survives `NO_COLOR`, `--plain`, and color-blindness — and color is layered on top, never the only signal. The "solid dot vs hollow ring" look from the design mockups is only achievable in **raster/SVG** surfaces (the website, marketing) — there it's allowed; in the terminal, ring → dim dot.
+**One thing first:** a terminal cell has a single foreground color. Braille gives sub-cell *shape* (2×4 dots) but not sub-cell *color*, so used-vs-remaining is carried by **glyph shape** (`⣿` vs `⣀`) — the load-bearing cue that survives `NO_COLOR`/`--plain`/color-blindness — with color layered on top, never the only signal. (Sub-cell two-tone "solid dot vs hollow ring" lands only on raster surfaces — the taskbar, web, marketing.)
 
-## Terminal palette — the semantic-style system (CANON)
+## Palette — the `SemanticStyle` system (CANON)
 
-**The terminal (CLI/TUI) renders in color.** This is the canonical design language — apply it to every
-surface, existing and new. The CLI/TUI paints the brand's own **COSTROID·CLI** lane; a single enum
-**`SemanticStyle`** (in `apps/cli/src/render.rs`) drives **both** the one-shot ANSI path (`StyledSpan::render`)
-and the interactive TUI (`ratatui_style` → `Color::Indexed(..)`) from **one** palette, so the two surfaces can
-never drift. Every renderer assigns *semantic* styles to spans; it never writes a raw ANSI code or a `ratatui`
-color directly.
+One enum `SemanticStyle` (in `apps/cli/src/render.rs`) drives **both** the one-shot ANSI path (`StyledSpan::render`) and the TUI (`ratatui_style` → `Color::Indexed`) from one palette, so the surfaces never drift. Renderers assign *semantic* styles — **never a raw ANSI code or a `ratatui::Color`**.
 
-| `SemanticStyle` | xterm-256 | Role — where to use it |
+| `SemanticStyle` | xterm-256 | Role |
 |---|---|---|
 | `Plain` | default fg | body text |
-| `Muted` | `245` (Ash) | labels, captions, scope, sub-notes, the inactive tab, hint-bar descriptions |
-| `Strong` | bold | dollar figures, model names, the active metric (the wordmark's strong weight) |
-| `Accent` | `154` (Signal-lime), bold | the `C⠉` mark, the **active** tab/selection, the `◆` insight marker, the live badge — used **sparingly** |
-| `Data` / `DataDim` | `39` / `24` (cyan / dim cyan) | the used fill + unfilled track of a **quota** meter / budget bar / spend sparkline |
-| `Series(n)` | `SERIES_PALETTE` = `38 79 75 141 215 210` (azure · aquamarine · cornflower · medium-purple · sand-gold · salmon), cycled by rank | **per-category** color-coding — the `n`-th model's `●`/`*` dot + spend-bar fill. **Lime `154` is deliberately excluded** — it stays the reserved `Accent`. |
-| `Heat(0..=4)` | `HEAT_PALETTE` = `239 38 154 215 210` (idle-slate → cyan → lime → gold → coral) | density-ramp cells (the Activity heatmap); the glyph **ink** (`·░▒▓█`) encodes the level too |
+| `Muted` | `245` (Ash) | labels, captions, scope, sub-notes, inactive tab, hint descriptions |
+| `Strong` | bold | dollar figures, model names, the active metric |
+| `Accent` | `154` (Signal-lime), bold | the `C⠉` mark, the active tab/selection, the `◆` insight marker, the live badge — **sparingly** |
+| `Data` / `DataDim` | `39` / `24` (cyan / dim cyan) | the used fill / unfilled track of a quota meter / budget bar / spend sparkline |
+| `Series(n)` | `SERIES_PALETTE` = `38 79 75 141 215 210`, cycled by rank | per-category coding — the n-th model's `●`/`*` dot + spend-bar fill. **Lime `154` is excluded** (reserved for `Accent`). |
+| `Heat(0..=4)` | `HEAT_PALETTE` = `239 38 154 215 210` (idle→cyan→lime→gold→coral) | density cells (Activity heatmap); the glyph ink `·░▒▓█` encodes the level too |
 | `Warn` / `Critical` | `33;1` / `31;1` (amber / red) | near-/over-limit — **always** paired with a `!`/`!!`/`OVER` text cue |
 
-**The three load-bearing rules (non-negotiable, enforced by tests):**
+**Three load-bearing rules (enforced by tests):**
 
-1. **Color is layered on top of a shape/text cue, never the only signal.** A meter's used-vs-remaining is carried by **glyph shape** (`⣿` vs `⣀`); a per-model row by its `●` dot + name; heat density by its ink ramp; the warning state by its `!`/`!!`/`OVER` word; the active tab by reverse-video. Color reinforces — it never *is* the information. This is the "never rely on color alone" guarantee (also covers `NO_COLOR` + color-blindness).
-2. **All color is gated on `options.ansi`.** `--plain` and `NO_COLOR` emit **zero** escapes; the byte content is identical to the colored render and **pure ASCII** in `Plain`/`Ascii` (the `*_is_pure_ascii` tests pin this). A new visual MUST keep a `--plain` path that reads top-to-bottom for a screen reader.
-3. **One color lane only.** The COSTROID·CLI cyan + Signal-lime + neutrals, plus the categorical `Series`/`Heat` ramps that sit beside them. **No third-party hue** (no Claude-Code purple) and **no SYNC coral** in the CLI/taskbar.
+1. **Color layers on a shape/text cue, never alone.** Meter = glyph shape; per-model row = its `●` dot + name; heat = its ink ramp; warning = its `!`/`!!`/`OVER` word; active tab = reverse-video. (Covers `NO_COLOR` + color-blindness.)
+2. **All color is gated on `options.ansi`.** `--plain`/`NO_COLOR` emit zero escapes; the bytes are identical to the colored render and **pure ASCII** in `Plain`/`Ascii` (the `*_is_pure_ascii` tests pin this).
+3. **One color lane only.** Cyan + Signal-lime + neutrals + the `Series`/`Heat` ramps. No third-party hue (no Claude purple), no warm SYNC coral in the CLI/taskbar.
 
-**Amber/red is reserved.** `Warn`/`Critical` mean *near-/over-limit* (and over-budget) **only** — informational/advisory surfaces (Providers, Models, History, Forecast, Anomalies, Activity, reconcile) never use them; they DO use the rest of the palette (`Data`/`Series`/`Muted`/`Accent`/`Strong`). The legacy `*_document_is_monochrome` test guards enforce exactly this "no amber/red" rule — despite the name, they assert *no `Warn`/`Critical` span*, **not** the absence of color. A new advisory tab keeps that guard (no amber/red) while coloring freely from the rest of the palette; only the limit-meter and Budget surfaces ever go amber/red, and there it is **always** paired with the `!`/`!!`/`OVER` cue.
+**Amber/red is reserved** for *near-/over-limit* and over-budget only — advisory surfaces (Providers/Models/History/Forecast/Anomalies/Activity/reconcile) never use them but color freely from the rest. The legacy `*_document_is_monochrome` guards assert *no `Warn`/`Critical` span* (not the absence of color); keep that guard on a new advisory tab.
 
-**Building a new visual?** Compose `StyledDocument`/`StyledLine`/`StyledSpan` and reuse the shared helpers
-so the palette + accessibility come for free: `push_header_line` (brand lockup + scope/money), `push_section`
-(Muted label), `push_meter` (two-tone fill+track), `push_insight` (Accent `◆` marker), `push_caveat` (Muted
-sub-note), `series_style(rank)` / `mode_dot` (per-category dot), `mark`/`push_brand`. Add a new `SemanticStyle`
-variant only when an existing role doesn't fit — and map it in **both** `StyledSpan::render` and `ratatui_style`.
+## Compose helpers
+
+Build `StyledDocument`/`StyledLine`/`StyledSpan` and reuse the shared helpers so palette + accessibility come for free: `push_header_line` (brand lockup + scope/money), `push_section` (Muted label), `push_meter` (two-tone fill+track), `push_insight` (Accent `◆`), `push_caveat` (Muted sub-note), `series_style(rank)` / `mode_dot` (per-category dot), `mark` / `push_brand`, `push_provider_notes`. Add a new `SemanticStyle` variant only when no role fits — and map it in **both** `StyledSpan::render` and `ratatui_style`.
 
 ## Brand basics
 
-Costroid must read as a **distinctive dot/braille terminal-native financial instrument — not a generic
-dashboard.** This is the master visual identity (Eren-confirmed 2026-06-17); interaction *feel* takes from
-high-quality terminal tools (Claude Code, Mistral — never their assets/branding/colors/logos/layouts).
+Costroid reads as a **distinctive dot/braille terminal-native financial instrument — not a generic dashboard.**
 
-**Surfaces & projection (read first).** A terminal cell has a single foreground color (see the note atop
-this doc), so the *sub-cell* "solid colored dots" look (two colors inside one glyph) lands only on
-**raster surfaces** — the **egui taskbar** (`apps/bar`, Step 6 — `docs/proposals/STEP6-TASKBAR-DESIGN.md`),
-the website, and marketing. The **terminal (CLI/TUI) renders a colored *projection*** of this identity:
-per-cell brand color from the **COSTROID·CLI** lane (the `SemanticStyle` system above — cyan data, Signal-lime
-accent, Ash muted, per-category `Series`/`Heat` ramps), layered on top of the always-present glyph-shape cue
-and the amber/red warning + text cue. Both surfaces share the same braille primitive, the same `C⠉` mark, the
-same voice, the same warning *semantics*, and the same color lane — only the sub-cell realization differs (the
-terminal is one color per cell).
-
-- **Mark.** A pixel `C` beside the braille cell `⠉` (dots 1 and 4 — the two top dots, i.e. a meter at full). The mark reads `C⠉`. On raster surfaces the mark's dots double as a live meter (the taskbar tray icon).
-- **Wordmark.** `costroid`, lowercase, with `cost` in the strong weight/primary color and `roid` muted. Carry this split into the UI: dollar figures and the active metric use the strong weight; labels and context are muted.
-- **Palette (master).** Parent neutrals — **Carbon `#0B0C0E`** / **Slate `#16181C`** / **Graphite `#2C2C2A`** (backgrounds, darkest→dark), **Ash `#888780`** (muted text), **Bone `#E9E7DF`** (primary text), **Pure `#FFFFFF`**. Accent — **Signal `#C8FF3D`** (lime), the *active/selected/"live"* highlight, used **sparingly**. Data/cost ramp — **COSTROID·CLI (cold) cyan-blue** `#042C53 #185FA5 #378ADD #85B7EB` ("logs, data, raw compute"). The **COSTROID·SYNC (warm) coral** ramp `#712B13 #D85A30 #F0997B #F5C4B3` is the sibling SYNC surface's identity — **not used in the Costroid CLI/taskbar** (Eren-confirmed 2026-06-17). **Terminal projection:** the CLI/TUI renders this CLI lane in 256-color via the `SemanticStyle` system (canonical table at the top of this doc) — cyan `Data`/`DataDim`, Signal-lime `Accent`, Ash `Muted`, the categorical `Series`/`Heat` ramps, plus the amber→red warning — all gated on a color TTY (`--plain`/`NO_COLOR` = zero escapes). One color per cell still holds (sub-cell two-tone stays raster-only).
-- **Warning system — a 9-step DOT-DENSITY scale (`0 idle → 8 critical`), the universal non-color-safe severity cue.** Severity is encoded by the **count/fill of dots in a 3×3 grid** (plus a color progression: idle→green→yellow→orange→red→brown→black), so it reads in grayscale and for color-blind users — it IS the "never rely on color alone" guarantee. Map a consumed quota fraction / alert level onto `0–8`. **Raster (taskbar/web):** the colored dot grid. **Terminal:** the `Data`→amber→red meter color **plus** the bright/dim glyph shape **plus** the `!`/`!!`/`OVER` (and `? unverified`) text cue (Limit meter states, below) — the same severity *semantics*; the text cue is what keeps it readable when color is stripped.
-- **Typography.** **JetBrains Mono** for everything measurable — numbers, costs, CLI text, all braille glyphs, tabular nums ("anything measurable is mono"). **Neue Haas Grotesk** for display/UI chrome on **web/marketing only** — it is a **commercial font and must NOT be bundled** in the Apache-2.0 binaries, so the **shipped CLI + taskbar use JetBrains Mono for chrome too** (Eren-confirmed 2026-06-17). Braille glyphs render in any monospace with braille coverage (JetBrains Mono, Cascadia Code, DejaVu); the ASCII fallback covers terminals without it.
-- **Tone of the visuals.** Sparse and precise. Dots are the accent and the data; keep surrounding typography clean. Don't drown the screen in braille. Compact, terminal-native, minimal motion.
+- **Mark.** A pixel `C` beside braille `⠉` (dots 1,4 — top two, a meter at full): `C⠉`. On raster the mark's dots double as a live meter (the tray icon).
+- **Wordmark.** `costroid`, lowercase, `cost` strong, `roid` muted — carried into the UI: figures/active-metric = strong, labels/context = muted.
+- **Palette hexes (master).** Carbon `#0B0C0E` / Slate `#16181C` / Graphite `#2C2C2A` (backgrounds) · Ash `#888780` (muted) · Bone `#E9E7DF` (primary) · Signal `#C8FF3D` (lime accent) · the cold cyan data ramp `#042C53 #185FA5 #378ADD #85B7EB`. The terminal renders this lane in 256-color via the table above.
+- **Typography.** JetBrains Mono for everything measurable and for chrome (Neue Haas Grotesk is commercial — web/marketing only, never bundled in the Apache-2.0 binaries). Braille renders in any monospace with braille coverage; the ASCII fallback covers the rest.
+- **Tone.** Sparse, precise; dots are the accent and the data; minimal motion.
 
 ## The braille rendering primitive
 
-Unicode braille (block `U+2800`–`U+28FF`) packs **2 columns × 4 rows = 8 dots** per character — the densest graphics a monospace terminal offers. Costroid draws its meters, bars, sparklines, spinner, and statusline glyph in these dots.
-
-**Compute glyphs from the codepoint, not from library constants.** (Ratatui v0.30 changed some `symbols::braille` constants; computing directly is stable.) Each dot has a bit value; the cell layout and bits are:
+Unicode braille (`U+2800`–`U+28FF`) packs 2 cols × 4 rows = 8 dots/char. **Compute glyphs from the codepoint, never via Ratatui's `Canvas` / `symbols::braille` constants** (TUI-only, drifts across versions, breaks one-shot/`--plain` parity):
 
 ```
-dot layout      bit values
- 1  4           1   8
- 2  5           2   16
- 3  6           4   32
- 7  8           64  128
-
-glyph = char::from_u32(0x2800 + bitmask)
+dot layout   bit values        glyph = char::from_u32(0x2800 + bitmask)
+ 1  4         1   8             ⠉ (1,4) = 0x2800+1+8   ⣿ (all) = 0x2800+255
+ 2  5         2   16            ⡇ (1,2,3,7) = 0x2800+71
+ 3  6         4   32
+ 7  8         64  128
 ```
 
-Examples: `⠉` (dots 1,4) = `0x2800 + 1 + 8`; full cell `⣿` = `0x2800 + 255`; left column `⡇` (dots 1,2,3,7) = `0x2800 + 71`.
+Two patterns over this primitive: **styled glyph runs** (horizontal meters/bars/statusline) and a **hand-rasterized 2-D plot** (the sparkline — bucket values, set bottom-up dot bits). One styled document feeds the TUI and the one-shot/`--plain` adapters identically. In `Ascii` the rasterizer emits a `.:-=+*#` ramp; in `Plain` it emits the plain-text substitute.
 
-**Everything is hand-rasterized** — Costroid computes braille cells directly from the codepoint (above), **never** via Ratatui's `Canvas` or `symbols::braille` constants (`Canvas` is TUI-only and drifts across versions, which would break one-shot / `--plain` parity — ARCHITECTURE §7/§12). Two patterns over the same primitive:
+## The 9-step dot-density warning ladder
 
-1. **Styled glyph runs** — for horizontal meters and bars. Compose a row of braille cells, color the run. Simple, exact, no canvas. Used for meters, cost bars, the statusline glyph.
-2. **Hand-rasterized 2D plot** — for the sparkline, which needs vertical resolution. Bucket the values, compute each column's dot-height, set the bottom-up dot bits in each cell's bitmask, and emit the glyph run (dot math under Spend sparkline). Because it's the same primitive as the meters, the **one styled document feeds the TUI and the one-shot/`--plain` adapters identically**.
-
-In `RenderMode::Ascii` (braille unsupported), the same rasterizer emits a block / `.:-=+*#` ramp instead of braille; in `RenderMode::Plain`, no plot is drawn — emit the plain-text substitute (see Accessibility).
+Severity is encoded by the **count/fill of dots in a 3×3 grid** (`0 idle → 8 critical`, plus a color progression idle→green→yellow→orange→red→brown→black), so it reads in grayscale and for color-blind users — this **IS** the never-rely-on-color-alone guarantee. Map a consumed quota fraction / alert level onto `0–8`. **Raster (taskbar/web):** the painted dot grid. **Terminal:** the `Data`→amber→red meter color **plus** bright/dim glyph shape **plus** the `!`/`!!`/`OVER` (or `? unverified`) text cue — same severity semantics; the text cue keeps it readable when color is stripped.
 
 ## Components
 
-For every component below: bright dots/cells = used/spent (the **cyan data** fill, `SemanticStyle::Data`), dim = remaining (the **dim-cyan track**, `SemanticStyle::DataDim`), amber/red = the warning state — and amber is **always** accompanied by a non-color cue. The glyph **shape** (full `⣿` vs light `⣀`) carries used-vs-remaining even with color stripped; the color is layered on top. Section labels, captions and the right-aligned scope render **Ash-muted** (`SemanticStyle::Muted`); dollar figures and the model name render **Strong** (bold); the `C⠉` mark and the `◆` insight marker render **Signal-lime** (`SemanticStyle::Accent`).
+Bright dots = used (`Data` cyan), dim = remaining (`DataDim`), amber/red = warning (always with a non-color cue). Labels/scope render Muted; figures/model-name Strong; the `C⠉` mark + `◆` marker Accent.
 
-### Limit meter (5-hour and weekly)
+- **Limit meter (5h / weekly).** A run of `W=12` braille cells via `meter_segments` (floor + one boundary half-cell `⡇` + a min-visibility half for any nonzero usage; track = light `⣀`, never a full cell). Thresholds `WARN_FRACTION=0.80` / `CRITICAL_FRACTION=0.95` (over at `f≥1.0`). Cue strings are per-mode (`state_cue`/`plain_state_phrase`): `Braille`+`Ascii` append ` !` / ` !!` / ` !! OVER`; `Plain` (no meter) spells ` (near limit)` / ` (critical)` / ` (over limit)`. A cross-check-failed reading draws **neutral** (never amber/red) with ` ? unverified`. Readings ≥~10 min old carry an `as of HH:MM` (UTC) stamp (`capture time unknown` if none). Example: `⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀ 78%  resets 2h 14m`.
+- **Measure variants.** Spend pool → `$used / $included used`, no meter, never a fabricated %. Estimated → `usage: N tokens (~$value, estimated) — quota % unavailable`, price omitted if unpriced. Unavailable → `unavailable: <reason>`. Claude windows carry the claude.ai chat caveat sub-note.
+- **Spend sparkline.** Hand-rasterized braille, ink only (`H=4`), `h_i = clamp(round((v_i/max)*H), v_i>0?1:0, H)`, drawn bottom-up in `Data`. Sparse period labels.
+- **API cost bar.** Same `meter_segments` primitive, one row/model sorted desc; each row color-coded by `Series(rank)` — leading `●` dot + bar fill take the model hue, track stays `DataDim`, figure right-aligned Strong. Cost bars never go amber. Example: `● claude opus 4.8   ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀   $24.10`.
+- **Reconciliation (`costroid reconcile`).** A plain table (no meter, no amber); direction is text (`over`/`under`/`exact`), signed variance = local − billed, % at 1 dp. Typed vendor-side absence is text (`report doesn't cover this day` / `not attributed by the vendor` / `connect <vendor> first` / `the invoice request could not be completed`), variance `—`. ASCII-folds in `--plain`/Ascii.
+- **Statusline glyph.** One fixed line — mark, hedged spend, a `STATUS_BAR_WIDTH=4` meter, pct, state cue, compact reset (`amber + !` at ≥warn; neutral `? unverified`). Flags: `--capture-only`, `--wrap '<cmd>'`. Example: `C⠉ ~$4.18  ⣿⣿⣿⣀ 78% 2h14m`.
+- **Spinner.** `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` (~80 ms/frame); ASCII `| / - \`.
 
-A horizontal run of `W` braille cells (`W = 12`, a fixed const today; configurability arrives with the planned config file). Given a usage `fraction f ∈ [0, 1+]`:
+**Reset-countdown format** — two largest non-zero units: `≥1d` `"{d}d {h}h"`; `≥1h` `"{h}h {m}m"`; `<1h` `"{m}m"`; `<1m` `"<1m"`.
 
-```
-full = floor(f * W)                          # full `⣿` cells (f ≥ 1 ⇒ full = W, no half)
-half = (f * W − full) ≥ 0.5                  # one boundary half-cell `⡇` (dots 1,2,3,7)
-if f > 0 and full == 0 and not half:
-    half = true                              # min-visibility: any nonzero usage shows ⡇
-track = W − full − (1 if half else 0)        # `⣀` cells
-```
+## TUI chrome — tab strip & hint bar
 
-(This is `meter_segments` in render.rs — floor plus a half-cell, **not** `round(f * W)` full cells; the min-visibility cell is the half-cell `⡇`, never a full `⣿`.)
-
-- Render `full` as `⣿`, the boundary `half` (when present) as left-column `⡇`, and the `track` as the light glyph `⣀` (dots 7,8 only) — never a full cell. As shipped, fill and track render in a single span sharing the line's style (plain, or amber/red near limit) — the **glyph shapes** distinguish used from remaining, so the meter reads correctly under `NO_COLOR` and color-blindness alike.
-- **Thresholds** (fixed consts today — `WARN_FRACTION`/`CRITICAL_FRACTION` in render.rs; configurability arrives with the planned config file): `warn = 0.80`, `critical = 0.95`. Below warn, used color = primary. At ≥ warn, used color = amber; at ≥ critical (or `f ≥ 1.0`, over limit), used color = red. The cue is what makes the state readable without color, and **the exact cue string is per render mode** (as built — `state_cue` / `plain_state_phrase` in render.rs): in `Braille` **and** `Ascii` modes the cue appended after the percentage is ` !` (warn) / ` !!` (critical) / ` !! OVER` (over); in `Plain` mode (no meter at all) the cue is spelled out as ` (near limit)` / ` (critical)` / ` (over limit)`. Below warn there is no cue in any mode.
-- **Unverified (cross-check-failed) reading.** When a quota reading fails the `rate_limits` sanitize/cross-check (ARCHITECTURE §9.2), the meter draws in a **neutral (non-alarm) color** — never amber/red even at a near-max fraction — and the threshold `!`/`!!`/`OVER` cue is replaced by the distinct color-free cue ` ? unverified`. A maxed-looking but unverified reading must never render as a confident alarm.
-- **Freshness stamp.** Every `Available`/`Unverified` — and measure-carrying `Partial` — reading that is at least ~10 minutes older than the render carries an always-on `as of HH:MM` (UTC) stamp, so an hours-old cached reading never renders as a bare, confident meter. A reading with no recorded capture instant discloses `capture time unknown` instead.
-- Always show the percentage and reset countdown beside the meter: `⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀ 78%  resets 2h 14m`.
-
-**Reset-countdown format** — compact, two largest non-zero units:
+The TUI frames content between two one-line bars (`draw_app` in `tui.rs`):
 
 ```
->= 1 day:  "{d}d {h}h"      e.g. "3d 4h"   (or "{d}d" if h == 0)
->= 1 hour: "{h}h {m}m"      e.g. "2h 14m"  (or "{h}h" if m == 0)
-<  1 hour: "{m}m"           e.g. "46m"
-<  1 min:  "<1m"
-```
-
-Each provider shows two meters (5-hour and weekly), labeled, stacked.
-
-### Limit measure variants (Spend / Estimated / Unavailable)
-
-Not every window meters a token fraction; the line is **measure-aware**:
-
-- **Spend pool** (a dollar-denominated allowance): render `$used / $included used` (or `$used used` when no published allowance) — **no meter, never a fabricated %**.
-- **Estimated** (quota source absent, volume inferred from local logs): render `usage: N tokens (~$value, estimated) — quota % unavailable` — no meter; the `~`/`estimated` hedge is mandatory and the price is omitted entirely when the model is unpriced (never guessed).
-- **Unavailable**: render `unavailable: <reason>` — no meter, no number.
-
-For Claude windows that show usage (Available / Unverified / Estimated), an indented sub-note carries the chat caveat: "reflects Claude Code's view; claude.ai chat usage may make true usage higher."
-
-### Spend sparkline
-
-A **hand-rasterized braille** plot of bucketed spend over the period — **ink only** (draw the data dots, no track), computed directly from the codepoint (no Ratatui `Canvas`; ARCHITECTURE §7). For `n` buckets with values `vᵢ` and `max = max(vᵢ)` (or a fixed ceiling), each bucket's height in dot-rows is:
-
-```
-h_i = clamp(round((v_i / max) * H), if v_i > 0 { 1 } else { 0 }, H)
-```
-
-where `H` is the vertical dot resolution (`H = 4`, i.e. 1 cell tall in the shipped renderer). Draw points at the bucket's x for rows `0..h_i` (bottom-up), in the primary color. Label the axis sparsely (period markers like `mon … sun`, `w1 … w4`, `jan … dec`). Linear scale by default. Bucket granularity follows the selected period.
-
-### API cost bar
-
-One horizontal dot bar per model, sorted by cost descending — drawn with the **same `meter_segments` primitive as the limit meter**. With `W` cells and `max = max(cost)`:
-
-```
-full  = floor((cost / max) * W)
-half  = 1 when (cost / max) * W - full >= 0.5, else 0
-        (min-visibility: if cost > 0 and full == 0 and half == 0, force half = 1)
-track = W - full - half
-```
-
-Bright `⣿` for the `full` cells, the **left-column half-cell `⡇`** for the boundary `half`, and the dim **track glyph `⣀`** for the rest (all three shape-distinct, so the fill survives `NO_COLOR` — never the same glyph distinguished by color alone). **As built (2026-06-19) each row is color-coded by model:** a leading `●`/`*` dot + the bar fill take the model's **`Series(rank)`** hue (the track stays `DataDim`), the model name sits left in the strong weight, and the dollar figure is right-aligned in the strong weight (`Intl`-style, e.g. `$24.10`, `$1,840.00`). Cost bars never go amber — amber is for limits, not spend; the per-model hue carries identity, and the `●` dot + name keep it legible with color stripped. Each row: `● claude opus 4.8   ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀   $24.10`.
-
-### Reconciliation section (`costroid reconcile`) — as built (T10c)
-
-One section per vendor, comparing Costroid's **local estimate** against the vendor's **billed invoice** per completed UTC day + model. It surfaces the T9c `CostReconciliation` engine; the renderer is a pure function of that type (snapshot-tested). The layout is a plain monospaced table — **no braille meter** (reconciliation is numeric, not a fill), and **no amber** (amber is reserved for limits). Direction is carried as **text** (`over`/`under`), never color.
-
-```
-C⠉ costroid                                   anthropic  est ~$5.20 / inv $4.50
-estimate vs invoice — 2026-06-08 to 2026-06-14 (UTC, completed days)
-Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.
-────────────────────────────────────────────────────────────────
-2026-06-13  est ~$1.00   report doesn't cover this day   —
-    claude-opus-4-8        est ~$1.00   report doesn't cover this day   —
-2026-06-14  est ~$4.20   inv $4.50   -$0.30 under (-6.7%)
-    claude-ghost-9         est ~$0.00   inv $0.50   -$0.50 under (-100.0%)
-    claude-opus-4-8        est ~$3.00   inv $3.00   exact
-    claude-sonnet-4-6      est ~$1.20   inv $1.00   +$0.20 over (+20.0%)
-Note: Anthropic Priority-Tier spend isn't in this report — the bill may be higher.
-Note: the invoice total covers only the days this report spans; days outside it show "report doesn't cover this day".
-```
-
-- **Header** — the mark + vendor + section totals: the estimate always `~`-prefixed (`est ~$5.20`); the invoice total (`inv $4.50`) only when a report was available.
-- **Day / model rows** — each carries `est ~$X` (always estimate-marked), the invoice cell, and the variance cell. Per-model rows are indented under their day.
-- **Signed variance** — `variance = local − billed`: `+$X over (+P%)` when the estimate exceeds the invoice, `-$X under (-P%)` when the invoice exceeds it, `exact` at zero. The percentage is rounded to a uniform **1 dp at the render boundary** (full `Decimal` precision is kept upstream); `% n/a` becomes `(vs $0 billed)` when the vendor billed `$0`.
-- **Typed vendor-side absence is TEXT, never `$0`** — the invoice cell shows `report doesn't cover this day` (`DayNotCovered`), `not attributed by the vendor` (`ModelNotInReport`), or the typed report reason (`connect <vendor> first` for not-connected; Gemini's pinned `unavailable — no sanctioned static-key usage API`; a per-vendor hard fetch failure renders the detail-free `the invoice request could not be completed` (`FetchFailed`) — so one vendor failing never aborts a multi-vendor reconcile); the variance cell renders `—` (no fabricated delta). A **local `$0`** against a real billed figure (e.g. `claude-ghost-9`) is genuine — a model the vendor billed but Costroid never saw — and renders as a real row.
-- **Caveats footnoted** — `priority_tier_absent` → the Priority-Tier note; `per_model_derived_best_effort` → footnote + a trailing `*` on each best-effort (OpenAI per-model) row; and when a report is available but doesn't span every local day (some day `DayNotCovered`), a footnote clarifies that the header `inv` total covers only the spanned days (so the headline `est / inv` pair isn't misread as a real over-estimate).
-- **`--plain` / Ascii** — the `─` rule, the `—` dashes, and any `—`/`…`/`×`/`·` in a reason message all ASCII-fold (`-`, `-`, `...`, `x`, `-`) so Plain/Ascii output is pure ASCII (locked by `is_ascii()` asserts); braille keeps those glyphs. (The hedge's "tokens x current prices" is plain ASCII `x` in every mode, including braille.) The over/under words and `*`/footnotes survive every mode, so nothing depends on color.
-
-### Statusline glyph (`costroid statusline`)
-
-A single line, no newline, fast — for shell prompts, tmux, Starship. Side-effect-free on interactive stdin; with piped stdin (Claude Code's `statusLine` JSON) it opportunistically captures the `rate_limits` block into the local no-secret cache first (T5 path 2). It shows the current-period spend and the **most-constrained** limit as a short meter.
-
-**As shipped**, the statusline emits **one fixed layout** — mark, hedged spend, a short meter (`STATUS_BAR_WIDTH = 4` cells, same fill rules as the limit meter), percentage, state cue, and compact reset — and its only flags are `--capture-only` and `--wrap '<cmd>'`:
-
-```
-C⠉ ~$4.18  ⣿⣿⣿⣀ 78% 2h14m          (meter+pct turn amber with a ! at ≥ warn; an
-                                     unverified pick gets a neutral meter + ? unverified)
-```
-
-Honors `NO_COLOR`/`--plain` (ASCII/plain variants under Accessibility).
-
-> **PLANNED — not built.** The `--format <template>` flag and the preset table below do **not** exist yet; the table documents design intent for the future flag only. Nothing in it describes shipped behavior.
-
-```
-planned presets — not built
-tokens:  {mark} {spend} {meter} {pct} {reset} {tool}
-default: "{mark} {spend}  {meter} {pct} {reset}"
-        → "C⠉ $4.18  ⣿⣿⣿⣀ 78% ⟳2h14m"
-compact: "{mark} {spend} {pct}"
-        → "C⠉ $4.18 78%"
-minimal: "{spend}"
-        → "$4.18"
-```
-
-### Spinner
-
-The classic braille spinner for indeterminate waits (discovery, parsing):
-
-```
-frames: ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏     cadence: ~80ms/frame
-```
-
-Used only briefly; never for steady-state. ASCII fallback: `| / - \`.
-
-## The two screens
-
-### now
-
-```
-C⠉ costroid                                   this week  $42.18
-────────────────────────────────────────────────────────────────
-limits
-  claude code   5h   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀  92% ! resets 41m     ← amber + ! cue
-                wk   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀  78%   resets 2d 6h
-────────────────────────────────────────────────────────────────
-api costs (this week)
-  claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $24.10
-  gpt-5.5           ⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀   $11.30
-  sonnet 4.6        ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀   $6.78
-────────────────────────────────────────────────────────────────
-◆ opus drove most of your api spend this week. (estimated)
-provider cursor detected: BETA - model Composer 2.5 Fast (composer-2.5), logged in; usage unavailable - no sanctioned source; quota unavailable - no sanctioned source
-```
-
-Live limit meters (5-hour and weekly, with reset countdowns) on top; current API spend by model below; one colleague insight line at the bottom. Subscription limits and API costs are visually parallel but clearly separate sections — limits carry no dollars.
-
-**Cursor never appears in the limits section.** Detect-only Cursor contributes zero limit windows, so it gets no limits row (and never a fabricated %); its status renders as a **bottom provider note** under the insight line — `push_provider_notes` in render.rs formats `provider cursor detected: <message>`, where the message is built by `cursor_detected_message` in costroid-core (`BETA - {model}, {login}; usage unavailable - no sanctioned source; quota unavailable - no sanctioned source`). The same note slot carries every non-`Available` provider's status (partial / missing / error), inline and non-fatal.
-
-### trends
-
-```
-C⠉ costroid                                   this month  $168.00
-  [day] [week] (month) [year]            group: (model) app total
-────────────────────────────────────────────────────────────────
-  spend / week
-  ⢀⣀⣠⣶⣿⣷⣄⡀ …                                   (braille sparkline)
-  w1      w2      w3      w4
-────────────────────────────────────────────────────────────────
-  claude opus 4.8   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿   $96.00
-  gpt-5.5           ⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀   $45.00
-  sonnet 4.6        ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀   $27.00
-────────────────────────────────────────────────────────────────
-◆ press a to ask why opus spend rose this month
-```
-
-A period sparkline, then the breakdown cost bars, then an insight line.
-
-### TUI chrome — tab strip & hint bar (as built, 2026-06-19)
-
-The interactive TUI frames the content between two one-line bars (`draw_app` in `tui.rs`):
-
-```
-1 now 2 trends 3 prov 4 models 5 history 6 budget 7 fcast 8 anom 9 actv  ← tab strip
-C⠉ costroid                                   this week  $42.18           ← screen header
- …content…
+1 now 2 trends 3 prov 4 models 5 history 6 budget 7 fcast 8 anom 9 actv   ← tab strip
+C⠉ costroid                                   this week  $42.18           ← header
  now  live  ·  1-9/tab switch  ·  a frontier  ·  r refresh  ·  ? help  ·  q quit  ← hint bar
 ```
 
-- **Tab strip (top).** The nine numbered tabs; the **active** tab is a reverse-video **lime chip** (` 1 now `), the rest **Ash-muted** `N name`. Reverse-video is a **non-color** cue, so the active tab is legible under `NO_COLOR` too. Single-space separators plus a strip-only clip of the four over-long labels (`providers`→`prov`, `forecast`→`fcast`, `anomalies`→`anom`, `activity`→`actv`, via `tab_strip_label`) keep all nine tabs inside an 80-column terminal (≈73 cols worst case, all nine always visible). The **full** name still shows in the footer's current-screen chip, the `?` help, and the screen header, so every abbreviation is disambiguated. The `a`/`esc` Frontier overlay appends its own chip when active.
-- **Hint bar (bottom).** The current screen as a lime chip, a `live`/`manual` badge (lime when live), then the **contextual** keybindings — keys in **lime**, labels **muted** — mirroring the screenshots' `d to day · w to week` hint row (the Trends tab adds `d/w/m/y period` + `g group`). An active filter / transient status is appended muted.
+- **Tab strip.** Nine numbered tabs; the active tab is a reverse-video lime chip (reverse = the non-color cue), the rest `N name` Ash-muted. Single-space separators + a strip-only clip of the four over-long labels (`tab_strip_label`: providers→`prov`, forecast→`fcast`, anomalies→`anom`, activity→`actv`) keep all nine inside 80 cols. The full name shows in the footer chip, `?` help, and header. The `a`/`esc` Frontier overlay appends its own chip.
+- **Hint bar.** The current screen as a lime chip, a `live`/`manual` badge, then contextual keys (keys lime, labels muted; Trends adds `d/w/m/y period` + `g group`).
 
-### Activity heatmap & Stats (the `9 activity` tab, as built 2026-06-19)
+**Activity heatmap (`9 activity`).** A GitHub-style contribution grid (columns = ISO weeks ≤52, rows = weekdays Mon→Sun with Mon/Wed/Fri labeled), each cell's token volume mapped to `Heat(0..=4)` — ink `·░▒▓█` (ASCII `.:+*#`) AND color rise together. Below it a Stats panel (`total tokens` / `active days` / `busiest day` / `top model` / `streak`, label Muted + value Strong) and exactly one hedged `◆ … (rough)` comparison line (the one sanctioned playful line). `Plain` draws no grid — the labeled facts are the screen-reader view.
 
-A GitHub-style **contribution heatmap** + an at-a-glance **Stats** panel, both built in the render layer from the same local FOCUS rows the History tab reads (no core change, no network):
+## Taskbar (`costroid-bar`)
 
-```
-C⠉ costroid                                    activity  3.0M tokens
-scope: all local usage (all time)
-────────────────────────────────────────────────────────────────
-    Apr      May      Jun
-Mon ░·▒···░▒█···▒·
-    ··░·▒··········
-Wed ▒······▓··░····      ← weeks → columns, weekdays → rows (Mon/Wed/Fri labeled)
-    …
-less ░▒▓█ more
-────────────────────────────────────────────────────────────────
-  total tokens 3.0M
-  active days  18 of 54 (2026-04-20 to 2026-06-12)
-  busiest day  2026-06-10 (1.2M tokens)
-  top model    claude-opus-4 (1.6M tokens)
-  streak       3d current · 9d longest
-◆ that's roughly 19 novels' worth of tokens moved through your tools. (rough)
-```
+The egui/eframe + `tray-icon` app renders the **same palette** in true-color — a lean glance surface, not a CLI clone. Pure `costroid-core` consumer: no new data path, no compute, no network beyond what `costroid-connect` authorizes (display-only, behind its own off-by-default `connect` feature), no telemetry.
 
-- **Grid.** Columns = ISO weeks (most recent ≤ 52, capped by terminal width), rows = the 7 weekdays (Mon→Sun, with Mon/Wed/Fri labeled in the gutter). Each cell's **token volume** maps to a level `0..=4`; the glyph's ink (`·░▒▓█`, ASCII `.:+*#`) AND its `Heat` color both rise with the level, so it reads in grayscale. Month abbreviations label the top row at each month boundary (thinning out when crowded). Empty/future cells are blank.
-- **Stats facts.** `total tokens`, `active days` of the span, `busiest day`, `top model` (by tokens), and `streak` (current/longest consecutive active days) — the label Muted, the value Strong.
-- **One tasteful comparison.** A single hedged, clearly-rough scale line (`◆ … (rough)`) — the screenshots' playful stat, kept inside Costroid's voice (a rough order-of-magnitude, never false precision). This is a **deliberate, narrow loosening** of the "quiet, never chatty" rule (Eren-directed 2026-06-19): exactly one line, on the Stats tab only, always hedged.
-- **`--plain` / Ascii.** Ascii folds the ramp to `.:+*#` and the markers/`·`/`→`/`◆` to pure ASCII (`is_ascii()` test-pinned). **Plain draws no 2-D grid** (it doesn't read aloud) — the labeled facts ARE the screen-reader view, in linear order.
-
-### Controls / keybindings
-
-```
-d / w / m / y   set period (day / week / month / year)        [trends]
-g               cycle group (model → app → total)             [trends]
-tab             switch screen (now ↔ trends)
-f  or  /        filter (fuzzy select model / app)
-a               ask — hand the loaded context to the insight/recommendation (frontier) view
-r               refresh now
-q / Ctrl-C      quit (always restores the terminal)
-?               help
-```
-
-`--live` enables auto-refresh on a tick.
-
-### States
-
-- **Loading:** the braille spinner with a short label.
-- **Empty:** no providers detected → a plain-language line on what Costroid looked for and how to point it at the data (incl. the WSL/Windows path note), not an error.
-- **Partial:** some providers missing or incomplete (e.g. Cursor) → show what's available and label the gap explicitly; never fabricate.
-- **Per-provider error:** shown inline next to that provider, non-fatal; the rest of the screen still renders.
-- **Warning:** amber + cue on near/over-limit meters.
-- **Unverified:** a quota reading that failed the sanitize/cross-check renders with a neutral (non-alarm) meter and the color-free ` ? unverified` cue — never a confident alarm (ARCHITECTURE §9.2).
-- **Estimated / Unavailable:** when the quota source is absent, show the inferred token volume marked `(estimated)` with `quota % unavailable` (no meter), or `unavailable: <reason>` — never a fabricated percentage.
+- **Tray icon (the glance).** The `C⠉` mark whose 3×3 dot grid IS the warning meter — encodes the most-constrained `Available` quota window in the 0–8 dot-density language (9 pre-rendered RGBA bitmaps in `glyph.rs`, swapped per `severity::severity_step`). A degraded reading (Unverified/Estimated/Partial/Unavailable) shows the idle/`?` muted grid, never a confident fill. Tooltip carries the precise line + `as of HH:MM`. Left-click toggles the window; right-click → Open / Refresh now / Quit.
+- **Window (toggle).** A resizable eframe window (persisted size/pos, refresh-on-show). Header = the Overview (period spend `~`-hedged + meters + the opt-in alert banner); a tab strip switches Overview/Budget/Forecast/Anomalies/Providers, each mapping ONE core view fn.
+- **Painted meters.** Quota/cost meters are **painted** 2×4 dot cells (`meter.rs::paint_bar`, `painter.circle_filled`) — fill length = the TUI's `meter_segments`, tint = the 0–8 ramp (`glyph::step_fill_color`). Per-model rows lead with a `Series(rank)` legend dot + a single-row `Series`-hued share dot-bar (`app::SERIES` / `series_color`, mirroring the CLI). All five `LimitAvailability` arms render honestly.
+- **Colored state chips** (`app::chip` — a low-alpha tint + the word, named for AccessKit): Providers health (green available · cyan detected · amber partial · red error · Ash missing), Budget pace (green on-track · amber ahead · red over-budget), connection state. The **word always pairs the color**; **never color alone** — severity is still the 0–8 dot grid (tray / meters / alert badges), never `!`/`!!`.
+- **AccessKit ON** (the bar's default `accesskit` feature) — every painted widget (meters, chips, share bars, tabs, badges, the `C⠉` mark, the refresh button) carries an accessible name; it is the GUI's `--plain` analogue. Lime stays reserved (the active tab is a filled lime chip with Carbon ink). The header carries the `· estimates` caveat once; the Claude chat caveat shows once. Money routes through core display helpers (`now_api_spend_display` / `format_money_usd` / `format_over_by_usd` / `decimal_share_percent` / `anomaly_multiple_phrase` / `forecast_daily_fractions` / `now_model_spend_breakdown`) so the bar names no `rust_decimal`.
 
 ## Accessibility
 
-`--plain` produces no color, no braille, in a linear top-to-bottom reading order with every value labeled and carrying its unit and context — built to be read aloud by a screen reader. The ASCII guarantee, precisely (as built and test-pinned — `plain_mode_output_is_pure_ascii` / `ascii_mode_output_is_pure_ascii` in render.rs): every **Costroid-generated** byte in `Plain` and `Ascii` output is pure ASCII; **provider-supplied names** (models, projects) pass through verbatim, so a provider's non-ASCII name appears as-is. Mode selection (the `--plain` flag, TTY detection, `NO_COLOR`, and a braille-capability check) is in ARCHITECTURE.md.
+`--plain` produces no color, no braille, linear top-to-bottom with every value labeled + united + contextual, built to be read aloud. Every Costroid-generated byte in `Plain`/`Ascii` is pure ASCII (`plain_mode_output_is_pure_ascii` / `ascii_mode_output_is_pure_ascii`); provider-supplied names pass through verbatim. The amber/red state is **always** paired with its text cue; the unverified state always carries ` ? unverified` with a neutral meter — never a confident alarm without color.
 
-**The no-color-only rule:** the amber/red warning state is **always** paired with a textual cue, so it survives `NO_COLOR`, color-blindness, and `--plain`. The exact strings as built (see the threshold spec above): `Braille`/`Ascii` append ` !` / ` !!` / ` !! OVER` after the percentage; `Plain` spells out ` (near limit)` / ` (critical)` / ` (over limit)`. The **unverified** state is likewise carried by its own color-free cue ` ? unverified` (shown instead of the state cue, in every mode), with a neutral meter, so a cross-check-failed reading never reads as a confident alarm even without color.
-
-> **The egui taskbar (`apps/bar`, Step 6) — as built + colorized 2026-06-19.** The egui/eframe (+ `tray-icon`) taskbar renders this **same palette** in true-color (the raster realization of the CANON table above), and is built **lean** — a glance surface, not a CLI clone:
-> - **One shared palette.** The bar's `SERIES` constant is the true-color equivalent of the CLI's `SERIES_PALETTE` (azure/aquamarine/cornflower/medium-purple/sand-gold/salmon, lime excluded), so per-model coloring matches the terminal edge-to-edge: the **Overview "by model"** rows lead with a `Series(rank)` legend dot + a single-row `Series`-hued share dot-bar. **Signal-lime stays the reserved accent** — the active tab is a filled lime chip with Carbon ink (the **fill** is the non-color cue, not the lime alone), and the footer keys.
-> - **Colored state chips** (the `chip()` helper — a low-alpha tint of the state color + the word, named for AccessKit): Providers health (green available · cyan detected · amber partial · red error · Ash missing), Budget pace (green on-track · amber ahead-of-pace · red over-budget), connection state. The **word always pairs the color** (never color alone).
-> - **Severity is still the 9-step dot grid** (the tray mark, the painted quota meters, the alert-banner badges) — never `!`/`!!`. The cyan data ramp colors the Forecast sparkline + the per-model share bars; **amber/red stays reserved** for near-/over-limit + over-budget, paired with its dot density.
-> - **Lean by construction.** The persistent header status carries the `· estimates` honesty caveat **once**, so the panels drop the per-panel scope lines + estimate-note paragraphs the CLI keeps (every `$` is still `~`-hedged + `(estimated)`-tagged); the Claude chat caveat shows once under the meter stack (deduped); the Budget "no budget set" state is a 2-line hint, not the full TOML dump; Providers shows the two product pillars (cost + quota sources) and sheds the model-mix/auth reference lines. **AccessKit** is the GUI's `--plain` analogue — every painted widget (meters, chips, share bars, tabs, badges, the mark, the refresh button) carries a name. Scope/sequencing: [PRODUCT-PLAN.md](PRODUCT-PLAN.md) §2d / §4 Step 6; the design pin is [`STEP6-TASKBAR-DESIGN.md`](proposals/STEP6-TASKBAR-DESIGN.md).
-
-**ASCII substitutes per component:**
+**ASCII substitutes (illustrative):**
 
 ```
-limit meter   Ascii: "[###########-] 92% !  resets 41m"           # '#' used, '+' half-cell, '-' remaining; same ! / !! / !! OVER cues as braille
-              Plain (no bar): "claude code 5h: 92% used (near limit), resets in 41m"   # cue spelled out: (near limit) / (critical) / (over limit)
-unverified    "claude code 5h: 92% used ? unverified, resets in 41m  as of 14:03"   # neutral, no alarm word (same ? unverified cue in every mode)
-spend pool    "copilot mo: $3.20 / $10.00 used, resets in 5d"     # dollar line, no meter, no % — illustrative of the Spend variant only: Copilot is discovery-gated, not shipped
-estimated     "claude code 5h: usage 412,000 tokens (~$1.10, estimated), quota % unavailable"
-sparkline     prefer a labeled numeric list; or an ASCII height ramp .:-=+*#
-cost bar      "claude opus 4.8   $24.10   (57%)"                 # no bar, or "####"
-statusline    Ascii: "costroid ~$4.18  [###-] 78% 2h14m"          Plain: "costroid ~$4.18, claude code 5h 78% used, resets in 2h14m"
+limit meter   "[###########-] 92% !  resets 41m"   (# used, + half, - track; same !/!!/!! OVER cues)
+   Plain       "claude code 5h: 92% used (near limit), resets in 41m"
+unverified    "claude code 5h: 92% used ? unverified, resets in 41m  as of 14:03"
+sparkline     a labeled numeric list, or a .:-=+*# height ramp
+cost bar      "claude opus 4.8   $24.10   (57%)"
+statusline    "costroid ~$4.18  [###-] 78% 2h14m"
 spinner       "| / - \"  or  "working..."
 ```
 
-**Font/terminal fallback:** if braille isn't supported (replacement-char risk) Costroid downshifts automatically — a block / `.:-=+*#` ramp for the sparkline, ASCII `[####--]` for meters/bars — without the user asking. Piped/non-TTY output is always plain.
+If braille is unsupported, Costroid auto-downshifts to the block / `.:-=+*#` ramp and ASCII `[####--]` without being asked; piped/non-TTY output is always plain.
 
 ## Voice & copy
 
-The insight line is where Costroid sounds like a colleague: proactive, plain, specific, brief. State the fact, then the so-what, then (optionally) a next step. Never alarmist, never chatty, never an LLM chat box.
+The insight line sounds like a colleague: proactive, plain, specific, brief — fact, then so-what, then (optionally) a next step. Never alarmist, chatty, or a chat box.
 
-**Rules:**
-- Cost is an estimate — hedge accordingly (`~`, "estimated", "about"). Never claim certainty about money you inferred.
-- Recommendations are advisory and **sourced**, and attach only to API-cost lines — never to subscription limits.
-- One insight at a time. Quiet by default. Never block the user or demand a response.
-- Sentence case, no emoji, no exclamation spam, no fake urgency, no greetings ("Hey there!").
-- **One sanctioned exception (2026-06-19): the Stats/Activity comparison line.** The Activity tab may carry exactly ONE playful "comparison" line per render (e.g. "that's roughly 19 novels' worth of tokens moved through your tools. (rough)") — a single rough order-of-magnitude scale, always hedged (`(rough)`), Stats tab only. It is a deliberate, narrow loosening of "never chatty" to add engagement; it stays factual, never false precision, never a greeting/CTA. Don't generalize it to other surfaces.
+- Cost is an estimate — hedge (`~`, "estimated", "about"); never claim certainty about inferred money.
+- Recommendations are advisory + **sourced**, and attach only to API-cost lines — never to subscription limits.
+- One insight at a time; quiet by default; never block or demand a response.
+- Sentence case, no emoji, no exclamation spam, no fake urgency, no greetings.
+- **One sanctioned exception:** the Activity/Stats tab may carry exactly one hedged `(rough)` comparison line per render — factual, never false precision, never generalized to other surfaces.
 
-**Good:**
-- "You're pacing toward ~$58 this week — Opus drove most of it. (estimated)"
-- "Weekly Claude limit at 92%, resets Sunday. Codex still has headroom."
-- "Sonnet could cover ~40% of these tasks at about ⅓ the cost. Advisory — sources: DeepSWE, CursorBench (vendor)."
-
-**Avoid:**
-- "🚨 WARNING!! You are SPENDING TOO MUCH!!!"
-- "This will save you exactly $19.42." (false precision on an estimate)
-- "Hi friend! Want to chat about your costs?" (chatbot register)
+**Good:** "You're pacing toward ~$58 this week — Opus drove most of it. (estimated)" · "Sonnet could cover ~40% of these tasks at about ⅓ the cost. Advisory — sources: DeepSWE, CursorBench (vendor)."
+**Avoid:** "🚨 WARNING!! SPENDING TOO MUCH!!!" · "This will save you exactly $19.42." · "Hi friend! Want to chat?"

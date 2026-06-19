@@ -63,13 +63,13 @@
 //! the `async-secret-service` (zbus) path. That choice keeps **no async runtime** in
 //! the dependency graph — `async-io`/`tokio` stay globally forbidden even under
 //! `--features connect` — at the cost of the C build-deps `libdbus-1-dev` +
-//! `libsecret-1-dev` (installed in CI; PRODUCT-PLAN Step 4). macOS uses the Security
+//! `libsecret-1-dev` (installed in CI; ARCHITECTURE). macOS uses the Security
 //! framework (`apple-native`) and Windows the Credential Manager (`windows-native`).
 //!
 //! # The auth source ladder (the rule the future code must obey)
 //!
 //! Every datum is sourced by descending an explicit ladder, most-sanctioned first —
-//! **only tiers 0–3 are ever built** (PRODUCT-PLAN §5):
+//! **only tiers 0–3 are ever built** (ARCHITECTURE):
 //!
 //! 0. Local artifacts — provider logs on disk (today's default, *not* this crate).
 //! 1. Sanctioned push/hook — e.g. Claude's `statusLine` capture (also not this crate).
@@ -125,7 +125,7 @@ pub use costroid_core::vendor_report::{
 
 /// Gemini has **no sanctioned static-key usage API**, so there is no adapter: both
 /// report kinds resolve to a first-class [`VendorReportUnavailable::NoSanctionedStaticKeyApi`]
-/// carrying the pinned reason string (`docs/proposals/T9-PIN-PROPOSAL.md` §4). T10
+/// carrying the pinned reason string (`docs/ROADMAP.md`). T10
 /// renders it; nothing here ever performs a network call for Gemini.
 pub fn gemini_cost_report() -> CostReportOutcome {
     CostReportOutcome::Unavailable(VendorReportUnavailable::NoSanctionedStaticKeyApi)
@@ -258,7 +258,7 @@ pub enum ConnectError {
     #[error("no state directory: set $HOME or $XDG_STATE_HOME")]
     NoStateDir,
 
-    // ---- the T9a HTTP-client taxonomy (PRODUCT-PLAN §12.11 pins) ----------
+    // ---- the T9a HTTP-client taxonomy (ARCHITECTURE pins) ----------
     //
     /// The request URL is not on the client's single authorized host. Raised
     /// **before any I/O** — the authorized-host guarantee lives in the type.

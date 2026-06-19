@@ -22,7 +22,7 @@ categories = ["command-line-utilities", "authentication"]
 # blocking C libdbus) + pure-Rust crypto (`crypto-rust`) — deliberately NOT the
 # `async-secret-service` (zbus) path, so NO async runtime is pulled and `async-io`
 # stays globally banned even under `--features connect`. The cost is the C build-deps
-# `libdbus-1-dev` + `libsecret-1-dev` (installed in CI; PRODUCT-PLAN Step 4 §161).
+# `libdbus-1-dev` + `libsecret-1-dev` (installed in CI; ARCHITECTURE).
 #
 # HTTP (T9a): blocking `ureq` on `rustls` (no async runtime, no OpenSSL), with
 # OS-native trust roots loaded via `rustls-native-certs` — never `webpki-roots`

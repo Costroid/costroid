@@ -4,7 +4,7 @@
 //! Severity is encoded by **how many dots are filled** in the tray's 3×3 grid, so the
 //! glance survives grayscale and color-blindness with no `!`/`!!` badge — the dot count
 //! *is* the "never rely on color alone" guarantee (DESIGN-SYSTEM "Brand basics" /
-//! STEP6-TASKBAR-DESIGN §0). Color is only a secondary tint over that count.
+//! DESIGN-SYSTEM). Color is only a secondary tint over that count.
 //!
 //! Pure logic, no egui/tray types — unit-tested against `NowSummary` fixtures.
 
@@ -24,7 +24,7 @@ pub const MAX_STEP: u8 = 8;
 ///   limit", never merely "near it".
 ///
 /// Build-time decision (T18): the design pin fixes the per-step *colors* but defers the
-/// fraction→step *curve* and glyph geometry to build time (STEP6-TASKBAR-DESIGN §13).
+/// fraction→step *curve* and glyph geometry to build time (DESIGN-SYSTEM).
 /// This linear round-with-floor curve is the obvious default; T19's in-window meters
 /// reuse it so the dot language is identical edge-to-edge.
 pub fn severity_step(fraction: f64) -> u8 {
@@ -58,10 +58,10 @@ impl Constraint {
 ///
 /// Only the `LimitAvailability::Available` arm yields a fill: the upstream
 /// sanitize / cross-check / age-out already demotes stale, unverified, or implausible
-/// readings to the other arms (STATUSLINE-CAPTURE-BRIEF §5 / ARCHITECTURE §9.2). A
+/// readings to the other arms (ARCHITECTURE). A
 /// degraded arm (`Unverified`/`Estimated`/`Partial`/`Unavailable`) never contributes a
 /// fill — the tray shows the idle / `?` muted grid instead, honesty over a guessed level
-/// (STEP6-TASKBAR-DESIGN §3).
+/// (DESIGN-SYSTEM).
 ///
 /// A `Spend` dollar pool carries no token fraction, exactly as the CLI meter treats it
 /// (`render.rs::measure_fraction`), so it does not drive the tray fill in v0.6.0; when a

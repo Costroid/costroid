@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// The exact, pinned render string for a vendor with **no sanctioned static-key usage
-/// API** (Gemini). Pinned by `docs/proposals/T9-PIN-PROPOSAL.md` §4 — do not reword.
+/// API** (Gemini). Pinned by `docs/ROADMAP.md` — do not reword.
 /// (Carries an em dash; a `--plain` renderer must ASCII-fold it at the render boundary,
 /// the same way the Cursor detect-only note is folded — that is T10's job, not this
 /// data layer's.)

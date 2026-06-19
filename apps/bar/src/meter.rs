@@ -7,7 +7,7 @@
 //! `meter_segments` (floor + a boundary half-cell + a min-visibility floor), and the fill
 //! TINT follows the brand's 0–8 warning ramp (`severity::severity_step` +
 //! `glyph::step_fill_color`) — so the dot language is identical edge-to-edge with the tray
-//! (STEP6-TASKBAR-DESIGN §6 / DESIGN-SYSTEM "Limit meter").
+//! (DESIGN-SYSTEM "Limit meter").
 //!
 //! Honesty is mirrored from the CLI's `render_limit_line`: the five `LimitAvailability` arms
 //! render distinctly, a degraded reading is NEVER dressed as a confident fill, and the

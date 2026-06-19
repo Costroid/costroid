@@ -25,7 +25,7 @@ use costroid_providers::{
 // `Capability` lane descriptors carried by the public `ProviderCapabilityView` (so the
 // Providers tab can match on each lane's source). Without this a "core-only" consumer
 // (the Step 6 taskbar `apps/bar`, which depends only on `costroid-core` —
-// ARCHITECTURE §5) could not name the engine's own public surface and would be forced
+// ARCHITECTURE) could not name the engine's own public surface and would be forced
 // into a direct `costroid-providers` edge. Same rationale as the `FocusRecord`
 // re-export above; the rest of `costroid-providers` stays an internal dependency.
 pub use costroid_providers::{
@@ -65,10 +65,10 @@ const UNKNOWN_GROUP_VALUE: &str = "unknown";
 const TOTAL_GROUP_VALUE: &str = "total";
 
 /// The cross-check fraction above which a Claude `rate_limits` reading is treated as
-/// "high" (mirrors the render layer's `WARN_FRACTION`; STATUSLINE-CAPTURE-BRIEF §5).
+/// "high" (mirrors the render layer's `WARN_FRACTION`; ARCHITECTURE).
 const HIGH_USAGE_FRACTION: f64 = 0.80;
 /// The absolute summed-token floor below which a *high* Claude reading is implausible
-/// and demoted to `Unverified` (STATUSLINE-CAPTURE-BRIEF §5, the one genuinely-open
+/// and demoted to `Unverified` (ARCHITECTURE, the one genuinely-open
 /// number — biased low so it only flags "near-max on almost no usage", never a real
 /// heavy prompt, and only ever demotes; an under-conservative floor would let a
 /// false-100% through, which is the failure being guarded). Tunable.
@@ -146,7 +146,7 @@ pub fn now_summary(snapshot: &EngineSnapshot, options: NowOptions) -> NowSummary
 /// now-header leads with (e.g. `"~$42.18"`).
 ///
 /// Money stays [`Decimal`] inside the engine; a consumer that must not depend on
-/// `rust_decimal` (the Step 6 taskbar `apps/bar`, a core-only consumer — ARCHITECTURE §5)
+/// `rust_decimal` (the Step 6 taskbar `apps/bar`, a core-only consumer — ARCHITECTURE)
 /// receives the finished display string rather than the raw `Decimal`. This mirrors the
 /// CLI now-header exactly (`apps/cli/src/render.rs`): the sum of the [`CostLane::Api`]
 /// rows' `billed_cost`, formatted by `format_money(.., "USD", estimated = true)`. The
@@ -360,7 +360,7 @@ pub fn trends_summary(snapshot: &EngineSnapshot, options: TrendsOptions) -> Tren
 /// projection over the existing snapshot — it reuses [`bench_view`] + the same per-row
 /// [`AggregateTotals::add_row`] aggregation and resolved-key grouping `bench_view` performs,
 /// and introduces NO new pricing/bench math. API-cost rows ONLY (the frontier is API-only,
-/// ARCHITECTURE §9.6): a subscription-only model never appears. Spend is **lifetime-scoped**
+/// ARCHITECTURE): a subscription-only model never appears. Spend is **lifetime-scoped**
 /// (all API usage in the snapshot, not period-scoped) — it reconciles with `trends` (lifetime
 /// totals) and the `frontier` overlay, NOT with the period-scoped `now` tab.
 ///
@@ -570,7 +570,7 @@ const MIN_FORECAST_DAYS: u32 = 3;
 /// projected ONLY off a fresh, cross-checked [`LimitAvailability::Available`] token-fraction
 /// reading (it rides [`now_summary`], which already runs the sanitize/cross-check/stale-age-out
 /// ladder). Every other arm — `Unverified`/`Estimated`/`Partial`/`Unavailable`, or a dollar
-/// `Spend` measure — degrades to "ETA unavailable", never a confident wrong ETA (ARCHITECTURE §9.2).
+/// `Spend` measure — degrades to "ETA unavailable", never a confident wrong ETA (ARCHITECTURE).
 pub fn forecast_view(snapshot: &EngineSnapshot) -> ForecastView {
     let now = snapshot.generated_at;
     let today = now.date_naive();
@@ -655,7 +655,7 @@ fn days_in_month_utc(year: i32, month: u32) -> u32 {
 /// Project one window's exhaustion ETA, riding the finalized [`LimitSummary`]. ONLY a fresh,
 /// cross-checked [`LimitAvailability::Available`] token-fraction reading is projectable; every
 /// other arm (incl. a dollar `Spend` measure) degrades to a typed "unavailable" — never a
-/// confident wrong ETA (§11.5 T15 / ARCHITECTURE §9.2).
+/// confident wrong ETA (§11.5 T15 / ARCHITECTURE).
 fn quota_eta(limit: &LimitSummary, now: DateTime<Utc>) -> QuotaEta {
     let outcome = match &limit.availability {
         LimitAvailability::Available {
@@ -1080,7 +1080,7 @@ pub const ALERT_CRITICAL_FRACTION: f64 = 0.95;
 /// * **Quota (%)** (T17) — one alert per quota window at/above a fraction threshold, fired ONLY off
 ///   a fresh, cross-checked [`LimitAvailability::Available`] reading (a token-fraction, or a dollar
 ///   `Spend` pool with a known allowance). An `Unverified`/`Estimated`/`Partial`/`Unavailable`
-///   reading is NEVER alerted (the T15 discipline / ARCHITECTURE §9.2 — degrade, never a confident
+///   reading is NEVER alerted (the T15 discipline / ARCHITECTURE — degrade, never a confident
 ///   wrong alarm; staleness is already aged-out to `Estimated` upstream by `now_summary`).
 /// * **Budget ($)** (T17) — one alert per [`BudgetRow`] STRICTLY over its monthly target (riding
 ///   `over_by_usd`), API-lane only.
@@ -1778,7 +1778,7 @@ fn limit_summary(
     rows: &[FocusRecord],
     generated_at: DateTime<Utc>,
 ) -> LimitSummary {
-    // The finalize pass (STATUSLINE-CAPTURE-BRIEF §4b): the cross-check needs per-window
+    // The finalize pass (ARCHITECTURE): the cross-check needs per-window
     // usage volume, which exists only here at the core layer (the provider could not see
     // it). Compute the trailing-window volume + its priced value, then demote a
     // high-but-trivial Claude reading to Unverified before mapping to the render verdict.
@@ -1798,7 +1798,7 @@ fn limit_summary(
     }
 }
 
-/// The cross-check (STATUSLINE-CAPTURE-BRIEF §4b.6 — the #31820 guard: flag, never
+/// The cross-check (ARCHITECTURE — the #31820 guard: flag, never
 /// suppress, never rewrite the number). A Claude `rate_limits` reading that is *high*
 /// (`fraction ≥ HIGH_USAGE_FRACTION`) but whose trailing-window token volume is *trivial*
 /// (`< UNVERIFIED_TOKEN_FLOOR`) is implausible — demote `Verified → Unverified` so it
@@ -1822,7 +1822,7 @@ fn finalize_limit_status(limit: &LimitWindow, volume: &TokenTotals) -> LimitStat
 /// window for `kind` (filter by `x_tool` + `charge_period_start` inside the window
 /// ending at `now`). Returns the per-meter [`TokenTotals`] so the `Estimated` render can
 /// show the breakdown; the cross-check uses its scalar `.total()`. Lives in
-/// `costroid-core` — the provider has no access to usage rows (STATUSLINE-CAPTURE-BRIEF
+/// `costroid-core` — the provider has no access to usage rows (ARCHITECTURE
 /// §5).
 fn window_token_volume(
     rows: &[FocusRecord],
@@ -1843,7 +1843,7 @@ fn window_token_volume(
 /// The priced dollar value of a window's local volume — the existing cost calculator's
 /// per-row `effective_cost`, summed over the same trailing-window rows. `None` when any
 /// contributing row is unpriced (`x_pricing_status != "priced"`): the volume is shown
-/// alone, never a guessed price (STATUSLINE-CAPTURE-BRIEF §6). `None` too when the
+/// alone, never a guessed price (ARCHITECTURE). `None` too when the
 /// window has no rows (the caller only reaches `Estimated` with nonzero volume).
 fn window_estimated_usd(
     rows: &[FocusRecord],
@@ -1889,7 +1889,7 @@ fn window_duration(kind: LimitKind) -> Duration {
 }
 
 /// Map a finalized [`LimitWindow`] to its render-layer [`LimitAvailability`]
-/// (STATUSLINE-CAPTURE-BRIEF §1.2/§4b.7 — a pure map; no I/O, no clock beyond
+/// (ARCHITECTURE — a pure map; no I/O, no clock beyond
 /// `generated_at`). Staleness is evaluated *here* against the live `generated_at` (so
 /// `--live` re-checks it each tick), never frozen by the provider:
 /// * `status == Unavailable` / no measure → `Estimated` (volume > 0) else `Unavailable`;
@@ -1951,7 +1951,7 @@ fn limit_availability(
     }
 }
 
-/// The absent→estimate fallback (STATUSLINE-CAPTURE-BRIEF §6): show the window's local
+/// The absent→estimate fallback (ARCHITECTURE): show the window's local
 /// token volume + priced value when there is no trustworthy %, else `Unavailable`. Never
 /// blank when there is something to show, never a fabricated number.
 fn estimate_or_unavailable(
@@ -2334,7 +2334,7 @@ pub struct LimitSummary {
     /// When the underlying reading was observed — threaded from the finalized
     /// [`LimitWindow::captured_at`] so the render layer (which only ever sees
     /// `LimitSummary`, never `LimitWindow`) can draw the always-on "as of HH:MM"
-    /// freshness stamp (STATUSLINE-CAPTURE-BRIEF §8). For `Unavailable` windows this is
+    /// freshness stamp (ARCHITECTURE). For `Unavailable` windows this is
     /// the UNIX-epoch sentinel, but those arms render no stamp so it never surfaces.
     pub captured_at: DateTime<Utc>,
     pub availability: LimitAvailability,
@@ -2343,7 +2343,7 @@ pub struct LimitSummary {
 /// How usable a single quota reading is at the availability/render layer. Carries
 /// the [`LimitMeasure`] (token-fraction or dollar `Spend`) so the render layer — which
 /// only ever sees `LimitSummary.availability`, never the provider `LimitWindow` — can
-/// format dollars without touching a type (PRODUCT-PLAN §11.5 D1). `Estimated` lives
+/// format dollars without touching a type (ARCHITECTURE D1). `Estimated` lives
 /// only here, never on `LimitWindow`; it is wired by T4/T6.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2642,7 +2642,7 @@ pub enum SpendForecast {
 
 /// One quota window's projected exhaustion ETA (T15). Projected ONLY off a fresh, cross-checked
 /// [`LimitAvailability::Available`] token-fraction; every other availability arm degrades to
-/// [`QuotaEtaOutcome::Unavailable`] (ARCHITECTURE §9.2 — degrade, never a confident wrong ETA).
+/// [`QuotaEtaOutcome::Unavailable`] (ARCHITECTURE — degrade, never a confident wrong ETA).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QuotaEta {
     pub tool: ProviderId,
@@ -2672,7 +2672,7 @@ pub enum QuotaEtaOutcome {
 pub enum QuotaEtaUnavailable {
     /// The reading is not a fresh, cross-checked `Available` token-fraction — it is
     /// `Unverified`/`Estimated`/`Partial`/`Unavailable`, or a dollar `Spend` measure. Degraded
-    /// per ARCHITECTURE §9.2 (stale is already aged-out to `Estimated` upstream).
+    /// per ARCHITECTURE (stale is already aged-out to `Estimated` upstream).
     ReadingNotProjectable,
     /// Too little of the window has elapsed (or a clock skew) to estimate a burn rate.
     WindowJustStarted,
@@ -3534,7 +3534,7 @@ mod tests {
     #[test]
     fn active_alerts_never_fires_off_unverified_estimated_partial_or_unavailable() {
         // Each reading is at/above CRITICAL, yet NONE is a fresh cross-checked `Available` — so the
-        // detector stays silent (the T15 discipline / ARCHITECTURE §9.2).
+        // detector stays silent (the T15 discipline / ARCHITECTURE).
         let now = now_with_limits(vec![
             alert_limit(
                 ProviderId::ClaudeCode,
@@ -6299,7 +6299,7 @@ mod tests {
             LimitAvailability::Partial { .. }
         ));
         // A reading whose window has already reset (resets_at in the past) ages out
-        // against generated_at (STATUSLINE-CAPTURE-BRIEF §4b.5) — with no local volume
+        // against generated_at (ARCHITECTURE) — with no local volume
         // to estimate from, that is Unavailable, never a confident stale meter.
         assert!(matches!(
             summary.limits[3].availability,

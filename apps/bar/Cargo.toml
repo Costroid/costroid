@@ -5,7 +5,7 @@ edition.workspace = true
 # The egui/eframe 0.34 stack requires Rust 1.92, above the workspace MSRV (1.88) the
 # CLI + library crates keep — so `apps/bar` declares its own honest MSRV rather than
 # inheriting. The CI MSRV (1.88) job excludes this crate (`--exclude costroid-bar`),
-# so the shipped CLI keeps its 1.88 MSRV; T21/release may revisit (PRODUCT-PLAN §11.5).
+# so the shipped CLI keeps its 1.88 MSRV; T21/release may revisit (ARCHITECTURE).
 rust-version = "1.92"
 license.workspace = true
 repository.workspace = true
@@ -28,7 +28,7 @@ path = "src/main.rs"
 # `accesskit_winit` → (Linux) `accesskit_unix → zbus → async-io` — local AT-SPI/D-Bus IPC,
 # NOT network. async-io stays banned everywhere else (the CLI graph is async-io-free); here it
 # is admitted only as the reviewed subtree AND backed by the runtime no-`AF_INET` proof in
-# `scripts/offline_acceptance.sh`. ⛔ security-boundary carve-out (PRODUCT-PLAN §12.29 / §11.5).
+# `scripts/offline_acceptance.sh`. ⛔ security-boundary carve-out (ARCHITECTURE).
 [features]
 default = ["accesskit"]
 accesskit = ["eframe/accesskit"]
@@ -64,7 +64,7 @@ gtk.workspace = true
 [lints]
 workspace = true
 
-# cargo-dist per-package release config (T21 / PRODUCT-PLAN §12.29 pin decision 2).
+# cargo-dist per-package release config (T21 / ARCHITECTURE pin decision 2).
 [package.metadata.dist]
 # Ship the taskbar as downloadable binary ARCHIVES + crates.io (`cargo install costroid-bar`)
 # only — the one-click npm/Homebrew (and curl|sh / irm) installers stay CLI-only (`costroid`)

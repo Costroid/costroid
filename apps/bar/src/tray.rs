@@ -2,7 +2,7 @@
 //!
 //! The tray renders the `C⠉` dot-grid (`glyph.rs`), shows a full tooltip, toggles the
 //! window on left-click, and offers a right-click menu (Open / Refresh / Quit) —
-//! STEP6-TASKBAR-DESIGN §3.
+//! DESIGN-SYSTEM
 //!
 //! Threading is forced by the platforms: eframe owns the one `winit` event loop, which
 //! does **not** pump GTK, so on **Linux** the tray runs on its own dedicated GTK-main
@@ -12,9 +12,9 @@
 //! thread** drains and forwards to the app (waking the UI only when something happens).
 //!
 //! Everything degrades: if the tray can't be created (no SNI/AppIndicator on Linux, etc.)
-//! the app runs window-only rather than crashing (STEP6-TASKBAR-DESIGN §10/§11). The
+//! the app runs window-only rather than crashing (DESIGN-SYSTEM). The
 //! macOS/Windows path compiles here but is **not yet field-verified** (no such hardware on
-//! the dev box; PRODUCT-PLAN §12.29) — the GUI ships as archives + `cargo install
+//! the dev box; ARCHITECTURE) — the GUI ships as archives + `cargo install
 //! costroid-bar` until that matrix is confirmed.
 
 use std::sync::mpsc::{self, Receiver, Sender};

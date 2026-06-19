@@ -236,7 +236,7 @@ pub enum DataSource {
     ApiKey,
     /// No sanctioned source exists for this datum — unavailable, never fetched.
     /// (Reusing a credential/session against a non-sanctioned, undocumented, or
-    /// internal endpoint is never an option — that is the ToS line; see ARCHITECTURE §8.)
+    /// internal endpoint is never an option — that is the ToS line; see ARCHITECTURE)
     Unavailable,
 }
 
@@ -351,7 +351,7 @@ impl Provider for ClaudeCodeProvider {
 
     /// Claude's 5h/weekly quota is not in the transcripts (`_loc`); it arrives only
     /// through the sanctioned `statusLine` `rate_limits` push, captured into a local
-    /// no-secret cache (ARCHITECTURE §8/§9.2). Read + sanitize that cache into two
+    /// no-secret cache (ARCHITECTURE). Read + sanitize that cache into two
     /// provisional windows; an absent/unreadable cache degrades to two `Unavailable`
     /// windows. The `Verified`/`Unavailable` status set here is PROVISIONAL — the core
     /// cross-check (which alone sees usage volume) may demote a high-but-trivial
@@ -428,7 +428,7 @@ impl Provider for CursorProvider {
     /// Cost + quota are served live server-side by Cursor with no sanctioned source,
     /// and Costroid never reuses a session to fetch them — so both lanes are
     /// [`DataSource::Unavailable`], never fetched (live quota is discovery-gated;
-    /// PRODUCT-PLAN §8 / ARCHITECTURE §8). Only the selected model (model mix) is a
+    /// ROADMAP). Only the selected model (model mix) is a
     /// local artifact (`cli-config.json`). No local quota window, so `quota_kinds` is empty.
     fn capability(&self) -> Capability {
         Capability {
@@ -458,7 +458,7 @@ impl Provider for CursorProvider {
     /// served live by Cursor with **no sanctioned source** Costroid may read, so
     /// `parse_limits` emits no window — the "unavailable — no sanctioned source" status
     /// is surfaced in the provider's detected-status message in `costroid-core`. A live
-    /// fetch is **discovery-gated** (PRODUCT-PLAN §8): pursued only via a future
+    /// fetch is **discovery-gated** (ROADMAP): pursued only via a future
     /// *sanctioned* Cursor API/OAuth, **never** by reusing a local session against the
     /// undocumented `api2.cursor.sh` RPC (a ToS violation; §5 tier 4). (The generalized
     /// `LimitKind`/`Spend` shape that would render it already landed in T2.)
@@ -1078,7 +1078,7 @@ fn parse_codex_limit(
     let measure = value
         .get("used_percent")
         .and_then(Value::as_f64)
-        // Provider logs are untrusted input (PRODUCT-PLAN §6): sanitize the RAW
+        // Provider logs are untrusted input (ARCHITECTURE): sanitize the RAW
         // percentage before ÷100, mirroring Claude's guard — an out-of-range value
         // yields no measure (core degrades it to Estimated/Unavailable), never a
         // confident wrong meter.
@@ -1134,7 +1134,7 @@ pub fn claude_rate_limits_cache_path() -> Option<PathBuf> {
     Some(base.join("costroid").join("claude-rate-limits.json"))
 }
 
-/// Read + sanitize the sanctioned Claude rate-limits cache (ARCHITECTURE §9.2). The
+/// Read + sanitize the sanctioned Claude rate-limits cache (ARCHITECTURE). The
 /// captured field is UNTRUSTED input: a missing/unreadable/malformed cache degrades to
 /// two `Unavailable` windows — never an error, never a crash. Always returns exactly
 /// two windows (`FiveHour`, `Weekly`). The status set here is PROVISIONAL; the core
@@ -1174,7 +1174,7 @@ fn read_claude_rate_limits(path: Option<&Path>) -> Vec<LimitWindow> {
 ///
 /// Only an in-range reading survives to `Verified` carrying a `TokenFraction`.
 /// `resets_at` is parsed defensively as either an integer epoch or an RFC3339 string
-/// (both appear across Claude Code versions, ARCHITECTURE §12).
+/// (both appear across Claude Code versions, ARCHITECTURE).
 fn claude_limit_window(
     window: Option<&Value>,
     kind: LimitKind,
@@ -1218,7 +1218,7 @@ fn claude_limit_window(
 
 /// Parse a Claude `resets_at` value defensively: an integer epoch (reusing
 /// [`epoch_seconds`]) first, then an RFC3339 string. Both forms appear across Claude
-/// Code versions (ARCHITECTURE §12). `None` when it is neither.
+/// Code versions (ARCHITECTURE). `None` when it is neither.
 fn parse_reset_stamp(value: &Value) -> Option<DateTime<Utc>> {
     if let Some(epoch) = value.as_i64() {
         return epoch_seconds(epoch);
@@ -1601,7 +1601,7 @@ mod tests {
 
     #[test]
     fn claude_cache_negative_percentage_is_sanitized_out() {
-        // The documented `<0` half of the out-of-range sanitize (DATA-MODEL).
+        // The documented `<0` half of the out-of-range sanitize (ARCHITECTURE).
         let window = claude_cache_window("rate-limits-negative.json", LimitKind::FiveHour);
         assert_eq!(window.status, LimitStatus::Unavailable);
         assert!(window.measure.is_none());
@@ -1692,7 +1692,7 @@ mod tests {
 
     #[test]
     fn codex_out_of_range_used_percent_is_sanitized_out() {
-        // Provider logs are untrusted input (PRODUCT-PLAN §6): a corrupt out-of-range
+        // Provider logs are untrusted input (ARCHITECTURE): a corrupt out-of-range
         // used_percent must never become a confident Verified "900%"/negative meter —
         // the same raw-range guard Claude's identically-shaped field gets.
         let entry = codex_limits_entry(

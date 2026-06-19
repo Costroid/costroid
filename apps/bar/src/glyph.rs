@@ -2,7 +2,7 @@
 //!
 //! The tray icon is the brand's `C⠉` mark whose **3×3 dot grid is the warning meter**:
 //! it fills to the `0..=8` dot-density step of the most-constrained quota window
-//! (STEP6-TASKBAR-DESIGN §3). Because `tray-icon` takes a rasterized RGBA bitmap (never a
+//! (DESIGN-SYSTEM). Because `tray-icon` takes a rasterized RGBA bitmap (never a
 //! font glyph), the mark is drawn here from first principles — the same dot geometry the
 //! in-window painter reuses (so the language is identical edge-to-edge). The glyph dots
 //! are computed directly, never from a library constant, exactly as the CLI computes its
@@ -53,13 +53,13 @@ pub fn dots_filled(step: u8) -> usize {
 }
 
 /// RGBA (`[r, g, b, a]`) for the *filled* dots at a severity step — the brand warning
-/// ramp keyed to the step number (STEP6-TASKBAR-DESIGN §0 / DESIGN-SYSTEM "Brand
+/// ramp keyed to the step number (DESIGN-SYSTEM "Brand
 /// basics"): `1–2` green · `3` yellow · `4` orange · `5–6` red · `7` brown · `8`
 /// critical. The dot *count* is the primary, grayscale-safe cue; this tint is secondary.
 ///
 /// Build-time decision (T18): the pin fixes the ramp's named colors but not exact hexes;
 /// these are on-brand, accessible values, flagged for T19/T21 polish
-/// (STEP6-TASKBAR-DESIGN §13). The pin's literal "full black grid" at step 8 would be
+/// (DESIGN-SYSTEM). The pin's literal "full black grid" at step 8 would be
 /// invisible on the dark mark, so step 8 renders as the densest critical red instead.
 pub fn step_fill_color(step: u8) -> [u8; 4] {
     match step {

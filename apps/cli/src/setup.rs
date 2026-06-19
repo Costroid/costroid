@@ -5,7 +5,7 @@
 //! side-effect that performs the capture. The matching *reader* lives in
 //! `costroid-providers` (T4); the *rendering* of the captured quota lands in T6.
 //!
-//! Security envelope (ARCHITECTURE §8/§10): the cache holds only two percentages, two
+//! Security envelope (ARCHITECTURE): the cache holds only two percentages, two
 //! reset stamps, and a capture time — never a token, prompt, credential, or content. No
 //! network call, no credential read. `setup-statusline` edits only Claude Code's
 //! `settings.json`, always backing it up first and restorable via `--undo`.
@@ -64,7 +64,7 @@ pub fn build_cache_value(input: &[u8], captured_at: DateTime<Utc>) -> Option<Val
 
 /// Copy only the two allowed fields from one rate-limit window. `None` when the window is
 /// absent, not an object, or carries neither field — the security floor that keeps the
-/// cache to "two percentages + two reset stamps" (ARCHITECTURE §10).
+/// cache to "two percentages + two reset stamps" (ARCHITECTURE).
 fn clean_window(window: Option<&Value>) -> Option<Value> {
     let window = window?.as_object()?;
     let mut clean = Map::new();

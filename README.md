@@ -2,147 +2,69 @@
 
 > Local-first, FOCUS-native cost and limit visibility for your AI coding tools — right in your terminal.
 
-![status](https://img.shields.io/badge/status-early_development-orange)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-Costroid shows you — right in your terminal — what your AI coding tools actually cost. It tracks both the subscription limits you're burning through (your Claude Code and Codex 5-hour and weekly caps, with reset countdowns) and the real dollars on your API bill, broken down by model. Everything runs locally: it reads the logs those tools already write to your machine, sends nothing anywhere, and normalizes the data into the open [FOCUS](https://focus.finops.org) standard so your cost data is portable, auditable, and ready for whatever you plug it into next.
+Costroid shows what your AI coding tools actually cost — both the subscription limits you're burning through (Claude Code and Codex 5-hour and weekly caps, with reset countdowns) and the real dollars on your API bill, by model. By default it runs entirely from the local logs those tools already write, sends nothing anywhere, and normalizes everything into the open [FOCUS](https://focus.finops.org) 1.3 standard. Subscription limits and API costs are modeled separately, because they're different things: a subscription has a quota % and a reset timer; an API key has summable per-model dollars.
 
-It's the kind of tool that should be free and open, so it is.
+**Feature-complete at v0.6.0.** Edition 2021, Apache-2.0. MSRV 1.88 (libraries + CLI), 1.92 (the taskbar).
 
-## Status
+## Install
 
-**Early development.** Costroid's **v0.6.0** release ships the **`costroid-bar` taskbar** — the last surface: an always-on tray glance (your most-constrained quota meter, in the dot-density warning language) plus a small live cockpit window with the Overview, the opt-in alert banner, and **Budget**, **Forecast**, **Anomalies**, and **Providers** panels — painted in the same braille/dot language as the terminal UI, with screen-reader accessibility (AccessKit) on. It builds on the **analytical TUI tabs + opt-in alerts** (Providers, Models, History, Budget, Forecast, Anomalies + threshold alerts that fire at 80% / 95% of a quota or over a budget target, **off by default**, v0.5.0), the opt-in **connections** line (your own Anthropic/OpenAI usage-API key + `costroid reconcile`, off by default, v0.4.0), live Claude subscription quota (5-hour + weekly via Claude Code's `statusLine`, v0.3.0), and the local cost lane (`now`, `trends`, `statusline`, `export`, the cost-vs-quality `frontier` view, Cursor detect-and-defer, WSL Windows-root auto-detection, v0.2.0). The default build still reads only local logs and makes **zero** network calls. Install the CLI via the packaged installers below (shell, PowerShell, Homebrew, npm), `cargo install costroid`, or `cargo binstall costroid`; the taskbar ships as downloadable binary archives + `cargo install costroid-bar` — or build from source (see [Quickstart](#quickstart)). Commands and flags may still evolve.
-
-## What Costroid does
-
-Shipping today (v0.6.0):
-
-- **Two views in one tool.**
-  - `now` — your Codex **and live Claude** 5-hour and weekly limits with reset countdowns (Claude via its `statusLine`), plus your current API spend by model.
-  - `trends` — spend over day / week / month / year, grouped or filtered by model or app.
-- **Six analytical tabs** (number `1`–`9` or Tab / Shift-Tab, alongside `now`, `trends`, and the Activity tab below) — **Providers** (each tool's data source, auth, and what's available vs unavailable), **Models** (per-model API spend + token mix fused with the frontier), **History** (the full per-turn FOCUS record, newest-first, scrollable), **Budget** (your monthly $ targets vs actual API-lane spend, with a pace cue), **Forecast** (run-rate month-end projection + per-quota burn ETAs, hedged), and **Anomalies** (spend-spike + model-mix-shift callouts vs your own recent history).
-- **Opt-in threshold alerts** (`alerts` / `alerts --check`) — an inline banner + a cron-friendly exit-code check when a quota window crosses 80% / 95% or a budget goes over target, plus two optional advisory heads-ups (a month-end projection over your total budget, a daily spend spike vs your own norm); **off by default**, no daemon, no network.
-- **Cost-vs-quality frontier** (`frontier`) — the published cost-vs-quality frontier (DeepSWE + CursorBench) and where your own spend sits on it; advisory, sourced, **API-cost rows only**.
-- **Local logs only.** Reads what Claude Code, Codex, and Cursor already write to disk. Today's release needs no API keys and no login, and nothing leaves your machine. (Optional, opt-in connections — your own API key — shipped in v0.4.0, with a sanctioned OAuth login still planned; the local-only path always stays the default.)
-- **FOCUS-conformant export** (JSON / CSV) so your cost data is standard and portable.
-- **Statusline mode** for your shell, tmux, or Starship.
-- **`--live`** auto-refreshing view and a **`--plain`** ASCII mode for accessibility and pipes.
-- **Braille rendering, in color.** Charts, meters, and bars are drawn in braille dots — dense, distinctive, terminal-native — and painted in Costroid's own palette (cyan data, lime accent, per-model hues, muted context), with a top tab strip and contextual key hints in the interactive TUI. Color is layered on top of the glyph shapes and text cues, never the only signal: `--plain`/`NO_COLOR` strip it entirely with byte-identical, screen-reader-friendly output.
-- **Activity heatmap + Stats** (the `9` tab) — a GitHub-style contribution grid of your daily token volume in the dot-density language, plus total tokens, active days, busiest day, top model, and streaks. Built from the same local data, no network.
-- **Taskbar / menu-bar app** (`costroid-bar`, new in v0.6.0) — an always-on tray glance (your most-constrained limit, in the dot-density warning language) plus a live cockpit window (Overview + opt-in alert banner + Budget / Forecast / Anomalies / Providers), painted in the same dot/braille language and screen-reader-accessible (AccessKit). A pure consumer of the same local data — no new network, no telemetry. Ships as binary archives + `cargo install costroid-bar`. (Deep analysis — trends, models, history, frontier — stays in the `costroid` terminal app.)
-
-A note on the two views: subscription limits and API costs are deliberately separate, because they're different things. A subscription is a flat monthly fee, so it has a quota percentage and a reset timer but no per-use dollar amount. An API key is pay-as-you-go, so it has real, summable dollars per model. Costroid shows both, and a model you use both ways appears in each view, marked by access path.
-
-## Roadmap
-
-Where Costroid is headed:
-
-- **Live Claude quota** — **shipped in v0.3.0.** Claude Code's `statusLine` hook hands Costroid your real 5-hour and weekly limits locally — no login, no token reuse. `costroid setup-statusline` wires it up and captures the data, and the now-screen and statusline render those limits (with a color-free `? unverified` cue and a labeled estimate fallback when a reading can't be trusted, never a confident wrong number).
-- **Cost-vs-quality frontier** (`costroid frontier`) — **shipped in v0.2.0.** Plots the published cost-vs-quality frontier and where your own spend sits on it; advisory and sourced, never "just use the cheapest."
-- **Connections (your own key, opt-in) — shipped in v0.4.0.** Optional, default-off, feature-gated connections fetch live numbers no local log carries — your own Anthropic or OpenAI usage-API key, and a sanctioned OAuth login where the provider offers one. Costroid never reuses a session or token against an undocumented endpoint, so a provider with no sanctioned source — Cursor today, and Gemini, which exposes no static-key usage API — stays detect-only and shows "unavailable" until an official API exists. Tokens live only in your OS keychain and are used strictly between your device and the provider; `connect` warns at paste time that an admin key is organization-wide and recommends a dedicated, instantly-revocable one. v0.4.0 ships it all — the feature-gated `costroid-connect` crate, its OS-keychain credential store, the generic authorized-host HTTPS client, the Anthropic + OpenAI usage-API adapters, the estimate-vs-invoice reconciliation engine, the **`costroid connect`/`disconnect`/`connections` CLI** (stdin-only key entry, instant revoke), and the **`costroid reconcile` view** that puts your local estimate side by side with the vendor's billed invoice (signed variance per day and model, honest about every gap, never presenting the estimate as the bill) — all off by default, with the default build still making zero network calls.
-- **Analytical tabs + alerts** — **shipped in v0.5.0.** The Providers, Models, History, Budget, Forecast, and Anomalies TUI tabs land alongside opt-in **threshold alerts** (`costroid alerts` / `--check` + an inline banner): a quota window crossing 80% / 95% or a budget going over its monthly $ target, default off, pure-local, no daemon.
-- **Taskbar / menu-bar app** — **shipped in v0.6.0.** The `costroid-bar` surface, built in egui (no webview): an always-on tray glance + a live cockpit window (Overview, opt-in alert banner, Budget / Forecast / Anomalies / Providers), screen-reader-accessible (AccessKit), painted in the same dot/braille language as the terminal UI — the last surface, and a pure consumer of what the core already computes. (The macOS/Windows tray paths are built but not yet field-verified, so the GUI ships as binary archives + `cargo install costroid-bar`; the one-click npm/Homebrew installers stay CLI-only until that matrix is confirmed.)
-- **Maybe later** — an MCP server (query your costs from inside your AI agent) remains a speculative, uncommitted future surface.
-- A separate, team-oriented **web platform** for company-wide cost management is planned as its own project.
-
-See [CLAUDE.md](CLAUDE.md) for the build scope and the rules that AI coding agents follow. (Costroid's detailed design specs — architecture, data model, product plan — live in [docs/](docs/).)
-
-## Quickstart
-
-### Build from source (works today)
+**CLI (`costroid`):**
 
 ```bash
-git clone https://github.com/Costroid/costroid
-cd costroid
-cargo install --path apps/cli
-```
-
-### Packaged installers
-
-> **v0.6.0 is published** — all commands below work today. Built and released by [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`). Release binaries carry build-provenance attestations + checksums but are not yet OS-code-signed, so on first run macOS may show an "unidentified developer" prompt and Windows a SmartScreen prompt — see [Security & privacy](#security--privacy).
-
-macOS / Linux (shell):
-
-```bash
+# macOS / Linux (shell)
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Costroid/costroid/releases/latest/download/costroid-installer.sh | sh
-```
-
-Windows (PowerShell):
-
-```powershell
+# Windows (PowerShell)
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/Costroid/costroid/releases/latest/download/costroid-installer.ps1 | iex"
+brew install Costroid/tap/costroid     # Homebrew
+npx costroid                           # npm
+cargo binstall costroid                # prebuilt binary, no compile
+cargo install costroid                 # from crates.io (compiles)
 ```
 
-Homebrew:
+**Taskbar (`costroid-bar`):** downloadable binary archives, or `cargo install costroid-bar`. (No npm/Homebrew this cut.)
 
-```bash
-brew install Costroid/tap/costroid
-```
+Build from source: `git clone https://github.com/Costroid/costroid && cd costroid && cargo install --path apps/cli`.
 
-npm:
+## Commands
 
-```bash
-npx costroid
-```
+| Command | What it does |
+|---|---|
+| `costroid` / `now` | Live Claude + Codex 5h/weekly limits with reset countdowns, plus current API spend by model |
+| `costroid trends` | Spend over time — `--period day\|week\|month\|year`, `--group model\|app\|total` |
+| `costroid frontier` | Cost-vs-quality frontier and where your spend sits; advisory, sourced, API-cost rows only |
+| `costroid statusline` | Compact one-line status for shell / tmux / Starship (`--wrap '<cmd>'` escape hatch) |
+| `costroid setup-statusline` | Wire Claude Code's `statusLine` to capture live 5h/7d quota (`--undo` to restore) |
+| `costroid export --format json\|csv` | FOCUS 1.3-conformant export |
+| `costroid alerts` / `--check` | Opt-in threshold alerts (default off); `--check` is cron-friendly (exit 0/1/2) |
+| `costroid --live` | Auto-refreshing interactive view |
+| `costroid --plain` | One-shot ASCII, no color — screen-reader & pipe friendly |
 
-Prebuilt binary via [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (downloads the attested release binary from GitHub, no compile):
+**Opt-in connections** (behind `--features connect`, off by default): `costroid connect` / `disconnect` / `connections [--check]` link your own Anthropic/OpenAI usage-API key (stdin-only entry, instant revoke), and `costroid reconcile` puts your local estimate side by side with the vendor's billed invoice.
 
-```bash
-cargo binstall costroid
-```
+## Surfaces
 
-From crates.io (compiles from source):
+- **TUI** — 9 numbered tabs (`1` now, `2` trends, `3` providers, `4` models, `5` history, `6` budget, `7` forecast, `8` anomalies, `9` activity) plus an `a`/`esc` frontier overlay. Charts/meters/bars draw in braille dots, painted in Costroid's palette; `--plain`/`NO_COLOR` strip all color with byte-identical output.
+- **Taskbar** (`costroid-bar`) — always-on tray glance (your most-constrained quota meter, in the dot-density warning language) plus a live cockpit (Overview, opt-in alert banner, Budget / Forecast / Anomalies / Providers). egui/eframe + tray-icon, AccessKit on, a pure consumer of the same local data. macOS/Windows tray paths compile but are not yet field-verified.
 
-```bash
-cargo install costroid
-```
+## Providers
 
-### Usage
+Claude Code and Codex (full cost + quota); Cursor (detect-only — cost/quota "unavailable"). Cursor live quota, GitHub Copilot, Antigravity, and Gemini own-key are discovery-gated and never built speculatively.
 
-```bash
-costroid                         # interactive "now": live limits + current API costs
-costroid trends                  # interactive spend-over-time view
-costroid trends --period week    # day | week | month | year
-costroid trends --group model    # model | app | total
-costroid --live                  # auto-refresh the interactive view
-costroid statusline              # compact one-line status for shell / tmux / Starship
-costroid setup-statusline        # wire Claude Code's statusLine to capture live 5h/7d quota
-costroid setup-statusline --undo # restore the original statusLine + remove the cache
-costroid export --format json    # FOCUS export (--format json | csv)
-costroid alerts                  # opt-in threshold alerts (default off; enable in config)
-costroid alerts --check          # cron-friendly: exit 0 = clear, 1 = a crossing, 2 = error
-costroid --plain                 # one-shot ASCII, no color (screen-reader & pipe friendly)
-```
+## Guarantees
 
-On an interactive terminal, `costroid` and `costroid trends` open a navigable view (press `?` for keys, `q` to quit); when the output is piped or `--plain` is set, they render once and exit. `statusline`, `export`, and `alerts` are always one-shot.
+- **Local-first, zero-network default.** The default build reads local logs only and makes no network calls (enforced by a strace offline-acceptance test + a two-tier forbidden-crates test). Network happens only under `--features connect`, on an explicit `connect` / `connections --check` / `reconcile` action, as an HTTPS GET to the one provider host you authorized.
+- **No telemetry, ever.** Any update check is opt-in and off by default.
+- **Secrets live only in your OS keychain** (`keyring`) — read from stdin, never written to disk, config, or logs, never routed through any server. A usage-API key is organization-wide; `connect` warns at paste time and recommends a dedicated, instantly-revocable key. TLS validates against your OS trust store (no cert pinning) — see [SECURITY.md](SECURITY.md).
+- **Cost is always an estimate** (your tokens × current prices), built to reconcile against the provider invoice, which is the source of truth.
+- **`--plain` everywhere**, never color alone (the dot-density grid is the cue); permissive licenses only.
 
-`costroid alerts` is **off by default**. Enable it in `~/.config/costroid/config.toml` with an `[alerts]` section (`enabled = true`, plus optional `quota_warn` / `quota_critical` fraction overrides). Once on, it warns you when a quota window crosses 80% / 95% (only off a fresh, cross-checked reading — never a guess) or when your monthly $ budget goes over target, as an inline banner atop the `now` view and via the `costroid alerts` list. `costroid alerts --check` is built for cron — it stays quiet when clear and exits non-zero on a crossing, so you can wire it into a notification of your own. It is pure-local: no daemon, no network, no telemetry. (The two budget targets it reads live in the same `[budget]` config the Budget tab uses.)
+## More
 
-Two optional **advisory** heads-ups can be turned on alongside those hard crossings, each its own opt-in sub-flag (still requiring `enabled = true`): `forecast = true` fires when your month-end **projection** would exceed your **total** budget (only off a settled projection — never the noisy first days of the month, and never when you're already over, which the budget alert already covers), and `anomalies = true` fires on a **daily spend spike** versus your own recent norm. Both are advisory by nature — a softer heads-up that sorts after the quota/budget crossings — and both are off by default.
-
-`costroid setup-statusline` is idempotent and safe: it backs up `settings.json` first (restore with `--undo`), injects a capture snippet into an existing `statusLine` or sets Costroid as the status line if you have none, and writes only two percentages + two reset stamps to a local cache — never a token, prompt, or credential, and never over the network. (The captured quota is read, sanitized, cross-checked, and rendered on the now-screen and statusline.) If you have a `statusLine` you can't edit through `setup-statusline`, wrap it manually: `costroid statusline --wrap '<your-status-command>'` captures the quota and then runs your command on the same input (it degrades to a blank line on error, never breaking your prompt). (`costroid statusline --capture-only` is the internal capture step the generated snippet calls, not a command you run directly.)
-
-## Security & privacy
-
-- **No telemetry, by default.** Any update check is opt-in and clearly disclosed.
-- **Your data stays on your machine.** The default, local-only build reads local logs only and makes no network calls — enforced by an offline-acceptance test. Network access happens only through the opt-in, feature-gated connections path, and only to a provider endpoint you explicitly authorized; nothing is uploaded to Costroid.
-- **Secrets live in your OS keychain.** The keychain credential store and the `costroid connect` CLI live in the feature-gated `costroid-connect` path, off by default — the default binary doesn't even link it, and only an explicit `connect` / `connections --check` / `reconcile` reaches the network. When you do connect, your key is read from stdin only (never an argument or environment variable), goes only to the OS keychain — never to disk, a config file, or a log — and is used only between your device and the provider, never routed through any Costroid server.
-- **When you connect, treat the key as a root credential.** A provider "usage API" key is **organization-wide** — it can read your whole organization's usage and billing — so `costroid connect` warns you at paste time and recommends creating a **dedicated, instantly-revocable** key (revoke it in the provider console if the machine is ever compromised). Connections validate TLS against your **OS trust store** and Costroid does **not** pin certificates, so connect only on a host whose trust store you control. See [SECURITY.md](SECURITY.md) for the full transport-trust model.
-- **Attested releases.** Release binaries carry keyless [GitHub build-provenance attestations](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) and SHA-256 checksums — verify with `gh attestation verify <file> --repo Costroid/costroid`. OS code-signing (macOS notarization, Windows Authenticode) is not yet in place, so first run may show an unidentified-developer / SmartScreen prompt.
-- Local cost figures are **estimates** (your tokens × current prices). Costroid is built to reconcile them against your actual provider invoices, which are the source of truth.
-
-## Standards
-
-Costroid follows [FinOps Foundation](https://www.finops.org) practice and emits [FOCUS](https://focus.finops.org) 1.3-conformant records — the open specification that now covers AI billing data — so your cost data is portable and vendor-neutral from the start.
-
-## Project status & contributing
-
-- Detailed design specs (architecture, data model, product plan): [docs/](docs/)
-- Building Costroid, and the rules that AI coding agents must follow: [CLAUDE.md](CLAUDE.md)
-- Contributions are welcome — please read [CLAUDE.md](CLAUDE.md) first.
+- Standards: emits [FOCUS](https://focus.finops.org) 1.3-conformant records — portable and vendor-neutral.
+- Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Release history: [CHANGELOG.md](CHANGELOG.md). Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Build rules for AI coding agents: [CLAUDE.md](CLAUDE.md).
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
-
-Costroid uses only local and provider-sanctioned data sources — it never reuses a credential or session against a non-sanctioned, undocumented, or internal endpoint, and the default build makes no network calls. If you optionally connect your own API key or a sanctioned login, you remain responsible for your own use of those credentials and for complying with each provider's terms of service.
+Apache-2.0. See [LICENSE](LICENSE). Costroid uses only local and provider-sanctioned data sources and never reuses a credential or session against an undocumented or internal endpoint; if you connect your own key, you remain responsible for complying with each provider's terms of service.
