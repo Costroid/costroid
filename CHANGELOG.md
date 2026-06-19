@@ -11,6 +11,41 @@ against your provider invoice, which is the source of truth.
 
 ## [Unreleased]
 
+### Added
+
+- **Activity tab (`9`) — a contribution heatmap + Stats.** A new TUI tab renders a GitHub-style
+  weeks×weekdays heatmap of your daily token volume in the brand's dot-density language (each
+  cell's ink *and* color scale with the day's activity, so it reads in grayscale too), plus
+  at-a-glance facts — total tokens, active days, busiest day, top model, and current/longest
+  streak — and one tasteful, clearly-rough comparison line. Built from the same local FOCUS rows
+  the History tab reads: no new data path, no network. `--plain` lists the facts (no 2-D grid) for
+  screen readers.
+- **Per-model color coding.** Each model now gets a stable hue by spend rank: a leading `●`/`*`
+  dot + its spend-bar fill in that color across the Now and Models surfaces (the dot + name keep
+  models distinguishable with color stripped).
+
+### Changed
+
+- **Terminal UI refresh — the CLI/TUI now renders in color.** The `costroid` CLI and its interactive
+  TUI carry the brand's own **COSTROID·CLI** palette instead of the former monochrome projection:
+  a cold **cyan** data fill (with a dim-cyan track) on quota meters, cost bars and the spend
+  sparkline; the **Signal-lime** accent on the `C⠉` mark, the active tab and the `◆` insight marker;
+  **Ash-muted** section labels, captions and scope; **bold** dollar figures and model names. The
+  amber/red near-/over-limit lane is unchanged and still always carries its `!`/`!!`/`OVER` text cue.
+  It uses Costroid's own identity (cyan + lime), not a borrowed third-party hue.
+- **TUI gains a top tab strip and a contextual hint bar.** The eight numbered tabs render across the
+  top with the active tab as a reverse-video lime chip (legible under `NO_COLOR` too); the footer is
+  now a colorized, screen-aware keybinding hint row (keys in lime, labels muted), including the
+  Trends `d/w/m/y period` / `g group` hints.
+- **Accessibility unchanged and re-verified.** All color is gated on a color TTY — `--plain` and
+  `NO_COLOR` emit zero escape codes with byte-identical output (the `is_ascii()` purity gates still
+  pass), the glyph-shape and text cues remain the load-bearing signals, and color is never the only
+  cue.
+
+### Fixed
+
+- ASCII-mode screen headers no longer render the wordmark twice (`costroid costroid` → `costroid`).
+
 ## [0.6.0] - 2026-06-18
 
 This release ships the **`costroid-bar` taskbar** — the last surface — an always-on tray glance

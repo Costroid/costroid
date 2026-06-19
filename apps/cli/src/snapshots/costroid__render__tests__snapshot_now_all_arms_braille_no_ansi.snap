@@ -18,15 +18,15 @@ limits
   cursor       cyc unavailable: no sanctioned source
 ────────────────────────────────────────────────────────────────
 api costs (this week)
-  claude opus 4.7     ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ~$24.10
-  gpt 5.5             ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀       ~$11.30
-  sonnet 4.6          ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$6.78
+  ● claude opus 4.7   ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ~$24.10
+  ● gpt 5.5           ⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀       ~$11.30
+  ● sonnet 4.6        ⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$6.78
 ────────────────────────────────────────────────────────────────
 subscription API-equivalent value (estimate, not bill)
-  gpt 5.5             ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unpriced/partial]
+  ● gpt 5.5           ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unpriced/partial]
 ────────────────────────────────────────────────────────────────
 unknown-access usage (partial)
-  mystery model       ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unknown model/unpriced]
+  ● mystery model     ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unknown model/unpriced]
 ────────────────────────────────────────────────────────────────
 ◆ claude code wk at 96% (unverified), resets 2d 2h.
 provider cursor missing: no local data found

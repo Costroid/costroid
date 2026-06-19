@@ -24,10 +24,10 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::render::{
-    render_anomalies_document, render_budget_document, render_forecast_document,
-    render_frontier_document, render_history_document, render_models_document,
-    render_providers_document, render_trends_document, RenderOptions, SemanticStyle,
-    StyledDocument, StyledLine,
+    render_activity_document, render_anomalies_document, render_budget_document,
+    render_forecast_document, render_frontier_document, render_history_document,
+    render_models_document, render_providers_document, render_trends_document, RenderOptions,
+    SemanticStyle, StyledDocument, StyledLine,
 };
 
 const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -52,6 +52,7 @@ enum Screen {
     Budget,
     Forecast,
     Anomalies,
+    Activity,
     Frontier,
 }
 
@@ -61,7 +62,7 @@ enum Screen {
 /// slot `6`, T15 Forecast at slot `7` (the first tab past the original digit range, extending
 /// `handle_key`'s digit match to `'1'..='7'`), and T16 Anomalies at slot `8` (extending it to
 /// `'1'..='8'`).
-const TAB_SCREENS: [Screen; 8] = [
+const TAB_SCREENS: [Screen; 9] = [
     Screen::Now,
     Screen::Trends,
     Screen::Providers,
@@ -70,6 +71,7 @@ const TAB_SCREENS: [Screen; 8] = [
     Screen::Budget,
     Screen::Forecast,
     Screen::Anomalies,
+    Screen::Activity,
 ];
 
 /// Step left (`delta = -1`) or right (`delta = 1`) through [`TAB_SCREENS`], wrapping. A
@@ -85,8 +87,8 @@ fn cycle_tab(current: Screen, delta: isize) -> Screen {
     }
 }
 
-/// Map a `1`-`8` digit to its tab, if one exists (`1`-`8` are all wired — slot `4` is Models,
-/// `5` is History, `6` is Budget, `7` is Forecast, `8` is Anomalies).
+/// Map a `1`-`9` digit to its tab, if one exists (`1`-`9` are all wired — slot `4` is Models,
+/// `5` is History, `6` is Budget, `7` is Forecast, `8` is Anomalies, `9` is Activity).
 fn tab_for_digit(ch: char) -> Option<Screen> {
     let index = ch.to_digit(10)? as usize;
     index
@@ -290,7 +292,7 @@ impl App {
                 self.set_screen(cycle_tab(self.screen, -1));
                 AppAction::Continue
             }
-            KeyCode::Char(ch @ '1'..='8') => {
+            KeyCode::Char(ch @ '1'..='9') => {
                 if let Some(screen) = tab_for_digit(ch) {
                     self.set_screen(screen);
                 }
@@ -512,6 +514,12 @@ impl App {
                         let view = costroid_core::anomalies_view(&snapshot);
                         render_anomalies_document(&view, options)
                     }
+                    Screen::Activity => {
+                        // Pure-local: the all-time contribution heatmap + at-a-glance facts, from
+                        // the same FOCUS rows History reads (unfiltered — a holistic view). No
+                        // network, no core change.
+                        render_activity_document(&snapshot.focus_rows, options)
+                    }
                     Screen::Frontier => match costroid_core::bench_view(&snapshot) {
                         Ok(view) => render_frontier_document(&view, options),
                         Err(error) => {
@@ -526,43 +534,6 @@ impl App {
             }
             None => loading_document(self, options),
         }
-    }
-
-    fn footer(&self) -> String {
-        let left = match self.screen {
-            Screen::Now => "now",
-            Screen::Trends => "trends",
-            Screen::Providers => "providers",
-            Screen::Models => "models",
-            Screen::History => "history",
-            Screen::Budget => "budget",
-            Screen::Forecast => "forecast",
-            Screen::Anomalies => "anomalies",
-            Screen::Frontier => "frontier",
-        };
-        let live = if self.live { "live" } else { "manual" };
-        let filter = if self.filter.trim().is_empty() {
-            String::new()
-        } else {
-            format!(" filter:{}", self.filter)
-        };
-        let status = self
-            .status
-            .as_deref()
-            .map(|value| format!(" | {value}"))
-            .unwrap_or_default();
-        let nav = match self.screen {
-            Screen::Frontier => "esc back",
-            Screen::Now
-            | Screen::Trends
-            | Screen::Providers
-            | Screen::Models
-            | Screen::History
-            | Screen::Budget
-            | Screen::Forecast
-            | Screen::Anomalies => "1-8/tab switch | a frontier",
-        };
-        format!("{left} | {live} | {nav} | r refresh | ? help | q quit{filter}{status}")
     }
 }
 
@@ -676,41 +647,182 @@ fn is_actionable_key(key: KeyEvent) -> bool {
 
 fn draw_app(frame: &mut Frame<'_>, app: &mut App, now: DateTime<Utc>) {
     let area = frame.area();
+    // Three rows: the tab strip (top, like the screenshots' tab bar), the scrolling content,
+    // and the hint/footer bar. The tab strip + footer are one line each; content takes the rest.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(area);
-    let doc = app.document_for_width(chunks[0].width, now);
+    let tab_area = chunks[0];
+    let body_area = chunks[1];
+    let footer_area = chunks[2];
+
+    frame.render_widget(Paragraph::new(render_tab_bar(app)), tab_area);
+
+    let doc = app.document_for_width(body_area.width, now);
 
     // Clamp the scroll offset to the rendered content: the top is 0, the bottom keeps the last
     // row on screen. The wrapped-row count is exact for non-wrapping rows (History truncates
     // nothing it can't fit on one screen line at typical widths) and conservative otherwise, so
     // the offset can never run past the content into a blank viewport (no panic on short/empty
     // lists). Done here (not in `handle_key`) because only the draw knows the terminal size.
-    app.viewport_rows = chunks[0].height.max(1);
-    let total_rows = document_display_rows(&doc, chunks[0].width);
+    app.viewport_rows = body_area.height.max(1);
+    let total_rows = document_display_rows(&doc, body_area.width);
     let max_scroll = total_rows
-        .saturating_sub(chunks[0].height as usize)
+        .saturating_sub(body_area.height as usize)
         .min(u16::MAX as usize) as u16;
     app.scroll = app.scroll.min(max_scroll);
 
     let paragraph = Paragraph::new(styled_document_to_text(&doc, app.render_options))
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0));
-    frame.render_widget(paragraph, chunks[0]);
+    frame.render_widget(paragraph, body_area);
 
     let footer = if app.filter_editing {
-        format!("filter: {}", app.filter)
+        Line::from(format!("filter: {}", app.filter))
     } else if app.loading {
-        format!("{} refreshing local logs", spinner(app))
+        Line::from(format!("{} refreshing local logs", spinner(app)))
     } else {
-        app.footer()
+        footer_line(app)
     };
-    frame.render_widget(Paragraph::new(footer), chunks[1]);
+    frame.render_widget(Paragraph::new(footer), footer_area);
 
     if app.help_open {
         draw_help(frame, area);
     }
+}
+
+/// The short display label for a tab (the tab strip + footer share it).
+fn tab_label(screen: Screen) -> &'static str {
+    match screen {
+        Screen::Now => "now",
+        Screen::Trends => "trends",
+        Screen::Providers => "providers",
+        Screen::Models => "models",
+        Screen::History => "history",
+        Screen::Budget => "budget",
+        Screen::Forecast => "forecast",
+        Screen::Anomalies => "anomalies",
+        Screen::Activity => "activity",
+        Screen::Frontier => "frontier",
+    }
+}
+
+/// The highlight for the ACTIVE tab/segment: the Accent (lime) color PLUS reverse-video, so the
+/// active tab reads as a filled chip even under `NO_COLOR` (where the color collapses to default
+/// but the reverse highlight remains) — color is never the only cue.
+fn active_chip_style(options: RenderOptions) -> RatatuiStyle {
+    ratatui_style(SemanticStyle::Accent, options).add_modifier(Modifier::REVERSED)
+}
+
+/// The numbered tab strip drawn across the top — `1 now  2 trends  …  8 anomalies` — with the
+/// active tab a lime chip and the rest Ash-muted. The `a`/`esc` Frontier overlay (not in the
+/// numbered cycle) appends its own chip when active.
+fn render_tab_bar(app: &App) -> Line<'static> {
+    let options = app.render_options;
+    let active_style = active_chip_style(options);
+    let muted = ratatui_style(SemanticStyle::Muted, options);
+    // Single-space separators + a chip envelope only on the ACTIVE tab keeps all eight numbered
+    // tabs inside an 80-column terminal (≈79 cols worst case); inactive tabs are bare `N name`.
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for (index, screen) in TAB_SCREENS.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        if app.screen == *screen {
+            spans.push(Span::styled(
+                format!(" {} {} ", index + 1, tab_label(*screen)),
+                active_style,
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!("{} {}", index + 1, tab_label(*screen)),
+                muted,
+            ));
+        }
+    }
+    if app.screen == Screen::Frontier {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(" a frontier ", active_style));
+    }
+    Line::from(spans)
+}
+
+/// A `key + label` hint pair for the footer: the key in Accent (lime), the label Ash-muted.
+fn key_hint(key: &str, label: &str, options: RenderOptions) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            key.to_string(),
+            ratatui_style(SemanticStyle::Accent, options),
+        ),
+        Span::styled(
+            format!(" {label}"),
+            ratatui_style(SemanticStyle::Muted, options),
+        ),
+    ]
+}
+
+/// The colorized hint/footer bar: the current screen, the live/manual state, then the contextual
+/// keybindings (keys in lime, labels muted). Replaces the former flat footer string so the prompt
+/// reads like the screenshots' "d to day · w to week · r to retry" hint row.
+fn footer_line(app: &App) -> Line<'static> {
+    let options = app.render_options;
+    let muted = ratatui_style(SemanticStyle::Muted, options);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Current screen + live/manual badge.
+    spans.push(Span::styled(
+        format!(" {} ", tab_label(app.screen)),
+        active_chip_style(options),
+    ));
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        if app.live { "live" } else { "manual" }.to_string(),
+        if app.live {
+            ratatui_style(SemanticStyle::Accent, options)
+        } else {
+            muted
+        },
+    ));
+
+    let sep = || Span::styled("  ·  ".to_string(), muted);
+
+    // Contextual keys.
+    let mut hints: Vec<(&str, &str)> = Vec::new();
+    if app.screen == Screen::Frontier {
+        hints.push(("esc", "back"));
+    } else {
+        hints.push(("1-9/tab", "switch"));
+        hints.push(("a", "frontier"));
+    }
+    if app.screen == Screen::Trends {
+        hints.push(("d/w/m/y", "period"));
+        hints.push(("g", "group"));
+    }
+    hints.push(("f", "filter"));
+    hints.push(("r", "refresh"));
+    hints.push(("?", "help"));
+    hints.push(("q", "quit"));
+    for (key, label) in hints {
+        spans.push(sep());
+        spans.extend(key_hint(key, label, options));
+    }
+
+    // Active filter / transient status, appended muted.
+    if !app.filter.trim().is_empty() {
+        spans.push(sep());
+        spans.push(Span::styled(format!("filter:{}", app.filter), muted));
+    }
+    if let Some(status) = app.status.as_deref() {
+        spans.push(sep());
+        spans.push(Span::styled(status.to_string(), muted));
+    }
+
+    Line::from(spans)
 }
 
 /// The number of display rows a [`StyledDocument`] occupies when wrapped to `width` — the sum,
@@ -734,11 +846,12 @@ fn document_display_rows(doc: &StyledDocument, width: u16) -> usize {
 }
 
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(74, 18, area);
+    let popup = centered_rect(74, 19, area);
     let lines = vec![
         Line::from("1-6 now / trends / providers / models / history / budget"),
         Line::from("7          forecast (projected spend + quota ETAs)"),
         Line::from("8          anomalies (vs your own recent history)"),
+        Line::from("9          activity (contribution heatmap + stats)"),
         Line::from("tab/S-tab  cycle tabs"),
         Line::from("up/dn      scroll  (pgup/pgdn page, home/end ends)"),
         Line::from("d/w/m/y    set trends period"),
@@ -803,7 +916,23 @@ fn ratatui_style(style: SemanticStyle, render_options: RenderOptions) -> Ratatui
     }
     match style {
         SemanticStyle::Plain => RatatuiStyle::default(),
+        // The same 256-color indices the one-shot ANSI path emits (render.rs), so the TUI and
+        // a piped/statusline render share one palette: Ash 245, Signal-lime 154, cyan 39, dim
+        // cyan 24. Indexed (not Rgb) so it degrades cleanly on 256-color terminals.
+        SemanticStyle::Muted => RatatuiStyle::default().fg(Color::Indexed(245)),
         SemanticStyle::Strong => RatatuiStyle::default().add_modifier(Modifier::BOLD),
+        SemanticStyle::Accent => RatatuiStyle::default()
+            .fg(Color::Indexed(154))
+            .add_modifier(Modifier::BOLD),
+        SemanticStyle::Data => RatatuiStyle::default().fg(Color::Indexed(39)),
+        SemanticStyle::DataDim => RatatuiStyle::default().fg(Color::Indexed(24)),
+        // Per-model + heatmap hues resolve through the same palette accessors the ANSI path uses.
+        SemanticStyle::Series(index) => {
+            RatatuiStyle::default().fg(Color::Indexed(crate::render::series_color_index(index)))
+        }
+        SemanticStyle::Heat(level) => {
+            RatatuiStyle::default().fg(Color::Indexed(crate::render::heat_color_index(level)))
+        }
         SemanticStyle::Warn => RatatuiStyle::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
@@ -1277,6 +1406,32 @@ mod tests {
         buffer_to_string(terminal.backend().buffer())
     }
 
+    /// Render a frame and collect every distinct (fg color, modifier) pair the buffer carries —
+    /// used to prove the live TUI actually paints the brand palette onto cells (not just the
+    /// one-shot ANSI path).
+    fn frame_cell_styles(app: &mut App, width: u16, height: u16) -> Vec<(Color, Modifier)> {
+        let now = utc(2026, 6, 2, 9, 0);
+        let backend = TestBackend::new(width, height);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test terminal should be valid: {error}"),
+        };
+        match terminal.draw(|frame| draw_app(frame, app, now)) {
+            Ok(_) => {}
+            Err(error) => panic!("test frame should draw: {error}"),
+        }
+        let buffer = terminal.backend().buffer();
+        let mut styles = Vec::new();
+        for y in buffer.area.y..buffer.area.y + buffer.area.height {
+            for x in buffer.area.x..buffer.area.x + buffer.area.width {
+                if let Some(cell) = buffer.cell((x, y)) {
+                    styles.push((cell.fg, cell.modifier));
+                }
+            }
+        }
+        styles
+    }
+
     fn buffer_to_string(buffer: &ratatui::buffer::Buffer) -> String {
         let mut out = String::new();
         for y in buffer.area.y..buffer.area.y + buffer.area.height {
@@ -1290,6 +1445,89 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn live_tui_paints_the_brand_palette() {
+        // The TUI (the user's primary, colorful surface) must actually color cells with the
+        // brand palette: cyan data fill on cost bars/meters, the lime active-tab chip (reversed),
+        // and Ash-muted context. Proven at the rendered-buffer level, not just the ANSI snapshots.
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        app.render_options = render_options(RenderMode::Braille, true); // ansi on (a color TTY)
+        let styles = frame_cell_styles(&mut app, 100, 24);
+        let has = |c: Color| styles.iter().any(|(fg, _)| *fg == c);
+        assert!(
+            has(Color::Indexed(crate::render::series_color_index(0))),
+            "TUI should paint the top model's series hue on its spend row"
+        );
+        assert!(
+            has(Color::Indexed(245)),
+            "TUI should paint Ash-muted context"
+        );
+        assert!(
+            has(Color::Indexed(154)),
+            "TUI should paint the Signal-lime accent (mark / active tab / insight)"
+        );
+        assert!(
+            styles.iter().any(|(_, m)| m.contains(Modifier::REVERSED)),
+            "the active tab should be a reverse-video chip (a non-color cue too)"
+        );
+
+        // With NO_COLOR (ansi off) the palette collapses to default fg — color is never the only
+        // cue — but the reverse-video active-tab chip survives so the active tab is still legible.
+        let mut mono = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        mono.render_options = render_options(RenderMode::Braille, false); // ansi off (NO_COLOR)
+        let mono_styles = frame_cell_styles(&mut mono, 100, 24);
+        assert!(
+            !mono_styles.iter().any(|(fg, _)| *fg == Color::Indexed(39)),
+            "NO_COLOR must not emit cyan"
+        );
+        assert!(
+            mono_styles
+                .iter()
+                .any(|(_, m)| m.contains(Modifier::REVERSED)),
+            "NO_COLOR active tab keeps its reverse-video chip"
+        );
+    }
+
+    #[test]
+    fn tab_strip_and_footer_render_with_active_tab_and_hints() {
+        // The Now tab is active: the strip shows the numbered tabs and the footer shows the
+        // contextual key hints (the "interactive" affordances from the screenshots).
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Braille);
+        let frame = frame_to_string(&mut app, 100, 24);
+        // Top row: the numbered tab strip with every tab labeled.
+        assert!(
+            frame.contains("1 now"),
+            "tab strip should number tabs: {frame}"
+        );
+        assert!(
+            frame.contains("2 trends"),
+            "tab strip missing trends: {frame}"
+        );
+        assert!(
+            frame.contains("8 anomalies"),
+            "tab strip missing anomalies: {frame}"
+        );
+        // Footer hint row: keys + labels.
+        assert!(frame.contains("switch"), "footer should hint nav: {frame}");
+        assert!(
+            frame.contains("frontier"),
+            "footer should hint frontier: {frame}"
+        );
+        assert!(frame.contains("quit"), "footer should hint quit: {frame}");
+
+        // Switching to Trends surfaces the period/group hints (like "d to day · w to week").
+        app.screen = Screen::Trends;
+        let trends_frame = frame_to_string(&mut app, 100, 24);
+        assert!(
+            trends_frame.contains("period"),
+            "trends footer should hint period: {trends_frame}"
+        );
+        assert!(
+            trends_frame.contains("group"),
+            "trends footer should hint group: {trends_frame}"
+        );
     }
 
     #[test]
@@ -1369,13 +1607,12 @@ mod tests {
         assert_eq!(app.screen, Screen::Forecast);
         assert_eq!(app.handle_key(key(KeyCode::Char('8'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Anomalies);
+        assert_eq!(app.handle_key(key(KeyCode::Char('9'))), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Activity);
         assert_eq!(app.handle_key(key(KeyCode::Char('1'))), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
-        // `9` has no tab — inert, the new boundary.
-        assert_eq!(app.handle_key(key(KeyCode::Char('9'))), AppAction::Continue);
-        assert_eq!(app.screen, Screen::Now);
 
-        // Tab cycles forward, wrapping Now -> ... -> Forecast -> Anomalies -> Now.
+        // Tab cycles forward, wrapping Now -> ... -> Anomalies -> Activity -> Now.
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Trends);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
@@ -1391,11 +1628,13 @@ mod tests {
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Anomalies);
         assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
+        assert_eq!(app.screen, Screen::Activity);
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), AppAction::Continue);
         assert_eq!(app.screen, Screen::Now);
 
-        // BackTab cycles in reverse (Now -> Anomalies).
+        // BackTab cycles in reverse (Now -> Activity).
         assert_eq!(app.handle_key(key(KeyCode::BackTab)), AppAction::Continue);
-        assert_eq!(app.screen, Screen::Anomalies);
+        assert_eq!(app.screen, Screen::Activity);
 
         // Frontier is outside the cycle (an a/esc overlay); Tab returns to the first tab.
         assert_eq!(app.handle_key(key(KeyCode::Char('a'))), AppAction::Continue);
@@ -1535,7 +1774,7 @@ mod tests {
         assert!(frame.contains("not enough history yet"));
         assert!(frame.contains("quota burn-rate anomalies need multi-day quota history"));
         // The footer enumerates the full numbered range now that slot 8 is wired.
-        assert!(frame.contains("1-8/tab switch"));
+        assert!(frame.contains("1-9/tab switch"));
     }
 
     /// One dated API-lane FOCUS record for the anomalies integration test: a model, a UTC day, a

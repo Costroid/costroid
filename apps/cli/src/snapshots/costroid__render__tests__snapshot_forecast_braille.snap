@@ -2,7 +2,7 @@
 source: apps/cli/src/render.rs
 expression: "render_forecast(&forecast_view_projected_fixture(),\nRenderOptions::braille(false))"
 ---
-C⠉ costroid                                   forecast  ~$37.50
+C⠉ costroid                                    forecast  ~$37.50
 scope: API-lane spend this month + quota burn (estimated)
 projected ~$37.50 by Jun 30 (estimated)
 spend so far ~$20.00 over 16 of 30 days (estimated)

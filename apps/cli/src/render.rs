@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::io::{self, IsTerminal};
 
-use chrono::{DateTime, Datelike, Local, Utc};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Utc};
 use costroid_core::{
     AggregateTotals, Alert, AlertLevel, AnomaliesView, Anomaly, AnomalySignal, BenchFrontier,
     BenchView, BudgetExcludedTool, BudgetExclusion, BudgetPace, BudgetRow, BudgetScope, BudgetView,
@@ -64,12 +64,69 @@ pub(crate) struct RenderOptions {
     pub width: usize,
 }
 
+/// The terminal palette — a colored *projection* of the master brand identity onto the
+/// one-color-per-cell terminal. Every color is gated by `options.ansi`, so `--plain` and
+/// `NO_COLOR` render no escapes at all and the byte content is identical; the warning state is
+/// ALWAYS additionally carried by a textual cue (`!`/`!!`/`OVER`), so color is never the only
+/// signal (the "never rely on color alone" guarantee). Colors are drawn from the brand's
+/// sanctioned **COSTROID·CLI** lane — the cold cyan-blue data ramp + the Signal-lime accent +
+/// Ash muted — never the SYNC coral ramp, and never a borrowed third-party hue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SemanticStyle {
+    /// Default foreground — body text.
     Plain,
+    /// Ash secondary text: labels, captions, sub-notes, context (256-color 245).
+    Muted,
+    /// Bold primary metric — dollar figures, the active measure (default fg + bold).
     Strong,
+    /// Signal-lime, the active / selected / "live" / brand highlight — used sparingly
+    /// (the `C⠉` mark, the active tab, the insight marker). 256-color 154, bold.
+    Accent,
+    /// The cold-cyan data fill — cost bars, the used portion of a quota meter, the
+    /// spend sparkline (256-color 39). The brand's "logs, data, raw compute" hue.
+    Data,
+    /// The dim-cyan unfilled track behind a [`SemanticStyle::Data`] fill (256-color 24) —
+    /// reinforces used-vs-remaining with color, on top of the always-present glyph-shape cue.
+    DataDim,
+    /// A per-model categorical hue (the `n`-th model gets `Series(n)`, cycled over
+    /// [`SERIES_PALETTE`]) — colors the per-model spend rows + legend dots the way the
+    /// screenshots color each model. Distinct from the cyan quota lane (limits stay cyan/amber);
+    /// the leading `●`/`*` dot + the model name carry the identity even without color.
+    Series(u8),
+    /// Activity-heatmap density level `0..=4` (idle→peak): a cool→warm dot-density ramp
+    /// (idle slate → cyan → lime → gold → coral). The glyph's dot-count encodes the level too,
+    /// so the heatmap reads in grayscale (the brand's non-color-safe dot-density cue).
+    Heat(u8),
+    /// Amber near-limit warning — ALWAYS paired with a `!` textual cue.
     Warn,
+    /// Red critical / over-limit — ALWAYS paired with a `!!`/`OVER` textual cue.
     Critical,
+}
+
+/// The categorical per-model hue ramp (xterm-256 indices): azure, aquamarine, cornflower,
+/// medium-purple, sand-gold, salmon — six distinct, dark-background-friendly hues cycled by
+/// model rank. Signal-lime (154) is intentionally absent: it stays the reserved "active/live"
+/// accent, never a data series.
+const SERIES_PALETTE: [u8; 6] = [38, 79, 75, 141, 215, 210];
+
+/// The activity-heatmap density ramp (xterm-256 indices), `0..=4`: idle slate → cyan → lime →
+/// gold → coral, a cool→warm escalation that doubles as a severity read.
+const HEAT_PALETTE: [u8; 5] = [239, 38, 154, 215, 210];
+
+/// The `SemanticStyle` for the `n`-th model (cycled over [`SERIES_PALETTE`]).
+fn series_style(index: usize) -> SemanticStyle {
+    SemanticStyle::Series((index % SERIES_PALETTE.len()) as u8)
+}
+
+/// The xterm-256 color index for series `n` (cycled). Shared by the one-shot ANSI path and the
+/// TUI's `ratatui_style`, so both surfaces use one palette.
+pub(crate) fn series_color_index(index: u8) -> u8 {
+    SERIES_PALETTE[(index as usize) % SERIES_PALETTE.len()]
+}
+
+/// The xterm-256 color index for heat level `0..=4` (clamped). Shared by both render paths.
+pub(crate) fn heat_color_index(level: u8) -> u8 {
+    HEAT_PALETTE[(level as usize).min(HEAT_PALETTE.len() - 1)]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +258,19 @@ impl StyledSpan {
         }
         let code = match self.style {
             SemanticStyle::Plain => return self.content.clone(),
+            SemanticStyle::Muted => "38;5;245",
             SemanticStyle::Strong => "1",
+            SemanticStyle::Accent => "1;38;5;154",
+            SemanticStyle::Data => "38;5;39",
+            SemanticStyle::DataDim => "38;5;24",
+            SemanticStyle::Series(index) => {
+                let color = series_color_index(index);
+                return format!("\x1b[38;5;{color}m{}\x1b[0m", self.content);
+            }
+            SemanticStyle::Heat(level) => {
+                let color = heat_color_index(level);
+                return format!("\x1b[38;5;{color}m{}\x1b[0m", self.content);
+            }
             SemanticStyle::Warn => "33;1",
             SemanticStyle::Critical => "31;1",
         };
@@ -358,7 +427,7 @@ pub(crate) fn render_reconciliation_document(
         // costroid` doubling, which would read awkwardly to a screen reader.
         push_line(&mut out, &format!("costroid reconcile  {vendor}  {money}"));
     } else {
-        push_header_line(&mut out, mark(options), vendor, money, options);
+        push_header_line(&mut out, vendor, money, options);
     }
     push_line(
         &mut out,
@@ -683,7 +752,6 @@ fn render_frontier_visual_document(view: &BenchView, options: RenderOptions) -> 
     let mut out = StyledDocument::new();
     push_header_line(
         &mut out,
-        mark(options),
         "cost vs quality",
         format_money(&total_overlay_spend(view), Some("USD"), true),
         options,
@@ -1232,7 +1300,7 @@ fn render_providers_visual_document(
 ) -> StyledDocument {
     let mut out = StyledDocument::new();
     let mut header = StyledLine::new();
-    header.push_plain(format!("{} costroid", mark(options)));
+    push_brand(&mut header, options);
     header.push_styled("  providers", SemanticStyle::Strong);
     out.push(header);
 
@@ -1476,7 +1544,6 @@ fn render_models_visual_document(view: &ModelsView, options: RenderOptions) -> S
     let mut out = StyledDocument::new();
     push_header_line(
         &mut out,
-        mark(options),
         "models",
         format_money(&total_models_spend(view), Some("USD"), true),
         options,
@@ -1488,9 +1555,9 @@ fn render_models_visual_document(view: &ModelsView, options: RenderOptions) -> S
         push_rule(&mut out, options);
         push_line(&mut out, "no API-billed usage to compare");
     } else {
-        for model in &view.models {
+        for (index, model) in view.models.iter().enumerate() {
             push_rule(&mut out, options);
-            out.push(model_spend_line(model));
+            out.push(model_spend_line(model, index, options));
             push_line(
                 &mut out,
                 &format!("  tokens: {}", format_token_mix(&model.totals.tokens)),
@@ -1552,11 +1619,15 @@ fn total_models_spend(view: &ModelsView) -> Decimal {
     })
 }
 
-/// The visual per-model spend line: name (bold) + the always-estimated (`~`) spend (bold) +
-/// the honest pricing-coverage badge (e.g. "(partial pricing)") when some rows were unpriced.
-fn model_spend_line(model: &ModelRow) -> StyledLine {
+/// The visual per-model spend line: a series-colored dot + the model name in its series hue + the
+/// always-estimated spend (bold) + the honest pricing-coverage badge when some rows were unpriced.
+/// The hue is keyed on the model's rank (`index`) so the Models tab and the per-model spend rows
+/// share one color per model.
+fn model_spend_line(model: &ModelRow, index: usize, options: RenderOptions) -> StyledLine {
+    let series = series_style(index);
     let mut line = StyledLine::new();
-    line.push_styled(model.model.clone(), SemanticStyle::Strong);
+    line.push_styled(format!("{} ", mode_dot(options)), series);
+    line.push_styled(model.model.clone(), series);
     line.push_plain("  spent ".to_string());
     line.push_styled(
         format_money(
@@ -1688,7 +1759,6 @@ fn render_history_visual_document(rows: &[&FocusRecord], options: RenderOptions)
     let mut out = StyledDocument::new();
     push_header_line(
         &mut out,
-        mark(options),
         "history",
         format_money(&history_api_spend(rows), Some("USD"), true),
         options,
@@ -1807,6 +1877,366 @@ const BUDGET_CONFIG_HINT: &str = "no budget set - set targets in ~/.config/costr
 const BUDGET_ESTIMATE_NOTE: &str = "figures are local estimates (your tokens x current prices); \
      run `costroid reconcile` to compare against the provider invoice.";
 
+// ---------------------------------------------------------------------------
+// Activity / Stats surface — the contribution heatmap + at-a-glance facts, built
+// from the same local FOCUS rows the History tab reads (no core change, no network).
+// A GitHub-style weeks×weekdays grid in the brand's dot-density language: each cell's
+// ink (and color) scales with that day's token volume, so it reads in grayscale too.
+// ---------------------------------------------------------------------------
+
+/// The most weeks the heatmap ever shows (≈ a year), capped further by the terminal width.
+const ACTIVITY_MAX_WEEKS: usize = 52;
+/// The weekday-label gutter width (`"Mon "`), reserved on the left of every heatmap row.
+const ACTIVITY_GUTTER: usize = 4;
+
+#[derive(Default, Clone)]
+struct DayStat {
+    tokens: Decimal,
+    cost: Decimal,
+    entries: usize,
+}
+
+/// Sum the local rows into per-UTC-day token/cost/entry totals (the heatmap + facts source).
+fn aggregate_activity(rows: &[&FocusRecord]) -> BTreeMap<NaiveDate, DayStat> {
+    let mut days: BTreeMap<NaiveDate, DayStat> = BTreeMap::new();
+    for record in rows {
+        let day = record.charge_period_start.date_naive();
+        let stat = days.entry(day).or_default();
+        stat.tokens += record.x_consumed_tokens;
+        stat.cost += record.billed_cost;
+        stat.entries += 1;
+    }
+    days
+}
+
+/// The Monday on or before `date` (the heatmap lays weeks out Monday→Sunday, top→bottom).
+fn monday_of(date: NaiveDate) -> NaiveDate {
+    date - ChronoDuration::days(i64::from(date.weekday().num_days_from_monday()))
+}
+
+/// A short, human token magnitude: `1.4B` / `32.5M` / `412k` / `87`. Always rounded, never a
+/// false-precision exact count in the headline (the History tab carries the exact figure).
+fn format_tokens_short(tokens: Decimal) -> String {
+    let value = tokens.to_f64().unwrap_or(0.0).max(0.0);
+    if value >= 1e9 {
+        format!("{:.1}B", value / 1e9)
+    } else if value >= 1e6 {
+        format!("{:.1}M", value / 1e6)
+    } else if value >= 1e3 {
+        format!("{:.0}k", value / 1e3)
+    } else {
+        format!("{value:.0}")
+    }
+}
+
+/// The heat level `0..=4` for a day's tokens against the busiest day: `0` = no activity, `1..=4`
+/// scales the active range. The level drives BOTH the glyph's ink (non-color cue) and its color.
+fn heat_level(tokens: Decimal, max: Decimal) -> u8 {
+    if tokens <= Decimal::ZERO || max <= Decimal::ZERO {
+        return 0;
+    }
+    let ratio = (tokens / max).to_f64().unwrap_or(0.0).clamp(0.0, 1.0);
+    // 1..=4 (a non-zero day is always at least level 1, never a blank).
+    (1 + (ratio * 3.0).round() as u8).min(4)
+}
+
+/// The heatmap cell glyph for a level: an increasing ink ramp (so magnitude reads without color).
+fn heat_glyph(level: u8, options: RenderOptions) -> &'static str {
+    let index = (level as usize).min(4);
+    match options.mode {
+        RenderMode::Ascii => [".", ":", "+", "*", "#"][index],
+        // UTF-8 shade ramp (faint dot → full block) — a real heatmap look in the brand's grid.
+        RenderMode::Braille | RenderMode::Plain => ["·", "░", "▒", "▓", "█"][index],
+    }
+}
+
+/// Render the activity heatmap + facts (visual modes) or the screen-reader fact list (Plain).
+/// Takes the local FOCUS rows by value-slice (like the History tab) and borrows internally.
+pub(crate) fn render_activity_document(
+    rows: &[FocusRecord],
+    options: RenderOptions,
+) -> StyledDocument {
+    let refs: Vec<&FocusRecord> = rows.iter().collect();
+    match options.mode {
+        RenderMode::Plain => render_activity_plain_document(&refs),
+        RenderMode::Braille | RenderMode::Ascii => render_activity_visual_document(&refs, options),
+    }
+}
+
+fn render_activity_visual_document(
+    rows: &[&FocusRecord],
+    options: RenderOptions,
+) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    let days = aggregate_activity(rows);
+    let total_tokens: Decimal = days.values().map(|day| day.tokens).sum();
+    push_header_line(
+        &mut out,
+        "activity",
+        format!("{} tokens", format_tokens_short(total_tokens)),
+        options,
+    );
+    push_line(&mut out, "scope: all local usage (all time)");
+    push_rule(&mut out, options);
+
+    let (Some(first), Some(last)) = (
+        days.keys().next().copied(),
+        days.keys().next_back().copied(),
+    ) else {
+        push_line(&mut out, "no local usage history yet");
+        return out;
+    };
+
+    // The grid window: columns are weeks ending in `last`'s week, as many as fit the width and
+    // the data (≤ a year). Rows are the 7 weekdays (Mon→Sun).
+    let max_by_width = options.width.saturating_sub(ACTIVITY_GUTTER + 1).max(1);
+    let span_weeks = ((last - first).num_days() / 7 + 1).max(1) as usize;
+    let weeks = span_weeks.min(ACTIVITY_MAX_WEEKS).min(max_by_width).max(1);
+    let last_monday = monday_of(last);
+    let start_monday = last_monday - ChronoDuration::days(((weeks - 1) * 7) as i64);
+    let max_daily = days
+        .values()
+        .map(|day| day.tokens)
+        .max()
+        .unwrap_or_default();
+
+    // Month-label row, aligned to the week columns where the month changes.
+    out.push(activity_month_label_row(start_monday, weeks));
+
+    // Seven weekday rows.
+    for weekday in 0..7u8 {
+        let mut line = StyledLine::new();
+        line.push_styled(activity_weekday_gutter(weekday), SemanticStyle::Muted);
+        for week in 0..weeks {
+            let date = start_monday + ChronoDuration::days((week * 7) as i64 + i64::from(weekday));
+            if date > last || date < first {
+                line.push_plain(" ");
+                continue;
+            }
+            let tokens = days.get(&date).map(|day| day.tokens).unwrap_or_default();
+            let level = heat_level(tokens, max_daily);
+            line.push_styled(heat_glyph(level, options), SemanticStyle::Heat(level));
+        }
+        out.push(line);
+    }
+
+    // Legend: less ░▒▓█ more.
+    out.push(activity_legend_row(options));
+    push_rule(&mut out, options);
+    push_activity_facts(&mut out, rows, &days, first, last, options);
+    out
+}
+
+/// The left-gutter weekday label: `Mon`/`Wed`/`Fri` are labeled, the rest blank, each padded to
+/// [`ACTIVITY_GUTTER`].
+fn activity_weekday_gutter(weekday: u8) -> String {
+    let label = match weekday {
+        0 => "Mon",
+        2 => "Wed",
+        4 => "Fri",
+        _ => "",
+    };
+    format!("{label:<width$}", width = ACTIVITY_GUTTER)
+}
+
+/// The top month-label row: the 3-letter month abbreviation placed at the column where each new
+/// month begins (left-padded by the gutter). Muted.
+fn activity_month_label_row(start_monday: NaiveDate, weeks: usize) -> StyledLine {
+    let mut cells = vec![' '; weeks];
+    let mut last_month = 0u32;
+    // The next column free for a label — a label is placed only past it, so abbreviations never
+    // collide in a narrow window (months thin out gracefully rather than overprinting).
+    let mut next_free = 0usize;
+    for week in 0..weeks {
+        let month = (start_monday + ChronoDuration::days((week * 7) as i64)).month();
+        if month != last_month {
+            last_month = month;
+            if week >= next_free {
+                let abbr = month_abbr(month);
+                for (offset, ch) in abbr.chars().enumerate() {
+                    if week + offset < weeks {
+                        cells[week + offset] = ch;
+                    }
+                }
+                next_free = week + abbr.len() + 1;
+            }
+        }
+    }
+    let mut line = StyledLine::new();
+    line.push_styled(
+        format!(
+            "{}{}",
+            " ".repeat(ACTIVITY_GUTTER),
+            cells.iter().collect::<String>()
+        ),
+        SemanticStyle::Muted,
+    );
+    line
+}
+
+fn month_abbr(month: u32) -> &'static str {
+    [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .get((month.saturating_sub(1)) as usize)
+    .copied()
+    .unwrap_or("")
+}
+
+/// The `less ░▒▓█ more` density key, each glyph in its heat color.
+fn activity_legend_row(options: RenderOptions) -> StyledLine {
+    let mut line = StyledLine::new();
+    line.push_styled("less ".to_string(), SemanticStyle::Muted);
+    for level in 1..=4u8 {
+        line.push_styled(
+            heat_glyph(level, options).to_string(),
+            SemanticStyle::Heat(level),
+        );
+    }
+    line.push_styled(" more".to_string(), SemanticStyle::Muted);
+    line
+}
+
+/// The at-a-glance facts under the heatmap — the "Stats" parity: total tokens, active days, the
+/// busiest day, the top model, the current/longest streak, and one tasteful, clearly-rough
+/// comparison. All computed from the local rows; the comparison is hedged (never false precision).
+fn push_activity_facts(
+    out: &mut StyledDocument,
+    rows: &[&FocusRecord],
+    days: &BTreeMap<NaiveDate, DayStat>,
+    first: NaiveDate,
+    last: NaiveDate,
+    options: RenderOptions,
+) {
+    let total_tokens: Decimal = days.values().map(|day| day.tokens).sum();
+    let active_days = days.len();
+    let span_days = (last - first).num_days() + 1;
+    let (current_streak, longest_streak) = activity_streaks(days, last);
+    let busiest = days
+        .iter()
+        .max_by(|left, right| left.1.tokens.cmp(&right.1.tokens))
+        .map(|(date, stat)| (*date, stat.tokens));
+    let top_model = top_model_by_tokens(rows);
+    // A pure-ASCII separator in every mode (Plain/Ascii must not carry the `·` middle dot).
+    let dot = if options.mode == RenderMode::Braille {
+        "·"
+    } else {
+        "-"
+    };
+
+    push_fact(out, "total tokens", format_tokens_short(total_tokens));
+    push_fact(
+        out,
+        "active days",
+        format!("{active_days} of {span_days} ({first} to {last})"),
+    );
+    if let Some((date, tokens)) = busiest {
+        push_fact(
+            out,
+            "busiest day",
+            format!("{date} ({} tokens)", format_tokens_short(tokens)),
+        );
+    }
+    if let Some((model, tokens)) = top_model {
+        push_fact(
+            out,
+            "top model",
+            format!("{model} ({} tokens)", format_tokens_short(tokens)),
+        );
+    }
+    push_fact(
+        out,
+        "streak",
+        format!("{current_streak}d current {dot} {longest_streak}d longest"),
+    );
+    if let Some(comparison) = token_comparison(total_tokens) {
+        // Mode-aware insight marker so Plain/Ascii stay pure ASCII (no `◆`).
+        if options.mode == RenderMode::Plain {
+            push_line(out, &format!("insight: {comparison}"));
+        } else {
+            push_insight(
+                out,
+                mode_insight(format!("◆ {comparison}"), options),
+                options,
+            );
+        }
+    }
+}
+
+/// One `label  value` fact line — the label Muted, the value bold.
+fn push_fact(out: &mut StyledDocument, label: &str, value: String) {
+    let mut line = StyledLine::new();
+    line.push_styled(format!("  {label:<13}"), SemanticStyle::Muted);
+    line.push_styled(value, SemanticStyle::Strong);
+    out.push(line);
+}
+
+/// (current streak ending at `last`, longest streak) in consecutive active days.
+fn activity_streaks(days: &BTreeMap<NaiveDate, DayStat>, last: NaiveDate) -> (i64, i64) {
+    let mut current = 0i64;
+    let mut cursor = last;
+    while days.contains_key(&cursor) {
+        current += 1;
+        cursor -= ChronoDuration::days(1);
+    }
+    let mut longest = 0i64;
+    let mut run = 0i64;
+    let mut prev: Option<NaiveDate> = None;
+    for date in days.keys() {
+        run = match prev {
+            Some(p) if *date == p + ChronoDuration::days(1) => run + 1,
+            _ => 1,
+        };
+        longest = longest.max(run);
+        prev = Some(*date);
+    }
+    (current, longest)
+}
+
+/// The model with the most consumed tokens across the rows (the "favorite/top model" fact).
+fn top_model_by_tokens(rows: &[&FocusRecord]) -> Option<(String, Decimal)> {
+    let mut totals: BTreeMap<String, Decimal> = BTreeMap::new();
+    for record in rows {
+        *totals.entry(record.x_model.clone()).or_default() += record.x_consumed_tokens;
+    }
+    totals
+        .into_iter()
+        .filter(|(_, tokens)| *tokens > Decimal::ZERO)
+        .max_by(|left, right| left.1.cmp(&right.1))
+}
+
+/// One tasteful, explicitly-rough comparison for the total token volume — the screenshots'
+/// playful stat, in Costroid's hedged voice (a rough scale, never false precision). A novel is
+/// ~160k tokens (~120k words). `None` below a novel's worth (nothing fun to say yet).
+fn token_comparison(total_tokens: Decimal) -> Option<String> {
+    const TOKENS_PER_NOVEL: f64 = 160_000.0;
+    let novels = total_tokens.to_f64().unwrap_or(0.0) / TOKENS_PER_NOVEL;
+    if novels < 1.0 {
+        return None;
+    }
+    let rounded = novels.round() as i64;
+    Some(format!(
+        "that's roughly {rounded} novels' worth of tokens moved through your tools. (rough)"
+    ))
+}
+
+fn render_activity_plain_document(rows: &[&FocusRecord]) -> StyledDocument {
+    let mut out = StyledDocument::new();
+    push_line(&mut out, "costroid activity");
+    push_line(&mut out, "scope: all local usage (all time)");
+    let days = aggregate_activity(rows);
+    let (Some(first), Some(last)) = (
+        days.keys().next().copied(),
+        days.keys().next_back().copied(),
+    ) else {
+        push_line(&mut out, "no local usage history yet");
+        return out;
+    };
+    // No 2D grid in Plain (it doesn't read aloud) — the facts ARE the screen-reader view.
+    push_activity_facts(&mut out, rows, &days, first, last, RenderOptions::plain());
+    out
+}
+
 #[cfg(test)]
 pub(crate) fn render_budget(view: &BudgetView, options: RenderOptions) -> String {
     render_budget_document(view, options).render(options)
@@ -1823,7 +2253,6 @@ fn render_budget_visual_document(view: &BudgetView, options: RenderOptions) -> S
     let mut out = StyledDocument::new();
     push_header_line(
         &mut out,
-        mark(options),
         "budget",
         format_money(&view.spent_total_usd, Some("USD"), true),
         options,
@@ -1912,10 +2341,13 @@ fn budget_row_meter_line(row: &BudgetRow, options: RenderOptions) -> StyledLine 
     ));
     // The fill bar is colored by the SAME state the cue uses (one source of truth), so the bar,
     // the percent, and the spelled-out cue can never disagree at a boundary.
-    line.spans.push(StyledSpan::styled(
-        positional_meter_text(row.fraction, LIMIT_BAR_WIDTH, options),
-        state_style(state),
-    ));
+    push_meter(
+        &mut line,
+        row.fraction,
+        LIMIT_BAR_WIDTH,
+        meter_fill_style(state),
+        options,
+    );
     // Percent + the non-color cue, colored by state so a near-/over-budget number reads amber/red
     // — but the `!`/`!!`/`OVER` text means color is never the only signal.
     line.push_styled(
@@ -2221,7 +2653,8 @@ pub(crate) fn push_alert_banner(
         }
         RenderMode::Braille | RenderMode::Ascii => {
             let mut header = StyledLine::new();
-            header.push_plain(format!("{} ", mark(options)));
+            header.push_styled(mark(options), SemanticStyle::Accent);
+            header.push_plain(" ");
             header.push_styled("alerts", SemanticStyle::Strong);
             out.push(header);
             push_alert_lines(out, alerts, options);
@@ -2261,7 +2694,7 @@ fn push_alerts_header(out: &mut StyledDocument, options: RenderOptions) {
         RenderMode::Plain => push_line(out, "costroid alerts"),
         RenderMode::Braille | RenderMode::Ascii => {
             let mut header = StyledLine::new();
-            header.push_plain(format!("{} costroid", mark(options)));
+            push_brand(&mut header, options);
             header.push_styled("  alerts", SemanticStyle::Strong);
             out.push(header);
         }
@@ -2330,7 +2763,6 @@ fn render_forecast_visual_document(view: &ForecastView, options: RenderOptions) 
     let mut out = StyledDocument::new();
     push_header_line(
         &mut out,
-        mark(options),
         "forecast",
         forecast_header_money(view)
             .map(|money| format_money(&money, Some("USD"), true))
@@ -2646,13 +3078,7 @@ fn render_anomalies_visual_document(
     options: RenderOptions,
 ) -> StyledDocument {
     let mut out = StyledDocument::new();
-    push_header_line(
-        &mut out,
-        mark(options),
-        "anomalies",
-        anomalies_header_label(view),
-        options,
-    );
+    push_header_line(&mut out, "anomalies", anomalies_header_label(view), options);
     push_line(&mut out, ANOMALIES_SCOPE_LINE);
     push_anomalies_body(&mut out, view, options);
     push_rule(&mut out, options);
@@ -2849,17 +3275,24 @@ fn render_statusline_line(summary: &NowSummary, options: RenderOptions) -> Style
                     .map(|seconds| format!(" {}", compact_reset(seconds)))
                     .unwrap_or_default();
                 let mut line = StyledLine::new();
-                line.push_plain(format!("{} {spend}{api_state}  ", mark(options)));
-                line.spans.push(limit_meter_with_confidence(
+                line.push_styled(mark(options), SemanticStyle::Accent);
+                line.push_plain(format!(" {spend}{api_state}  "));
+                push_meter_with_confidence(
+                    &mut line,
                     fraction,
                     unverified,
                     STATUS_BAR_WIDTH,
                     options,
-                ));
+                );
                 line.push_plain(format!(" {pct}{cue}{reset}"));
                 line
             }
-            None => StyledLine::plain(format!("{} {spend}{api_state}", mark(options))),
+            None => {
+                let mut line = StyledLine::new();
+                line.push_styled(mark(options), SemanticStyle::Accent);
+                line.push_plain(format!(" {spend}{api_state}"));
+                line
+            }
         },
     }
 }
@@ -2871,25 +3304,24 @@ fn render_now_visual_document(summary: &NowSummary, options: RenderOptions) -> S
 
     push_header_line(
         &mut out,
-        mark(options),
         "this week",
         format_money(&api_total, Some("USD"), true),
         options,
     );
     push_rule(&mut out, options);
-    push_line(&mut out, "limits");
+    push_section(&mut out, "limits");
     if summary.limits.is_empty() {
         push_line(&mut out, "  no local limit data found");
     } else {
         for limit in &summary.limits {
             out.push(render_limit_line(limit, summary.generated_at, options));
             if let Some(caveat) = claude_caveat(limit) {
-                push_line(&mut out, &format!("    {caveat}"));
+                push_caveat(&mut out, caveat);
             }
         }
     }
     push_rule(&mut out, options);
-    push_line(&mut out, "api costs (this week)");
+    push_section(&mut out, "api costs (this week)");
     if api.is_empty() {
         push_line(&mut out, "  no API usage in this period");
     } else {
@@ -2897,9 +3329,10 @@ fn render_now_visual_document(summary: &NowSummary, options: RenderOptions) -> S
     }
     push_non_api_sections(&mut out, &summary.current_costs, options);
     push_rule(&mut out, options);
-    push_line(
+    push_insight(
         &mut out,
-        &mode_insight(insight_line(&api, &summary.limits), options),
+        mode_insight(insight_line(&api, &summary.limits), options),
+        options,
     );
     push_provider_notes(&mut out, &summary.providers);
     push_empty_provider_guidance(&mut out, &summary.providers);
@@ -2955,7 +3388,6 @@ fn render_trends_visual_document(
 
     push_header_line(
         &mut out,
-        mark(options),
         period_scope(summary.period),
         format_money(&api_total, Some("USD"), true),
         options,
@@ -2969,7 +3401,7 @@ fn render_trends_visual_document(
         ),
     );
     push_rule(&mut out, options);
-    push_line(
+    push_section(
         &mut out,
         &format!("  api spend / {}", period_bucket_label(summary.period)),
     );
@@ -2977,14 +3409,14 @@ fn render_trends_visual_document(
     if api.is_empty() {
         push_line(&mut out, "  no API usage in this period");
     } else {
-        push_line(&mut out, &format!("  {}", sparkline(&values, options)));
+        push_sparkline(&mut out, &values, options);
         push_line(
             &mut out,
             &format!("  {}", sparkline_labels(summary.period, values.len())),
         );
     }
     push_rule(&mut out, options);
-    push_line(&mut out, "breakdown");
+    push_section(&mut out, "breakdown");
     if api.is_empty() {
         push_line(&mut out, "  no API usage in this period");
     } else {
@@ -2992,7 +3424,11 @@ fn render_trends_visual_document(
     }
     push_non_api_sections(&mut out, &summary.totals, options);
     push_rule(&mut out, options);
-    push_line(&mut out, &mode_insight(insight_line(&api, &[]), options));
+    push_insight(
+        &mut out,
+        mode_insight(insight_line(&api, &[]), options),
+        options,
+    );
     push_provider_notes(&mut out, &summary.providers);
     push_empty_provider_guidance(&mut out, &summary.providers);
     out
@@ -3090,7 +3526,11 @@ fn push_cost_rows(out: &mut StyledDocument, rows: &[CostLaneSummary], options: R
         .map(|row| row.totals.billed_cost)
         .max()
         .unwrap_or_default();
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
+        // Each model gets a stable hue by spend rank: a leading ●/* dot + the bar fill in that
+        // series color (the model name stays bold), so the rows read like the screenshots'
+        // color-coded model legend. The dot + name carry identity with color stripped.
+        let series = series_style(index);
         let money = format_money(
             &row.totals.billed_cost,
             row.totals.currency.as_deref(),
@@ -3101,13 +3541,19 @@ fn push_cost_rows(out: &mut StyledDocument, rows: &[CostLaneSummary], options: R
             .len();
         let badge = pricing_badge(&row.totals);
         let mut line = StyledLine::new();
-        line.push_plain(format!("  {:<18}  ", display_group(&row.group.value)));
-        line.spans.push(cost_bar_span(
-            row.totals.billed_cost,
-            max,
+        line.push_plain("  ");
+        line.push_styled(format!("{} ", mode_dot(options)), series);
+        line.push_styled(
+            format!("{:<16}  ", display_group(&row.group.value)),
+            SemanticStyle::Strong,
+        );
+        push_meter(
+            &mut line,
+            cost_bar_fraction(row.totals.billed_cost, max),
             cost_bar_width(options),
+            series,
             options,
-        ));
+        );
         line.push_plain(format!(
             "  {}",
             " ".repeat(12_usize.saturating_sub(rendered_money_len))
@@ -3196,23 +3642,22 @@ fn claude_caveat(limit: &LimitSummary) -> Option<&'static str> {
     (limit.tool == ProviderId::ClaudeCode && shows_usage).then_some(CLAUDE_CHAT_CAVEAT)
 }
 
-/// A meter span that never alarm-colors an `unverified` reading — an unverified near-max
-/// must draw as a neutral bar, not a confident red one (brief §8). Verified readings keep
-/// the state-based color from [`limit_meter_span`].
-fn limit_meter_with_confidence(
+/// Push a meter that never alarm-colors an `unverified` reading — an unverified near-max must
+/// draw as a neutral (Muted) bar, not a confident red one (brief §8). Verified readings take the
+/// state-based fill color from [`meter_fill_style`].
+fn push_meter_with_confidence(
+    line: &mut StyledLine,
     fraction: f64,
     unverified: bool,
     width: usize,
     options: RenderOptions,
-) -> StyledSpan {
-    if unverified {
-        StyledSpan::styled(
-            positional_meter_text(fraction, width, options),
-            SemanticStyle::Strong,
-        )
+) {
+    let fill = if unverified {
+        SemanticStyle::Muted
     } else {
-        limit_meter_span(fraction, width, options)
-    }
+        meter_fill_style(limit_state(fraction))
+    };
+    push_meter(line, fraction, width, fill, options);
 }
 
 /// Format a `Spend` dollar pool as "$used / $included used", or "$used used" when there is
@@ -3258,11 +3703,17 @@ fn render_limit_line(
         } => match measure {
             LimitMeasure::TokenFraction(fraction) => {
                 let fraction = *fraction;
-                let cue = state_cue(limit_state(fraction));
+                let state = limit_state(fraction);
+                let cue = state_cue(state);
                 let mut line = StyledLine::new();
                 line.push_plain(format!("  {tool:<12} {kind:<3} "));
-                line.spans
-                    .push(limit_meter_span(fraction, LIMIT_BAR_WIDTH, options));
+                push_meter(
+                    &mut line,
+                    fraction,
+                    LIMIT_BAR_WIDTH,
+                    meter_fill_style(state),
+                    options,
+                );
                 line.push_plain(format!(
                     "  {}{}  resets {}{}",
                     percent(fraction),
@@ -3298,11 +3749,17 @@ fn render_limit_line(
             match measure {
                 Some(LimitMeasure::TokenFraction(fraction)) => {
                     let fraction = *fraction;
-                    let cue = state_cue(limit_state(fraction));
+                    let state = limit_state(fraction);
+                    let cue = state_cue(state);
                     let mut line = StyledLine::new();
                     line.push_plain(format!("  {tool:<12} {kind:<3} "));
-                    line.spans
-                        .push(limit_meter_span(fraction, LIMIT_BAR_WIDTH, options));
+                    push_meter(
+                        &mut line,
+                        fraction,
+                        LIMIT_BAR_WIDTH,
+                        meter_fill_style(state),
+                        options,
+                    );
                     line.push_plain(format!(
                         "  {}{}  partial: {}{}{}",
                         percent(fraction),
@@ -3342,12 +3799,7 @@ fn render_limit_line(
                     let fraction = *fraction;
                     let mut line = StyledLine::new();
                     line.push_plain(format!("  {tool:<12} {kind:<3} "));
-                    line.spans.push(limit_meter_with_confidence(
-                        fraction,
-                        true,
-                        LIMIT_BAR_WIDTH,
-                        options,
-                    ));
+                    push_meter_with_confidence(&mut line, fraction, true, LIMIT_BAR_WIDTH, options);
                     line.push_plain(format!(
                         "  {}{}{}{}",
                         percent(fraction),
@@ -3646,18 +4098,6 @@ fn plain_state_phrase(state: LimitState) -> &'static str {
     }
 }
 
-#[cfg(test)]
-fn limit_meter(fraction: f64, width: usize, options: RenderOptions) -> String {
-    limit_meter_span(fraction, width, options).render(options)
-}
-
-fn limit_meter_span(fraction: f64, width: usize, options: RenderOptions) -> StyledSpan {
-    StyledSpan::styled(
-        positional_meter_text(fraction, width, options),
-        state_style(limit_state(fraction)),
-    )
-}
-
 /// The semantic style for a near-/over-limit state: Normal stays bold (a non-color cue),
 /// Warn is amber, Critical/Over are red. Shared by the limit meter and the Budget tab — the
 /// two places where amber/red is allowed, always paired with a non-color textual cue.
@@ -3669,47 +4109,12 @@ fn state_style(state: LimitState) -> SemanticStyle {
     }
 }
 
-fn cost_bar_span(
-    amount: Decimal,
-    max: Decimal,
-    width: usize,
-    options: RenderOptions,
-) -> StyledSpan {
-    let fraction = if max > Decimal::ZERO {
+/// The fraction a cost bar fills: `amount / max`, clamped at the bottom (an empty `max` ⇒ 0).
+fn cost_bar_fraction(amount: Decimal, max: Decimal) -> f64 {
+    if max > Decimal::ZERO {
         (amount / max).to_f64().unwrap_or(0.0)
     } else {
         0.0
-    };
-    StyledSpan::styled(
-        positional_meter_text(fraction, width, options),
-        SemanticStyle::Strong,
-    )
-}
-
-fn positional_meter_text(fraction: f64, width: usize, options: RenderOptions) -> String {
-    let segments = meter_segments(fraction, width);
-    match options.mode {
-        RenderMode::Plain => String::new(),
-        RenderMode::Ascii => {
-            let mut meter = String::with_capacity(width + 2);
-            meter.push('[');
-            meter.extend(std::iter::repeat_n('#', segments.full));
-            if segments.partial {
-                meter.push('+');
-            }
-            meter.extend(std::iter::repeat_n('-', segments.remaining));
-            meter.push(']');
-            meter
-        }
-        RenderMode::Braille => {
-            let mut meter = String::with_capacity(width);
-            meter.extend(std::iter::repeat_n(braille_full(), segments.full));
-            if segments.partial {
-                meter.push(braille_left_column());
-            }
-            meter.extend(std::iter::repeat_n(braille_light(), segments.remaining));
-            meter
-        }
     }
 }
 
@@ -3835,6 +4240,109 @@ fn mark(options: RenderOptions) -> &'static str {
     }
 }
 
+/// Push the brand lockup onto a header line: the Accent (Signal-lime) `C⠉` mark followed by the
+/// split `cost`(strong) / `roid`(muted) wordmark — carrying the wordmark's strong/muted contrast
+/// into the UI (the master identity). In Ascii/Plain the braille mark is dropped (the terminal
+/// can't draw it) and only the wordmark remains — which also FIXES the prior "costroid costroid"
+/// doubling, where the header appended a literal " costroid" after `mark()`'s own "costroid".
+fn push_brand(line: &mut StyledLine, options: RenderOptions) {
+    if options.mode == RenderMode::Braille {
+        line.push_styled("C⠉", SemanticStyle::Accent);
+        line.push_plain(" ");
+    }
+    line.push_styled("cost", SemanticStyle::Strong);
+    line.push_styled("roid", SemanticStyle::Muted);
+}
+
+/// The visible (column) width of [`push_brand`]'s lockup — `C⠉ costroid` (11) in braille,
+/// `costroid` (8) otherwise — used for right-aligning the scope/money in a header.
+fn brand_width(options: RenderOptions) -> usize {
+    if options.mode == RenderMode::Braille {
+        11
+    } else {
+        8
+    }
+}
+
+/// The semantic fill color of a quota/budget meter's used portion: cyan data in the normal
+/// state, amber/red near/over limit. The unfilled track is always [`SemanticStyle::DataDim`]
+/// (see [`push_meter`]); an unverified reading passes [`SemanticStyle::Muted`] for a neutral,
+/// non-alarm fill (brief §8). Shape still distinguishes used vs remaining under `NO_COLOR`.
+fn meter_fill_style(state: LimitState) -> SemanticStyle {
+    match state {
+        LimitState::Normal => SemanticStyle::Data,
+        LimitState::Warn => SemanticStyle::Warn,
+        LimitState::Critical | LimitState::Over => SemanticStyle::Critical,
+    }
+}
+
+/// Push a horizontal meter as two color spans — the used portion in `fill`, the remaining track
+/// in dim cyan — so color reinforces the glyph-shape distinction (full `⣿`/`#` vs light `⣀`/`-`)
+/// without ever being the only cue. Nothing is pushed in Plain mode (no meter); Ascii brackets
+/// stay plain. Replaces the former single-span `positional_meter_text` helpers.
+fn push_meter(
+    line: &mut StyledLine,
+    fraction: f64,
+    width: usize,
+    fill: SemanticStyle,
+    options: RenderOptions,
+) {
+    let seg = meter_segments(fraction, width);
+    match options.mode {
+        RenderMode::Plain => {}
+        RenderMode::Ascii => {
+            line.push_plain("[");
+            let mut used = "#".repeat(seg.full);
+            if seg.partial {
+                used.push('+');
+            }
+            if !used.is_empty() {
+                line.push_styled(used, fill);
+            }
+            if seg.remaining > 0 {
+                line.push_styled("-".repeat(seg.remaining), SemanticStyle::DataDim);
+            }
+            line.push_plain("]");
+        }
+        RenderMode::Braille => {
+            let mut used: String = std::iter::repeat_n(braille_full(), seg.full).collect();
+            if seg.partial {
+                used.push(braille_left_column());
+            }
+            if !used.is_empty() {
+                line.push_styled(used, fill);
+            }
+            if seg.remaining > 0 {
+                let track: String = std::iter::repeat_n(braille_light(), seg.remaining).collect();
+                line.push_styled(track, SemanticStyle::DataDim);
+            }
+        }
+    }
+}
+
+/// Test-only: render a standalone meter to a string (the production code pushes meter spans
+/// directly onto a line via [`push_meter`]).
+#[cfg(test)]
+fn meter_to_string(
+    fraction: f64,
+    width: usize,
+    fill: SemanticStyle,
+    options: RenderOptions,
+) -> String {
+    let mut line = StyledLine::new();
+    push_meter(&mut line, fraction, width, fill, options);
+    line.render(options)
+}
+
+/// The legend/series dot glyph: a filled `●` on a braille-capable terminal, a pure-ASCII `*`
+/// on the Ascii fallback (Plain renders no dot — its rows are screen-reader text).
+fn mode_dot(options: RenderOptions) -> &'static str {
+    match options.mode {
+        RenderMode::Braille => "●",
+        RenderMode::Ascii | RenderMode::Plain => "*",
+    }
+}
+
 /// Bit for a braille dot number (1-8) in the U+2800 cell mask.
 fn bit_for_dot(dot: u8) -> u8 {
     match dot {
@@ -3893,6 +4401,52 @@ fn push_line(out: &mut StyledDocument, line: &str) {
     out.push(StyledLine::plain(line));
 }
 
+/// Push a Muted section label (e.g. `limits`, `breakdown`) — gray, so the colored data below it
+/// reads as the foreground. A no-op-safe convenience over [`StyledLine::push_styled`].
+fn push_section(out: &mut StyledDocument, label: &str) {
+    let mut line = StyledLine::new();
+    line.push_styled(label.to_string(), SemanticStyle::Muted);
+    out.push(line);
+}
+
+/// Push an indented Muted sub-note (e.g. the Claude chat caveat under a limit) — context, drawn
+/// in Ash gray so it sits visually beneath the data it qualifies.
+fn push_caveat(out: &mut StyledDocument, caveat: &str) {
+    let mut line = StyledLine::new();
+    line.push_styled(format!("    {caveat}"), SemanticStyle::Muted);
+    out.push(line);
+}
+
+/// Push an insight line with its leading marker (`◆ ` braille / `* ` ascii) drawn in Accent
+/// (Signal-lime), the rest of the sentence plain — the proactive "colleague" voice, color-cued
+/// but never color-dependent (the marker is also a literal glyph). Pass the post-`mode_insight`
+/// string. In Plain mode callers use the spelled-out `insight:` form instead (no marker to color).
+fn push_insight(out: &mut StyledDocument, line: String, options: RenderOptions) {
+    let marker = if options.mode == RenderMode::Ascii {
+        "* "
+    } else {
+        "◆ "
+    };
+    let mut styled = StyledLine::new();
+    match line.strip_prefix(marker) {
+        Some(rest) => {
+            styled.push_styled(marker.to_string(), SemanticStyle::Accent);
+            styled.push_plain(rest.to_string());
+        }
+        None => styled.push_plain(line),
+    }
+    out.push(styled);
+}
+
+/// Push the spend sparkline as a Data (cyan) span, indented two columns. Empty (a no-op span) in
+/// Plain mode where [`sparkline`] returns "".
+fn push_sparkline(out: &mut StyledDocument, values: &[Decimal], options: RenderOptions) {
+    let mut line = StyledLine::new();
+    line.push_plain("  ");
+    line.push_styled(sparkline(values, options), SemanticStyle::Data);
+    out.push(line);
+}
+
 fn push_rule(out: &mut StyledDocument, options: RenderOptions) {
     // RenderMode::Ascii targets terminals that may not render multi-byte glyphs
     // (chosen when braille capability — incl. a UTF-8 locale — is absent), so the
@@ -3915,27 +4469,19 @@ fn mode_insight(line: String, options: RenderOptions) -> String {
     }
 }
 
-fn push_header_line(
-    out: &mut StyledDocument,
-    mark: &str,
-    scope: &str,
-    money: String,
-    options: RenderOptions,
-) {
+/// The screen header: the Accent brand lockup on the left, then the Muted `scope` and the Strong
+/// `money` right-aligned to `options.width`. The brand glyph + wordmark come from [`push_brand`].
+fn push_header_line(out: &mut StyledDocument, scope: &str, money: String, options: RenderOptions) {
     let mut line = StyledLine::new();
-    if options.width == DEFAULT_RENDER_WIDTH {
-        line.push_plain(format!(
-            "{mark} costroid                                   {scope}  "
-        ));
-    } else {
-        let left = format!("{mark} costroid");
-        let right = format!("{scope}  ");
-        let spacing = options
-            .width
-            .saturating_sub(visible_width(&left) + visible_width(&right) + visible_width(&money))
-            .max(1);
-        line.push_plain(format!("{left}{}{right}", " ".repeat(spacing)));
-    }
+    push_brand(&mut line, options);
+    let right = format!("{scope}  ");
+    let spacing = options
+        .width
+        .saturating_sub(brand_width(options) + visible_width(&right) + visible_width(&money))
+        .max(1);
+    line.push_plain(" ".repeat(spacing));
+    line.push_styled(scope.to_string(), SemanticStyle::Muted);
+    line.push_plain("  ");
     line.push_styled(money, SemanticStyle::Strong);
     out.push(line);
 }
@@ -4759,7 +5305,7 @@ mod tests {
 
     #[test]
     fn meter_segments_keep_braille_fill_visible_without_ansi() {
-        let meter = limit_meter(0.42, 6, RenderOptions::braille(false));
+        let meter = meter_to_string(0.42, 6, SemanticStyle::Data, RenderOptions::braille(false));
 
         assert_eq!(meter, "⣿⣿⡇⣀⣀⣀");
     }
@@ -5480,6 +6026,106 @@ mod tests {
         record.effective_cost = cost;
         record.x_pricing_status = "priced".to_string();
         record
+    }
+
+    /// A multi-week activity fixture: rows spread over ~10 weeks with varying daily token volume,
+    /// a few consecutive days (for the streak facts), and two models (for the top-model fact).
+    fn activity_rows_fixture() -> Vec<FocusRecord> {
+        let mut rows = Vec::new();
+        // (day-of-June, tokens) — June 8–10 consecutive (a streak); June 10 the busiest.
+        let plan = [
+            (2, 100_000u64, "claude-opus-4"),
+            (3, 250_000, "claude-opus-4"),
+            (5, 80_000, "gpt-5.5"),
+            (8, 400_000, "claude-opus-4"),
+            (9, 600_000, "claude-opus-4"),
+            (10, 1_200_000, "gpt-5.5"),
+            (12, 50_000, "gpt-5.5"),
+        ];
+        for (day, tokens, model) in plan {
+            rows.push(history_record(
+                model,
+                utc(2026, 6, day, 12, 0),
+                costroid_focus::TokenType::Output,
+                tokens,
+                0,
+                costroid_focus::FocusAccessPath::Subscription,
+            ));
+        }
+        // An older week (April) so the heatmap spans more than one month.
+        rows.push(history_record(
+            "claude-opus-4",
+            utc(2026, 4, 20, 9, 0),
+            costroid_focus::TokenType::Output,
+            300_000,
+            0,
+            costroid_focus::FocusAccessPath::Subscription,
+        ));
+        rows
+    }
+
+    #[cfg(test)]
+    fn render_activity(rows: &[FocusRecord], options: RenderOptions) -> String {
+        render_activity_document(rows, options).render(options)
+    }
+
+    #[test]
+    fn snapshot_activity_braille() {
+        insta::assert_snapshot!(render_activity(
+            &activity_rows_fixture(),
+            RenderOptions::braille(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_activity_ascii() {
+        insta::assert_snapshot!(render_activity(
+            &activity_rows_fixture(),
+            RenderOptions::ascii(false)
+        ));
+    }
+
+    #[test]
+    fn snapshot_activity_plain() {
+        insta::assert_snapshot!(render_activity(
+            &activity_rows_fixture(),
+            RenderOptions::plain()
+        ));
+    }
+
+    #[test]
+    fn activity_ascii_and_plain_are_pure_ascii() {
+        // The heatmap grid, month labels, legend, and facts must all fold to ASCII in the Ascii
+        // fallback and Plain mode (no `·`/`░`/`◆`/`→`/em-dash leaking through).
+        let ascii = render_activity(&activity_rows_fixture(), RenderOptions::ascii(false));
+        assert!(
+            ascii.is_ascii(),
+            "ascii activity must be pure ASCII: {ascii}"
+        );
+        let plain = render_activity(&activity_rows_fixture(), RenderOptions::plain());
+        assert!(
+            plain.is_ascii(),
+            "plain activity must be pure ASCII: {plain}"
+        );
+        // The facts surface regardless of mode.
+        assert!(plain.contains("total tokens"));
+        assert!(plain.contains("top model"));
+        assert!(plain.contains("streak"));
+        // Plain mode draws no 2D grid (no heat glyphs).
+        assert!(
+            !plain.contains('#'),
+            "plain activity must not draw a grid: {plain}"
+        );
+    }
+
+    #[test]
+    fn activity_heat_level_scales_with_tokens() {
+        let max = Decimal::new(1000, 0);
+        assert_eq!(heat_level(Decimal::ZERO, max), 0);
+        assert_eq!(heat_level(Decimal::new(1, 0), max), 1);
+        assert_eq!(heat_level(max, max), 4);
+        // No activity anywhere ⇒ everything is level 0 (never a divide-by-zero alarm).
+        assert_eq!(heat_level(Decimal::new(5, 0), Decimal::ZERO), 0);
     }
 
     /// A two-lane fixture: a newer API turn (priced) + an older subscription turn (no per-token

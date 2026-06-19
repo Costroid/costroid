@@ -2,4 +2,4 @@
 source: apps/cli/src/render.rs
 expression: "render_statusline(&all_arms_now(), RenderOptions::braille(true))"
 ---
-C⠉ ~$42.18  [1m⣿⣿⣿⡇[0m 96% ? unverified 2d2h
+[1;38;5;154mC⠉[0m ~$42.18  [38;5;245m⣿⣿⣿⡇[0m 96% ? unverified 2d2h

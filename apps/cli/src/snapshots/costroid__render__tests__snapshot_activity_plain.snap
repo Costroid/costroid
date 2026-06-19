@@ -1,0 +1,12 @@
+---
+source: apps/cli/src/render.rs
+expression: "render_activity(&activity_rows_fixture(), RenderOptions::plain())"
+---
+costroid activity
+scope: all local usage (all time)
+  total tokens 3.0M
+  active days  8 of 54 (2026-04-20 to 2026-06-12)
+  busiest day  2026-06-10 (1.2M tokens)
+  top model    claude-opus-4 (1.6M tokens)
+  streak       1d current - 3d longest
+insight: that's roughly 19 novels' worth of tokens moved through your tools. (rough)

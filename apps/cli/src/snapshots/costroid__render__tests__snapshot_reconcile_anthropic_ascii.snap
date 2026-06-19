@@ -2,7 +2,7 @@
 source: apps/cli/src/render.rs
 expression: "render_reconciliation(\"anthropic\", WINDOW, &anthropic_reconciliation(),\nRenderOptions::ascii(false),)"
 ---
-costroid costroid                                   anthropic  est ~$5.20 / inv $4.50
+costroid                       anthropic  est ~$5.20 / inv $4.50
 estimate vs invoice - 2026-06-08 to 2026-06-14 (UTC, completed days)
 Local figures are estimates (your tokens x current prices); the vendor invoice is the source of truth.
 ----------------------------------------------------------------

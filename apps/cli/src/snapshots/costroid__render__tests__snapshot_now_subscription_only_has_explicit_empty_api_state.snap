@@ -2,7 +2,7 @@
 source: apps/cli/src/render.rs
 expression: "render_now(&subscription_only_now(), RenderOptions::braille(false))"
 ---
-C⠉ costroid                                   this week  ~$0.00
+C⠉ costroid                                    this week  ~$0.00
 ────────────────────────────────────────────────────────────────
 limits
   claude code  5h  unavailable: no captured reading; run `costroid setup-statusline`
@@ -14,7 +14,7 @@ api costs (this week)
   no API usage in this period
 ────────────────────────────────────────────────────────────────
 subscription API-equivalent value (estimate, not bill)
-  gpt 5.5             ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unpriced/partial]
+  ● gpt 5.5           ⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀        ~$0.00  [unpriced/partial]
 ────────────────────────────────────────────────────────────────
 ◆ cursor wk at 97%, resets unknown.
 provider cursor missing: no local data found

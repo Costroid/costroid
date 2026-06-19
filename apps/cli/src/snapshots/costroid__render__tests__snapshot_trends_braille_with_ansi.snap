@@ -2,20 +2,20 @@
 source: apps/cli/src/render.rs
 expression: "render_trends(&priced_trends(), RenderOptions::braille(true))"
 ---
-C⠉ costroid                                   this month  [1m~$168.00[0m
+[1;38;5;154mC⠉[0m [1mcost[0m[38;5;245mroid[0m                                 [38;5;245mthis month[0m  [1m~$168.00[0m
   [day] [week] (month) [year]            group: (model) app total
 ────────────────────────────────────────────────────────────────
-  api spend / month
-  ⣿⣤
+[38;5;245m  api spend / month[0m
+  [38;5;39m⣿⣤[0m
   w1   w2
 ────────────────────────────────────────────────────────────────
-breakdown
-  claude opus 4.7     [1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿[0m  [1m~$96.00[0m
-  gpt 5.5             [1m⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀[0m  [1m~$45.00[0m
-  sonnet 4.6          [1m⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$27.00[0m
+[38;5;245mbreakdown[0m
+  [38;5;38m● [0m[1mclaude opus 4.7   [0m[38;5;38m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿[0m  [1m~$96.00[0m
+  [38;5;79m● [0m[1mgpt 5.5           [0m[38;5;79m⣿⣿⣿⣿⣿⡇[0m[38;5;24m⣀⣀⣀⣀⣀⣀[0m  [1m~$45.00[0m
+  [38;5;75m● [0m[1msonnet 4.6        [0m[38;5;75m⣿⣿⣿[0m[38;5;24m⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$27.00[0m
 ────────────────────────────────────────────────────────────────
 subscription API-equivalent value (estimate, not bill)
-  gpt 5.5             [1m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unpriced/partial]
+  [38;5;38m● [0m[1mgpt 5.5           [0m[38;5;24m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unpriced/partial]
 ────────────────────────────────────────────────────────────────
-◆ claude opus 4.7 drove most of your API spend in this period. (estimated)
+[1;38;5;154m◆ [0mclaude opus 4.7 drove most of your API spend in this period. (estimated)
 provider cursor missing: no local data found

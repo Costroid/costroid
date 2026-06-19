@@ -2,7 +2,7 @@
 source: apps/cli/src/render.rs
 expression: "render_budget(&budget_view_fixture(), RenderOptions::ascii(false))"
 ---
-costroid costroid                                   budget  ~$84.00
+costroid                                         budget  ~$84.00
 scope: API-lane spend this month (50% of month elapsed)
 ----------------------------------------------------------------
 codex  ~$60.00 / ~$50.00  [############] 120% !! OVER

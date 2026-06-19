@@ -2,7 +2,7 @@
 source: apps/cli/src/render.rs
 expression: "render_frontier(&used_gpt(), RenderOptions::braille(true))"
 ---
-C⠉ costroid                                   cost vs quality  [1m~$35.00[0m
+[1;38;5;154mC⠉[0m [1mcost[0m[38;5;245mroid[0m                             [38;5;245mcost vs quality[0m  [1m~$35.00[0m
 ────────────────────────────────────────────────────────────────
 DeepSWE — primary (neutral)   as of 2026-05-30
   neutral mini-swe-agent harness, not your tool; avg cost/task is cache-miss priced (~5x overstated) - indicative

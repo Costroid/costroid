@@ -2,7 +2,7 @@
 source: apps/cli/src/render.rs
 expression: "render_providers(&provider_capabilities_fixture(),\n&provider_statuses_for_tab(), RenderOptions::ascii(false))"
 ---
-costroid costroid  providers
+costroid  providers
 ----------------------------------------------------------------
 claude code (available)
   api cost   from local logs

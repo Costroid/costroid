@@ -2,19 +2,19 @@
 source: apps/cli/src/render.rs
 expression: "render_models(&models_view_fixture(), RenderOptions::ascii(false))"
 ---
-costroid costroid                                   models  ~$23.24
+costroid                                         models  ~$23.24
 scope: all usage (all time)
 ----------------------------------------------------------------
-gpt-5.5  spent ~$12.34
+* gpt-5.5  spent ~$12.34
   tokens: 10 in / 20 out / 30 cache
   frontier: swe-bench 72% - on frontier
   claude-haiku-4 costs about ~$4.00 less at equal volume
 ----------------------------------------------------------------
-claude-opus-4  spent ~$8.80 (partial pricing)
+* claude-opus-4  spent ~$8.80 (partial pricing)
   tokens: 10 in / 20 out / 30 cache
   frontier: swe-bench 70% - off (dominated by gpt-5.5)
 ----------------------------------------------------------------
-mystery-model  spent ~$2.10
+* mystery-model  spent ~$2.10
   tokens: 10 in / 20 out / 30 cache
   frontier: not benchmarked
 ----------------------------------------------------------------

@@ -2,7 +2,7 @@
 source: apps/cli/src/render.rs
 expression: "render_forecast(&forecast_view_eta_unavailable_fixture(),\nRenderOptions::ascii(false))"
 ---
-costroid costroid                                   forecast  
+costroid                                              forecast  
 scope: API-lane spend this month + quota burn (estimated)
 no API usage recorded - nothing to forecast yet
 ----------------------------------------------------------------

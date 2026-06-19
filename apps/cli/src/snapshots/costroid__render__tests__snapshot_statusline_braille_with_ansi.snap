@@ -2,4 +2,4 @@
 source: apps/cli/src/render.rs
 expression: "render_statusline(&priced_now(), RenderOptions::braille(true))"
 ---
-C⠉ ~$42.18  [31;1m⣿⣿⣿⡇[0m 97% !!
+[1;38;5;154mC⠉[0m ~$42.18  [31;1m⣿⣿⣿⡇[0m 97% !!

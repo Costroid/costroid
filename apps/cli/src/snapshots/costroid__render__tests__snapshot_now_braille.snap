@@ -2,24 +2,24 @@
 source: apps/cli/src/render.rs
 expression: "render_now(&priced_now(), RenderOptions::braille(true))"
 ---
-C⠉ costroid                                   this week  [1m~$42.18[0m
+[1;38;5;154mC⠉[0m [1mcost[0m[38;5;245mroid[0m                                   [38;5;245mthis week[0m  [1m~$42.18[0m
 ────────────────────────────────────────────────────────────────
-limits
+[38;5;245mlimits[0m
   claude code  5h  unavailable: no captured reading; run `costroid setup-statusline`
-  codex        5h  [1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀[0m  78%  resets 41m
-  codex        wk  [33;1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀[0m  92% !  resets 2d 6h
+  codex        5h  [38;5;39m⣿⣿⣿⣿⣿⣿⣿⣿⣿[0m[38;5;24m⣀⣀⣀[0m  78%  resets 41m
+  codex        wk  [33;1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿[0m[38;5;24m⣀[0m  92% !  resets 2d 6h
   cursor       wk  [31;1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇[0m  97% !!  partial: limit data incomplete
 ────────────────────────────────────────────────────────────────
-api costs (this week)
-  claude opus 4.7     [1m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿[0m  [1m~$24.10[0m
-  gpt 5.5             [1m⣿⣿⣿⣿⣿⡇⣀⣀⣀⣀⣀⣀[0m  [1m~$11.30[0m
-  sonnet 4.6          [1m⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$6.78[0m
+[38;5;245mapi costs (this week)[0m
+  [38;5;38m● [0m[1mclaude opus 4.7   [0m[38;5;38m⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿[0m  [1m~$24.10[0m
+  [38;5;79m● [0m[1mgpt 5.5           [0m[38;5;79m⣿⣿⣿⣿⣿⡇[0m[38;5;24m⣀⣀⣀⣀⣀⣀[0m  [1m~$11.30[0m
+  [38;5;75m● [0m[1msonnet 4.6        [0m[38;5;75m⣿⣿⣿[0m[38;5;24m⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$6.78[0m
 ────────────────────────────────────────────────────────────────
 subscription API-equivalent value (estimate, not bill)
-  gpt 5.5             [1m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unpriced/partial]
+  [38;5;38m● [0m[1mgpt 5.5           [0m[38;5;24m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unpriced/partial]
 ────────────────────────────────────────────────────────────────
 unknown-access usage (partial)
-  mystery model       [1m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unknown model/unpriced]
+  [38;5;38m● [0m[1mmystery model     [0m[38;5;24m⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀[0m  [1m~$0.00[0m  [unknown model/unpriced]
 ────────────────────────────────────────────────────────────────
-◆ cursor wk at 97%, resets unknown.
+[1;38;5;154m◆ [0mcursor wk at 97%, resets unknown.
 provider cursor missing: no local data found
