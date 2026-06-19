@@ -5,9 +5,11 @@
 //! The single [`usage_rows`](USAGE_ROWS_TABLE) table is an **explicit metadata
 //! allowlist** ([`USAGE_ROWS_COLUMNS`]). It persists only the bounded, non-free-text
 //! metadata needed to reconstruct a [`FocusRecord`] on replay (a later milestone) via
-//! [`FocusRecord::unpriced_usage`] plus cost overrides: token counts, model, lane, the
-//! costs (as decimal *strings*, never floats), the charge timestamp, provider identity,
-//! and SKU identifiers.
+//! [`FocusRecord::unpriced_usage`] plus cost/pricing overrides: token counts, model,
+//! lane, the full priced cost set + the catalog-priced quantity/unit-price columns (all
+//! as decimal *strings*, never floats), the charge timestamp, provider identity, and the
+//! bounded SKU + pricing-category/unit identifiers — so a *priced* row round-trips
+//! byte-identically rather than reverting to the unpriced 0.
 //!
 //! It deliberately **drops every free-text-capable or non-derivable FOCUS column** —
 //! `ChargeDescription` (the derived `"{model} {token_type} tokens"`, re-derived on
@@ -25,15 +27,20 @@
 //! never `f64` — exact decimal arithmetic, no binary-float drift.
 
 use std::path::Path;
+use std::str::FromStr;
 
-use costroid_focus::{FocusRecord, FOCUS_VERSION};
+use chrono::{DateTime, Utc};
+use costroid_focus::{
+    FocusAccessPath, FocusRecord, LedgerLane, TokenType, UnpricedUsage, FOCUS_VERSION,
+};
 use rusqlite::{Connection, OptionalExtension};
+use rust_decimal::Decimal;
 use thiserror::Error;
 
 /// The schema version of the [`usage_rows`](USAGE_ROWS_TABLE) layout. Bumped whenever
 /// the persisted column set changes so a future replay/migration step can tell shapes
 /// apart. Stamped into [`STORE_META_TABLE`] on open.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// The one persisted table.
 pub const USAGE_ROWS_TABLE: &str = "usage_rows";
@@ -65,16 +72,36 @@ pub const USAGE_ROWS_COLUMNS: &[&str] = &[
     // Costs — decimal STRINGS (never floats); raw token count as a decimal string.
     "billed_cost",
     "effective_cost",
+    // The remaining FOCUS cost columns a priced row sets — non-null `Decimal`
+    // (`cloud_usage_to_focus` + `apply_pricing` stamp these); decimal STRINGS, never
+    // floats. Dropping them previously reverted a real priced row to the unpriced 0.
+    "list_cost",
+    "contracted_cost",
+    "pricing_currency_effective_cost",
     "x_consumed_tokens",
     "billing_currency",
+    // Quantity / unit-price columns a catalog-priced SKU populates (`apply_pricing`) —
+    // nullable `Option<Decimal>` (null on an unpriced row, Some on a priced one);
+    // decimal STRINGS, never floats. Bounded numeric metadata (R4-safe).
+    "consumed_quantity",
+    "pricing_quantity",
+    "list_unit_price",
+    "contracted_unit_price",
+    "pricing_currency_list_unit_price",
+    "pricing_currency_contracted_unit_price",
     // Provider identity — bounded identifier strings.
     "service_name",
     "service_provider_name",
     "host_provider_name",
     "invoice_issuer_name",
-    // SKU identifiers — bounded; NOT `sku_price_details` (dropped, free-text-capable).
+    // SKU / pricing identifiers — bounded enum/identifier strings; NOT
+    // `sku_price_details` (dropped, free-text-capable). `sku_price_id`, `pricing_category`,
+    // and `pricing_unit` are populated by `apply_pricing` on a catalog-priced row.
     "sku_id",
+    "sku_price_id",
     "sku_meter",
+    "pricing_category",
+    "pricing_unit",
 ];
 
 /// `CREATE TABLE` DDL for the [`usage_rows`](USAGE_ROWS_TABLE) metadata-allowlist table.
@@ -97,14 +124,26 @@ pub fn usage_rows_ddl() -> String {
             x_project TEXT,\n  \
             billed_cost TEXT NOT NULL,\n  \
             effective_cost TEXT NOT NULL,\n  \
+            list_cost TEXT NOT NULL,\n  \
+            contracted_cost TEXT NOT NULL,\n  \
+            pricing_currency_effective_cost TEXT NOT NULL,\n  \
             x_consumed_tokens TEXT NOT NULL,\n  \
             billing_currency TEXT NOT NULL,\n  \
+            consumed_quantity TEXT,\n  \
+            pricing_quantity TEXT,\n  \
+            list_unit_price TEXT,\n  \
+            contracted_unit_price TEXT,\n  \
+            pricing_currency_list_unit_price TEXT,\n  \
+            pricing_currency_contracted_unit_price TEXT,\n  \
             service_name TEXT NOT NULL,\n  \
             service_provider_name TEXT NOT NULL,\n  \
             host_provider_name TEXT NOT NULL,\n  \
             invoice_issuer_name TEXT NOT NULL,\n  \
             sku_id TEXT,\n  \
-            sku_meter TEXT\n\
+            sku_price_id TEXT,\n  \
+            sku_meter TEXT,\n  \
+            pricing_category TEXT,\n  \
+            pricing_unit TEXT\n\
         )"
     )
 }
@@ -131,6 +170,20 @@ pub enum StoreError {
     /// to read (a future migration step's job; for now it is a fail-closed mismatch).
     #[error("unsupported store schema version: found {found}, expected {expected}")]
     SchemaVersion { found: i64, expected: i64 },
+
+    /// A persisted row could not be reconstructed into a [`FocusRecord`] on replay — a
+    /// malformed stored enum (an `x_lane`/`x_token_type`/`x_access_path` value with no
+    /// `from_focus_str` inverse), an unparseable timestamp, or an unparseable decimal
+    /// string. The store fails closed with this typed error rather than panicking or
+    /// silently substituting a default (which would corrupt the replayed ledger).
+    #[error("failed to reconstruct a FocusRecord from a stored row: {0}")]
+    Reconstruct(String),
+
+    /// Building the FOCUS record from the reconstructed [`UnpricedUsage`] failed — the
+    /// underlying [`costroid_focus::FocusError`] (e.g. an out-of-range timestamp for the
+    /// FOCUS billing-period calculation), surfaced typed.
+    #[error("failed to build a FocusRecord on replay: {0}")]
+    Focus(#[from] costroid_focus::FocusError),
 }
 
 /// The local SQLite usage store. Wraps a single [`rusqlite::Connection`]; the schema is
@@ -205,12 +258,17 @@ impl Store {
                 "INSERT INTO {USAGE_ROWS_TABLE} (\
                     charge_period_start, x_lane, x_tool, x_model, x_token_type, \
                     x_access_path, x_pricing_status, x_estimated, x_project, \
-                    billed_cost, effective_cost, x_consumed_tokens, billing_currency, \
-                    service_name, service_provider_name, host_provider_name, \
-                    invoice_issuer_name, sku_id, sku_meter\
+                    billed_cost, effective_cost, list_cost, contracted_cost, \
+                    pricing_currency_effective_cost, x_consumed_tokens, billing_currency, \
+                    consumed_quantity, pricing_quantity, list_unit_price, \
+                    contracted_unit_price, pricing_currency_list_unit_price, \
+                    pricing_currency_contracted_unit_price, service_name, \
+                    service_provider_name, host_provider_name, invoice_issuer_name, \
+                    sku_id, sku_price_id, sku_meter, pricing_category, pricing_unit\
                 ) VALUES (\
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
-                    ?16, ?17, ?18, ?19\
+                    ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, \
+                    ?29, ?30, ?31\
                 )"
             ))?;
 
@@ -227,14 +285,26 @@ impl Store {
                     row.x_project,
                     row.billed_cost.to_string(),
                     row.effective_cost.to_string(),
+                    row.list_cost.to_string(),
+                    row.contracted_cost.to_string(),
+                    row.pricing_currency_effective_cost.to_string(),
                     row.x_consumed_tokens.to_string(),
                     row.billing_currency,
+                    decimal_opt_to_string(&row.consumed_quantity),
+                    decimal_opt_to_string(&row.pricing_quantity),
+                    decimal_opt_to_string(&row.list_unit_price),
+                    decimal_opt_to_string(&row.contracted_unit_price),
+                    decimal_opt_to_string(&row.pricing_currency_list_unit_price),
+                    decimal_opt_to_string(&row.pricing_currency_contracted_unit_price),
                     row.service_name,
                     row.service_provider_name,
                     row.host_provider_name,
                     row.invoice_issuer_name,
                     row.sku_id,
+                    row.sku_price_id,
                     row.sku_meter,
+                    row.pricing_category,
+                    row.pricing_unit,
                 ])?;
             }
         }
@@ -252,9 +322,192 @@ impl Store {
         Ok(count.max(0) as usize)
     }
 
+    /// Faithfully reconstruct every persisted row back into a [`FocusRecord`], in
+    /// insertion order (T11 replay).
+    ///
+    /// For each row this rebuilds an [`UnpricedUsage`] from the whitelisted columns —
+    /// the three enums via [`LedgerLane::from_focus_str`] / [`TokenType::from_focus_str`]
+    /// / [`FocusAccessPath::from_focus_str`] (the single source of truth for the
+    /// string↔enum mapping; a malformed stored enum yields a typed
+    /// [`StoreError::Reconstruct`], never a panic or silent default) — calls
+    /// [`FocusRecord::unpriced_usage`] (which re-derives `charge_description` and the
+    /// always-null non-persisted FOCUS columns identically), then applies the stored
+    /// cost/pricing overrides — the full cost set (`billed_cost` / `effective_cost` /
+    /// `list_cost` / `contracted_cost` / `pricing_currency_effective_cost`), the
+    /// catalog-priced quantity/unit-price columns (`consumed_quantity` /
+    /// `pricing_quantity` / `list_unit_price` / `contracted_unit_price` /
+    /// `pricing_currency_list_unit_price` / `pricing_currency_contracted_unit_price`),
+    /// `x_estimated` / `x_pricing_status` / `x_consumed_tokens`, and the stored SKU +
+    /// pricing identifiers (`sku_id` / `sku_price_id` / `sku_meter` / `pricing_category`
+    /// / `pricing_unit`) — so a **source-priced cloud row** OR a **catalog-priced
+    /// dev-tool row** (`x_estimated = false`, `x_pricing_status = "priced"`, a real cost,
+    /// populated unit-price/quantity columns) reconstructs faithfully rather than
+    /// collapsing to the unpriced default.
+    ///
+    /// The store names no `costroid-core` type: the replay-aggregate + export round-trip
+    /// is the caller's (apps/cli) job — this method only rebuilds the records.
+    pub fn all_focus_rows(&self) -> Result<Vec<FocusRecord>, StoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT charge_period_start, x_lane, x_tool, x_model, x_token_type, \
+                x_access_path, x_pricing_status, x_estimated, x_project, billed_cost, \
+                effective_cost, list_cost, contracted_cost, \
+                pricing_currency_effective_cost, x_consumed_tokens, billing_currency, \
+                consumed_quantity, pricing_quantity, list_unit_price, \
+                contracted_unit_price, pricing_currency_list_unit_price, \
+                pricing_currency_contracted_unit_price, service_name, \
+                service_provider_name, host_provider_name, invoice_issuer_name, sku_id, \
+                sku_price_id, sku_meter, pricing_category, pricing_unit \
+             FROM {USAGE_ROWS_TABLE} ORDER BY id"
+        ))?;
+
+        let mut records = Vec::new();
+        let mut query = stmt.query([])?;
+        while let Some(row) = query.next()? {
+            records.push(Self::reconstruct_row(row)?);
+        }
+        Ok(records)
+    }
+
+    /// Reconstruct a single SQLite row into a [`FocusRecord`] (see [`all_focus_rows`]).
+    /// Every fallible step (enum parse, timestamp parse, decimal parse) maps to a typed
+    /// [`StoreError`] — no `unwrap`/`expect`/`panic!`, no silent default.
+    fn reconstruct_row(row: &rusqlite::Row<'_>) -> Result<FocusRecord, StoreError> {
+        // Columns in the SELECT order above.
+        let charge_period_start: String = row.get(0)?;
+        let x_lane: String = row.get(1)?;
+        let x_tool: String = row.get(2)?;
+        let x_model: String = row.get(3)?;
+        let x_token_type: String = row.get(4)?;
+        let x_access_path: String = row.get(5)?;
+        let x_pricing_status: String = row.get(6)?;
+        let x_estimated: i64 = row.get(7)?;
+        let x_project: Option<String> = row.get(8)?;
+        let billed_cost: String = row.get(9)?;
+        let effective_cost: String = row.get(10)?;
+        let list_cost: String = row.get(11)?;
+        let contracted_cost: String = row.get(12)?;
+        let pricing_currency_effective_cost: String = row.get(13)?;
+        let x_consumed_tokens: String = row.get(14)?;
+        let billing_currency: String = row.get(15)?;
+        let consumed_quantity: Option<String> = row.get(16)?;
+        let pricing_quantity: Option<String> = row.get(17)?;
+        let list_unit_price: Option<String> = row.get(18)?;
+        let contracted_unit_price: Option<String> = row.get(19)?;
+        let pricing_currency_list_unit_price: Option<String> = row.get(20)?;
+        let pricing_currency_contracted_unit_price: Option<String> = row.get(21)?;
+        let service_name: String = row.get(22)?;
+        let service_provider_name: String = row.get(23)?;
+        let host_provider_name: String = row.get(24)?;
+        let invoice_issuer_name: String = row.get(25)?;
+        let sku_id: Option<String> = row.get(26)?;
+        let sku_price_id: Option<String> = row.get(27)?;
+        let sku_meter: Option<String> = row.get(28)?;
+        let pricing_category: Option<String> = row.get(29)?;
+        let pricing_unit: Option<String> = row.get(30)?;
+
+        // Enums via the single-source-of-truth inverse: a malformed stored enum is a
+        // typed Reconstruct error, never a panic or a silent default.
+        let lane = LedgerLane::from_focus_str(&x_lane)
+            .ok_or_else(|| StoreError::Reconstruct(format!("unknown x_lane `{x_lane}`")))?;
+        let token_type = TokenType::from_focus_str(&x_token_type).ok_or_else(|| {
+            StoreError::Reconstruct(format!("unknown x_token_type `{x_token_type}`"))
+        })?;
+        let access_path = FocusAccessPath::from_focus_str(&x_access_path).ok_or_else(|| {
+            StoreError::Reconstruct(format!("unknown x_access_path `{x_access_path}`"))
+        })?;
+
+        // Timestamp: RFC 3339 (UTC) back to a DateTime<Utc>.
+        let timestamp = DateTime::parse_from_rfc3339(&charge_period_start)
+            .map_err(|err| {
+                StoreError::Reconstruct(format!(
+                    "unparseable charge_period_start `{charge_period_start}`: {err}"
+                ))
+            })?
+            .with_timezone(&Utc);
+
+        // Decimals: the exact decimal strings back to `Decimal` (never via f64).
+        let billed = parse_decimal("billed_cost", &billed_cost)?;
+        let effective = parse_decimal("effective_cost", &effective_cost)?;
+        let list = parse_decimal("list_cost", &list_cost)?;
+        let contracted = parse_decimal("contracted_cost", &contracted_cost)?;
+        let pricing_currency_effective = parse_decimal(
+            "pricing_currency_effective_cost",
+            &pricing_currency_effective_cost,
+        )?;
+        // Nullable decimals: NULL → None; a present (non-null) value parses exactly or
+        // fails closed (a stored Some that won't parse is malformed data, never legit).
+        let consumed_qty = parse_decimal_opt("consumed_quantity", &consumed_quantity)?;
+        let pricing_qty = parse_decimal_opt("pricing_quantity", &pricing_quantity)?;
+        let list_unit = parse_decimal_opt("list_unit_price", &list_unit_price)?;
+        let contracted_unit = parse_decimal_opt("contracted_unit_price", &contracted_unit_price)?;
+        let pricing_currency_list_unit = parse_decimal_opt(
+            "pricing_currency_list_unit_price",
+            &pricing_currency_list_unit_price,
+        )?;
+        let pricing_currency_contracted_unit = parse_decimal_opt(
+            "pricing_currency_contracted_unit_price",
+            &pricing_currency_contracted_unit_price,
+        )?;
+        let consumed = parse_decimal("x_consumed_tokens", &x_consumed_tokens)?;
+        // `UnpricedUsage::token_count` is a u64; the persisted token count is a whole
+        // decimal. Convert exactly (no fractional tokens) and fail closed otherwise.
+        let token_count = decimal_to_u64("x_consumed_tokens", &consumed)?;
+
+        let input = UnpricedUsage {
+            lane,
+            timestamp,
+            tool: x_tool,
+            model: x_model,
+            token_type,
+            token_count,
+            project: x_project,
+            access_path,
+            service_name,
+            service_provider_name,
+            host_provider_name,
+            invoice_issuer_name,
+            billing_currency,
+        };
+
+        let mut record = FocusRecord::unpriced_usage(input)?;
+        // Apply the stored overrides so a source-priced row reconstructs faithfully —
+        // `unpriced_usage` defaults cost=0 / x_estimated=true / x_pricing_status="missing_price".
+        record.billed_cost = billed;
+        record.effective_cost = effective;
+        // The remaining priced cost columns: `cloud_usage_to_focus`/`apply_pricing` stamp
+        // these on a priced row; restore them verbatim so a real priced row no longer
+        // reverts to the unpriced 0 (the fidelity bug this fix closes).
+        record.list_cost = list;
+        record.contracted_cost = contracted;
+        record.pricing_currency_effective_cost = pricing_currency_effective;
+        // The catalog-priced quantity/unit-price columns (nullable): None on an unpriced
+        // row, Some on a priced one. Restore verbatim.
+        record.consumed_quantity = consumed_qty;
+        record.pricing_quantity = pricing_qty;
+        record.list_unit_price = list_unit;
+        record.contracted_unit_price = contracted_unit;
+        record.pricing_currency_list_unit_price = pricing_currency_list_unit;
+        record.pricing_currency_contracted_unit_price = pricing_currency_contracted_unit;
+        record.x_estimated = x_estimated != 0;
+        record.x_pricing_status = x_pricing_status;
+        // x_consumed_tokens is re-derived as Decimal::from(token_count); apply the stored
+        // decimal verbatim so scale/representation match exactly.
+        record.x_consumed_tokens = consumed;
+        // SKU / pricing identifiers are persisted (nullable); apply them verbatim rather
+        // than keeping the unpriced-default derivation, so a priced row's SKU + pricing
+        // category/unit round-trip.
+        record.sku_id = sku_id;
+        record.sku_price_id = sku_price_id;
+        record.sku_meter = sku_meter;
+        record.pricing_category = pricing_category;
+        record.pricing_unit = pricing_unit;
+
+        Ok(record)
+    }
+
     /// The `x_lane` value of every persisted row, in insertion order — a minimal
     /// read-back proving the whitelisted metadata round-trips. (Full `FocusRecord`
-    /// reconstruction + aggregate + export is a later milestone.)
+    /// reconstruction is [`all_focus_rows`].)
     pub fn stored_lanes(&self) -> Result<Vec<String>, StoreError> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT x_lane FROM {USAGE_ROWS_TABLE} ORDER BY id"
@@ -283,14 +536,55 @@ impl Store {
     }
 }
 
+/// Parse a persisted decimal-string column back into a [`Decimal`] (exact, never via
+/// `f64`), mapping a malformed value to a typed [`StoreError::Reconstruct`].
+fn parse_decimal(column: &str, value: &str) -> Result<Decimal, StoreError> {
+    Decimal::from_str(value)
+        .map_err(|err| StoreError::Reconstruct(format!("unparseable {column} `{value}`: {err}")))
+}
+
+/// Parse a persisted *nullable* decimal-string column: SQL `NULL` → `None`, a present
+/// value through [`parse_decimal`] (exact, never via `f64`; malformed → typed
+/// [`StoreError::Reconstruct`]). Mirrors the FOCUS `Option<Decimal>` columns.
+fn parse_decimal_opt(column: &str, value: &Option<String>) -> Result<Option<Decimal>, StoreError> {
+    match value {
+        Some(text) => Ok(Some(parse_decimal(column, text)?)),
+        None => Ok(None),
+    }
+}
+
+/// Render a nullable [`Decimal`] column for persistence: `Some(d)` → its exact decimal
+/// string (never via `f64`), `None` → SQL `NULL`. The exact inverse of
+/// [`parse_decimal_opt`], so an `Option<Decimal>` column round-trips byte-identically.
+fn decimal_opt_to_string(value: &Option<Decimal>) -> Option<String> {
+    value.as_ref().map(Decimal::to_string)
+}
+
+/// Convert a persisted token-count decimal to the `u64` [`UnpricedUsage::token_count`]
+/// expects. Token counts are whole non-negative integers; a fractional or out-of-range
+/// value fails closed (it would be malformed stored data, never legitimate).
+fn decimal_to_u64(column: &str, value: &Decimal) -> Result<u64, StoreError> {
+    use rust_decimal::prelude::ToPrimitive;
+    if value.fract() != Decimal::ZERO {
+        return Err(StoreError::Reconstruct(format!(
+            "{column} `{value}` is not a whole token count"
+        )));
+    }
+    value.to_u64().ok_or_else(|| {
+        StoreError::Reconstruct(format!(
+            "{column} `{value}` is out of range for a token count"
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    // `super::*` already re-exports `DateTime`/`Utc`, the FOCUS enums + `UnpricedUsage` +
+    // `FocusRecord`, and `Decimal` (all now used by the reconstruction path), so the test
+    // module only adds the chrono builders + the billing-currency constant.
     use super::*;
-    use chrono::{LocalResult, TimeZone, Utc};
-    use costroid_focus::{
-        FocusAccessPath, LedgerLane, TokenType, UnpricedUsage, DEFAULT_BILLING_CURRENCY,
-    };
-    use rust_decimal::Decimal;
+    use chrono::{LocalResult, TimeZone};
+    use costroid_focus::DEFAULT_BILLING_CURRENCY;
 
     /// Substrings no `usage_rows` column name (or the DDL at large) may contain — every
     /// free-text-capable or content-bearing shape (R4). Checked case-insensitively.
@@ -482,5 +776,180 @@ mod tests {
             panic!("row_count should succeed");
         };
         assert_eq!(total, 3);
+    }
+
+    /// A **catalog-priced** row mirroring the dominant `apply_pricing` shape: a real,
+    /// priced charge (not an estimate) with EVERY now-persisted priced column set to a
+    /// non-default value — the full cost set (`list_cost`/`contracted_cost`/
+    /// `pricing_currency_effective_cost`), the catalog quantity/unit-price columns
+    /// (`consumed_quantity`/`pricing_quantity`/`list_unit_price`/`contracted_unit_price`/
+    /// the two `pricing_currency_*_unit_price`), and the `sku_price_id`/`pricing_category`/
+    /// `pricing_unit` identifiers. Built by hand (the store crate cannot depend on
+    /// `costroid-core`'s `apply_pricing`); the byte-identical-via-`export_focus_csv` proof
+    /// over a *real* `apply_pricing` row lives in `apps/cli/tests/store_replay.rs`. This is
+    /// the row whose faithful reconstruction the deciding test below turns on: it must NOT
+    /// collapse to the unpriced default `unpriced_usage` produces — which, before this fix,
+    /// silently reverted these columns to 0/None.
+    fn priced_cloud_record() -> FocusRecord {
+        let timestamp = match Utc.with_ymd_and_hms(2026, 2, 3, 9, 0, 0) {
+            LocalResult::Single(value) => value,
+            LocalResult::Ambiguous(_, _) | LocalResult::None => {
+                panic!("test timestamp should be valid")
+            }
+        };
+        let input = UnpricedUsage {
+            lane: LedgerLane::CloudApi,
+            timestamp,
+            tool: "anthropic-api".to_string(),
+            model: "claude-opus".to_string(),
+            token_type: TokenType::Output,
+            token_count: 4_096,
+            project: None,
+            access_path: FocusAccessPath::Api,
+            service_name: "Anthropic API".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            host_provider_name: "Anthropic".to_string(),
+            invoice_issuer_name: "Anthropic".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        };
+        let Ok(mut rec) = FocusRecord::unpriced_usage(input) else {
+            panic!("priced cloud record should build");
+        };
+        // Priced: a real cost, NOT an estimate. Set EVERY now-persisted priced column to a
+        // value distinct from the unpriced default (0 / None) so the round-trip is
+        // non-vacuous — a regression to the lossy behavior (these reverting to 0/None)
+        // fails the equality below.
+        let cost = Decimal::new(12_345, 4); // 1.2345
+        rec.billed_cost = cost;
+        rec.effective_cost = cost;
+        rec.list_cost = cost;
+        rec.contracted_cost = cost;
+        rec.pricing_currency_effective_cost = cost;
+        // Catalog quantity/unit-price columns — non-default (the unpriced default is None).
+        let quantity = Decimal::from(4_096);
+        let per_token = Decimal::new(15, 8); // 0.00000015 — a per-token unit price
+        rec.consumed_quantity = Some(quantity);
+        rec.pricing_quantity = Some(quantity);
+        rec.list_unit_price = Some(per_token);
+        rec.contracted_unit_price = Some(per_token);
+        rec.pricing_currency_list_unit_price = Some(per_token);
+        rec.pricing_currency_contracted_unit_price = Some(per_token);
+        // SKU + pricing identifiers — non-default (sku_price_id/pricing_category/pricing_unit
+        // are None on an unpriced row).
+        rec.sku_price_id = Some("claude-opus:output:standard".to_string());
+        rec.pricing_category = Some("Standard".to_string());
+        rec.pricing_unit = Some("tokens".to_string());
+        rec.x_estimated = false;
+        rec.x_pricing_status = "priced".to_string();
+        rec
+    }
+
+    /// R4-faithful round-trip (the deciding T11 test): ingest a Vec mixing a developer_tool
+    /// row AND a fully priced row (every now-persisted priced column set non-default),
+    /// replay via `all_focus_rows`, and assert the reconstructed rows EQUAL the originals
+    /// (full `==`). The M1 row types leave every *non-persisted* FOCUS column
+    /// `None`/derived-identical on both sides (both are built through `unpriced_usage`,
+    /// which re-derives `charge_description` identically), so the equality is exact, not a
+    /// persisted-subset compromise — and the persisted priced columns now round-trip
+    /// instead of reverting to 0/None.
+    #[test]
+    fn all_focus_rows_round_trips_records_faithfully_including_priced_cloud() {
+        let Ok(store) = Store::open_in_memory() else {
+            panic!("in-memory store should open");
+        };
+
+        let originals = vec![
+            record(LedgerLane::DeveloperTool, 1_234), // estimated dev-tool row, "12.34"
+            priced_cloud_record(),                    // source-priced cloud_api row
+        ];
+
+        let Ok(count) = store.ingest(&originals) else {
+            panic!("ingest should succeed");
+        };
+        assert_eq!(count, 2);
+
+        let Ok(reconstructed) = store.all_focus_rows() else {
+            panic!("all_focus_rows should succeed");
+        };
+
+        // Full structural equality — replay reconstructs the records exactly.
+        assert_eq!(reconstructed, originals);
+
+        // Non-vacuous: the priced row kept its real cost, "priced" status, not-estimated
+        // flag, and cloud_api lane after the round-trip (it did NOT collapse to the
+        // unpriced default).
+        let cloud = &reconstructed[1];
+        assert_eq!(cloud.x_lane, "cloud_api");
+        assert_eq!(cloud.x_pricing_status, "priced");
+        assert!(!cloud.x_estimated);
+        assert_eq!(cloud.billed_cost, Decimal::new(12_345, 4));
+        assert_eq!(cloud.effective_cost, Decimal::new(12_345, 4));
+        assert_eq!(cloud.x_access_path, "api");
+        assert_eq!(cloud.x_token_type, "output");
+        assert_eq!(cloud.x_consumed_tokens, Decimal::from(4_096));
+
+        // The deciding assertions: every now-persisted priced column survived the
+        // round-trip at its non-default value. Before this fix these reverted to the
+        // unpriced default (0 / None) — so each of these would have failed.
+        assert_eq!(cloud.list_cost, Decimal::new(12_345, 4));
+        assert_eq!(cloud.contracted_cost, Decimal::new(12_345, 4));
+        assert_eq!(
+            cloud.pricing_currency_effective_cost,
+            Decimal::new(12_345, 4)
+        );
+        let quantity = Decimal::from(4_096);
+        let per_token = Decimal::new(15, 8);
+        assert_eq!(cloud.consumed_quantity, Some(quantity));
+        assert_eq!(cloud.pricing_quantity, Some(quantity));
+        assert_eq!(cloud.list_unit_price, Some(per_token));
+        assert_eq!(cloud.contracted_unit_price, Some(per_token));
+        assert_eq!(cloud.pricing_currency_list_unit_price, Some(per_token));
+        assert_eq!(
+            cloud.pricing_currency_contracted_unit_price,
+            Some(per_token)
+        );
+        assert_eq!(
+            cloud.sku_price_id,
+            Some("claude-opus:output:standard".to_string())
+        );
+        assert_eq!(cloud.pricing_category, Some("Standard".to_string()));
+        assert_eq!(cloud.pricing_unit, Some("tokens".to_string()));
+        // Guard the unpriced (dev-tool) row's null columns survived as null too — the
+        // restore must not fabricate Some on a row where apply_pricing never ran.
+        let dev = &reconstructed[0];
+        assert_eq!(dev.pricing_quantity, None);
+        assert_eq!(dev.sku_price_id, None);
+        assert_eq!(dev.pricing_unit, None);
+        assert_eq!(dev.list_cost, Decimal::ZERO);
+    }
+
+    /// A malformed stored enum (an `x_lane` with no `from_focus_str` inverse) yields a
+    /// typed `StoreError::Reconstruct` on replay — never a panic or a silent default.
+    #[test]
+    fn all_focus_rows_fails_closed_on_a_malformed_stored_enum() {
+        let Ok(store) = Store::open_in_memory() else {
+            panic!("in-memory store should open");
+        };
+        let Ok(_) = store.ingest(&[record(LedgerLane::DeveloperTool, 100)]) else {
+            panic!("ingest should succeed");
+        };
+        // Corrupt the persisted enum directly (bypassing the typed ingest path) to simulate
+        // a malformed/garbage stored value a future migration or external write might leave.
+        let Ok(_) = store.conn.execute(
+            &format!("UPDATE {USAGE_ROWS_TABLE} SET x_lane = 'not_a_lane'"),
+            [],
+        ) else {
+            panic!("update should succeed");
+        };
+
+        match store.all_focus_rows() {
+            Err(StoreError::Reconstruct(msg)) => {
+                assert!(
+                    msg.contains("x_lane"),
+                    "error should name the bad column: {msg}"
+                );
+            }
+            other => panic!("expected a Reconstruct error, got {other:?}"),
+        }
     }
 }

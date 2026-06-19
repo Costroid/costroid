@@ -386,6 +386,30 @@ if [ "$iso_mode" != strace ]; then
 fi
 
 # ============================================================================
+# Feature-on store — the local-SQLite store build's runtime no-network proof (T12)
+# ============================================================================
+# The store (`costroid-store`, behind the CLI's off-by-default `store` feature) links
+# `rusqlite` + the bundled SQLite C amalgamation — an EMBEDDED, in-process database engine.
+# SQLite is local: it links no network/TLS/telemetry/async-runtime crate (the per-binary
+# static STORE_ALLOWED allowlist in apps/cli/tests/offline.rs is the authoritative proof of
+# that). This is its behavioral counterpart: building `--features store` in and running a
+# normal command (the default `now` screen, `--plain`) under the SAME isolation must make NO
+# network call — exactly the connect baseline's "linking the HTTP client ≠ a call", here
+# "linking rusqlite ≠ network". (`now` is the default subcommand, run as `costroid --plain`,
+# mirroring the "now (--plain)" check above.)
+echo "==> Building costroid --features store (rusqlite + bundled SQLite linked — zero network expected)"
+cargo build -q -p costroid --features store
+store_bin="$repo_root/target/debug/costroid"
+
+printf '  %-52s' "store build: normal run leaks no network"
+rc=0; iso_run "$store_bin" --plain || rc=$?
+if [ "$rc" -eq 90 ]; then echo "NETWORK VIOLATION"; fail=1
+elif [ "$rc" -ne 0 ]; then echo "FAIL (exit $rc)"; fail=1
+elif [ "${#OUT}" -lt 10 ] || ! grep -qiF "costroid now" <<<"$OUT"; then
+  echo "FAIL (unexpected now output: ${OUT:0:80})"; fail=1
+else echo "ok (rusqlite linked, no network)"; fi
+
+# ============================================================================
 # costroid-bar — the taskbar binary's runtime no-network proof (T21)
 # ============================================================================
 # The egui taskbar is a pure core consumer (no new data path/network/telemetry). Its

@@ -26,15 +26,16 @@ publish = false
 costroid-focus.workspace = true
 # The local SQLite store — bundled C amalgamation, MSRV-1.88 clean, all-permissive deps.
 # NOT reachable from the default CLI/bar/server graph (behind the off-by-default `store`
-# feature). DuckDB was rejected at M0; SQLite is locked. NO costroid-core dep yet —
-# replay/aggregate is T11.
+# feature). DuckDB was rejected at M0; SQLite is locked. NO costroid-core dep — the
+# replay-aggregate + export round-trip is driven by the caller (apps/cli), so the store
+# stays a costroid-focus(+chrono+rust_decimal) leaf and core never depends on it.
 rusqlite.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-# Test-only: building synthetic FocusRecords (timestamps) and asserting decimal-string
-# cost round-trips. Not in the runtime graph — the store itself names no Decimal/chrono
-# type (it reads them off the record and persists their string form).
+# T11 replay: reconstructing a `FocusRecord` from the persisted columns parses the RFC 3339
+# timestamp back to a `DateTime<Utc>` (chrono) and the decimal-string costs/token counts back
+# to `rust_decimal::Decimal` (exact decimal, never a float). Both are permissive (Apache-2.0/
+# MIT) and now in the runtime graph for the reconstruction path — still behind the CLI's
+# off-by-default `store` feature, so never in the default CLI/bar/server graph.
 chrono.workspace = true
 rust_decimal.workspace = true
 
