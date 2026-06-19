@@ -144,6 +144,13 @@ impl LocalCostEstimate {
 /// lane (excluding any lane would under-count real usage and blind a subscription-only user).
 fn api_lane_rows(rows: &[FocusRecord]) -> impl Iterator<Item = &FocusRecord> {
     rows.iter()
+        // §170 dev-tool gate (T6): the developer-tool $ axis (`x_Lane == developer_tool`) BEFORE
+        // the access-path $-lane filter. A `cloud_api`-lane row can carry `access_path = Api`, so
+        // without this it would be folded into the dev-tool API total this filter feeds — both the
+        // shared Forecast/Anomalies daily-$ series (`api_lane_daily_usd_series`) AND the reconcile
+        // estimate side (`LocalCostEstimate::from_focus_records`), which compares the LOCAL
+        // dev-tool estimate against the vendor invoice. No-op at v0.6.0 (every row is dev-tool).
+        .filter(|row| crate::is_developer_tool_lane(row))
         .filter(|row| CostLane::from_access_path(&row.x_access_path) == CostLane::Api)
 }
 

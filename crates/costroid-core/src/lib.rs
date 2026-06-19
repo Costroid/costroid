@@ -444,6 +444,11 @@ pub fn trends_summary(snapshot: &EngineSnapshot, options: TrendsOptions) -> Tren
     let mut buckets = BTreeMap::<(PeriodRange, CostLane, GroupKey), AggregateTotals>::new();
 
     for row in &snapshot.focus_rows {
+        // §170 dev-tool gate: only developer_tool rows feed the trends $ buckets (and thus the
+        // CLI's `plain_api_bucket_values` sparkline, which re-sums these buckets by CostLane::Api).
+        if !is_developer_tool_lane(row) {
+            continue;
+        }
         let range = period_range_for(options.period, row.charge_period_start);
         let lane = CostLane::from_access_path(&row.x_access_path);
         let group = group_key(row, options.group_by);
@@ -500,6 +505,10 @@ pub fn models_view(snapshot: &EngineSnapshot) -> Result<ModelsView, CoreError> {
     // as bench_view does, so the two views stay row-for-row identical.
     let mut by_key: BTreeMap<String, AggregateTotals> = BTreeMap::new();
     for row in &snapshot.focus_rows {
+        // §170 dev-tool gate: the Models tab's per-model spend is developer-tool-only.
+        if !is_developer_tool_lane(row) {
+            continue;
+        }
         if CostLane::from_access_path(&row.x_access_path) != CostLane::Api {
             continue;
         }
@@ -573,6 +582,11 @@ pub fn budget_view(snapshot: &EngineSnapshot, targets: &BudgetTargets) -> Budget
     let mut tools_with_unknown: BTreeSet<String> = BTreeSet::new();
 
     for row in &snapshot.focus_rows {
+        // §170 dev-tool gate: the Budget tab compares a $ target against developer-tool API spend
+        // only — a cloud_api/local_inference row is on its own lane, never this monthly $ figure.
+        if !is_developer_tool_lane(row) {
+            continue;
+        }
         match CostLane::from_access_path(&row.x_access_path) {
             CostLane::Api => {
                 tools_with_api.insert(row.x_tool.clone());
@@ -1845,12 +1859,56 @@ fn vendor_name(provider: ProviderId) -> &'static str {
     }
 }
 
+/// True iff this row belongs to the developer-tool ledger lane — the ONLY lane that feeds the
+/// developer-tool dollar totals. cloud_api / local_inference rows are summed on their own lane
+/// totals, never into the dev-tool total (the "lanes never summed across" invariant).
+///
+/// This is the `x_Lane` ledger axis ([`LedgerLane`]), which is DISTINCT from the `x_AccessPath`-derived
+/// [`CostLane`] axis the dev-tool summers group by: a `cloud_api`-lane row can still carry
+/// `access_path = Api` → `CostLane::Api`, so without this guard it would be folded into the
+/// developer-tool API total. Every dev-tool $-summer gates on this BEFORE its `CostLane` filter.
+/// At v0.6.0 every row is `developer_tool`, so the gate is a no-op (all rows pass); it is the typed
+/// enforcement that prevents future cross-lane pollution once import (T14) / local inference (M3)
+/// rows arrive.
+///
+/// Public so app-side dev-tool $-summers (e.g. the CLI History header, which `costroid-focus`
+/// does not reach as a runtime dep) gate on the SAME predicate — one source of truth, no
+/// duplicated `"developer_tool"` literal.
+pub fn is_developer_tool_lane(row: &FocusRecord) -> bool {
+    row.x_lane == LedgerLane::DeveloperTool.as_str()
+}
+
+/// Total `billed_cost` (estimate) for one ledger lane across the given rows — each lane summed
+/// independently so a cloud/local row never moves the developer-tool total. The companion of the
+/// dev-tool gate: lanes that are deliberately excluded from the dev-tool total each get their OWN
+/// summable total here, never folded into another lane (the "lanes never summed across" invariant).
+pub fn lane_total_usd(rows: &[FocusRecord], lane: LedgerLane) -> Decimal {
+    let lane = lane.as_str();
+    rows.iter()
+        .filter(|row| row.x_lane == lane)
+        .fold(Decimal::ZERO, |sum, row| sum + row.billed_cost)
+}
+
+/// Grand total `billed_cost` across ALL lanes (the sum of every lane's [`lane_total_usd`]). Because
+/// each row belongs to exactly one lane, this equals `lane_total_usd(DeveloperTool) +
+/// lane_total_usd(CloudApi) + lane_total_usd(LocalInference)` — the lanes partition the rows.
+pub fn grand_total_usd(rows: &[FocusRecord]) -> Decimal {
+    rows.iter()
+        .fold(Decimal::ZERO, |sum, row| sum + row.billed_cost)
+}
+
 fn summarize_rows<'a, I>(rows: I, group_by: GroupBy) -> Vec<CostLaneSummary>
 where
     I: IntoIterator<Item = &'a FocusRecord>,
 {
     let mut summaries = BTreeMap::<(CostLane, GroupKey), AggregateTotals>::new();
     for row in rows {
+        // §170 dev-tool gate: only developer_tool rows feed the dev-tool dollar totals
+        // (current_costs/totals → now/trends $, now_api_spend_display, now_model_spend_breakdown).
+        // cloud_api/local_inference rows are summed on their own lane totals, never here.
+        if !is_developer_tool_lane(row) {
+            continue;
+        }
         let lane = CostLane::from_access_path(&row.x_access_path);
         let group = group_key(row, group_by);
         summaries.entry((lane, group)).or_default().add_row(row);
@@ -1974,6 +2032,11 @@ fn window_estimated_usd(
     let mut sum = Decimal::ZERO;
     let mut any = false;
     for row in rows {
+        // §170 dev-tool gate: the per-window estimated $ (a developer-tool quota-window figure)
+        // sums developer_tool rows only — a cloud_api/local_inference row never feeds it.
+        if !is_developer_tool_lane(row) {
+            continue;
+        }
         if row_in_trailing_window(row, &tool, kind, now) {
             if row.x_pricing_status != PRICING_STATUS_PRICED {
                 return None;
@@ -3190,6 +3253,203 @@ mod tests {
             now_api_spend_display(&now_summary_with_costs(Vec::new())),
             "~$0.00"
         );
+    }
+
+    // ----- T6: the LedgerLane dev-tool gate + per-lane totals (the "lanes never summed
+    // across" invariant). These prove that a cloud_api / local_inference row never moves the
+    // developer-tool dollar total, and that each lane has its OWN summable total. At v0.6.0 every
+    // shipped row is developer_tool, so every gate is a no-op on real data; the synthetic
+    // mixed-lane fixtures below are what exercise the guard. -----
+
+    /// One FOCUS row on an arbitrary `lane` + `access_path`, with `billed_cost`/`effective_cost`
+    /// overwritten to `whole_dollars` (the summers read these). `charge_period_start` defaults to
+    /// `when` so the row falls inside whatever period the test scopes.
+    fn lane_record(
+        lane: LedgerLane,
+        access_path: FocusAccessPath,
+        when: DateTime<Utc>,
+        whole_dollars: i64,
+    ) -> FocusRecord {
+        let mut record = match FocusRecord::unpriced_usage(UnpricedUsage {
+            lane,
+            timestamp: when,
+            tool: "codex".to_string(),
+            model: "gpt-5.5".to_string(),
+            token_type: TokenType::Output,
+            token_count: 1_000,
+            project: Some("/work/project".to_string()),
+            access_path,
+            service_name: "Codex".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            host_provider_name: "OpenAI".to_string(),
+            invoice_issuer_name: "OpenAI".to_string(),
+            billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        }) {
+            Ok(record) => record,
+            Err(err) => panic!("lane record should build: {err}"),
+        };
+        let cost = Decimal::from(whole_dollars);
+        record.billed_cost = cost;
+        record.effective_cost = cost;
+        // A priced status so the per-window estimated-$ summer (window_estimated_usd) does not
+        // short-circuit to None on these synthetic rows.
+        record.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+        record
+    }
+
+    /// The canonical T6 mixed-lane fixture: exactly one developer_tool + Api row ($5), one
+    /// cloud_api row ($7), and one local_inference row ($11). All three share an access_path of
+    /// `Api`, so the ONLY thing separating the cloud/local rows from the dev-tool total is the
+    /// `x_Lane` gate under test (an `access_path`-only filter would wrongly fold in all $23).
+    fn mixed_lane_rows(when: DateTime<Utc>) -> Vec<FocusRecord> {
+        vec![
+            lane_record(LedgerLane::DeveloperTool, FocusAccessPath::Api, when, 5),
+            lane_record(LedgerLane::CloudApi, FocusAccessPath::Api, when, 7),
+            lane_record(LedgerLane::LocalInference, FocusAccessPath::Api, when, 11),
+        ]
+    }
+
+    #[test]
+    fn dev_tool_total_excludes_cloud_and_local_lanes() {
+        // The mixed-lane guard: the developer-tool API total — via BOTH the now-summary path
+        // (now_api_spend_display over a real snapshot) AND lane_total_usd(DeveloperTool) — equals
+        // ONLY the $5 developer_tool row. The $7 cloud + $11 local rows do NOT move it, even though
+        // all three carry access_path = Api (so a CostLane-only summer would have summed $23).
+        let when = utc_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = mixed_lane_rows(when);
+        let snapshot = snapshot_with_rows(when, rows.clone(), Vec::new());
+
+        let summary = now_summary(&snapshot, NowOptions::default());
+        // The developer-tool API total surfaced to the CLI/taskbar is $5 only — not $12, not $23.
+        assert_eq!(now_api_spend_display(&summary), "~$5.00");
+        // current_costs holds ONE Api-lane row (the cloud/local rows were gated out before the
+        // CostLane grouping), and its billed_cost is the developer_tool $5.
+        let api_rows: Vec<&CostLaneSummary> = summary
+            .current_costs
+            .iter()
+            .filter(|row| row.lane == CostLane::Api)
+            .collect();
+        assert_eq!(
+            api_rows.len(),
+            1,
+            "only the dev-tool Api row survives the gate"
+        );
+        assert_eq!(api_rows[0].totals.billed_cost, Decimal::from(5));
+
+        // The typed per-lane helper agrees: the dev-tool lane total is exactly $5.
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::DeveloperTool),
+            Decimal::from(5)
+        );
+    }
+
+    #[test]
+    fn per_lane_totals_are_independent() {
+        // Per-lane independence: each lane sums only its own rows. Adding cloud/local dollars never
+        // changes another lane's total.
+        let when = utc_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = mixed_lane_rows(when);
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::DeveloperTool),
+            Decimal::from(5)
+        );
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::CloudApi),
+            Decimal::from(7)
+        );
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::LocalInference),
+            Decimal::from(11)
+        );
+    }
+
+    #[test]
+    fn grand_total_is_the_sum_of_disjoint_lanes() {
+        // Grand-total invariant: the grand total is $23, equals the sum of the three lane totals,
+        // and (because other lanes are non-zero) is strictly greater than the dev-tool lane alone —
+        // i.e. the lanes are DISJOINT and partition the rows, never each equal to the grand total.
+        let when = utc_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = mixed_lane_rows(when);
+
+        assert_eq!(grand_total_usd(&rows), Decimal::from(23));
+        assert_eq!(
+            grand_total_usd(&rows),
+            lane_total_usd(&rows, LedgerLane::DeveloperTool)
+                + lane_total_usd(&rows, LedgerLane::CloudApi)
+                + lane_total_usd(&rows, LedgerLane::LocalInference),
+            "lanes sum to the grand total"
+        );
+        assert_ne!(
+            lane_total_usd(&rows, LedgerLane::DeveloperTool),
+            grand_total_usd(&rows),
+            "a single lane is NOT the grand total when other lanes are non-zero"
+        );
+    }
+
+    #[test]
+    fn dev_tool_only_data_is_unchanged_by_the_gate() {
+        // v0.6.0 no-regression: on all-developer_tool data the gate is a no-op — the dev-tool API
+        // total equals the grand total (no other lane exists to subtract), so existing behavior is
+        // byte-for-byte preserved.
+        let when = utc_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = vec![
+            lane_record(LedgerLane::DeveloperTool, FocusAccessPath::Api, when, 5),
+            lane_record(LedgerLane::DeveloperTool, FocusAccessPath::Api, when, 7),
+        ];
+        let snapshot = snapshot_with_rows(when, rows.clone(), Vec::new());
+        let summary = now_summary(&snapshot, NowOptions::default());
+        assert_eq!(now_api_spend_display(&summary), "~$12.00");
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::DeveloperTool),
+            Decimal::from(12)
+        );
+        assert_eq!(
+            grand_total_usd(&rows),
+            lane_total_usd(&rows, LedgerLane::DeveloperTool)
+        );
+    }
+
+    #[test]
+    fn budget_view_dev_tool_spend_excludes_cloud_and_local_lanes() {
+        // The Budget tab's monthly API spend is developer-tool-only: against the mixed-lane fixture
+        // (codex tool, all access_path = Api), the figure for `codex` is $5 — the cloud $7 + local
+        // $11 are on their own lanes and never inflate the budget figure.
+        let when = utc_datetime(2026, 6, 16, 12, 0, 0);
+        let rows = mixed_lane_rows(when);
+        let snapshot = snapshot_with_rows(when, rows, Vec::new());
+        let view = budget_view(
+            &snapshot,
+            &budget_targets(Some(10_000), &[("codex", 10_000)]),
+        );
+
+        let codex = view
+            .rows
+            .iter()
+            .find(|row| matches!(&row.scope, BudgetScope::Tool(t) if t == "codex"));
+        let codex = match codex {
+            Some(row) => row,
+            None => panic!("codex budget row should exist: {:?}", view.rows),
+        };
+        assert_eq!(codex.spent_usd, Decimal::from(5), "dev-tool spend only");
+        // The grand $/total row also sees only the dev-tool $5, not $23.
+        let total = view
+            .rows
+            .iter()
+            .find(|row| matches!(row.scope, BudgetScope::Total));
+        if let Some(total) = total {
+            assert_eq!(total.spent_usd, Decimal::from(5), "total is dev-tool only");
+        }
+    }
+
+    #[test]
+    fn window_estimated_usd_excludes_cloud_and_local_lanes() {
+        // The per-window estimated-$ (a developer-tool quota-window figure) sums developer_tool rows
+        // only. All three mixed-lane rows fall inside Codex's 5-hour window and are priced, so an
+        // ungated summer would report $23; the gated summer reports $5.
+        let now = utc_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = mixed_lane_rows(now);
+        let estimated = window_estimated_usd(&rows, ProviderId::Codex, LimitKind::FiveHour, now);
+        assert_eq!(estimated, Some(Decimal::from(5)), "dev-tool window $ only");
     }
 
     #[test]

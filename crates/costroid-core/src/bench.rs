@@ -288,6 +288,12 @@ pub fn bench_view(snapshot: &EngineSnapshot) -> Result<BenchView, CoreError> {
     // now/trends summaries use so "your spend" reconciles exactly and can't drift.
     let mut accum: BTreeMap<String, OverlayAccum> = BTreeMap::new();
     for row in &snapshot.focus_rows {
+        // §170 dev-tool gate: the frontier "your spend" overlay is developer-tool-only, so a
+        // cloud_api/local_inference row never moves `entry.billed_cost` (it stays row-for-row
+        // identical to models_view, which gates the same way). No-op at v0.6.0.
+        if !crate::is_developer_tool_lane(row) {
+            continue;
+        }
         if CostLane::from_access_path(&row.x_access_path) != CostLane::Api {
             continue;
         }
