@@ -1225,7 +1225,8 @@ mod tests {
     use chrono::{LocalResult, TimeZone};
     use costroid_core::{CostLane, ProviderCapabilityView, ProviderStatus, ProviderStatusKind};
     use costroid_focus::{
-        FocusAccessPath, FocusRecord, TokenType, UnpricedUsage, DEFAULT_BILLING_CURRENCY,
+        FocusAccessPath, FocusRecord, LedgerLane, TokenType, UnpricedUsage,
+        DEFAULT_BILLING_CURRENCY,
     };
     use costroid_providers::{
         AuthMethod, DataSource, LimitKind, LimitMeasure, LimitStatus, LimitWindow, ProviderId,
@@ -1259,6 +1260,7 @@ mod tests {
     fn sample_record(model: &str, cents: i64, project: &str) -> FocusRecord {
         let timestamp = utc(2026, 6, 2, 9, 0);
         let input = UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp,
             tool: "codex".to_string(),
             model: model.to_string(),
@@ -1825,6 +1827,7 @@ mod tests {
     /// raw token count (→ `x_ConsumedTokens`), and an (overwritten) billed cost.
     fn dated_record(model: &str, when: DateTime<Utc>, tokens: u64, cents: i64) -> FocusRecord {
         let input = UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: when,
             tool: "codex".to_string(),
             model: model.to_string(),

@@ -510,7 +510,7 @@ mod tests {
     use super::*;
     use crate::vendor_report::CostLineItem;
     use chrono::{DateTime, TimeZone, Utc};
-    use costroid_focus::{FocusAccessPath, TokenType, UnpricedUsage};
+    use costroid_focus::{FocusAccessPath, LedgerLane, TokenType, UnpricedUsage};
 
     // ---- helpers -------------------------------------------------------------
 
@@ -555,6 +555,7 @@ mod tests {
     /// A priced API-lane FOCUS row for the local-estimate side, at a given UTC instant.
     fn api_row(at: DateTime<Utc>, model: &str, billed: &str) -> FocusRecord {
         let mut row = ok(FocusRecord::unpriced_usage(UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: at,
             tool: "claude-code".to_string(),
             model: model.to_string(),

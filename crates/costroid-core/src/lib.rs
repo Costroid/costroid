@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Utc};
 use costroid_focus::{
-    to_csv_string, to_json_string, FocusAccessPath, FocusError, TokenType, UnpricedUsage,
-    DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD, PRICING_STATUS_MISSING_PRICE,
-    PRICING_UNIT_TOKENS,
+    to_csv_string, to_json_string, FocusAccessPath, FocusError, LedgerLane, TokenType,
+    UnpricedUsage, DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD,
+    PRICING_STATUS_MISSING_PRICE, PRICING_UNIT_TOKENS,
 };
 // Re-export FOCUS's record type from the engine crate: the apps depend on `core`, not on
 // `costroid-focus` directly (the dependency arc is `apps → core → {providers, focus}`), so
@@ -1421,6 +1421,7 @@ fn push_meter_records(
             continue;
         }
         let mut row = FocusRecord::unpriced_usage(UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: event.timestamp,
             tool: event.tool.to_string(),
             model: event.model.clone(),
@@ -2973,6 +2974,7 @@ mod tests {
         token_count: u64,
     ) -> FocusRecord {
         match FocusRecord::unpriced_usage(UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp,
             tool: "codex".to_string(),
             model: model.to_string(),
@@ -3166,6 +3168,7 @@ mod tests {
         cents: i64,
     ) -> FocusRecord {
         let mut record = match FocusRecord::unpriced_usage(UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: when,
             tool: tool.to_string(),
             model: "gpt-5.5".to_string(),
@@ -4426,6 +4429,7 @@ mod tests {
         access_path: FocusAccessPath,
     ) -> FocusRecord {
         let mut record = match FocusRecord::unpriced_usage(UnpricedUsage {
+            lane: LedgerLane::DeveloperTool,
             timestamp: when,
             tool: "codex".to_string(),
             model: model.to_string(),
