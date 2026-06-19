@@ -6,8 +6,10 @@
 > a **local web UI** on top of the shipped v0.6.0 tool. This file is the resume-point (§2.5): a new
 > session reads `CLAUDE.md` → this file → the last handoff note, then runs the gate to confirm state.
 >
-> **Current milestone: M0 (audit + plan + scaffolding) — COMPLETE, awaiting human checkpoint.**
-> Do not start M1 until the human approves at the M0 checkpoint (§2.4).
+> **Current milestone: M1 (core model + storage + FOCUS export + collectors) — COMPLETE on
+> branch `costroid-next`, awaiting the human's full fresh-eyes milestone-boundary review
+> before merge to main.** M0 was approved + committed; M1 executed end-to-end (T0–T19 + C1)
+> on the per-task dev-loop. Do not merge to main until the human signs off at the boundary.
 
 ---
 
@@ -266,9 +268,10 @@ starting **M1**.
 
 - [x] **M0** — audit; decisions A locked; spikes B recorded (DuckDB→SQLite); scaffold green; plan +
   human inputs written; offline allowlist + loopback proof in place. *(Awaiting human checkpoint.)*
-- [ ] **M1** — three-lane event model + SQLite store + v1.2-in/v1.3-out FOCUS export (validated) +
-  golden collectors. Detailed plan: [`docs/M1-PLAN.md`](docs/M1-PLAN.md) (T0–T19); awaiting export-schema
-  sign-off (T2/T3/T19); Parquet deferred (T1 spike clean but heavy); real-AWS leg C1-gated (T18).
+- [x] **M1** — three-lane event model + SQLite store + v1.2-in/v1.3-out FOCUS export (validated) +
+  golden collectors. **DONE on `costroid-next` (T0–T19 + C1); awaiting the human's milestone-boundary
+  review before merge.** Lean export schema (T2/T3) + `import` CLI (T19) signed off; Parquet deferred
+  (T1 spike clean but heavy); C1 resolved synthetically (real-AWS leg present-but-SKIP, T18).
 - [ ] **M2** — LiteLLM snapshot pricing; AWS-FOCUS import; Bedrock AIP path; merged ledger.
 - [ ] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
@@ -280,6 +283,46 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-19 (f) — M1 COMPLETE (T0–T19 + C1); ⛔ STOP at the milestone boundary for the
+  human's full fresh-eyes review before merge.** Branch `costroid-next`, the FOCUS-import
+  half landed on the per-task dev-loop (build → independent adversarial review → fix →
+  commit). Six commits since the store half:
+  - `db36bfd` **C1 (resolved, no external dep)** — synthetic `fixtures/focus/v1.2/` (marked +
+    unmarked CSV, JSON, AWS-shaped sample with x_ServiceCode/x_UsageType extras; R4 README) +
+    vendored `scripts/focus-ruleset-1.2/model-1.2.0.1.json` (official v1.2 release asset,
+    CC-BY-4.0, sha256 639b302a…).
+  - `24ba887` **T13+T14** — `costroid-providers::focus_import` (FocusInputVersion/detect_version/
+    RawFocusRow metadata-only/FocusV12Mapping/import_focus_{csv,json}; unknown columns dropped by
+    serde, non-USD refused) + core `focus_records_from_v12_import` (reuses `cloud_usage_to_focus`,
+    source-priced kept verbatim / usage-only repriced) + `x_FocusInputVersion` column persisted in
+    the store (schema v3). **Independently reviewed: APPROVE-WITH-FIXES → fix folded in.**
+  - `3ff574f` **T15** — sidechain attribution: `UsageEvent.is_sidechain` (Claude reads
+    `isSidechain`, Codex always false) + `x_Sidechain`/`x_AttributionConfidence`/`x_CollectorVersion`
+    columns (kept-counting + annotated-uncertain), persisted in the store (schema v4); golden test
+    `claude_sidechain_golden.rs`; `docs/limitations.md`. **Independently reviewed: APPROVE.**
+  - `153e6f2` **T16** — R4 no-`..` field-exhaustive destructure of `FocusRecord` (focus) + a
+    persist-or-drop forcing function over `FocusRecord` (store): a new field is a COMPILE error
+    until classified — proves content *cannot* enter the export/store, not just that it doesn't.
+  - `17cc3b4` **T19** — public `costroid import` CLI (human-approved); integration test asserts the
+    binary is byte-identical to the library path; no new offline-gate dep edge; README updated.
+  - `6d0dff9` **T17+T18** — `focus_conformance.sh` deciding test: CSV leg (exact, pin unchanged) +
+    JSON-equivalence leg (locally verifiable) + synthetic v1.2-in→v1.3-out round-trip legs
+    (`--subset` contract) + real-AWS leg present-but-SKIP (`COSTROID_REAL_AWS_FOCUS`). CI job runs
+    the script → all legs ride it.
+  - **Local gate GREEN:** fmt; clippy (default + `--features store`); `test --workspace` (24 suites);
+    store-feature CLI tests; offline.rs (7 pass); cargo-deny (default + `--all-features`); MSRV 1.88
+    `-p costroid --features store`. **CI-only arbiters (run them in review):** `focus_conformance.sh`
+    validator legs (no validator locally — the v1.2 `--subset` legs assert no NEW failing rule; if a
+    new rule surfaces, it's a one-line fixture/allowlist adjust), cross-OS compile, strace
+    `offline_acceptance.sh`.
+  - **Human review focus (you flagged these):** (1) **T16 non-vacuity** — the no-`..` destructure is a
+    genuine compile-time forcing function (adding a field breaks the build) + asserts the free-text-
+    capable FOCUS columns are None / `charge_description` derived. (2) **T15 honesty** — sidechain rows
+    are counted *and* tagged `x_AttributionConfidence=uncertain` (golden proves 130 of 430 tokens kept);
+    `docs/limitations.md` records why. (3) **T17 real-schema** — validates the 1.3 OUTPUT against the
+    vendored `scripts/focus-ruleset/` ruleset in CI (the v1.2 input also validates via the bundled +
+    vendored 1.2.0.1 model). (4) **STORE_ALLOWED** carried the two new x_ column families with no
+    network/TLS crate (offline gate still 7-pass). **Do not merge to main until you sign off.**
 - **2026-06-19 (e) — M1 EVENT-MODEL + STORE HALF DONE (T2–T12 committed).** Branch `costroid-next`,
   16 commits. Each task: fresh-context build → independent review → green → commit. **Three real
   bugs caught by the per-task independent review + fixed before commit** (the dev-loop working):

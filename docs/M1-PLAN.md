@@ -6,7 +6,11 @@
 > Line numbers/symbols were verified against the tree at synthesis time; **re-verify before editing —
 > the code wins.** Tracked from [`../PROGRESS.md`](../PROGRESS.md).
 >
-> **Status: APPROVED FOR EXECUTION (human sign-off 2026-06-19).**
+> **Status: EXECUTED — M1 COMPLETE on branch `costroid-next` (T0–T19 + C1), 2026-06-19.**
+> Awaiting the human's full fresh-eyes milestone-boundary review before merge to main
+> (see the latest handoff in [`../PROGRESS.md`](../PROGRESS.md)). Original sign-off below.
+>
+> **Sign-off (2026-06-19).**
 > - **Export-schema scope = LEAN** (T2/T3): M1 adds ONLY the columns M1 populates — `x_Lane`,
 >   `x_Sidechain`, `x_AttributionConfidence`, `x_CollectorVersion`, `x_FocusInputVersion`. The 7
 >   local-inference columns (`x_MeasuredWh`/`x_AmortizedHwCost`/`x_AvgPowerWatts`/`x_MeasurementMode`/
