@@ -7,3 +7,6 @@
 
 # local Claude Code agent state (settings, locks) — never committed
 .claude/
+# Python bytecode (from dev-time py_compile of the conformance checkers)
+__pycache__/
+*.pyc
