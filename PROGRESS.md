@@ -280,6 +280,17 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-19 (c) — M1 EXECUTION started; T2 done.** Sign-offs locked (`b2c7f34`): lean column
+  set, import CLI approved, synthetic/C1-later, Parquet deferred. **T2 committed (`c1f955d`)** — the
+  `x_Lane` three-lane discriminator + `LedgerLane` enum, threaded through all 13 `UnpricedUsage` sites
+  (all `DeveloperTool`; v0.6.0 export preserved). Built fresh-context → independently adversarial-
+  reviewed (verdict: correct/complete/non-regressing) → committed. Gate green. **M1 task status:**
+  T0 ✅ (doc) · T1 ✅ (Parquet spike → deferred) · **T2 ✅ (x_Lane)** · T3 = no-op (lean) · next **T4**
+  (CanonicalEvent/CloudUsageEvent/LocalRunEvent in providers) → T5 (core normalizers) → **T6 (lane-
+  separation $-summer guard — highest blast radius)** → T7 (R14 serde tests) → T8 (public aggregate_rows)
+  → T9–T12 (store) → T13–T16 (FOCUS import + collectors) → T17 (deciding test) → T19 (import CLI). All
+  buildable now on synthetic fixtures; only T18 (real-AWS sample) is C1-gated. Each task: fresh-context
+  build → independent review → commit (dev-loop).
 - **2026-06-19 (b) — M0 approved + committed; M1 PLANNED, awaiting export-schema sign-off.** M0
   committed on branch `costroid-next` (`707abcf`) with the independent-review fixes folded in (loopback
   regex quote-anchored; cost.rs guards negative inputs; unused deps dropped). Ran the M0→M1 design
