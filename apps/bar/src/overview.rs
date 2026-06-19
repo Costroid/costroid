@@ -5,7 +5,8 @@
 //! `now_api_spend_display` (money stays `Decimal` in core; the bar only displays the
 //! hedged string), and each quota meter is a `MeterModel` over one `now_summary` window,
 //! honest across all five availability arms (`meter.rs`). The active-alerts banner and the
-//! four live panels are T20; this card is the meters + the spend header only.
+//! four live panels (Budget/Forecast/Anomalies/Providers) live in their own modules (added in
+//! T20); this Overview card is the meters + the spend header.
 
 use costroid_core::{NowSummary, ProviderStatusKind};
 

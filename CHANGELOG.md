@@ -37,7 +37,7 @@ against your provider invoice, which is the source of truth.
   **Ash-muted** section labels, captions and scope; **bold** dollar figures and model names. The
   amber/red near-/over-limit lane is unchanged and still always carries its `!`/`!!`/`OVER` text cue.
   It uses Costroid's own identity (cyan + lime), not a borrowed third-party hue.
-- **TUI gains a top tab strip and a contextual hint bar.** The eight numbered tabs render across the
+- **TUI gains a top tab strip and a contextual hint bar.** The nine numbered tabs render across the
   top with the active tab as a reverse-video lime chip (legible under `NO_COLOR` too); the footer is
   now a colorized, screen-aware keybinding hint row (keys in lime, labels muted), including the
   Trends `d/w/m/y period` / `g group` hints.
@@ -380,7 +380,9 @@ First public release — the local cost lane's foundation.
   (`cargo install costroid` / `cargo binstall costroid`), each artifact SHA-256-checksummed
   and build-provenance-attested.
 
-[Unreleased]: https://github.com/Costroid/costroid/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Costroid/costroid/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Costroid/costroid/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/Costroid/costroid/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Costroid/costroid/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Costroid/costroid/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Costroid/costroid/compare/v0.1.0...v0.2.0

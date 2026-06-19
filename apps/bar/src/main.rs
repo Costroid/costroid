@@ -3,8 +3,9 @@
 //! figure the engine already computes, from local data, no network, no telemetry.
 //!
 //! T18 stood up the running shell (tray + window + worker-thread refresh); T19 added the
-//! Overview meters; T20 adds the tab strip, the opt-in alert banner, and the four live panels
-//! (Budget/Forecast/Anomalies/Providers) over the shared `costroid-config` schema.
+//! Overview meters; T20 added the tab strip, the opt-in alert banner, and the four live panels
+//! (Budget/Forecast/Anomalies/Providers) over the shared `costroid-config` schema; T21 turned
+//! on AccessKit (default feature) and wired the v0.6.0 release. Shipped in v0.6.0.
 
 mod anomalies;
 mod app;

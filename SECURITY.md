@@ -4,11 +4,11 @@ Costroid is a local-first, secure-by-design tool, and we take security seriously
 
 ## Supported versions
 
-Costroid's current release line is **0.4.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
+Costroid's current release line is **0.6.x**. Only the **latest release line** receives security fixes; older lines will not be patched unless stated otherwise.
 
 | Version | Security fixes |
 | --- | --- |
-| Latest release line (0.4.x) | Yes |
+| Latest release line (0.6.x) | Yes |
 | Older releases | No (upgrade to the latest) |
 | Unreleased `main` | Best-effort |
 
@@ -36,8 +36,8 @@ If that button isn't available, or you'd rather use email, contact **costroid@pr
 
 **In scope:**
 
-- The `costroid` CLI and TUI.
-- The library crates: `costroid-core`, `costroid-focus`, `costroid-providers`, and the off-by-default `costroid-connect` (the network/credential boundary — feature-gated and off by default; it holds the OS-keychain credential store, a non-secret "what is linked" index, the generic authorized-host HTTPS client, and the Anthropic/OpenAI usage-API adapters. Under `--features connect`, an explicit `connect` / `connections --check` / `reconcile` action makes a read-only HTTPS GET to the authorized provider host; the default `costroid` binary links and calls none of it).
+- The `costroid` CLI and TUI, and the `costroid-bar` egui taskbar GUI (since v0.6.0).
+- The library crates: `costroid-core`, `costroid-focus`, `costroid-providers`, the shared read-only user-config crate `costroid-config` (the `[budget]`/`[alerts]` TOML schema; no network/keychain), and the off-by-default `costroid-connect` (the network/credential boundary — feature-gated and off by default; it holds the OS-keychain credential store, a non-secret "what is linked" index, the generic authorized-host HTTPS client, and the Anthropic/OpenAI usage-API adapters. Under `--features connect`, an explicit `connect` / `connections --check` / `reconcile` action makes a read-only HTTPS GET to the authorized provider host; the default `costroid` binary links and calls none of it).
 - Release artifacts and installers, including the **integrity of the bundled pricing data** and the release/signing pipeline.
 
 **Out of scope:**

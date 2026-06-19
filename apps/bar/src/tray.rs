@@ -13,7 +13,9 @@
 //!
 //! Everything degrades: if the tray can't be created (no SNI/AppIndicator on Linux, etc.)
 //! the app runs window-only rather than crashing (STEP6-TASKBAR-DESIGN §10/§11). The
-//! macOS/Windows path compiles here but is verified in T21 (the cross-platform card).
+//! macOS/Windows path compiles here but is **not yet field-verified** (no such hardware on
+//! the dev box; PRODUCT-PLAN §12.29) — the GUI ships as archives + `cargo install
+//! costroid-bar` until that matrix is confirmed.
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;

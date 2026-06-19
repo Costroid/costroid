@@ -48,7 +48,8 @@ const USAGE_REPORT_PATH: &str = "/v1/organizations/usage_report/messages";
 /// by the same Admin-API org-gate as `cost_report`, so a 200 predicts the cost fetch.
 const ME_PATH: &str = "/v1/organizations/me";
 /// Buckets per page. The usage report caps `1d` at 31; cost_report's per-page cap is
-/// undocumented (a Gate-2 live check) — 31 is a safe daily-month request that paginates.
+/// undocumented by Anthropic — 31 is a safe daily-month request that paginates, and the
+/// Gate-2b live confirm (2026-06-13) exercised it (see the pinned fixtures below).
 const PAGE_LIMIT: &str = "31";
 /// A hard ceiling on pages, so a misbehaving `has_more=true` server cannot loop forever.
 const MAX_PAGES: u32 = 1024;
@@ -272,8 +273,8 @@ impl AnthropicAdapter {
 }
 
 /// Reject a non-admin key from its prefix before any request is sent (the connect-time
-/// copy itself is T10's; this is the fail-fast guard). Only the prefix is inspected; the
-/// secret is never logged or stored.
+/// copy itself landed with the `connect` CLI in T10a; this is the fail-fast guard). Only
+/// the prefix is inspected; the secret is never logged or stored.
 fn wrong_key_class(key: &SecretString) -> Option<VendorReportUnavailable> {
     if key.expose_secret().starts_with(ADMIN_KEY_PREFIX) {
         None

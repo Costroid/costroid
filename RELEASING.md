@@ -2,7 +2,7 @@
 
 This is the runbook for cutting a Costroid release. The release **infrastructure** was
 configured and dry-run-verified for v0.1.0 (the release-infrastructure milestone, PR #1) and has
-cut every release since (latest tag: v0.4.0); the **actual** publish is a deliberate,
+cut every release since (latest tag: v0.6.0); the **actual** publish is a deliberate,
 human-triggered action and is intentionally not automated to run on a normal push.
 
 > **Nothing in this repo publishes by itself.** The release workflow

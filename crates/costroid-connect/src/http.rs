@@ -4,8 +4,9 @@
 //! This is a small, provider-agnostic, **blocking** client on `ureq` + `rustls`
 //! that can only ever talk to the **one** host it was constructed over. It has no
 //! provider knowledge — no endpoint, no parameter, no response shape (those are the
-//! T9b adapters') — and **nothing calls it** until the explicit, user-initiated
-//! `connect` action lands in T10.
+//! T9b adapters') — and it acts **only** on an explicit, user-initiated
+//! `connect` / `connections --check` / `reconcile` action (its first callers landed
+//! in T10a/T10c; the default build links none of it).
 //!
 //! The pinned posture (PRODUCT-PLAN §12.11 — do not weaken):
 //!
