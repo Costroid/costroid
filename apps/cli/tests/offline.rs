@@ -123,6 +123,12 @@ const CLI_CRATE: &str = "costroid";
 /// subtree ([`BAR_ACCESSKIT_ALLOWED`]) and nothing else network-shaped.
 const BAR_CRATE: &str = "costroid-bar";
 
+/// The local HTTP API + web-UI binary package (⚑ Readiness gate A1, §6.11). It admits the
+/// reviewed local-listen subtree ([`SERVER_ALLOWED`], in practice just `tiny_http` + its
+/// transitives) and nothing else network-shaped. It is NEVER linked into `costroid`/`costroid-bar`
+/// — the CLI/bar graphs are rooted elsewhere, so `tiny_http` cannot pollute them.
+const SERVER_CRATE: &str = "costroid-server";
+
 /// Every crate `--features connect` legitimately adds to the resolved graph over the
 /// default build (rooted at the SAME binary), unioned across all shipped targets
 /// (`costroid-connect` itself excluded — it is the gated home). This is an
@@ -316,6 +322,28 @@ const BAR_ACCESSKIT_ALLOWED: &[&str] = &[
     "zvariant_derive",
     "zvariant_utils",
 ];
+
+/// Every crate the local HTTP/web-UI binary (`costroid-server`) adds to its resolved graph over
+/// the default CLI build, unioned across all shipped targets (`costroid-server` itself excluded —
+/// it is the root). This is the reviewed **local-listen subtree**: `tiny_http` (the blocking,
+/// loopback-bound HTTP *server*) and its three pure-Rust transitives (`ascii`, `chunked_transfer`,
+/// `httpdate`).
+///
+/// `tiny_http` is in [`ALWAYS_FORBIDDEN_CRATES`] because the CLI/bar must carry no HTTP server;
+/// it is admitted **only here**, for the server binary, and it is an **inbound** local listener —
+/// NOT an outbound client. The server binds `127.0.0.1` only and makes no `connect()` egress; that
+/// behavior is proven at RUNTIME by the loopback-only check in `scripts/offline_acceptance.sh`
+/// (allow a loopback bind; forbid any non-loopback bind/connect), turning this static allowlist
+/// into a behavioral no-egress guarantee.
+///
+/// It is a **subset-allowlist**, exactly like [`CONNECT_ALLOWED`] / [`BAR_ACCESSKIT_ALLOWED`]: the
+/// server test asserts the real server-delta is a SUBSET of it, so a future dependency bump that
+/// pulls a NEW crate (an outbound HTTP/TLS/telemetry path, or a `tiny_http` feature that adds an
+/// SSL/socket crate) fails the gate until a human reviews it. Every genuine outbound
+/// network/TLS/telemetry crate is absent from this list. Regenerate after a deliberate dependency
+/// change with the `#[ignore]` `print_server_delta` test:
+/// `cargo test -p costroid --test offline print_server_delta -- --ignored --nocapture`.
+const SERVER_ALLOWED: &[&str] = &["ascii", "chunked_transfer", "httpdate", "tiny_http"];
 
 /// The target triples Costroid ships (mirrors `deny.toml` `[graph].targets`). The
 /// reachable graph is resolved once **per target** and unioned (see
@@ -675,6 +703,76 @@ fn bar_connect_build_forbids_network_except_the_reviewed_subtrees() {
 }
 
 // =====================================================================================
+// Server binary (`costroid-server`) — loopback-only local HTTP/web-UI; no OUTBOUND network
+// =====================================================================================
+
+/// The local HTTP/web-UI binary admits the reviewed local-listen subtree ([`SERVER_ALLOWED`] —
+/// `tiny_http` + transitives) and **no** outbound network/TLS/telemetry/async-runtime crate. It
+/// must not link `costroid-connect` (it is local-only — it reads the ledger via `costroid-core`,
+/// never the network). `tiny_http` is the lone [`ALWAYS_FORBIDDEN_CRATES`] member admitted, as an
+/// INBOUND loopback listener; its no-egress / loopback-only behavior is proven at runtime by
+/// `scripts/offline_acceptance.sh`. The real server-delta is asserted to be a SUBSET of the
+/// allowlist (fail-closed).
+#[test]
+fn server_build_admits_only_the_reviewed_local_listen_subtree() {
+    let names = reachable_crate_names(&[SERVER_CRATE], &[]);
+
+    assert!(
+        !names.contains(CONNECT_CRATE),
+        "the `{SERVER_CRATE}` build must not link `{CONNECT_CRATE}` — the local HTTP/web-UI \
+         server is local-only (it reads the ledger via `costroid-core`), so it links no \
+         network/keychain code."
+    );
+
+    // Every outbound network/TLS/telemetry/async-runtime crate is forbidden EXCEPT the reviewed
+    // local-listen subtree (in practice just `tiny_http` from this list). The connect trio
+    // (`ureq`/`rustls`/`keyring`) is forbidden too — the server makes no outbound call.
+    let hits = forbidden_hits(
+        &names,
+        ALWAYS_FORBIDDEN_CRATES
+            .iter()
+            .chain(CONNECT_GATED_CRATES.iter())
+            .copied(),
+        SERVER_ALLOWED,
+    );
+    assert!(
+        hits.is_empty(),
+        "the `{SERVER_CRATE}` build forbids every OUTBOUND network/TLS/telemetry/async-runtime \
+         crate (only the reviewed local-listen subtree is excused), but the resolved graph \
+         contains: {hits:?}.\n\
+         If a crate is a legitimate part of the inbound local-listen subtree, review it and add \
+         it to SERVER_ALLOWED; otherwise it is a real egress/telemetry path and must be removed."
+    );
+
+    // Positive check: the local listener really is linked, so the carve-out is load-bearing and
+    // not vacuous (mirrors the connect-trio / async-io positive checks).
+    assert!(
+        names.contains("tiny_http"),
+        "`{SERVER_CRATE}` must link `tiny_http` — otherwise the SERVER_ALLOWED carve-out is \
+         vacuous (the server needs its loopback HTTP listener)."
+    );
+
+    // Subset-allowlist: bound exactly what the server adds over the default CLI build, so a future
+    // dependency bump that introduces a NEW crate (an outbound HTTP/TLS/telemetry path, or a
+    // `tiny_http` SSL feature) trips this gate for a human to review.
+    let cli_default = reachable_crate_names(&[CLI_CRATE], &[]);
+    let allowed: BTreeSet<&str> = SERVER_ALLOWED.iter().copied().collect();
+    let unexpected: Vec<&str> = names
+        .difference(&cli_default)
+        .map(String::as_str)
+        .filter(|name| *name != SERVER_CRATE && !allowed.contains(name))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "`{SERVER_CRATE}` introduced crate(s) not in the reviewed allowlist: {unexpected:?}.\n\
+         Every crate the server graph adds over the CLI must be reviewed (is it an outbound \
+         network / TLS / telemetry path?) and, if legitimate, added to SERVER_ALLOWED. Regenerate \
+         the expected delta with: \
+         `cargo test -p costroid --test offline print_server_delta -- --ignored --nocapture`."
+    );
+}
+
+// =====================================================================================
 // Maintenance helpers (not run in CI) — regenerate the allowlists after a deliberate dep change
 // =====================================================================================
 
@@ -703,6 +801,24 @@ fn print_bar_accesskit_delta() {
     let without = reachable_crate_names(&[BAR_CRATE], &["--no-default-features"]);
     let delta: Vec<&String> = with.difference(&without).collect();
     println!("BAR_ACCESSKIT_DELTA ({} crates):", delta.len());
+    for name in &delta {
+        println!("  {name}");
+    }
+}
+
+/// Prints the exact crates `costroid-server` adds over the default CLI build, unioned across all
+/// shipped targets (`costroid-server` itself excluded). Run to regenerate [`SERVER_ALLOWED`]:
+/// `cargo test -p costroid --test offline print_server_delta -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_server_delta() {
+    let cli = reachable_crate_names(&[CLI_CRATE], &[]);
+    let server = reachable_crate_names(&[SERVER_CRATE], &[]);
+    let delta: Vec<&String> = server
+        .difference(&cli)
+        .filter(|name| name.as_str() != SERVER_CRATE)
+        .collect();
+    println!("SERVER_DELTA ({} crates):", delta.len());
     for name in &delta {
         println!("  {name}");
     }

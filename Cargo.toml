@@ -2,10 +2,19 @@
 members = [
     "apps/bar",
     "apps/cli",
+    # The local HTTP API + web UI is a SEPARATE binary (costroid-server), never linked into
+    # `costroid`/`costroid-bar` — `tiny_http` is name-banned in the CLI/bar offline gate, so the
+    # server gets its own reviewed per-binary allowlist + a loopback-only runtime proof (⚑ A1,
+    # §6.11). It lives under apps/ (binaries) mirroring `apps/bar`; the package is `costroid-server`.
+    "apps/server",
     "crates/costroid-config",
     "crates/costroid-connect",
     "crates/costroid-core",
     "crates/costroid-focus",
+    # The local-inference economics engine: the three-source PowerSampler + the energy/cost model
+    # (§3.1.B). All Linux/GPU code behind the off-by-default `power` feature (R1); a leaf crate
+    # (no internal deps) that `costroid-core` will consume at M3.
+    "crates/costroid-power",
     "crates/costroid-providers",
 ]
 resolver = "2"
@@ -41,6 +50,13 @@ rustls-native-certs = "=0.8.4"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150", features = ["raw_value"] }
 thiserror = "=2.0.18"
+# The local HTTP server for `costroid-server` (the separate web-UI binary, ⚑ A1 / §6.11).
+# A non-`tokio` BLOCKING server — matching the repo's blocking-`ureq` philosophy and sidestepping
+# the async-runtime ban entirely. It is an INBOUND local listener (the server binds 127.0.0.1
+# only); it is NOT an outbound client, pulls no TLS/async-runtime, and is reachable ONLY from
+# `costroid-server` (never the CLI/bar), which carries its own reviewed `SERVER_ALLOWED` allowlist
+# + the runtime loopback-only proof. M0 spike: 31-pkg tree, all permissive, builds on MSRV 1.88.
+tiny_http = "=0.12.0"
 # Parse-only TOML for the shared user config (`costroid-config`, T14/T20 `[budget]`/`[alerts]`).
 # Permissive (MIT/Apache-2.0), no network, deny-allowlist-clean; read-only — Costroid never writes
 # config, so default features are off and only `parse` + `serde` (deserialize) are enabled (the
@@ -62,6 +78,9 @@ costroid-config = { path = "crates/costroid-config", version = "0.6.0" }
 costroid-connect = { path = "crates/costroid-connect", version = "0.6.0" }
 costroid-core = { path = "crates/costroid-core", version = "0.6.0" }
 costroid-focus = { path = "crates/costroid-focus", version = "0.6.0" }
+# `costroid-power` is `publish = false` for now (M0 scaffold; the publish-ladder bump is an M6
+# task), so no published crate may depend on it yet — it is consumed only locally via this path.
+costroid-power = { path = "crates/costroid-power", version = "0.6.0" }
 costroid-providers = { path = "crates/costroid-providers", version = "0.6.0" }
 
 # The egui taskbar GUI stack (Step 6 / `apps/bar` only — the default `costroid` CLI
