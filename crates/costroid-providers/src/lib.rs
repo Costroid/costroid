@@ -1,5 +1,7 @@
 //! Provider-facing interfaces and local parsers for AI-tool usage data.
 
+pub mod focus_import;
+
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fmt;

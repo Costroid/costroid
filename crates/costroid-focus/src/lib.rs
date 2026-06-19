@@ -399,6 +399,12 @@ pub struct FocusRecord {
     /// this for token totals so nulling `ConsumedQuantity` never drops usage.
     #[serde(rename = "x_ConsumedTokens", serialize_with = "serialize_decimal")]
     pub x_consumed_tokens: Decimal,
+    /// The FOCUS spec version this row was **imported from** (the v1.2-in / v1.3-out
+    /// bridge stamps `"1.2"`); `None` on rows Costroid produced directly from local
+    /// tool logs / local-inference runs (not imported). Bounded version string — never
+    /// content.
+    #[serde(rename = "x_FocusInputVersion")]
+    pub x_focus_input_version: Option<String>,
 }
 
 impl FocusRecord {
@@ -501,6 +507,8 @@ impl FocusRecord {
             x_project: input.project,
             x_pricing_status: PRICING_STATUS_MISSING_PRICE.to_string(),
             x_consumed_tokens: consumed_tokens,
+            // Not an imported row by default — set by the core FOCUS-import bridge only.
+            x_focus_input_version: None,
         })
     }
 }
@@ -883,7 +891,7 @@ mod tests {
             assert!(fields.contains(&required), "missing column {required}");
         }
         assert!(header.ends_with(
-            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens"
+            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion"
         ));
     }
 
