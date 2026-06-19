@@ -24,7 +24,15 @@ EXACT-MATCH contract, not a tolerance list:
     or a changed report total. The allowlist can therefore never silently mask
     a regression and must be kept current.
 
-Usage: check_focus_conformance.py <validator-report.txt> <allowlist.txt>
+Usage: check_focus_conformance.py [--subset] <validator-report.txt> <allowlist.txt>
+
+`--subset` relaxes the exact-match contract to a SUBSET contract: every root
+failure must still be in the allowlist (no NEW failing rule), but per-rule
+violation counts and the report-fail-count total are NOT pinned. This is for the
+v1.2-import round-trip leg, whose re-emitted 1.3 output is a different (smaller)
+synthetic row set than the dev-tool fixtures — so its per-rule counts legitimately
+differ, but it must introduce NO conformance failure beyond the documented
+validator defects the allowlist already enumerates.
 """
 
 import re
@@ -106,16 +114,18 @@ def parse_fail_lines(report_text: str) -> tuple[dict[str, int], list[str], list[
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    args = [a for a in sys.argv[1:] if a != "--subset"]
+    subset = "--subset" in sys.argv[1:]
+    if len(args) != 2:
         print(__doc__)
         return 2
-    report = Path(sys.argv[1]).read_text(encoding="utf-8")
+    report = Path(args[0]).read_text(encoding="utf-8")
     try:
         expected, expected_fail_count = parse_allowlist(
-            Path(sys.argv[2]).read_text(encoding="utf-8")
+            Path(args[1]).read_text(encoding="utf-8")
         )
     except ValueError as err:
-        print(f"FAIL: malformed allowlist {sys.argv[2]}: {err}")
+        print(f"FAIL: malformed allowlist {args[1]}: {err}")
         return 2
 
     # Guard against a vacuous pass: a crashed validator (Python traceback) or a changed
@@ -159,32 +169,35 @@ def main() -> int:
         print("refusing to check against the allowlist blind.")
         return 1
 
-    # Exact-match contract: any deviation from the pinned set, in either
-    # direction, is a failure.
+    # A NEW failing rule (root failure not in the allowlist) is always a regression —
+    # checked in both the exact and the subset contract.
     problems: list[str] = []
     for rule in sorted(set(failures) - set(expected)):
         problems.append(
             f"NEW failing rule (not in allowlist): {rule} "
             f"(violations={failures[rule]})"
         )
-    for rule in sorted(set(expected) - set(failures)):
-        problems.append(
-            f"allowlisted rule did NOT fail: {rule} — stale entry; remove it (and "
-            "re-pin report-fail-count) so the allowlist stays current"
-        )
-    for rule in sorted(set(expected) & set(failures)):
-        if failures[rule] != expected[rule]:
+    if not subset:
+        # Exact-match contract: any deviation from the pinned set, in either direction,
+        # is a failure (a stale entry, a count drift, or a changed report total).
+        for rule in sorted(set(expected) - set(failures)):
             problems.append(
-                f"violation-count drift on {rule}: expected "
-                f"violations={expected[rule]}, got violations={failures[rule]} — "
-                "a new violating row inside a known-defective rule is still a regression"
+                f"allowlisted rule did NOT fail: {rule} — stale entry; remove it (and "
+                "re-pin report-fail-count) so the allowlist stays current"
             )
-    if summary_fail != expected_fail_count:
-        problems.append(
-            f"report 'Fail:' total is {summary_fail}, allowlist pins "
-            f"report-fail-count = {expected_fail_count} "
-            f"(parsed {len(failures)} root + {len(cascades)} cascade lines)"
-        )
+        for rule in sorted(set(expected) & set(failures)):
+            if failures[rule] != expected[rule]:
+                problems.append(
+                    f"violation-count drift on {rule}: expected "
+                    f"violations={expected[rule]}, got violations={failures[rule]} — "
+                    "a new violating row inside a known-defective rule is still a regression"
+                )
+        if summary_fail != expected_fail_count:
+            problems.append(
+                f"report 'Fail:' total is {summary_fail}, allowlist pins "
+                f"report-fail-count = {expected_fail_count} "
+                f"(parsed {len(failures)} root + {len(cascades)} cascade lines)"
+            )
 
     if problems:
         print("\nFAIL: FOCUS conformance deviates from the exact known-failure set:")
@@ -198,10 +211,16 @@ def main() -> int:
         )
         return 1
 
-    print(
-        "\nOK: FOCUS conformance holds — the failure set exactly matches the "
-        "documented validator defects."
-    )
+    if subset:
+        print(
+            "\nOK: FOCUS conformance holds — the failure set is a SUBSET of the "
+            "documented validator defects (no new failing rule)."
+        )
+    else:
+        print(
+            "\nOK: FOCUS conformance holds — the failure set exactly matches the "
+            "documented validator defects."
+        )
     return 0
 
 

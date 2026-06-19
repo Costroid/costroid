@@ -123,8 +123,12 @@ jobs:
         run: python -m pip install "focus-validator==2.1.0"
 
       # Exports the committed fixtures to FOCUS CSV and runs the official
-      # validator (offline, bundled 1.3 ruleset) against the documented
-      # known-failure allowlist. Guards against conformance regressions.
+      # validator (offline, vendored 1.3 ruleset) against the documented
+      # known-failure allowlist. Also runs the JSON-equivalence leg (export
+      # --format json == CSV rows) and the synthetic v1.2-in -> v1.3-out
+      # `costroid import` round-trip legs (subset contract). The real-AWS v1.2
+      # leg is present-but-SKIPPED (set COSTROID_REAL_AWS_FOCUS to run it).
+      # Guards against conformance regressions.
       - name: Validate FOCUS export
         env:
           FOCUS_VALIDATOR_PYTHON: python
