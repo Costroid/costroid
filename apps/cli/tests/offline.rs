@@ -345,6 +345,48 @@ const BAR_ACCESSKIT_ALLOWED: &[&str] = &[
 /// `cargo test -p costroid --test offline print_server_delta -- --ignored --nocapture`.
 const SERVER_ALLOWED: &[&str] = &["ascii", "chunked_transfer", "httpdate", "tiny_http"];
 
+/// Every crate the CLI's off-by-default `store` feature adds to its resolved graph over the
+/// default CLI build, unioned across all shipped targets (`costroid-store` is the gated home —
+/// it appears in the delta and is allowlisted here, mirroring how `costroid-server` is the
+/// server root). This is the reviewed **local-SQLite subtree**: `rusqlite` (the pure-local
+/// SQLite binding), its `bundled` C-amalgamation build (`libsqlite3-sys` + the `cc` build
+/// toolchain: `cc`/`jobserver`/`shlex`/`find-msvc-tools` on Linux, `pkg-config`/`vcpkg` for
+/// system-lib discovery on other targets), and rusqlite's small pure-Rust support crates
+/// (`hashlink`, `fallible-iterator`, `fallible-streaming-iterator`).
+///
+/// Every entry is a LOCAL crate: SQLite is an embedded, in-process database engine — it links
+/// NO network/TLS/telemetry/async-runtime crate. "Linking rusqlite ≠ a network call" exactly
+/// as "linking the HTTP client ≠ a call" for `connect`; the runtime no-`AF_INET` proof for the
+/// store-linked build lives in `scripts/offline_acceptance.sh`, turning this static allowlist
+/// into a behavioral no-network guarantee for the SQLite subtree.
+///
+/// `cc` / `pkg-config` / `find-msvc-tools` / `jobserver` / `shlex` are ALSO members of
+/// [`CONNECT_ALLOWED`] (the `cc` build toolchain is shared plumbing), but `STORE_ALLOWED` is its
+/// own independent reviewed list — the store delta is computed against the default build, not
+/// the connect build, so the overlap is incidental, not a dependency.
+///
+/// It is a **subset-allowlist**, exactly like [`CONNECT_ALLOWED`] / [`SERVER_ALLOWED`] /
+/// [`BAR_ACCESSKIT_ALLOWED`]: the store test asserts the real store-delta is a SUBSET of it, so a
+/// future dependency bump that pulls a NEW crate (a socket/TLS/telemetry path, or a rusqlite
+/// feature that adds one) fails the gate until a human reviews it. Every genuine
+/// network/TLS/telemetry crate is absent from this list. Regenerate after a deliberate dependency
+/// change with the `#[ignore]` `print_store_delta` test:
+/// `cargo test -p costroid --test offline print_store_delta -- --ignored --nocapture`.
+const STORE_ALLOWED: &[&str] = &[
+    "cc",             // also in CONNECT_ALLOWED — the `cc` build toolchain (shared plumbing).
+    "costroid-store", // the store crate itself (the gated home, like costroid-server is its root).
+    "fallible-iterator",
+    "fallible-streaming-iterator",
+    "find-msvc-tools", // also in CONNECT_ALLOWED — `cc`'s MSVC toolchain locator.
+    "hashlink",
+    "jobserver",      // also in CONNECT_ALLOWED — `cc`'s parallel-build jobserver.
+    "libsqlite3-sys", // the bundled SQLite C amalgamation binding.
+    "pkg-config",     // also in CONNECT_ALLOWED — system-lib discovery (non-bundled targets).
+    "rusqlite",       // the local SQLite binding (load-bearing — the store's whole point).
+    "shlex",          // also in CONNECT_ALLOWED — `cc` build-flag splitting.
+    "vcpkg",          // Windows system-lib discovery for `libsqlite3-sys`.
+];
+
 /// The target triples Costroid ships (mirrors `deny.toml` `[graph].targets`). The
 /// reachable graph is resolved once **per target** and unioned (see
 /// [`reachable_crate_names`]).
@@ -583,6 +625,92 @@ fn cli_connect_feature_admits_only_the_sanctioned_trio() {
     );
 }
 
+/// `--features store` (CLI): the off-by-default local-SQLite store is linked, so the reviewed
+/// local-SQLite subtree (`rusqlite` + bundled SQLite + `cc` build toolchain + rusqlite's
+/// pure-Rust support crates — [`STORE_ALLOWED`]) is permitted. SQLite is an embedded, in-process
+/// engine: the store links NO network/TLS/telemetry/async-runtime crate, so EVERY
+/// [`ALWAYS_FORBIDDEN_CRATES`] and [`CONNECT_GATED_CRATES`] member stays forbidden even here. The
+/// store-delta over the default CLI build is asserted to be a SUBSET of `STORE_ALLOWED`
+/// (fail-closed: a future dep bump pulling a NEW crate trips it).
+#[test]
+fn cli_store_feature_admits_only_store_allowed() {
+    let names = reachable_crate_names(&[CLI_CRATE], &["--features", "store"]);
+
+    // The store must NOT pull in the network/credential home — it is a pure local-SQLite leaf.
+    assert!(
+        !names.contains(CONNECT_CRATE),
+        "`--features store` must not link `{CONNECT_CRATE}` — the store is a pure local-SQLite \
+         leaf (no network/keychain code); it shares no graph with the connections subsystem."
+    );
+
+    // The store links NO network/TLS/telemetry/async-runtime crate — rusqlite is pure local
+    // SQLite. So NO ALWAYS_FORBIDDEN_CRATES / CONNECT_GATED_CRATES member may appear at all
+    // (no allowlist excuse, exactly like the default CLI build): "linking rusqlite ≠ network".
+    let hits = forbidden_hits(
+        &names,
+        ALWAYS_FORBIDDEN_CRATES
+            .iter()
+            .chain(CONNECT_GATED_CRATES.iter())
+            .copied(),
+        &[],
+    );
+    assert!(
+        hits.is_empty(),
+        "the `--features store` build forbids networking/TLS/async-runtime/telemetry crates \
+         (the local-SQLite store links none — rusqlite is an embedded in-process engine), but \
+         the resolved graph contains: {hits:?}.\n\
+         If a crate is a legitimate part of the local-SQLite subtree, it still must NOT be a \
+         network/TLS/telemetry path; otherwise it is a real egress path and must be removed."
+    );
+
+    // Positive check: `rusqlite` really is linked under `--features store`, so the STORE_ALLOWED
+    // carve-out is load-bearing and not vacuous (mirrors the connect-trio / tiny_http positives).
+    assert!(
+        names.contains("rusqlite"),
+        "`--features store` must link `rusqlite` — otherwise the STORE_ALLOWED carve-out is \
+         vacuous (the store needs its local SQLite binding)."
+    );
+    assert!(
+        names.contains("costroid-store"),
+        "`--features store` must link `costroid-store` — otherwise the gate is not actually \
+         wired to the store subsystem."
+    );
+
+    // Subset-allowlist: bound exactly what `store` ADDS over the default CLI build, so a future
+    // dependency bump that introduces a NEW crate (a socket/TLS/telemetry path, or a rusqlite
+    // feature that pulls one) trips this gate for a human to review.
+    let default = reachable_crate_names(&[CLI_CRATE], &[]);
+    let allowed: BTreeSet<&str> = STORE_ALLOWED.iter().copied().collect();
+    let unexpected: Vec<&str> = names
+        .difference(&default)
+        .map(String::as_str)
+        .filter(|name| !allowed.contains(name))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "`--features store` introduced crate(s) not in the reviewed allowlist: {unexpected:?}.\n\
+         Every crate the store-on graph adds must be reviewed (is it a network / TLS / telemetry \
+         path?) and, if legitimate, added to STORE_ALLOWED. Regenerate the expected delta with: \
+         `cargo test -p costroid --test offline print_store_delta -- --ignored --nocapture`."
+    );
+}
+
+/// The default CLI build is store-free: neither `costroid-store` nor `rusqlite` (nor the
+/// bundled-SQLite `libsqlite3-sys`) is linked when the off-by-default `store` feature is off.
+/// This is the mirror of the connect-off assertion — the store stays out of the default,
+/// local-only graph entirely.
+#[test]
+fn cli_default_build_is_store_free() {
+    let names = reachable_crate_names(&[CLI_CRATE], &[]);
+    for absent in ["costroid-store", "rusqlite", "libsqlite3-sys"] {
+        assert!(
+            !names.contains(absent),
+            "the default CLI build must not link `{absent}` — the `store` feature must be off by \
+             default so the local-only build carries no SQLite store."
+        );
+    }
+}
+
 // =====================================================================================
 // Taskbar binary (`costroid-bar`) — admits ONLY the reviewed AccessKit local-IPC subtree
 // =====================================================================================
@@ -801,6 +929,21 @@ fn print_bar_accesskit_delta() {
     let without = reachable_crate_names(&[BAR_CRATE], &["--no-default-features"]);
     let delta: Vec<&String> = with.difference(&without).collect();
     println!("BAR_ACCESSKIT_DELTA ({} crates):", delta.len());
+    for name in &delta {
+        println!("  {name}");
+    }
+}
+
+/// Prints the exact crates `--features store` adds to the CLI over the default build, unioned
+/// across all shipped targets. Run to regenerate [`STORE_ALLOWED`]:
+/// `cargo test -p costroid --test offline print_store_delta -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_store_delta() {
+    let default = reachable_crate_names(&[CLI_CRATE], &[]);
+    let store = reachable_crate_names(&[CLI_CRATE], &["--features", "store"]);
+    let delta: Vec<&String> = store.difference(&default).collect();
+    println!("STORE_DELTA ({} crates):", delta.len());
     for name in &delta {
         println!("  {name}");
     }

@@ -174,6 +174,19 @@ impl FocusAccessPath {
             Self::Unknown => "unknown",
         }
     }
+
+    /// The exact inverse of [`as_str`](Self::as_str): parse the canonical string back to
+    /// the variant, or `None` for an unrecognized value. The single source of truth for
+    /// the string↔enum mapping (the round-trip is asserted in tests), so a replay path
+    /// (e.g. `costroid-store`) reconstructs the enum without duplicating the table.
+    pub fn from_focus_str(value: &str) -> Option<Self> {
+        match value {
+            "api" => Some(Self::Api),
+            "subscription" => Some(Self::Subscription),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +203,19 @@ impl LedgerLane {
             Self::DeveloperTool => "developer_tool",
             Self::CloudApi => "cloud_api",
             Self::LocalInference => "local_inference",
+        }
+    }
+
+    /// The exact inverse of [`as_str`](Self::as_str): parse the canonical string back to
+    /// the variant, or `None` for an unrecognized value. The single source of truth for
+    /// the string↔enum mapping (the round-trip is asserted in tests), so a replay path
+    /// (e.g. `costroid-store`) reconstructs the lane without duplicating the table.
+    pub fn from_focus_str(value: &str) -> Option<Self> {
+        match value {
+            "developer_tool" => Some(Self::DeveloperTool),
+            "cloud_api" => Some(Self::CloudApi),
+            "local_inference" => Some(Self::LocalInference),
+            _ => None,
         }
     }
 }
@@ -210,6 +236,20 @@ impl TokenType {
             Self::Output => "output",
             Self::CacheRead => "cache_read",
             Self::CacheWrite => "cache_write",
+        }
+    }
+
+    /// The exact inverse of [`as_str`](Self::as_str): parse the canonical string back to
+    /// the variant, or `None` for an unrecognized value. The single source of truth for
+    /// the string↔enum mapping (the round-trip is asserted in tests), so a replay path
+    /// (e.g. `costroid-store`) reconstructs the token type without duplicating the table.
+    pub fn from_focus_str(value: &str) -> Option<Self> {
+        match value {
+            "input" => Some(Self::Input),
+            "output" => Some(Self::Output),
+            "cache_read" => Some(Self::CacheRead),
+            "cache_write" => Some(Self::CacheWrite),
+            _ => None,
         }
     }
 }
@@ -565,6 +605,40 @@ mod tests {
             Ok(value) => value,
             Err(err) => panic!("record should build: {err}"),
         }
+    }
+
+    #[test]
+    fn focus_enum_str_round_trips_for_every_variant() {
+        // The single source of truth for the string↔enum mapping: `from_focus_str` is the
+        // exact inverse of `as_str` for EVERY variant, so a replay path (costroid-store)
+        // reconstructs the enum faithfully. An unknown string yields None (never a default).
+        for lane in [
+            LedgerLane::DeveloperTool,
+            LedgerLane::CloudApi,
+            LedgerLane::LocalInference,
+        ] {
+            assert_eq!(LedgerLane::from_focus_str(lane.as_str()), Some(lane));
+        }
+        assert_eq!(LedgerLane::from_focus_str("not_a_lane"), None);
+
+        for token in [
+            TokenType::Input,
+            TokenType::Output,
+            TokenType::CacheRead,
+            TokenType::CacheWrite,
+        ] {
+            assert_eq!(TokenType::from_focus_str(token.as_str()), Some(token));
+        }
+        assert_eq!(TokenType::from_focus_str("not_a_token"), None);
+
+        for path in [
+            FocusAccessPath::Api,
+            FocusAccessPath::Subscription,
+            FocusAccessPath::Unknown,
+        ] {
+            assert_eq!(FocusAccessPath::from_focus_str(path.as_str()), Some(path));
+        }
+        assert_eq!(FocusAccessPath::from_focus_str("not_a_path"), None);
     }
 
     #[test]
