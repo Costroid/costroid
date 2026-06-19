@@ -30,6 +30,13 @@ connect = ["dep:costroid-connect", "dep:rpassword"]
 # core with zero real network. NOT enabled by the shipping `--features connect` build, so
 # the plain-`connect` lint never compiles the loopback harness into the surface.
 connect-test-support = ["connect", "costroid-connect/test-support"]
+# The local SQLite usage store (M1) is opt-in and off by default: the default build never
+# links `costroid-store` (and therefore never `rusqlite`/bundled SQLite), so the
+# default/local-only CLI graph stays free of the store. Mirrors how `connect` gates the
+# network/credential subsystem. (No store subcommand yet — T9 only establishes the
+# optional dep edge so the store is CLI-reachable under `--features store`; the offline
+# STORE_ALLOWED gate is a later task.)
+store = ["dep:costroid-store"]
 
 [dependencies]
 anyhow.workspace = true
@@ -42,6 +49,9 @@ costroid-config.workspace = true
 costroid-connect = { workspace = true, optional = true }
 costroid-core.workspace = true
 costroid-providers.workspace = true
+# The local SQLite usage store (M1), optional + off by default behind the `store` feature
+# (above). The default CLI build links neither this nor `rusqlite`.
+costroid-store = { workspace = true, optional = true }
 crossterm.workspace = true
 ratatui.workspace = true
 rpassword = { version = "=7.5.4", optional = true }

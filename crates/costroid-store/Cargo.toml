@@ -1,0 +1,42 @@
+[package]
+name = "costroid-store"
+version.workspace = true
+edition.workspace = true
+# Inherits the workspace MSRV (1.88). rusqlite 0.37 with the `bundled` SQLite C
+# amalgamation (libsqlite3-sys 0.35) compiles clean on 1.88 (M0 spike + the T9 MSRV
+# gate). The ⛔ Readiness gate reserves the right for this crate to declare its OWN
+# higher `rust-version` later if a heavyweight store dependency ever demands it — but
+# the store is behind the CLI's off-by-default `store` feature, so it is never reachable
+# from the 1.88 default CLI/bar/server graph.
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "Costroid's local SQLite usage store: a metadata-only (R4 Cardinal Rule) persistent ledger of FOCUS usage rows, structurally incapable of holding prompt/response content."
+documentation = "https://docs.rs/costroid-store"
+keywords = ["finops", "sqlite", "store", "focus", "ai"]
+categories = ["database", "command-line-utilities"]
+# M1 scaffold — not published until the store path lands fully (the publish-ladder bump
+# is an M6 task). Consumed only locally, behind the CLI's off-by-default `store` feature.
+publish = false
+
+[dependencies]
+# The FOCUS record types the store persists (metadata-only allowlist) and replays (T11).
+costroid-focus.workspace = true
+# The local SQLite store — bundled C amalgamation, MSRV-1.88 clean, all-permissive deps.
+# NOT reachable from the default CLI/bar/server graph (behind the off-by-default `store`
+# feature). DuckDB was rejected at M0; SQLite is locked. NO costroid-core dep yet —
+# replay/aggregate is T11.
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Test-only: building synthetic FocusRecords (timestamps) and asserting decimal-string
+# cost round-trips. Not in the runtime graph — the store itself names no Decimal/chrono
+# type (it reads them off the record and persists their string form).
+chrono.workspace = true
+rust_decimal.workspace = true
+
+[lints]
+workspace = true
