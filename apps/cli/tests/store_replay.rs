@@ -62,6 +62,7 @@ fn priced_dev_tool_rows(model: &str, input_tokens: u64, day: u32) -> Vec<FocusRe
         cache_write_tokens: 0,
         project: Some("/work/alpha".to_string()),
         access_path: AccessPath::Api,
+        is_sidechain: false,
     };
     match focus_records_from_usage(&[event]) {
         Ok(rows) => rows,

@@ -146,6 +146,11 @@ pub struct UsageEvent {
     pub cache_write_tokens: u64,
     pub project: Option<String>,
     pub access_path: AccessPath,
+    /// `true` when this turn was a sub-agent (sidechain) turn — Claude transcripts carry
+    /// a top-level `isSidechain` flag. Costroid keeps counting sidechain usage; this only
+    /// annotates it (its attribution is less certain). Codex has no sidechain concept, so
+    /// its events are always `false`. Metadata only (R4) — a bool, never content.
+    pub is_sidechain: bool,
 }
 
 /// The canonical, lane-spanning event model. Every datum Costroid ingests is one
@@ -791,6 +796,12 @@ fn parse_claude_usage(value: &Value, access_path: AccessPath) -> Option<UsageEve
             .and_then(Value::as_str)
             .map(ToString::to_string),
         access_path,
+        // Sub-agent turns carry a top-level `isSidechain: true`. Absent/non-bool → false
+        // (a mainline turn). Costroid keeps counting these; the FOCUS row annotates them.
+        is_sidechain: value
+            .get("isSidechain")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     };
     has_any_tokens(&event).then_some(event)
 }
@@ -1094,6 +1105,8 @@ fn parse_codex_usage(
         cache_write_tokens: 0,
         project: current_cwd.clone(),
         access_path,
+        // Codex has no sub-agent/sidechain concept; its turns are always mainline.
+        is_sidechain: false,
     };
     has_any_tokens(&event).then_some(event)
 }
@@ -1485,6 +1498,7 @@ mod tests {
             cache_write_tokens: 0,
             project: None,
             access_path: AccessPath::Subscription,
+            is_sidechain: false,
         });
         let Ok(json) = serde_json::to_string(&tool) else {
             panic!("CanonicalEvent::Tool should serialize to JSON");
