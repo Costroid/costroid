@@ -139,12 +139,27 @@ forbidden crates, on all 6 shipped targets.)
 plan + human inputs written. **Deciding test:** the verification gate above is green (it is).
 
 ### M1 — Core model + storage + FOCUS export + collectors  *(irreducible core)*
-- Canonical event model; `x_PascalCase` extension schema (§6.4); **SQLite + Parquet** store behind a
-  feature/dedicated crate (A5); the **v1.2-in / v1.3-out** FOCUS exporter (isolate version mappings).
-- Extend the Claude/Codex/Cursor parsers into golden-tested collectors; annotate sub-agent-undercount
-  uncertainty (Cardinal Rule R4: metadata only, never prompt/response content).
+> **Detailed task plan: [`docs/M1-PLAN.md`](docs/M1-PLAN.md)** — 20 ordered tasks (T0–T19), repo-fit-
+> verified, with the C1 dependency map + the cross-cutting risks. **Awaiting human sign-off** on the
+> export-schema additions (T2/T3: `x_Lane` + the local/cloud `x_` columns) and the `import` CLI
+> subcommand (T19) before execution, per CLAUDE.md "ask before changing the export/output schema."
+- Three-lane canonical event model (developer-tool / cloud-API / local-inference) with a mandatory
+  `x_Lane` discriminator + `x_PascalCase` extension schema (§6.4); a **typed lane-separation guard**
+  so lanes are never summed across (v0.6.0 dev-tool totals stay byte-for-byte).
+- **SQLite store** (`rusqlite`, bundled — A5) behind a `store` feature on a CLI-reachable crate, with
+  its own `STORE_ALLOWED` offline allowlist; **metadata-only whitelist schema** (R4 — no free-text
+  column, fail-closed subset assertion on schema + ingest mapper). **Parquet DEFERRED** — the T1 spike
+  found it gate-clean (parquet 59.0.0, all-permissive, 1.88) but a heavy 90-pkg/C-codec surface, so
+  **CSV + JSON are the M1 exports**; the deciding test never depends on Parquet.
+- The **v1.2-in / v1.3-out** FOCUS importer with an isolated version-mapping seam (`FocusV12Mapping`),
+  built against synthetic v1.2 fixtures now; the real-AWS leg is **C1-gated** (T18) and M1 closes
+  without it (synthetic round-trip green, real leg present-but-SKIPPED with a loud C1 notice).
+- Extend the Claude/Codex/Cursor parsers into golden-tested collectors; sidechain attribution
+  (`x_Sidechain`/`x_AttributionConfidence`, keep counting + annotate) — Cardinal Rule R4: metadata
+  only, never prompt/response content (enforced by a no-`..` field-exhaustive structural test, T16).
 - **Deliverable:** schema-valid FOCUS export of real developer-tool data. **Deciding test:** the FOCUS
-  1.3 validator (existing `focus_conformance.sh`) passes on the new export + a collector golden test.
+  1.3 validator (existing `focus_conformance.sh`, extended with a JSON leg + a synthetic-v1.2 round-trip
+  leg) passes + a Claude/Codex collector golden test asserting the normalized `FocusRecord` row.
 
 ### M2 — Cloud/API cost lane
 - LiteLLM pricing **bundled dated snapshot + user override** (never a runtime fetch, R8); API-log
@@ -251,7 +266,9 @@ starting **M1**.
 
 - [x] **M0** — audit; decisions A locked; spikes B recorded (DuckDB→SQLite); scaffold green; plan +
   human inputs written; offline allowlist + loopback proof in place. *(Awaiting human checkpoint.)*
-- [ ] **M1** — event model; SQLite+Parquet store; v1.2-in/v1.3-out FOCUS export (validated); collectors.
+- [ ] **M1** — three-lane event model + SQLite store + v1.2-in/v1.3-out FOCUS export (validated) +
+  golden collectors. Detailed plan: [`docs/M1-PLAN.md`](docs/M1-PLAN.md) (T0–T19); awaiting export-schema
+  sign-off (T2/T3/T19); Parquet deferred (T1 spike clean but heavy); real-AWS leg C1-gated (T18).
 - [ ] **M2** — LiteLLM snapshot pricing; AWS-FOCUS import; Bedrock AIP path; merged ledger.
 - [ ] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
@@ -263,9 +280,16 @@ starting **M1**.
 
 ## Handoff note (latest)
 
-- **2026-06-19 — M0 complete, awaiting checkpoint.** Scaffolded `costroid-power` + `costroid-server`;
-  locked A1–A5; ran spikes B (DuckDB rejected on license + forbidden-crates + build-network → SQLite
-  adopted, R11); wired the server's `SERVER_ALLOWED` allowlist + loopback-only runtime proof; added the
-  cross-OS CI build matrix. Full local gate green (fmt/clippy/test/deny/MSRV/offline-acceptance).
-  **Next:** human approves A-decisions + the M1 start; provide C1 (FOCUS samples) when convenient. Then
-  begin **M1** (event model + SQLite store + v1.2-in/v1.3-out FOCUS export + golden-tested collectors).
+- **2026-06-19 (b) — M0 approved + committed; M1 PLANNED, awaiting export-schema sign-off.** M0
+  committed on branch `costroid-next` (`707abcf`) with the independent-review fixes folded in (loopback
+  regex quote-anchored; cost.rs guards negative inputs; unused deps dropped). Ran the M0→M1 design
+  workflow → **[`docs/M1-PLAN.md`](docs/M1-PLAN.md)** (T0–T19, repo-fit-verified). Ran the T1 Parquet
+  spike (gate-clean but heavy → Parquet deferred; CSV+JSON are the M1 exports). Reconciled the DuckDB→
+  SQLite doc-drift (`COSTROID-NEXT.md` §3.3 M1 line). **Next:** human signs off on the M1 export-schema
+  additions (T2/T3 `x_Lane` + `x_` columns) + the `import` subcommand (T19) per CLAUDE.md, and confirms
+  M1-closes-without-C1; provide **C1** (FOCUS v1.2 schema + AWS sample) to unblock T18. Then execute M1
+  in order: T0 (doc) → T2–T8 (event model + core, the foundation) → T9–T12 (store) → T13–T17 (FOCUS
+  import + collectors + deciding test). All of T0–T17/T19 are buildable now on synthetic fixtures.
+- **2026-06-19 (a) — M0 complete, presented for checkpoint.** Scaffolded `costroid-power` +
+  `costroid-server`; locked A1–A5; ran spikes B (DuckDB rejected → SQLite, R11); wired the server's
+  `SERVER_ALLOWED` allowlist + loopback-only proof; added the cross-OS CI build matrix. Full gate green.
