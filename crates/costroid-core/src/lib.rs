@@ -1897,6 +1897,18 @@ pub fn grand_total_usd(rows: &[FocusRecord]) -> Decimal {
         .fold(Decimal::ZERO, |sum, row| sum + row.billed_cost)
 }
 
+/// Public wrapper over the internal [`summarize_rows`] aggregator for the
+/// store-replay path (M1): the edge reads rows from the store and hands them here,
+/// keeping the dependency direction store → core (core never depends on the store).
+///
+/// Inherits the M1 T6 developer-tool gate of [`summarize_rows`] — these are
+/// **developer-tool** summaries: cloud_api / local_inference rows are excluded
+/// here and summed on their own lane totals via [`lane_total_usd`]. Behavior is
+/// identical to the internal aggregator; this only widens its visibility.
+pub fn aggregate_rows(rows: &[FocusRecord], group_by: GroupBy) -> Vec<CostLaneSummary> {
+    summarize_rows(rows.iter(), group_by)
+}
+
 fn summarize_rows<'a, I>(rows: I, group_by: GroupBy) -> Vec<CostLaneSummary>
 where
     I: IntoIterator<Item = &'a FocusRecord>,
@@ -3407,6 +3419,35 @@ mod tests {
             grand_total_usd(&rows),
             lane_total_usd(&rows, LedgerLane::DeveloperTool)
         );
+    }
+
+    #[test]
+    fn aggregate_rows_matches_the_internal_now_summary_aggregation() {
+        // T8: the public store-replay wrapper produces exactly what the internal aggregator
+        // does — equal to now_summary().current_costs over a snapshot of the same rows (the
+        // canonical internal consumer of summarize_rows). The mixed-lane fixture also proves
+        // aggregate_rows INHERITS the T6 developer-tool gate: only the $5 dev-tool Api row
+        // survives; the $7 cloud + $11 local rows (all access_path = Api) are excluded.
+        let when = utc_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = mixed_lane_rows(when);
+
+        let aggregated = aggregate_rows(&rows, GroupBy::Model);
+
+        // (a) Matches the internal aggregation that feeds now_summary.current_costs.
+        let snapshot = snapshot_with_rows(when, rows.clone(), Vec::new());
+        let summary = now_summary(&snapshot, NowOptions::default());
+        assert_eq!(aggregated, summary.current_costs);
+
+        // (b) Non-vacuous: exactly one Api lane summary survives the dev-tool gate, and its
+        // billed_cost is the dev-tool $5 only (NOT $12, NOT the $23 grand total).
+        assert_eq!(
+            aggregated.len(),
+            1,
+            "only the dev-tool Api row survives the gate"
+        );
+        assert_eq!(aggregated[0].lane, CostLane::Api);
+        assert_eq!(aggregated[0].totals.billed_cost, Decimal::from(5));
+        assert_eq!(aggregated[0].totals.row_count, 1);
     }
 
     #[test]
