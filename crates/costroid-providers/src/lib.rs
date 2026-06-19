@@ -146,6 +146,72 @@ pub struct UsageEvent {
     pub access_path: AccessPath,
 }
 
+/// The canonical, lane-spanning event model. Every datum Costroid ingests is one
+/// of these three lanes:
+///
+/// - [`CanonicalEvent::Tool`] — an AI-coding-tool usage row parsed from local
+///   logs (the existing [`UsageEvent`], the default local lane).
+/// - [`CanonicalEvent::Cloud`] — a cloud-billing row imported via the M1
+///   FOCUS-v1.2 bridge / M2 cloud lane (see [`CloudUsageEvent`]).
+/// - [`CanonicalEvent::Local`] — a local-inference run measured at M3 (see
+///   [`LocalRunEvent`]).
+///
+/// Metadata only: by the **Cardinal Rule (R4)** no lane variant may ever carry
+/// prompt/completion/response/content/message/text. Costroid meters cost and
+/// quota, never conversation content. The structural guard in this crate's tests
+/// destructures the metadata variants field-exhaustively (no `..`) so any new
+/// field forces a conscious review against R4.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonicalEvent {
+    Tool(UsageEvent),
+    Cloud(CloudUsageEvent),
+    Local(LocalRunEvent),
+}
+
+/// Minimal metadata for a FOCUS-v1.2-imported cloud-billing row.
+///
+/// Populated by the M2 cloud lane / the M1 v1.2 import bridge — defined here so
+/// the canonical event model spans all lanes. Metadata only (R4): no
+/// prompt/completion/content/text fields, ever.
+///
+/// The source-authoritative cost is carried as a decimal **string**
+/// ([`billed_cost`](Self::billed_cost)) — not `f64` money and not a
+/// `rust_decimal` type. `costroid-providers` stays dep-light at the parsing
+/// boundary; the `costroid-core` bridge parses the string into its money type.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CloudUsageEvent {
+    pub timestamp: DateTime<Utc>,
+    pub service_name: String,
+    pub service_provider_name: String,
+    pub model: Option<String>,
+    pub token_count: Option<u64>,
+    /// Source-authoritative billed cost, carried verbatim as a decimal string
+    /// (e.g. `"0.0123"`). Parsed by the core bridge, never as `f64` here.
+    pub billed_cost: Option<String>,
+}
+
+/// Minimal metadata for a local-inference run.
+///
+/// Populated at M3; defining the struct now lets the canonical event model span
+/// the local-inference lane. Adds **no** export columns at M1. Metadata only
+/// (R4): no prompt/completion/content/text fields, ever.
+///
+/// [`measurement_mode`](Self::measurement_mode) is a plain `String` at this
+/// crate boundary — the typed enum lives in `costroid-power`, which
+/// `costroid-providers` must not depend on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocalRunEvent {
+    pub timestamp: DateTime<Utc>,
+    pub model: String,
+    pub runtime_kind: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub run_seconds: f64,
+    pub avg_power_watts: f64,
+    pub measurement_mode: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LimitKind {
@@ -1300,6 +1366,131 @@ mod tests {
         assert_eq!(ProviderId::ClaudeCode.to_string(), "claude-code");
         assert_eq!(ProviderId::Codex.to_string(), "codex");
         assert_eq!(ProviderId::Cursor.to_string(), "cursor");
+    }
+
+    fn sample_cloud_usage_event() -> CloudUsageEvent {
+        CloudUsageEvent {
+            timestamp: Utc
+                .timestamp_opt(1_700_000_000, 0)
+                .single()
+                .unwrap_or_default(),
+            service_name: "Bedrock".to_string(),
+            service_provider_name: "AWS".to_string(),
+            model: Some("anthropic.claude-3".to_string()),
+            token_count: Some(12_345),
+            billed_cost: Some("0.0123".to_string()),
+        }
+    }
+
+    fn sample_local_run_event() -> LocalRunEvent {
+        LocalRunEvent {
+            timestamp: Utc
+                .timestamp_opt(1_700_000_000, 0)
+                .single()
+                .unwrap_or_default(),
+            model: "llama-3-8b".to_string(),
+            runtime_kind: "ollama".to_string(),
+            tokens_in: 100,
+            tokens_out: 200,
+            run_seconds: 4.5,
+            avg_power_watts: 75.0,
+            measurement_mode: "estimated".to_string(),
+        }
+    }
+
+    /// R4 (Cardinal Rule) structural guard: field-exhaustively destructure the
+    /// metadata-only lane events with NO `..` rest-pattern, so any added field
+    /// breaks compilation here and forces a conscious review. No field may ever
+    /// name or hold prompt/completion/response/content/message/text — Costroid
+    /// meters cost and quota, never conversation content.
+    #[test]
+    fn lane_events_stay_metadata_only_r4_guard() {
+        let CloudUsageEvent {
+            timestamp: _,
+            service_name: _,
+            service_provider_name: _,
+            model: _,
+            token_count: _,
+            billed_cost: _,
+        } = sample_cloud_usage_event();
+
+        let LocalRunEvent {
+            timestamp: _,
+            model: _,
+            runtime_kind: _,
+            tokens_in: _,
+            tokens_out: _,
+            run_seconds: _,
+            avg_power_watts: _,
+            measurement_mode: _,
+        } = sample_local_run_event();
+    }
+
+    #[test]
+    fn cloud_usage_event_round_trips_through_json() {
+        let original = sample_cloud_usage_event();
+        let Ok(json) = serde_json::to_string(&original) else {
+            panic!("CloudUsageEvent should serialize to JSON");
+        };
+        let Ok(restored) = serde_json::from_str::<CloudUsageEvent>(&json) else {
+            panic!("CloudUsageEvent should deserialize from JSON");
+        };
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn local_run_event_round_trips_through_json() {
+        let original = sample_local_run_event();
+        let Ok(json) = serde_json::to_string(&original) else {
+            panic!("LocalRunEvent should serialize to JSON");
+        };
+        let Ok(restored) = serde_json::from_str::<LocalRunEvent>(&json) else {
+            panic!("LocalRunEvent should deserialize from JSON");
+        };
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn canonical_event_round_trips_through_json() {
+        let cloud = CanonicalEvent::Cloud(sample_cloud_usage_event());
+        let Ok(json) = serde_json::to_string(&cloud) else {
+            panic!("CanonicalEvent::Cloud should serialize to JSON");
+        };
+        let Ok(restored) = serde_json::from_str::<CanonicalEvent>(&json) else {
+            panic!("CanonicalEvent::Cloud should deserialize from JSON");
+        };
+        assert_eq!(cloud, restored);
+
+        let local = CanonicalEvent::Local(sample_local_run_event());
+        let Ok(json) = serde_json::to_string(&local) else {
+            panic!("CanonicalEvent::Local should serialize to JSON");
+        };
+        let Ok(restored) = serde_json::from_str::<CanonicalEvent>(&json) else {
+            panic!("CanonicalEvent::Local should deserialize from JSON");
+        };
+        assert_eq!(local, restored);
+
+        let tool = CanonicalEvent::Tool(UsageEvent {
+            tool: ProviderId::ClaudeCode,
+            model: "claude-opus".to_string(),
+            timestamp: Utc
+                .timestamp_opt(1_700_000_000, 0)
+                .single()
+                .unwrap_or_default(),
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            project: None,
+            access_path: AccessPath::Subscription,
+        });
+        let Ok(json) = serde_json::to_string(&tool) else {
+            panic!("CanonicalEvent::Tool should serialize to JSON");
+        };
+        let Ok(restored) = serde_json::from_str::<CanonicalEvent>(&json) else {
+            panic!("CanonicalEvent::Tool should deserialize from JSON");
+        };
+        assert_eq!(tool, restored);
     }
 
     #[test]
