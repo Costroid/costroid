@@ -15,8 +15,8 @@ use costroid_focus::{
 // reaches it here rather than taking a direct `focus` edge.
 pub use costroid_focus::FocusRecord;
 use costroid_providers::{
-    default_providers, read_cursor_config, AccessPath, CursorConfig, LimitStatus, LimitWindow,
-    Provider, UsageEvent,
+    default_providers, read_cursor_config, AccessPath, CanonicalEvent, CloudUsageEvent,
+    CursorConfig, LimitStatus, LimitWindow, LocalRunEvent, Provider, UsageEvent,
 };
 // Re-export the provider-layer types that appear in this crate's PUBLIC API — the
 // parameter type of `collect_local_snapshot`/`now_summary` callers need (`HostEnv`),
@@ -103,6 +103,124 @@ pub fn focus_records_from_usage(events: &[UsageEvent]) -> Result<Vec<FocusRecord
         push_meter_records(event, &pricing, &mut records)?;
     }
     Ok(records)
+}
+
+/// Lane-tagged dispatch: normalize a slice of [`CanonicalEvent`]s into FOCUS rows,
+/// routing each variant to its per-lane normalizer so every emitted row carries the
+/// correct [`LedgerLane`] (`x_Lane`).
+///
+/// - [`CanonicalEvent::Tool`] reuses the existing developer-tool path
+///   ([`push_meter_records`], exactly as [`focus_records_from_usage`]); its rows are
+///   estimates (your tokens × current prices). The lane is `developer_tool`, set at
+///   the meter site.
+/// - [`CanonicalEvent::Cloud`] becomes one `cloud_api`-lane row via
+///   [`cloud_usage_to_focus`]; the cloud bill is authoritative, so a present
+///   `billed_cost` is preserved verbatim (not recomputed).
+/// - [`CanonicalEvent::Local`] becomes one `local_inference`-lane row via
+///   [`local_run_to_focus`]; only the lane + token count are carried (the energy
+///   columns are deferred to M3).
+///
+/// This does not sum across lanes — mixing estimated dev-tool rows with authoritative
+/// cloud-bill rows is guarded separately (T6). T5 only produces correctly-laned rows.
+pub fn focus_records_from_canonical(
+    events: &[CanonicalEvent],
+) -> Result<Vec<FocusRecord>, CoreError> {
+    let pricing = PricingCatalog::bundled()?;
+    let mut records = Vec::new();
+    for event in events {
+        match event {
+            CanonicalEvent::Tool(usage) => {
+                // Reuse the existing developer-tool meter path verbatim — no
+                // duplicated meter logic. Lane is `developer_tool` (set by the
+                // UnpricedUsage site in `push_meter_records`).
+                push_meter_records(usage, &pricing, &mut records)?;
+            }
+            CanonicalEvent::Cloud(cloud) => {
+                records.push(cloud_usage_to_focus(cloud)?);
+            }
+            CanonicalEvent::Local(local) => {
+                records.push(local_run_to_focus(local)?);
+            }
+        }
+    }
+    Ok(records)
+}
+
+/// Build a single `cloud_api`-lane FOCUS row from a [`CloudUsageEvent`].
+///
+/// This is the reusable home the M1 v1.2 import bridge (T14) will call. Cloud rows
+/// are **source-priced**: the cloud invoice is authoritative, so when `billed_cost`
+/// is present it is parsed verbatim into the money type and stamped onto the cost
+/// columns with `x_Estimated = false`. When it is absent the row stays on the
+/// estimate path (`x_Estimated` remains `true`); no estimate is recomputed here.
+fn cloud_usage_to_focus(cloud: &CloudUsageEvent) -> Result<FocusRecord, CoreError> {
+    // Aggregate cloud row: a single output-token meter via the API access path are
+    // the sensible defaults until T14 refines token-type granularity.
+    // TODO(T14): the v1.2 import bridge can refine token-type granularity.
+    let model = cloud.model.clone().unwrap_or_default();
+    let mut row = FocusRecord::unpriced_usage(UnpricedUsage {
+        lane: LedgerLane::CloudApi,
+        timestamp: cloud.timestamp,
+        tool: cloud.service_name.clone(),
+        model,
+        token_type: TokenType::Output,
+        token_count: cloud.token_count.unwrap_or(0),
+        project: None,
+        access_path: FocusAccessPath::Api,
+        service_name: cloud.service_name.clone(),
+        service_provider_name: cloud.service_provider_name.clone(),
+        host_provider_name: cloud.service_provider_name.clone(),
+        invoice_issuer_name: cloud.service_provider_name.clone(),
+        billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+    })?;
+
+    if let Some(raw) = cloud.billed_cost.as_deref() {
+        let cost = Decimal::from_str_exact(raw.trim()).map_err(|err| {
+            CoreError::Import(format!("invalid cloud billed_cost {raw:?}: {err}"))
+        })?;
+        // Source-authoritative bill: stamp it across the cost columns verbatim and
+        // mark the row non-estimated. (Unit-price/quantity columns stay as the
+        // unpriced helper left them — no per-token rate is reconstructed.)
+        row.billed_cost = cost;
+        row.effective_cost = cost;
+        row.list_cost = cost;
+        row.contracted_cost = cost;
+        row.pricing_currency_effective_cost = cost;
+        row.x_estimated = false;
+        // The row IS priced (by the source bill, not our catalog), so it must read
+        // "priced" — not the unpriced helper's default "missing_price" — or pricing
+        // coverage under-reports and a now/window estimate would wrongly skip it. Reuse
+        // the existing "priced" constant (a new status would break `window_estimated_usd`
+        // + `PricingCoverage::add`, which key on it exactly). Plan T14 resolution.
+        row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+    }
+
+    Ok(row)
+}
+
+/// Build a single `local_inference`-lane FOCUS row from a [`LocalRunEvent`].
+///
+/// T5 only tags the lane + carries the consumed-token count (`tokens_out`); the
+/// energy/cost custom columns are intentionally left unset.
+fn local_run_to_focus(local: &LocalRunEvent) -> Result<FocusRecord, CoreError> {
+    // M3 will populate the local-inference energy columns once they land (lean
+    // sign-off deferred them); T5 only tags the lane + tokens.
+    let row = FocusRecord::unpriced_usage(UnpricedUsage {
+        lane: LedgerLane::LocalInference,
+        timestamp: local.timestamp,
+        tool: local.runtime_kind.clone(),
+        model: local.model.clone(),
+        token_type: TokenType::Output,
+        token_count: local.tokens_out,
+        project: None,
+        access_path: FocusAccessPath::Unknown,
+        service_name: local.runtime_kind.clone(),
+        service_provider_name: local.runtime_kind.clone(),
+        host_provider_name: local.runtime_kind.clone(),
+        invoice_issuer_name: local.runtime_kind.clone(),
+        billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+    })?;
+    Ok(row)
 }
 
 pub fn focus_records_from_local_logs(env: &HostEnv) -> Result<Vec<FocusRecord>, CoreError> {
@@ -2897,6 +3015,9 @@ pub enum CoreError {
 
     #[error("FOCUS export failed: {0}")]
     Focus(#[from] FocusError),
+
+    #[error("import failed: {0}")]
+    Import(String),
 }
 
 #[cfg(test)]
@@ -6855,5 +6976,113 @@ mod tests {
         fn parse_limits(&self, _loc: &DataLocation) -> Result<Vec<LimitWindow>, ProviderError> {
             Ok(self.limits.clone())
         }
+    }
+
+    fn cloud_event(billed_cost: Option<&str>) -> CloudUsageEvent {
+        CloudUsageEvent {
+            timestamp: timestamp(),
+            service_name: "Claude 3.5 Sonnet".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            model: Some("claude-3-5-sonnet".to_string()),
+            token_count: Some(1_000),
+            billed_cost: billed_cost.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn canonical_tool_event_yields_developer_tool_lane() {
+        let event = usage_event(ProviderId::Codex, AccessPath::Subscription, timestamp());
+        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Tool(event.clone())]) else {
+            panic!("tool canonical event should normalize");
+        };
+        // Same shape the existing dev-tool path produces.
+        let Ok(direct) = focus_records_from_usage(&[event]) else {
+            panic!("dev-tool path should normalize");
+        };
+        assert_eq!(rows, direct);
+        assert!(!rows.is_empty(), "tool event should emit meter rows");
+        assert!(
+            rows.iter().all(|row| row.x_lane == "developer_tool"),
+            "all tool rows carry the developer_tool lane"
+        );
+    }
+
+    #[test]
+    fn canonical_cloud_event_with_billed_cost_is_source_priced() {
+        let Ok(rows) =
+            focus_records_from_canonical(&[CanonicalEvent::Cloud(cloud_event(Some("12.34")))])
+        else {
+            panic!("cloud canonical event should normalize");
+        };
+        assert_eq!(rows.len(), 1, "a cloud event is one aggregate row");
+        let row = &rows[0];
+        assert_eq!(row.x_lane, "cloud_api");
+        // The source bill is preserved verbatim, not recomputed.
+        let Ok(expected) = Decimal::from_str_exact("12.34") else {
+            panic!("decimal literal should parse");
+        };
+        assert_eq!(row.billed_cost, expected);
+        assert_eq!(row.effective_cost, expected);
+        assert_eq!(row.list_cost, expected);
+        assert_eq!(row.contracted_cost, expected);
+        assert_eq!(row.pricing_currency_effective_cost, expected);
+        assert!(
+            !row.x_estimated,
+            "a source-priced cloud row is not estimated"
+        );
+        assert_eq!(
+            row.x_pricing_status, "priced",
+            "a source-priced row reads priced (not missing_price), so pricing coverage counts it"
+        );
+    }
+
+    #[test]
+    fn canonical_cloud_event_without_billed_cost_stays_estimated() {
+        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Cloud(cloud_event(None))])
+        else {
+            panic!("cloud canonical event should normalize");
+        };
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.x_lane, "cloud_api");
+        assert!(
+            row.x_estimated,
+            "no source bill: the row stays on the estimate path"
+        );
+    }
+
+    #[test]
+    fn canonical_cloud_event_with_bad_cost_errors_without_panicking() {
+        let result = focus_records_from_canonical(&[CanonicalEvent::Cloud(cloud_event(Some(
+            "not-a-number",
+        )))]);
+        assert!(
+            matches!(result, Err(CoreError::Import(_))),
+            "a malformed source cost is a CoreError::Import, not a panic: {result:?}"
+        );
+    }
+
+    #[test]
+    fn canonical_local_event_yields_local_inference_lane_with_tokens() {
+        let local = LocalRunEvent {
+            timestamp: timestamp(),
+            model: "llama-3.1-8b".to_string(),
+            runtime_kind: "ollama".to_string(),
+            tokens_in: 500,
+            tokens_out: 1_200,
+            run_seconds: 4.2,
+            avg_power_watts: 95.0,
+            measurement_mode: "estimated".to_string(),
+        };
+        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Local(local)]) else {
+            panic!("local canonical event should normalize");
+        };
+        assert_eq!(rows.len(), 1, "a local run is one row");
+        let row = &rows[0];
+        assert_eq!(row.x_lane, "local_inference");
+        // Consumed tokens carried (tokens_out); no energy column exists yet (M3).
+        assert_eq!(row.x_consumed_tokens, Decimal::from(1_200_u64));
+        assert_eq!(row.x_token_type, "output");
+        assert_eq!(row.x_model, "llama-3.1-8b");
     }
 }
