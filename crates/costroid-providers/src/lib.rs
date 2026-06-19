@@ -1493,6 +1493,132 @@ mod tests {
         assert_eq!(tool, restored);
     }
 
+    /// R14: the quota model is generalized to Daily/Monthly/BillingCycle and a
+    /// dollar-denominated `Spend` measure. These round-trips lock the EXACT wire
+    /// forms (read from the `#[serde(rename_all = ...)]` attrs) so a future rename
+    /// can't silently change the on-disk/wire format the store-replay path reads.
+    fn sample_limit_window(kind: LimitKind, measure: LimitMeasure) -> LimitWindow {
+        LimitWindow {
+            tool: ProviderId::ClaudeCode,
+            plan: Some("max".to_string()),
+            kind,
+            measure: Some(measure),
+            resets_at: Utc.timestamp_opt(1_700_003_600, 0).single(),
+            captured_at: Utc
+                .timestamp_opt(1_700_000_000, 0)
+                .single()
+                .unwrap_or_default(),
+            status: LimitStatus::Verified,
+            label: Some("primary".to_string()),
+        }
+    }
+
+    fn round_trip_limit_window(window: &LimitWindow) -> LimitWindow {
+        let Ok(json) = serde_json::to_string(window) else {
+            panic!("LimitWindow should serialize to JSON");
+        };
+        let Ok(restored) = serde_json::from_str::<LimitWindow>(&json) else {
+            panic!("LimitWindow should deserialize from JSON");
+        };
+        restored
+    }
+
+    #[test]
+    fn limit_window_round_trips_for_generalized_kinds_r14() {
+        for kind in [
+            LimitKind::Daily,
+            LimitKind::Monthly,
+            LimitKind::BillingCycle,
+        ] {
+            let original = sample_limit_window(kind, LimitMeasure::TokenFraction(0.5));
+            assert_eq!(original, round_trip_limit_window(&original));
+        }
+    }
+
+    #[test]
+    fn limit_window_round_trips_for_both_measures_r14() {
+        let fraction = sample_limit_window(LimitKind::Daily, LimitMeasure::TokenFraction(0.42));
+        assert_eq!(fraction, round_trip_limit_window(&fraction));
+
+        let spend = sample_limit_window(
+            LimitKind::BillingCycle,
+            LimitMeasure::Spend {
+                used_usd: Decimal::new(1234, 2),
+                included_usd: Some(Decimal::new(2000, 2)),
+            },
+        );
+        assert_eq!(spend, round_trip_limit_window(&spend));
+
+        let spend_no_allowance = sample_limit_window(
+            LimitKind::Monthly,
+            LimitMeasure::Spend {
+                used_usd: Decimal::new(500, 2),
+                included_usd: None,
+            },
+        );
+        assert_eq!(
+            spend_no_allowance,
+            round_trip_limit_window(&spend_no_allowance)
+        );
+    }
+
+    #[test]
+    fn limit_kind_wire_tokens_are_kebab_case_r14() {
+        let cases = [
+            (LimitKind::FiveHour, "\"five-hour\""),
+            (LimitKind::Weekly, "\"weekly\""),
+            (LimitKind::Daily, "\"daily\""),
+            (LimitKind::Monthly, "\"monthly\""),
+            (LimitKind::BillingCycle, "\"billing-cycle\""),
+        ];
+        for (kind, expected) in cases {
+            let Ok(json) = serde_json::to_string(&kind) else {
+                panic!("LimitKind should serialize to JSON");
+            };
+            assert_eq!(json, expected, "LimitKind wire token drifted");
+            let Ok(restored) = serde_json::from_str::<LimitKind>(&json) else {
+                panic!("LimitKind should deserialize from JSON");
+            };
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn limit_measure_wire_tokens_are_snake_case_r14() {
+        let Ok(fraction_json) = serde_json::to_string(&LimitMeasure::TokenFraction(0.25)) else {
+            panic!("LimitMeasure should serialize to JSON");
+        };
+        assert!(
+            fraction_json.contains("\"token_fraction\""),
+            "TokenFraction wire token drifted: {fraction_json}"
+        );
+
+        let spend = LimitMeasure::Spend {
+            used_usd: Decimal::new(1234, 2),
+            included_usd: Some(Decimal::new(2000, 2)),
+        };
+        let Ok(spend_json) = serde_json::to_string(&spend) else {
+            panic!("LimitMeasure should serialize to JSON");
+        };
+        assert!(
+            spend_json.contains("\"spend\""),
+            "Spend wire token drifted: {spend_json}"
+        );
+        assert!(
+            spend_json.contains("\"used_usd\""),
+            "Spend.used_usd field name drifted: {spend_json}"
+        );
+        assert!(
+            spend_json.contains("\"included_usd\""),
+            "Spend.included_usd field name drifted: {spend_json}"
+        );
+
+        let Ok(restored) = serde_json::from_str::<LimitMeasure>(&spend_json) else {
+            panic!("LimitMeasure should deserialize from JSON");
+        };
+        assert_eq!(spend, restored);
+    }
+
     #[test]
     fn wsl_roots_include_linux_and_windows_candidates() {
         let env = HostEnv::new(
