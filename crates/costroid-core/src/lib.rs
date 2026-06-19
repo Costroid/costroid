@@ -31,6 +31,9 @@ use costroid_providers::{
 pub use costroid_providers::{
     AuthMethod, Capability, DataSource, HostEnv, LimitKind, LimitMeasure, ProviderId,
 };
+// The FOCUS-import version discriminator appears in this crate's public API
+// (`focus_records_from_v12_import`); re-export it so a core-only consumer can name it.
+pub use costroid_providers::focus_import::FocusInputVersion;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -221,6 +224,45 @@ fn local_run_to_focus(local: &LocalRunEvent) -> Result<FocusRecord, CoreError> {
         billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
     })?;
     Ok(row)
+}
+
+/// Normalize a slice of FOCUS-1.2-imported [`CloudUsageEvent`]s into `cloud_api`-lane
+/// FOCUS rows — the M1 v1.2-in / v1.3-out import bridge (T14).
+///
+/// Each event becomes one row via [`cloud_usage_to_focus`] (T5), reused verbatim — so a
+/// **source-priced** row (a present `billed_cost`) keeps its authoritative cost across the
+/// FOCUS cost columns with `x_Estimated = false`. A **usage-only** row (no `billed_cost`)
+/// takes the catalog estimate path like a local tool log: when its model resolves in the
+/// bundled catalog [`apply_pricing`] reprices it (`x_Estimated` stays `true`,
+/// `x_PricingStatus = "priced"`); otherwise it stays unpriced. Every emitted row is
+/// stamped with the source FOCUS version on `x_FocusInputVersion`.
+///
+/// Lane separation (T6) holds: these are `cloud_api`-lane rows; the typed guard keeps them
+/// out of the developer-tool dollar total.
+pub fn focus_records_from_v12_import(
+    events: &[CloudUsageEvent],
+    source_version: &FocusInputVersion,
+) -> Result<Vec<FocusRecord>, CoreError> {
+    let pricing = PricingCatalog::bundled()?;
+    let version = source_version.as_str().to_string();
+    let mut records = Vec::with_capacity(events.len());
+    for event in events {
+        let mut row = cloud_usage_to_focus(event)?;
+        // Usage-only foreign row (no authoritative bill): estimate it from the bundled
+        // catalog like a local log, when the model is known. `cloud_usage_to_focus` already
+        // preserved a present `billed_cost` (source-priced), so only the None case reprices.
+        if event.billed_cost.is_none() {
+            if let Some(rate) = pricing
+                .resolve_key(event.model.as_deref().unwrap_or_default())
+                .and_then(|key| pricing.rate(key, TokenType::Output))
+            {
+                apply_pricing(&mut row, rate, &pricing);
+            }
+        }
+        row.x_focus_input_version = Some(version.clone());
+        records.push(row);
+    }
+    Ok(records)
 }
 
 pub fn focus_records_from_local_logs(env: &HostEnv) -> Result<Vec<FocusRecord>, CoreError> {
@@ -7360,6 +7402,96 @@ mod tests {
         assert!(
             matches!(result, Err(CoreError::Import(_))),
             "a malformed source cost is a CoreError::Import, not a panic: {result:?}"
+        );
+    }
+
+    #[test]
+    fn v12_import_source_priced_row_preserves_cost_and_stamps_version() {
+        // A source-priced foreign row (a present billed_cost) keeps its authoritative cost
+        // verbatim and is stamped with the input FOCUS version. Use a CATALOG-KNOWN model
+        // (claude-sonnet-4-6) with a source bill that does NOT match what the catalog would
+        // compute, so a regression that wrongly repriced a source-priced row would change
+        // billed_cost away from 0.0123 and fail the assertion below (the reprice guard is
+        // real, not vacuous on a catalog-unknown model).
+        let event = CloudUsageEvent {
+            timestamp: timestamp(),
+            service_name: "Claude API".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            model: Some("claude-sonnet-4-6".to_string()),
+            token_count: Some(1_000_000),
+            billed_cost: Some("0.0123".to_string()),
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
+            panic!("v1.2 import should normalize");
+        };
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.x_lane, "cloud_api");
+        let Ok(expected) = Decimal::from_str_exact("0.0123") else {
+            panic!("decimal literal should parse");
+        };
+        assert_eq!(
+            row.billed_cost, expected,
+            "the source bill is preserved verbatim"
+        );
+        assert!(!row.x_estimated, "a source-priced row is not an estimate");
+        assert_eq!(row.x_pricing_status, "priced");
+        assert_eq!(
+            row.x_focus_input_version.as_deref(),
+            Some("1.2"),
+            "every imported row is stamped with its source FOCUS version"
+        );
+    }
+
+    #[test]
+    fn v12_import_usage_only_row_is_repriced_from_the_catalog_like_a_local_log() {
+        // A usage-only foreign row (no billed_cost) whose model is in the bundled catalog
+        // is repriced from the catalog — an ESTIMATE (x_estimated stays true), status
+        // "priced", a non-zero cost — exactly like a local tool log.
+        let event = CloudUsageEvent {
+            timestamp: timestamp(),
+            service_name: "Claude API".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            model: Some("claude-sonnet-4-6".to_string()),
+            token_count: Some(1_000_000),
+            billed_cost: None,
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
+            panic!("usage-only import should normalize");
+        };
+        let row = &rows[0];
+        assert_eq!(row.x_lane, "cloud_api");
+        assert!(
+            row.x_estimated,
+            "a catalog-repriced row is an estimate (your tokens x current prices)"
+        );
+        assert_eq!(row.x_pricing_status, "priced", "catalog reprice → priced");
+        assert!(
+            row.billed_cost > Decimal::ZERO,
+            "the catalog reprice produced a non-zero estimated cost: {}",
+            row.billed_cost
+        );
+        assert_eq!(row.x_focus_input_version.as_deref(), Some("1.2"));
+    }
+
+    #[test]
+    fn v12_import_rows_never_inflate_the_developer_tool_total() {
+        // Lane separation (T6): imported cloud rows are cloud_api-lane and stay out of the
+        // developer-tool dollar total even though they carry a real cost.
+        let events = [cloud_event(Some("99.99"))];
+        let Ok(rows) = focus_records_from_v12_import(&events, &FocusInputVersion::V1_2) else {
+            panic!("import should normalize");
+        };
+        assert!(rows.iter().all(|row| row.x_lane == "cloud_api"));
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::DeveloperTool),
+            Decimal::ZERO,
+            "a cloud_api row must not appear in the developer-tool total"
+        );
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::CloudApi),
+            Decimal::from_str_exact("99.99").unwrap_or(Decimal::ZERO),
+            "it appears in the cloud_api total instead"
         );
     }
 

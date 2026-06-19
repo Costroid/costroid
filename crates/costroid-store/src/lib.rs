@@ -40,7 +40,7 @@ use thiserror::Error;
 /// The schema version of the [`usage_rows`](USAGE_ROWS_TABLE) layout. Bumped whenever
 /// the persisted column set changes so a future replay/migration step can tell shapes
 /// apart. Stamped into [`STORE_META_TABLE`] on open.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// The one persisted table.
 pub const USAGE_ROWS_TABLE: &str = "usage_rows";
@@ -102,6 +102,9 @@ pub const USAGE_ROWS_COLUMNS: &[&str] = &[
     "sku_meter",
     "pricing_category",
     "pricing_unit",
+    // Import provenance — the FOCUS spec version a row was imported from (nullable; a
+    // bounded version string like "1.2", null on non-imported rows). Never content.
+    "x_focus_input_version",
 ];
 
 /// `CREATE TABLE` DDL for the [`usage_rows`](USAGE_ROWS_TABLE) metadata-allowlist table.
@@ -143,7 +146,8 @@ pub fn usage_rows_ddl() -> String {
             sku_price_id TEXT,\n  \
             sku_meter TEXT,\n  \
             pricing_category TEXT,\n  \
-            pricing_unit TEXT\n\
+            pricing_unit TEXT,\n  \
+            x_focus_input_version TEXT\n\
         )"
     )
 }
@@ -264,11 +268,12 @@ impl Store {
                     contracted_unit_price, pricing_currency_list_unit_price, \
                     pricing_currency_contracted_unit_price, service_name, \
                     service_provider_name, host_provider_name, invoice_issuer_name, \
-                    sku_id, sku_price_id, sku_meter, pricing_category, pricing_unit\
+                    sku_id, sku_price_id, sku_meter, pricing_category, pricing_unit, \
+                    x_focus_input_version\
                 ) VALUES (\
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, \
-                    ?29, ?30, ?31\
+                    ?29, ?30, ?31, ?32\
                 )"
             ))?;
 
@@ -305,6 +310,7 @@ impl Store {
                     row.sku_meter,
                     row.pricing_category,
                     row.pricing_unit,
+                    row.x_focus_input_version,
                 ])?;
             }
         }
@@ -356,7 +362,8 @@ impl Store {
                 contracted_unit_price, pricing_currency_list_unit_price, \
                 pricing_currency_contracted_unit_price, service_name, \
                 service_provider_name, host_provider_name, invoice_issuer_name, sku_id, \
-                sku_price_id, sku_meter, pricing_category, pricing_unit \
+                sku_price_id, sku_meter, pricing_category, pricing_unit, \
+                x_focus_input_version \
              FROM {USAGE_ROWS_TABLE} ORDER BY id"
         ))?;
 
@@ -404,6 +411,7 @@ impl Store {
         let sku_meter: Option<String> = row.get(28)?;
         let pricing_category: Option<String> = row.get(29)?;
         let pricing_unit: Option<String> = row.get(30)?;
+        let x_focus_input_version: Option<String> = row.get(31)?;
 
         // Enums via the single-source-of-truth inverse: a malformed stored enum is a
         // typed Reconstruct error, never a panic or a silent default.
@@ -501,6 +509,9 @@ impl Store {
         record.sku_meter = sku_meter;
         record.pricing_category = pricing_category;
         record.pricing_unit = pricing_unit;
+        // Import provenance (nullable): None on a non-imported row, Some("1.2") on a
+        // FOCUS-v1.2-imported one. Restore verbatim so an imported row round-trips.
+        record.x_focus_input_version = x_focus_input_version;
 
         Ok(record)
     }
@@ -841,6 +852,9 @@ mod tests {
         rec.pricing_unit = Some("tokens".to_string());
         rec.x_estimated = false;
         rec.x_pricing_status = "priced".to_string();
+        // Import provenance — a cloud row imported from a FOCUS v1.2 export. Non-default
+        // (None on a directly-collected row) so the round-trip below is non-vacuous.
+        rec.x_focus_input_version = Some("1.2".to_string());
         rec
     }
 
@@ -914,6 +928,11 @@ mod tests {
         );
         assert_eq!(cloud.pricing_category, Some("Standard".to_string()));
         assert_eq!(cloud.pricing_unit, Some("tokens".to_string()));
+        assert_eq!(
+            cloud.x_focus_input_version,
+            Some("1.2".to_string()),
+            "import provenance round-trips (not lost on replay)"
+        );
         // Guard the unpriced (dev-tool) row's null columns survived as null too — the
         // restore must not fabricate Some on a row where apply_pricing never ran.
         let dev = &reconstructed[0];
@@ -921,6 +940,10 @@ mod tests {
         assert_eq!(dev.sku_price_id, None);
         assert_eq!(dev.pricing_unit, None);
         assert_eq!(dev.list_cost, Decimal::ZERO);
+        assert_eq!(
+            dev.x_focus_input_version, None,
+            "a directly-collected (non-imported) row stays None"
+        );
     }
 
     /// A malformed stored enum (an `x_lane` with no `from_focus_str` inverse) yields a
