@@ -17,15 +17,13 @@ use costroid_core::{
 use crate::app::{color_of, ASH, BONE, DATA_CYAN};
 use crate::format::provider_label;
 
-const FORECAST_SCOPE_LINE: &str = "scope: API-lane spend this month + quota burn (estimated)";
-const FORECAST_NO_USAGE: &str = "no API usage recorded - nothing to forecast yet";
-const FORECAST_ESTIMATE_NOTE: &str =
-    "figures are local estimates (your tokens x current prices), projected - not the vendor invoice.";
+const FORECAST_NO_USAGE: &str = "no API usage recorded — nothing to forecast yet";
 
-/// Draw the Forecast panel. Pure of app/thread state — a headless egui pass exercises it.
+/// Draw the Forecast panel. Pure of app/thread state — a headless egui pass exercises it. The
+/// persistent header status carries the "estimates" caveat, so the panel drops the long scope +
+/// estimate notes the CLI keeps (lean taskbar); every `$` stays `~`-hedged + `(estimated)`-tagged.
 pub fn draw(ui: &mut egui::Ui, view: &ForecastView) {
     draw_header(ui, view);
-    text_line(ui, FORECAST_SCOPE_LINE, ASH);
 
     if view.no_api_usage {
         text_line(ui, FORECAST_NO_USAGE, ASH);
@@ -40,10 +38,8 @@ pub fn draw(ui: &mut egui::Ui, view: &ForecastView) {
         }
     }
 
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     draw_quota_section(ui, view);
-    ui.add_space(2.0);
-    text_line(ui, FORECAST_ESTIMATE_NOTE, ASH);
 }
 
 fn draw_header(ui: &mut egui::Ui, view: &ForecastView) {

@@ -14,25 +14,16 @@ use costroid_core::{
     AnomalySignal,
 };
 
-use crate::app::{color_of, ASH, BONE};
+use crate::app::{color_of, ASH, BONE, DATA_CYAN};
 
-const ANOMALIES_SCOPE_LINE: &str =
-    "scope: API-lane spend spike + all-lane model mix vs your own recent history (estimated)";
-const ANOMALIES_NO_USAGE: &str =
-    "no usage recorded yet - callouts need a few days of history (estimated)";
-const ANOMALIES_QUOTA_DEFERRED_NOTE: &str =
-    "quota burn-rate anomalies need multi-day quota history, which local data does not keep - not shown.";
-const ANOMALIES_ESTIMATE_NOTE: &str =
-    "figures are local estimates (your tokens x current prices), vs your own recent history.";
+const ANOMALIES_NO_USAGE: &str = "no usage recorded yet — callouts need a few days of history";
 
-/// Draw the Anomalies panel. Pure of app/thread state — a headless egui pass exercises it.
+/// Draw the Anomalies panel. Pure of app/thread state — a headless egui pass exercises it. The
+/// persistent header status carries the "estimates" caveat, so the panel drops the long scope +
+/// estimate + quota-deferred footnotes the CLI keeps (lean taskbar); each callout stays `~`-hedged.
 pub fn draw(ui: &mut egui::Ui, view: &AnomaliesView) {
     draw_header(ui, view);
-    text_line(ui, ANOMALIES_SCOPE_LINE, ASH);
     draw_body(ui, view);
-    ui.add_space(2.0);
-    text_line(ui, ANOMALIES_QUOTA_DEFERRED_NOTE, ASH);
-    text_line(ui, ANOMALIES_ESTIMATE_NOTE, ASH);
 }
 
 fn draw_header(ui: &mut egui::Ui, view: &AnomaliesView) {
@@ -154,16 +145,18 @@ fn anomaly_callout(anomaly: &Anomaly) -> String {
     }
 }
 
-/// Draw one callout: a small painted Bone dot marker + the hedged sentence (the proactive
-/// insight voice). The marker is PAINTED (not a `◆` glyph the bundled JetBrains Mono may lack).
+/// Draw one callout: a small painted data-cyan dot marker + the hedged sentence (the proactive
+/// insight voice). The marker is PAINTED (not a `◆` glyph the bundled JetBrains Mono may lack), and
+/// cyan reads as "data/analytical insight" — NOT amber/red (anomalies are advisory, never an alarm).
 fn draw_callout(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(2.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         let (rect, _response) =
             ui.allocate_exact_size(egui::Vec2::splat(8.0), egui::Sense::hover());
         ui.painter_at(rect)
-            .circle_filled(rect.center(), 2.4, color_of(BONE));
-        ui.add_space(2.0);
+            .circle_filled(rect.center(), 2.4, color_of(DATA_CYAN));
+        ui.add_space(4.0);
         ui.label(egui::RichText::new(text).monospace().color(color_of(BONE)));
     });
 }

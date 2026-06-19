@@ -12,37 +12,32 @@
 //! NO connect/disconnect/reconcile action (those stay in the CLI; STEP6-TASKBAR-DESIGN §9). It is
 //! compiled only under `--features connect`; the default build links no `costroid-connect` symbol.
 
-use costroid_core::{AuthMethod, DataSource, ProviderCapabilityView, ProviderStatus};
+use costroid_core::{
+    AuthMethod, DataSource, ProviderCapabilityView, ProviderStatus, ProviderStatusKind,
+};
 
-use crate::app::{color_of, ASH, BONE};
+use crate::app::{chip, color_of, ASH, BONE, CAUTION, CRITICAL, DATA_CYAN, HEALTHY};
 use crate::format::{kind_label, provider_label, provider_state_word};
 
 /// Draw the Providers panel's lane sources (always present; the connection lane is appended by
-/// [`draw_connection_lane`] under `--features connect`). Pure of app/thread state.
+/// [`draw_connection_lane`] under `--features connect`). Pure of app/thread state. Lean: each
+/// provider is a name + a colored health chip + its two product pillars (cost source + quota
+/// source); the CLI carries the fuller model-mix/auth breakdown.
 pub fn draw(
     ui: &mut egui::Ui,
     capabilities: &[ProviderCapabilityView],
     statuses: &[ProviderStatus],
 ) {
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("providers")
-                .monospace()
-                .strong()
-                .color(color_of(BONE)),
-        );
-    });
-
     if capabilities.is_empty() {
         text_line(ui, "no providers to describe", ASH);
         return;
     }
 
-    for capability in capabilities {
+    for (index, capability) in capabilities.iter().enumerate() {
         let status = find_status(statuses, capability);
-        ui.add_space(4.0);
+        ui.add_space(if index == 0 { 2.0 } else { 6.0 });
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(provider_label(capability.provider))
@@ -50,36 +45,51 @@ pub fn draw(
                     .strong()
                     .color(color_of(BONE)),
             );
-            ui.label(
-                egui::RichText::new(format!(" ({})", provider_state_word(status)))
-                    .monospace()
-                    .color(color_of(ASH)),
-            );
+            chip(ui, provider_state_word(status), state_color(status));
         });
-        text_line(
-            ui,
-            &format!("  api cost   {}", data_source_phrase(capability.api_cost)),
-            ASH,
-        );
-        text_line(
-            ui,
-            &format!("  quota      {}", quota_phrase(capability)),
-            ASH,
-        );
-        text_line(
-            ui,
-            &format!("  model mix  {}", data_source_phrase(capability.model_mix)),
-            ASH,
-        );
-        text_line(
-            ui,
-            &format!("  auth       {}", auth_phrase(capability.auth)),
-            ASH,
-        );
+        detail_line(ui, "cost ", data_source_phrase(capability.api_cost));
+        detail_line(ui, "quota", &quota_phrase(capability));
+        // Auth only when there is one (today's local providers need no login — skip the noise).
+        if !matches!(capability.auth, AuthMethod::None) {
+            detail_line(ui, "auth ", auth_phrase(capability.auth));
+        }
         if let Some(note) = status.and_then(|status| status.message.as_deref()) {
-            text_line(ui, &format!("  note: {}", sanitize(note)), ASH);
+            detail_line(ui, "note ", &sanitize(note));
         }
     }
+}
+
+/// The health-chip color for a provider's detection state — green available, cyan detected,
+/// amber partial, red error, muted missing/unknown. Always paired with [`provider_state_word`]
+/// (never color alone).
+fn state_color(status: Option<&ProviderStatus>) -> [u8; 4] {
+    match status.map(|status| status.status) {
+        Some(ProviderStatusKind::Available) => HEALTHY,
+        Some(ProviderStatusKind::Detected) => DATA_CYAN,
+        Some(ProviderStatusKind::Partial) => CAUTION,
+        Some(ProviderStatusKind::Error) => CRITICAL,
+        Some(ProviderStatusKind::Missing) | None => ASH,
+    }
+}
+
+/// One indented `tag  value` lane line — the tag muted (Ash), the value readable (Bone).
+fn detail_line(ui: &mut egui::Ui, tag: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.add_space(20.0);
+        ui.label(
+            egui::RichText::new(tag)
+                .monospace()
+                .size(11.0)
+                .color(color_of(ASH)),
+        );
+        ui.label(
+            egui::RichText::new(value)
+                .monospace()
+                .size(11.0)
+                .color(color_of(BONE)),
+        );
+    });
 }
 
 fn find_status<'a>(
@@ -245,18 +255,36 @@ pub fn draw_connection_lane(ui: &mut egui::Ui, connections: &[ConnectionEntry]) 
     if connections.is_empty() {
         return;
     }
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     text_line(ui, "connections (your own usage API keys)", ASH);
     for entry in connections {
-        let detail = match &entry.state {
+        let (word, color, extra) = match &entry.state {
             ConnectionState::Connected { org: Some(org) } => {
-                format!("connected - organization {org}")
+                ("connected", HEALTHY, format!("organization {org}"))
             }
-            ConnectionState::Connected { org: None } => "connected".to_string(),
-            ConnectionState::NotConnected => "not connected".to_string(),
-            ConnectionState::Unavailable(message) => sanitize(message),
+            ConnectionState::Connected { org: None } => ("connected", HEALTHY, String::new()),
+            ConnectionState::NotConnected => ("not connected", ASH, String::new()),
+            ConnectionState::Unavailable(message) => ("unavailable", ASH, sanitize(message)),
         };
-        text_line(ui, &format!("  {:<10} {detail}", entry.vendor), ASH);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add_space(20.0);
+            ui.label(
+                egui::RichText::new(format!("{:<10}", entry.vendor))
+                    .monospace()
+                    .size(11.0)
+                    .color(color_of(BONE)),
+            );
+            chip(ui, word, color);
+            if !extra.is_empty() {
+                ui.label(
+                    egui::RichText::new(extra)
+                        .monospace()
+                        .size(11.0)
+                        .color(color_of(ASH)),
+                );
+            }
+        });
     }
 }
 

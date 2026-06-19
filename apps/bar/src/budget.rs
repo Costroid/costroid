@@ -12,24 +12,23 @@ use costroid_core::{
     BudgetRow, BudgetScope, BudgetView, ALERT_CRITICAL_FRACTION, ALERT_WARN_FRACTION,
 };
 
-use crate::app::{color_of, ASH, BONE};
+use crate::app::{chip, color_of, ASH, BONE, CAUTION, CRITICAL, HEALTHY};
 use crate::format::percent;
 use crate::meter::{self, MeterFill, MeterModel};
 
-const BUDGET_CONFIG_HINT: &str = "no budget set - set targets in ~/.config/costroid/config.toml";
+const BUDGET_CONFIG_HINT: &str =
+    "no budget set — add [budget] targets in ~/.config/costroid/config.toml";
 const BUDGET_NO_USABLE_TARGETS: &str =
-    "no usable budget targets - check ~/.config/costroid/config.toml";
-const BUDGET_ESTIMATE_NOTE: &str = "figures are local estimates (your tokens x current prices); \
-     run `costroid reconcile` to compare against the provider invoice.";
+    "no usable budget targets — check ~/.config/costroid/config.toml";
 
-/// Draw the Budget panel. Pure of app/thread state — a headless egui pass exercises it.
+/// Draw the Budget panel. Pure of app/thread state — a headless egui pass exercises it. The
+/// persistent header status line carries the "estimates" honesty caveat, so the panel does not
+/// repeat it (lean taskbar — the CLI keeps the long-form notes).
 pub fn draw(ui: &mut egui::Ui, view: &BudgetView) {
     draw_header(ui, view);
-    text_line(ui, &scope_line(view), ASH, false);
 
     if view.no_budget_set {
         draw_empty_state(ui);
-        text_line(ui, BUDGET_ESTIMATE_NOTE, ASH, false);
         return;
     }
 
@@ -37,28 +36,42 @@ pub fn draw(ui: &mut egui::Ui, view: &BudgetView) {
     for row in &view.rows {
         ui.add_space(4.0);
         meter::paint(ui, &row_meter(row));
-        text_line(ui, &format!("  {}", pace_line(row, view)), ASH, false);
-        if let Some(over) = &row.over_by_usd {
-            text_line(
-                ui,
-                &format!("  over by {}", format_over_by_usd(over)),
-                ASH,
-                false,
-            );
-        }
+        draw_pace(ui, row, view);
         any = true;
     }
-    if !view.excluded_tools.is_empty() {
-        for excluded in &view.excluded_tools {
-            text_line(ui, &excluded_line(excluded), ASH, false);
-        }
+    for excluded in &view.excluded_tools {
+        ui.add_space(2.0);
+        text_line(ui, &excluded_line(excluded), ASH, false);
         any = true;
     }
     if !any {
         text_line(ui, BUDGET_NO_USABLE_TARGETS, ASH, false);
     }
-    ui.add_space(2.0);
-    text_line(ui, BUDGET_ESTIMATE_NOTE, ASH, false);
+}
+
+/// The pace line under a budget row: a colored state chip (`on track` / `ahead of pace` / `over
+/// budget`) followed by the used-vs-elapsed numbers + any over-by overshoot — the chip WORD + the
+/// over-by `$` carry the state without relying on color (never color alone).
+fn draw_pace(ui: &mut egui::Ui, row: &BudgetRow, view: &BudgetView) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.add_space(8.0);
+        chip(ui, pace_phrase(row.pace), pace_color(row.pace));
+        let mut detail = format!(
+            "{} used · {} elapsed",
+            percent(row.fraction),
+            percent(view.month_elapsed_fraction),
+        );
+        if let Some(over) = &row.over_by_usd {
+            detail.push_str(&format!(" · over by {}", format_over_by_usd(over)));
+        }
+        ui.label(
+            egui::RichText::new(detail)
+                .monospace()
+                .size(11.0)
+                .color(color_of(ASH)),
+        );
+    });
 }
 
 fn draw_header(ui: &mut egui::Ui, view: &BudgetView) {
@@ -125,27 +138,21 @@ fn budget_step(row: &BudgetRow) -> u8 {
     }
 }
 
-fn scope_line(view: &BudgetView) -> String {
-    format!(
-        "scope: API-lane spend this month ({} of month elapsed)",
-        percent(view.month_elapsed_fraction)
-    )
-}
-
-fn pace_line(row: &BudgetRow, view: &BudgetView) -> String {
-    format!(
-        "pace: {} used vs {} of month elapsed ({})",
-        percent(row.fraction),
-        percent(view.month_elapsed_fraction),
-        pace_phrase(row.pace),
-    )
-}
-
 fn pace_phrase(pace: BudgetPace) -> &'static str {
     match pace {
         BudgetPace::OnTrack => "on track",
         BudgetPace::AheadOfPace => "ahead of pace",
         BudgetPace::OverBudget => "over budget",
+    }
+}
+
+/// The pace chip's color — green on track, amber ahead of pace (spending faster than the month
+/// elapses), red over budget. Always paired with [`pace_phrase`] (never color alone).
+fn pace_color(pace: BudgetPace) -> [u8; 4] {
+    match pace {
+        BudgetPace::OnTrack => HEALTHY,
+        BudgetPace::AheadOfPace => CAUTION,
+        BudgetPace::OverBudget => CRITICAL,
     }
 }
 
@@ -172,20 +179,17 @@ fn excluded_line(excluded: &BudgetExcludedTool) -> String {
     }
 }
 
-/// The "no budget set" empty state: point the user at the config file with a copy-paste schema.
+/// The "no budget set" empty state — lean: one hint line + one compact example (the CLI carries the
+/// full copy-paste `[budget]` schema; the taskbar points at it without the wall of text).
 fn draw_empty_state(ui: &mut egui::Ui) {
-    for line in [
-        BUDGET_CONFIG_HINT,
-        "",
-        "[budget]",
-        "total_monthly_usd = 100.00",
-        "",
-        "[budget.per_tool]",
-        "claude-code = 60.00",
-        "codex = 40.00",
-    ] {
-        text_line(ui, line, ASH, false);
-    }
+    text_line(ui, BUDGET_CONFIG_HINT, ASH, false);
+    ui.add_space(2.0);
+    text_line(
+        ui,
+        "e.g.  total_monthly_usd = 100.00  ·  [budget.per_tool] claude-code = 60.00",
+        ASH,
+        false,
+    );
 }
 
 /// A single indented monospace text line in the given ink (optionally strong).

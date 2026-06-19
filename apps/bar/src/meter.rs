@@ -318,8 +318,9 @@ fn meter_segments(fraction: f64, width: usize) -> Segments {
     Segments { full, half }
 }
 
-/// Paint one meter row: the aligned label, the painted fill (when any), the detail + stamp,
-/// and an optional Claude caveat sub-line.
+/// Paint one meter row: the aligned label, the painted fill (when any), and the detail + stamp.
+/// The Claude chat caveat is NOT drawn here — the Overview renders it ONCE below the meter stack
+/// (deduped) rather than repeating it per Claude window; callers read `model.caveat` for that.
 pub fn paint(ui: &mut egui::Ui, model: &MeterModel) {
     let detail = if model.stamp.is_empty() {
         model.detail.clone()
@@ -354,17 +355,6 @@ pub fn paint(ui: &mut egui::Ui, model: &MeterModel) {
         }
         ui.label(egui::RichText::new(detail).monospace().color(color_of(ASH)));
     });
-    if let Some(caveat) = model.caveat {
-        ui.horizontal(|ui| {
-            ui.add_space(20.0);
-            ui.label(
-                egui::RichText::new(caveat)
-                    .monospace()
-                    .size(10.0)
-                    .color(color_of(ASH)),
-            );
-        });
-    }
 }
 
 /// Paint the dot-grid fill bar to the consumed `fraction`, lit dots in `lit`, track dots dim.

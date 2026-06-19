@@ -161,6 +161,60 @@ pub fn now_api_spend_display(summary: &NowSummary) -> String {
     format_money_usd(&total, true)
 }
 
+/// One model's API-lane spend for the taskbar's per-model breakdown: the model id, its
+/// `~`-hedged + estimate-labeled spend string, and its `0.0..=1.0` share of the largest model's
+/// spend (for a share bar). Money stays [`Decimal`] in the engine; a `rust_decimal`-free consumer
+/// (the Step 6 taskbar `apps/bar`) receives the finished string + the normalized fraction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelSpend {
+    pub model: String,
+    /// The `~`-hedged + estimate-labeled spend (e.g. `"~$24.10"`).
+    pub spend_display: String,
+    /// This model's spend as a fraction of the largest model's spend (`0.0..=1.0`) — the share-bar
+    /// length. The top model is always `1.0`; an all-zero set yields all-zero (an honest flat row).
+    pub fraction: f64,
+}
+
+/// The per-model API-lane spend breakdown of a now-summary, highest spend first (ties broken by
+/// model name) — the input a `rust_decimal`-free consumer (the taskbar) needs to paint a colored
+/// per-model share list without naming `Decimal`. Mirrors the CLI now-screen's `sorted_lane_rows`
+/// ordering + `format_money(.., estimated = true)`; the `fraction` is each row's `billed_cost`
+/// normalized to the series max (the same display-scaling pattern as [`forecast_daily_fractions`],
+/// no pricing math). Subscription/unknown lanes are excluded (never a summable `$`).
+pub fn now_model_spend_breakdown(summary: &NowSummary) -> Vec<ModelSpend> {
+    let mut rows: Vec<&CostLaneSummary> = summary
+        .current_costs
+        .iter()
+        .filter(|row| row.lane == CostLane::Api)
+        .collect();
+    rows.sort_by(|left, right| {
+        right
+            .totals
+            .billed_cost
+            .cmp(&left.totals.billed_cost)
+            .then_with(|| left.group.value.cmp(&right.group.value))
+    });
+    let max = rows
+        .iter()
+        .map(|row| row.totals.billed_cost)
+        .max()
+        .unwrap_or(Decimal::ZERO);
+    rows.into_iter()
+        .map(|row| ModelSpend {
+            model: row.group.value.clone(),
+            spend_display: format_money_usd(&row.totals.billed_cost, true),
+            fraction: if max <= Decimal::ZERO {
+                0.0
+            } else {
+                (row.totals.billed_cost / max)
+                    .to_f64()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0)
+            },
+        })
+        .collect()
+}
+
 /// Normalize a Forecast view's daily actual spends to `0.0..=1.0` fractions of the series max —
 /// the input a `rust_decimal`-free consumer (the Step 6 taskbar `apps/bar`) needs to paint the
 /// daily-spend sparkline without naming `Decimal`. Output is parallel to `days` (one fraction per
@@ -3013,6 +3067,41 @@ mod tests {
             now_api_spend_display(&now_summary_with_costs(Vec::new())),
             "~$0.00"
         );
+    }
+
+    #[test]
+    fn now_model_spend_breakdown_sorts_hedges_and_normalizes() {
+        // API-lane only, highest spend first; a subscription-lane row is excluded.
+        let mut subscription = api_cost_row("claude-opus", Decimal::new(9999, 2));
+        subscription.lane = CostLane::SubscriptionEstimate;
+        let summary = now_summary_with_costs(vec![
+            api_cost_row("gpt-5.5", Decimal::new(1250, 2)),
+            api_cost_row("claude-sonnet", Decimal::new(5000, 2)),
+            subscription,
+        ]);
+        let breakdown = now_model_spend_breakdown(&summary);
+        assert_eq!(breakdown.len(), 2, "subscription lane excluded");
+        // Highest spend leads and is the full-length share bar.
+        assert_eq!(breakdown[0].model, "claude-sonnet");
+        assert_eq!(breakdown[0].spend_display, "~$50.00");
+        assert!((breakdown[0].fraction - 1.0).abs() < 1e-9);
+        // The smaller model is a 0.25 share of the largest (12.50 / 50.00).
+        assert_eq!(breakdown[1].model, "gpt-5.5");
+        assert!((breakdown[1].fraction - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn now_model_spend_breakdown_handles_empty_and_zero() {
+        // No usage → no rows (never a fabricated $0 model).
+        assert!(now_model_spend_breakdown(&now_summary_with_costs(Vec::new())).is_empty());
+        // All-zero spend → present rows, but an honest flat 0.0 share (never a 0/0).
+        let summary = now_summary_with_costs(vec![
+            api_cost_row("gpt-5.5", Decimal::ZERO),
+            api_cost_row("claude-sonnet", Decimal::ZERO),
+        ]);
+        let breakdown = now_model_spend_breakdown(&summary);
+        assert_eq!(breakdown.len(), 2);
+        assert!(breakdown.iter().all(|row| row.fraction == 0.0));
     }
 
     #[test]

@@ -96,7 +96,8 @@ pub(crate) fn color_of(rgba: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
 }
 
-const CARBON: [u8; 4] = [0x0b, 0x0c, 0x0e, 0xff];
+/// The darkest brand ground ("Carbon") — also the high-contrast ink on a Signal-lime chip.
+pub(crate) const CARBON: [u8; 4] = [0x0b, 0x0c, 0x0e, 0xff];
 const SLATE: [u8; 4] = [0x16, 0x18, 0x1c, 0xff];
 /// Primary ink (brand "Bone").
 pub(crate) const BONE: [u8; 4] = [0xe9, 0xe7, 0xdf, 0xff];
@@ -106,8 +107,59 @@ pub(crate) const ASH: [u8; 4] = [0x88, 0x87, 0x80, 0xff];
 /// only the active/selected/"live" highlight — the active tab + the Overview's header rule).
 pub(crate) const SIGNAL: [u8; 4] = [0xc8, 0xff, 0x3d, 0xff];
 /// The cold cyan-blue data ramp's mid tone (brand "COSTROID·CLI" `#378ADD` — "logs, data, raw
-/// compute"). Used for cost/spend data viz (the Forecast sparkline); never amber (amber is limits).
+/// compute"). Used for cost/spend data viz (the Forecast sparkline + per-model share bars); never
+/// amber (amber is limits).
 pub(crate) const DATA_CYAN: [u8; 4] = [0x37, 0x8a, 0xdd, 0xff];
+
+/// The brand's categorical per-model hue ramp — the true-color equivalents of the CLI's xterm-256
+/// `SERIES_PALETTE` (38/79/75/141/215/210): azure, aquamarine, cornflower, medium-purple, sand-gold,
+/// salmon. Six dark-ground-friendly hues cycled by a model's spend rank, so the taskbar's per-model
+/// coloring matches the terminal edge-to-edge (DESIGN-SYSTEM "Terminal palette" / the §0 brand
+/// system, evolved 2026-06-19). Signal-lime is intentionally ABSENT — it stays the reserved
+/// active/"live" accent, never a data series. The leading dot + the model name carry the identity
+/// even without color (never color alone).
+pub(crate) const SERIES: [[u8; 4]; 6] = [
+    [0x00, 0xaf, 0xd7, 0xff], // azure       (xterm 38)
+    [0x5f, 0xd7, 0xaf, 0xff], // aquamarine  (79)
+    [0x5f, 0xaf, 0xff, 0xff], // cornflower  (75)
+    [0xaf, 0x87, 0xff, 0xff], // medium-purple (141)
+    [0xff, 0xaf, 0x5f, 0xff], // sand-gold   (215)
+    [0xff, 0x87, 0x87, 0xff], // salmon      (210)
+];
+
+/// The `SERIES` hue for the `n`-th model (cycled), as an egui color. Mirrors the CLI's
+/// `series_color_index`, so the two surfaces share one per-model palette.
+pub(crate) fn series_color(index: usize) -> egui::Color32 {
+    color_of(SERIES[index % SERIES.len()])
+}
+
+/// A small filled "chip": a rounded-rect tint of `fg` with `text` painted in `fg` — the colored
+/// state / pace tag (Providers health, Budget pace). The word itself is the non-color cue (never
+/// color alone), and the chip is named for AccessKit (T21) since its text is painted, not a label.
+/// Laid out inline (allocates its own exact size); returns after painting.
+pub(crate) fn chip(ui: &mut egui::Ui, text: &str, fg: [u8; 4]) {
+    let fg_color = color_of(fg);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), fg_color);
+    let pad = egui::vec2(6.0, 2.0);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + pad * 2.0, egui::Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    let painter = ui.painter_at(rect);
+    // A low-alpha tint of the fg reads as a subtle badge over the Carbon ground.
+    painter.rect_filled(rect, 3.0, color_of([fg[0], fg[1], fg[2], 0x2e]));
+    painter.galley(rect.min + pad, galley, fg_color);
+}
+
+/// A "healthy"/positive state color (the warning ramp's green) — distinct from Signal-lime so it
+/// never competes with the reserved active/"live" accent. Paired with a state/pace WORD by callers.
+pub(crate) const HEALTHY: [u8; 4] = [0x5b, 0xd1, 0x7a, 0xff];
+/// A "caution" state color (the warning ramp's amber/orange) — Budget ahead-of-pace, a partial
+/// provider. Always paired with its word.
+pub(crate) const CAUTION: [u8; 4] = [0xe8, 0x92, 0x3d, 0xff];
+/// A "critical" state color (the warning ramp's red) — over budget, a provider error. Paired with
+/// its word.
+pub(crate) const CRITICAL: [u8; 4] = [0xe0, 0x53, 0x3d, 0xff];
 
 fn carbon_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
@@ -484,7 +536,17 @@ fn status_text(
     generated_hhmm: Option<String>,
 ) -> String {
     if let Some(reason) = error {
-        return format!("refresh failed — {reason}");
+        // A failed refresh KEEPS the last-good cockpit on screen (`RefreshState::apply` retains
+        // `loaded` on an error), so the `$` panels — Budget especially, whose figures carry no
+        // inline `(estimated)` tag — keep rendering. The "· estimates" honesty caveat must ride
+        // every state in which a dollar figure can show (CLAUDE.md: local cost is always an
+        // estimate), so keep it here whenever stale data is still up. The no-data load states below
+        // have no cockpit (no `$` panels), so they carry no caveat.
+        return if has_data {
+            format!("refresh failed — {reason} · estimates")
+        } else {
+            format!("refresh failed — {reason}")
+        };
     }
     match (has_data, generated_hhmm) {
         (true, Some(stamp)) => format!("updated {stamp} · estimates"),
@@ -500,14 +562,20 @@ fn status_text(
 fn draw_shell(ui: &mut egui::Ui, view: &ShellView) -> ShellAction {
     let mut action = ShellAction::default();
 
-    ui.add_space(8.0);
+    ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         draw_mark(ui, view.step);
         ui.add_space(10.0);
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("costroid").strong().size(20.0));
-            ui.label(egui::RichText::new(&view.status).color(color_of(ASH)));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("costroid").strong().size(18.0));
+            ui.label(
+                egui::RichText::new(&view.status)
+                    .monospace()
+                    .size(11.0)
+                    .color(color_of(ASH)),
+            );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
@@ -557,19 +625,45 @@ fn draw_shell(ui: &mut egui::Ui, view: &ShellView) -> ShellAction {
                 ui.add_space(6.0);
                 draw_panel(ui, view.tab, cockpit);
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new("1-5 tabs · r refresh · q hide")
-                            .monospace()
-                            .size(10.0)
-                            .color(color_of(ASH)),
-                    );
-                });
+                draw_key_hints(ui);
             }
         });
 
     action
+}
+
+/// The persistent key-hint footer — keys in Signal-lime (the active/"live" accent), labels in muted
+/// Ash, dim `·` separators. Colorful but quiet; the words carry the meaning, so it never relies on
+/// color alone. The honesty caveat ("estimates") rides the header status line, not here.
+fn draw_key_hints(ui: &mut egui::Ui) {
+    const HINTS: [(&str, &str); 3] = [("1-5", "tabs"), ("r", "refresh"), ("q", "hide")];
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.add_space(8.0);
+        for (index, (key, label)) in HINTS.iter().enumerate() {
+            if index > 0 {
+                ui.label(
+                    egui::RichText::new("·")
+                        .monospace()
+                        .size(10.0)
+                        .color(color_of(ASH)),
+                );
+            }
+            ui.label(
+                egui::RichText::new(*key)
+                    .monospace()
+                    .size(10.0)
+                    .strong()
+                    .color(color_of(SIGNAL)),
+            );
+            ui.label(
+                egui::RichText::new(*label)
+                    .monospace()
+                    .size(10.0)
+                    .color(color_of(ASH)),
+            );
+        }
+    });
 }
 
 /// Dispatch the lower region to the selected tab's panel.
@@ -700,13 +794,21 @@ mod tests {
 
     #[test]
     fn status_text_prioritizes_error() {
+        // A failed refresh over stale data still shows the cockpit's $ panels, so the error line
+        // keeps the "· estimates" honesty caveat (cockpit Some ⇒ has_data true).
         let s = status_text(
             Some("could not read local data: boom"),
             true,
             Phase::Idle,
             Some("12:00".to_owned()),
         );
-        assert_eq!(s, "refresh failed — could not read local data: boom");
+        assert_eq!(
+            s,
+            "refresh failed — could not read local data: boom · estimates"
+        );
+        // A first-load error (no data yet, no cockpit, no $ panels) carries no estimate caveat.
+        let s = status_text(Some("boom"), false, Phase::Idle, None);
+        assert_eq!(s, "refresh failed — boom");
     }
 
     #[test]

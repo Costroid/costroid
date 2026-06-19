@@ -8,7 +8,7 @@
 //! (digit 1–5 / arrows / Tab) mirrors the TUI; it is driven by `app.rs`, this module owns the
 //! `Tab` model + the strip paint.
 
-use crate::app::{color_of, ASH, SIGNAL};
+use crate::app::{color_of, ASH, CARBON, SIGNAL};
 
 /// One of the five live cockpit views (STEP6-TASKBAR-DESIGN §1, scope "Glance + live
 /// cockpit"). `Trends`/`Models`/`History`/`Frontier` are the deferred post-0.6.0 fast-follow.
@@ -62,29 +62,47 @@ impl Tab {
     }
 }
 
-/// Paint the tab strip, highlighting `selected` in Signal-lime + strong. Returns a tab if one
-/// was clicked. Pure of app/thread state, so a headless egui pass can exercise it.
+/// Paint the tab strip, the active tab a filled Signal-lime chip. Returns a tab if one was clicked.
+/// Pure of app/thread state, so a headless egui pass can exercise it.
 pub fn draw_strip(ui: &mut egui::Ui, selected: Tab) -> Option<Tab> {
     let mut clicked = None;
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
         ui.add_space(8.0);
         for tab in Tab::ALL {
-            let active = tab == selected;
-            // The active tab is BOTH lime AND strong, so the selection is never carried by color
-            // alone (the never-color-alone rule — DESIGN-SYSTEM Brand basics); inactive tabs are
-            // muted Ash. A `selectable_label` gives a click target + hover affordance.
-            let mut text = egui::RichText::new(tab.label()).monospace();
-            text = if active {
-                text.strong().color(color_of(SIGNAL))
-            } else {
-                text.color(color_of(ASH))
-            };
-            if ui.selectable_label(active, text).clicked() {
+            if draw_tab(ui, tab, tab == selected) {
                 clicked = Some(tab);
             }
         }
     });
     clicked
+}
+
+/// One tab: the active one is a filled Signal-lime chip with dark (Carbon) ink — a reverse-video
+/// selection whose FILL (a shape change, not the lime alone) is the never-color-alone cue; inactive
+/// tabs are muted Ash with a quiet lime hover tint. Painted (not a `selectable_label`) so the active
+/// chip can be the brand lime; named + selected-flagged for AccessKit (T21). Returns whether clicked.
+fn draw_tab(ui: &mut egui::Ui, tab: Tab, active: bool) -> bool {
+    let label = tab.label();
+    let fg = if active { CARBON } else { ASH };
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::monospace(12.0),
+        color_of(fg),
+    );
+    let pad = egui::vec2(7.0, 3.0);
+    let (rect, response) = ui.allocate_exact_size(galley.size() + pad * 2.0, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, label)
+    });
+    let painter = ui.painter_at(rect);
+    if active {
+        painter.rect_filled(rect, 4.0, color_of(SIGNAL));
+    } else if response.hovered() {
+        painter.rect_filled(rect, 4.0, color_of([SIGNAL[0], SIGNAL[1], SIGNAL[2], 0x22]));
+    }
+    painter.galley(rect.min + pad, galley, color_of(fg));
+    response.clicked()
 }
 
 #[cfg(test)]
