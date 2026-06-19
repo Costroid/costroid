@@ -1794,9 +1794,17 @@ fn render_history_plain_document(rows: &[&FocusRecord]) -> StyledDocument {
 /// The header figure: the always-estimated API-lane cost across the shown rows. Subscription
 /// turns are a flat-fee plan, not a per-token bill (golden rule: limits are not summable
 /// dollars), so only API rows contribute — matching the now/trends API total.
+///
+/// **Lane guard (M1 T6):** like every developer-tool dollar total, this sums ONLY the
+/// `developer_tool` ledger lane — a `cloud_api`/`local_inference` row can also be
+/// `access_path == "api"`, so without the `x_Lane` gate it would inflate this header on
+/// mixed-lane data (the "lanes never summed across" invariant; mirrors `is_developer_tool_lane`
+/// in `costroid-core`).
 fn history_api_spend(rows: &[&FocusRecord]) -> Decimal {
     rows.iter()
-        .filter(|record| record.x_access_path == "api")
+        .filter(|record| {
+            costroid_core::is_developer_tool_lane(record) && record.x_access_path == "api"
+        })
         .fold(Decimal::ZERO, |total, record| total + record.billed_cost)
 }
 
@@ -1903,7 +1911,14 @@ fn aggregate_activity(rows: &[&FocusRecord]) -> BTreeMap<NaiveDate, DayStat> {
         let day = record.charge_period_start.date_naive();
         let stat = days.entry(day).or_default();
         stat.tokens += record.x_consumed_tokens;
-        stat.cost += record.billed_cost;
+        // Lane guard (M1 T6): the per-day $ accumulator counts ONLY the developer_tool lane, so
+        // if Activity ever surfaces a per-day cost it is correct-by-construction (a cloud_api /
+        // local_inference row can be access_path=Api, so an ungated sum would silently inflate it
+        // — the same trap as the history_api_spend bug, closed here too). tokens/entries are
+        // token-based local activity, not a summable bill, so they are not lane-gated.
+        if costroid_core::is_developer_tool_lane(record) {
+            stat.cost += record.billed_cost;
+        }
         stat.entries += 1;
     }
     days
@@ -6209,6 +6224,46 @@ mod tests {
         // The count/scope header and the unchanged-export pointer are present.
         assert!(output.contains("scope: 2 records, newest first (all time)"));
         assert!(output.contains("costroid export --format json|csv"));
+    }
+
+    #[test]
+    fn history_api_spend_excludes_cloud_and_local_lanes() {
+        // M1 T6 lane guard: the History header's API-lane cost sums ONLY the developer_tool
+        // ledger lane. All three rows are access_path=Api, so ONLY the x_Lane gate (not the
+        // CostLane axis) separates them — a CostLane-only summer would wrongly report $23.00
+        // instead of the $5.00 developer-tool figure (the "lanes never summed across" invariant).
+        fn lane_api_row(lane: costroid_focus::LedgerLane, cents: i64) -> FocusRecord {
+            let input = costroid_focus::UnpricedUsage {
+                lane,
+                timestamp: utc(2026, 6, 1, 12, 0),
+                tool: "codex".to_string(),
+                model: "gpt-5.5".to_string(),
+                token_type: costroid_focus::TokenType::Output,
+                token_count: 1000,
+                project: None,
+                access_path: costroid_focus::FocusAccessPath::Api,
+                service_name: "svc".to_string(),
+                service_provider_name: "prov".to_string(),
+                host_provider_name: "prov".to_string(),
+                invoice_issuer_name: "prov".to_string(),
+                billing_currency: costroid_focus::DEFAULT_BILLING_CURRENCY.to_string(),
+            };
+            let mut record = match FocusRecord::unpriced_usage(input) {
+                Ok(record) => record,
+                Err(error) => panic!("lane fixture row should be valid: {error}"),
+            };
+            record.billed_cost = Decimal::new(cents, 2);
+            record
+        }
+        let dev = lane_api_row(costroid_focus::LedgerLane::DeveloperTool, 500);
+        let cloud = lane_api_row(costroid_focus::LedgerLane::CloudApi, 700);
+        let local = lane_api_row(costroid_focus::LedgerLane::LocalInference, 1100);
+        let rows = [&dev, &cloud, &local];
+        assert_eq!(
+            history_api_spend(&rows),
+            Decimal::new(500, 2),
+            "History header sums only the developer_tool lane ($5.00), never cloud/local ($7/$11)"
+        );
     }
 
     #[test]
