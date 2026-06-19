@@ -742,6 +742,102 @@ mod tests {
         }
     }
 
+    /// R4 + faithfulness forcing function (T16): the store's persist-or-drop decision over
+    /// `FocusRecord` is COMPILE-TIME exhaustive. Destructures every field with NO `..`, so
+    /// adding a field to `FocusRecord` fails to COMPILE here (`E0027`) until a human comes
+    /// to this site and consciously decides: PERSIST it (add to `USAGE_ROWS_COLUMNS` + the
+    /// DDL + `ingest` + `reconstruct_row`) or DROP it (re-derived/null on replay). This is
+    /// the exact bug class T11 hit — the store silently dropping a `FocusRecord` field —
+    /// converted from a runtime surprise into a forced compile-time review.
+    #[test]
+    fn store_persist_or_drop_decision_is_field_exhaustive_over_focus_record() {
+        let FocusRecord {
+            // PERSISTED (restored verbatim on replay) — keep in lockstep with
+            // USAGE_ROWS_COLUMNS / ingest / reconstruct_row.
+            billed_cost: _,
+            effective_cost: _,
+            list_cost: _,
+            contracted_cost: _,
+            pricing_currency_effective_cost: _,
+            billing_currency: _,
+            charge_period_start: _,
+            consumed_quantity: _,
+            pricing_quantity: _,
+            list_unit_price: _,
+            contracted_unit_price: _,
+            pricing_currency_list_unit_price: _,
+            pricing_currency_contracted_unit_price: _,
+            service_name: _,
+            service_provider_name: _,
+            host_provider_name: _,
+            invoice_issuer_name: _,
+            sku_id: _,
+            sku_price_id: _,
+            sku_meter: _,
+            pricing_category: _,
+            pricing_unit: _,
+            x_lane: _,
+            x_model: _,
+            x_token_type: _,
+            x_access_path: _,
+            x_estimated: _,
+            x_tool: _,
+            x_project: _,
+            x_pricing_status: _,
+            x_consumed_tokens: _,
+            x_focus_input_version: _,
+            x_sidechain: _,
+            x_attribution_confidence: _,
+            x_collector_version: _,
+            // INTENTIONALLY DROPPED — re-derived identically by `unpriced_usage` on replay
+            // (so the round-trip stays byte-identical) OR a free-text-capable / non-derivable
+            // FOCUS column that R4 forbids the store from retaining at all.
+            billing_account_id: _,           // re-derived (placeholder const)
+            billing_account_name: _,         // re-derived (placeholder const)
+            billing_account_type: _,         // re-derived (placeholder const)
+            billing_period_start: _,         // re-derived from charge_period_start
+            billing_period_end: _,           // re-derived from charge_period_start
+            charge_period_end: _,            // re-derived (start + 1s)
+            charge_category: _,              // re-derived (const "Usage")
+            charge_class: _,                 // re-derived (None)
+            charge_description: _,           // re-derived "{model} {token_type} tokens"
+            charge_frequency: _,             // re-derived (const)
+            service_category: _,             // re-derived (const)
+            service_subcategory: _,          // re-derived (const)
+            provider_name: _,                // re-derived (mirrors service_provider_name)
+            publisher_name: _,               // re-derived (mirrors invoice_issuer_name)
+            invoice_id: _,                   // re-derived (None)
+            sku_price_details: _,            // DROPPED, R4: free-text-capable
+            pricing_currency: _,             // re-derived (== billing_currency)
+            consumed_unit: _,                // re-derived (const "tokens")
+            commitment_discount_category: _, // re-derived (None)
+            commitment_discount_id: _,       // re-derived (None)
+            commitment_discount_name: _,     // re-derived (None)
+            commitment_discount_quantity: _, // re-derived (None)
+            commitment_discount_status: _,   // re-derived (None)
+            commitment_discount_type: _,     // re-derived (None)
+            commitment_discount_unit: _,     // re-derived (None)
+            capacity_reservation_id: _,      // re-derived (None)
+            capacity_reservation_status: _,  // re-derived (None)
+            region_id: _,                    // re-derived (None)
+            region_name: _,                  // re-derived (None)
+            availability_zone: _,            // re-derived (None)
+            resource_id: _,                  // DROPPED, R4: free-text-capable
+            resource_name: _,                // DROPPED, R4: free-text-capable
+            resource_type: _,                // re-derived (None)
+            sub_account_id: _,               // re-derived (None)
+            sub_account_name: _,             // re-derived (None)
+            sub_account_type: _,             // re-derived (None)
+            tags: _,                         // DROPPED, R4: free-text-capable
+            contract_applied: _,             // re-derived (None)
+            allocated_method_id: _,          // re-derived (None)
+            allocated_method_details: _,     // DROPPED, R4: free-text-capable
+            allocated_resource_id: _,        // re-derived (None)
+            allocated_resource_name: _,      // DROPPED, R4: free-text-capable
+            allocated_tags: _,               // DROPPED, R4: free-text-capable
+        } = record(LedgerLane::DeveloperTool, 0);
+    }
+
     /// Ingest round-trip (metadata only): build several records, ingest, and prove the
     /// whitelisted lanes + costs persisted exactly.
     #[test]

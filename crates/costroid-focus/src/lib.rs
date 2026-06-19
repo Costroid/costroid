@@ -926,6 +926,163 @@ mod tests {
         ));
     }
 
+    /// R4 — the Cardinal Rule, as a COMPILE-TIME forcing function (T16).
+    ///
+    /// Destructures EVERY `FocusRecord` field with NO `..` rest-pattern. Adding any field
+    /// to `FocusRecord` makes this test fail to COMPILE (`E0027` — pattern does not mention
+    /// field) until the new field is named here AND consciously classified — turning "did
+    /// someone add a content column?" from a silent risk into a forced compile-time review.
+    ///
+    /// The type-safe-by-construction fields (decimals, timestamps, bools, bounded
+    /// enum/identifier strings) are discarded with `: _`. The free-text-CAPABLE FOCUS
+    /// columns — the ones a *foreign* import could carry prose in — are bound and asserted
+    /// to be either the **derived** form (`charge_description`) or **None** on a
+    /// Costroid-produced row: Costroid never populates them with content, and `FocusRecord`
+    /// is built ONLY via `unpriced_usage` (no `Default`, no public literal), so this single
+    /// representative row proves the property for every produced row.
+    #[test]
+    fn r4_focus_record_is_field_exhaustive_and_holds_no_content() {
+        let rec = record();
+        let FocusRecord {
+            // Costs / quantities / timestamps / bool — structurally text-incapable.
+            billed_cost: _,
+            effective_cost: _,
+            list_cost: _,
+            contracted_cost: _,
+            // Billing account — documented bounded placeholders.
+            billing_account_id: _,
+            billing_account_name: _,
+            billing_account_type: _,
+            billing_currency: _,
+            billing_period_start: _,
+            billing_period_end: _,
+            charge_period_start: _,
+            charge_period_end: _,
+            // Charge classification — bounded consts, EXCEPT charge_description (asserted
+            // to be the derived "{model} {token_type} tokens" form below).
+            charge_category: _,
+            charge_class: _,
+            charge_description,
+            charge_frequency: _,
+            // Service & provider — bounded provider/service identifiers.
+            service_name: _,
+            service_category: _,
+            service_subcategory: _,
+            service_provider_name: _,
+            host_provider_name: _,
+            invoice_issuer_name: _,
+            provider_name: _,
+            publisher_name: _,
+            invoice_id: _,
+            // SKU / pricing — bounded ids + decimals, EXCEPT sku_price_details (free-text-
+            // capable in foreign FOCUS; asserted None — Costroid never sets it).
+            sku_id: _,
+            sku_price_id: _,
+            sku_meter: _,
+            sku_price_details,
+            pricing_category: _,
+            pricing_currency: _,
+            pricing_quantity: _,
+            pricing_unit: _,
+            list_unit_price: _,
+            contracted_unit_price: _,
+            pricing_currency_list_unit_price: _,
+            pricing_currency_contracted_unit_price: _,
+            pricing_currency_effective_cost: _,
+            consumed_quantity: _,
+            consumed_unit: _,
+            // Commitment-discount / reservation / region / sub-account — null on Costroid
+            // rows; bounded id/enum even when a foreign import populates them.
+            commitment_discount_category: _,
+            commitment_discount_id: _,
+            commitment_discount_name: _,
+            commitment_discount_quantity: _,
+            commitment_discount_status: _,
+            commitment_discount_type: _,
+            commitment_discount_unit: _,
+            capacity_reservation_id: _,
+            capacity_reservation_status: _,
+            region_id: _,
+            region_name: _,
+            availability_zone: _,
+            // Resource / tag / allocation columns — the free-text-CAPABLE set. Asserted
+            // None: Costroid never carries a resource description, tag map, or allocation
+            // detail (where foreign prose could hide).
+            resource_id,
+            resource_name,
+            resource_type,
+            sub_account_id: _,
+            sub_account_name: _,
+            sub_account_type: _,
+            tags,
+            contract_applied: _,
+            allocated_method_id: _,
+            allocated_method_details,
+            allocated_resource_id: _,
+            allocated_resource_name,
+            allocated_tags,
+            // Custom x_ taxonomy — bounded enum/flag/id/version/count, never content.
+            x_lane: _,
+            x_model: _,
+            x_token_type: _,
+            x_access_path: _,
+            x_estimated: _,
+            x_tool: _,
+            x_project: _,
+            x_pricing_status: _,
+            x_consumed_tokens: _,
+            x_focus_input_version: _,
+            x_sidechain: _,
+            x_attribution_confidence: _,
+            x_collector_version: _,
+        } = rec;
+
+        // The one description-named column is always the DERIVED form — never user content.
+        assert_eq!(charge_description, "example-model input tokens");
+        // Every free-text-capable FOCUS column is unpopulated on a Costroid-produced row.
+        assert!(
+            sku_price_details.is_none(),
+            "sku_price_details must stay null"
+        );
+        assert!(resource_id.is_none(), "resource_id must stay null");
+        assert!(resource_name.is_none(), "resource_name must stay null");
+        assert!(resource_type.is_none(), "resource_type must stay null");
+        assert!(tags.is_none(), "tags must stay null");
+        assert!(allocated_tags.is_none(), "allocated_tags must stay null");
+        assert!(
+            allocated_method_details.is_none(),
+            "allocated_method_details must stay null"
+        );
+        assert!(
+            allocated_resource_name.is_none(),
+            "allocated_resource_name must stay null"
+        );
+    }
+
+    /// R4 export-surface guard: no EXPORTED column name carries a content-bearing token.
+    /// (`ChargeDescription` is the FOCUS-required column whose value the test above pins to
+    /// the derived form, so the name token "description" is intentionally not scanned here.)
+    #[test]
+    fn r4_no_exported_column_name_is_content_bearing() {
+        let csv = match to_csv_string(&[record()]) {
+            Ok(value) => value,
+            Err(err) => panic!("csv should serialize: {err}"),
+        };
+        let header = match csv.lines().next() {
+            Some(value) => value,
+            None => panic!("csv should have a header"),
+        };
+        for column in header.split(',') {
+            let lower = column.to_lowercase();
+            for forbidden in ["prompt", "completion", "message", "content", "text"] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "R4: exported column `{column}` carries content-bearing token `{forbidden}`"
+                );
+            }
+        }
+    }
+
     #[test]
     fn zero_row_csv_export_still_emits_the_header() {
         // The documented contract (ARCHITECTURE "Export shapes"): the first row is the
