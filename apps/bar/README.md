@@ -28,6 +28,20 @@ not deep analysis. So it ships:
 **Trends, Models, History, and Frontier stay in the terminal app (`costroid`)** — they are
 cramped in a small tray window, and the TUI serves them well. Run `costroid` for those.
 
+### Look & feel (refreshed 2026-06-19)
+
+The cockpit renders the brand's evolved color language in true-color, **lean by design** — a glance
+surface, not a CLI clone:
+
+- **Per-model color** matching the terminal: the Overview "by model" rows lead with a spend-rank
+  `Series` legend dot + a single-row share dot-bar in that hue.
+- **Colored state chips** — Providers health, Budget pace, and connection state each pair a color
+  with its word (never color alone). The active tab is a filled **Signal-lime** chip; severity is
+  still the 9-step dot grid (tray mark, meters, alert badges), never `!`/`!!`.
+- **Less text:** the header status carries the `· estimates` honesty caveat once (every `$` is still
+  `~`-hedged + estimate-labeled), so panels drop the per-panel scope/estimate notes the CLI keeps;
+  the Budget "no budget set" state is a 2-line hint, and Providers shows the cost + quota pillars.
+
 ## Connections (display-only)
 
 Built with `--features connect`, the Providers panel *displays* read-only connection state.

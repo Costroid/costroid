@@ -23,6 +23,10 @@ against your provider invoice, which is the source of truth.
 - **Per-model color coding.** Each model now gets a stable hue by spend rank: a leading `●`/`*`
   dot + its spend-bar fill in that color across the Now and Models surfaces (the dot + name keep
   models distinguishable with color stripped).
+- **`costroid_core::now_model_spend_breakdown`** — a pure display helper (per-model API-lane spend,
+  highest first, `~`-hedged + a `0.0..=1.0` share fraction) the taskbar uses to paint its colored
+  per-model share list without naming a money type, mirroring the existing `forecast_daily_fractions`
+  pattern.
 
 ### Changed
 
@@ -41,6 +45,22 @@ against your provider invoice, which is the source of truth.
   `NO_COLOR` emit zero escape codes with byte-identical output (the `is_ascii()` purity gates still
   pass), the glyph-shape and text cues remain the load-bearing signals, and color is never the only
   cue.
+- **Taskbar (`costroid-bar`) — a colorful, lean cockpit refresh.** The taskbar now carries the same
+  evolved color language as the CLI, and is tighter as a glance surface:
+  - **Per-model color coding** matching the terminal — the Overview "by model" rows lead with a
+    spend-rank `Series` legend dot + a single-row share dot-bar in that hue (the dot + name + dollar
+    keep models distinguishable with color stripped).
+  - **Colored state chips** — Providers health (green available · cyan detected · amber partial · red
+    error), Budget pace (green on-track · amber ahead-of-pace · red over-budget), and connection
+    state, each pairing the color with its word (never color alone) and named for AccessKit. The
+    active tab is now a filled Signal-lime chip (the fill is the non-color cue), and the footer keys
+    are lime.
+  - **Leaner panels** — the persistent header status carries the `· estimates` caveat once, so the
+    panels drop the per-panel scope lines + estimate-note paragraphs (every `$` is still `~`-hedged +
+    `(estimated)`-tagged); the Claude chat caveat shows once under the meter stack (deduped); the
+    Budget empty state is a 2-line hint instead of the full TOML dump; Providers shows cost + quota
+    sources and sheds the model-mix/auth reference lines. The severity dot grid, the honest five
+    availability arms, and the no-new-network/keychain/telemetry guarantees are unchanged.
 
 ### Fixed
 

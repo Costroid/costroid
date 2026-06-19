@@ -393,3 +393,35 @@ relicensed from OFL); Neue Haas Grotesk not bundled. Warm SYNC ramp = not used i
     `[package.metadata.dist.dependencies.apt]` for the Linux GTK3/xdo/AppIndicator headers (they flow into the
     runtime `matrix.packages_install`, NOT the generated `release.yml`). `dist build --artifacts=local --target
     x86_64-unknown-linux-gnu` builds a working bar locally. `release.yml` is `dist generate`d (never hand-edit).
+
+## 14. Color + lean refresh (post-v0.6.0, 2026-06-19 — Eren-directed)
+
+After the CLI/TUI went full-color (2026-06-19), the taskbar was refreshed to **match that evolved color
+language and to read as a lean glance surface** (Eren's note: it was "too cluttered and hard to use as a
+taskbar app"). The §0 brand system + §6 honesty rules are **unchanged**; this is render polish on `apps/bar`
+(no new data path/compute/network/telemetry — `cargo deny` + offline/forbidden-crates parity unaffected; the
+one new symbol is the pure-display `costroid_core::now_model_spend_breakdown`, mirroring `forecast_daily_fractions`):
+
+- **One shared palette with the CLI.** `app.rs` gained `SERIES` (true-color equivalents of the CLI's xterm-256
+  `SERIES_PALETTE` — azure/aquamarine/cornflower/medium-purple/sand-gold/salmon, lime excluded) + `series_color()`,
+  so per-model coloring matches the terminal edge-to-edge. The **Overview "by model"** rows lead with a
+  `Series(rank)` legend dot + a single-row `Series`-hued share dot-bar (distinct from the quota meters' dense 2×4
+  dot blocks). **Signal-lime stays reserved** — the active tab is a filled lime **chip** (Carbon ink; the fill is
+  the non-color cue), and the footer keys.
+- **Colored state chips** via the new `app::chip()` helper (a low-alpha tint of the state color + the word, named
+  for AccessKit since the text is painted): **Providers** health (green available · cyan detected · amber partial ·
+  red error · Ash missing), **Budget** pace (green on-track · amber ahead-of-pace · red over-budget), connection
+  state. The **word always pairs the color** (never color alone). Anomaly callouts gained a cyan "insight" dot
+  (data, not alarm). Severity is still the 0–8 dot grid (tray mark / meters / alert badges), never `!`/`!!`.
+- **Lean by construction (declutter).** The persistent header status carries the `· estimates` honesty caveat
+  **once**, so the panels dropped the per-panel `scope:` lines + the trailing estimate-note paragraphs the CLI
+  keeps (every `$` is **still** `~`-hedged + `(estimated)`-tagged — honesty intact). The Claude chat caveat shows
+  **once** under the meter stack (deduped, not per Claude window). The Budget "no budget set" empty state is a
+  2-line hint, not the 8-line TOML dump. Providers shows the two product pillars (cost + quota sources) and sheds
+  the model-mix line + the unconditional auth line (auth shown only when a login is required). Header chrome
+  tightened (wordmark 20→18, less vertical space); the footer is a colorized key-hint bar (lime keys, Ash labels).
+- **Invariants held + gate green:** every painted widget (meters, chips, share bars, tabs, badges, mark, refresh
+  button) carries an AccessKit name; never color alone; the five `LimitAvailability` arms still render honestly; no
+  `unwrap`/`expect`/`panic!`; `fmt` + `clippy --workspace -D warnings` (default **and** `--features connect`) +
+  `test --workspace` all clean; `costroid-bar --self-check` runs. The folded canon lives in `docs/DESIGN-SYSTEM.md`
+  ("The egui taskbar — as built + colorized 2026-06-19").
