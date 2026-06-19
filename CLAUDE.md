@@ -2,6 +2,8 @@
 
 Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — subscription limits (Claude Code / Codex 5-hour + weekly caps with reset countdowns) and real API-bill dollars by model — by default entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace (Apache-2.0, edition 2021), **feature-complete at v0.6.0**. This file is the operating manual: read it before doing anything. Scope/status + deferred adapters live in [`docs/ROADMAP.md`](docs/ROADMAP.md); the technical canon is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) + [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md). **When a doc disagrees with the code, the code wins** — verify any symbol/path/flag in the code before relying on it; never invent one.
 
+> **Active build (post-v0.6.0):** the "Costroid-Next" feature set ([`docs/COSTROID-NEXT.md`](docs/COSTROID-NEXT.md)) — local-inference economics, cloud/API cost lane, break-even, local web UI. **Resume by reading [`PROGRESS.md`](PROGRESS.md)** (living plan/checklist + handoff note), then run the verification gate it lists. M0 (scaffold) is done; the new members are `crates/costroid-power` (off-by-default `power` feature) + `apps/server` (`costroid-server`, loopback-only) — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §10.
+
 ---
 
 ## Golden rules — non-negotiable

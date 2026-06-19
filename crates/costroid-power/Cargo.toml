@@ -1,0 +1,39 @@
+[package]
+name = "costroid-power"
+version.workspace = true
+edition.workspace = true
+# Inherits the workspace MSRV (1.88) — the M0 scaffold's only deps (thiserror/chrono/
+# rust_decimal/serde) all build on 1.88. The ⚑ Readiness gate (A4) reserves the right for
+# this crate to declare its OWN higher `rust-version` later if a heavyweight M3 dependency
+# (e.g. a runtime-detection helper) demands it; the inference path is a subprocess (A2), so
+# no FFI/GPU crate is pulled and 1.88 holds for now.
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Costroid local-inference economics: the three-source PowerSampler abstraction and the measured/estimated energy-cost model."
+documentation = "https://docs.rs/costroid-power"
+keywords = ["finops", "energy", "power", "inference", "ai"]
+categories = ["finance", "hardware-support"]
+# M0 scaffold — not published until the M3 engine lands (publish ladder bump is an M6 task).
+publish = false
+
+[features]
+# OFF by default — mirrors how `connect` gates the network/credential subsystem. With `power`
+# off (the default, and every non-Linux target), the sysfs sampler self-disables and only the
+# portable WallMeter/Estimated samplers are live, so the default workspace build never reaches
+# the Linux hwmon path. Named `power` (NOT `telemetry`) per R1 — Costroid's #1 guarantee is
+# "no telemetry, ever", so a feature literally named `telemetry` would read as a contradiction.
+power = []
+
+[dependencies]
+# Lean by design: the M0 scaffold uses only `serde` (the `MeasurementMode` stamp) + `thiserror`
+# (typed `PowerError`); the §3.2 cost model is pure `f64`. `chrono` (reading timestamps) and
+# `rust_decimal` (mapping the final $ to FOCUS money columns) are re-added at M3 when the FOCUS
+# record mapping actually needs them — declared-but-unused deps are dead weight until then.
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -93,6 +93,9 @@ OUT=""
 # `strace -f` thread interleaving. The `connect()` grep below is a SECONDARY diagnostic
 # (nicer output) that can be defeated by `-f` <unfinished>/<resumed> line splits — so it
 # narrows the report, never the guarantee, which rests on the socket-creation check.
+# NOTE: the loopback addresses are QUOTE-ANCHORED ("127.0.0.1" / "::1", as strace prints them in
+# inet_addr()/inet_pton()) so a bare `::1` cannot match as a SUBSTRING of a routable IPv6 address
+# (e.g. "2001:db8::1") and wave an egress through. strace decodes string sockaddr args in quotes.
 assert_no_inet() { # <strace-log>
   local log="$1"
   if grep -Eq 'socket\(AF_INET6?[,)]' "$log"; then
@@ -100,8 +103,29 @@ assert_no_inet() { # <strace-log>
     grep -E 'socket\(AF_INET6?[,)]' "$log" | sed 's/^/      /'
     return 1
   fi
-  if grep -E 'connect\(' "$log" 2>/dev/null | grep -E 'AF_INET6?' | grep -vqE '127\.0\.0\.1|::1'; then
+  if grep -E 'connect\(' "$log" 2>/dev/null | grep -E 'AF_INET6?' | grep -vqE '"127\.0\.0\.1"|"::1"'; then
     echo "    NETWORK VIOLATION: connect() to a non-loopback address"
+    grep -E 'connect\(' "$log" | grep -E 'AF_INET6?' | sed 's/^/      /'
+    return 1
+  fi
+  return 0
+}
+
+# The costroid-server variant: the local HTTP/web-UI binary is ALLOWED to create an AF_INET
+# socket and bind it — but ONLY to loopback (127.0.0.1 / ::1), and it must make NO outbound
+# connect(). So unlike assert_no_inet (which forbids any AF_INET socket), this forbids two things:
+# any bind() to a non-loopback INET address, and any connect() to a non-loopback INET address.
+# That is the "loopback-bind, no egress" guarantee (⚑ A1 / §6.11) — distinct from the CLI/bar's
+# "no AF_INET socket at all".
+assert_loopback_only() { # <strace-log>
+  local log="$1"
+  if grep -E 'bind\(' "$log" 2>/dev/null | grep -E 'AF_INET6?' | grep -vqE '"127\.0\.0\.1"|"::1"'; then
+    echo "    LOOPBACK VIOLATION: bind() to a non-loopback address"
+    grep -E 'bind\(' "$log" | grep -E 'AF_INET6?' | sed 's/^/      /'
+    return 1
+  fi
+  if grep -E 'connect\(' "$log" 2>/dev/null | grep -E 'AF_INET6?' | grep -vqE '"127\.0\.0\.1"|"::1"'; then
+    echo "    EGRESS VIOLATION: connect() to a non-loopback address"
     grep -E 'connect\(' "$log" | grep -E 'AF_INET6?' | sed 's/^/      /'
     return 1
   fi
@@ -406,9 +430,44 @@ else
   echo "         + the --self-check run above are the authoritative no-network proof for the bar.)"
 fi
 
+# ============================================================================
+# costroid-server — the local HTTP/web-UI binary's loopback-only / no-egress proof (M0)
+# ============================================================================
+# The server is a SEPARATE binary (it links `tiny_http`, name-banned in the CLI/bar offline
+# gate) with its own reviewed per-binary allowlist (SERVER_ALLOWED in apps/cli/tests/offline.rs).
+# Its guarantee differs from the CLI/bar's "no AF_INET socket at all": the server BINDS a
+# loopback AF_INET socket on purpose, so the guarantee is "loopback-bind, NO egress". Its
+# one-shot `--self-check` binds an ephemeral 127.0.0.1 port, asserts the bound address is
+# loopback, makes no outbound call, and exits. Under strace we assert `assert_loopback_only`
+# (allow a loopback bind; forbid any non-loopback bind/connect). Under netns/none the loopback
+# interface may be unavailable, so the proof is strace-gated (the static SERVER_ALLOWED
+# allowlist + the in-code loopback-only bind remain authoritative).
+echo "==> Building costroid-server (loopback-only local HTTP/web-UI) for the no-egress proof"
+cargo build -q -p costroid-server
+server_bin="$repo_root/target/debug/costroid-server"
+
+printf '  %-52s' "server --self-check: loopback-bind, no egress"
+srv_rc=0
+case "$iso_mode" in
+  strace)
+    srv_log="$workdir/strace.server"
+    OUT="$(strace -f -e trace=network -qq -o "$srv_log" env "${env_args[@]}" "$server_bin" --self-check 2>/dev/null)" && srv_rc=0 || srv_rc=$?
+    if [ -f "$srv_log" ] && ! assert_loopback_only "$srv_log"; then srv_rc=90; fi
+    rm -f "$srv_log" ;;
+  *)
+    OUT="$(env "${env_args[@]}" "$server_bin" --self-check 2>/dev/null)" && srv_rc=0 || srv_rc=$? ;;
+esac
+if [ "$srv_rc" -eq 90 ]; then echo "LOOPBACK/EGRESS VIOLATION"; fail=1
+elif [ "$srv_rc" -ne 0 ]; then echo "FAIL (exit $srv_rc)"; fail=1
+elif [ "${#OUT}" -lt 5 ] || ! grep -qiF "server self-check ok" <<<"$OUT"; then
+  echo "FAIL (unexpected self-check output: ${OUT:0:80})"; fail=1
+elif [ "$iso_mode" != strace ]; then
+  echo "ok (loopback-only assertion strace-gated; static SERVER_ALLOWED authoritative here)"
+else echo "ok (loopback bind, no egress)"; fi
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "==> OFFLINE ACCEPTANCE: FAILED"
   exit 1
 fi
-echo "==> OFFLINE ACCEPTANCE (default build, connect OFF + costroid-bar): PASSED (all commands ran offline, no network, no telemetry)"
+echo "==> OFFLINE ACCEPTANCE (default build, connect OFF + costroid-bar + costroid-server): PASSED (all commands ran offline; CLI/bar no socket, server loopback-only no egress)"

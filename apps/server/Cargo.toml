@@ -1,0 +1,40 @@
+[package]
+name = "costroid-server"
+version.workspace = true
+edition.workspace = true
+# Inherits the workspace MSRV (1.88): the M0 spike confirmed `tiny_http` 0.12 builds on 1.88
+# (31-pkg tree, all permissive). The ⚑ Readiness gate (A4) lets this binary raise its own
+# `rust-version` later if the M5 web stack demands it; today it does not.
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "Costroid local HTTP API + web UI — a loopback-only (127.0.0.1) server over the local cost ledger. No outbound network."
+keywords = ["finops", "cost", "server", "localhost", "ai"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+# M0 scaffold — not published to crates.io until the M5 server/UI lands (publish-ladder bump = M6).
+publish = false
+
+[[bin]]
+name = "costroid-server"
+path = "src/main.rs"
+
+[dependencies]
+# A binary lives in apps/ → `anyhow` is the sanctioned error type here (library crates use
+# `thiserror`). The server is local-only: it links `tiny_http` (inbound loopback listener) and
+# reads the ledger via `costroid-core`. It pulls NO HTTP client, NO TLS, NO async runtime — the
+# per-binary `SERVER_ALLOWED` allowlist in `apps/cli/tests/offline.rs` enforces exactly that, and
+# `scripts/offline_acceptance.sh` proves the loopback-only / no-egress behavior at runtime.
+anyhow.workspace = true
+costroid-core.workspace = true
+tiny_http.workspace = true
+
+[lints]
+workspace = true
+
+# Kept OUT of the cargo-dist release pipeline at M0 (it is a scaffold). The web UI/API ships at
+# M5; flipping `dist`/`publish` on (and choosing installers vs archives, mirroring apps/bar) is an
+# M6 packaging task.
+[package.metadata.dist]
+dist = false
