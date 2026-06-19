@@ -4,8 +4,18 @@
 > (event-model · store · FOCUS-mapping · collectors) → adversarial repo-fit verification against the
 > repo's hard gates (MSRV/offline/deny/Cardinal-rule — the same lens that rejected DuckDB) → synthesis.
 > Line numbers/symbols were verified against the tree at synthesis time; **re-verify before editing —
-> the code wins.** Tracked from [`../PROGRESS.md`](../PROGRESS.md). **Status: PLAN — awaiting human
-> sign-off on the export-schema additions (T2/T3) + the `import` CLI subcommand (T19) before execution.**
+> the code wins.** Tracked from [`../PROGRESS.md`](../PROGRESS.md).
+>
+> **Status: APPROVED FOR EXECUTION (human sign-off 2026-06-19).**
+> - **Export-schema scope = LEAN** (T2/T3): M1 adds ONLY the columns M1 populates — `x_Lane`,
+>   `x_Sidechain`, `x_AttributionConfidence`, `x_CollectorVersion`, `x_FocusInputVersion`. The 7
+>   local-inference columns (`x_MeasuredWh`/`x_AmortizedHwCost`/`x_AvgPowerWatts`/`x_MeasurementMode`/
+>   `x_HardwareProfile`/`x_RuntimeKind`/`x_BenchmarkId`) are **DEFERRED to M3**, and `x_CloudEquivCost`
+>   to **M4** (all optional x_ extensions → additive/non-breaking when added later). **T3 is therefore
+>   reduced to "no-op in M1"** — its 8 columns move to M3/M4.
+> - **`import` CLI subcommand (T19): APPROVED.**
+> - **Proceed on SYNTHETIC v1.2 fixtures; C1 later** — M1 closes without C1 (T18 stays C1-gated).
+> - **Parquet: DEFERRED** (T1 spike clean but heavy) — CSV+JSON are the M1 exports.
 
 # M1 detailed plan — FOCUS three-lane ledger foundation
 
