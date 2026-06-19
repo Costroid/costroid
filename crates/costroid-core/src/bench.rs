@@ -621,8 +621,8 @@ mod tests {
             Err(err) => panic!("bundled benchmarks should validate: {err}"),
         };
         assert_eq!(table.benchmarks.len(), 2);
-        assert_eq!(table.benchmarks[0].name, "DeepSWE");
-        assert_eq!(table.benchmarks[0].as_of, "2026-05-30");
+        assert_eq!(table.benchmarks[0].name, "DeepSWE v1.1");
+        assert_eq!(table.benchmarks[0].as_of, "2026-06-14");
         assert_eq!(table.benchmarks[1].name, "CursorBench v3.1");
         assert_eq!(table.benchmarks[1].as_of, "2026-05-18");
     }
@@ -645,22 +645,28 @@ mod tests {
         assert!(BenchmarkTable::from_json(&body("2026-05-30")).is_ok());
     }
 
-    // 3 — frontier correctness on the seeded DeepSWE data (the DoD assertion).
+    // 3 — frontier correctness on the seeded DeepSWE v1.1 data (the DoD assertion).
     #[test]
-    fn deepswe_opus47_is_dominated() {
+    fn deepswe_opus48_is_dominated() {
         let view = match bench_view(&snapshot(&[])) {
             Ok(view) => view,
             Err(err) => panic!("bench_view should build: {err}"),
         };
-        let deepswe = frontier(&view, "DeepSWE");
+        let deepswe = frontier(&view, "DeepSWE v1.1");
+        // opus-4.8 (59% / $13.22) is dominated by gpt-5.5 (67% / $7.23) — cheaper AND higher.
         assert_eq!(
-            point(deepswe, "claude-opus-4-7").standing,
+            point(deepswe, "claude-opus-4-8").standing,
             FrontierStanding::Dominated {
                 by: "gpt-5.5".to_string()
             }
         );
         assert_eq!(
             point(deepswe, "gpt-5.5").standing,
+            FrontierStanding::OnFrontier
+        );
+        // fable-5 tops the board on score → on-frontier even with no pricing-catalog entry.
+        assert_eq!(
+            point(deepswe, "claude-fable-5").standing,
             FrontierStanding::OnFrontier
         );
         // sonnet-4.6 is the cheapest point at $5.52 → on-frontier (not CostUnknown).

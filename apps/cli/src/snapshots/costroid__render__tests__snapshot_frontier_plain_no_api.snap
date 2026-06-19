@@ -3,11 +3,13 @@ source: apps/cli/src/render.rs
 expression: "render_frontier(&bench_view_for(&[]), RenderOptions::plain())"
 ---
 costroid frontier
-DeepSWE - primary (neutral), source https://deepswe.datacurve.ai, as of 2026-05-30
-  caveat: neutral mini-swe-agent harness, not your tool; avg cost/task is cache-miss priced (~5x overstated) - indicative
-  gpt-5.5: score 70%, cost ~$6.61/task, on frontier: yes, your API spend: none
-  claude-opus-4.7: score 54%, cost ~$18.19/task, on frontier: no (dominated by gpt-5.5), your API spend: none
-  claude-sonnet-4.6: score 32%, cost ~$5.52/task, on frontier: yes, your API spend: none
+DeepSWE v1.1 - primary (neutral), source https://deepswe.datacurve.ai, as of 2026-06-14
+  caveat: neutral mini-swe-agent harness (not your tool); v1.1 grades only the committed patch in an isolated container - reproducible; avg cost/task uses the board's own undisclosed token pricing - indicative, not cache-correct
+  claude-fable-5: score 70%, cost ~$21.63/task, on frontier: yes, your API spend: none -- tops the board; no pricing-catalog entry - plotted by score + board cost, not re-priced
+  gpt-5.5: score 67%, cost ~$7.23/task, on frontier: yes, your API spend: none
+  claude-opus-4.8: score 59%, cost ~$13.22/task, on frontier: no (dominated by gpt-5.5), your API spend: none
+  gpt-5.4: score 52%, cost ~$5.65/task, on frontier: yes, your API spend: none
+  claude-sonnet-4.6: score 30%, cost ~$5.52/task, on frontier: yes, your API spend: none
 CursorBench v3.1 - corroborating (vendor), source https://cursor.com/cursorbench, as of 2026-05-18
   caveat: vendor benchmark - Cursor's own private, non-reproducible tasks, showcases Composer; cost is cache-aware (each model's published per-token pricing incl. cache reads, applied to tokens used, then averaged) - sound; the caveat is provenance, not cost
   Composer 2.5: score 63.2%, cost ~$0.55/task, on frontier: yes, your API spend: none -- Cursor subscription only - no API access

@@ -4,19 +4,21 @@ expression: "render_frontier(&used_gpt(), RenderOptions::braille(true))"
 ---
 [1;38;5;154mC⠉[0m [1mcost[0m[38;5;245mroid[0m                             [38;5;245mcost vs quality[0m  [1m~$35.00[0m
 ────────────────────────────────────────────────────────────────
-DeepSWE — primary (neutral)   as of 2026-05-30
-  neutral mini-swe-agent harness, not your tool; avg cost/task is cache-miss priced (~5x overstated) - indicative
+DeepSWE v1.1 — primary (neutral)   as of 2026-06-14
+  neutral mini-swe-agent harness (not your tool); v1.1 grades only the committed patch in an isolated container - reproducible; avg cost/task uses the board's own undisclosed token pricing - indicative, not cache-correct
   source: https://deepswe.datacurve.ai
-  ⠀⠀⠀⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-  ⠀⠀⢰⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-  ⠀⠀⡎⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠
-  ⠀⡸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-  ⢀⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  ⠀⠀⠀⢀⣿⠤⠤⠤⠤⠤⠤⠤⠤⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠉⠉⠉⠉⠉⠉⠉⠉⣿
+  ⠀⠀⡰⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  ⣿⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  ⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  ⡎⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
   ⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
   x: cost/task ->   y: score (high = top)
-  gpt-5.5  70% @ ~$6.61  on frontier
-  claude-opus-4.7  54% @ ~$18.19  off (dominated by gpt-5.5)
-  claude-sonnet-4.6  32% @ ~$5.52  on frontier
+  claude-fable-5  70% @ ~$21.63  on frontier  — tops the board; no pricing-catalog entry - plotted by score + board cost, not re-priced
+  gpt-5.5  67% @ ~$7.23  on frontier
+  claude-opus-4.8  59% @ ~$13.22  off (dominated by gpt-5.5)
+  gpt-5.4  52% @ ~$5.65  on frontier
+  claude-sonnet-4.6  30% @ ~$5.52  on frontier
 ────────────────────────────────────────────────────────────────
 CursorBench v3.1 — corroborating (vendor)   as of 2026-05-18
   vendor benchmark - Cursor's own private, non-reproducible tasks, showcases Composer; cost is cache-aware (each model's published per-token pricing incl. cache reads, applied to tokens used, then averaged) - sound; the caveat is provenance, not cost
@@ -33,9 +35,9 @@ CursorBench v3.1 — corroborating (vendor)   as of 2026-05-18
   GPT-5.5 Extra High  64.3% @ ~$4.37  on frontier
 ────────────────────────────────────────────────────────────────
 your models (API-billed):
-  gpt-5.5  spent [1m~$35.00[0m; claude-sonnet-4-6 costs about ~$17.00 less at equal volume
+  gpt-5.5  spent [1m~$35.00[0m; gpt-5.4 costs about ~$17.50 less at equal volume
 ────────────────────────────────────────────────────────────────
-◆ gpt-5.5 drove most of your API spend; claude-sonnet-4-6 sits cheaper on the frontier at equal volume. (estimated)
+◆ gpt-5.5 drove most of your API spend; gpt-5.4 sits cheaper on the frontier at equal volume. (estimated)
 no providers detected
 looked for Claude Code, Codex, and Cursor local logs under the usual home/config dirs.
 under WSL, Costroid also checks Windows paths like /mnt/c/Users/<you>/...

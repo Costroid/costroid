@@ -1,18 +1,20 @@
 {
   "schema_version": "1",
-  "notes": "Bundled, dated, cited cost-vs-quality snapshot. Phase-1: never fetched. cost_per_task_usd is the benchmark's OWN reported avg $/task, used only for the reference-frontier cost axis; the dollar delta and the user's actual spend always use the pricing catalog / Costroid's cache-correct cost, never this. DeepSWE costs are indicative (methodology unpublished, widely reported cache-miss priced); CursorBench costs are cache-aware/sound (its caveat is provenance, not cost). model_id must match the pricing catalog key where a re-pricing rate is wanted; a model_id absent from the catalog (e.g. composer-2.5) is a gap. A null cost = no published figure (plotted by score only, cost 'n/a', never guessed) - not exercised by the seeded data below, but supported.",
+  "notes": "Bundled, dated, cited cost-vs-quality snapshot. Phase-1: never fetched. cost_per_task_usd is the benchmark's OWN reported avg $/task, used only for the reference-frontier cost axis; the dollar delta and the user's actual spend always use the pricing catalog / Costroid's cache-correct cost, never this. DeepSWE costs are indicative (mini-swe-agent harness; v1.1 isolated-verification/reproducible; token-pricing methodology unpublished, not cache-correct); CursorBench costs are cache-aware/sound (its caveat is provenance, not cost). model_id must match the pricing catalog key where a re-pricing rate is wanted; a model_id absent from the catalog (e.g. composer-2.5) is a gap. A null cost = no published figure (plotted by score only, cost 'n/a', never guessed) - not exercised by the seeded data below, but supported.",
   "benchmarks": [
     {
-      "name": "DeepSWE",
+      "name": "DeepSWE v1.1",
       "role": "primary",
       "source": "https://deepswe.datacurve.ai",
-      "as_of": "2026-05-30",
+      "as_of": "2026-06-14",
       "harness": "mini-swe-agent",
-      "cost_note": "neutral mini-swe-agent harness, not your tool; avg cost/task is cache-miss priced (~5x overstated) - indicative",
+      "cost_note": "neutral mini-swe-agent harness (not your tool); v1.1 grades only the committed patch in an isolated container - reproducible; avg cost/task uses the board's own undisclosed token pricing - indicative, not cache-correct",
       "points": [
-        { "model_id": "gpt-5.5",           "label": "gpt-5.5",           "score_pct": "70.0", "cost_per_task_usd": "6.61" },
-        { "model_id": "claude-opus-4-7",   "label": "claude-opus-4.7",   "score_pct": "54.0", "cost_per_task_usd": "18.19" },
-        { "model_id": "claude-sonnet-4-6", "label": "claude-sonnet-4.6", "score_pct": "32.0", "cost_per_task_usd": "5.52" }
+        { "model_id": "claude-fable-5",    "label": "claude-fable-5",    "score_pct": "70.0", "cost_per_task_usd": "21.63", "note": "tops the board; no pricing-catalog entry - plotted by score + board cost, not re-priced" },
+        { "model_id": "gpt-5.5",           "label": "gpt-5.5",           "score_pct": "67.0", "cost_per_task_usd": "7.23" },
+        { "model_id": "claude-opus-4-8",   "label": "claude-opus-4.8",   "score_pct": "59.0", "cost_per_task_usd": "13.22" },
+        { "model_id": "gpt-5.4",           "label": "gpt-5.4",           "score_pct": "52.0", "cost_per_task_usd": "5.65" },
+        { "model_id": "claude-sonnet-4-6", "label": "claude-sonnet-4.6", "score_pct": "30.0", "cost_per_task_usd": "5.52" }
       ]
     },
     {
