@@ -31,7 +31,7 @@ The single source for navigating these docs and resolving conflicts between them
 - **`docs/PRODUCT-PLAN.md`** — scope, sequencing, the build steps (§3), the hard invariants (§6), the per-task cards (§12), and the decisions/limitations log (§11.5). Owns *what* to build and *in what order*; **§11.5 is the freshest "what actually shipped"** and where new decisions get logged.
 - **`docs/ARCHITECTURE.md`** — the technical canon: crate boundaries + dependency direction (§5), the security/credential boundary + auth ladder (§8), the degrade-never-crash + Claude `rate_limits` sanitize/cross-check rules (§9.2), data flow, render mechanics (§7).
 - **`docs/DATA-MODEL.md`** — the data shapes: FOCUS columns, the Rust structs (`UsageEvent` / `FocusRecord` / `LimitWindow` / `LimitMeasure` / `LimitStatus` / core `LimitAvailability`), per-provider field paths, the bundled pricing JSON schema, export shapes.
-- **`docs/DESIGN-SYSTEM.md`** — rendering/UX detail: braille dot math, the meter/bar/sparkline components, the ASCII/`--plain` substitutes, the always-on non-color cue, voice.
+- **`docs/DESIGN-SYSTEM.md`** — rendering/UX detail + **the canonical color design language**: the `SemanticStyle` palette (the semantic-style table — `Data`/`DataDim`/`Muted`/`Accent`/`Strong`/`Series`/`Heat`/`Warn`/`Critical`), the shared compose helpers (`push_header_line`/`push_section`/`push_meter`/`push_insight`/…), braille dot math, the meter/bar/sparkline/heatmap components, the tab strip + hint bar, the ASCII/`--plain` substitutes, the always-on non-color cue, voice. **Every new visual follows this** — color via `SemanticStyle` only, never raw ANSI/`ratatui::Color`.
 - **A task's Spec** (named in its §12 card, e.g. `docs/STATUSLINE-CAPTURE-BRIEF.md`) — read it fully when the card says so; it IS that task's design.
 - **User-facing docs** (`README.md`, `SECURITY.md`, `CHANGELOG.md`) are *downstream*, not input canon — update them only when a change shifts user-facing behavior/interface (Definition of Done).
 
@@ -149,7 +149,7 @@ No `costroid-mcp` (name intentionally unclaimed). `costroid-connect` carries rea
 - [ ] New behavior is covered by tests (use fixture logs, never real user data).
 - [ ] Docs (`README.md` / `CLAUDE.md` / `docs/*`) updated if behavior or interface changed.
 - [ ] No new copyleft dependency; new dependency licenses verified permissive.
-- [ ] Any new visual has a `--plain` ASCII equivalent and does not rely on color alone.
+- [ ] Any new visual follows the `docs/DESIGN-SYSTEM.md` design language: color via the `SemanticStyle` palette (never raw ANSI/`ratatui::Color`), reusing the shared compose helpers; has a `--plain` ASCII equivalent; and does not rely on color alone (every color carries a shape/text cue).
 - [ ] No telemetry; the default/local-only build introduces no network call (any network stays inside `costroid-connect`, feature-gated and behind an explicit user-initiated `connect`).
 - [ ] Change stays on the current build step (`docs/PRODUCT-PLAN.md` §3).
 
@@ -237,7 +237,7 @@ Planned, but only after a live-install discovery confirms each one's real data/a
 - making the default/local-only build perform a network call, adding network code outside `costroid-connect`, or adding anything that could phone home;
 - expanding scope beyond the build steps in `docs/PRODUCT-PLAN.md` §3, or building a deferred provider adapter (Copilot, Antigravity) before its discovery lands.
 
-**Always:** keep commits small, update docs in the same change when behavior shifts, write tests against fixture logs (never real user data), provide a `--plain` path for every visual, never rely on color alone, and source pricing/model data at build time rather than hardcoding figures that drift.
+**Always:** keep commits small, update docs in the same change when behavior shifts, write tests against fixture logs (never real user data), build every visual in the `docs/DESIGN-SYSTEM.md` design language (the `SemanticStyle` palette + shared compose helpers — never raw ANSI/`ratatui::Color`), provide a `--plain` path for every visual, never rely on color alone, and source pricing/model data at build time rather than hardcoding figures that drift.
 
 ---
 
