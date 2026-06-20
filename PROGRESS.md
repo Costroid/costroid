@@ -16,12 +16,19 @@
 > independently reviewed at the milestone boundary (APPROVED, no high/medium), re-verified on a
 > clean build, merged. Detail: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)**.
 >
-> **Current milestone: M3 (dual-mode local-inference engine, Gemma 4 family) — NOT STARTED.**
-> M3a (the `PowerSampler` trait + 3 impls + runtime probing + the subprocess runner + the
-> benchmark harness + deterministic cost-math on synthetic power fixtures) is agent-ownable +
-> CI-tested; **M3b** (native-Linux sysfs `power1_average` confirmation + a captured joules/token)
-> needs **C2** (a native-Linux boot) and does NOT block M4. The detailed T-plan is synthesized
-> at the M3 kickoff (the M1/M2 pattern). The earlier superseded line follows for history.
+> **Current milestone: M3 (dual-mode local-inference engine, Gemma 4 family) — PLAN
+> SYNTHESIZED, AWAITING D1–D5 SIGN-OFF.** The detailed T-plan is written:
+> **[`docs/M3-PLAN.md`](docs/M3-PLAN.md)** — T0 (canon reconciled to the four-source,
+> wall-meter-led measured ladder) DONE; T1–T13 ordered, with a deciding test per task and the
+> §1.5 schema / public-CLI / network-boundary decisions surfaced for sign-off (D1–D5). **No M3
+> code is written until those are signed off** (CLAUDE.md "ask first"). M3a (the four-source
+> `PowerSampler` + the reordered selector + the subprocess runner + the benchmark harness + the
+> 7 local `x_` columns + deterministic cost-math on SYNTHETIC power fixtures, the `costroid
+> bench` CLI behind an off-by-default `power` feature) is agent-ownable + CI-tested and **needs
+> NO hardware**; **M3b** (a real captured joules/token — wall-meter-primary on the Strix Halo;
+> sysfs/Windows-LHM optional) is a **separate** human handoff and does NOT block M4. Work on
+> branch `costroid-next` (recreated off the merged main). The earlier superseded line follows
+> for history.
 >
 > **(superseded) Current milestone: M2 — PLAN SYNTHESIZED, AWAITING SIGN-OFF.**
 > The detailed T-plan is written: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)** — 15 ordered tasks
@@ -323,6 +330,7 @@ starting **M1**.
   fold-ins (full-sha pin in Rust, README accuracy, the non-vacuous D2 shadowing guard);
   milestone-boundary review APPROVED (no high/medium); clean-build re-verify green.
 - [ ] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
+  *(PLAN SYNTHESIZED 2026-06-20 — [`docs/M3-PLAN.md`](docs/M3-PLAN.md); T0 canon reconciliation done; T1–T13 awaiting D1–D5 sign-off.)*
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
 - [ ] **M4** — break-even + scenario engine (incl. "never" case); DeepSWE-Bench dated snapshot wired.
 - [ ] **M5** — CLI/TUI + tiny_http local API + 3-view embedded web UI (loopback-only).
@@ -332,6 +340,30 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (m) — M3 T0 DONE (canon reconciled); M3-PLAN synthesized; ⛔ STOP for D1–D5
+  sign-off before any code.** On branch `costroid-next`. **T0 (before building):** committed
+  the uncommitted §5.3/§5.4 edits (`a15bd8f` — the wall-meter-led measured ladder) then
+  reconciled the 5 dependent spots that still said "three-source/sysfs-first" (`3f5b218` —
+  §3.3 M3, R1, §6.3 impls +`WindowsLhmPowerSampler`, §6.3 selector to the new order, §6.12
+  DoD, +§6.4 `measured_lhm`). Wrote **[`docs/M3-PLAN.md`](docs/M3-PLAN.md)** (13 tasks T0–T13,
+  dependency-ordered, a deciding test per task, the M1/M2-PLAN pattern) from the canon (§3.3
+  M3 / the revised §5.3/§5.4 / §6.3 / §6.4 / R1·R4·R6·R7·R8·R10·A2) + the M0 `costroid-power`
+  scaffold + a repo-fit code map (the 4-source selector seam, `MeasurementMode`, the §3.2 cost
+  model, `CanonicalEvent::Local`/`LocalRunEvent`, the M0-stub `local_run_to_focus`, the store
+  fan-out, the offline allowlists, the bundled-data + sha256 pattern). **§1.5 surfaces the
+  sign-off decisions D1–D5:** D1 the wall-meter-led selector order (+`MeasuredLhm`); D2 the 7
+  local `x_` columns (§6.4 verbatim) all in M3a (M3b is data-only); D3 the dated/stamped/
+  overridable hardware+electricity profile (incl. the one judgemental default — the electricity
+  rate); D4 the Gemma 4 model/quant set + published-quality source; D5 the `costroid bench` CLI
+  behind a new off-by-default `power` feature + the LHM parser-only seam (live loopback read
+  deferred to M3b → the default CLI stays byte-for-byte no-network). Internal-structure
+  decisions taken without sign-off (recorded): no `core→power` edge (the CLI orchestrates; core
+  maps a pre-computed enriched `LocalRunEvent`); the runner/harness/samplers/manifests live in
+  `costroid-power` (a leaf). **M3a needs NO hardware** (synthetic power fixtures + estimated
+  mode + an LHM JSON fixture + a StubRunner cover it). **Next: human signs off D1–D5, then
+  execute T1→T13 on the per-task dev-loop; STOP at the M3a boundary for the human's review +
+  clean-build re-verify before merge.** M3b (a real captured joules/token) is a separate human
+  handoff. CI never asserts a real power number (R10).
 - **2026-06-20 (l) — M2 ✅ MERGED to `main` (PR #3); M3 is next.** After the milestone-boundary
   review (APPROVED for merge), the 3 LOW fold-ins landed on the per-task dev-loop: `fed1856`
   fold-in 1+2 (pin the FULL LiteLLM upstream sha256 as the Rust const
