@@ -1,5 +1,6 @@
 {
   "schema_version": "1",
+  "source": "curated",
   "as_of": "2026-06-02",
   "currency": "USD",
   "sources": [

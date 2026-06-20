@@ -83,6 +83,57 @@ pub fn bundled_pricing_json() -> &'static str {
     include_str!("../pricing/pricing.v1.json")
 }
 
+/// The bundled LiteLLM-derived cloud-API pricing snapshot (M2) — the long-tail tier
+/// layered UNDER the curated catalog. A vendored, dated, hashed MIT data artifact (see
+/// `pricing/README.md`); never fetched at build or runtime (R8).
+pub fn bundled_litellm_pricing_json() -> &'static str {
+    include_str!("../pricing/litellm-prices.v1.json")
+}
+
+/// The default user pricing-override path: `$XDG_CONFIG_HOME/costroid/pricing-override.json`,
+/// falling back to `~/.config/costroid/pricing-override.json`. `None` when neither
+/// `XDG_CONFIG_HOME` nor `HOME` is set (no override location → bundled only). Pure path
+/// construction — does not touch the filesystem.
+pub fn default_pricing_override_path() -> Option<std::path::PathBuf> {
+    let file = std::path::Path::new("costroid").join("pricing-override.json");
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(std::path::Path::new(&xdg).join(file));
+        }
+    }
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty())?;
+    Some(std::path::Path::new(&home).join(".config").join(file))
+}
+
+/// Read a user pricing-override file's content for [`PricingCatalog::layered`].
+///
+/// - `explicit = Some(path)`: the user pointed at a file — an unreadable path is a typed
+///   error (they asked for it).
+/// - `explicit = None`: use the [`default_pricing_override_path`]; a missing file (or no
+///   path at all) returns `Ok(None)` (zero-config → bundled only). A present-but-unreadable
+///   default file is a typed error rather than a silent skip.
+///
+/// A *malformed* override (bad JSON) surfaces later from [`PricingCatalog::layered`] as a
+/// typed [`CoreError`]; the CLI decides whether to treat the default-path case as a warning
+/// (fall back to bundled) vs the explicit-path case as fatal.
+pub fn read_pricing_override(
+    explicit: Option<&std::path::Path>,
+) -> Result<Option<String>, CoreError> {
+    let path = match explicit {
+        Some(path) => path.to_path_buf(),
+        None => match default_pricing_override_path() {
+            Some(path) if path.exists() => path,
+            _ => return Ok(None),
+        },
+    };
+    std::fs::read_to_string(&path).map(Some).map_err(|err| {
+        CoreError::PricingValidation(format!(
+            "reading pricing override {}: {err}",
+            path.display()
+        ))
+    })
+}
+
 pub fn bundled_pricing_value() -> Result<serde_json::Value, CoreError> {
     serde_json::from_str(bundled_pricing_json()).map_err(CoreError::from)
 }
@@ -100,7 +151,7 @@ pub fn local_snapshot(env: &HostEnv) -> Snapshot {
 }
 
 pub fn focus_records_from_usage(events: &[UsageEvent]) -> Result<Vec<FocusRecord>, CoreError> {
-    let pricing = PricingCatalog::bundled()?;
+    let pricing = PricingCatalog::layered_default()?;
     let mut records = Vec::new();
     for event in events {
         push_meter_records(event, &pricing, &mut records)?;
@@ -128,7 +179,7 @@ pub fn focus_records_from_usage(events: &[UsageEvent]) -> Result<Vec<FocusRecord
 pub fn focus_records_from_canonical(
     events: &[CanonicalEvent],
 ) -> Result<Vec<FocusRecord>, CoreError> {
-    let pricing = PricingCatalog::bundled()?;
+    let pricing = PricingCatalog::layered_default()?;
     let mut records = Vec::new();
     for event in events {
         match event {
@@ -248,7 +299,7 @@ pub fn focus_records_from_v12_import(
     events: &[CloudUsageEvent],
     source_version: &FocusInputVersion,
 ) -> Result<Vec<FocusRecord>, CoreError> {
-    let pricing = PricingCatalog::bundled()?;
+    let pricing = PricingCatalog::layered_default()?;
     let version = source_version.as_str().to_string();
     let mut records = Vec::with_capacity(events.len());
     for event in events {
@@ -261,7 +312,7 @@ pub fn focus_records_from_v12_import(
                 .resolve_key(event.model.as_deref().unwrap_or_default())
                 .and_then(|key| pricing.rate(key, TokenType::Output))
             {
-                apply_pricing(&mut row, rate, &pricing);
+                apply_pricing(&mut row, rate);
             }
         }
         row.x_focus_input_version = Some(version.clone());
@@ -541,7 +592,7 @@ pub fn trends_summary(snapshot: &EngineSnapshot, options: TrendsOptions) -> Tren
 /// `appearances`), never a guessed standing; a benchmarked model can never render as a gap.
 pub fn models_view(snapshot: &EngineSnapshot) -> Result<ModelsView, CoreError> {
     let bench = bench_view(snapshot)?;
-    let pricing = PricingCatalog::bundled()?;
+    let pricing = PricingCatalog::layered_default()?;
 
     // Aggregate API-lane spend + tokens by RESOLVED catalog key — the SAME grouping +
     // per-row aggregation `bench_view` performs (bench.rs). Keying by the raw `x_model`
@@ -1620,7 +1671,7 @@ fn push_meter_records(
         })?;
 
         match resolved.and_then(|key| pricing.rate(key, token_type)) {
-            Some(rate) => apply_pricing(&mut row, rate, pricing),
+            Some(rate) => apply_pricing(&mut row, rate),
             None if model.is_none() => {
                 row.x_pricing_status = PRICING_STATUS_UNKNOWN_MODEL.to_string();
             }
@@ -1641,7 +1692,18 @@ fn push_meter_records(
     Ok(())
 }
 
-fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate, pricing: &PricingCatalog) {
+/// Opaque, stable per-rate SKU price identifier. The unit component reflects the
+/// FOCUS-facing per-token basis (consistent with PricingUnit / ListUnitPrice), and the
+/// `as_of` is the WINNING tier's snapshot date — so a layered catalog's SKU id reflects
+/// the tier that actually priced the row, never a global/curated date.
+fn sku_price_id(rate: &CatalogRate) -> String {
+    format!(
+        "{}:{}:{}:{}:{}",
+        rate.provider, rate.model, rate.meter, PRICING_UNIT_TOKENS, rate.as_of
+    )
+}
+
+fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate) {
     // Per-token representation (FOCUS UnitFormat): PricingQuantity is the token
     // count, the unit-price columns are per-token (the per-1M catalog rate ÷
     // 1_000_000). Cost is invariant: per_token × tokens == tokens × rate ÷ 1e6,
@@ -1659,7 +1721,7 @@ fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate, pricing: &PricingCat
     row.pricing_quantity = Some(quantity);
     row.pricing_category = Some(PRICING_CATEGORY_STANDARD.to_string());
     row.pricing_unit = Some(PRICING_UNIT_TOKENS.to_string());
-    row.sku_price_id = Some(pricing.sku_price_id(rate));
+    row.sku_price_id = Some(sku_price_id(rate));
     row.list_unit_price = Some(per_token);
     row.contracted_unit_price = Some(per_token);
     // PricingCurrency == BillingCurrency for Costroid, so the pricing-currency
@@ -1668,6 +1730,9 @@ fn apply_pricing(row: &mut FocusRecord, rate: &CatalogRate, pricing: &PricingCat
     row.pricing_currency_list_unit_price = Some(per_token);
     row.pricing_currency_contracted_unit_price = Some(per_token);
     row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+    // R8: stamp the winning tier's provenance (source + date + content hash) so an
+    // estimated row records exactly which snapshot priced it.
+    row.x_pricing_snapshot_id = Some(rate.snapshot_id.clone());
 }
 
 /// If `model` ends in a strict dated-snapshot suffix, return the base id with the
@@ -1707,10 +1772,38 @@ fn strip_compact_date(model: &str) -> Option<&str> {
 #[derive(Debug, Deserialize)]
 struct PricingTable {
     schema_version: String,
+    /// The pricing source label for the R8 stamp (`"curated"` / `"litellm"` /
+    /// `"override"`); defaults to `"bundled"` when a (e.g. older) snapshot omits it.
+    #[serde(default = "default_pricing_source")]
+    source: String,
     as_of: String,
+    /// The content hash of the source data (e.g. the pinned upstream sha256), recorded
+    /// for the R8 stamp. Optional — a hand-curated tier identifies by source+date.
+    #[serde(default)]
+    content_hash: Option<String>,
     currency: String,
     #[serde(default)]
     models: Vec<PricingModel>,
+}
+
+fn default_pricing_source() -> String {
+    "bundled".to_string()
+}
+
+/// The R8 provenance stamp for a pricing tier: `"{source}@{as_of}"`, plus the first 8 hex
+/// chars of the content hash when present — e.g. `"litellm@2026-06-18#36c8994e"` or
+/// `"curated@2026-06-02"`. Stamped on every estimated row via `x_PricingSnapshotId`.
+fn pricing_snapshot_id(source: &str, as_of: &str, content_hash: Option<&str>) -> String {
+    match content_hash {
+        Some(hash) if !hash.is_empty() => {
+            // First ≤8 chars, taken CHAR-safely: `content_hash` is a free-form JSON string
+            // from a user override, so a byte slice (`&hash[..8]`) could split a multibyte
+            // char and panic — and a library crate must never panic.
+            let short: String = hash.chars().take(8).collect();
+            format!("{source}@{as_of}#{short}")
+        }
+        _ => format!("{source}@{as_of}"),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1732,6 +1825,21 @@ struct PricingRate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PricingModelInfo {
     service_name: String,
+    /// The tier this model entry came from (`"curated"`/`"litellm"`/`"override"`/…) — used
+    /// by [`resolve_key`](PricingCatalog::resolve_key) to prefer the higher-precedence tier
+    /// when both an exact dated entry (e.g. litellm) and a base entry (e.g. curated) exist.
+    source: String,
+}
+
+/// Precedence rank for a pricing tier (lower = higher precedence): override > curated >
+/// litellm > anything else. Mirrors the layering order in [`PricingCatalog::layered`].
+fn tier_rank(source: &str) -> u8 {
+    match source {
+        "override" => 0,
+        "curated" => 1,
+        "litellm" => 2,
+        _ => 3,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1741,10 +1849,19 @@ struct CatalogRate {
     meter: String,
     unit: String,
     price: Decimal,
+    /// The snapshot date of the tier this rate came from (feeds `sku_price_id`), so a
+    /// layered catalog's per-rate SKU id reflects the winning tier, not a global date.
+    as_of: String,
+    /// The R8 provenance stamp of the winning tier ([`pricing_snapshot_id`]); copied onto
+    /// `x_PricingSnapshotId` when this rate prices a row.
+    snapshot_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PricingCatalog {
+    /// The primary (top-tier) snapshot date — curated's, or the override's when present.
+    /// For catalog-level display (e.g. the Frontier `pricing_as_of`); a row's accurate
+    /// per-tier date lives on its [`CatalogRate::as_of`].
     as_of: String,
     currency: String,
     models: BTreeMap<String, PricingModelInfo>,
@@ -1752,8 +1869,42 @@ struct PricingCatalog {
 }
 
 impl PricingCatalog {
+    /// The curated tier alone (no long tail). Kept for tests + as the single-tier parse
+    /// primitive; production paths use [`layered_default`](Self::layered_default).
     fn bundled() -> Result<Self, CoreError> {
         Self::from_json(bundled_pricing_json())
+    }
+
+    /// The production catalog: the LiteLLM long-tail (lowest precedence) under the curated
+    /// catalog, with no user override. Every internal record-builder uses this so a row is
+    /// priced from the best tier and stamped with its provenance (R8).
+    fn layered_default() -> Result<Self, CoreError> {
+        Self::layered(None)
+    }
+
+    /// The layered catalog (D2): `user-override > curated > LiteLLM long-tail`. `override_json`
+    /// is the override file's content (the caller reads it; see [`read_pricing_override`]); a
+    /// malformed override is a typed [`CoreError`] the caller may downgrade to a warning.
+    fn layered(override_json: Option<&str>) -> Result<Self, CoreError> {
+        // Lowest precedence first; each higher tier overlays (owns its models entirely).
+        let mut catalog = Self::from_json(bundled_litellm_pricing_json())?;
+        catalog.overlay(Self::from_json(bundled_pricing_json())?);
+        if let Some(json) = override_json {
+            catalog.overlay(Self::from_json(json)?);
+        }
+        Ok(catalog)
+    }
+
+    /// Overlay a higher-precedence tier. Per-model precedence (D2): a model present in
+    /// `higher` is owned ENTIRELY by it (all four meters), so any lower-tier rate for that
+    /// model is dropped first — never blending two sources within one model.
+    fn overlay(&mut self, higher: PricingCatalog) {
+        self.rates
+            .retain(|(model, _meter), _| !higher.models.contains_key(model));
+        self.models.extend(higher.models);
+        self.rates.extend(higher.rates);
+        self.as_of = higher.as_of;
+        self.currency = higher.currency;
     }
 
     fn from_json(value: &str) -> Result<Self, CoreError> {
@@ -1781,32 +1932,30 @@ impl PricingCatalog {
 
     /// Resolve a raw log model id to the catalog key whose info/rates apply.
     ///
-    /// 1. Exact match wins — preserves prior behavior and lets a curated explicit
-    ///    dated entry override the base-alias fallback (the escape hatch when a
-    ///    snapshot is ever repriced away from its base).
-    /// 2. Else strip a strict date-snapshot suffix and use the bare base **iff that
-    ///    base already exists in the catalog** — so we never invent a mapping, and a
-    ///    version bump (`claude-opus-4-8`) is never folded onto a different version.
-    /// 3. Else `None` (genuinely unknown model → `unknown_model`).
+    /// 1. Both an exact match AND a date-stripped base may exist (e.g. litellm carries the
+    ///    exact dated `claude-haiku-4-5-20251001` while curated carries the base
+    ///    `claude-haiku-4-5`). Prefer the **higher-precedence tier** ([`tier_rank`]) so a
+    ///    curated base wins over a litellm dated entry — keeping curated authoritative and
+    ///    preserving M1's "dated snapshot prices at its base" honesty. A tie (same tier)
+    ///    keeps the exact match (an explicit dated entry in the SAME tier wins its base).
+    /// 2. Only one present → that one. The base is used **iff it exists** — never invent a
+    ///    mapping, and a version bump (`claude-opus-4-8`) is never folded onto another version.
+    /// 3. Neither → `None` (genuinely unknown model → `unknown_model`).
     fn resolve_key<'a>(&'a self, model: &'a str) -> Option<&'a str> {
-        if self.models.contains_key(model) {
-            return Some(model);
+        let exact = self.models.get_key_value(model);
+        let base = strip_date_suffix(model).and_then(|b| self.models.get_key_value(b));
+        match (exact, base) {
+            (Some((exact_key, exact_info)), Some((base_key, base_info))) => {
+                if tier_rank(&base_info.source) < tier_rank(&exact_info.source) {
+                    Some(base_key.as_str())
+                } else {
+                    Some(exact_key.as_str())
+                }
+            }
+            (Some((exact_key, _)), None) => Some(exact_key.as_str()),
+            (None, Some((base_key, _))) => Some(base_key.as_str()),
+            (None, None) => None,
         }
-        let base = strip_date_suffix(model)?;
-        if self.models.contains_key(base) {
-            return Some(base);
-        }
-        None
-    }
-
-    fn sku_price_id(&self, rate: &CatalogRate) -> String {
-        // Opaque, stable per-rate identifier. The unit component reflects the
-        // FOCUS-facing per-token basis (consistent with PricingUnit / ListUnitPrice),
-        // not the catalog's per-1M rate basis — no stale "1M_tokens" in the id.
-        format!(
-            "{}:{}:{}:{}:{}",
-            rate.provider, rate.model, rate.meter, PRICING_UNIT_TOKENS, self.as_of
-        )
     }
 
     fn from_table(table: PricingTable) -> Result<Self, CoreError> {
@@ -1823,8 +1972,11 @@ impl PricingCatalog {
             )));
         }
 
+        let as_of = table.as_of;
+        let source = table.source;
+        let snapshot_id = pricing_snapshot_id(&source, &as_of, table.content_hash.as_deref());
         let mut catalog = Self {
-            as_of: table.as_of,
+            as_of: as_of.clone(),
             currency: table.currency,
             models: BTreeMap::new(),
             rates: BTreeMap::new(),
@@ -1837,6 +1989,7 @@ impl PricingCatalog {
                     model.model.clone(),
                     PricingModelInfo {
                         service_name: model.service_name.clone(),
+                        source: source.clone(),
                     },
                 )
                 .is_some()
@@ -1877,6 +2030,8 @@ impl PricingCatalog {
                         meter: rate.meter,
                         unit: rate.unit,
                         price: rate.price,
+                        as_of: as_of.clone(),
+                        snapshot_id: snapshot_id.clone(),
                     },
                 );
             }
@@ -5645,10 +5800,149 @@ mod tests {
 
         assert_eq!(rate.price, Decimal::new(500, 2));
         assert_eq!(catalog.currency, "USD");
+        assert_eq!(sku_price_id(rate), "openai:gpt-5.5:input:tokens:2026-06-02");
+    }
+
+    #[test]
+    fn bundled_litellm_snapshot_loads_with_pinned_provenance() {
+        // T1-deferred loader check: the vendored LiteLLM artifact parses, and its embedded
+        // source/as_of/content_hash surface on the per-rate provenance stamp (R8).
+        let catalog = match PricingCatalog::from_json(bundled_litellm_pricing_json()) {
+            Ok(value) => value,
+            Err(err) => panic!("litellm snapshot should parse: {err}"),
+        };
+        let rate = match catalog.rate("mistral-large-latest", TokenType::Input) {
+            Some(value) => value,
+            None => panic!("a litellm long-tail model should be present"),
+        };
+        assert_eq!(rate.as_of, "2026-06-18");
+        assert_eq!(rate.snapshot_id, "litellm@2026-06-18#36c8994e");
+        assert_eq!(catalog.currency, "USD");
+    }
+
+    #[test]
+    fn layered_catalog_precedence_and_provenance_stamp() {
+        // An override re-prices a curated model (claude-sonnet-4-6) at an absurd rate.
+        let override_json = r#"{"schema_version":"1","source":"override","as_of":"2026-06-20",
+            "content_hash":"deadbeefcafe","currency":"USD","models":[
+            {"provider":"anthropic","model":"claude-sonnet-4-6","service_name":"Anthropic API",
+             "rates":[{"meter":"input","unit":"1M_tokens","price":"99.00"}]}]}"#;
+        let catalog = match PricingCatalog::layered(Some(override_json)) {
+            Ok(value) => value,
+            Err(err) => panic!("layered catalog should build: {err}"),
+        };
+        // override > curated: the override rate + stamp win for claude-sonnet-4-6.
+        let r = match catalog.rate("claude-sonnet-4-6", TokenType::Input) {
+            Some(value) => value,
+            None => panic!("override rate"),
+        };
+        assert_eq!(r.price, Decimal::new(99, 0));
+        assert_eq!(r.snapshot_id, "override@2026-06-20#deadbeef");
+        // curated > litellm: a curated model not in the override keeps its curated rate+stamp.
+        let r = match catalog.rate("gpt-5.5", TokenType::Input) {
+            Some(value) => value,
+            None => panic!("curated rate"),
+        };
+        assert_eq!(r.price, Decimal::new(500, 2));
+        assert_eq!(r.snapshot_id, "curated@2026-06-02");
+        // litellm long tail: a model absent from curated + override keeps the litellm stamp.
+        let r = match catalog.rate("mistral-large-latest", TokenType::Input) {
+            Some(value) => value,
+            None => panic!("mistral-large-latest should come from the litellm tier"),
+        };
+        assert_eq!(r.snapshot_id, "litellm@2026-06-18#36c8994e");
+    }
+
+    #[test]
+    fn dev_tool_models_reprice_unchanged_and_stamp_curated() {
+        // R8 + no-regression: a dev-tool claude-sonnet-4-6 row prices from the CURATED tier
+        // (authoritative; curated > litellm), unchanged from M1 (3.00/15.00 per 1M), and
+        // carries the curated provenance stamp — the long-tail layer never alters it.
+        let event = UsageEvent {
+            tool: ProviderId::ClaudeCode,
+            model: "claude-sonnet-4-6".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            project: None,
+            access_path: AccessPath::Api,
+            is_sidechain: false,
+        };
+        let rows = match focus_records_from_usage(&[event]) {
+            Ok(value) => value,
+            Err(err) => panic!("conversion should succeed: {err}"),
+        };
+        let input = match rows.iter().find(|r| r.x_token_type == "input") {
+            Some(value) => value,
+            None => panic!("input meter"),
+        };
+        assert_eq!(input.billed_cost, Decimal::new(3, 0));
         assert_eq!(
-            catalog.sku_price_id(rate),
-            "openai:gpt-5.5:input:tokens:2026-06-02"
+            input.x_pricing_snapshot_id.as_deref(),
+            Some("curated@2026-06-02")
         );
+        let output = match rows.iter().find(|r| r.x_token_type == "output") {
+            Some(value) => value,
+            None => panic!("output meter"),
+        };
+        assert_eq!(output.billed_cost, Decimal::new(15, 0));
+        assert_eq!(
+            output.x_pricing_snapshot_id.as_deref(),
+            Some("curated@2026-06-02")
+        );
+    }
+
+    #[test]
+    fn pricing_snapshot_id_is_char_safe_and_never_panics() {
+        // Real (ASCII-hex) cases: first 8 chars.
+        assert_eq!(
+            pricing_snapshot_id("litellm", "2026-06-18", Some("36c8994e4d65")),
+            "litellm@2026-06-18#36c8994e"
+        );
+        // Short / empty / absent hashes.
+        assert_eq!(
+            pricing_snapshot_id("override", "2026-06-20", Some("abcd")),
+            "override@2026-06-20#abcd"
+        );
+        assert_eq!(
+            pricing_snapshot_id("curated", "2026-06-02", None),
+            "curated@2026-06-02"
+        );
+        assert_eq!(
+            pricing_snapshot_id("curated", "2026-06-02", Some("")),
+            "curated@2026-06-02"
+        );
+        // Multibyte content_hash must NOT panic on a non-char-boundary byte slice (a user
+        // override could supply anything). First 8 CHARS, char-safe.
+        assert_eq!(
+            pricing_snapshot_id("override", "2026-06-20", Some("aéééééééz")),
+            "override@2026-06-20#aééééééé"
+        );
+    }
+
+    #[test]
+    fn read_pricing_override_reads_explicit_and_errors_on_missing_explicit() {
+        // An explicit, readable path returns its content; an explicit missing path is a
+        // typed error (the user asked for it). Default-path resolution is env-dependent and
+        // covered by the CLI; here we exercise the deterministic explicit-path branches.
+        let path =
+            std::env::temp_dir().join(format!("costroid-override-{}.json", std::process::id()));
+        if std::fs::write(&path, "{\"models\":[]}").is_err() {
+            panic!("temp override write should succeed");
+        }
+        match read_pricing_override(Some(&path)) {
+            Ok(Some(content)) => assert_eq!(content, "{\"models\":[]}"),
+            other => panic!("explicit readable path should return its content: {other:?}"),
+        }
+        let _ = std::fs::remove_file(&path);
+        let missing =
+            std::env::temp_dir().join(format!("costroid-missing-{}.json", std::process::id()));
+        match read_pricing_override(Some(&missing)) {
+            Err(_) => {}
+            other => panic!("explicit missing path should be a typed error: {other:?}"),
+        }
     }
 
     #[test]
