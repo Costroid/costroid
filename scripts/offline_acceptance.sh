@@ -410,6 +410,31 @@ elif [ "${#OUT}" -lt 10 ] || ! grep -qiF "costroid now" <<<"$OUT"; then
 else echo "ok (rusqlite linked, no network)"; fi
 
 # ============================================================================
+# Feature-on power — the local-inference engine build's runtime no-network proof (M3)
+# ============================================================================
+# The local-inference engine (`costroid-power`, behind the CLI's off-by-default `power` feature)
+# powers `costroid bench`. It is a pure-compute leaf: the runner is a `std::process` subprocess
+# (A2 — not FFI/HTTP) and the sysfs read is `std::fs`, so it links NO network/TLS/telemetry/async-
+# runtime crate (the per-binary static POWER_ALLOWED allowlist in apps/cli/tests/offline.rs is the
+# authoritative proof of that). This is its behavioral counterpart: building `--features power` in
+# and running the ESTIMATED / what-if `bench` (NO --measure → no subprocess, no hardware, D5) under
+# the SAME isolation must make NO network call — exactly the connect/store "linking ≠ a call". (The
+# `--measure` path drives a runtime subprocess + a wall meter and is the M3b on-hardware step — never
+# exercised here; it needs no network either, but it is out of scope for this no-hardware gate.) The
+# estimated row carries `x_Lane=local_inference` + `x_MeasurementMode=estimated`, which we assert.
+echo "==> Building costroid --features power (local-inference engine linked — zero network expected)"
+cargo build -q -p costroid --features power
+power_bin="$repo_root/target/debug/costroid"
+
+printf '  %-52s' "power build: estimated bench leaks no network"
+rc=0; iso_run "$power_bin" bench --out csv || rc=$?
+if [ "$rc" -eq 90 ]; then echo "NETWORK VIOLATION"; fail=1
+elif [ "$rc" -ne 0 ]; then echo "FAIL (exit $rc)"; fail=1
+elif [ "${#OUT}" -lt 10 ] || ! grep -qiF "local_inference" <<<"$OUT"; then
+  echo "FAIL (unexpected bench output: ${OUT:0:80})"; fail=1
+else echo "ok (engine linked, estimated bench, no network)"; fi
+
+# ============================================================================
 # costroid-bar — the taskbar binary's runtime no-network proof (T21)
 # ============================================================================
 # The egui taskbar is a pure core consumer (no new data path/network/telemetry). Its
@@ -494,4 +519,4 @@ if [ "$fail" -ne 0 ]; then
   echo "==> OFFLINE ACCEPTANCE: FAILED"
   exit 1
 fi
-echo "==> OFFLINE ACCEPTANCE (default build, connect OFF + costroid-bar + costroid-server): PASSED (all commands ran offline; CLI/bar no socket, server loopback-only no egress)"
+echo "==> OFFLINE ACCEPTANCE (default build, connect OFF + power + costroid-bar + costroid-server): PASSED (all commands ran offline; CLI/bar no socket, server loopback-only no egress)"
