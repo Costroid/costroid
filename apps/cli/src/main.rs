@@ -192,6 +192,11 @@ struct BenchArgs {
     /// The Gemma 4 model id (e.g. `gemma-4-26b-a4b`, `gemma-4-31b-dense`).
     #[arg(long, default_value = "gemma-4-26b-a4b")]
     model: String,
+    /// The model id/path handed to the runtime in `--measure` mode — an Ollama tag or a GGUF
+    /// path, which need not equal the manifest id. Defaults to `--model`. The economics
+    /// (pricing, profile, benchmark id) always key on `--model` (the manifest id).
+    #[arg(long)]
+    runtime_model: Option<String>,
     /// The quantization (default: the model's manifest default, `Q4_K_M`).
     #[arg(long)]
     quant: Option<String>,
