@@ -28,17 +28,14 @@ publish = false
 power = []
 
 [dependencies]
-# Lean by design: the M0 scaffold uses only `serde` (the `MeasurementMode` stamp) + `thiserror`
-# (typed `PowerError`); the §3.2 cost model is pure `f64`. `chrono` (reading timestamps) and
-# `rust_decimal` (mapping the final $ to FOCUS money columns) are re-added at M3 when the FOCUS
-# record mapping actually needs them — declared-but-unused deps are dead weight until then.
+# Lean by design: `serde` (the `MeasurementMode` stamp + the profile/manifest structs) +
+# `serde_json` (parse the bundled, dated power-profile + Gemma-4 data artifacts — `include_str!`,
+# never fetched, R8) + `thiserror` (typed `PowerError`). The §3.2 cost model stays pure `f64`.
+# `serde_json` is already in the CLI graph (apps/cli depends on it), so this adds no NEW crate to
+# the offline forbidden-crates surface when `costroid-power` becomes CLI-reachable behind `power`.
 serde.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
-# Test-only: the `MeasurementMode` / report serde round-trips. Not a shipping dep, so it never
-# enters the CLI/bar graph or the offline forbidden-crates surface.
 serde_json.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

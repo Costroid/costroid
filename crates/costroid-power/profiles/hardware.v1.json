@@ -1,0 +1,25 @@
+{
+  "schema": "costroid.power.profiles/v1",
+  "as_of": "2026-06-20",
+  "source": "Community-measured Strix Halo ranges (COSTROID-NEXT.md §5.2). ESTIMATED assumptions, never measured (R10) — confirm on real hardware (M3b). Dated, stamped, overridable (R8): override via `costroid bench` flags or the [power] config section.",
+  "hardware_profiles": [
+    {
+      "id": "strix-halo-128gb",
+      "description": "AMD Strix Halo / Ryzen AI Max+ 395 / Radeon 8060S iGPU (gfx1151, RDNA3.5), 128 GB unified memory, ~215 GB/s — inference is memory-bandwidth-bound.",
+      "load_watts": 155.0,
+      "load_watts_range": [137.0, 174.0],
+      "idle_watts": 15.0,
+      "hardware_price": 2000.0,
+      "hardware_lifetime_seconds": 94608000,
+      "memory_bandwidth_gbps": 215.0,
+      "estimated": true
+    }
+  ],
+  "electricity_rate": {
+    "value": 0.16,
+    "currency": "USD",
+    "as_of": "2026-06-20",
+    "label": "global-household-average-template",
+    "estimated": true
+  }
+}
