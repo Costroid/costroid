@@ -104,6 +104,12 @@ pub struct RawFocusRow {
     pub pricing_currency: Option<String>,
     #[serde(rename = "ConsumedUnit", default)]
     pub consumed_unit: Option<String>,
+    /// Amazon Bedrock application-inference-profile id (M2 / D4). A dedicated bounded id
+    /// column — NOT `ResourceId` / `Tags` / a profile *name* (those are free text → R4, and
+    /// are not fields here, so serde drops them). The real AWS export column name is C4-truable
+    /// (localized to [`FocusV12Mapping`]); the synthetic fixtures use `x_InferenceProfileId`.
+    #[serde(rename = "x_InferenceProfileId", default)]
+    pub x_inference_profile_id: Option<String>,
     #[serde(rename = "ChargePeriodStart", default)]
     pub charge_period_start: Option<String>,
     #[serde(rename = "BillingCurrency", default)]
@@ -224,6 +230,8 @@ impl FocusInputMapping for FocusV12Mapping {
                 .map(str::to_ascii_uppercase),
             consumed_unit: owned(row.consumed_unit.as_deref()),
             billing_currency,
+            // Bedrock workload attribution (D4): the bounded inference-profile id only.
+            inference_profile_id: owned(row.x_inference_profile_id.as_deref()),
         })
     }
 }
@@ -397,6 +405,22 @@ mod tests {
         assert!(!serialized.contains("ServiceCode"));
         assert!(!serialized.contains("UsageType"));
         assert!(!serialized.contains("BedrockModelUnits"));
+        // D4 + R4: the bounded Bedrock inference-profile ID is carried for workload
+        // attribution, but the free-text profile NAME is NOT a RawFocusRow field, so serde
+        // drops it — no profile name can reach the canonical events.
+        assert_eq!(
+            import.events[0].inference_profile_id.as_deref(),
+            Some("aip-0a1b2c3d4e5f6789"),
+            "the bounded inference-profile id is carried"
+        );
+        assert!(
+            import.events[1].inference_profile_id.is_none(),
+            "the second row has no inference profile (None)"
+        );
+        assert!(
+            !serialized.contains("Secret Project"),
+            "the user-chosen profile NAME (free text) must never reach a field (R4)"
+        );
         // The model still rode SkuId through.
         assert_eq!(
             import.events[0].model.as_deref(),

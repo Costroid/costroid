@@ -223,6 +223,10 @@ pub struct CloudUsageEvent {
     /// currency and excluded from the USD totals rather than blended in. `None`/absent → the
     /// ledger default (USD).
     pub billing_currency: Option<String>,
+    /// The Amazon Bedrock application-inference-profile id for workload attribution (M2 / D4)
+    /// — the bounded SYSTEM id only, read from a dedicated bounded column, **never** the
+    /// user-chosen profile name or cost-allocation tags (free text → R4). `None` off-Bedrock.
+    pub inference_profile_id: Option<String>,
 }
 
 /// Minimal metadata for a local-inference run.
@@ -1433,6 +1437,7 @@ mod tests {
             pricing_currency: Some("USD".to_string()),
             consumed_unit: Some("Tokens".to_string()),
             billing_currency: Some("USD".to_string()),
+            inference_profile_id: Some("us.anthropic.claude-3-profile".to_string()),
         }
     }
 
@@ -1479,6 +1484,7 @@ mod tests {
             pricing_currency: _,
             consumed_unit: _,
             billing_currency: _,
+            inference_profile_id: _,
         } = sample_cloud_usage_event();
 
         let LocalRunEvent {
