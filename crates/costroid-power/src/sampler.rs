@@ -406,6 +406,21 @@ mod tests {
     }
 
     #[test]
+    fn r4_the_lhm_fixture_carries_no_prompt_or_completion_content() {
+        // The LHM fixture is a hardware-sensor tree by construction; guard it with the SAME
+        // content-marker scan the stats fixtures use (runner.rs
+        // `r4_the_stats_fixtures_carry_no_prompt_or_completion_content`) so a future real LHM
+        // capture that accidentally embeds generated text can't slip in.
+        let lower = LHM_DATA_JSON.to_lowercase();
+        for forbidden in ["prompt:", "completion", "response:", "assistant:", "user:"] {
+            assert!(
+                !lower.contains(forbidden),
+                "R4: the LHM fixture must carry no content marker `{forbidden}`"
+            );
+        }
+    }
+
+    #[test]
     fn lhm_parser_fails_closed_on_missing_or_malformed_data() {
         // No Package power sensor present → typed unavailable, never a panic.
         let no_pkg = r#"{"Text":"Sensor","Children":[{"Text":"CPU Cores","Value":"30.0 W","Type":"Power"}]}"#;
