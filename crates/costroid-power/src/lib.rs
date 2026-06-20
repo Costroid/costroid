@@ -22,18 +22,28 @@
 
 pub mod cost;
 mod error;
+pub mod harness;
 mod mode;
 pub mod models;
 pub mod profile;
+pub mod runner;
 mod sampler;
 
 pub use cost::{cloud_cost, local_run_cost, CostInputs, LocalRunCost};
 pub use error::PowerError;
+pub use harness::{
+    average_watts, benchmark_id, compute_report, estimate_run, run_measured, LocalRunReport,
+    DEFAULT_BENCHMARK_SUITE,
+};
 pub use mode::MeasurementMode;
 pub use models::{bundled_models, ModelManifest, ModelQuality, ModelSpec, GEMMA4_MANIFEST_AS_OF};
 pub use profile::{
     bundled_power_profiles, ElectricityRate, HardwareProfile, PowerProfiles, ProfileOverrides,
     ResolvedProfile, DEFAULT_HARDWARE_PROFILE_ID, POWER_PROFILE_AS_OF,
+};
+pub use runner::{
+    parse_llama_cpp_stats, parse_ollama_stats, LlamaCppRunner, OllamaRunner, RunOutput, RunSpec,
+    Runner, StubRunner,
 };
 pub use sampler::{
     select_sampler, EstimatedPowerSampler, PowerSampler, SysfsPowerSampler, WallMeterPowerSampler,
