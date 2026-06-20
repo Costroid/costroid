@@ -446,6 +446,44 @@ pub struct FocusRecord {
     /// non-Bedrock row. A bounded id — never content.
     #[serde(rename = "x_InferenceProfileId")]
     pub x_inference_profile_id: Option<String>,
+
+    // ---- Local-inference economics (M3 / §6.4) — populated on `local_inference`-lane rows;
+    // `None` on developer_tool + cloud_api rows. All bounded numbers / ids / enum-ish labels
+    // (R4: never content). The energy figure rides `x_MeasuredWh` in BOTH measured and
+    // estimated mode; `x_MeasurementMode` + `x_Estimated` disclose which (R6 honesty).
+    /// Energy consumed by the local run, in watt-hours (`avg_power_watts * run_seconds / 3600`).
+    /// Bounded number. `None` off the local-inference lane.
+    #[serde(rename = "x_MeasuredWh", serialize_with = "serialize_decimal_opt")]
+    pub x_measured_wh: Option<Decimal>,
+    /// Average power draw over the run, in watts (from the selected `PowerSampler`). Bounded
+    /// number. `None` off the local-inference lane.
+    #[serde(rename = "x_AvgPowerWatts", serialize_with = "serialize_decimal_opt")]
+    pub x_avg_power_watts: Option<Decimal>,
+    /// The dated hardware/power profile id the run's assumptions came from (e.g.
+    /// `"strix-halo-128gb@2026-06-20"`) — the R8 "stamp the assumption" id. A bounded id —
+    /// never content. `None` off the local-inference lane.
+    #[serde(rename = "x_HardwareProfile")]
+    pub x_hardware_profile: Option<String>,
+    /// The amortized hardware cost attributed to the run
+    /// (`hardware_price / hardware_lifetime_seconds * run_seconds`), in `BillingCurrency`.
+    /// Bounded number. `None` off the local-inference lane.
+    #[serde(rename = "x_AmortizedHwCost", serialize_with = "serialize_decimal_opt")]
+    pub x_amortized_hw_cost: Option<Decimal>,
+    /// The local inference runtime that produced the run — a bounded enum-ish label
+    /// (`"ollama"` / `"llama.cpp"`), never content. `None` off the local-inference lane.
+    #[serde(rename = "x_RuntimeKind")]
+    pub x_runtime_kind: Option<String>,
+    /// The benchmark id identifying the fixed prompt-suite + model + quant + runtime flags that
+    /// produced the run (reproducibility, R10) — a bounded id, never content. `None` off the
+    /// local-inference lane.
+    #[serde(rename = "x_BenchmarkId")]
+    pub x_benchmark_id: Option<String>,
+    /// How the run's power was obtained — the bounded `MeasurementMode` wire value
+    /// (`measured_wallmeter` / `measured_sysfs` / `measured_lhm` / `estimated`, §6.4). The
+    /// measured-vs-estimated stamp R6/R10 require on every record. `None` off the
+    /// local-inference lane.
+    #[serde(rename = "x_MeasurementMode")]
+    pub x_measurement_mode: Option<String>,
 }
 
 impl FocusRecord {
@@ -562,6 +600,16 @@ impl FocusRecord {
             // Set only by the cloud-import bridge for an Amazon Bedrock row carrying an
             // application-inference-profile id; None on every other row.
             x_inference_profile_id: None,
+            // Local-inference economics (M3): populated only by the local-run mapping
+            // (`local_run_to_focus`, costroid-core) for a `local_inference`-lane row; None on
+            // every developer_tool / cloud_api row.
+            x_measured_wh: None,
+            x_avg_power_watts: None,
+            x_hardware_profile: None,
+            x_amortized_hw_cost: None,
+            x_runtime_kind: None,
+            x_benchmark_id: None,
+            x_measurement_mode: None,
         })
     }
 }
@@ -944,7 +992,7 @@ mod tests {
             assert!(fields.contains(&required), "missing column {required}");
         }
         assert!(header.ends_with(
-            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion,x_Sidechain,x_AttributionConfidence,x_CollectorVersion,x_PricingSnapshotId,x_InferenceProfileId"
+            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion,x_Sidechain,x_AttributionConfidence,x_CollectorVersion,x_PricingSnapshotId,x_InferenceProfileId,x_MeasuredWh,x_AvgPowerWatts,x_HardwareProfile,x_AmortizedHwCost,x_RuntimeKind,x_BenchmarkId,x_MeasurementMode"
         ));
     }
 
@@ -990,6 +1038,72 @@ mod tests {
             row[idx], "litellm@2026-06-18#36c8994e",
             "estimated row carries the stamp verbatim"
         );
+    }
+
+    /// M3 T2 / §6.4: the 7 local-inference economics columns are empty on a non-local row and
+    /// carry their bounded values verbatim on a `local_inference` row. Proves the schema is
+    /// present, defaults null (so developer_tool + cloud_api rows are unaffected), and round-trips.
+    #[test]
+    fn local_inference_columns_are_null_off_lane_and_populated_on_a_local_row() {
+        let cols = [
+            "x_MeasuredWh",
+            "x_AvgPowerWatts",
+            "x_HardwareProfile",
+            "x_AmortizedHwCost",
+            "x_RuntimeKind",
+            "x_BenchmarkId",
+            "x_MeasurementMode",
+        ];
+        // A default (developer_tool) row leaves every local column an empty cell.
+        let rec = record();
+        let Ok(csv) = to_csv_string(std::slice::from_ref(&rec)) else {
+            panic!("csv export should succeed");
+        };
+        let mut lines = csv.lines();
+        let (Some(header_line), Some(row_line)) = (lines.next(), lines.next()) else {
+            panic!("expected a header + one data row");
+        };
+        let header: Vec<&str> = header_line.split(',').collect();
+        let row: Vec<&str> = row_line.split(',').collect();
+        assert_eq!(header.len(), row.len(), "one cell per column");
+        for col in cols {
+            let Some(idx) = header.iter().position(|c| *c == col) else {
+                panic!("local column {col} should be present");
+            };
+            assert_eq!(row[idx], "", "{col} is empty on a non-local row");
+        }
+
+        // A populated local row carries each value verbatim.
+        let mut local = record();
+        local.x_lane = "local_inference".to_string();
+        local.x_measured_wh = Some(Decimal::from_str_exact("0.0044").unwrap_or(Decimal::ZERO));
+        local.x_avg_power_watts = Some(Decimal::from_str_exact("160.0").unwrap_or(Decimal::ZERO));
+        local.x_hardware_profile = Some("strix-halo-128gb@2026-06-20".to_string());
+        local.x_amortized_hw_cost =
+            Some(Decimal::from_str_exact("0.0021").unwrap_or(Decimal::ZERO));
+        local.x_runtime_kind = Some("ollama".to_string());
+        local.x_benchmark_id = Some("gemma4-coding-v1".to_string());
+        local.x_measurement_mode = Some("measured_wallmeter".to_string());
+        let Ok(csv) = to_csv_string(std::slice::from_ref(&local)) else {
+            panic!("csv export should succeed");
+        };
+        let Some(row_line) = csv.lines().nth(1) else {
+            panic!("expected a data row");
+        };
+        let row: Vec<&str> = row_line.split(',').collect();
+        let cell = |name: &str| {
+            let Some(idx) = header.iter().position(|c| *c == name) else {
+                panic!("column {name} should be present");
+            };
+            row[idx]
+        };
+        assert_eq!(cell("x_MeasuredWh"), "0.0044");
+        assert_eq!(cell("x_AvgPowerWatts"), "160.0");
+        assert_eq!(cell("x_HardwareProfile"), "strix-halo-128gb@2026-06-20");
+        assert_eq!(cell("x_AmortizedHwCost"), "0.0021");
+        assert_eq!(cell("x_RuntimeKind"), "ollama");
+        assert_eq!(cell("x_BenchmarkId"), "gemma4-coding-v1");
+        assert_eq!(cell("x_MeasurementMode"), "measured_wallmeter");
     }
 
     /// R4 — the Cardinal Rule, as a COMPILE-TIME forcing function (T16).
@@ -1103,6 +1217,15 @@ mod tests {
             x_collector_version: _,
             x_pricing_snapshot_id: _,
             x_inference_profile_id: _,
+            // Local-inference economics (M3) — bounded numbers / ids / enum-ish labels, never
+            // content. A new local column lands here and is consciously classified (R4).
+            x_measured_wh: _,
+            x_avg_power_watts: _,
+            x_hardware_profile: _,
+            x_amortized_hw_cost: _,
+            x_runtime_kind: _,
+            x_benchmark_id: _,
+            x_measurement_mode: _,
         } = rec;
 
         // The one description-named column is always the DERIVED form — never user content.

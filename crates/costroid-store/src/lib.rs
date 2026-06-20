@@ -40,7 +40,7 @@ use thiserror::Error;
 /// The schema version of the [`usage_rows`](USAGE_ROWS_TABLE) layout. Bumped whenever
 /// the persisted column set changes so a future replay/migration step can tell shapes
 /// apart. Stamped into [`STORE_META_TABLE`] on open.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// The one persisted table.
 pub const USAGE_ROWS_TABLE: &str = "usage_rows";
@@ -115,6 +115,15 @@ pub const USAGE_ROWS_COLUMNS: &[&str] = &[
     // Bedrock application-inference-profile id (bounded system id; nullable, null off-Bedrock).
     // Never the profile name/tags. Never content.
     "x_inference_profile_id",
+    // Local-inference economics (M3 / §6.4) — populated on `local_inference`-lane rows, null
+    // off-lane. All bounded numbers (decimal STRINGS) / ids / enum-ish labels — never content.
+    "x_measured_wh",
+    "x_avg_power_watts",
+    "x_hardware_profile",
+    "x_amortized_hw_cost",
+    "x_runtime_kind",
+    "x_benchmark_id",
+    "x_measurement_mode",
 ];
 
 /// `CREATE TABLE` DDL for the [`usage_rows`](USAGE_ROWS_TABLE) metadata-allowlist table.
@@ -162,7 +171,14 @@ pub fn usage_rows_ddl() -> String {
             x_attribution_confidence TEXT NOT NULL,\n  \
             x_collector_version TEXT NOT NULL,\n  \
             x_pricing_snapshot_id TEXT,\n  \
-            x_inference_profile_id TEXT\n\
+            x_inference_profile_id TEXT,\n  \
+            x_measured_wh TEXT,\n  \
+            x_avg_power_watts TEXT,\n  \
+            x_hardware_profile TEXT,\n  \
+            x_amortized_hw_cost TEXT,\n  \
+            x_runtime_kind TEXT,\n  \
+            x_benchmark_id TEXT,\n  \
+            x_measurement_mode TEXT\n\
         )"
     )
 }
@@ -285,11 +301,14 @@ impl Store {
                     service_provider_name, host_provider_name, invoice_issuer_name, \
                     sku_id, sku_price_id, sku_meter, pricing_category, pricing_unit, \
                     x_focus_input_version, x_sidechain, x_attribution_confidence, \
-                    x_collector_version, x_pricing_snapshot_id, x_inference_profile_id\
+                    x_collector_version, x_pricing_snapshot_id, x_inference_profile_id, \
+                    x_measured_wh, x_avg_power_watts, x_hardware_profile, \
+                    x_amortized_hw_cost, x_runtime_kind, x_benchmark_id, x_measurement_mode\
                 ) VALUES (\
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, \
-                    ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37\
+                    ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, \
+                    ?42, ?43, ?44\
                 )"
             ))?;
 
@@ -332,6 +351,15 @@ impl Store {
                     row.x_collector_version,
                     row.x_pricing_snapshot_id,
                     row.x_inference_profile_id,
+                    // Local-inference economics (M3): decimal columns as exact strings (never
+                    // floats), the id/enum-ish columns verbatim. Null off the local lane.
+                    decimal_opt_to_string(&row.x_measured_wh),
+                    decimal_opt_to_string(&row.x_avg_power_watts),
+                    row.x_hardware_profile,
+                    decimal_opt_to_string(&row.x_amortized_hw_cost),
+                    row.x_runtime_kind,
+                    row.x_benchmark_id,
+                    row.x_measurement_mode,
                 ])?;
             }
         }
@@ -385,7 +413,9 @@ impl Store {
                 service_provider_name, host_provider_name, invoice_issuer_name, sku_id, \
                 sku_price_id, sku_meter, pricing_category, pricing_unit, \
                 x_focus_input_version, x_sidechain, x_attribution_confidence, \
-                x_collector_version, x_pricing_snapshot_id, x_inference_profile_id \
+                x_collector_version, x_pricing_snapshot_id, x_inference_profile_id, \
+                x_measured_wh, x_avg_power_watts, x_hardware_profile, \
+                x_amortized_hw_cost, x_runtime_kind, x_benchmark_id, x_measurement_mode \
              FROM {USAGE_ROWS_TABLE} ORDER BY id"
         ))?;
 
@@ -439,6 +469,15 @@ impl Store {
         let x_collector_version: String = row.get(34)?;
         let x_pricing_snapshot_id: Option<String> = row.get(35)?;
         let x_inference_profile_id: Option<String> = row.get(36)?;
+        // Local-inference economics (M3): decimal columns as strings (parsed below), the
+        // id/enum-ish columns verbatim. Null off the local lane.
+        let x_measured_wh: Option<String> = row.get(37)?;
+        let x_avg_power_watts: Option<String> = row.get(38)?;
+        let x_hardware_profile: Option<String> = row.get(39)?;
+        let x_amortized_hw_cost: Option<String> = row.get(40)?;
+        let x_runtime_kind: Option<String> = row.get(41)?;
+        let x_benchmark_id: Option<String> = row.get(42)?;
+        let x_measurement_mode: Option<String> = row.get(43)?;
 
         // Enums via the single-source-of-truth inverse: a malformed stored enum is a
         // typed Reconstruct error, never a panic or a silent default.
@@ -550,6 +589,17 @@ impl Store {
         record.x_pricing_snapshot_id = x_pricing_snapshot_id;
         // Bedrock inference-profile id (nullable): None off-Bedrock. Restore verbatim.
         record.x_inference_profile_id = x_inference_profile_id;
+        // Local-inference economics (M3, nullable): None off the local lane. The decimal
+        // columns parse exactly (fail closed on a malformed stored Some); the id/enum-ish
+        // columns restore verbatim. So a `local_inference` row round-trips faithfully.
+        record.x_measured_wh = parse_decimal_opt("x_measured_wh", &x_measured_wh)?;
+        record.x_avg_power_watts = parse_decimal_opt("x_avg_power_watts", &x_avg_power_watts)?;
+        record.x_amortized_hw_cost =
+            parse_decimal_opt("x_amortized_hw_cost", &x_amortized_hw_cost)?;
+        record.x_hardware_profile = x_hardware_profile;
+        record.x_runtime_kind = x_runtime_kind;
+        record.x_benchmark_id = x_benchmark_id;
+        record.x_measurement_mode = x_measurement_mode;
 
         Ok(record)
     }
@@ -808,6 +858,16 @@ mod tests {
             x_collector_version: _,
             x_pricing_snapshot_id: _,
             x_inference_profile_id: _,
+            // Local-inference economics (M3): PERSISTED — bounded decimal/id/enum columns,
+            // restored verbatim on replay (in lockstep with USAGE_ROWS_COLUMNS / ingest /
+            // reconstruct_row). Null off the local lane.
+            x_measured_wh: _,
+            x_avg_power_watts: _,
+            x_hardware_profile: _,
+            x_amortized_hw_cost: _,
+            x_runtime_kind: _,
+            x_benchmark_id: _,
+            x_measurement_mode: _,
             // INTENTIONALLY DROPPED — re-derived identically by `unpriced_usage` on replay
             // (so the round-trip stays byte-identical) OR a free-text-capable / non-derivable
             // FOCUS column that R4 forbids the store from retaining at all.
@@ -1020,15 +1080,28 @@ mod tests {
         // An ESTIMATED row carries the pricing-snapshot stamp (R8); set it non-default so
         // its round-trip is non-vacuous (the source-priced cloud row below keeps None).
         sidechain_dev.x_pricing_snapshot_id = Some("litellm@2026-06-18#36c8994e".to_string());
+
+        // A `local_inference`-lane row (M3): the 7 local economics columns set non-default so
+        // their round-trip is non-vacuous (they are None on the dev-tool + cloud rows above).
+        let mut local = record(LedgerLane::LocalInference, 0);
+        local.x_measured_wh = Some(Decimal::new(44, 4)); // 0.0044 Wh
+        local.x_avg_power_watts = Some(Decimal::new(1600, 1)); // 160.0 W
+        local.x_hardware_profile = Some("strix-halo-128gb@2026-06-20".to_string());
+        local.x_amortized_hw_cost = Some(Decimal::new(21, 4)); // 0.0021
+        local.x_runtime_kind = Some("ollama".to_string());
+        local.x_benchmark_id = Some("gemma4-coding-v1".to_string());
+        local.x_measurement_mode = Some("measured_wallmeter".to_string());
+
         let originals = vec![
             sidechain_dev,         // estimated dev-tool sidechain row
             priced_cloud_record(), // source-priced cloud_api row
+            local,                 // local_inference row with the 7 economics columns
         ];
 
         let Ok(count) = store.ingest(&originals) else {
             panic!("ingest should succeed");
         };
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
 
         let Ok(reconstructed) = store.all_focus_rows() else {
             panic!("all_focus_rows should succeed");
@@ -1108,6 +1181,29 @@ mod tests {
         assert_eq!(
             dev.x_attribution_confidence, "uncertain",
             "uncertain attribution round-trips (not reverted to the confident default)"
+        );
+        // The dev-tool + cloud rows carry no local-inference economics (null off-lane); a
+        // restore must not fabricate Some here.
+        assert_eq!(dev.x_measured_wh, None);
+        assert_eq!(dev.x_measurement_mode, None);
+        assert_eq!(cloud.x_avg_power_watts, None);
+
+        // The deciding M3-T3 assertions: every local-inference economics column survived the
+        // round-trip at its non-default value (a missed store fan-out site would drop one).
+        let local = &reconstructed[2];
+        assert_eq!(local.x_lane, "local_inference");
+        assert_eq!(local.x_measured_wh, Some(Decimal::new(44, 4)));
+        assert_eq!(local.x_avg_power_watts, Some(Decimal::new(1600, 1)));
+        assert_eq!(
+            local.x_hardware_profile,
+            Some("strix-halo-128gb@2026-06-20".to_string())
+        );
+        assert_eq!(local.x_amortized_hw_cost, Some(Decimal::new(21, 4)));
+        assert_eq!(local.x_runtime_kind, Some("ollama".to_string()));
+        assert_eq!(local.x_benchmark_id, Some("gemma4-coding-v1".to_string()));
+        assert_eq!(
+            local.x_measurement_mode,
+            Some("measured_wallmeter".to_string())
         );
     }
 
