@@ -235,17 +235,21 @@ plan + human inputs written. **Deciding test:** the verification gate above is g
 > expanding the AWS fixtures + the input-validation leg.
 
 ### M3 — Dual-mode local-inference engine  *(irreducible core)*
-- **M3a (agent-ownable, CI-tested):** the `PowerSampler` trait + 3 impls + runtime probing +
-  `EstimatedPowerSampler` + deterministic cost-math on **synthetic** power fixtures, green
-  cross-platform (the M0 scaffold is the seed). The subprocess inference **runner** (llama.cpp/Ollama,
-  Vulkan default, A2/R7) + the **benchmark harness**; FOCUS-conformant local records. CI **never**
-  asserts a real power number.
-- **M3b (human-gated handoff — does NOT block M4):** native-Linux **sysfs `power1_average`**
-  confirmation on the gfx1151 APU + a captured **joules/token** figure. If sysfs reads → measured-sysfs
-  confirmed; else the human confirms the wall-meter path. **Never invent a power number** (R10).
-- **Deliverable:** measured local cost-per-token (sysfs or wall-meter) with estimated fallback;
-  measurement mode stamped on every record (R6). **Deciding test (M3a):** cost-math on synthetic power
-  fixtures (worked examples) — present in the scaffold; extended with the runner contract.
+- **M3a (agent-ownable, CI-tested):** the `PowerSampler` trait + the **four sources** behind the
+  **wall-meter-led** selector (D1) — `WallMeterPowerSampler` → `SysfsPowerSampler` [Linux] →
+  `WindowsLhmPowerSampler` [parser-only seam] → `EstimatedPowerSampler` — + runtime probing +
+  deterministic cost-math on **synthetic** power fixtures, green cross-platform (the M0 scaffold is the
+  seed). The subprocess inference **runner** (llama.cpp/Ollama, Vulkan default, A2/R7) + the
+  **benchmark harness**; FOCUS-conformant local records. CI **never** asserts a real power number.
+- **M3b (human-gated handoff — does NOT block M4):** a captured **joules/token** on the real gfx1151
+  hardware. **Primary path = a wall meter on the Strix Halo** (true total-system draw, cross-OS, ~$20
+  plug, no dual-boot) → `measured_wallmeter`. The on-chip readers are **optional** package-grade
+  convenience: native-Linux **sysfs `power1_average`** (→ `measured_sysfs`, needs C2) and the Windows
+  **LibreHardwareMonitor** localhost live read (→ `measured_lhm`). **Never invent a power number** (R10).
+- **Deliverable:** measured local cost-per-token (**wall meter primary**; sysfs/LHM optional) with the
+  estimated fallback; the measurement mode stamped on every record (R6). **Deciding test (M3a):**
+  cost-math on synthetic power fixtures (worked examples) — present in the scaffold; extended with the
+  runner contract.
 
 #### M3 benchmark spectrum (§3.1.E) — record exactly this, produce numbers by the harness (R10)
 The harness measures **cost / energy / throughput** by running each model on the Strix Halo; the
