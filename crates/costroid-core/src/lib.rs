@@ -5981,6 +5981,44 @@ mod tests {
     }
 
     #[test]
+    fn d2_higher_tier_shadows_lower_on_price_not_just_provenance() {
+        // Non-vacuous D2 shadowing guard: two tiers carry the SAME model at DIFFERENT prices,
+        // so a per-model precedence bug (the lower tier shadowing the higher) would change the
+        // PRICE — not only the snapshot_id. (The bundled curated/litellm tiers agree on price
+        // for shared models, so a same-price test could only catch a stamp regression; this
+        // synthetic pair catches a real mispricing.)
+        let litellm = r#"{"schema_version":"1","source":"litellm","as_of":"2026-06-18",
+            "content_hash":"aabbccddeeff","currency":"USD","models":[
+            {"provider":"x","model":"shadowed-model","service_name":"X",
+             "rates":[{"meter":"output","unit":"1M_tokens","price":"99.00"}]}]}"#;
+        let curated_json = r#"{"schema_version":"1","source":"curated","as_of":"2026-06-02",
+            "currency":"USD","models":[
+            {"provider":"x","model":"shadowed-model","service_name":"X",
+             "rates":[{"meter":"output","unit":"1M_tokens","price":"1.00"}]}]}"#;
+        let mut catalog = match PricingCatalog::from_json(litellm) {
+            Ok(value) => value,
+            Err(err) => panic!("litellm tier should parse: {err}"),
+        };
+        let curated = match PricingCatalog::from_json(curated_json) {
+            Ok(value) => value,
+            Err(err) => panic!("curated tier should parse: {err}"),
+        };
+        catalog.overlay(curated); // curated (higher precedence) overlays litellm
+        let rate = match catalog.rate("shadowed-model", TokenType::Output) {
+            Some(value) => value,
+            None => panic!("the shadowed model should resolve"),
+        };
+        // THE deciding assertion: the curated PRICE wins (1.00), not litellm's 99.00. If the
+        // overlay let the lower tier shadow the higher, this would be 99.00 — the test fails.
+        assert_eq!(
+            rate.price,
+            Decimal::new(1, 0),
+            "the higher (curated) tier's price shadows the lower (litellm) tier's"
+        );
+        assert_eq!(rate.snapshot_id, "curated@2026-06-02");
+    }
+
+    #[test]
     fn dev_tool_models_reprice_unchanged_and_stamp_curated() {
         // R8 + no-regression: a dev-tool claude-sonnet-4-6 row prices from the CURATED tier
         // (authoritative; curated > litellm), unchanged from M1 (3.00/15.00 per 1M), and
