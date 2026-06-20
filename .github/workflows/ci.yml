@@ -52,6 +52,18 @@ jobs:
           cargo clippy -p costroid --features connect-test-support --all-targets -- -D warnings
           cargo test -p costroid --features connect-test-support
 
+      # Smoke-test the opt-in local-inference build (M3): the `costroid bench` subcommand + the
+      # `costroid-power` engine (incl. the Linux sysfs cfg path + the LHM parser, exercised only
+      # under `--features power`) must compile, lint, and test cleanly. Off by default, so the
+      # default `cargo {clippy,test} --workspace` above never compiles `bench.rs`/the gated paths.
+      - name: Power feature — build + lint + test
+        run: |
+          cargo build -p costroid --features power
+          cargo clippy -p costroid --features power --all-targets -- -D warnings
+          cargo clippy -p costroid-power --features power --all-targets -- -D warnings
+          cargo test -p costroid --features power
+          cargo test -p costroid-power --features power
+
   # Cross-platform build gate (⚑ Readiness gate / §6.6 / R2). The repo's full fmt+clippy+test
   # runs on Linux (the `pre-pr` job above); the existing distribution already proves macOS/Windows
   # *release* builds via cargo-dist. This job adds a per-push macOS + Windows **build** gate so the
@@ -78,6 +90,13 @@ jobs:
       - name: Build workspace (all targets, incl. test code)
         run: cargo build --workspace --all-targets
 
+      # The `power` feature gates the `costroid bench` subcommand (M3) + the `costroid-power`
+      # engine's cfg paths off the default build, so `--workspace` above never compiles them.
+      # Build them here too, on macOS + Windows, so the non-Linux "unavailable" sysfs stub + the
+      # cross-OS bench/harness/LHM-parser code stay green everywhere.
+      - name: Build power feature (cross-OS)
+        run: cargo build -p costroid --features power --all-targets
+
   msrv:
     name: MSRV (Rust 1.88)
     runs-on: ubuntu-latest
@@ -100,6 +119,14 @@ jobs:
 
       - name: Check (workspace minus apps/bar, all targets, on the MSRV toolchain)
         run: cargo check --workspace --all-targets --exclude costroid-bar
+
+      # The off-by-default `power` feature (M3) must also hold the 1.88 MSRV — the `--workspace`
+      # check above builds `costroid-power` but without its feature, so check the feature-on CLI +
+      # engine explicitly (costroid-power inherits 1.88; its deps build on it).
+      - name: Check power feature on the MSRV toolchain
+        run: |
+          cargo check -p costroid-power --features power --all-targets
+          cargo check -p costroid --features power --all-targets
 
   focus-conformance:
     name: FOCUS 1.3 validator
@@ -127,6 +154,12 @@ jobs:
       # sha256sum -c of the committed sidecars; offline.
       - name: Verify pricing-snapshot integrity
         run: bash scripts/check_pricing_snapshots.sh
+
+      # R8 power-assumption integrity (M3): the vendored hardware/electricity profile + the
+      # Gemma 4 model manifest are byte-for-byte their committed sidecars (catches an edited
+      # assumption that did not bump `as_of`). A pure sha256sum -c; offline.
+      - name: Verify power-profile + model-manifest integrity
+        run: bash scripts/check_power_profiles.sh
 
       # Exports the committed fixtures to FOCUS CSV and runs the official validator
       # (offline, vendored rulesets) against the documented known-failure allowlists:
