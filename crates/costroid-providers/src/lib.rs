@@ -229,25 +229,58 @@ pub struct CloudUsageEvent {
     pub inference_profile_id: Option<String>,
 }
 
-/// Minimal metadata for a local-inference run.
+/// Metadata for a measured/estimated local-inference run (M3).
 ///
-/// Populated at M3; defining the struct now lets the canonical event model span
-/// the local-inference lane. Adds **no** export columns at M1. Metadata only
-/// (R4): no prompt/completion/content/text fields, ever.
+/// The provider-neutral carrier the `costroid bench` command builds from the
+/// `costroid-power` harness result (`LocalRunReport`) and hands to the core
+/// mapping (`local_run_to_focus`) — so `costroid-core` maps already-computed
+/// economics onto FOCUS columns without depending on `costroid-power` (the
+/// §3.2 cost math lives only in `costroid-power`). Metadata only (R4): token
+/// counts + power/energy + dated assumptions — **no** prompt/completion/content/
+/// text fields, ever.
 ///
-/// [`measurement_mode`](Self::measurement_mode) is a plain `String` at this
-/// crate boundary — the typed enum lives in `costroid-power`, which
-/// `costroid-providers` must not depend on.
+/// The raw observations (power, time, tokens, mode) and the **dated, stamped**
+/// economics (energy, costs, the profile/benchmark ids, the assumption inputs)
+/// travel together. Money is a decimal **string** (e.g. `"0.0021"`) — never
+/// `f64` money; physical f64s (watts, seconds, energy, the rate/price/lifetime
+/// inputs) stay f64 (physics). [`measurement_mode`](Self::measurement_mode) is a
+/// plain `String` at this crate boundary — the typed enum lives in
+/// `costroid-power`, which `costroid-providers` must not depend on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LocalRunEvent {
     pub timestamp: DateTime<Utc>,
     pub model: String,
+    /// The model quantization the run used (e.g. `"Q4_K_M"`) — a bounded label.
+    pub quant: String,
     pub runtime_kind: String,
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub run_seconds: f64,
     pub avg_power_watts: f64,
     pub measurement_mode: String,
+    /// Energy consumed by the run, in watt-hours (physics → f64).
+    pub energy_wh: f64,
+    /// Amortized hardware cost attributed to the run, a decimal **string** in
+    /// `billing_currency` (never f64 money).
+    pub amortized_hw_cost: String,
+    /// Total local run cost (energy + amortized hardware), a decimal **string**
+    /// in `billing_currency` (never f64 money).
+    pub local_run_cost: String,
+    /// The dated electricity-rate assumption used, in `billing_currency` per kWh
+    /// (R8; physics-adjacent input → f64).
+    pub electricity_rate_per_kwh: f64,
+    /// The dated hardware-price assumption used, in `billing_currency` (input → f64).
+    pub hardware_price: f64,
+    /// The dated hardware amortization lifetime, in seconds (input → f64).
+    pub hardware_lifetime_seconds: f64,
+    /// The dated hardware/power profile id the assumptions came from (e.g.
+    /// `"strix-halo-128gb@2026-06-20"`) — the R8 "stamp the assumption" id.
+    pub hardware_profile_id: String,
+    /// The benchmark id identifying the fixed prompt-suite + model + quant +
+    /// runtime flags that produced the run (reproducibility, R10) — a bounded id.
+    pub benchmark_id: String,
+    /// The currency the costs/rate are quoted in (FOCUS `BillingCurrency`).
+    pub billing_currency: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1448,12 +1481,22 @@ mod tests {
                 .single()
                 .unwrap_or_default(),
             model: "llama-3-8b".to_string(),
+            quant: "Q4_K_M".to_string(),
             runtime_kind: "ollama".to_string(),
             tokens_in: 100,
             tokens_out: 200,
             run_seconds: 4.5,
             avg_power_watts: 75.0,
             measurement_mode: "estimated".to_string(),
+            energy_wh: 0.09375,
+            amortized_hw_cost: "0.0001".to_string(),
+            local_run_cost: "0.0002".to_string(),
+            electricity_rate_per_kwh: 0.16,
+            hardware_price: 2000.0,
+            hardware_lifetime_seconds: 94_608_000.0,
+            hardware_profile_id: "strix-halo-128gb@2026-06-20".to_string(),
+            benchmark_id: "gemma4-coding-v1".to_string(),
+            billing_currency: "USD".to_string(),
         }
     }
 
@@ -1490,12 +1533,23 @@ mod tests {
         let LocalRunEvent {
             timestamp: _,
             model: _,
+            // M3 economics — all bounded numbers / ids / enum-ish labels, never content.
+            quant: _,
             runtime_kind: _,
             tokens_in: _,
             tokens_out: _,
             run_seconds: _,
             avg_power_watts: _,
             measurement_mode: _,
+            energy_wh: _,
+            amortized_hw_cost: _,
+            local_run_cost: _,
+            electricity_rate_per_kwh: _,
+            hardware_price: _,
+            hardware_lifetime_seconds: _,
+            hardware_profile_id: _,
+            benchmark_id: _,
+            billing_currency: _,
         } = sample_local_run_event();
     }
 

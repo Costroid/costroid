@@ -8400,12 +8400,22 @@ mod tests {
         let local = LocalRunEvent {
             timestamp: timestamp(),
             model: "llama-3.1-8b".to_string(),
+            quant: "Q4_K_M".to_string(),
             runtime_kind: "ollama".to_string(),
             tokens_in: 500,
             tokens_out: 1_200,
             run_seconds: 4.2,
             avg_power_watts: 95.0,
             measurement_mode: "estimated".to_string(),
+            energy_wh: 0.110_833,
+            amortized_hw_cost: "0.0001".to_string(),
+            local_run_cost: "0.0002".to_string(),
+            electricity_rate_per_kwh: 0.16,
+            hardware_price: 2000.0,
+            hardware_lifetime_seconds: 94_608_000.0,
+            hardware_profile_id: "strix-halo-128gb@2026-06-20".to_string(),
+            benchmark_id: "gemma4-coding-v1".to_string(),
+            billing_currency: "USD".to_string(),
         };
         let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Local(local)]) else {
             panic!("local canonical event should normalize");
@@ -8413,7 +8423,7 @@ mod tests {
         assert_eq!(rows.len(), 1, "a local run is one row");
         let row = &rows[0];
         assert_eq!(row.x_lane, "local_inference");
-        // Consumed tokens carried (tokens_out); no energy column exists yet (M3).
+        // Consumed tokens carried (tokens_out). The energy/cost columns are mapped in T9.
         assert_eq!(row.x_consumed_tokens, Decimal::from(1_200_u64));
         assert_eq!(row.x_token_type, "output");
         assert_eq!(row.x_model, "llama-3.1-8b");
