@@ -37,19 +37,18 @@ The M1 FOCUS v1.2 importer carries a single authoritative cost into a USD ledger
 **refuses** a non-USD source rather than silently relabeling it. Multi-currency import is
 an M2 cloud-lane feature.
 
-## Source-priced cloud rows have no per-token rate
+## Source-priced cloud rows carry the foreign per-token rate (M2)
 
 A FOCUS-imported cloud row that carries an authoritative cost is **source-priced**: that
-cost is preserved exactly (`x_Estimated = false`), but Costroid does not reconstruct a
-per-token rate from a lump source cost, so `SkuPriceId` / `PricingQuantity` /
-`ListUnitPrice` stay null on those rows (the foreign export's own pricing detail is not
-yet carried through). (A *usage-only* imported row — no source cost — is instead
-re-estimated from the bundled catalog like a local log, and does get a catalog
-`SkuPriceId`/rate.) The cost
-is exact; only the per-token *rate* breakdown is absent. The cloud lane (M2) will carry
-the foreign pricing detail. This is why the v1.2 round-trip's 1.3 output validates as a
-**subset** of the documented validator defects (the SkuPriceId-null defect rule applies),
-never with a new failure.
+cost is preserved exactly (`x_Estimated = false`). As of the M2 cloud lane, when the
+foreign export also carries its own pricing detail (`SkuPriceId` + `ListUnitPrice` /
+`ContractedUnitPrice` + `PricingQuantity`), Costroid **carries it through verbatim**, so a
+source-priced row is *fully* priced — not just costed. (When the export has **no**
+`SkuPriceId`, FOCUS requires the pricing-detail columns be null, so they stay null; the
+cost is still exact.) A *usage-only* imported row — no source cost — is instead
+re-estimated from the layered catalog like a local log, and gets a catalog `SkuPriceId` +
+rate + the `x_PricingSnapshotId` provenance stamp. (Source-authoritative rows carry **no**
+`x_PricingSnapshotId` — they are the bill, not an estimate against a snapshot.)
 
 ## FOCUS v1.2 import fixtures are a metadata subset
 

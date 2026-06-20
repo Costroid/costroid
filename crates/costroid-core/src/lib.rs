@@ -207,10 +207,23 @@ pub fn focus_records_from_canonical(
 /// is present it is parsed verbatim into the money type and stamped onto the cost
 /// columns with `x_Estimated = false`. When it is absent the row stays on the
 /// estimate path (`x_Estimated` remains `true`); no estimate is recomputed here.
+/// Parse an optional foreign decimal column (cost / unit-price / quantity) carried as a
+/// string into `Decimal`, or a typed `CoreError::Import` — never `f64`, never a panic. A
+/// blank/absent cell is `None`.
+fn parse_cloud_decimal(field: &str, raw: Option<&str>) -> Result<Option<Decimal>, CoreError> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => Decimal::from_str_exact(value)
+            .map(Some)
+            .map_err(|err| CoreError::Import(format!("invalid cloud {field} {value:?}: {err}"))),
+        None => Ok(None),
+    }
+}
+
 fn cloud_usage_to_focus(cloud: &CloudUsageEvent) -> Result<FocusRecord, CoreError> {
-    // Aggregate cloud row: a single output-token meter via the API access path are
-    // the sensible defaults until T14 refines token-type granularity.
-    // TODO(T14): the v1.2 import bridge can refine token-type granularity.
+    // Aggregate cloud row: a single output-token meter via the API access path. NOTE: a
+    // FOCUS cloud line is already cost-aggregated per SKU, so Costroid does not split it
+    // back into input/output meters — the per-token *rate* it carries (below) is the
+    // billable fact; the token-type label stays the aggregate `output`.
     let model = cloud.model.clone().unwrap_or_default();
     let mut row = FocusRecord::unpriced_usage(UnpricedUsage {
         lane: LedgerLane::CloudApi,
@@ -232,26 +245,61 @@ fn cloud_usage_to_focus(cloud: &CloudUsageEvent) -> Result<FocusRecord, CoreErro
         let cost = Decimal::from_str_exact(raw.trim()).map_err(|err| {
             CoreError::Import(format!("invalid cloud billed_cost {raw:?}: {err}"))
         })?;
-        // Source-authoritative bill: stamp it across the cost columns verbatim and
-        // mark the row non-estimated.
-        // TODO(deferred, documented in docs/limitations.md): a source-priced cloud row
-        // keeps SkuPriceId/PricingQuantity/ListUnitPrice null — Costroid does not
-        // reconstruct a per-token rate from a lump source cost (and a foreign export's
-        // SkuPriceId/unit-price columns are not yet carried through). The cost is exact;
-        // only the per-token *rate* breakdown is absent. Revisit when the cloud lane (M2)
-        // carries the foreign pricing detail.
+        // Source-authoritative bill. The separate FOCUS cost columns are carried verbatim
+        // when present (cost fidelity), else they fall back to BilledCost.
+        let effective =
+            parse_cloud_decimal("EffectiveCost", cloud.effective_cost.as_deref())?.unwrap_or(cost);
+        let list = parse_cloud_decimal("ListCost", cloud.list_cost.as_deref())?.unwrap_or(cost);
+        let contracted = parse_cloud_decimal("ContractedCost", cloud.contracted_cost.as_deref())?
+            .unwrap_or(cost);
         row.billed_cost = cost;
-        row.effective_cost = cost;
-        row.list_cost = cost;
-        row.contracted_cost = cost;
-        row.pricing_currency_effective_cost = cost;
+        row.effective_cost = effective;
+        row.list_cost = list;
+        row.contracted_cost = contracted;
+        row.pricing_currency_effective_cost = effective;
         row.x_estimated = false;
         // The row IS priced (by the source bill, not our catalog), so it must read
         // "priced" — not the unpriced helper's default "missing_price" — or pricing
         // coverage under-reports and a now/window estimate would wrongly skip it. Reuse
         // the existing "priced" constant (a new status would break `window_estimated_usd`
-        // + `PricingCoverage::add`, which key on it exactly). Plan T14 resolution.
+        // + `PricingCoverage::add`, which key on it exactly).
         row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+
+        // Carry the foreign export's per-token pricing detail (M2 T4 — closes the M1
+        // per-token-rate deferral). FOCUS requires the pricing-detail columns be null when
+        // SkuPriceId is null, so only populate them when the export carries a SkuPriceId.
+        if let Some(sku_price_id) = cloud
+            .sku_price_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let consumed = Decimal::from(cloud.token_count.unwrap_or(0));
+            let priced_qty =
+                parse_cloud_decimal("PricingQuantity", cloud.pricing_quantity.as_deref())?
+                    .unwrap_or(consumed);
+            let list_unit = parse_cloud_decimal("ListUnitPrice", cloud.list_unit_price.as_deref())?;
+            let contracted_unit = parse_cloud_decimal(
+                "ContractedUnitPrice",
+                cloud.contracted_unit_price.as_deref(),
+            )?;
+            row.sku_price_id = Some(sku_price_id.to_string());
+            row.pricing_category = Some(
+                cloud
+                    .pricing_category
+                    .clone()
+                    .unwrap_or_else(|| PRICING_CATEGORY_STANDARD.to_string()),
+            );
+            // Normalize the unit label to Costroid's canonical "tokens" (the foreign export
+            // may spell it "Tokens"); the numeric rate is what's authoritative.
+            row.pricing_unit = Some(PRICING_UNIT_TOKENS.to_string());
+            row.pricing_quantity = Some(priced_qty);
+            row.consumed_quantity = Some(consumed);
+            row.list_unit_price = list_unit;
+            row.contracted_unit_price = contracted_unit;
+            row.pricing_currency_list_unit_price = list_unit;
+            row.pricing_currency_contracted_unit_price = contracted_unit;
+        }
     }
 
     Ok(row)
@@ -7677,6 +7725,31 @@ mod tests {
             model: Some("claude-3-5-sonnet".to_string()),
             token_count: Some(1_000),
             billed_cost: billed_cost.map(str::to_string),
+            ..cloud_event_no_detail()
+        }
+    }
+
+    /// A `CloudUsageEvent` with no foreign pricing detail (every T4 detail field `None`) —
+    /// the base for tests that don't exercise the per-token-rate carry-through.
+    fn cloud_event_no_detail() -> CloudUsageEvent {
+        CloudUsageEvent {
+            timestamp: timestamp(),
+            service_name: String::new(),
+            service_provider_name: String::new(),
+            model: None,
+            token_count: None,
+            billed_cost: None,
+            effective_cost: None,
+            list_cost: None,
+            contracted_cost: None,
+            sku_price_id: None,
+            pricing_category: None,
+            pricing_quantity: None,
+            pricing_unit: None,
+            list_unit_price: None,
+            contracted_unit_price: None,
+            pricing_currency: None,
+            consumed_unit: None,
         }
     }
 
@@ -7700,9 +7773,9 @@ mod tests {
 
     #[test]
     fn canonical_cloud_event_with_billed_cost_is_source_priced() {
-        let Ok(rows) =
-            focus_records_from_canonical(&[CanonicalEvent::Cloud(cloud_event(Some("12.34")))])
-        else {
+        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Cloud(Box::new(
+            cloud_event(Some("12.34")),
+        ))]) else {
             panic!("cloud canonical event should normalize");
         };
         assert_eq!(rows.len(), 1, "a cloud event is one aggregate row");
@@ -7729,7 +7802,8 @@ mod tests {
 
     #[test]
     fn canonical_cloud_event_without_billed_cost_stays_estimated() {
-        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Cloud(cloud_event(None))])
+        let Ok(rows) =
+            focus_records_from_canonical(&[CanonicalEvent::Cloud(Box::new(cloud_event(None)))])
         else {
             panic!("cloud canonical event should normalize");
         };
@@ -7744,8 +7818,8 @@ mod tests {
 
     #[test]
     fn canonical_cloud_event_with_bad_cost_errors_without_panicking() {
-        let result = focus_records_from_canonical(&[CanonicalEvent::Cloud(cloud_event(Some(
-            "not-a-number",
+        let result = focus_records_from_canonical(&[CanonicalEvent::Cloud(Box::new(cloud_event(
+            Some("not-a-number"),
         )))]);
         assert!(
             matches!(result, Err(CoreError::Import(_))),
@@ -7762,12 +7836,12 @@ mod tests {
         // billed_cost away from 0.0123 and fail the assertion below (the reprice guard is
         // real, not vacuous on a catalog-unknown model).
         let event = CloudUsageEvent {
-            timestamp: timestamp(),
-            service_name: "Claude API".to_string(),
-            service_provider_name: "Anthropic".to_string(),
             model: Some("claude-sonnet-4-6".to_string()),
             token_count: Some(1_000_000),
             billed_cost: Some("0.0123".to_string()),
+            service_name: "Claude API".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            ..cloud_event_no_detail()
         };
         let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
             panic!("v1.2 import should normalize");
@@ -7792,17 +7866,102 @@ mod tests {
     }
 
     #[test]
+    fn v12_import_source_priced_row_carries_foreign_pricing_detail() {
+        // T4 (closes the M1 per-token-rate deferral): a source-priced row whose foreign
+        // export carries a SkuPriceId + unit-prices is now FULLY priced — the detail columns
+        // are populated from the source verbatim, not left null.
+        let event = CloudUsageEvent {
+            model: Some("anthropic.claude-sonnet-4-6".to_string()),
+            token_count: Some(8_200),
+            billed_cost: Some("0.0123".to_string()),
+            effective_cost: Some("0.0123".to_string()),
+            list_cost: Some("0.0123".to_string()),
+            contracted_cost: Some("0.0123".to_string()),
+            sku_price_id: Some("aws-sku-claude-sonnet-output".to_string()),
+            pricing_category: Some("Standard".to_string()),
+            pricing_quantity: Some("8200".to_string()),
+            pricing_unit: Some("Tokens".to_string()),
+            list_unit_price: Some("0.0000015".to_string()),
+            contracted_unit_price: Some("0.0000015".to_string()),
+            pricing_currency: Some("USD".to_string()),
+            consumed_unit: Some("Tokens".to_string()),
+            ..cloud_event_no_detail()
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
+            panic!("source-priced import should normalize");
+        };
+        let row = &rows[0];
+        let Ok(cost) = Decimal::from_str_exact("0.0123") else {
+            panic!("decimal literal should parse");
+        };
+        assert_eq!(row.billed_cost, cost, "cost preserved exactly");
+        assert!(
+            !row.x_estimated,
+            "source-priced row is authoritative, not an estimate"
+        );
+        // The deciding assertions: the foreign per-token rate detail is now carried.
+        assert_eq!(
+            row.sku_price_id.as_deref(),
+            Some("aws-sku-claude-sonnet-output"),
+            "the foreign SkuPriceId is carried (was null before T4)"
+        );
+        assert_eq!(row.pricing_quantity, Some(Decimal::from(8_200)));
+        assert_eq!(row.consumed_quantity, Some(Decimal::from(8_200)));
+        let Ok(rate) = Decimal::from_str_exact("0.0000015") else {
+            panic!("decimal literal should parse");
+        };
+        assert_eq!(row.list_unit_price, Some(rate));
+        assert_eq!(row.contracted_unit_price, Some(rate));
+        assert_eq!(row.pricing_currency_list_unit_price, Some(rate));
+        assert_eq!(row.pricing_category.as_deref(), Some("Standard"));
+        assert_eq!(
+            row.pricing_unit.as_deref(),
+            Some("tokens"),
+            "unit normalized to canonical"
+        );
+        // A source-authoritative row carries NO catalog provenance stamp (R8 / D1).
+        assert!(
+            row.x_pricing_snapshot_id.is_none(),
+            "an authoritative row is not catalog-estimated, so it carries no snapshot stamp"
+        );
+    }
+
+    #[test]
+    fn v12_import_source_priced_row_without_sku_price_id_keeps_detail_null() {
+        // FOCUS conformance: with NO source SkuPriceId, the pricing-detail columns stay null
+        // (the rule "detail must be null when SkuPriceId is null"), even though the cost is
+        // carried — the M1 behavior, preserved for detail-less exports.
+        let event = CloudUsageEvent {
+            model: Some("some-model".to_string()),
+            token_count: Some(1_000),
+            billed_cost: Some("0.50".to_string()),
+            ..cloud_event_no_detail()
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
+            panic!("import should normalize");
+        };
+        let row = &rows[0];
+        assert!(!row.x_estimated);
+        assert!(
+            row.sku_price_id.is_none(),
+            "no source SkuPriceId → pricing detail stays null (FOCUS rule)"
+        );
+        assert!(row.pricing_quantity.is_none());
+        assert!(row.list_unit_price.is_none());
+    }
+
+    #[test]
     fn v12_import_usage_only_row_is_repriced_from_the_catalog_like_a_local_log() {
         // A usage-only foreign row (no billed_cost) whose model is in the bundled catalog
         // is repriced from the catalog — an ESTIMATE (x_estimated stays true), status
         // "priced", a non-zero cost — exactly like a local tool log.
         let event = CloudUsageEvent {
-            timestamp: timestamp(),
-            service_name: "Claude API".to_string(),
-            service_provider_name: "Anthropic".to_string(),
             model: Some("claude-sonnet-4-6".to_string()),
             token_count: Some(1_000_000),
             billed_cost: None,
+            service_name: "Claude API".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            ..cloud_event_no_detail()
         };
         let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
             panic!("usage-only import should normalize");

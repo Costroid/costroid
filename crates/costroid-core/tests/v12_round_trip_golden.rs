@@ -85,4 +85,14 @@ fn v12_marked_round_trip_matches_the_committed_golden() {
         golden.contains(VERSION_PLACEHOLDER),
         "golden is version-normalized"
     );
+    // T4: the foreign per-token pricing detail is carried through (was null before T4) — so
+    // a regression that dropped it back to null can't silently pass this golden.
+    assert!(
+        golden.contains("claude-sonnet-4-6-output"),
+        "golden carries the foreign SkuPriceId"
+    );
+    assert!(
+        golden.contains("0.0000015"),
+        "golden carries the foreign per-token ListUnitPrice"
+    );
 }
