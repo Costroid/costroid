@@ -1,0 +1,105 @@
+{
+  "schema": "costroid.power.models/v1",
+  "family": "Gemma 4",
+  "license": "Apache-2.0",
+  "as_of": "2026-06-20",
+  "source": "Gemma 4 model card (ai.google.dev/gemma/docs/core/model_card_4) + Google's 2026 launch (COSTROID-NEXT.md §3.1.E / §5.5). Specs are from the card; quality scores are PUBLISHED and CITED, never re-derived (R10); tok/s are ESTIMATES (community §5.2 analogs) until confirmed on real hardware (M3b).",
+  "note": "Costroid ships NO weights (user-downloaded GGUF). Pinned to Gemma 4 (Apache-2.0); Gemma 1-3 used the restrictive non-OSI Gemma Terms of Use.",
+  "models": [
+    {
+      "id": "gemma-4-26b-a4b",
+      "display_name": "Gemma 4 26B A4B",
+      "class": "fast-moe",
+      "params_b": 25.2,
+      "active_params_b": 3.8,
+      "context_tokens": 262144,
+      "default_quant": "Q4_K_M",
+      "quants": ["Q4_K_M", "Q8_0"],
+      "has_draft_model": true,
+      "estimated_tok_s": 96.0,
+      "tok_s_estimated": true,
+      "quality": {
+        "score": null,
+        "metric": "as published",
+        "source": "Gemma 4 model card (ai.google.dev/gemma/docs/core/model_card_4)",
+        "as_of": "2026-06-20"
+      }
+    },
+    {
+      "id": "gemma-4-31b-dense",
+      "display_name": "Gemma 4 31B Dense",
+      "class": "dense-flagship",
+      "params_b": 30.7,
+      "active_params_b": 30.7,
+      "context_tokens": 262144,
+      "default_quant": "Q4_K_M",
+      "quants": ["Q4_K_M", "Q8_0"],
+      "has_draft_model": true,
+      "estimated_tok_s": 12.0,
+      "tok_s_estimated": true,
+      "quality": {
+        "score": null,
+        "metric": "as published",
+        "source": "Gemma 4 model card (ai.google.dev/gemma/docs/core/model_card_4)",
+        "as_of": "2026-06-20"
+      }
+    },
+    {
+      "id": "gemma-4-12b-unified",
+      "display_name": "Gemma 4 12B Unified",
+      "class": "compute-efficient",
+      "params_b": 12.0,
+      "active_params_b": 12.0,
+      "context_tokens": 262144,
+      "default_quant": "Q4_K_M",
+      "quants": ["Q4_K_M", "Q8_0"],
+      "has_draft_model": true,
+      "estimated_tok_s": 30.0,
+      "tok_s_estimated": true,
+      "quality": {
+        "score": null,
+        "metric": "as published",
+        "source": "Gemma 4 model card (ai.google.dev/gemma/docs/core/model_card_4)",
+        "as_of": "2026-06-20"
+      }
+    },
+    {
+      "id": "gemma-4-e2b",
+      "display_name": "Gemma 4 E2B (edge)",
+      "class": "edge",
+      "params_b": 2.0,
+      "active_params_b": 2.0,
+      "context_tokens": 131072,
+      "default_quant": "Q4_K_M",
+      "quants": ["Q4_K_M", "Q8_0"],
+      "has_draft_model": false,
+      "estimated_tok_s": 120.0,
+      "tok_s_estimated": true,
+      "quality": {
+        "score": null,
+        "metric": "as published",
+        "source": "Gemma 4 model card (ai.google.dev/gemma/docs/core/model_card_4)",
+        "as_of": "2026-06-20"
+      }
+    },
+    {
+      "id": "gemma-4-e4b",
+      "display_name": "Gemma 4 E4B (edge)",
+      "class": "edge",
+      "params_b": 4.0,
+      "active_params_b": 4.0,
+      "context_tokens": 131072,
+      "default_quant": "Q4_K_M",
+      "quants": ["Q4_K_M", "Q8_0"],
+      "has_draft_model": false,
+      "estimated_tok_s": 90.0,
+      "tok_s_estimated": true,
+      "quality": {
+        "score": null,
+        "metric": "as published",
+        "source": "Gemma 4 model card (ai.google.dev/gemma/docs/core/model_card_4)",
+        "as_of": "2026-06-20"
+      }
+    }
+  ]
+}
