@@ -1,0 +1,75 @@
+{
+  "id": 0,
+  "Text": "Sensor",
+  "Children": [
+    {
+      "id": 1,
+      "Text": "DESKTOP-STRIXHALO",
+      "Children": [
+        {
+          "id": 2,
+          "Text": "AMD Ryzen AI Max+ 395",
+          "ImageURL": "images_icon/cpu.png",
+          "Children": [
+            {
+              "id": 3,
+              "Text": "Powers",
+              "Children": [
+                {
+                  "id": 4,
+                  "Text": "Package",
+                  "Min": "12.1 W",
+                  "Value": "62.5 W",
+                  "Max": "121.0 W",
+                  "Type": "Power",
+                  "SensorId": "/amdcpu/0/power/0"
+                },
+                {
+                  "id": 5,
+                  "Text": "CPU Cores",
+                  "Min": "1.0 W",
+                  "Value": "30.2 W",
+                  "Max": "95.0 W",
+                  "Type": "Power",
+                  "SensorId": "/amdcpu/0/power/1"
+                }
+              ]
+            },
+            {
+              "id": 6,
+              "Text": "Temperatures",
+              "Children": [
+                {
+                  "id": 7,
+                  "Text": "Core (Tctl/Tdie)",
+                  "Value": "54.0 °C",
+                  "Type": "Temperature",
+                  "SensorId": "/amdcpu/0/temperature/0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "Text": "AMD Radeon 8060S Graphics",
+          "Children": [
+            {
+              "id": 9,
+              "Text": "Powers",
+              "Children": [
+                {
+                  "id": 10,
+                  "Text": "GPU SoC",
+                  "Value": "0.0 W",
+                  "Type": "Power",
+                  "SensorId": "/gpu-amd/0/power/0"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

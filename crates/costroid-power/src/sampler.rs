@@ -175,6 +175,69 @@ impl WindowsLhmPowerSampler {
             endpoint: endpoint.into(),
         }
     }
+
+    /// Parse the whole-APU **Package** power (watts) out of LibreHardwareMonitor's
+    /// `/data.json` tree (M3a parser seam — the live loopback fetch is M3b). LHM nests sensors
+    /// under `Children`; the SMU package-power leaf has `Text` containing "Package", `Type ==
+    /// "Power"`, and a `Value` like `"62.5 W"`. Walks the tree, prefers a `Type == "Power"`
+    /// node, and parses the watts. A typed [`PowerError`] if no package-power sensor is found —
+    /// never a panic. (Disclose: this is whole-APU package power, not GPU-only — R6.)
+    pub fn parse_package_watts(json: &str) -> Result<f64, PowerError> {
+        let root: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| PowerError::SensorRead {
+                path: "lhm-data.json".to_string(),
+                reason: format!("LHM data.json failed to parse: {e}"),
+            })?;
+        find_package_watts(&root).ok_or_else(|| {
+            PowerError::SensorUnavailable(
+                "no Package power sensor (Type=Power, Value in watts) found in the LHM data.json \
+                 tree"
+                    .to_string(),
+            )
+        })
+    }
+}
+
+/// Parse a LHM value string like `"62.5 W"` into watts (`62.5`). Returns `None` if it is not a
+/// watt value (e.g. a temperature `"54.0 °C"`).
+fn lhm_watts_value(value: &str) -> Option<f64> {
+    let trimmed = value.trim();
+    let num = trimmed
+        .strip_suffix('W')
+        .or_else(|| trimmed.strip_suffix('w'))?;
+    num.trim().parse::<f64>().ok()
+}
+
+/// Recursively find the whole-APU **Package** power (watts) in an LHM `/data.json` node tree.
+/// Prefers a node whose `Text` contains "Package" with a watt `Value` (and `Type == "Power"`
+/// when the field is present), depth-first.
+fn find_package_watts(node: &serde_json::Value) -> Option<f64> {
+    if let Some(text) = node.get("Text").and_then(serde_json::Value::as_str) {
+        if text.to_lowercase().contains("package") {
+            // If a Type is present it must be "Power"; if absent, a watt-shaped Value suffices.
+            let type_ok = match node.get("Type").and_then(serde_json::Value::as_str) {
+                Some(t) => t.eq_ignore_ascii_case("power"),
+                None => true,
+            };
+            if type_ok {
+                if let Some(watts) = node
+                    .get("Value")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(lhm_watts_value)
+                {
+                    return Some(watts);
+                }
+            }
+        }
+    }
+    if let Some(children) = node.get("Children").and_then(serde_json::Value::as_array) {
+        for child in children {
+            if let Some(watts) = find_package_watts(child) {
+                return Some(watts);
+            }
+        }
+    }
+    None
 }
 
 impl PowerSampler for WindowsLhmPowerSampler {
@@ -326,6 +389,32 @@ mod tests {
         assert!(!lhm.probe());
         assert_eq!(lhm.mode(), MeasurementMode::MeasuredLhm);
         assert!(lhm.sample_watts().is_err());
+    }
+
+    // The LHM JSON parser (T10) — exercised against a committed fixture (the live loopback read
+    // is M3b). The fixture is a hardware-sensor tree, not user content (R4-safe).
+    const LHM_DATA_JSON: &str = include_str!("../../../fixtures/local/lhm-data.json");
+
+    #[test]
+    fn parses_the_package_power_from_the_lhm_fixture() {
+        let Ok(watts) = WindowsLhmPowerSampler::parse_package_watts(LHM_DATA_JSON) else {
+            panic!("the committed LHM data.json fixture must yield a Package power");
+        };
+        // The CPU "Powers" group's Package sensor reads 62.5 W (whole-APU package power, R6) —
+        // chosen over "CPU Cores" / "GPU SoC".
+        assert!((watts - 62.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lhm_parser_fails_closed_on_missing_or_malformed_data() {
+        // No Package power sensor present → typed unavailable, never a panic.
+        let no_pkg = r#"{"Text":"Sensor","Children":[{"Text":"CPU Cores","Value":"30.0 W","Type":"Power"}]}"#;
+        assert!(WindowsLhmPowerSampler::parse_package_watts(no_pkg).is_err());
+        // Malformed JSON → typed read error.
+        assert!(WindowsLhmPowerSampler::parse_package_watts("{not json").is_err());
+        // A "Package" node that is a temperature, not watts, is not mistaken for power.
+        let temp = r#"{"Text":"Package","Value":"54.0 °C","Type":"Temperature"}"#;
+        assert!(WindowsLhmPowerSampler::parse_package_watts(temp).is_err());
     }
 
     #[test]
