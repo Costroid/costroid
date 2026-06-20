@@ -11,7 +11,19 @@
 > executed end-to-end (T0–T19 + C1) on the per-task dev-loop, independently reviewed at the
 > milestone boundary (5× APPROVE, 0 HIGH/MEDIUM), and the LOW fold-ins folded in.
 >
-> **Current milestone: M2 (cloud/API cost lane) — PLAN SYNTHESIZED, AWAITING SIGN-OFF.**
+> **M2 (cloud/API cost lane) — ✅ MERGED to `main`** (PR #3, rebased, 2026-06-20; CI green on
+> all jobs). Executed end-to-end (T0–T14 + D1–D6 + 3 LOW fold-ins) on the per-task dev-loop,
+> independently reviewed at the milestone boundary (APPROVED, no high/medium), re-verified on a
+> clean build, merged. Detail: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)**.
+>
+> **Current milestone: M3 (dual-mode local-inference engine, Gemma 4 family) — NOT STARTED.**
+> M3a (the `PowerSampler` trait + 3 impls + runtime probing + the subprocess runner + the
+> benchmark harness + deterministic cost-math on synthetic power fixtures) is agent-ownable +
+> CI-tested; **M3b** (native-Linux sysfs `power1_average` confirmation + a captured joules/token)
+> needs **C2** (a native-Linux boot) and does NOT block M4. The detailed T-plan is synthesized
+> at the M3 kickoff (the M1/M2 pattern). The earlier superseded line follows for history.
+>
+> **(superseded) Current milestone: M2 — PLAN SYNTHESIZED, AWAITING SIGN-OFF.**
 > The detailed T-plan is written: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)** — 15 ordered tasks
 > (T0–T14) from the four M2 seeds + the canon, with a deciding test per task and the §1.5
 > schema / public-CLI / network-secrets decisions surfaced for sign-off (D1–D6). **No M2 code
@@ -307,8 +319,9 @@ starting **M1**.
   (T2/T3) + `import` CLI (T19) signed off; Parquet deferred (T1 spike clean but heavy); C1 resolved
   synthetically (real-AWS leg present-but-SKIP, T18). Milestone-boundary review: 5× APPROVE, fold-ins in.
 - [x] **M2** — LiteLLM snapshot pricing; AWS-FOCUS import; Bedrock AIP path; merged ledger.
-  **Executed T0–T14 on `costroid-next` ([`docs/M2-PLAN.md`](docs/M2-PLAN.md)); ⛔ awaiting the
-  human's milestone-boundary review before merge to `main`** (clean-build re-verify done).
+  **✅ MERGED to `main` (PR #3, 2026-06-20; CI green).** Executed T0–T14 + D1–D6 + 3 LOW
+  fold-ins (full-sha pin in Rust, README accuracy, the non-vacuous D2 shadowing guard);
+  milestone-boundary review APPROVED (no high/medium); clean-build re-verify green.
 - [ ] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
 - [ ] **M4** — break-even + scenario engine (incl. "never" case); DeepSWE-Bench dated snapshot wired.
@@ -319,6 +332,25 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (l) — M2 ✅ MERGED to `main` (PR #3); M3 is next.** After the milestone-boundary
+  review (APPROVED for merge), the 3 LOW fold-ins landed on the per-task dev-loop: `fed1856`
+  fold-in 1+2 (pin the FULL LiteLLM upstream sha256 as the Rust const
+  `LITELLM_SNAPSHOT_CONTENT_HASH` + assert it in the loader test, so CI catches an upstream
+  swap; README corrected) and `254377f` fold-in 3 (a non-vacuous D2 shadowing guard — two tiers
+  at DIFFERENT prices, so the curated PRICE, not just the snapshot_id, must win). Re-verified on
+  a clean build (`cargo clean -p costroid-core` — the include_str! pricing warm-cache note):
+  fmt · clippy · `test --workspace` (25) · store CLI (5) · deny (default + all-features) ·
+  offline (7) · pricing integrity · focus-validator conformance (8 OK legs) · MSRV 1.88 — all
+  green. Pushed `costroid-next` → **PR #3 → CI green on every job** (fmt/clippy/test, macOS +
+  Windows cross-platform, FOCUS validator, MSRV 1.88, cargo-deny, advisories, offline-acceptance;
+  release jobs skipped) → merged via `gh pr merge 3 --rebase --delete-branch`. main builds clean,
+  the deciding test passes, the branch is deleted + recreated off main.
+  **Next: the M3 /goal** — M3a (PowerSampler trait + 3 impls + runtime probing + the
+  subprocess llama.cpp/Ollama runner + benchmark harness + deterministic cost-math on SYNTHETIC
+  power fixtures, cross-platform green; the M0 `costroid-power` scaffold is the seed) is
+  agent-ownable + CI-tested; M3b (native-Linux sysfs `power1_average` + a captured joules/token)
+  needs **C2** (a native-Linux boot) and does NOT block M4. Local models = the Gemma 4 family
+  (Apache-2.0). CI never asserts a real power number (R10). See the "M3" section above.
 - **2026-06-20 (k) — M2 COMPLETE (T0–T14); ⛔ STOP at the milestone boundary for the human's
   fresh-eyes review before any merge to `main`.** Branch `costroid-next`. All 14 tasks landed
   on the per-task dev-loop (build → independent adversarial review → fold-in → commit), each
