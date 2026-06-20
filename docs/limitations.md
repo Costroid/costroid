@@ -36,3 +36,24 @@ replayed/exported ledger record which normalization logic produced each row.
 The M1 FOCUS v1.2 importer carries a single authoritative cost into a USD ledger and
 **refuses** a non-USD source rather than silently relabeling it. Multi-currency import is
 an M2 cloud-lane feature.
+
+## Source-priced cloud rows have no per-token rate
+
+A FOCUS-imported cloud row that carries an authoritative cost is **source-priced**: that
+cost is preserved exactly (`x_Estimated = false`), but Costroid does not reconstruct a
+per-token rate from a lump source cost, so `SkuPriceId` / `PricingQuantity` /
+`ListUnitPrice` stay null on those rows (the foreign export's own pricing detail is not
+yet carried through). (A *usage-only* imported row — no source cost — is instead
+re-estimated from the bundled catalog like a local log, and does get a catalog
+`SkuPriceId`/rate.) The cost
+is exact; only the per-token *rate* breakdown is absent. The cloud lane (M2) will carry
+the foreign pricing detail. This is why the v1.2 round-trip's 1.3 output validates as a
+**subset** of the documented validator defects (the SkuPriceId-null defect rule applies),
+never with a new failure.
+
+## FOCUS v1.2 import fixtures are a metadata subset
+
+The committed `fixtures/focus/v1.2/` are a deliberate metadata subset (only the columns
+the importer reads), **not complete FOCUS 1.2 documents** — so the conformance gate
+validates the 1.3 *output*, not the v1.2 *input*. A full-fixture 1.2 input-validation
+leg (against the vendored `scripts/focus-ruleset-1.2/`) is a documented fast-follow.
