@@ -110,6 +110,67 @@ fn import_json_input_leg_matches_the_library_path() {
 }
 
 #[test]
+fn import_pricing_override_reprices_a_usage_only_row() {
+    // D5: --pricing-override layers a user file over the bundled catalog. A USAGE-ONLY cloud
+    // row (no BilledCost) for a catalog model is repriced; the override tier wins and stamps
+    // its provenance. (Source-priced rows are authoritative and unaffected.)
+    let dir = std::env::temp_dir().join(format!("costroid-override-cli-{}", std::process::id()));
+    if std::fs::create_dir_all(&dir).is_err() {
+        panic!("temp dir should create");
+    }
+    let usage_csv = dir.join("usage-only.csv");
+    if std::fs::write(
+        &usage_csv,
+        "BilledCost,ChargePeriodStart,SkuId,ConsumedQuantity\n\
+         ,2026-06-15T10:00:00Z,claude-sonnet-4-6,1000000\n",
+    )
+    .is_err()
+    {
+        panic!("usage csv should write");
+    }
+    let override_json = dir.join("override.json");
+    if std::fs::write(
+        &override_json,
+        r#"{"schema_version":"1","source":"override","as_of":"2026-06-20",
+            "content_hash":"deadbeefcafe","currency":"USD","models":[
+            {"provider":"anthropic","model":"claude-sonnet-4-6","service_name":"Anthropic API",
+             "rates":[{"meter":"output","unit":"1M_tokens","price":"999.00"}]}]}"#,
+    )
+    .is_err()
+    {
+        panic!("override json should write");
+    }
+
+    let bin = env!("CARGO_BIN_EXE_costroid");
+    let output = match Command::new(bin)
+        .args(["import", "--format", "focus-csv", "--out", "csv"])
+        .arg("--pricing-override")
+        .arg(&override_json)
+        .arg(&usage_csv)
+        .output()
+    {
+        Ok(value) => value,
+        Err(err) => panic!("running import should succeed: {err}"),
+    };
+    assert!(
+        output.status.success(),
+        "import exited non-zero: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = String::from_utf8_lossy(&output.stdout);
+    // 1M tokens × 999.00/1M = 999.00 (the override rate, not the curated 15.00).
+    assert!(
+        out.contains("999"),
+        "the override rate priced the row: {out}"
+    );
+    assert!(
+        out.contains("override@2026-06-20#deadbeef"),
+        "the row records the override provenance stamp: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn import_aws_sample_drops_provider_specific_columns() {
     // The AWS-shaped sample carries x_ServiceCode / x_UsageType; the importer must drop
     // them (R4 — no provider-specific free text reaches the ledger).

@@ -365,7 +365,19 @@ pub fn focus_records_from_v12_import(
     events: &[CloudUsageEvent],
     source_version: &FocusInputVersion,
 ) -> Result<Vec<FocusRecord>, CoreError> {
-    let pricing = PricingCatalog::layered_default()?;
+    focus_records_from_v12_import_with_override(events, source_version, None)
+}
+
+/// As [`focus_records_from_v12_import`], but layers a user pricing-override file's content
+/// (M2 / D5) over the curated + LiteLLM tiers when repricing usage-only rows. `override_json`
+/// is the override file's content (the CLI reads it via [`read_pricing_override`]); `None`
+/// uses the bundled tiers only. A malformed override is a typed [`CoreError`].
+pub fn focus_records_from_v12_import_with_override(
+    events: &[CloudUsageEvent],
+    source_version: &FocusInputVersion,
+    override_json: Option<&str>,
+) -> Result<Vec<FocusRecord>, CoreError> {
+    let pricing = PricingCatalog::layered(override_json)?;
     let version = source_version.as_str().to_string();
     let mut records = Vec::with_capacity(events.len());
     for event in events {

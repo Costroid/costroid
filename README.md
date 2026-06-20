@@ -37,7 +37,7 @@ Build from source: `git clone https://github.com/Costroid/costroid && cd costroi
 | `costroid statusline` | Compact one-line status for shell / tmux / Starship (`--wrap '<cmd>'` escape hatch) |
 | `costroid setup-statusline` | Wire Claude Code's `statusLine` to capture live 5h/7d quota (`--undo` to restore) |
 | `costroid export --format json\|csv` | FOCUS 1.3-conformant export |
-| `costroid import <file>` | Import a foreign FOCUS v1.2 export → Costroid FOCUS 1.3 (`--format focus-csv\|focus-json`, `--version auto\|1.2`, `--out json\|csv`); pure local parse, no network |
+| `costroid import <file>` | Import a foreign FOCUS v1.2 export (incl. AWS Data Exports / Bedrock; multi-currency) → Costroid FOCUS 1.3 cloud lane (`--format focus-csv\|focus-json`, `--version auto\|1.2`, `--out json\|csv`, `--pricing-override <file>` to layer a user price file over the bundled catalog); pure local parse, no network |
 | `costroid alerts` / `--check` | Opt-in threshold alerts (default off); `--check` is cron-friendly (exit 0/1/2) |
 | `costroid --live` | Auto-refreshing interactive view |
 | `costroid --plain` | One-shot ASCII, no color — screen-reader & pipe friendly |

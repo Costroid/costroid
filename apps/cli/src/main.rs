@@ -172,6 +172,11 @@ struct ImportArgs {
     /// The serialization of the re-emitted Costroid FOCUS 1.3 ledger.
     #[arg(long, value_enum, default_value_t = ExportFormat::Json)]
     out: ExportFormat,
+    /// Optional user pricing-override file (JSON, the `pricing.v1.json` schema) layered over
+    /// the bundled catalog when repricing usage-only rows. Omit to use the XDG default
+    /// (`~/.config/costroid/pricing-override.json`, if present) or the bundled tiers only.
+    #[arg(long)]
+    pricing_override: Option<std::path::PathBuf>,
     /// Path to the foreign FOCUS export file.
     path: std::path::PathBuf,
 }
@@ -473,9 +478,17 @@ fn run_import(args: &ImportArgs) -> Result<()> {
         );
     }
 
-    let rows =
-        costroid_core::focus_records_from_v12_import(&import.events, &import.detection.version)
-            .context("normalizing imported FOCUS rows to the 1.3 ledger")?;
+    // Optional user pricing-override (D5): explicit --pricing-override, else the XDG default
+    // (missing = bundled tiers only). Layered over curated + LiteLLM when repricing usage-only
+    // rows. Pure local file read — no network.
+    let pricing_override = costroid_core::read_pricing_override(args.pricing_override.as_deref())
+        .context("reading the pricing-override file")?;
+    let rows = costroid_core::focus_records_from_v12_import_with_override(
+        &import.events,
+        &import.detection.version,
+        pricing_override.as_deref(),
+    )
+    .context("normalizing imported FOCUS rows to the 1.3 ledger")?;
 
     let output = match args.out {
         ExportFormat::Json => costroid_core::export_focus_json(rows)?,
