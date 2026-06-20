@@ -11,10 +11,13 @@
 > executed end-to-end (T0–T19 + C1) on the per-task dev-loop, independently reviewed at the
 > milestone boundary (5× APPROVE, 0 HIGH/MEDIUM), and the LOW fold-ins folded in.
 >
-> **Current milestone: M2 (cloud/API cost lane) — NOT STARTED.** Scope + deciding test +
-> task seeds are framed in the M2 section below; the detailed T-plan is synthesized at the
-> M2 kickoff (the M0→M1 pattern). Work happens on branch `costroid-next` (recreated off the
-> merged main); the human reviews at the M2 milestone boundary before the next merge.
+> **Current milestone: M2 (cloud/API cost lane) — PLAN SYNTHESIZED, AWAITING SIGN-OFF.**
+> The detailed T-plan is written: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)** — 15 ordered tasks
+> (T0–T14) from the four M2 seeds + the canon, with a deciding test per task and the §1.5
+> schema / public-CLI / network-secrets decisions surfaced for sign-off (D1–D6). **No M2 code
+> is written until those are signed off** (CLAUDE.md "ask first"). Work happens on branch
+> `costroid-next` (recreated off the merged main); the human reviews again at the M2 milestone
+> boundary before the next merge.
 
 ---
 
@@ -168,7 +171,7 @@ plan + human inputs written. **Deciding test:** the verification gate above is g
   1.3 validator (existing `focus_conformance.sh`, extended with a JSON leg + a synthetic-v1.2 round-trip
   leg) passes + a Claude/Codex collector golden test asserting the normalized `FocusRecord` row.
 
-### M2 — Cloud/API cost lane  *(NEXT — teed up 2026-06-20)*
+### M2 — Cloud/API cost lane  *(PLAN SYNTHESIZED 2026-06-20 — [`docs/M2-PLAN.md`](docs/M2-PLAN.md); awaiting D1–D6 sign-off)*
 - LiteLLM pricing **bundled dated snapshot + user override** (never a runtime fetch, R8); API-log
   pricing (historical/tiered); **AWS Data Exports FOCUS import** + **Bedrock Application Inference
   Profile** path — **ingest user-provided exported files only (pure-local parse in providers/core)**;
@@ -314,6 +317,19 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (h) — M2 PLAN synthesized; ⛔ STOP for sign-off before any code.** On branch
+  `costroid-next`, wrote **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)** (15 tasks T0–T14,
+  dependency-ordered, a deciding test per task, the M1-PLAN pattern) from the four M2 seeds +
+  the canon + a repo-fit code map of the merged M1 cloud-lane machinery (`CloudUsageEvent`,
+  `cloud_usage_to_focus`, `focus_records_from_v12_import`, `apply_pricing`, the layered-pricing
+  target, the `reconcile`/`vendor_report` engine, the 11+2 `is_developer_tool_lane` gates, the
+  `import` CLI). **§1.5 surfaces the sign-off decisions D1–D6** (R8 provenance columns; LiteLLM
+  layering+vendoring; multi-currency; Bedrock attribution; CLI delta; the live-AWS network
+  boundary). Closes both M1 deferrals (seed 2 per-token rate / T14 TODO; seed 3 v1.2-input
+  leg). **M2 builds entirely on SYNTHETIC AWS FOCUS + Bedrock fixtures** — C4 gates only the
+  real-export leg + the live API path (which is also separately sign-off-gated and NOT built
+  in M2). Zero new CLI-reachable crate deps (offline gate stays byte-for-byte). **Next: human
+  signs off D1–D6, then execute T0→T14 on the per-task dev-loop; stop at the M2 boundary.**
 - **2026-06-20 (g) — M1 ✅ MERGED to `main` (PR #2); M2 teed up; ready for the M2 /goal.**
   After the human's milestone-boundary review (APPROVED for merge), the 4 LOW fold-ins landed
   on the per-task dev-loop, independently re-reviewed by a 5-agent adversarial workflow
