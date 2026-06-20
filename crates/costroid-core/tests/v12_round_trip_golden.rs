@@ -24,13 +24,14 @@ fn repo_path(rel: &str) -> PathBuf {
 }
 
 /// Replace the live collector-version stamp with a stable placeholder so the golden is
-/// version-agnostic. The stamp is the `x_CollectorVersion` column, followed by the two
+/// version-agnostic. The stamp is the `x_CollectorVersion` column, followed by the **nine**
 /// trailing columns that are empty on these source-priced non-Bedrock rows
-/// (`x_PricingSnapshotId`, `x_InferenceProfileId`) — i.e. `,<version>,,` at the end of
+/// (`x_PricingSnapshotId`, `x_InferenceProfileId`, and the 7 M3 local-inference economics
+/// columns `x_MeasuredWh` … `x_MeasurementMode`) — i.e. `,<version>,,,,,,,,,` at the end of
 /// every data row.
 fn normalize_version(csv: &str) -> String {
-    let needle = format!(",{COLLECTOR_VERSION},,\n");
-    csv.replace(&needle, &format!(",{VERSION_PLACEHOLDER},,\n"))
+    let needle = format!(",{COLLECTOR_VERSION},,,,,,,,,\n");
+    csv.replace(&needle, &format!(",{VERSION_PLACEHOLDER},,,,,,,,,\n"))
 }
 
 #[test]
