@@ -23,11 +23,16 @@
 pub mod cost;
 mod error;
 mod mode;
+pub mod profile;
 mod sampler;
 
 pub use cost::{cloud_cost, local_run_cost, CostInputs, LocalRunCost};
 pub use error::PowerError;
 pub use mode::MeasurementMode;
+pub use profile::{
+    bundled_power_profiles, ElectricityRate, HardwareProfile, PowerProfiles, ProfileOverrides,
+    ResolvedProfile, DEFAULT_HARDWARE_PROFILE_ID, POWER_PROFILE_AS_OF,
+};
 pub use sampler::{
     select_sampler, EstimatedPowerSampler, PowerSampler, SysfsPowerSampler, WallMeterPowerSampler,
     WindowsLhmPowerSampler,
