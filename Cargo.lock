@@ -1059,6 +1059,7 @@ dependencies = [
  "costroid-connect",
  "costroid-core",
  "costroid-focus",
+ "costroid-power",
  "costroid-providers",
  "costroid-store",
  "crossterm",

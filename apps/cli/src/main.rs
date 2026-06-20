@@ -1,3 +1,5 @@
+#[cfg(feature = "power")]
+mod bench;
 #[cfg(feature = "connect")]
 mod connect;
 #[cfg(feature = "connect")]
@@ -40,6 +42,9 @@ enum Command {
     /// Wire Claude Code's `statusLine` to capture live 5h/7d quota into a local cache.
     SetupStatusline(SetupStatuslineArgs),
     Export(ExportArgs),
+    /// Benchmark a local model's cost-per-token (estimated, or --measure with a wall meter).
+    #[cfg(feature = "power")]
+    Bench(BenchArgs),
     /// Import a foreign FOCUS export (v1.2) and re-emit it as Costroid's FOCUS 1.3 ledger
     /// (the `cloud_api` lane). Pure local parse — no network.
     Import(ImportArgs),
@@ -181,6 +186,61 @@ struct ImportArgs {
     path: std::path::PathBuf,
 }
 
+#[cfg(feature = "power")]
+#[derive(Debug, Parser)]
+struct BenchArgs {
+    /// The Gemma 4 model id (e.g. `gemma-4-26b-a4b`, `gemma-4-31b-dense`).
+    #[arg(long, default_value = "gemma-4-26b-a4b")]
+    model: String,
+    /// The quantization (default: the model's manifest default, `Q4_K_M`).
+    #[arg(long)]
+    quant: Option<String>,
+    /// The local runtime to drive in `--measure` mode (and label the estimate).
+    #[arg(long, value_enum, default_value_t = RuntimeArg::Ollama)]
+    runtime: RuntimeArg,
+    /// Measure REAL power by running the model via the runtime subprocess (needs
+    /// `--wall-meter-watts`). Without this flag, the cost is an estimate/what-if (no hardware).
+    #[arg(long)]
+    measure: bool,
+    /// Path to the runtime binary (default: the runtime's name on `PATH`).
+    #[arg(long)]
+    binary: Option<String>,
+    /// Generated (output) tokens — the decode budget for `--measure`, the scenario volume for
+    /// the estimate.
+    #[arg(long, default_value_t = 1024)]
+    tokens_out: u64,
+    /// Prompt (input) tokens for the estimate / the cost-per-1M denominator.
+    #[arg(long, default_value_t = 256)]
+    tokens_in: u64,
+    /// Wall-meter reading in watts (true total-system draw) for `--measure` — the recommended
+    /// measured source.
+    #[arg(long)]
+    wall_meter_watts: Option<f64>,
+    /// Override the electricity rate (per kWh, in the profile currency) — a dated assumption (R8).
+    #[arg(long)]
+    electricity_rate: Option<f64>,
+    /// Override the hardware purchase price (for amortization).
+    #[arg(long)]
+    hardware_price: Option<f64>,
+    /// Override the hardware amortization lifetime, in seconds.
+    #[arg(long)]
+    hardware_lifetime_seconds: Option<f64>,
+    /// Override the hardware profile id (default `strix-halo-128gb`).
+    #[arg(long)]
+    hardware_profile: Option<String>,
+    /// The serialization of the emitted `local_inference` FOCUS row.
+    #[arg(long, value_enum, default_value_t = ExportFormat::Json)]
+    out: ExportFormat,
+}
+
+#[cfg(feature = "power")]
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RuntimeArg {
+    Ollama,
+    #[value(name = "llama.cpp")]
+    LlamaCpp,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum ImportFormat {
     FocusCsv,
@@ -266,6 +326,10 @@ fn main() -> Result<()> {
         }
         Some(Command::Import(args)) => {
             run_import(args)?;
+        }
+        #[cfg(feature = "power")]
+        Some(Command::Bench(args)) => {
+            bench::run_bench(args)?;
         }
         Some(Command::Alerts(args)) => {
             std::process::exit(run_alerts(args, render_options)?);

@@ -37,6 +37,13 @@ connect-test-support = ["connect", "costroid-connect/test-support"]
 # optional dep edge so the store is CLI-reachable under `--features store`; the offline
 # STORE_ALLOWED gate is a later task.)
 store = ["dep:costroid-store"]
+# The local-inference economics engine (M3) is opt-in and off by default: the default build
+# never links `costroid-power`, so the `costroid bench` subcommand only exists under
+# `--features power`. Mirrors how `connect`/`store` gate their subsystems. Enabling it also turns
+# on `costroid-power/power` (the native-Linux sysfs read for the measured path). The bench
+# command is offline by construction (subprocess via std::process, sysfs via std::fs — no
+# network crate), so the default CLI graph stays byte-for-byte no-network (POWER_ALLOWED guard).
+power = ["dep:costroid-power", "costroid-power/power"]
 
 [dependencies]
 anyhow.workspace = true
@@ -48,6 +55,9 @@ clap.workspace = true
 costroid-config.workspace = true
 costroid-connect = { workspace = true, optional = true }
 costroid-core.workspace = true
+# The local-inference economics engine (M3), optional + off by default behind the `power`
+# feature (above). The default CLI build never links it.
+costroid-power = { workspace = true, optional = true }
 costroid-providers.workspace = true
 # The local SQLite usage store (M1), optional + off by default behind the `store` feature
 # (above). The default CLI build links neither this nor `rusqlite`.
