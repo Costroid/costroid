@@ -182,8 +182,13 @@ fn cloud_usage_to_focus(cloud: &CloudUsageEvent) -> Result<FocusRecord, CoreErro
             CoreError::Import(format!("invalid cloud billed_cost {raw:?}: {err}"))
         })?;
         // Source-authoritative bill: stamp it across the cost columns verbatim and
-        // mark the row non-estimated. (Unit-price/quantity columns stay as the
-        // unpriced helper left them — no per-token rate is reconstructed.)
+        // mark the row non-estimated.
+        // TODO(deferred, documented in docs/limitations.md): a source-priced cloud row
+        // keeps SkuPriceId/PricingQuantity/ListUnitPrice null — Costroid does not
+        // reconstruct a per-token rate from a lump source cost (and a foreign export's
+        // SkuPriceId/unit-price columns are not yet carried through). The cost is exact;
+        // only the per-token *rate* breakdown is absent. Revisit when the cloud lane (M2)
+        // carries the foreign pricing detail.
         row.billed_cost = cost;
         row.effective_cost = cost;
         row.list_cost = cost;
@@ -2072,6 +2077,15 @@ fn window_token_volume(
     let tool = tool.to_string();
     let mut totals = TokenTotals::default();
     for row in rows {
+        // §170 dev-tool gate (symmetry with `window_estimated_usd`): this is a
+        // developer-tool quota-window volume that feeds the Verified→Unverified cross-check
+        // (`finalize_limit_status`). Sum developer_tool rows only — a cloud_api/local_inference
+        // import row must never inflate the window volume (which could mask a demotion). The
+        // `x_tool == ProviderId` filter already blocks most foreign rows, but the lane gate is
+        // the load-bearing guard. No-op at v0.6.0 (every row is developer_tool).
+        if !is_developer_tool_lane(row) {
+            continue;
+        }
         if row_in_trailing_window(row, &tool, kind, now) {
             totals.add(&row.x_token_type, decimal_to_u64(row.x_consumed_tokens));
         }
@@ -3542,6 +3556,23 @@ mod tests {
         let rows = mixed_lane_rows(now);
         let estimated = window_estimated_usd(&rows, ProviderId::Codex, LimitKind::FiveHour, now);
         assert_eq!(estimated, Some(Decimal::from(5)), "dev-tool window $ only");
+    }
+
+    #[test]
+    fn window_token_volume_excludes_cloud_and_local_lanes() {
+        // Symmetry with the $-side guard above: the per-window TOKEN volume — which feeds the
+        // Verified→Unverified cross-check (`finalize_limit_status`, compared to
+        // UNVERIFIED_TOKEN_FLOOR) — must sum developer_tool rows only. All three mixed-lane rows
+        // carry x_tool="codex", 1_000 output tokens, inside Codex's 5-hour window, so an ungated
+        // summer would report 3_000 (and could mask a demotion); the gated summer reports 1_000.
+        let now = utc_datetime(2026, 1, 1, 12, 0, 0);
+        let rows = mixed_lane_rows(now);
+        let volume = window_token_volume(&rows, ProviderId::Codex, LimitKind::FiveHour, now);
+        assert_eq!(
+            volume.total(),
+            1_000,
+            "only the developer_tool row's tokens count toward the window volume"
+        );
     }
 
     #[test]

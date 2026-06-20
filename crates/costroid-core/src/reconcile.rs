@@ -187,22 +187,27 @@ pub(crate) fn api_lane_daily_usd_series(rows: &[FocusRecord]) -> BTreeMap<NaiveD
     series
 }
 
-/// The per-**UTC-day**, per-model **all-lane consumed-token** series — `day -> (model -> summed
-/// x_ConsumedTokens)`. The token-side companion of [`api_lane_daily_usd_series`], built for T16b
-/// Anomalies' model-mix-shift signal (share-of-tokens per model per day). Unlike the $ series this
-/// counts **every** lane (Api + Subscription + Unknown): a token *share* is lane-agnostic, so
-/// excluding any lane would under-count real usage and silently blind a subscription-only user
-/// (e.g. Claude Code Max with no API key — T16b). Keyed by `charge_period_start.date_naive()`
-/// (UTC), summing the raw `x_ConsumedTokens` count — exact `Decimal`, the count that survives FOCUS
-/// nulling `ConsumedQuantity` on unpriced rows — ascending by day, then by model (`BTreeMap`).
-/// The model key is normalized via the engine's `non_empty_value` (a blank/whitespace id →
+/// The per-**UTC-day**, per-model **consumed-token** series within the developer-tool ledger lane
+/// — `day -> (model -> summed x_ConsumedTokens)`. The token-side companion of
+/// [`api_lane_daily_usd_series`], built for T16b Anomalies' model-mix-shift signal
+/// (share-of-tokens per model per day). It counts **every access-path CostLane** (Api +
+/// Subscription + Unknown): a token *share* is access-path-agnostic, so excluding any of those
+/// would under-count real usage and silently blind a subscription-only user (e.g. Claude Code Max
+/// with no API key — T16b). It does, however, gate on `x_Lane == developer_tool` FIRST (the T6
+/// ledger-lane guard): the signal is the *developer tool's own* model mix, so an imported
+/// `cloud_api` bill row or a `local_inference` run must not pollute it (those carry their own model
+/// ids on a different ledger). No-op at v0.6.0 (every row is developer_tool); the gate matters once
+/// the import/local lanes carry rows. Keyed by `charge_period_start.date_naive()` (UTC), summing
+/// the raw `x_ConsumedTokens` count — exact `Decimal`, the count that survives FOCUS nulling
+/// `ConsumedQuantity` on unpriced rows — ascending by day, then by model (`BTreeMap`). The model
+/// key is normalized via the engine's `non_empty_value` (a blank/whitespace id →
 /// `UNKNOWN_GROUP_VALUE`), matching `GroupBy::Model`, so a malformed row never surfaces as a
 /// blank-named model-mix callout.
 pub(crate) fn all_lane_daily_token_series(
     rows: &[FocusRecord],
 ) -> BTreeMap<NaiveDate, BTreeMap<String, Decimal>> {
     let mut series: BTreeMap<NaiveDate, BTreeMap<String, Decimal>> = BTreeMap::new();
-    for row in rows {
+    for row in rows.iter().filter(|row| crate::is_developer_tool_lane(row)) {
         let day = series
             .entry(row.charge_period_start.date_naive())
             .or_default();
@@ -1040,6 +1045,41 @@ mod tests {
         };
         // All three rows (1_000 tokens each) contribute — none excluded by lane.
         assert_eq!(jun1.get("m").copied(), Some(Decimal::from(3_000)));
+    }
+
+    #[test]
+    fn token_series_excludes_cloud_and_local_ledger_lanes() {
+        // T6 ledger-lane guard on the token side: an imported `cloud_api` bill row and a
+        // `local_inference` run carry their own model ids on a different ledger and must NOT
+        // pollute the developer-tool model-mix signal — even though they carry real tokens and
+        // (for cloud) an Api access path. Only the developer_tool row's tokens are counted.
+        let dev = api_row(utc(2026, 6, 1, 9, 0), "sonnet", "1.00");
+        let mut cloud = api_row(utc(2026, 6, 1, 10, 0), "imported-cloud-model", "9.99");
+        cloud.x_lane = LedgerLane::CloudApi.as_str().to_string();
+        let mut local = api_row(utc(2026, 6, 1, 11, 0), "local-model", "0.00");
+        local.x_lane = LedgerLane::LocalInference.as_str().to_string();
+
+        let series = all_lane_daily_token_series(&[dev, cloud, local]);
+        let jun1 = match series.get(&date(2026, 6, 1)) {
+            Some(day) => day,
+            None => panic!("June 1 bucket should exist"),
+        };
+        assert_eq!(
+            jun1.get("sonnet").copied(),
+            Some(Decimal::from(1_000)),
+            "the developer-tool row is counted"
+        );
+        assert_eq!(
+            jun1.get("imported-cloud-model"),
+            None,
+            "a cloud_api ledger row must not enter the dev-tool token mix"
+        );
+        assert_eq!(
+            jun1.get("local-model"),
+            None,
+            "a local_inference ledger row must not enter the dev-tool token mix"
+        );
+        assert_eq!(jun1.len(), 1, "only the developer_tool model is present");
     }
 
     #[test]
