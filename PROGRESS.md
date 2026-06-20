@@ -16,8 +16,8 @@
 > independently reviewed at the milestone boundary (APPROVED, no high/medium), re-verified on a
 > clean build, merged. Detail: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)**.
 >
-> **Current milestone: M3 (dual-mode local-inference engine, Gemma 4 family) — PLAN
-> SYNTHESIZED, AWAITING D1–D5 SIGN-OFF.** The detailed T-plan is written:
+> **Current milestone: M3 (dual-mode local-inference engine, Gemma 4 family) — D1–D5 ✅
+> SIGNED OFF 2026-06-20; EXECUTING T1–T13.** The detailed T-plan is written:
 > **[`docs/M3-PLAN.md`](docs/M3-PLAN.md)** — T0 (canon reconciled to the four-source,
 > wall-meter-led measured ladder) DONE; T1–T13 ordered, with a deciding test per task and the
 > §1.5 schema / public-CLI / network-boundary decisions surfaced for sign-off (D1–D5). **No M3
