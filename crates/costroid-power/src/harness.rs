@@ -177,24 +177,28 @@ pub fn estimate_run(
 /// [`PowerSampler`], then compute the economics stamped with the sampler's mode. The model's
 /// output text is never read (R4 — the runner discards it).
 ///
-/// `run_seconds` is the **runtime's own reported total time** ([`RunOutput::run_seconds`]) — the
-/// interval power is drawn over (more accurate for energy than the host wall-clock, which would
-/// add process-spawn overhead, and deterministic for testing). M3a reads the sampler **once**
-/// after the run (correct for the constant wall meter — the recommended live measured source);
-/// periodic capture for the time-varying on-chip sources is the M3b enhancement. The runner is
-/// injected, so a `StubRunner` makes this CI-testable without a subprocess.
+/// `model_id` is the **economic identity** (the Gemma 4 manifest id) the report + benchmark id
+/// key on — distinct from `run_spec.model`, which is what the runtime actually loads (an Ollama
+/// tag / a GGUF path that need not equal the manifest id). `run_seconds` is the **runtime's own
+/// reported total time** ([`RunOutput::run_seconds`]) — the interval power is drawn over (more
+/// accurate for energy than the host wall-clock, and deterministic for testing). M3a reads the
+/// sampler **once** after the run (correct for the constant wall meter — the recommended live
+/// measured source); periodic capture for the time-varying on-chip sources is the M3b
+/// enhancement. The runner is injected, so a `StubRunner` makes this CI-testable without a
+/// subprocess.
 pub fn run_measured(
     runner: &dyn Runner,
     sampler: &dyn PowerSampler,
     run_spec: &RunSpec,
+    model_id: &str,
     profile: &ResolvedProfile,
     suite: &str,
 ) -> Result<LocalRunReport, PowerError> {
     let out = runner.run(run_spec)?;
     let avg_power_watts = sampler.sample_watts()?;
-    let id = benchmark_id(suite, &run_spec.model, &run_spec.quant, runner.kind());
+    let id = benchmark_id(suite, model_id, &run_spec.quant, runner.kind());
     compute_report(
-        &run_spec.model,
+        model_id,
         &run_spec.quant,
         runner.kind(),
         out.tokens_in,
@@ -341,21 +345,35 @@ mod tests {
         };
         let spec = RunSpec {
             binary_path: "unused".to_string(),
-            model: "gemma-4-26b-a4b".to_string(),
+            // What the runtime LOADS — a GGUF path, deliberately distinct from the manifest id.
+            model: "/models/gemma-4-26b-a4b-Q4_K_M.gguf".to_string(),
             quant: "Q4_K_M".to_string(),
             prompt: "fixed benchmark prompt".to_string(),
             max_tokens: 1_500,
             extra_args: vec![],
         };
         let profile = resolved();
-        let Ok(rep) = run_measured(&stub, &wall, &spec, &profile, "gemma4-local-v1") else {
+        // `run_spec.model` is what the runtime loads (the GGUF path above); the economic identity
+        // is the manifest id passed separately — the report keys on the latter, not the path.
+        let Ok(rep) = run_measured(
+            &stub,
+            &wall,
+            &spec,
+            "gemma-4-26b-a4b",
+            &profile,
+            "gemma4-local-v1",
+        ) else {
             panic!("measured run computes")
         };
         assert_eq!(rep.tokens_out, 1_500);
+        assert_eq!(
+            rep.model, "gemma-4-26b-a4b",
+            "report keys on the manifest id"
+        );
         assert_eq!(rep.measurement_mode, MeasurementMode::MeasuredWallmeter);
         assert!((rep.avg_power_watts - 165.0).abs() < 1e-12);
-        // The wall-clock around an instant StubRunner is tiny but positive.
-        assert!(rep.run_seconds >= 0.0);
+        // run_seconds is the runtime's reported total time (deterministic via the stub).
+        assert!((rep.run_seconds - 12.0).abs() < 1e-12);
         assert_eq!(rep.runtime_kind, "stub");
     }
 }

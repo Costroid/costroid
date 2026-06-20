@@ -60,17 +60,28 @@ pub fn local_run_cost(inputs: &CostInputs) -> Result<LocalRunCost, PowerError> {
             inputs.hardware_lifetime_seconds
         )));
     }
-    // Reject non-physical NEGATIVE inputs (R6 honesty): a negative power draw, electricity rate, or
-    // hardware price is nonsensical and would yield a negative cost. Zero is permitted (see above).
+    // Reject non-physical NEGATIVE or NaN inputs (R6 honesty): a negative power draw, electricity
+    // rate, or hardware price is nonsensical and would yield a negative cost; a NaN would slip
+    // through a bare `< 0.0` (NaN compares false to everything) and produce a NaN cost. The
+    // explicit `is_nan()` guards keep the docstring's "never panics/NaN" contract honest, matching
+    // `profile::PowerProfiles::resolve`. Zero is permitted (see above).
     if inputs.avg_power_watts < 0.0
+        || inputs.avg_power_watts.is_nan()
         || inputs.electricity_rate_per_kwh < 0.0
+        || inputs.electricity_rate_per_kwh.is_nan()
         || inputs.hardware_price < 0.0
+        || inputs.hardware_price.is_nan()
     {
         return Err(PowerError::InvalidProfile(format!(
-            "avg_power_watts / electricity_rate_per_kwh / hardware_price must be non-negative, \
-             got {} / {} / {}",
+            "avg_power_watts / electricity_rate_per_kwh / hardware_price must be non-negative \
+             and finite, got {} / {} / {}",
             inputs.avg_power_watts, inputs.electricity_rate_per_kwh, inputs.hardware_price
         )));
+    }
+    // A non-finite duration (Inf/NaN) would also escape the `<= 0.0` check above and yield a
+    // non-finite energy — reject it as a non-positive duration.
+    if !inputs.run_seconds.is_finite() {
+        return Err(PowerError::NonPositiveDuration(inputs.run_seconds));
     }
     if inputs.tokens_in_run == 0 {
         return Err(PowerError::ZeroTokens);

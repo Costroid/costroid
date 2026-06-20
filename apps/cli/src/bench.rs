@@ -78,7 +78,12 @@ pub fn run_bench(args: &BenchArgs) -> Result<()> {
                 .binary
                 .clone()
                 .unwrap_or_else(|| args.runtime.default_binary().to_string()),
-            model: args.model.clone(),
+            // What the RUNTIME loads (an Ollama tag / a GGUF path) — defaults to the manifest id
+            // but need not equal it; the economics above key on `args.model` (the manifest id).
+            model: args
+                .runtime_model
+                .clone()
+                .unwrap_or_else(|| args.model.clone()),
             quant: quant.clone(),
             prompt: BENCH_PROMPT.to_string(),
             max_tokens: args.tokens_out,
@@ -88,6 +93,8 @@ pub fn run_bench(args: &BenchArgs) -> Result<()> {
             runner.as_ref(),
             &wall,
             &run_spec,
+            // The economic identity is the manifest id (`--model`), not what the runtime loads.
+            &args.model,
             &resolved,
             DEFAULT_BENCHMARK_SUITE,
         )?
