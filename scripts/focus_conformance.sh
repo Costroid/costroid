@@ -88,16 +88,30 @@ HOME="$home" USERPROFILE="" CLAUDE_CONFIG_DIR="" ANTHROPIC_API_KEY="" \
 # 1.2 export as Costroid's 1.3 ledger; the re-emitted output must validate with NO new
 # failing rule beyond the documented defects (subset contract — the synthetic row set is
 # smaller/different than the dev-tool fixtures, so its per-rule counts legitimately differ).
+# A v1.2-in -> v1.3-out conversion is a STRUCTURAL UPGRADE, never byte-identical (1.3 adds
+# columns; Costroid synthesizes derived fields). So this gate proves the output is 1.3-CONFORMANT
+# (subset of the documented defects); the value-preserving semantic net (cost preserved, lane,
+# model, x_FocusInputVersion, sidechain) lives in the Rust tests + the committed round-trip golden.
 echo "==> Synthetic v1.2 round-trip leg: v1.2-in -> v1.3-out validates (subset of defects)"
 v12_dir="$repo_root/fixtures/focus/v1.2"
-import_and_validate() {  # $1=fixture $2=input-format $3=label
+import_and_validate() {  # $1=fixture $2=input-format $3=label $4=expected-data-rows
   local out_csv="$workdir/$3.csv"
   "$bin" import --format "$2" --version auto --out csv "$1" > "$out_csv"
+  # Row-count guard: a silent import drop (0 rows) would VACUOUSLY pass the subset check
+  # (no rows -> no failures). Pin the expected data-row count (CSV = header + N rows) so an
+  # import that quietly emits nothing fails loudly here instead.
+  local got_rows
+  got_rows=$(($(wc -l < "$out_csv") - 1))
+  if [ "$got_rows" -ne "$4" ]; then
+    echo "FAIL: $3 import produced $got_rows data rows, expected $4" >&2
+    exit 1
+  fi
   validate_csv "$out_csv" "$3" --subset
 }
-import_and_validate "$v12_dir/synthetic-v12-marked.csv" focus-csv  "v12-marked"
-import_and_validate "$v12_dir/synthetic-v12.json"       focus-json "v12-json"
-import_and_validate "$v12_dir/synthetic-aws-v12.csv"    focus-csv  "v12-aws"
+import_and_validate "$v12_dir/synthetic-v12-marked.csv"   focus-csv  "v12-marked"   2
+import_and_validate "$v12_dir/synthetic-v12-unmarked.csv" focus-csv  "v12-unmarked" 2
+import_and_validate "$v12_dir/synthetic-v12.json"         focus-json "v12-json"     2
+import_and_validate "$v12_dir/synthetic-aws-v12.csv"      focus-csv  "v12-aws"      2
 
 echo "==> Real AWS v1.2 leg (present, SKIPPED unless COSTROID_REAL_AWS_FOCUS is set)"
 if [ -n "${COSTROID_REAL_AWS_FOCUS:-}" ] && [ -f "${COSTROID_REAL_AWS_FOCUS}" ]; then

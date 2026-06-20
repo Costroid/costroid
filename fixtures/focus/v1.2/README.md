@@ -30,7 +30,19 @@ the M1 bridge) and its conformance gate.
 
 ## Validation
 
-The wheel-bundled and vendored `model-1.2.0.1.json` (`scripts/focus-ruleset-1.2/`)
-validate the **input** side. Costroid's **output** is FOCUS 1.3, validated against
-`scripts/focus-ruleset/` by `scripts/focus_conformance.sh` (the synthetic-v1.2
-round-trip leg: v1.2-in → v1.3-out → validate the 1.3 output).
+These fixtures are a deliberate **metadata subset** of FOCUS 1.2 — only the columns
+Costroid's importer reads (plus the user-specified set above). They are **not complete
+FOCUS 1.2 documents**, so they intentionally fail full-1.2 column-presence rules
+(`ChargeDescription`, `InvoiceId`, `InvoiceIssuerName`, `PricingQuantity`, …) and are
+**not** input-validated by `scripts/focus_conformance.sh`.
+
+What the conformance gate validates is the **1.3 OUTPUT** of importing them:
+`scripts/focus_conformance.sh` runs `costroid import` on each fixture (v1.2-in →
+v1.3-out) and validates the re-emitted FOCUS 1.3 against `scripts/focus-ruleset/` under
+a **subset contract** (the import must add no new failing rule beyond the documented
+1.3 validator defects). The value-preserving semantic net (cost preserved, lane,
+model, `x_FocusInputVersion`, sidechain) lives in the Rust unit/integration tests
+(`costroid-core` `v12_import_*`, the `costroid-core` round-trip golden
+`tests/v12_round_trip_golden.rs` + `golden/` here, and `apps/cli/tests/import_cli.rs`).
+A full-fixture 1.2 *input*-validation leg (against the vendored
+`scripts/focus-ruleset-1.2/`) is a documented fast-follow.
