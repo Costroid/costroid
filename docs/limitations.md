@@ -55,6 +55,21 @@ re-estimated from the layered catalog like a local log, and gets a catalog `SkuP
 rate + the `x_PricingSnapshotId` provenance stamp. (Source-authoritative rows carry **no**
 `x_PricingSnapshotId` — they are the bill, not an estimate against a snapshot.)
 
+## Live AWS / Bedrock API path — not built (file import only)
+
+Costroid ingests AWS Data Exports FOCUS and Bedrock Application Inference Profile data
+**only as a user-provided exported file** (`costroid import`), parsed pure-local in
+`costroid-providers` / `costroid-core` — there is **no live AWS/Bedrock API call** anywhere
+in the tool. A *live* path (calling the AWS Data Exports / Cost Explorer / Bedrock APIs,
+reading AWS credentials) is **not built in M2**: it is triple-gated — it would live **only**
+in `costroid-connect` behind the off-by-default `connect` feature (keychain-only secrets),
+it is **C4-gated** (needs a real AWS account), and it needs its **own** human sign-off before
+any code. The default `costroid` build stays byte-for-byte no-network (proven by the
+forbidden-crates + offline-acceptance gates, which ban the network crates any AWS SDK would
+pull). To true the synthetic AWS fixtures against a **real** export, run the conformance
+gate locally with `COSTROID_REAL_AWS_FOCUS=/path/to/real-focus-1.2.csv` (a present-but-SKIP
+leg; a real export never enters the repo — privacy + offline CI).
+
 ## Bedrock workload attribution is the profile ID only
 
 Amazon Bedrock **Application Inference Profile** spend is attributed by the bounded
