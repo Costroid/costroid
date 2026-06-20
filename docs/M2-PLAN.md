@@ -94,6 +94,20 @@ AWS/Bedrock API path is `connect`-gated + C4-gated + needs a **separate** sign-o
 > These are the **export/output-schema, public-CLI, and network/secrets** decisions M2
 > cannot make unilaterally. **No T-task is coded until these are signed off.** Recommended
 > defaults are marked ★; the four highest-leverage ones are also asked interactively.
+>
+> **✅ SIGNED OFF 2026-06-20 (all recommended ★):**
+> - **D1 → (a)** one combined `x_PricingSnapshotId` = `"{source}@{as_of}#{short_sha}"`.
+> - **D2 → (a)** layered `user-override > curated pricing.v1.json > LiteLLM long-tail`; LiteLLM
+>   = vendored MIT data file compiled into core (date+sha256+attribution), dev-script refresh,
+>   no build/runtime fetch.
+> - **D3 → (a)** carry native `BillingCurrency`, never auto-convert; cross-currency refused/
+>   separated into per-currency subtotals.
+> - **D4 → (a)** carry only the bounded inference-profile id as `x_InferenceProfileId`; never
+>   the profile name/tags.
+> - **D5 → proceed as described** (no objection): `import` accepts AWS-shaped FOCUS + non-USD;
+>   add `--pricing-override <path>` to `import`/`export`; no other new subcommand.
+> - **D6 → proceed as described** (no objection): the live AWS/Bedrock **API** path is NOT
+>   built in M2 (connect-gated + C4-gated + separately sign-off-gated); file-import only.
 
 - **D1 — R8 pricing-provenance stamp (output schema).** R8 requires recording *source + date
   + content hash for every comparison*. Options: **(a) ★ one combined column
