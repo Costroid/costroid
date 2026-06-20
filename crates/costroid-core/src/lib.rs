@@ -331,14 +331,20 @@ fn cloud_usage_to_focus(cloud: &CloudUsageEvent) -> Result<FocusRecord, CoreErro
     Ok(row)
 }
 
-/// Build a single `local_inference`-lane FOCUS row from a [`LocalRunEvent`].
+/// Build a single `local_inference`-lane FOCUS row from a [`LocalRunEvent`] (M3 T9).
 ///
-/// T5 only tags the lane + carries the consumed-token count (`tokens_out`); the
-/// energy/cost custom columns are intentionally left unset.
+/// Maps the **already-computed** economics (from the `costroid-power` harness, carried on the
+/// enriched event) onto FOCUS columns — no cost math here, so `costroid-core` needs no
+/// `costroid-power` dependency. The local run cost (energy + amortized hardware, in the event's
+/// `billing_currency`) becomes the row's cost; the 7 §6.4 local columns are populated; and the
+/// **measured-vs-estimated** stamp (R6/R10) rides `x_MeasurementMode` + `x_Estimated`.
+///
+/// `x_Estimated` is `true` unless the energy was *measured* (one of the three measured modes) —
+/// an unknown/blank mode defaults to estimated (the honest, conservative default). The cost is
+/// always at least rate-assumption-driven, so a measured-energy row still discloses its
+/// assumptions via `x_HardwareProfile`.
 fn local_run_to_focus(local: &LocalRunEvent) -> Result<FocusRecord, CoreError> {
-    // M3 will populate the local-inference energy columns once they land (lean
-    // sign-off deferred them); T5 only tags the lane + tokens.
-    let row = FocusRecord::unpriced_usage(UnpricedUsage {
+    let mut row = FocusRecord::unpriced_usage(UnpricedUsage {
         lane: LedgerLane::LocalInference,
         timestamp: local.timestamp,
         tool: local.runtime_kind.clone(),
@@ -351,9 +357,59 @@ fn local_run_to_focus(local: &LocalRunEvent) -> Result<FocusRecord, CoreError> {
         service_provider_name: local.runtime_kind.clone(),
         host_provider_name: local.runtime_kind.clone(),
         invoice_issuer_name: local.runtime_kind.clone(),
-        billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        // Multi-currency (D3): carry the run's native currency (the electricity-rate currency),
+        // never relabel to USD.
+        billing_currency: local.billing_currency.clone(),
     })?;
+
+    // The run cost (energy + amortized hardware) — carried as a decimal STRING on the event,
+    // parsed exactly (never f64), stamped across the FOCUS cost columns in billing_currency.
+    let cost = parse_local_decimal("local_run_cost", &local.local_run_cost)?;
+    let amortized = parse_local_decimal("amortized_hw_cost", &local.amortized_hw_cost)?;
+    row.billed_cost = cost;
+    row.effective_cost = cost;
+    row.list_cost = cost;
+    row.contracted_cost = cost;
+    row.pricing_currency_effective_cost = cost;
+
+    // Measured-vs-estimated stamp (R6/R10): only a real measured-energy mode clears x_Estimated;
+    // "estimated" and any unknown mode default to estimated.
+    let is_measured = matches!(
+        local.measurement_mode.as_str(),
+        "measured_wallmeter" | "measured_sysfs" | "measured_lhm"
+    );
+    row.x_estimated = !is_measured;
+    // A computed cost exists → the row is "priced" (so it is not mistaken for an unpriced row);
+    // a zero cost (e.g. free electricity + no amortization scenario) stays the unpriced default.
+    if cost > Decimal::ZERO {
+        row.x_pricing_status = PRICING_STATUS_PRICED.to_string();
+    }
+
+    // The 7 local-inference economics columns (§6.4). Energy/power are physical f64 → Decimal
+    // with controlled rounding (no float-repr noise); the cost columns are exact decimals.
+    row.x_measured_wh = f64_to_decimal_rounded(local.energy_wh, 6);
+    row.x_avg_power_watts = f64_to_decimal_rounded(local.avg_power_watts, 3);
+    row.x_hardware_profile = Some(local.hardware_profile_id.clone());
+    row.x_amortized_hw_cost = Some(amortized);
+    row.x_runtime_kind = Some(local.runtime_kind.clone());
+    row.x_benchmark_id = Some(local.benchmark_id.clone());
+    row.x_measurement_mode = Some(local.measurement_mode.clone());
+
     Ok(row)
+}
+
+/// Parse a required local-run decimal column (carried as a decimal string on the event) into
+/// `Decimal`, or a typed [`CoreError::Import`] — never `f64`, never a panic.
+fn parse_local_decimal(field: &str, raw: &str) -> Result<Decimal, CoreError> {
+    Decimal::from_str_exact(raw.trim())
+        .map_err(|err| CoreError::Import(format!("invalid local-run {field} {raw:?}: {err}")))
+}
+
+/// Convert a finite physical `f64` (Wh / watts) to a `Decimal` rounded to `dp` places, so a
+/// FOCUS numeric column carries a clean value rather than float-representation noise. A
+/// non-finite value yields `None` (the column stays null rather than emitting a garbage number).
+fn f64_to_decimal_rounded(value: f64, dp: u32) -> Option<Decimal> {
+    Decimal::from_f64_retain(value).map(|d| d.round_dp(dp))
 }
 
 /// Normalize a slice of FOCUS-1.2-imported [`CloudUsageEvent`]s into `cloud_api`-lane
@@ -8395,37 +8451,104 @@ mod tests {
         );
     }
 
-    #[test]
-    fn canonical_local_event_yields_local_inference_lane_with_tokens() {
-        let local = LocalRunEvent {
+    fn local_event(mode: &str) -> LocalRunEvent {
+        LocalRunEvent {
             timestamp: timestamp(),
-            model: "llama-3.1-8b".to_string(),
+            model: "gemma-4-26b-a4b".to_string(),
             quant: "Q4_K_M".to_string(),
             runtime_kind: "ollama".to_string(),
             tokens_in: 500,
             tokens_out: 1_200,
             run_seconds: 4.2,
             avg_power_watts: 95.0,
-            measurement_mode: "estimated".to_string(),
+            measurement_mode: mode.to_string(),
             energy_wh: 0.110_833,
-            amortized_hw_cost: "0.0001".to_string(),
-            local_run_cost: "0.0002".to_string(),
+            amortized_hw_cost: "0.0021".to_string(),
+            local_run_cost: "0.0023".to_string(),
             electricity_rate_per_kwh: 0.16,
             hardware_price: 2000.0,
             hardware_lifetime_seconds: 94_608_000.0,
             hardware_profile_id: "strix-halo-128gb@2026-06-20".to_string(),
-            benchmark_id: "gemma4-coding-v1".to_string(),
+            benchmark_id: "gemma4-local-v1/gemma-4-26b-a4b/Q4_K_M/ollama".to_string(),
             billing_currency: "USD".to_string(),
-        };
-        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Local(local)]) else {
+        }
+    }
+
+    #[test]
+    fn canonical_local_event_maps_all_economics_columns_estimated() {
+        let Ok(rows) =
+            focus_records_from_canonical(&[CanonicalEvent::Local(local_event("estimated"))])
+        else {
             panic!("local canonical event should normalize");
         };
         assert_eq!(rows.len(), 1, "a local run is one row");
         let row = &rows[0];
         assert_eq!(row.x_lane, "local_inference");
-        // Consumed tokens carried (tokens_out). The energy/cost columns are mapped in T9.
         assert_eq!(row.x_consumed_tokens, Decimal::from(1_200_u64));
         assert_eq!(row.x_token_type, "output");
-        assert_eq!(row.x_model, "llama-3.1-8b");
+        assert_eq!(row.x_model, "gemma-4-26b-a4b");
+
+        // The run cost lands on the cost columns (exact decimal, in billing_currency).
+        let expect_cost = Decimal::from_str_exact("0.0023").unwrap_or(Decimal::ZERO);
+        assert_eq!(row.billed_cost, expect_cost);
+        assert_eq!(row.effective_cost, expect_cost);
+        assert_eq!(row.x_pricing_status, PRICING_STATUS_PRICED);
+
+        // The 7 §6.4 economics columns are populated.
+        assert_eq!(
+            row.x_measured_wh,
+            Some(Decimal::from_str_exact("0.110833").unwrap_or(Decimal::ZERO))
+        );
+        assert_eq!(
+            row.x_avg_power_watts,
+            Some(Decimal::from_str_exact("95.000").unwrap_or(Decimal::ZERO))
+        );
+        assert_eq!(
+            row.x_hardware_profile,
+            Some("strix-halo-128gb@2026-06-20".to_string())
+        );
+        assert_eq!(
+            row.x_amortized_hw_cost,
+            Some(Decimal::from_str_exact("0.0021").unwrap_or(Decimal::ZERO))
+        );
+        assert_eq!(row.x_runtime_kind, Some("ollama".to_string()));
+        assert_eq!(
+            row.x_benchmark_id,
+            Some("gemma4-local-v1/gemma-4-26b-a4b/Q4_K_M/ollama".to_string())
+        );
+        assert_eq!(row.x_measurement_mode, Some("estimated".to_string()));
+
+        // Estimated mode → x_Estimated true (R6/R10).
+        assert!(row.x_estimated, "estimated-mode row is flagged estimated");
+
+        // The cost lands in the local_inference USD total, never the developer-tool total.
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::LocalInference),
+            expect_cost
+        );
+        assert_eq!(
+            lane_total_usd(&rows, LedgerLane::DeveloperTool),
+            Decimal::ZERO
+        );
+    }
+
+    #[test]
+    fn canonical_local_event_measured_mode_clears_x_estimated() {
+        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Local(local_event(
+            "measured_wallmeter",
+        ))]) else {
+            panic!("measured local event should normalize");
+        };
+        let row = &rows[0];
+        assert_eq!(
+            row.x_measurement_mode,
+            Some("measured_wallmeter".to_string())
+        );
+        // A real measured-energy mode clears x_Estimated (the energy is measured); the cost is
+        // still assumption-driven via the dated rate stamped on x_HardwareProfile.
+        assert!(
+            !row.x_estimated,
+            "measured-mode row is not flagged estimated"
+        );
     }
 }
