@@ -45,10 +45,11 @@ use serde::{Deserialize, Serialize};
 use costroid_focus::FocusRecord;
 
 use crate::vendor_report::{
-    AmountConfidence, CostReportCaveats, CostReportOutcome, MoneyParseError, UsdAmount,
-    VendorCostDay, VendorCostReport, VendorReportUnavailable,
+    AmountConfidence, CostLineItem, CostReportCaveats, CostReportOutcome, MoneyParseError,
+    UsdAmount, VendorCostDay, VendorCostReport, VendorReportUnavailable,
 };
 use crate::CostLane;
+use costroid_focus::{LedgerLane, DEFAULT_BILLING_CURRENCY};
 
 // ---------------------------------------------------------------------------
 // The local-estimate side
@@ -517,6 +518,80 @@ fn variance_of(
     (Some(variance), pct)
 }
 
+// ---------------------------------------------------------------------------
+// M2 cloud-lane reconciliation: estimate (LiteLLM-priced API logs) vs authoritative
+// (AWS Data Exports FOCUS invoice), within the cloud_api lane.
+// ---------------------------------------------------------------------------
+
+/// A `cloud_api`-lane row in USD (the cloud reconciliation is USD-only, like the rest of
+/// the engine — a non-USD row is out of scope, never blended in).
+fn is_usd_cloud(row: &FocusRecord) -> bool {
+    row.x_lane == LedgerLane::CloudApi.as_str() && row.billing_currency == DEFAULT_BILLING_CURRENCY
+}
+
+/// The cloud **estimate** side: `cloud_api` rows Costroid priced from a snapshot
+/// (`x_Estimated = true`) — the LiteLLM-priced API logs — bucketed by UTC day + `x_Model`.
+pub fn cloud_estimate_from_rows(
+    rows: &[FocusRecord],
+) -> Result<LocalCostEstimate, MoneyParseError> {
+    let mut estimate = LocalCostEstimate::new();
+    for row in rows.iter().filter(|r| is_usd_cloud(r) && r.x_estimated) {
+        estimate.add(
+            row.charge_period_start.date_naive(),
+            &row.x_model,
+            UsdAmount::from_usd(row.billed_cost),
+        )?;
+    }
+    Ok(estimate)
+}
+
+/// The cloud **authoritative** side as a [`VendorCostReport`]: `cloud_api` rows that carry a
+/// source-authoritative bill (`x_Estimated = false`) — e.g. an AWS Data Exports FOCUS
+/// invoice. Each row is one [`CostLineItem`] attributed [`AmountConfidence::Exact`] (the
+/// source bill itself attributed it to the model). The label is the bounded `x_Model` id —
+/// never content (R4).
+pub fn authoritative_cloud_report(
+    rows: &[FocusRecord],
+) -> Result<VendorCostReport, MoneyParseError> {
+    let mut by_day: BTreeMap<NaiveDate, Vec<CostLineItem>> = BTreeMap::new();
+    for row in rows.iter().filter(|r| is_usd_cloud(r) && !r.x_estimated) {
+        by_day
+            .entry(row.charge_period_start.date_naive())
+            .or_default()
+            .push(CostLineItem {
+                label: row.x_model.clone(),
+                amount: UsdAmount::from_usd(row.billed_cost),
+                model: Some(row.x_model.clone()),
+                cost_type: None,
+                service_tier: None,
+                confidence: AmountConfidence::Exact,
+            });
+    }
+    let mut days = Vec::with_capacity(by_day.len());
+    for (date, line_items) in by_day {
+        days.push(VendorCostDay::from_line_items(date, line_items)?);
+    }
+    Ok(VendorCostReport {
+        days,
+        caveats: CostReportCaveats::default(),
+    })
+}
+
+/// Reconcile the cloud lane against itself: the LiteLLM-priced **estimate** rows
+/// (`x_Estimated = true`) vs the source-authoritative **invoice** rows (`x_Estimated =
+/// false`), reusing the pure [`reconcile_cost`] engine (the estimate is always the estimate,
+/// the authoritative figure the bill — cost is an estimate vs the invoice). Returns the
+/// signed per-day/per-model variance. Pure, offline; no `connect` needed (both sides come
+/// from imported files).
+pub fn reconcile_cloud_lane(rows: &[FocusRecord]) -> Result<CostReconciliation, MoneyParseError> {
+    let estimate = cloud_estimate_from_rows(rows)?;
+    let report = authoritative_cloud_report(rows)?;
+    Ok(reconcile_cost(
+        &estimate,
+        &CostReportOutcome::Available(report),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,6 +660,83 @@ mod tests {
         row.billed_cost = cost;
         row.effective_cost = cost;
         row
+    }
+
+    /// A `cloud_api`-lane FOCUS row: `estimated = true` is a LiteLLM-priced API-log estimate,
+    /// `false` is a source-authoritative (AWS FOCUS) invoice row.
+    fn cloud_row(at: DateTime<Utc>, model: &str, billed: &str, estimated: bool) -> FocusRecord {
+        let mut row = ok(FocusRecord::unpriced_usage(UnpricedUsage {
+            lane: LedgerLane::CloudApi,
+            timestamp: at,
+            tool: "Amazon Bedrock".to_string(),
+            model: model.to_string(),
+            token_type: TokenType::Output,
+            token_count: 1_000,
+            project: None,
+            access_path: FocusAccessPath::Api,
+            service_name: "Amazon Bedrock".to_string(),
+            service_provider_name: "AWS".to_string(),
+            host_provider_name: "AWS".to_string(),
+            invoice_issuer_name: "AWS".to_string(),
+            billing_currency: "USD".to_string(),
+        }));
+        let cost = ok(Decimal::from_str_exact(billed));
+        row.billed_cost = cost;
+        row.effective_cost = cost;
+        row.x_estimated = estimated;
+        row
+    }
+
+    #[test]
+    fn cloud_lane_reconciles_estimate_against_authoritative_invoice() {
+        // M2 T11: for the same model + UTC day, a LiteLLM-priced ESTIMATE (x_estimated=true)
+        // and the source-authoritative AWS INVOICE (x_estimated=false) reconcile via the pure
+        // engine to a signed variance — the estimate is the estimate, the authoritative figure
+        // the bill.
+        let when = utc(2026, 6, 15, 14, 0);
+        let rows = vec![
+            cloud_row(when, "anthropic.claude-sonnet", "0.030", true), // estimate
+            cloud_row(when, "anthropic.claude-sonnet", "0.025", false), // authoritative bill
+        ];
+        let recon = ok(reconcile_cloud_lane(&rows));
+        assert_eq!(recon.report, ReconciledReportStatus::Available);
+        let day = day(&recon, date(2026, 6, 15));
+        assert_eq!(
+            day.local_estimate,
+            usd("0.030"),
+            "estimate side = the LiteLLM-priced row"
+        );
+        assert_eq!(
+            day.vendor_billed,
+            VendorBilled::Billed(usd("0.025")),
+            "invoice side = the source-authoritative row"
+        );
+        assert_eq!(
+            day.variance,
+            Some(usd("0.005")),
+            "signed variance = estimate − bill (the estimate ran 0.005 over the invoice)"
+        );
+    }
+
+    #[test]
+    fn cloud_reconcile_ignores_dev_tool_local_and_non_usd_rows() {
+        // Only USD cloud_api rows participate: dev-tool, local_inference, and non-USD cloud
+        // rows are all excluded from BOTH sides (no cross-lane / cross-currency reconcile).
+        let when = utc(2026, 6, 15, 14, 0);
+        let mut eur = cloud_row(when, "mistral-large", "9.99", false);
+        eur.billing_currency = "EUR".to_string();
+        // A USD local_inference row (would land on the estimate side but for the lane gate).
+        let mut local = cloud_row(when, "gemma-4", "1.00", true);
+        local.x_lane = LedgerLane::LocalInference.as_str().to_string();
+        let rows = vec![
+            api_row(when, "claude-sonnet-4-6", "5.00"), // dev-tool — excluded
+            eur,                                        // non-USD cloud — excluded
+            local,                                      // local_inference — excluded
+        ];
+        let estimate = ok(cloud_estimate_from_rows(&rows));
+        let report = ok(authoritative_cloud_report(&rows));
+        assert_eq!(estimate.dates().count(), 0, "no USD cloud estimate rows");
+        assert!(report.days.is_empty(), "no USD cloud authoritative rows");
     }
 
     fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
