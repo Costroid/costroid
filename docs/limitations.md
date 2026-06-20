@@ -80,6 +80,39 @@ reads only a dedicated bounded id column; a profile name in the source (or `Reso
 column carrying the id is C4-truable (localized to `FocusV12Mapping`); the synthetic
 fixtures use `x_InferenceProfileId`.
 
+## Local-inference economics — measured vs estimated, package vs wall (M3)
+
+The local-inference lane (`costroid bench`, the `local_inference` FOCUS lane) computes a
+**cost per token** for running a model on your own hardware (energy + amortized hardware,
+§3.2). It is honest about how much it can know:
+
+- **Measured vs estimated is stamped on every row** (R6/R10): `x_MeasurementMode` ∈
+  `measured_wallmeter` / `measured_sysfs` / `measured_lhm` / `estimated`, with `x_Estimated`
+  cleared **only** when the energy was really measured. By default `costroid bench` runs in
+  **estimated** mode (no hardware) — power comes from a dated, stamped, **overridable** profile
+  (`crates/costroid-power/profiles/hardware.v1.json`), never a measured number.
+- **No source isolates GPU-only watts on this APU.** The Strix Halo's iGPU shares a power rail
+  with the CPU, so **every on-chip reading — Linux `power1_average` sysfs and the Windows
+  LibreHardwareMonitor "Package" sensor alike — is whole-APU *package* power** (it overlaps the
+  CPU and is time-averaged), not GPU-only. The **wall meter** measures **true total-system
+  draw** (typically **~20–40% higher** than package power) and is the most honest figure — so
+  the measured ladder *leads* with it (`measured_wallmeter`), and the on-chip readers are the
+  optional package-grade convenience.
+- **At low volume, local usually LOSES on pure cost.** Amortized hardware dominates a lightly
+  used machine; local inference wins on **privacy, unlimited use, and experimentation**, not on
+  $/token until volume is high. Costroid presents **ranges + methodology, never a single hero
+  number** (the break-even crossover is M4).
+- **The assumptions are dated, stamped, and overridable** (R8): the electricity rate (default
+  `0.16 USD/kWh`, a `global-household-average-template` — set your own, e.g. the Turkey EPDK
+  tariff, via `--electricity-rate` or the `[power]` config), the hardware price, and the
+  amortization lifetime. The winning profile id rides `x_HardwareProfile` (`"{id}@{as_of}"`).
+- **Throughput (tok/s) and quality are not measured here.** The bundled Gemma 4 manifest's
+  `estimated_tok_s` is a community-analog **estimate** (flagged `tok_s_estimated`); the quality
+  score is **as published** (cited, never re-derived — R10). A real captured **joules/token**
+  on the actual gfx1151 hardware is the **M3b** on-hardware step (a wall meter on the Strix
+  Halo is the primary path; the sysfs / LibreHardwareMonitor live reads are optional). **CI
+  never asserts a real power number** — the deterministic tests run on synthetic power fixtures.
+
 ## FOCUS v1.2 import fixtures are a metadata subset
 
 The committed `fixtures/focus/v1.2/synthetic-v12-*` and `synthetic-aws-v12.csv` are a
