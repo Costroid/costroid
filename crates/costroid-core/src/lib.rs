@@ -249,6 +249,16 @@ fn cloud_usage_to_focus(cloud: &CloudUsageEvent) -> Result<FocusRecord, CoreErro
             .to_string(),
     })?;
 
+    // Bedrock workload attribution (D4): carry the bounded inference-profile id (the system
+    // id only — never a name/tag) when the source provides it. Independent of pricing, so it
+    // applies to both source-priced and usage-only Bedrock rows.
+    row.x_inference_profile_id = cloud
+        .inference_profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
     if let Some(raw) = cloud.billed_cost.as_deref() {
         let cost = Decimal::from_str_exact(raw.trim()).map_err(|err| {
             CoreError::Import(format!("invalid cloud billed_cost {raw:?}: {err}"))
@@ -7780,6 +7790,7 @@ mod tests {
             pricing_currency: None,
             consumed_unit: None,
             billing_currency: None,
+            inference_profile_id: None,
         }
     }
 
@@ -8122,6 +8133,48 @@ mod tests {
         assert!(
             row.x_pricing_snapshot_id.is_none(),
             "an unpriced row carries no snapshot stamp"
+        );
+    }
+
+    #[test]
+    fn v12_import_bedrock_row_carries_bounded_inference_profile_id_d4() {
+        // D4: a Bedrock cloud row carries the bounded inference-profile id for per-workload
+        // attribution (independent of pricing); a non-Bedrock row carries none.
+        // A USAGE-ONLY Bedrock row (no billed_cost) — proves the profile id is carried
+        // independent of pricing (the id is set before the billed_cost branch).
+        let bedrock = CloudUsageEvent {
+            model: Some("anthropic.claude-3-5-sonnet-20240620-v1:0".to_string()),
+            token_count: Some(1_000),
+            billed_cost: None,
+            inference_profile_id: Some("aip-0a1b2c3d4e5f6789".to_string()),
+            service_name: "Amazon Bedrock".to_string(),
+            service_provider_name: "AWS".to_string(),
+            ..cloud_event_no_detail()
+        };
+        let other = CloudUsageEvent {
+            model: Some("claude-sonnet-4-6".to_string()),
+            token_count: Some(1_000),
+            billed_cost: None,
+            service_name: "Claude API".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            ..cloud_event_no_detail()
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[bedrock, other], &FocusInputVersion::V1_2)
+        else {
+            panic!("import should normalize");
+        };
+        assert_eq!(
+            rows[0].x_inference_profile_id.as_deref(),
+            Some("aip-0a1b2c3d4e5f6789"),
+            "the bounded Bedrock inference-profile id is carried even on a usage-only row"
+        );
+        assert!(
+            rows[0].x_estimated,
+            "the usage-only Bedrock row took the estimate path (id carried independent of pricing)"
+        );
+        assert!(
+            rows[1].x_inference_profile_id.is_none(),
+            "a non-Bedrock row carries no inference profile id"
         );
     }
 

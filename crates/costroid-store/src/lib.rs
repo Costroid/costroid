@@ -40,7 +40,7 @@ use thiserror::Error;
 /// The schema version of the [`usage_rows`](USAGE_ROWS_TABLE) layout. Bumped whenever
 /// the persisted column set changes so a future replay/migration step can tell shapes
 /// apart. Stamped into [`STORE_META_TABLE`] on open.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// The one persisted table.
 pub const USAGE_ROWS_TABLE: &str = "usage_rows";
@@ -112,6 +112,9 @@ pub const USAGE_ROWS_COLUMNS: &[&str] = &[
     // Pricing provenance — the bundled/override snapshot that priced an estimated row
     // ("{source}@{as_of}#{hash8}"); nullable (null on source-priced/unpriced). Never content.
     "x_pricing_snapshot_id",
+    // Bedrock application-inference-profile id (bounded system id; nullable, null off-Bedrock).
+    // Never the profile name/tags. Never content.
+    "x_inference_profile_id",
 ];
 
 /// `CREATE TABLE` DDL for the [`usage_rows`](USAGE_ROWS_TABLE) metadata-allowlist table.
@@ -158,7 +161,8 @@ pub fn usage_rows_ddl() -> String {
             x_sidechain INTEGER NOT NULL,\n  \
             x_attribution_confidence TEXT NOT NULL,\n  \
             x_collector_version TEXT NOT NULL,\n  \
-            x_pricing_snapshot_id TEXT\n\
+            x_pricing_snapshot_id TEXT,\n  \
+            x_inference_profile_id TEXT\n\
         )"
     )
 }
@@ -281,11 +285,11 @@ impl Store {
                     service_provider_name, host_provider_name, invoice_issuer_name, \
                     sku_id, sku_price_id, sku_meter, pricing_category, pricing_unit, \
                     x_focus_input_version, x_sidechain, x_attribution_confidence, \
-                    x_collector_version, x_pricing_snapshot_id\
+                    x_collector_version, x_pricing_snapshot_id, x_inference_profile_id\
                 ) VALUES (\
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, \
-                    ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36\
+                    ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37\
                 )"
             ))?;
 
@@ -327,6 +331,7 @@ impl Store {
                     row.x_attribution_confidence,
                     row.x_collector_version,
                     row.x_pricing_snapshot_id,
+                    row.x_inference_profile_id,
                 ])?;
             }
         }
@@ -380,7 +385,7 @@ impl Store {
                 service_provider_name, host_provider_name, invoice_issuer_name, sku_id, \
                 sku_price_id, sku_meter, pricing_category, pricing_unit, \
                 x_focus_input_version, x_sidechain, x_attribution_confidence, \
-                x_collector_version, x_pricing_snapshot_id \
+                x_collector_version, x_pricing_snapshot_id, x_inference_profile_id \
              FROM {USAGE_ROWS_TABLE} ORDER BY id"
         ))?;
 
@@ -433,6 +438,7 @@ impl Store {
         let x_attribution_confidence: String = row.get(33)?;
         let x_collector_version: String = row.get(34)?;
         let x_pricing_snapshot_id: Option<String> = row.get(35)?;
+        let x_inference_profile_id: Option<String> = row.get(36)?;
 
         // Enums via the single-source-of-truth inverse: a malformed stored enum is a
         // typed Reconstruct error, never a panic or a silent default.
@@ -542,6 +548,8 @@ impl Store {
         // Pricing provenance (nullable): None on a source-priced/unpriced row, Some on an
         // estimated one. Restore verbatim so the snapshot stamp round-trips (R8).
         record.x_pricing_snapshot_id = x_pricing_snapshot_id;
+        // Bedrock inference-profile id (nullable): None off-Bedrock. Restore verbatim.
+        record.x_inference_profile_id = x_inference_profile_id;
 
         Ok(record)
     }
@@ -799,6 +807,7 @@ mod tests {
             x_attribution_confidence: _,
             x_collector_version: _,
             x_pricing_snapshot_id: _,
+            x_inference_profile_id: _,
             // INTENTIONALLY DROPPED — re-derived identically by `unpriced_usage` on replay
             // (so the round-trip stays byte-identical) OR a free-text-capable / non-derivable
             // FOCUS column that R4 forbids the store from retaining at all.

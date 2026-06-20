@@ -439,6 +439,13 @@ pub struct FocusRecord {
     /// provenance id — never content.
     #[serde(rename = "x_PricingSnapshotId")]
     pub x_pricing_snapshot_id: Option<String>,
+    /// The Amazon Bedrock **Application Inference Profile** identifier a cloud row is
+    /// attributed to (M2 / D4) — the bounded SYSTEM id (the inference-profile id / last ARN
+    /// segment), enabling per-workload attribution. **Never** the user-chosen profile *name*
+    /// or cost-allocation *tags* (those are free text → R4-forbidden). `None` on every
+    /// non-Bedrock row. A bounded id — never content.
+    #[serde(rename = "x_InferenceProfileId")]
+    pub x_inference_profile_id: Option<String>,
 }
 
 impl FocusRecord {
@@ -552,6 +559,9 @@ impl FocusRecord {
             // this row is estimated from a bundled/override snapshot; stays None on a
             // source-authoritative row and on as-yet-unpriced rows (R8 honesty).
             x_pricing_snapshot_id: None,
+            // Set only by the cloud-import bridge for an Amazon Bedrock row carrying an
+            // application-inference-profile id; None on every other row.
+            x_inference_profile_id: None,
         })
     }
 }
@@ -934,7 +944,7 @@ mod tests {
             assert!(fields.contains(&required), "missing column {required}");
         }
         assert!(header.ends_with(
-            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion,x_Sidechain,x_AttributionConfidence,x_CollectorVersion,x_PricingSnapshotId"
+            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion,x_Sidechain,x_AttributionConfidence,x_CollectorVersion,x_PricingSnapshotId,x_InferenceProfileId"
         ));
     }
 
@@ -1092,6 +1102,7 @@ mod tests {
             x_attribution_confidence: _,
             x_collector_version: _,
             x_pricing_snapshot_id: _,
+            x_inference_profile_id: _,
         } = rec;
 
         // The one description-named column is always the DERIVED form — never user content.

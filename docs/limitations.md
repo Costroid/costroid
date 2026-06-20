@@ -55,6 +55,16 @@ re-estimated from the layered catalog like a local log, and gets a catalog `SkuP
 rate + the `x_PricingSnapshotId` provenance stamp. (Source-authoritative rows carry **no**
 `x_PricingSnapshotId` — they are the bill, not an estimate against a snapshot.)
 
+## Bedrock workload attribution is the profile ID only
+
+Amazon Bedrock **Application Inference Profile** spend is attributed by the bounded
+**system inference-profile id** (`x_InferenceProfileId`) — never the user-chosen profile
+*name* or cost-allocation *tags*, which are free text and would violate R4. The importer
+reads only a dedicated bounded id column; a profile name in the source (or `ResourceId` /
+`Tags`) is not a field it reads, so serde drops it at parse. The real AWS Data Exports
+column carrying the id is C4-truable (localized to `FocusV12Mapping`); the synthetic
+fixtures use `x_InferenceProfileId`.
+
 ## FOCUS v1.2 import fixtures are a metadata subset
 
 The committed `fixtures/focus/v1.2/synthetic-v12-*` and `synthetic-aws-v12.csv` are a
