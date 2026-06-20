@@ -8,12 +8,16 @@
 > CLI). Line numbers/symbols were verified against the tree at synthesis time; **re-verify
 > before editing — the code wins.** Tracked from [`../PROGRESS.md`](../PROGRESS.md).
 >
-> **Status: AWAITING HUMAN SIGN-OFF (no code written).** Per CLAUDE.md "Decide vs ask", the
-> §1.5 decisions (export/output schema, public CLI surface, network/secrets boundary) are
-> surfaced below and must be signed off **before** any T-task is coded. M2 then executes on
-> the per-task dev-loop (fresh-context build → independent adversarial review → fix → commit)
-> and **STOPS at the M2 milestone boundary** for the human's full fresh-eyes review +
-> clean-build re-verify before merge to `main` (the M1 warm-cache hazard).
+> **Status: EXECUTED — T0–T14 COMPLETE on branch `costroid-next` (2026-06-20).** The §1.5
+> decisions (D1–D6) were signed off (all recommended); every T-task landed on the per-task
+> dev-loop (build → independent adversarial review → fold-in → commit), each green. Both M1
+> deferrals closed (the T14 per-token-rate TODO → M2 T4; the v1.2-input leg → M2 T9). The M2
+> milestone-boundary **clean-build re-verify is done** (`cargo clean` → rebuild: fmt · clippy ·
+> `test --workspace` (25) · store CLI (5) · deny default + all-features · offline-acceptance
+> (7) · pricing-snapshot integrity · focus-validator conformance (8 OK legs) · MSRV 1.88 — all
+> GREEN). **⛔ Awaiting the human's full fresh-eyes review before any merge to `main`**
+> (milestone-boundary cadence; the agent does not merge). See the handoff in
+> [`../PROGRESS.md`](../PROGRESS.md).
 
 # M2 detailed plan — the cloud/API cost lane
 
