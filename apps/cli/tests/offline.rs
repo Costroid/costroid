@@ -387,6 +387,22 @@ const STORE_ALLOWED: &[&str] = &[
     "vcpkg",          // Windows system-lib discovery for `libsqlite3-sys`.
 ];
 
+/// The reviewed crate(s) `--features power` (CLI) is allowed to ADD over the default build (M3).
+///
+/// `costroid-power` is the local-inference economics engine — a pure-compute leaf: its only deps
+/// (`serde`, `serde_json`, `thiserror`) are already in the default CLI graph, so the power-on
+/// delta is exactly the crate itself. The runner is a `std::process` subprocess and the sysfs
+/// read is `std::fs` (no crate), so the power build links NO network/TLS/telemetry/async-runtime
+/// crate; the runtime no-`AF_INET` proof for the power-on build is the offline-acceptance script.
+///
+/// A **subset-allowlist** like the others: if a future dependency bump pulls a NEW crate into the
+/// power graph, this gate trips until a human reviews it. Regenerate with the `#[ignore]`
+/// `print_power_delta` test:
+/// `cargo test -p costroid --test offline print_power_delta -- --ignored --nocapture`.
+const POWER_ALLOWED: &[&str] = &[
+    "costroid-power", // the local-inference engine crate itself (the gated home).
+];
+
 /// The target triples Costroid ships (mirrors `deny.toml` `[graph].targets`). The
 /// reachable graph is resolved once **per target** and unioned (see
 /// [`reachable_crate_names`]).
@@ -711,6 +727,78 @@ fn cli_default_build_is_store_free() {
     }
 }
 
+/// `--features power` (CLI, M3): the off-by-default local-inference engine (`costroid bench`) is
+/// linked, so the reviewed `costroid-power` subtree ([`POWER_ALLOWED`]) is permitted. It is a
+/// pure-compute leaf — the runner is a `std::process` subprocess (A2, not FFI/HTTP) and the
+/// sysfs read is `std::fs` — so EVERY [`ALWAYS_FORBIDDEN_CRATES`] / [`CONNECT_GATED_CRATES`]
+/// member stays forbidden even here (no allowlist excuse), and the power-delta is asserted to be
+/// a SUBSET of `POWER_ALLOWED` (fail-closed).
+#[test]
+fn cli_power_feature_admits_only_power_allowed() {
+    let names = reachable_crate_names(&[CLI_CRATE], &["--features", "power"]);
+
+    // The engine must NOT pull the network/credential home — it is a pure local-compute leaf.
+    assert!(
+        !names.contains(CONNECT_CRATE),
+        "`--features power` must not link `{CONNECT_CRATE}` — the local-inference engine carries \
+         no network/keychain code (the runner is a std::process subprocess, not the HTTP API)."
+    );
+
+    // The power build links NO network/TLS/telemetry/async-runtime crate.
+    let hits = forbidden_hits(
+        &names,
+        ALWAYS_FORBIDDEN_CRATES
+            .iter()
+            .chain(CONNECT_GATED_CRATES.iter())
+            .copied(),
+        &[],
+    );
+    assert!(
+        hits.is_empty(),
+        "the `--features power` build forbids networking/TLS/async-runtime/telemetry crates \
+         (the local-inference engine links none — the runner is a subprocess, the sysfs read is \
+         std::fs), but the resolved graph contains: {hits:?}."
+    );
+
+    // Positive check: `costroid-power` really is linked under `--features power`, so the
+    // POWER_ALLOWED carve-out is load-bearing and not vacuous.
+    assert!(
+        names.contains("costroid-power"),
+        "`--features power` must link `costroid-power` — otherwise the gate is not wired to the \
+         local-inference engine."
+    );
+
+    // Subset-allowlist: bound exactly what `power` ADDS over the default CLI build, so a future
+    // dependency bump that introduces a NEW crate trips this gate for a human to review.
+    let default = reachable_crate_names(&[CLI_CRATE], &[]);
+    let allowed: BTreeSet<&str> = POWER_ALLOWED.iter().copied().collect();
+    let unexpected: Vec<&str> = names
+        .difference(&default)
+        .map(String::as_str)
+        .filter(|name| !allowed.contains(name))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "`--features power` introduced crate(s) not in the reviewed allowlist: {unexpected:?}.\n\
+         Every crate the power-on graph adds must be reviewed (is it a network / TLS / telemetry \
+         path?) and, if legitimate, added to POWER_ALLOWED. Regenerate the expected delta with: \
+         `cargo test -p costroid --test offline print_power_delta -- --ignored --nocapture`."
+    );
+}
+
+/// The default CLI build is power-free: `costroid-power` is not linked when the off-by-default
+/// `power` feature is off, so the default/local-only build carries no local-inference engine and
+/// the `costroid bench` subcommand does not exist.
+#[test]
+fn cli_default_build_is_power_free() {
+    let names = reachable_crate_names(&[CLI_CRATE], &[]);
+    assert!(
+        !names.contains("costroid-power"),
+        "the default CLI build must not link `costroid-power` — the `power` feature must be off by \
+         default so the local-only build carries no local-inference engine."
+    );
+}
+
 // =====================================================================================
 // Taskbar binary (`costroid-bar`) — admits ONLY the reviewed AccessKit local-IPC subtree
 // =====================================================================================
@@ -944,6 +1032,21 @@ fn print_store_delta() {
     let store = reachable_crate_names(&[CLI_CRATE], &["--features", "store"]);
     let delta: Vec<&String> = store.difference(&default).collect();
     println!("STORE_DELTA ({} crates):", delta.len());
+    for name in &delta {
+        println!("  {name}");
+    }
+}
+
+/// Prints the exact crates `--features power` adds to the CLI over the default build, unioned
+/// across all shipped targets. Run to regenerate [`POWER_ALLOWED`]:
+/// `cargo test -p costroid --test offline print_power_delta -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_power_delta() {
+    let default = reachable_crate_names(&[CLI_CRATE], &[]);
+    let power = reachable_crate_names(&[CLI_CRATE], &["--features", "power"]);
+    let delta: Vec<&String> = power.difference(&default).collect();
+    println!("POWER_DELTA ({} crates):", delta.len());
     for name in &delta {
         println!("  {name}");
     }
