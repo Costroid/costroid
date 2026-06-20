@@ -10,13 +10,17 @@
 > were verified against the tree at synthesis time; **re-verify before editing — the code
 > wins.** Tracked from [`../PROGRESS.md`](../PROGRESS.md).
 >
-> **Status: T0 DONE (canon reconciled); D1–D5 ✅ SIGNED OFF 2026-06-20 (all recommended);
-> EXECUTING T1–T13 on the per-task dev-loop.** Per CLAUDE.md "ask first" the export-schema
-> columns (the 7 local `x_` columns), the public CLI surface (`bench`), and the LHM
-> loopback-read seam were sign-off-gated; all five decisions are now signed off (see §1.5).
-> Work happens on branch `costroid-next` (off the merged main); the human reviews again at the
-> **M3a milestone boundary** before the next merge. **M3b is a separate human handoff** (a real
-> captured joules/token; never fabricated — R10).
+> **Status: ✅ EXECUTED — T0–T13 COMPLETE on branch `costroid-next` (2026-06-20).** D1–D5 signed
+> off (all recommended); every task landed on the per-task dev-loop (build → independent
+> adversarial review → fold-in → commit), each green. The **milestone-boundary clean-build
+> re-verify is done** (`cargo clean` → rebuild: fmt · clippy `--workspace` · `test --workspace`
+> (26) · power feature · store · deny default+all-features · power+pricing integrity · MSRV 1.88
+> (workspace + power) · offline-acceptance · focus-validator conformance (8 OK legs incl. the
+> 3-lane merged ledger) — all GREEN), and a final independent boundary review APPROVED. **⛔
+> Awaiting the human's full fresh-eyes review before any merge to `main`** (milestone-boundary
+> cadence; the agent does not merge). **M3b** (a real captured joules/token — wall-meter-primary)
+> is a SEPARATE human handoff and does NOT block M4. See the handoff in
+> [`../PROGRESS.md`](../PROGRESS.md) note (n).
 
 # M3 detailed plan — the dual-mode local-inference cost engine
 

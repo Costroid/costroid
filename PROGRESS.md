@@ -16,8 +16,17 @@
 > independently reviewed at the milestone boundary (APPROVED, no high/medium), re-verified on a
 > clean build, merged. Detail: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)**.
 >
-> **Current milestone: M3 (dual-mode local-inference engine, Gemma 4 family) — D1–D5 ✅
-> SIGNED OFF 2026-06-20; EXECUTING T1–T13.** The detailed T-plan is written:
+> **Current milestone: M3a (dual-mode local-inference engine, Gemma 4 family) — ✅ BUILT
+> (T0–T13); ⛔ STOP at the milestone boundary for the human's fresh-eyes review before any
+> merge to `main`.** D1–D5 signed off (all recommended); every task landed on the per-task
+> dev-loop (build → independent adversarial review → fold-in → commit), each green; the
+> milestone-boundary **clean-build re-verify is done** (full `cargo clean` → rebuild: fmt ·
+> clippy `--workspace` · `test --workspace` (26) · power feature clippy+test · store · deny
+> default+all-features · power+pricing integrity · MSRV 1.88 (workspace + power) ·
+> offline-acceptance (default no-socket + server loopback-only) · focus-validator conformance
+> (8 OK legs incl. the 3-lane merged ledger) — all GREEN), and a final independent boundary
+> review APPROVED (no high/medium/low). **M3b (a real captured joules/token) is a SEPARATE
+> human handoff and does NOT block M4** (see handoff note (n)). The detailed T-plan:
 > **[`docs/M3-PLAN.md`](docs/M3-PLAN.md)** — T0 (canon reconciled to the four-source,
 > wall-meter-led measured ladder) DONE; T1–T13 ordered, with a deciding test per task and the
 > §1.5 schema / public-CLI / network-boundary decisions surfaced for sign-off (D1–D5). **No M3
@@ -329,8 +338,14 @@ starting **M1**.
   **✅ MERGED to `main` (PR #3, 2026-06-20; CI green).** Executed T0–T14 + D1–D6 + 3 LOW
   fold-ins (full-sha pin in Rust, README accuracy, the non-vacuous D2 shadowing guard);
   milestone-boundary review APPROVED (no high/medium); clean-build re-verify green.
-- [ ] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
-  *(PLAN SYNTHESIZED 2026-06-20 — [`docs/M3-PLAN.md`](docs/M3-PLAN.md); T0 canon reconciliation done; T1–T13 awaiting D1–D5 sign-off.)*
+- [x] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
+  **✅ BUILT (T0–T13); ⛔ at the milestone boundary awaiting the human's review before merge.**
+  Four-source wall-meter-led sampler (+MeasuredLhm); subprocess llama.cpp/Ollama runner;
+  benchmark harness; dated/stamped/sha256'd hardware+electricity profile + Gemma 4 manifest;
+  the 7 local `x_` columns through focus/store/core; `costroid bench` behind the off-by-default
+  `power` feature; deterministic cost-math on synthetic power; measured-vs-estimated stamped;
+  3-lane merged ledger validated. Reviewed per-task + mid-point + a final boundary sweep (all
+  APPROVE). See [`docs/M3-PLAN.md`](docs/M3-PLAN.md).
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
 - [ ] **M4** — break-even + scenario engine (incl. "never" case); DeepSWE-Bench dated snapshot wired.
 - [ ] **M5** — CLI/TUI + tiny_http local API + 3-view embedded web UI (loopback-only).
@@ -340,6 +355,48 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (n) — M3a COMPLETE (T0–T13); ⛔ STOP at the milestone boundary for the human's
+  full fresh-eyes review before any merge to `main`.** Branch `costroid-next`. All tasks landed
+  on the per-task dev-loop (build → independent adversarial review → fold-in → commit), each
+  green. Commits since (m): `a15bd8f`/`3f5b218` **T0** (canon reconciled to the four-source
+  wall-meter-led ladder) · `2d35861` D1–D5 sign-off · `1eb707d` **T1** (MeasuredLhm +
+  wall-meter-led selector + LHM seam) · `0cd24c2` **T2+T3** (the 7 local `x_` columns + the
+  store fan-out; reviewed APPROVE, store verified byte-correct) · `151a211` **T4** (enriched
+  `LocalRunEvent`) · `7eaf750` **T5** (dated hardware/electricity profile + loader, R8) ·
+  `9a73fea` **T6** (Gemma 4 manifest + loader, R10) · `da28d6e` **T7+T8** (harness + subprocess
+  runner + stub + stats-parse goldens) · `b831d7b` **T9** (`local_run_to_focus` maps the 7
+  columns + cost + the measured/estimated stamp) · `271ccd1` **T10** (LHM parser seam +
+  fixture) · `a9513ef` **T11** (`costroid bench` CLI + `power` feature + offline POWER_ALLOWED
+  guard) · `76bf9de` **mid-review fold-ins** (cost-NaN guard + the `--runtime-model` split;
+  from the APPROVE-WITH-FIXES mid-point review) · `9966ebb` **T12** (3-lane merged-ledger
+  conformance + `check_power_profiles.sh` + CI power-feature steps) · `b4e8cfb` **T13** (docs:
+  limitations/ARCHITECTURE/CLAUDE). The §4 non-negotiables held: **honesty/R10** (measured-vs-
+  estimated stamped per row; tok/s + quality estimated/as-published; CI asserts no real power
+  number — synthetic fixtures only), **R1/cross-platform** (`power` off by default; Linux+power
+  gated, clean stubs elsewhere; green both feature states on Linux/macOS/Windows), **subprocess
+  not FFI (A2)** (the runner is `std::process`; no async runtime; the LHM live read deferred to
+  M3b so M3a carries zero AF_INET code → the CLI stays byte-for-byte no-network), **R4** (the
+  runner discards model output; bounded columns + the no-`..` forcing functions), **R7** (sysfs
+  primary, amd-smi unverified; Vulkan default is a runtime/doc concern for M3b), **models =
+  Gemma 4 (Apache-2.0)**, **R8** (dated/stamped/sha256'd profile + manifest + a fail-closed CI
+  integrity check). **CLEAN-BUILD RE-VERIFY done** (`cargo clean` → 12.3 GB removed → rebuild,
+  `CARGO_INCREMENTAL=0`): fmt · clippy `--workspace` · `test --workspace` (26 groups) · power
+  feature (clippy+test) · store · cargo-deny (default + all-features) · power+pricing integrity
+  · MSRV 1.88 (workspace + power) · offline-acceptance · **focus-validator conformance exit 0 /
+  8 OK legs (incl. the 3-lane merged ledger)** — all GREEN. A final independent boundary review
+  APPROVED (no high/medium/low). **Next: the human's full independent fresh-eyes review at the
+  M3a boundary, then push `costroid-next` → CI-green → merge to `main`** (NOT done by the agent
+  — milestone-boundary cadence).
+  - **M3b is the SEPARATE human handoff (does NOT block M4): request the on-hardware run.** A
+    real captured **joules/token** flows through the SAME columns (no new schema). In order of
+    convenience: **(1) PRIMARY — the wall meter on the Strix Halo** (Windows/WSL, ~$20 smart
+    plug → true total draw, no dual-boot): `costroid bench --measure --wall-meter-watts <W>
+    --model gemma-4-26b-a4b [--runtime-model <ollama-tag|gguf-path>]` on a real Gemma 4 model.
+    (2) optional — implement the LHM live loopback read (gated `windows`+`power`, loopback-only
+    + its own offline carve-out) and field-verify the package sensor on the 8060S. (3) optional
+    — confirm `power1_average` on native Linux (dual-boot, now OPTIONAL). (4) optional — the
+    5800H native-Linux box with a small model (E2B/E4B). **NEVER fabricate a power/tok-s
+    number.** M4 (break-even) can proceed on the estimated engine in parallel.
 - **2026-06-20 (m) — M3 T0 DONE (canon reconciled); M3-PLAN synthesized; ⛔ STOP for D1–D5
   sign-off before any code.** On branch `costroid-next`. **T0 (before building):** committed
   the uncommitted §5.3/§5.4 edits (`a15bd8f` — the wall-meter-led measured ladder) then
