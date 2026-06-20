@@ -306,7 +306,9 @@ starting **M1**.
   golden collectors. **✅ MERGED to `main` (PR #2, 2026-06-20; CI green).** Lean export schema
   (T2/T3) + `import` CLI (T19) signed off; Parquet deferred (T1 spike clean but heavy); C1 resolved
   synthetically (real-AWS leg present-but-SKIP, T18). Milestone-boundary review: 5× APPROVE, fold-ins in.
-- [ ] **M2** — LiteLLM snapshot pricing; AWS-FOCUS import; Bedrock AIP path; merged ledger.
+- [x] **M2** — LiteLLM snapshot pricing; AWS-FOCUS import; Bedrock AIP path; merged ledger.
+  **Executed T0–T14 on `costroid-next` ([`docs/M2-PLAN.md`](docs/M2-PLAN.md)); ⛔ awaiting the
+  human's milestone-boundary review before merge to `main`** (clean-build re-verify done).
 - [ ] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
 - [ ] **M4** — break-even + scenario engine (incl. "never" case); DeepSWE-Bench dated snapshot wired.
@@ -317,6 +319,29 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (k) — M2 COMPLETE (T0–T14); ⛔ STOP at the milestone boundary for the human's
+  fresh-eyes review before any merge to `main`.** Branch `costroid-next`. All 14 tasks landed
+  on the per-task dev-loop (build → independent adversarial review → fold-in → commit), each
+  green. Commits since (j): `fe4598a` T4 (foreign pricing detail; closes the M1 T14 per-token
+  deferral) · `1c0b797` T5 (multi-currency, no FX) · `f1ee8ba` T6 (cloud long-tail repricing) ·
+  `9161bc2` T7+T9 (full v1.2 fixture + the v1.2-INPUT validation leg; closes the M1 fold-in
+  deferral) · `22b49a4` T8 (Bedrock AIP `x_InferenceProfileId`, D4) · `4fe6e18` **T10 — the M2
+  deciding test (merged dev-tool+cloud ledger; lanes separate, only grand_total crosses)** ·
+  `9a51d0e` T11 (authoritative-vs-estimate cloud reconciliation, reuses the engine) · `dd799ce`
+  T12 (CLI: import generalization + `--pricing-override`, D5) · `b0841ed` T13 (live-AWS boundary
+  doc, D6 — no live code) · `7f93e03` T14 (CI wiring: pricing-snapshot integrity + the new
+  conformance legs). The 4 M2 non-negotiables held: **pricing integrity** (bundled/dated/hashed
+  LiteLLM snapshot + override, never a fetch, `x_PricingSnapshotId` stamp), **network boundary**
+  (file-import only; zero new CLI-reachable deps; offline gate byte-for-byte), **R4** (every new
+  column bounded; the no-`..` forcing functions + the Bedrock name-drop test), **lane integrity**
+  (every $-summer gated; merged ledger keeps lanes separate). Both M1 deferrals closed.
+  **CLEAN-BUILD RE-VERIFY done** (`cargo clean` → 9.1 GB removed → rebuild, `CARGO_INCREMENTAL=0`):
+  fmt · clippy `--workspace --all-targets` · `test --workspace` (25 groups) · store-feature CLI
+  (5) · cargo-deny (default + all-features) · offline-acceptance (7) · pricing-snapshot integrity
+  · **full focus-validator conformance exit 0 / 8 OK legs** · MSRV 1.88 (store) — all GREEN.
+  **Next: the human's full independent fresh-eyes review at the M2 boundary, then push
+  `costroid-next` → CI-green → merge to `main`** (NOT done by the agent — milestone-boundary
+  cadence). M3 (local-inference engine) is the next milestone after the merge.
 - **2026-06-20 (j) — M2 IN PROGRESS: T0–T6 done (on `costroid-next`); next T7.**
   Continuing the per-task dev-loop (build → independent adversarial review → fold-in → commit):
   - `fe4598a` **T4** — carry foreign authoritative pricing detail (closes the M1 T14
