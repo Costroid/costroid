@@ -10,13 +10,13 @@
 > were verified against the tree at synthesis time; **re-verify before editing — the code
 > wins.** Tracked from [`../PROGRESS.md`](../PROGRESS.md).
 >
-> **Status: T0 DONE (canon reconciled); T1–T13 PLAN SYNTHESIZED — ⛔ awaiting D1–D5 sign-off
-> before any code.** Per CLAUDE.md "ask first": M3 adds export-schema columns (the 7 local
-> `x_` columns), a public CLI surface (`bench`), and an LHM loopback-read seam adjacent to the
-> network boundary — none may be coded until D1–D5 are signed off. Work happens on branch
-> `costroid-next` (off the merged main); the human reviews again at the **M3a milestone
-> boundary** before the next merge. **M3b is a separate human handoff** (a real captured
-> joules/token; never fabricated — R10).
+> **Status: T0 DONE (canon reconciled); D1–D5 ✅ SIGNED OFF 2026-06-20 (all recommended);
+> EXECUTING T1–T13 on the per-task dev-loop.** Per CLAUDE.md "ask first" the export-schema
+> columns (the 7 local `x_` columns), the public CLI surface (`bench`), and the LHM
+> loopback-read seam were sign-off-gated; all five decisions are now signed off (see §1.5).
+> Work happens on branch `costroid-next` (off the merged main); the human reviews again at the
+> **M3a milestone boundary** before the next merge. **M3b is a separate human handoff** (a real
+> captured joules/token; never fabricated — R10).
 
 # M3 detailed plan — the dual-mode local-inference cost engine
 
@@ -109,6 +109,22 @@ JSON parser + a fixture).
 > These are the **export/output-schema, public-CLI, and network-boundary** decisions M3
 > cannot make unilaterally. **No T-task is coded until these are signed off.** Recommended
 > defaults are marked ★; the highest-leverage ones are asked interactively.
+>
+> **✅ SIGNED OFF 2026-06-20 (all recommended ★):**
+> - **D1 → (a)** wall-meter-led selector (wall meter → on-chip → estimated) + a 4th
+>   `MeasuredLhm` (`measured_lhm`) mode.
+> - **D2 → (a)** all 7 §6.4 local `x_` columns land in M3a; M3b is data-only (no new column).
+> - **D3 → (a)** bundled dated/stamped/overridable hardware+electricity profile; the default
+>   electricity rate is **`0.16 USD/kWh`, `as_of 2026-06-20`,
+>   `label "global-household-average-template"`, `estimated`**, overridable via
+>   `--electricity-rate` / `[power]`; the Turkey EPDK tariff is the documented override
+>   template (not the baked default).
+> - **D4 → (a)** Gemma 4 family manifest (31B dense, 26B-A4B, 12B unified, E2B/E4B), default
+>   quant **`Q4_K_M`** (`Q8_0` for the quality-sensitive variant); quality from published
+>   scores (source + date, never re-derived); tok/s `estimated` until M3b.
+> - **D5 → (a)** add `costroid bench` behind an off-by-default `power` CLI feature (estimated/
+>   what-if default + `--measure`); the LHM live loopback read is **deferred to M3b** (M3a ships
+>   the parser-only seam) → the default CLI stays byte-for-byte no-network.
 
 - **D1 — The selector order (runtime behavior).** **(a) ★ Wall-meter-led:** the runtime
   selector picks **wall meter if configured → else on-chip if available (sysfs on Linux / LHM
