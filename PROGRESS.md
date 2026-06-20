@@ -6,10 +6,15 @@
 > a **local web UI** on top of the shipped v0.6.0 tool. This file is the resume-point (§2.5): a new
 > session reads `CLAUDE.md` → this file → the last handoff note, then runs the gate to confirm state.
 >
-> **Current milestone: M1 (core model + storage + FOCUS export + collectors) — COMPLETE on
-> branch `costroid-next`, awaiting the human's full fresh-eyes milestone-boundary review
-> before merge to main.** M0 was approved + committed; M1 executed end-to-end (T0–T19 + C1)
-> on the per-task dev-loop. Do not merge to main until the human signs off at the boundary.
+> **M1 (core model + storage + FOCUS export + collectors) — ✅ MERGED to `main`** (PR #2,
+> rebased, 2026-06-20; CI green incl. macOS/Windows builds + the FOCUS validator). It was
+> executed end-to-end (T0–T19 + C1) on the per-task dev-loop, independently reviewed at the
+> milestone boundary (5× APPROVE, 0 HIGH/MEDIUM), and the LOW fold-ins folded in.
+>
+> **Current milestone: M2 (cloud/API cost lane) — NOT STARTED.** Scope + deciding test +
+> task seeds are framed in the M2 section below; the detailed T-plan is synthesized at the
+> M2 kickoff (the M0→M1 pattern). Work happens on branch `costroid-next` (recreated off the
+> merged main); the human reviews at the M2 milestone boundary before the next merge.
 
 ---
 
@@ -163,7 +168,7 @@ plan + human inputs written. **Deciding test:** the verification gate above is g
   1.3 validator (existing `focus_conformance.sh`, extended with a JSON leg + a synthetic-v1.2 round-trip
   leg) passes + a Claude/Codex collector golden test asserting the normalized `FocusRecord` row.
 
-### M2 — Cloud/API cost lane
+### M2 — Cloud/API cost lane  *(NEXT — teed up 2026-06-20)*
 - LiteLLM pricing **bundled dated snapshot + user override** (never a runtime fetch, R8); API-log
   pricing (historical/tiered); **AWS Data Exports FOCUS import** + **Bedrock Application Inference
   Profile** path — **ingest user-provided exported files only (pure-local parse in providers/core)**;
@@ -171,6 +176,32 @@ plan + human inputs written. **Deciding test:** the verification gate above is g
   `connect`, keychain-only, with human sign-off (⚑ D).
 - **Deliverable:** unified developer-tool + cloud/API ledger. **Deciding test:** a merged-ledger
   fixture test (synthetic AWS FOCUS sample + dev-tool logs → one FOCUS ledger).
+
+> **M2 starting position (what M1 already laid down):** the `cloud_api` ledger lane + the
+> `CloudUsageEvent` model + `cloud_usage_to_focus` (source-priced) + `focus_records_from_v12_import`
+> + the `costroid import` CLI + the FOCUS-import seam (`FocusV12Mapping`) all exist and are merged.
+> So M2 builds ON this, not from scratch.
+>
+> **M2 task seeds (synthesize the detailed T-plan at the M2 /goal):**
+> 1. **LiteLLM pricing snapshot** — a bundled dated `litellm-prices.<date>.json` + user override;
+>    source at build time (R8, never a runtime fetch); wire into the cloud-lane repricing path
+>    (the M1 bridge already reprices usage-only rows from the *bundled* catalog — generalize it).
+> 2. **Carry the foreign authoritative pricing** through the import (the M1 deferral): read the
+>    v1.2 `SkuPriceId`/`PricingQuantity`/unit-price columns into the cloud row so a source-priced
+>    import is fully-priced (closes the per-token-rate gap in `docs/limitations.md`), + multi-currency.
+> 3. **AWS Data Exports FOCUS** + **Bedrock Application Inference Profile** — true the synthetic
+>    AWS fixtures to real column shapes; expand `fixtures/focus/v1.2/` toward full mandatory coverage
+>    and (now feasible — see below) **wire the v1.2-INPUT validation leg** the M1 fold-in deferred.
+> 4. **Merged-ledger view** — dev-tool + cloud_api in one FOCUS ledger; the merged-ledger deciding
+>    test (synthetic AWS FOCUS sample + dev-tool logs → one ledger), lane totals never cross-summed.
+>
+> **M2 inputs:** **C4** (a real AWS account w/ Data Exports FOCUS + a Bedrock AIP) unblocks the
+> *real* AWS/Bedrock leg — but **M2 can begin entirely on synthetic AWS FOCUS samples**, exactly as
+> M1 did (real leg stays present-but-SKIP until C4). No human input is required to START M2.
+>
+> **Dev note:** a real `focus-validator 2.1.0` is installable locally via `uv` (a venv) — used at the
+> M1 boundary to verify the conformance legs against the real validator. M2 should do the same when
+> expanding the AWS fixtures + the input-validation leg.
 
 ### M3 — Dual-mode local-inference engine  *(irreducible core)*
 - **M3a (agent-ownable, CI-tested):** the `PowerSampler` trait + 3 impls + runtime probing +
@@ -269,9 +300,9 @@ starting **M1**.
 - [x] **M0** — audit; decisions A locked; spikes B recorded (DuckDB→SQLite); scaffold green; plan +
   human inputs written; offline allowlist + loopback proof in place. *(Awaiting human checkpoint.)*
 - [x] **M1** — three-lane event model + SQLite store + v1.2-in/v1.3-out FOCUS export (validated) +
-  golden collectors. **DONE on `costroid-next` (T0–T19 + C1); awaiting the human's milestone-boundary
-  review before merge.** Lean export schema (T2/T3) + `import` CLI (T19) signed off; Parquet deferred
-  (T1 spike clean but heavy); C1 resolved synthetically (real-AWS leg present-but-SKIP, T18).
+  golden collectors. **✅ MERGED to `main` (PR #2, 2026-06-20; CI green).** Lean export schema
+  (T2/T3) + `import` CLI (T19) signed off; Parquet deferred (T1 spike clean but heavy); C1 resolved
+  synthetically (real-AWS leg present-but-SKIP, T18). Milestone-boundary review: 5× APPROVE, fold-ins in.
 - [ ] **M2** — LiteLLM snapshot pricing; AWS-FOCUS import; Bedrock AIP path; merged ledger.
 - [ ] **M3a** — PowerSampler engine + runner + harness + synthetic cost-math (cross-platform green).
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
@@ -283,6 +314,23 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (g) — M1 ✅ MERGED to `main` (PR #2); M2 teed up; ready for the M2 /goal.**
+  After the human's milestone-boundary review (APPROVED for merge), the 4 LOW fold-ins landed
+  on the per-task dev-loop, independently re-reviewed by a 5-agent adversarial workflow
+  (**5× APPROVE, 0 HIGH/MEDIUM**; 3 LOW: the `window_token_volume` ungated-token-summer
+  asymmetry was FIXED with a gate + cross-lane test, `docs/limitations.md` tightened, the
+  `all_lane_daily_token_series` name kept as cosmetic). Fold-in commits `cedae3d` (core
+  lane-gate + deferral doc) + `27d6f28` (conformance hardening + accurate v1.2 docs).
+  **Poisoned warm cache resolved** (`cargo clean` → clean rebuild, no phantom errors).
+  **Verified the conformance gate against a REAL focus-validator 2.1.0** (installed locally via
+  `uv`): CSV leg Fail:9 (exact pin), JSON equivalence (15 rows), four v1.2 round-trip legs
+  Fail:4 (clean subset), real-AWS SKIP. Pushed `costroid-next` → **CI green on every job
+  (incl. macOS + Windows cross-platform builds, FOCUS validator, MSRV 1.88, cargo-deny,
+  offline-acceptance)** → merged via `gh pr merge --rebase --delete-branch`. main builds clean.
+  **Next: the M2 /goal** — see the "M2 — Cloud/API cost lane" section above for the scope,
+  deciding test, the 4 task seeds, and the M1 starting position M2 builds on. M2 can begin on
+  synthetic AWS FOCUS samples with NO human input (C4 unblocks only the real AWS/Bedrock leg).
+  Work on the recreated `costroid-next` branch; stop at the M2 milestone boundary for review.
 - **2026-06-19 (f) — M1 COMPLETE (T0–T19 + C1); ⛔ STOP at the milestone boundary for the
   human's full fresh-eyes review before merge.** Branch `costroid-next`, the FOCUS-import
   half landed on the per-task dev-loop (build → independent adversarial review → fix →
