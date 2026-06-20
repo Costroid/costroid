@@ -40,7 +40,7 @@ use thiserror::Error;
 /// The schema version of the [`usage_rows`](USAGE_ROWS_TABLE) layout. Bumped whenever
 /// the persisted column set changes so a future replay/migration step can tell shapes
 /// apart. Stamped into [`STORE_META_TABLE`] on open.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// The one persisted table.
 pub const USAGE_ROWS_TABLE: &str = "usage_rows";
@@ -109,6 +109,9 @@ pub const USAGE_ROWS_COLUMNS: &[&str] = &[
     "x_sidechain",              // INTEGER 0/1
     "x_attribution_confidence", // "confident" / "uncertain"
     "x_collector_version",      // the Costroid version that minted the row
+    // Pricing provenance — the bundled/override snapshot that priced an estimated row
+    // ("{source}@{as_of}#{hash8}"); nullable (null on source-priced/unpriced). Never content.
+    "x_pricing_snapshot_id",
 ];
 
 /// `CREATE TABLE` DDL for the [`usage_rows`](USAGE_ROWS_TABLE) metadata-allowlist table.
@@ -154,7 +157,8 @@ pub fn usage_rows_ddl() -> String {
             x_focus_input_version TEXT,\n  \
             x_sidechain INTEGER NOT NULL,\n  \
             x_attribution_confidence TEXT NOT NULL,\n  \
-            x_collector_version TEXT NOT NULL\n\
+            x_collector_version TEXT NOT NULL,\n  \
+            x_pricing_snapshot_id TEXT\n\
         )"
     )
 }
@@ -277,11 +281,11 @@ impl Store {
                     service_provider_name, host_provider_name, invoice_issuer_name, \
                     sku_id, sku_price_id, sku_meter, pricing_category, pricing_unit, \
                     x_focus_input_version, x_sidechain, x_attribution_confidence, \
-                    x_collector_version\
+                    x_collector_version, x_pricing_snapshot_id\
                 ) VALUES (\
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, \
-                    ?29, ?30, ?31, ?32, ?33, ?34, ?35\
+                    ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36\
                 )"
             ))?;
 
@@ -322,6 +326,7 @@ impl Store {
                     i64::from(row.x_sidechain),
                     row.x_attribution_confidence,
                     row.x_collector_version,
+                    row.x_pricing_snapshot_id,
                 ])?;
             }
         }
@@ -375,7 +380,7 @@ impl Store {
                 service_provider_name, host_provider_name, invoice_issuer_name, sku_id, \
                 sku_price_id, sku_meter, pricing_category, pricing_unit, \
                 x_focus_input_version, x_sidechain, x_attribution_confidence, \
-                x_collector_version \
+                x_collector_version, x_pricing_snapshot_id \
              FROM {USAGE_ROWS_TABLE} ORDER BY id"
         ))?;
 
@@ -427,6 +432,7 @@ impl Store {
         let x_sidechain: i64 = row.get(32)?;
         let x_attribution_confidence: String = row.get(33)?;
         let x_collector_version: String = row.get(34)?;
+        let x_pricing_snapshot_id: Option<String> = row.get(35)?;
 
         // Enums via the single-source-of-truth inverse: a malformed stored enum is a
         // typed Reconstruct error, never a panic or a silent default.
@@ -533,6 +539,9 @@ impl Store {
         record.x_sidechain = x_sidechain != 0;
         record.x_attribution_confidence = x_attribution_confidence;
         record.x_collector_version = x_collector_version;
+        // Pricing provenance (nullable): None on a source-priced/unpriced row, Some on an
+        // estimated one. Restore verbatim so the snapshot stamp round-trips (R8).
+        record.x_pricing_snapshot_id = x_pricing_snapshot_id;
 
         Ok(record)
     }
@@ -789,6 +798,7 @@ mod tests {
             x_sidechain: _,
             x_attribution_confidence: _,
             x_collector_version: _,
+            x_pricing_snapshot_id: _,
             // INTENTIONALLY DROPPED — re-derived identically by `unpriced_usage` on replay
             // (so the round-trip stays byte-identical) OR a free-text-capable / non-derivable
             // FOCUS column that R4 forbids the store from retaining at all.
@@ -998,6 +1008,9 @@ mod tests {
         let mut sidechain_dev = record(LedgerLane::DeveloperTool, 1_234); // estimated, "12.34"
         sidechain_dev.x_sidechain = true;
         sidechain_dev.x_attribution_confidence = "uncertain".to_string();
+        // An ESTIMATED row carries the pricing-snapshot stamp (R8); set it non-default so
+        // its round-trip is non-vacuous (the source-priced cloud row below keeps None).
+        sidechain_dev.x_pricing_snapshot_id = Some("litellm@2026-06-18#36c8994e".to_string());
         let originals = vec![
             sidechain_dev,         // estimated dev-tool sidechain row
             priced_cloud_record(), // source-priced cloud_api row
@@ -1018,6 +1031,14 @@ mod tests {
         // Non-vacuous: the priced row kept its real cost, "priced" status, not-estimated
         // flag, and cloud_api lane after the round-trip (it did NOT collapse to the
         // unpriced default).
+        // The estimated dev-tool row's pricing-snapshot stamp survived replay (R8); the
+        // source-priced cloud row carries no stamp (None) and stays None.
+        assert_eq!(
+            reconstructed[0].x_pricing_snapshot_id,
+            Some("litellm@2026-06-18#36c8994e".to_string())
+        );
+        assert!(reconstructed[1].x_pricing_snapshot_id.is_none());
+
         let cloud = &reconstructed[1];
         assert_eq!(cloud.x_lane, "cloud_api");
         assert_eq!(cloud.x_pricing_status, "priced");
