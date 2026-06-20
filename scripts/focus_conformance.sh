@@ -21,8 +21,11 @@ py="${FOCUS_VALIDATOR_PYTHON:-python3}"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
-echo "==> Building costroid"
-cargo build -q -p costroid
+echo "==> Building costroid (with the power feature for the local-inference bench row)"
+# The `power` feature only ADDS the `bench` subcommand + links costroid-power; it changes
+# neither `export` nor `import` output (byte-identical), so building it for the whole script is
+# safe and lets the merged-ledger leg below include a real `local_inference` row.
+cargo build -q -p costroid --features power
 bin="$repo_root/target/debug/costroid"
 
 echo "==> Exporting FOCUS CSV from committed fixtures"
@@ -137,10 +140,24 @@ import_and_validate "$v12_dir/synthetic-aws-v12.csv"      focus-csv  "v12-aws"  
 # headers, so the union is a well-formed FOCUS CSV) and the union is 1.3-conformant. The
 # lane-SEPARATION invariant (totals never cross-summed; only grand_total crosses) is proven in
 # the Rust `merged_dev_tool_and_cloud_ledger_keeps_lanes_separate` test.
-echo "==> Merged-ledger leg: developer-tool + imported cloud rows in one ledger validate"
+# M3: a `local_inference` row from `costroid bench` (estimated mode — no subprocess, no
+# hardware) so the merged ledger below spans ALL THREE lanes (developer_tool + cloud_api +
+# local_inference). Estimated mode emits exactly one row; it carries the §6.4 local economics
+# columns + the measured/estimated stamp.
+echo "==> Generating a local_inference row (costroid bench, estimated mode)"
+local_csv="$workdir/local-inference.csv"
+"$bin" bench --out csv > "$local_csv"
+got_local=$(($(wc -l < "$local_csv") - 1))
+if [ "$got_local" -ne 1 ]; then
+  echo "FAIL: costroid bench emitted $got_local data rows, expected 1" >&2
+  exit 1
+fi
+
+echo "==> Merged-ledger leg: developer-tool + imported cloud + local-inference rows validate"
 merged_csv="$workdir/merged-ledger.csv"
 cp "$export_csv" "$merged_csv"          # header + developer_tool rows
 tail -n +2 "$workdir/v12-aws.csv" >> "$merged_csv"   # append the cloud_api rows (skip header)
+tail -n +2 "$local_csv" >> "$merged_csv"             # append the local_inference row (skip header)
 validate_csv "$merged_csv" "merged-ledger" --subset
 
 # v1.2 INPUT-validation leg (T9): unlike the round-trip legs above (which validate
