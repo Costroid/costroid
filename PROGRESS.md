@@ -317,6 +317,25 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (j) — M2 IN PROGRESS: T0–T6 done (on `costroid-next`); next T7.**
+  Continuing the per-task dev-loop (build → independent adversarial review → fold-in → commit):
+  - `fe4598a` **T4** — carry foreign authoritative pricing detail (closes the M1 T14
+    per-token-rate deferral): CloudUsageEvent/RawFocusRow +11 bounded fields; source-priced
+    rows now carry SkuPriceId/PricingQuantity/unit-prices verbatim (only when SkuPriceId
+    present — FOCUS rule); boxed CanonicalEvent::Cloud. Review APPROVE.
+  - `1c0b797` **T5** — multi-currency (D3): carry native BillingCurrency, never auto-convert;
+    `_usd` totals filter to USD; new `total_by_currency`; removed the non-USD refusal. Review
+    APPROVE-WITH-FIXES → fixed a case-sensitivity drop (`usd` now normalized to USD).
+  - `f1ee8ba` **T6** — verify cloud long-tail repricing (seed 1): gpt-4o / Bedrock ids reprice
+    from the litellm tier + litellm stamp; unknown → unpriced (no fabrication). Test-only
+    (T3 wired it; reviewed twice there).
+  - **Gate green after each**: fmt · clippy · `test --workspace` (25) · offline (7) · deny ·
+    real focus-validator conformance (v1.2 subset legs improved to Fail:2 after T4's SkuPriceId).
+  - **Next: T7** (true the synthetic AWS Data Exports FOCUS fixtures to the full mandatory
+    column set + a fixture for the T9 v1.2-input leg) → T8 Bedrock AIP attribution (D4 bounded
+    x_InferenceProfileId) → T9 v1.2-input validation leg → T10 merged ledger (the M2 deciding
+    test) → T11 reconcile → T12 CLI (--pricing-override) → T13 live-AWS SKIP → T14 CI. STOP at
+    the M2 boundary for the human's review.
 - **2026-06-20 (i) — M2 IN PROGRESS: D1–D6 signed off; T0–T3 done (on `costroid-next`).**
   Decisions signed off (all recommended): D1 one `x_PricingSnapshotId` column; D2 layered
   `override>curated>litellm`; D3 carry native currency (no FX); D4 bounded Bedrock profile-id;
