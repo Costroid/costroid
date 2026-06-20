@@ -24,10 +24,12 @@ fn repo_path(rel: &str) -> PathBuf {
 }
 
 /// Replace the live collector-version stamp with a stable placeholder so the golden is
-/// version-agnostic (the stamp is `,<version>` at the end of every data row).
+/// version-agnostic. The stamp is the `x_CollectorVersion` column, now followed by the
+/// (empty, on these source-priced rows) `x_PricingSnapshotId` column — i.e. `,<version>,`
+/// near the end of every data row.
 fn normalize_version(csv: &str) -> String {
-    let needle = format!(",{COLLECTOR_VERSION}\n");
-    csv.replace(&needle, &format!(",{VERSION_PLACEHOLDER}\n"))
+    let needle = format!(",{COLLECTOR_VERSION},\n");
+    csv.replace(&needle, &format!(",{VERSION_PLACEHOLDER},\n"))
 }
 
 #[test]

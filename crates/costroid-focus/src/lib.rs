@@ -431,6 +431,14 @@ pub struct FocusRecord {
     /// string — never content.
     #[serde(rename = "x_CollectorVersion")]
     pub x_collector_version: String,
+    /// The pricing snapshot that priced this row, as `"{source}@{as_of}#{hash8}"`
+    /// (e.g. `"litellm@2026-06-18#36c8994e"` / `"curated@2026-06-02"`) — the source +
+    /// date + content hash R8 requires recording for every comparison. `Some` on a row
+    /// Costroid **estimated** from a bundled/override pricing snapshot; `None` on a
+    /// source-authoritative (foreign-invoice) row and on as-yet-unpriced rows. A bounded
+    /// provenance id — never content.
+    #[serde(rename = "x_PricingSnapshotId")]
+    pub x_pricing_snapshot_id: Option<String>,
 }
 
 impl FocusRecord {
@@ -540,6 +548,10 @@ impl FocusRecord {
             x_sidechain: false,
             x_attribution_confidence: ATTRIBUTION_CONFIDENT.to_string(),
             x_collector_version: COLLECTOR_VERSION.to_string(),
+            // Set by the catalog repricer (apply_pricing / the cloud-import bridge) when
+            // this row is estimated from a bundled/override snapshot; stays None on a
+            // source-authoritative row and on as-yet-unpriced rows (R8 honesty).
+            x_pricing_snapshot_id: None,
         })
     }
 }
@@ -922,8 +934,52 @@ mod tests {
             assert!(fields.contains(&required), "missing column {required}");
         }
         assert!(header.ends_with(
-            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion,x_Sidechain,x_AttributionConfidence,x_CollectorVersion"
+            "x_Lane,x_Model,x_TokenType,x_AccessPath,x_Estimated,x_Tool,x_Project,x_PricingStatus,x_ConsumedTokens,x_FocusInputVersion,x_Sidechain,x_AttributionConfidence,x_CollectorVersion,x_PricingSnapshotId"
         ));
+    }
+
+    /// D1 / R8: the combined pricing-provenance stamp serializes the value verbatim when
+    /// present (an estimated row) and an empty cell when absent (a source-authoritative /
+    /// unpriced row) — so a comparison's source+date+hash is always recorded or visibly
+    /// absent, never silently wrong.
+    #[test]
+    fn x_pricing_snapshot_id_serializes_some_and_none() {
+        let mut rec = record();
+        assert!(
+            rec.x_pricing_snapshot_id.is_none(),
+            "a Costroid-produced (unpriced) row carries no snapshot stamp by default"
+        );
+        let Ok(csv) = to_csv_string(std::slice::from_ref(&rec)) else {
+            panic!("csv export should succeed");
+        };
+        let mut lines = csv.lines();
+        let (Some(header_line), Some(row_line)) = (lines.next(), lines.next()) else {
+            panic!("expected a header + one data row");
+        };
+        let header: Vec<&str> = header_line.split(',').collect();
+        let row: Vec<&str> = row_line.split(',').collect();
+        let Some(idx) = header.iter().position(|c| *c == "x_PricingSnapshotId") else {
+            panic!("x_PricingSnapshotId column should be present");
+        };
+        assert_eq!(
+            header.len(),
+            row.len(),
+            "one cell per column (fixture has no embedded comma)"
+        );
+        assert_eq!(row[idx], "", "None snapshot id is an empty cell");
+
+        rec.x_pricing_snapshot_id = Some("litellm@2026-06-18#36c8994e".to_string());
+        let Ok(csv) = to_csv_string(std::slice::from_ref(&rec)) else {
+            panic!("csv export should succeed");
+        };
+        let Some(row_line) = csv.lines().nth(1) else {
+            panic!("expected a data row");
+        };
+        let row: Vec<&str> = row_line.split(',').collect();
+        assert_eq!(
+            row[idx], "litellm@2026-06-18#36c8994e",
+            "estimated row carries the stamp verbatim"
+        );
     }
 
     /// R4 — the Cardinal Rule, as a COMPILE-TIME forcing function (T16).
@@ -1035,6 +1091,7 @@ mod tests {
             x_sidechain: _,
             x_attribution_confidence: _,
             x_collector_version: _,
+            x_pricing_snapshot_id: _,
         } = rec;
 
         // The one description-named column is always the DERIVED form — never user content.
