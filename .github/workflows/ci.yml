@@ -122,13 +122,20 @@ jobs:
       - name: Install focus-validator
         run: python -m pip install "focus-validator==2.1.0"
 
-      # Exports the committed fixtures to FOCUS CSV and runs the official
-      # validator (offline, vendored 1.3 ruleset) against the documented
-      # known-failure allowlist. Also runs the JSON-equivalence leg (export
-      # --format json == CSV rows) and the synthetic v1.2-in -> v1.3-out
-      # `costroid import` round-trip legs (subset contract). The real-AWS v1.2
-      # leg is present-but-SKIPPED (set COSTROID_REAL_AWS_FOCUS to run it).
-      # Guards against conformance regressions.
+      # R8 pricing-snapshot integrity: every vendored snapshot is the byte-for-byte
+      # deterministic output of its pinned transform (no hand-edited price). A pure
+      # sha256sum -c of the committed sidecars; offline.
+      - name: Verify pricing-snapshot integrity
+        run: bash scripts/check_pricing_snapshots.sh
+
+      # Exports the committed fixtures to FOCUS CSV and runs the official validator
+      # (offline, vendored rulesets) against the documented known-failure allowlists:
+      # the FOCUS 1.3 CSV leg (exact), the JSON-equivalence leg, the synthetic v1.2-in
+      # -> v1.3-out `costroid import` round-trip legs (subset), the v1.2-INPUT leg
+      # (a complete 1.2 document vs the vendored 1.2 ruleset, exact), and the
+      # merged dev-tool+cloud ledger leg (subset). The real-AWS v1.2 leg is
+      # present-but-SKIPPED (set COSTROID_REAL_AWS_FOCUS to run it). Guards
+      # against conformance regressions.
       - name: Validate FOCUS export
         env:
           FOCUS_VALIDATOR_PYTHON: python

@@ -40,9 +40,9 @@ recorded for every comparison).
   `mistral-large-latest` keeps Mistral's own rate, not Azure's resale). Output: **551 models**,
   deterministic (sorted keys).
 - **Integrity:** each snapshot has a `*.sha256` sidecar; `scripts/check_pricing_snapshots.sh`
-  fail-closed-verifies both (`sha256sum -c`). **Pending:** the script is wired into CI in M2 T14,
-  and a Rust loader test asserting the embedded `source`/`as_of`/`content_hash` against the
-  pinned constants lands with the loader in M2 T3.
+  fail-closed-verifies both (`sha256sum -c`), wired into the CI `focus-conformance` job. A Rust
+  loader test (`bundled_litellm_snapshot_loads_with_pinned_provenance`) additionally asserts the
+  embedded `source`/`as_of`/`content_hash` against the pinned constants.
 
 ## Updating a snapshot (deliberate re-pin)
 
