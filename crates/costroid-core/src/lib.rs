@@ -8179,6 +8179,93 @@ mod tests {
     }
 
     #[test]
+    fn merged_dev_tool_and_cloud_ledger_keeps_lanes_separate() {
+        // THE M2 DECIDING TEST (seed 4): one FOCUS ledger built from BOTH real producers —
+        // developer-tool logs (focus_records_from_usage) AND an imported synthetic AWS Bedrock
+        // FOCUS export (import_focus_csv → focus_records_from_v12_import) — keeps the lanes
+        // separate in every total; only grand_total_usd crosses lanes.
+        const AWS_CSV: &str = include_str!("../../../fixtures/focus/v1.2/synthetic-aws-v12.csv");
+
+        // Developer-tool lane: a real catalog-priced Claude usage event (USD).
+        let dev_event = UsageEvent {
+            tool: ProviderId::ClaudeCode,
+            model: "claude-sonnet-4-6".to_string(),
+            timestamp: timestamp(),
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            project: None,
+            access_path: AccessPath::Api,
+            is_sidechain: false,
+        };
+        let Ok(dev_rows) = focus_records_from_usage(&[dev_event]) else {
+            panic!("dev-tool normalization");
+        };
+        // Cloud lane: import the synthetic AWS Bedrock FOCUS export (source-priced).
+        let Ok(import) = costroid_providers::focus_import::import_focus_csv(AWS_CSV) else {
+            panic!("aws import");
+        };
+        let Ok(cloud_rows) =
+            focus_records_from_v12_import(&import.events, &import.detection.version)
+        else {
+            panic!("cloud bridge");
+        };
+
+        // The merged ledger is the natural concatenation — no special merge primitive.
+        let mut ledger = dev_rows.clone();
+        ledger.extend(cloud_rows.clone());
+
+        assert!(
+            dev_rows.iter().all(|r| r.x_lane == "developer_tool"),
+            "every dev-tool row is the developer_tool lane"
+        );
+        assert!(
+            !cloud_rows.is_empty() && cloud_rows.iter().all(|r| r.x_lane == "cloud_api"),
+            "every imported row is the cloud_api lane"
+        );
+
+        // Lane totals independent; the dev-tool total counts ONLY dev-tool rows.
+        let dev_total = lane_total_usd(&ledger, LedgerLane::DeveloperTool);
+        let cloud_total = lane_total_usd(&ledger, LedgerLane::CloudApi);
+        assert!(dev_total > Decimal::ZERO, "dev-tool lane is priced");
+        assert!(cloud_total > Decimal::ZERO, "cloud lane is priced");
+        assert_eq!(
+            dev_total,
+            lane_total_usd(&dev_rows, LedgerLane::DeveloperTool),
+            "merging cloud rows did NOT move the dev-tool total"
+        );
+        // Only grand_total_usd crosses the lanes.
+        assert_eq!(grand_total_usd(&ledger), dev_total + cloud_total);
+
+        // A dev-tool $-summer (aggregate_rows) over the MERGED ledger equals the same summer
+        // over the dev-tool rows alone — the cloud rows never leak into a dev-tool aggregate.
+        assert_eq!(
+            aggregate_rows(&ledger, GroupBy::Model),
+            aggregate_rows(&dev_rows, GroupBy::Model),
+            "the dev-tool aggregation ignores cloud_api rows in the merged ledger"
+        );
+
+        // The cloud rows carry the M2 attribution + provenance (Bedrock id; source-priced).
+        assert!(
+            cloud_rows
+                .iter()
+                .any(|r| r.x_inference_profile_id.as_deref() == Some("aip-0a1b2c3d4e5f6789")),
+            "an imported Bedrock row carries its inference-profile id"
+        );
+
+        // The merged export is well-formed: exactly one header + one row per ledger entry.
+        let Ok(csv) = export_focus_csv(&ledger) else {
+            panic!("merged export");
+        };
+        assert_eq!(
+            csv.lines().count(),
+            1 + ledger.len(),
+            "one header + one row per merged-ledger entry"
+        );
+    }
+
+    #[test]
     fn v12_import_usage_only_row_is_repriced_from_the_catalog_like_a_local_log() {
         // A usage-only foreign row (no billed_cost) whose model is in the bundled catalog
         // is repriced from the catalog — an ESTIMATE (x_estimated stays true), status

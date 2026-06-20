@@ -131,6 +131,18 @@ import_and_validate "$v12_dir/synthetic-v12-unmarked.csv" focus-csv  "v12-unmark
 import_and_validate "$v12_dir/synthetic-v12.json"         focus-json "v12-json"     2
 import_and_validate "$v12_dir/synthetic-aws-v12.csv"      focus-csv  "v12-aws"      2
 
+# Merged-ledger leg (M2 T10 — the deciding test in script form): a SINGLE FOCUS ledger built
+# from BOTH the developer-tool export AND the imported AWS Bedrock cloud rows must validate as
+# a subset of the documented defects — proving the two lanes' rows share one schema (identical
+# headers, so the union is a well-formed FOCUS CSV) and the union is 1.3-conformant. The
+# lane-SEPARATION invariant (totals never cross-summed; only grand_total crosses) is proven in
+# the Rust `merged_dev_tool_and_cloud_ledger_keeps_lanes_separate` test.
+echo "==> Merged-ledger leg: developer-tool + imported cloud rows in one ledger validate"
+merged_csv="$workdir/merged-ledger.csv"
+cp "$export_csv" "$merged_csv"          # header + developer_tool rows
+tail -n +2 "$workdir/v12-aws.csv" >> "$merged_csv"   # append the cloud_api rows (skip header)
+validate_csv "$merged_csv" "merged-ledger" --subset
+
 # v1.2 INPUT-validation leg (T9): unlike the round-trip legs above (which validate
 # the 1.3 OUTPUT of importing a metadata-SUBSET fixture), this validates a COMPLETE
 # synthetic FOCUS 1.2 document — the full mandatory column set — directly against the
