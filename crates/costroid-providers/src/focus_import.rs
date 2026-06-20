@@ -28,12 +28,6 @@ use thiserror::Error;
 
 use crate::CloudUsageEvent;
 
-/// Costroid's billing currency. The M1 import bridge carries a single authoritative
-/// cost into a USD ledger; a non-USD source is refused rather than silently mislabeled
-/// (R6 honesty). Must match `costroid_focus::DEFAULT_BILLING_CURRENCY` (which this crate
-/// cannot reference — `costroid-providers` is internal-dep-free).
-const LEDGER_CURRENCY: &str = "USD";
-
 /// The FOCUS spec version an imported file declares (or is assumed to be).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusInputVersion {
@@ -176,19 +170,13 @@ impl FocusInputMapping for FocusV12Mapping {
     ) -> Result<CloudUsageEvent, FocusImportError> {
         let timestamp = parse_timestamp(row.charge_period_start.as_deref(), index)?;
 
-        // Refuse a non-USD source rather than silently relabeling it USD (the M1 bridge
-        // carries one authoritative cost into a USD ledger; multi-currency is M2).
-        if let Some(currency) = non_empty(row.billing_currency.as_deref()) {
-            if !currency.eq_ignore_ascii_case(LEDGER_CURRENCY) {
-                return Err(FocusImportError::Row {
-                    row: index,
-                    message: format!(
-                        "non-{LEDGER_CURRENCY} BillingCurrency `{currency}` is not yet \
-                         importable (multi-currency is an M2 cloud-lane feature)"
-                    ),
-                });
-            }
-        }
+        // Multi-currency (M2 / D3): carry the bill's native BillingCurrency faithfully —
+        // never relabel or auto-convert it. Normalize the CASE to upper (ISO 4217 codes are
+        // uppercase) so a `usd`/`Usd` bill is not mistaken for a foreign currency and dropped
+        // from the USD totals. The core bridge keeps the row in its native currency and
+        // excludes a genuinely-non-USD row from the USD totals (no FX).
+        let billing_currency =
+            non_empty(row.billing_currency.as_deref()).map(str::to_ascii_uppercase);
 
         let service_name = non_empty(row.service_name.as_deref())
             .unwrap_or_default()
@@ -231,8 +219,11 @@ impl FocusInputMapping for FocusV12Mapping {
             pricing_unit: owned(row.pricing_unit.as_deref()),
             list_unit_price: owned(row.list_unit_price.as_deref()),
             contracted_unit_price: owned(row.contracted_unit_price.as_deref()),
-            pricing_currency: owned(row.pricing_currency.as_deref()),
+            // Currency codes normalized to upper-case (ISO 4217), like billing_currency.
+            pricing_currency: non_empty(row.pricing_currency.as_deref())
+                .map(str::to_ascii_uppercase),
             consumed_unit: owned(row.consumed_unit.as_deref()),
+            billing_currency,
         })
     }
 }
@@ -442,19 +433,34 @@ mod tests {
     }
 
     #[test]
-    fn a_non_usd_source_is_refused_not_silently_relabeled() {
+    fn a_non_usd_source_is_carried_not_refused() {
+        // M2 / D3: a non-USD bill imports (no error) and carries its native BillingCurrency
+        // verbatim — never relabeled or auto-converted. The core bridge keeps it in EUR and
+        // excludes it from the USD totals.
         let csv = "BilledCost,ChargePeriodStart,BillingCurrency,ConsumedQuantity\n\
                    1.00,2026-06-15T10:00:00Z,EUR,1000\n";
-        match import_focus_csv(csv) {
-            Err(FocusImportError::Row { row, message }) => {
-                assert_eq!(row, 0);
-                assert!(
-                    message.contains("EUR"),
-                    "error should name the currency: {message}"
-                );
-            }
-            other => panic!("expected a Row error for non-USD, got {other:?}"),
-        }
+        let Ok(import) = import_focus_csv(csv) else {
+            panic!("a non-USD source should now import (D3 multi-currency)");
+        };
+        assert_eq!(import.events.len(), 1);
+        assert_eq!(
+            import.events[0].billing_currency.as_deref(),
+            Some("EUR"),
+            "the native currency is carried verbatim, never relabeled to USD"
+        );
+    }
+
+    #[test]
+    fn a_lowercase_usd_currency_is_normalized_so_it_counts_as_usd() {
+        // A casing typo (`usd`) must NOT be mistaken for a foreign currency and dropped from
+        // the USD total — the import boundary upper-cases the ISO 4217 code.
+        let csv = "BilledCost,ChargePeriodStart,BillingCurrency,PricingCurrency,ConsumedQuantity\n\
+                   1.00,2026-06-15T10:00:00Z,usd,Usd,1000\n";
+        let Ok(import) = import_focus_csv(csv) else {
+            panic!("a lowercase-usd source should import");
+        };
+        assert_eq!(import.events[0].billing_currency.as_deref(), Some("USD"));
+        assert_eq!(import.events[0].pricing_currency.as_deref(), Some("USD"));
     }
 
     #[test]

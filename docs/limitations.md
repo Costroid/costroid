@@ -31,11 +31,16 @@ Every FOCUS row is stamped with `x_CollectorVersion` (the Costroid version that 
 it). Token-attribution methodology can shift between versions; the stamp lets a
 replayed/exported ledger record which normalization logic produced each row.
 
-## FOCUS import currency
+## FOCUS import currency (multi-currency, M2)
 
-The M1 FOCUS v1.2 importer carries a single authoritative cost into a USD ledger and
-**refuses** a non-USD source rather than silently relabeling it. Multi-currency import is
-an M2 cloud-lane feature.
+The cloud-lane importer carries a bill's **native** `BillingCurrency` faithfully and
+**never auto-converts** it (no runtime FX — that would be an undated, drifting estimate).
+A non-USD row is kept in its own currency and **excluded** from the USD totals
+(`grand_total_usd` / `lane_total_usd`) rather than blended in; per-currency subtotals are
+surfaced via `total_by_currency`. Cross-currency sums are refused exactly as cross-lane
+sums are — there is no single blended number. (Converting to a common currency would
+require a dated, pinned FX snapshot under the same R8 discipline as pricing; that is out
+of scope for M2.)
 
 ## Source-priced cloud rows carry the foreign per-token rate (M2)
 
