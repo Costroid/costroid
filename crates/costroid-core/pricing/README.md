@@ -24,13 +24,15 @@ recorded for every comparison).
 - **Pinned commit:** `4c25b7a13d50462103af64daadf696410393e1b4` (upstream date 2026-06-18).
 - **Upstream content sha256:** `36c8994e4d65edcfe396c64737d90aa0f7f303784067a26dfc2090994c6fde4d`
   (the `content_hash` recorded inside the artifact; the source of the `#36c8994e` stamp suffix).
+  Pinned in Rust as `costroid_core::LITELLM_SNAPSHOT_CONTENT_HASH` and asserted against the
+  artifact's embedded `content_hash` by the loader test, so CI catches an upstream swap.
 - **License:** **MIT** — Copyright (c) 2023 Berri AI. The LiteLLM repository is MIT; the data
   file resides at the repo root, outside the `enterprise/` directory, so it is MIT. MIT is on
   Costroid's permissive allowlist and ships inside the Apache-2.0 binary with attribution
   preserved here. It is a **data artifact**, not a Cargo crate dependency — outside the
-  crate-dependency license policy (same posture as the vendored FOCUS rulesets). It **will be**
-  compiled into `costroid-core` via `include_str!` when the cloud-lane loader lands (M2 T3),
-  because the cloud lane must reprice **offline** at runtime.
+  crate-dependency license policy (same posture as the vendored FOCUS rulesets). It is
+  compiled into `costroid-core` via `include_str!` (the cloud lane must reprice **offline** at
+  runtime), which is license-clean for MIT data shipped inside the Apache-2.0 binary.
 - **Transform:** `scripts/refresh_litellm_pricing.py` (a dev/CI-only tool; never run by the
   build or the CLI). It prunes to the cloud-API providers, keeps `chat`/`completion`/`responses`
   modes, converts per-token costs to **per-1M-token exact decimals** (`decimal.Decimal`, never
@@ -40,13 +42,18 @@ recorded for every comparison).
   `mistral-large-latest` keeps Mistral's own rate, not Azure's resale). Output: **551 models**,
   deterministic (sorted keys).
 - **Integrity:** each snapshot has a `*.sha256` sidecar; `scripts/check_pricing_snapshots.sh`
-  fail-closed-verifies both (`sha256sum -c`), wired into the CI `focus-conformance` job. A Rust
+  fail-closed-verifies both (`sha256sum -c`), wired into the CI `focus-conformance` job. The
   loader test (`bundled_litellm_snapshot_loads_with_pinned_provenance`) additionally asserts the
-  embedded `source`/`as_of`/`content_hash` against the pinned constants.
+  artifact's embedded **full** `content_hash` equals the pinned `LITELLM_SNAPSHOT_CONTENT_HASH`
+  Rust constant (catching an upstream swap), plus the `source`/`as_of` carried on the stamp.
 
 ## Updating a snapshot (deliberate re-pin)
 
 1. Edit `PIN_SHA` / `PIN_DATE` / `RAW_SHA256` in `scripts/refresh_litellm_pricing.py` to a newer
    upstream commit; run it (it refuses to write if the fetched bytes don't match `RAW_SHA256`).
-2. Re-pin the artifact sha in the Rust loader test + this README in the **same** commit (R8).
+2. In the **same** commit, re-pin `LITELLM_SNAPSHOT_CONTENT_HASH` (and the `2026-06-18` /
+   `#36c8994e` literals in the loader test) + this README to the new sha/date (R8). The
+   regenerated `*.sha256` sidecar is emitted by the script.
 3. Re-run the focus-conformance + pricing regression tests; any changed rate is reviewed.
+   (Local re-verify after touching `pricing/*.json` needs `cargo clean -p costroid-core` —
+   the `include_str!`-baked snapshot is not re-read on a fingerprint-only rebuild.)

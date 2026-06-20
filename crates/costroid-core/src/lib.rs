@@ -90,6 +90,14 @@ pub fn bundled_litellm_pricing_json() -> &'static str {
     include_str!("../pricing/litellm-prices.v1.json")
 }
 
+/// The pinned **full** upstream content sha256 the bundled LiteLLM snapshot was derived from
+/// (R8). Asserted against the artifact's embedded `content_hash` by the loader test, so CI
+/// catches a snapshot swapped to a *different* upstream revision — not only the offline
+/// `scripts/check_pricing_snapshots.sh` sidecar check. Bump deliberately when re-pinning
+/// (in lockstep with `scripts/refresh_litellm_pricing.py`'s `RAW_SHA256` + the artifact).
+pub const LITELLM_SNAPSHOT_CONTENT_HASH: &str =
+    "36c8994e4d65edcfe396c64737d90aa0f7f303784067a26dfc2090994c6fde4d";
+
 /// The default user pricing-override path: `$XDG_CONFIG_HOME/costroid/pricing-override.json`,
 /// falling back to `~/.config/costroid/pricing-override.json`. `None` when neither
 /// `XDG_CONFIG_HOME` nor `HOME` is set (no override location → bundled only). Pure path
@@ -5917,6 +5925,26 @@ mod tests {
         assert_eq!(rate.as_of, "2026-06-18");
         assert_eq!(rate.snapshot_id, "litellm@2026-06-18#36c8994e");
         assert_eq!(catalog.currency, "USD");
+
+        // Pin the FULL upstream sha256 (not just the 8-char stamp): the artifact's embedded
+        // `content_hash` MUST equal LITELLM_SNAPSHOT_CONTENT_HASH, so CI catches a snapshot
+        // swapped to a different upstream revision (fold-in: the offline sidecar check alone
+        // would not). Read it from the raw JSON the loader does not retain in full.
+        let raw: serde_json::Value = match serde_json::from_str(bundled_litellm_pricing_json()) {
+            Ok(value) => value,
+            Err(err) => panic!("litellm snapshot should be valid JSON: {err}"),
+        };
+        assert_eq!(
+            raw.get("content_hash").and_then(serde_json::Value::as_str),
+            Some(LITELLM_SNAPSHOT_CONTENT_HASH),
+            "the artifact's embedded content_hash must match the pinned full upstream sha256"
+        );
+        // And the stamp suffix is the first 8 chars of that full hash (not an independent value).
+        assert!(
+            rate.snapshot_id
+                .ends_with(&format!("#{}", &LITELLM_SNAPSHOT_CONTENT_HASH[..8])),
+            "the stamp suffix derives from the pinned full hash"
+        );
     }
 
     #[test]
