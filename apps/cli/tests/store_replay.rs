@@ -84,8 +84,22 @@ fn priced_cloud_rows() -> Vec<FocusRecord> {
         model: Some("claude-opus".to_string()),
         token_count: Some(4_096),
         billed_cost: Some("1.2345".to_string()),
+        // The foreign export's per-token pricing detail (T4): a fully-priced source row, so
+        // the store round-trip below also exercises SkuPriceId/PricingQuantity/unit-prices
+        // carried from the source (not just the lump cost).
+        effective_cost: Some("1.2345".to_string()),
+        list_cost: Some("1.2345".to_string()),
+        contracted_cost: Some("1.2345".to_string()),
+        sku_price_id: Some("anthropic.claude-opus-output".to_string()),
+        pricing_category: Some("Standard".to_string()),
+        pricing_quantity: Some("4096".to_string()),
+        pricing_unit: Some("Tokens".to_string()),
+        list_unit_price: Some("0.0003014".to_string()),
+        contracted_unit_price: Some("0.0003014".to_string()),
+        pricing_currency: Some("USD".to_string()),
+        consumed_unit: Some("Tokens".to_string()),
     };
-    match focus_records_from_canonical(&[CanonicalEvent::Cloud(cloud)]) {
+    match focus_records_from_canonical(&[CanonicalEvent::Cloud(Box::new(cloud))]) {
         Ok(rows) => rows,
         Err(err) => panic!("priced cloud rows should build: {err}"),
     }

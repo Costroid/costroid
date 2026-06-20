@@ -172,7 +172,10 @@ pub struct UsageEvent {
 #[serde(rename_all = "snake_case")]
 pub enum CanonicalEvent {
     Tool(UsageEvent),
-    Cloud(CloudUsageEvent),
+    /// Boxed: a `CloudUsageEvent` carries the full foreign pricing detail (M2 T4), so it is
+    /// much larger than the other variants — boxing keeps `CanonicalEvent` (and any
+    /// `Vec<CanonicalEvent>` an import builds) small.
+    Cloud(Box<CloudUsageEvent>),
     Local(LocalRunEvent),
 }
 
@@ -196,6 +199,25 @@ pub struct CloudUsageEvent {
     /// Source-authoritative billed cost, carried verbatim as a decimal string
     /// (e.g. `"0.0123"`). Parsed by the core bridge, never as `f64` here.
     pub billed_cost: Option<String>,
+    /// Source EffectiveCost / ListCost / ContractedCost (decimal strings) — carried for
+    /// cost-column fidelity; the core bridge falls back to `billed_cost` when absent.
+    pub effective_cost: Option<String>,
+    pub list_cost: Option<String>,
+    pub contracted_cost: Option<String>,
+    /// The foreign export's own per-token pricing detail (M2 — closes the M1 per-token-rate
+    /// deferral): SkuPriceId + unit-prices + priced quantity + bounded category/unit/currency
+    /// labels. All bounded metadata (R4): ids, decimals-as-strings, enum-ish labels — never
+    /// content. Carried so a source-priced cloud row is *fully* priced, not just costed.
+    pub sku_price_id: Option<String>,
+    pub pricing_category: Option<String>,
+    pub pricing_quantity: Option<String>,
+    pub pricing_unit: Option<String>,
+    pub list_unit_price: Option<String>,
+    pub contracted_unit_price: Option<String>,
+    /// The currency the unit prices / costs are quoted in (FOCUS `PricingCurrency`). Carried
+    /// for the M2 multi-currency lane; the core bridge keeps the row in its native currency.
+    pub pricing_currency: Option<String>,
+    pub consumed_unit: Option<String>,
 }
 
 /// Minimal metadata for a local-inference run.
@@ -1394,6 +1416,17 @@ mod tests {
             model: Some("anthropic.claude-3".to_string()),
             token_count: Some(12_345),
             billed_cost: Some("0.0123".to_string()),
+            effective_cost: Some("0.0123".to_string()),
+            list_cost: Some("0.0123".to_string()),
+            contracted_cost: Some("0.0123".to_string()),
+            sku_price_id: Some("anthropic.claude-3-output".to_string()),
+            pricing_category: Some("Standard".to_string()),
+            pricing_quantity: Some("12345".to_string()),
+            pricing_unit: Some("Tokens".to_string()),
+            list_unit_price: Some("0.000001".to_string()),
+            contracted_unit_price: Some("0.000001".to_string()),
+            pricing_currency: Some("USD".to_string()),
+            consumed_unit: Some("Tokens".to_string()),
         }
     }
 
@@ -1427,6 +1460,18 @@ mod tests {
             model: _,
             token_count: _,
             billed_cost: _,
+            // Foreign pricing detail (T4) — all bounded metadata strings, never content.
+            effective_cost: _,
+            list_cost: _,
+            contracted_cost: _,
+            sku_price_id: _,
+            pricing_category: _,
+            pricing_quantity: _,
+            pricing_unit: _,
+            list_unit_price: _,
+            contracted_unit_price: _,
+            pricing_currency: _,
+            consumed_unit: _,
         } = sample_cloud_usage_event();
 
         let LocalRunEvent {
@@ -1467,7 +1512,7 @@ mod tests {
 
     #[test]
     fn canonical_event_round_trips_through_json() {
-        let cloud = CanonicalEvent::Cloud(sample_cloud_usage_event());
+        let cloud = CanonicalEvent::Cloud(Box::new(sample_cloud_usage_event()));
         let Ok(json) = serde_json::to_string(&cloud) else {
             panic!("CanonicalEvent::Cloud should serialize to JSON");
         };

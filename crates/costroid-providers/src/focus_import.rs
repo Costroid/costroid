@@ -85,6 +85,31 @@ pub struct FocusImport {
 pub struct RawFocusRow {
     #[serde(rename = "BilledCost", default)]
     pub billed_cost: Option<String>,
+    // The separate authoritative cost columns + the per-token pricing detail (M2 T4). All
+    // bounded metadata (decimals-as-strings / ids / enum-ish labels), never content — carried
+    // so a source-priced import is fully priced. Absent columns deserialize to None.
+    #[serde(rename = "EffectiveCost", default)]
+    pub effective_cost: Option<String>,
+    #[serde(rename = "ListCost", default)]
+    pub list_cost: Option<String>,
+    #[serde(rename = "ContractedCost", default)]
+    pub contracted_cost: Option<String>,
+    #[serde(rename = "SkuPriceId", default)]
+    pub sku_price_id: Option<String>,
+    #[serde(rename = "PricingCategory", default)]
+    pub pricing_category: Option<String>,
+    #[serde(rename = "PricingQuantity", default)]
+    pub pricing_quantity: Option<String>,
+    #[serde(rename = "PricingUnit", default)]
+    pub pricing_unit: Option<String>,
+    #[serde(rename = "ListUnitPrice", default)]
+    pub list_unit_price: Option<String>,
+    #[serde(rename = "ContractedUnitPrice", default)]
+    pub contracted_unit_price: Option<String>,
+    #[serde(rename = "PricingCurrency", default)]
+    pub pricing_currency: Option<String>,
+    #[serde(rename = "ConsumedUnit", default)]
+    pub consumed_unit: Option<String>,
     #[serde(rename = "ChargePeriodStart", default)]
     pub charge_period_start: Option<String>,
     #[serde(rename = "BillingCurrency", default)]
@@ -186,6 +211,10 @@ impl FocusInputMapping for FocusV12Mapping {
         // core bridge can re-estimate from the catalog, like a local log).
         let billed_cost = non_empty(row.billed_cost.as_deref()).map(str::to_string);
 
+        // The foreign export's own per-token pricing detail + separate cost columns (T4),
+        // carried verbatim as bounded metadata strings; the core bridge parses the decimals.
+        let owned = |value: Option<&str>| non_empty(value).map(str::to_string);
+
         Ok(CloudUsageEvent {
             timestamp,
             service_name,
@@ -193,6 +222,17 @@ impl FocusInputMapping for FocusV12Mapping {
             model,
             token_count,
             billed_cost,
+            effective_cost: owned(row.effective_cost.as_deref()),
+            list_cost: owned(row.list_cost.as_deref()),
+            contracted_cost: owned(row.contracted_cost.as_deref()),
+            sku_price_id: owned(row.sku_price_id.as_deref()),
+            pricing_category: owned(row.pricing_category.as_deref()),
+            pricing_quantity: owned(row.pricing_quantity.as_deref()),
+            pricing_unit: owned(row.pricing_unit.as_deref()),
+            list_unit_price: owned(row.list_unit_price.as_deref()),
+            contracted_unit_price: owned(row.contracted_unit_price.as_deref()),
+            pricing_currency: owned(row.pricing_currency.as_deref()),
+            consumed_unit: owned(row.consumed_unit.as_deref()),
         })
     }
 }
