@@ -188,6 +188,32 @@ mod tests {
     }
 
     #[test]
+    fn every_bundled_profile_flags_estimated() {
+        // R10: NOT just the default profile — EVERY bundled hardware profile (and the electricity
+        // rate) is an estimate, never measured. Mirrors models.rs `every_model_flags_tok_s_estimated`,
+        // which iterates ALL models rather than asserting one; a future added profile that forgets
+        // the `estimated` flag must trip this.
+        let Ok(profiles) = bundled_power_profiles() else {
+            panic!("the bundled hardware.v1.json must parse");
+        };
+        assert!(
+            !profiles.hardware_profiles.is_empty(),
+            "the bundled artifact must carry at least one profile (else the assert is vacuous)"
+        );
+        for profile in &profiles.hardware_profiles {
+            assert!(
+                profile.estimated,
+                "R10: bundled hardware profile `{}` must be flagged estimated (never measured)",
+                profile.id
+            );
+        }
+        assert!(
+            profiles.electricity_rate.estimated,
+            "R10: the bundled electricity rate must be flagged estimated"
+        );
+    }
+
+    #[test]
     fn resolve_uses_the_default_profile_and_builds_the_stamp() {
         let Ok(profiles) = bundled_power_profiles() else {
             panic!("profiles must parse");
