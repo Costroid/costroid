@@ -8034,6 +8034,98 @@ mod tests {
     }
 
     #[test]
+    fn v12_import_usage_only_litellm_only_model_prices_from_the_long_tail() {
+        // T6 (seed 1): a usage-only cloud row whose model is ABSENT from the curated catalog
+        // but present in the LiteLLM long tail (e.g. gpt-4o) is repriced from LiteLLM — an
+        // estimate, stamped with the litellm snapshot provenance.
+        let event = CloudUsageEvent {
+            model: Some("gpt-4o".to_string()),
+            token_count: Some(1_000_000),
+            billed_cost: None,
+            service_name: "OpenAI API".to_string(),
+            service_provider_name: "OpenAI".to_string(),
+            ..cloud_event_no_detail()
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
+            panic!("long-tail import should normalize");
+        };
+        let row = &rows[0];
+        assert!(row.x_estimated, "a catalog-repriced row is an estimate");
+        assert_eq!(row.x_pricing_status, "priced");
+        // gpt-4o output rate is 10.00 / 1M (litellm) → 1M tokens → $10.00.
+        let Ok(ten) = Decimal::from_str_exact("10").map(|d| d.normalize()) else {
+            panic!("decimal");
+        };
+        assert_eq!(
+            row.billed_cost.normalize(),
+            ten,
+            "priced from the litellm output rate"
+        );
+        assert_eq!(
+            row.x_pricing_snapshot_id.as_deref(),
+            Some("litellm@2026-06-18#36c8994e"),
+            "the row records WHICH snapshot priced it (litellm long tail), not curated"
+        );
+    }
+
+    #[test]
+    fn v12_import_usage_only_bedrock_model_id_prices_from_the_long_tail() {
+        // A Bedrock SkuId (carries the `anthropic.` prefix + a date + `-v1:0`) resolves in
+        // the litellm tier and reprices — proving the long tail covers AWS Bedrock model ids.
+        let event = CloudUsageEvent {
+            model: Some("anthropic.claude-3-5-sonnet-20240620-v1:0".to_string()),
+            token_count: Some(1_000),
+            billed_cost: None,
+            service_name: "Amazon Bedrock".to_string(),
+            service_provider_name: "AWS".to_string(),
+            ..cloud_event_no_detail()
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
+            panic!("bedrock long-tail import should normalize");
+        };
+        let row = &rows[0];
+        assert_eq!(
+            row.x_pricing_status, "priced",
+            "the Bedrock id resolved in the litellm tier"
+        );
+        assert!(
+            row.billed_cost > Decimal::ZERO,
+            "a non-zero estimate was produced"
+        );
+        assert_eq!(
+            row.x_pricing_snapshot_id.as_deref(),
+            Some("litellm@2026-06-18#36c8994e")
+        );
+    }
+
+    #[test]
+    fn v12_import_usage_only_unknown_model_stays_unpriced_no_fabrication() {
+        // An unknown model (in neither tier) is NOT fabricated a price: cost stays 0, no
+        // catalog stamp — honesty over coverage.
+        let event = CloudUsageEvent {
+            model: Some("totally-made-up-model-xyz".to_string()),
+            token_count: Some(1_000),
+            billed_cost: None,
+            service_name: "Mystery API".to_string(),
+            service_provider_name: "Mystery".to_string(),
+            ..cloud_event_no_detail()
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[event], &FocusInputVersion::V1_2) else {
+            panic!("unknown-model import should still normalize");
+        };
+        let row = &rows[0];
+        assert_eq!(row.billed_cost, Decimal::ZERO, "no fabricated price");
+        assert_ne!(
+            row.x_pricing_status, "priced",
+            "an unknown model is not priced"
+        );
+        assert!(
+            row.x_pricing_snapshot_id.is_none(),
+            "an unpriced row carries no snapshot stamp"
+        );
+    }
+
+    #[test]
     fn v12_import_usage_only_row_is_repriced_from_the_catalog_like_a_local_log() {
         // A usage-only foreign row (no billed_cost) whose model is in the bundled catalog
         // is repriced from the catalog — an ESTIMATE (x_estimated stays true), status
