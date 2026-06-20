@@ -218,6 +218,11 @@ pub struct CloudUsageEvent {
     /// for the M2 multi-currency lane; the core bridge keeps the row in its native currency.
     pub pricing_currency: Option<String>,
     pub consumed_unit: Option<String>,
+    /// The bill's native currency (FOCUS `BillingCurrency`). The M2 multi-currency lane (D3)
+    /// carries it faithfully and **never auto-converts**; a non-USD row is kept in its native
+    /// currency and excluded from the USD totals rather than blended in. `None`/absent → the
+    /// ledger default (USD).
+    pub billing_currency: Option<String>,
 }
 
 /// Minimal metadata for a local-inference run.
@@ -1427,6 +1432,7 @@ mod tests {
             contracted_unit_price: Some("0.000001".to_string()),
             pricing_currency: Some("USD".to_string()),
             consumed_unit: Some("Tokens".to_string()),
+            billing_currency: Some("USD".to_string()),
         }
     }
 
@@ -1472,6 +1478,7 @@ mod tests {
             contracted_unit_price: _,
             pricing_currency: _,
             consumed_unit: _,
+            billing_currency: _,
         } = sample_cloud_usage_event();
 
         let LocalRunEvent {

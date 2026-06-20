@@ -98,6 +98,7 @@ fn priced_cloud_rows() -> Vec<FocusRecord> {
         contracted_unit_price: Some("0.0003014".to_string()),
         pricing_currency: Some("USD".to_string()),
         consumed_unit: Some("Tokens".to_string()),
+        billing_currency: Some("USD".to_string()),
     };
     match focus_records_from_canonical(&[CanonicalEvent::Cloud(Box::new(cloud))]) {
         Ok(rows) => rows,

@@ -238,7 +238,15 @@ fn cloud_usage_to_focus(cloud: &CloudUsageEvent) -> Result<FocusRecord, CoreErro
         service_provider_name: cloud.service_provider_name.clone(),
         host_provider_name: cloud.service_provider_name.clone(),
         invoice_issuer_name: cloud.service_provider_name.clone(),
-        billing_currency: DEFAULT_BILLING_CURRENCY.to_string(),
+        // Multi-currency (D3): carry the bill's NATIVE currency, never relabel to USD. A
+        // blank/absent BillingCurrency falls back to the ledger default.
+        billing_currency: cloud
+            .billing_currency
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(DEFAULT_BILLING_CURRENCY)
+            .to_string(),
     })?;
 
     if let Some(raw) = cloud.billed_cost.as_deref() {
@@ -2140,19 +2148,40 @@ pub fn is_developer_tool_lane(row: &FocusRecord) -> bool {
 /// independently so a cloud/local row never moves the developer-tool total. The companion of the
 /// dev-tool gate: lanes that are deliberately excluded from the dev-tool total each get their OWN
 /// summable total here, never folded into another lane (the "lanes never summed across" invariant).
+///
+/// Multi-currency (D3): only **USD** rows are summed — a non-USD cloud row is kept in its native
+/// currency and excluded from this USD figure rather than blended in (no FX). Use
+/// [`total_by_currency`] to see every currency's subtotal.
 pub fn lane_total_usd(rows: &[FocusRecord], lane: LedgerLane) -> Decimal {
     let lane = lane.as_str();
     rows.iter()
-        .filter(|row| row.x_lane == lane)
+        .filter(|row| row.x_lane == lane && row.billing_currency == DEFAULT_BILLING_CURRENCY)
         .fold(Decimal::ZERO, |sum, row| sum + row.billed_cost)
 }
 
 /// Grand total `billed_cost` across ALL lanes (the sum of every lane's [`lane_total_usd`]). Because
 /// each row belongs to exactly one lane, this equals `lane_total_usd(DeveloperTool) +
 /// lane_total_usd(CloudApi) + lane_total_usd(LocalInference)` — the lanes partition the rows.
+///
+/// Multi-currency (D3): **USD only**, like [`lane_total_usd`] — never blends currencies.
 pub fn grand_total_usd(rows: &[FocusRecord]) -> Decimal {
     rows.iter()
+        .filter(|row| row.billing_currency == DEFAULT_BILLING_CURRENCY)
         .fold(Decimal::ZERO, |sum, row| sum + row.billed_cost)
+}
+
+/// Per-currency `billed_cost` subtotals across all rows, keyed by `BillingCurrency` (D3). The
+/// honest companion to the USD-only [`grand_total_usd`]: a non-USD cloud row is carried in its
+/// native currency and surfaced here, never silently converted or dropped. Cross-currency sums
+/// are refused exactly as cross-lane sums are — there is no single blended number.
+pub fn total_by_currency(rows: &[FocusRecord]) -> BTreeMap<String, Decimal> {
+    let mut totals: BTreeMap<String, Decimal> = BTreeMap::new();
+    for row in rows {
+        *totals
+            .entry(row.billing_currency.clone())
+            .or_insert(Decimal::ZERO) += row.billed_cost;
+    }
+    totals
 }
 
 /// Public wrapper over the internal [`summarize_rows`] aggregator for the
@@ -7750,6 +7779,7 @@ mod tests {
             contracted_unit_price: None,
             pricing_currency: None,
             consumed_unit: None,
+            billing_currency: None,
         }
     }
 
@@ -7948,6 +7978,59 @@ mod tests {
         );
         assert!(row.pricing_quantity.is_none());
         assert!(row.list_unit_price.is_none());
+    }
+
+    #[test]
+    fn multi_currency_row_carries_native_currency_and_is_excluded_from_usd_total() {
+        // D3: a non-USD cloud bill is carried in its native currency (never relabeled), and
+        // is EXCLUDED from the USD totals (no FX) — while total_by_currency surfaces it.
+        let usd = CloudUsageEvent {
+            model: Some("claude-sonnet-4-6".to_string()),
+            token_count: Some(1_000),
+            billed_cost: Some("10.00".to_string()),
+            billing_currency: Some("USD".to_string()),
+            service_name: "Claude API".to_string(),
+            service_provider_name: "Anthropic".to_string(),
+            ..cloud_event_no_detail()
+        };
+        let eur = CloudUsageEvent {
+            model: Some("mistral-large-latest".to_string()),
+            token_count: Some(1_000),
+            billed_cost: Some("7.00".to_string()),
+            billing_currency: Some("EUR".to_string()),
+            service_name: "Mistral API".to_string(),
+            service_provider_name: "Mistral".to_string(),
+            ..cloud_event_no_detail()
+        };
+        let Ok(rows) = focus_records_from_v12_import(&[usd, eur], &FocusInputVersion::V1_2) else {
+            panic!("a mixed-currency import should normalize (no refusal)");
+        };
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].billing_currency, "USD");
+        assert_eq!(
+            rows[1].billing_currency, "EUR",
+            "EUR carried verbatim, not relabeled"
+        );
+
+        // USD-only totals: only the USD row counts; the EUR row is excluded (no FX blend).
+        let Ok(ten) = Decimal::from_str_exact("10.00") else {
+            panic!("decimal");
+        };
+        assert_eq!(lane_total_usd(&rows, LedgerLane::CloudApi), ten);
+        assert_eq!(grand_total_usd(&rows), ten);
+
+        // ...but the EUR subtotal is surfaced, never silently dropped.
+        let by_currency = total_by_currency(&rows);
+        let Ok(seven) = Decimal::from_str_exact("7.00") else {
+            panic!("decimal");
+        };
+        assert_eq!(by_currency.get("USD"), Some(&ten));
+        assert_eq!(by_currency.get("EUR"), Some(&seven));
+        assert_eq!(
+            by_currency.len(),
+            2,
+            "two currencies, two subtotals — never blended"
+        );
     }
 
     #[test]
