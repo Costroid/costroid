@@ -4,14 +4,13 @@
 //! real or estimated power draw integrated over wall-clock time) into **joules/token**, **Wh per
 //! 1M tokens**, and **$ per 1M tokens**, with the measurement source stamped on every figure (R6).
 //!
-//! # Status — M0 scaffold (do not mistake for the M3 engine)
-//! In place and green on every target: the [`PowerSampler`] abstraction (§6.3) with its three
-//! sources and runtime selector, the [`MeasurementMode`] stamp (§6.4), and the [`cost`] model
-//! (§3.2) with deterministic worked-example tests. **Deferred to M3:** real sysfs node discovery,
-//! runtime capability diagnostics, the subprocess inference runner (llama.cpp/Ollama — A2), the
-//! benchmark harness, and the FOCUS-record mapping (where this meets `costroid-focus`). The
-//! on-hardware sysfs confirmation (a captured joules/token figure on the gfx1151 APU) is the
-//! **M3b human handoff** — no real power number is ever fabricated in code (R10).
+//! # Status — M3a in progress (built on the M0 scaffold)
+//! In place and green on every target: the [`PowerSampler`] abstraction (§6.3) with its **four**
+//! sources and the wall-meter-led runtime selector, the [`MeasurementMode`] stamp (§6.4), and
+//! the [`cost`] model (§3.2) with deterministic worked-example tests. **Deferred to M3b
+//! (human-gated, on real hardware):** the live sysfs read confirmation on the gfx1151 APU, the
+//! LibreHardwareMonitor live loopback read (M3a ships its parser seam), and a captured
+//! joules/token figure — no real power number is ever fabricated in code (R10).
 //!
 //! # Invariants honored here
 //! - **No `unwrap`/`expect`/`panic!`** in library code; every failure is a [`PowerError`].
@@ -31,4 +30,5 @@ pub use error::PowerError;
 pub use mode::MeasurementMode;
 pub use sampler::{
     select_sampler, EstimatedPowerSampler, PowerSampler, SysfsPowerSampler, WallMeterPowerSampler,
+    WindowsLhmPowerSampler,
 };
