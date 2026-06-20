@@ -317,6 +317,28 @@ starting **M1**.
 
 ## Handoff note (latest)
 
+- **2026-06-20 (i) — M2 IN PROGRESS: D1–D6 signed off; T0–T3 done (on `costroid-next`).**
+  Decisions signed off (all recommended): D1 one `x_PricingSnapshotId` column; D2 layered
+  `override>curated>litellm`; D3 carry native currency (no FX); D4 bounded Bedrock profile-id;
+  D5/D6 as-described. Committed, each on the per-task dev-loop (fresh build → independent
+  adversarial review → fix → commit):
+  - `4c5387e`/`31d…` M2 plan ([`docs/M2-PLAN.md`](docs/M2-PLAN.md)) + D1–D6 lock.
+  - `2c71754` **T1** — vendored LiteLLM snapshot (`crates/costroid-core/pricing/litellm-prices.v1.json`,
+    551 models, MIT, pinned commit 4c25b7a1 / upstream sha 36c8994e; dev-only
+    `scripts/refresh_litellm_pricing.py` + `scripts/check_pricing_snapshots.sh`). 2 reviewers;
+    fixed a dedup-mispricing (Azure-resale beat native Mistral/DeepSeek) + cohere_chat.
+  - `069b54d` **T2** — `x_PricingSnapshotId` column (D1) on FocusRecord + store fan-out
+    (SCHEMA_VERSION 4→5, 36th col across all 5 SQL sites). Review APPROVE, 0 findings.
+  - `7576d07` **T3** — layered `PricingCatalog` + per-rate R8 provenance + tier-aware
+    `resolve_key` (curated base beats litellm dated) + `read_pricing_override` (XDG; CLI wires
+    it in T12). 2 reviewers; fixed a char-boundary panic in `pricing_snapshot_id`.
+  - **Gate green** after each: fmt · clippy · `test --workspace` (25 groups) · offline (7) ·
+    deny (default + all-features) · real focus-validator conformance (dev-tool CSV + JSON 15-row
+    + 4 v1.2 subset legs, Fail:4 no new rule). Validator at `/tmp/focusvenv` (uv).
+  - **Next: T4** (carry foreign authoritative pricing detail through the import → closes the M1
+    T14 per-token-rate TODO/limitations note) → T5 multi-currency → T6 cloud long-tail repricing
+    → T7 AWS fixtures → T8 Bedrock → T9 v1.2-input leg → T10 merged ledger (deciding test) →
+    T11 reconcile → T12 CLI → T13 live-AWS SKIP → T14 CI. STOP at the M2 boundary for review.
 - **2026-06-20 (h) — M2 PLAN synthesized; ⛔ STOP for sign-off before any code.** On branch
   `costroid-next`, wrote **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)** (15 tasks T0–T14,
   dependency-ordered, a deciding test per task, the M1-PLAN pattern) from the four M2 seeds +
