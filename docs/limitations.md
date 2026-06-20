@@ -57,7 +57,11 @@ rate + the `x_PricingSnapshotId` provenance stamp. (Source-authoritative rows ca
 
 ## FOCUS v1.2 import fixtures are a metadata subset
 
-The committed `fixtures/focus/v1.2/` are a deliberate metadata subset (only the columns
-the importer reads), **not complete FOCUS 1.2 documents** — so the conformance gate
-validates the 1.3 *output*, not the v1.2 *input*. A full-fixture 1.2 input-validation
-leg (against the vendored `scripts/focus-ruleset-1.2/`) is a documented fast-follow.
+The committed `fixtures/focus/v1.2/synthetic-v12-*` and `synthetic-aws-v12.csv` are a
+deliberate metadata subset (only the columns the importer reads), **not complete FOCUS
+1.2 documents** — so for those the conformance gate validates the 1.3 *output*, not the
+v1.2 *input*. The v1.2 input-validation leg is now wired (T9): a complete-document
+fixture (`synthetic-aws-v12-full.csv`) validates against the vendored 1.2 ruleset
+(`scripts/focus-ruleset-1.2/`, EXACT-matched against
+`scripts/focus_known_failures_v12.txt`); the subset fixtures remain for the importer
+round-trip.

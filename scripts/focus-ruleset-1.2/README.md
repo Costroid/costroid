@@ -4,17 +4,21 @@
 vendored verbatim so a **complete** FOCUS 1.2 document can be validated fully offline
 (`--block-download`) against a wheel-version-independent ruleset.
 
-> **What `scripts/focus_conformance.sh` actually validates today:** the FOCUS **1.3
-> OUTPUT** of Costroid's importer (the v1.2-in → v1.3-out round-trip), against the
-> sibling `scripts/focus-ruleset/` 1.3 ruleset. It does **not** input-validate the
-> synthetic v1.2 fixtures: those are a deliberate metadata *subset* (only the columns
-> Costroid's importer reads), **not complete FOCUS 1.2 documents**, so they
-> legitimately fail full-1.2 column-presence rules (`ChargeDescription`, `InvoiceId`,
-> `InvoiceIssuerName`, `PricingQuantity`, …). This ruleset is kept for: CI-independence
-> from the wheel's bundled model; validating a **real** complete AWS export locally
-> (the `COSTROID_REAL_AWS_FOCUS` leg); and a future input-validation leg over
-> full-fixtures (a documented fast-follow — it needs the fixtures expanded to the full
-> 1.2 mandatory column set + a pinned 1.2 known-failure list).
+> **What `scripts/focus_conformance.sh` validates against this ruleset:** the v1.2
+> INPUT leg (T9) validates a **complete** synthetic FOCUS 1.2 document
+> (`fixtures/focus/v1.2/synthetic-aws-v12-full.csv`) — the full mandatory column set —
+> directly against this 1.2.0.1 ruleset, offline (`--validate-version 1.2
+> --block-download`), under an EXACT-match contract against the pinned 1.2
+> known-failure list (`scripts/focus_known_failures_v12.txt`). Separately, the
+> round-trip legs validate the FOCUS **1.3 OUTPUT** of Costroid's importer (the
+> v1.2-in → v1.3-out bridge) against the sibling `scripts/focus-ruleset/` 1.3 ruleset.
+> The round-trip legs do **not** input-validate the v1.2 *subset* fixtures: those are a
+> deliberate metadata subset (only the columns Costroid's importer reads), **not
+> complete FOCUS 1.2 documents**, so they legitimately fail full-1.2 column-presence
+> rules (`ChargeDescription`, `InvoiceId`, `InvoiceIssuerName`, …) and stay for the
+> importer round-trip only. This ruleset is also kept for CI-independence from the
+> wheel's bundled model and for validating a **real** complete AWS export locally (the
+> `COSTROID_REAL_AWS_FOCUS` leg).
 
 - **Source:** the FOCUS specification's published release assets —
   <https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/releases>
@@ -33,6 +37,6 @@ vendored verbatim so a **complete** FOCUS 1.2 document can be validated fully of
   silently drift when the wheel updates. To validate a complete 1.2 document against it:
   `python -m focus_validator.main --data-file <file> --validate-version 1.2
   --rule-set-path scripts/focus-ruleset-1.2 --block-download`.
-- **Updating:** replace the file with a newer published `model-1.2.x.json`; if a
-  full-fixture input-validation leg is later added, re-check its pinned 1.2 known
-  failures in the same change.
+- **Updating:** replace the file with a newer published `model-1.2.x.json`; the
+  full-document input-validation leg (T9) is wired, so re-check its pinned 1.2 known
+  failures (`scripts/focus_known_failures_v12.txt`) in the same change.

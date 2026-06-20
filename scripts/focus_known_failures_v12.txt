@@ -1,0 +1,48 @@
+# Known, documented focus-validator (FOCUS 1.2) failures for the complete-document
+# INPUT fixture fixtures/focus/v1.2/synthetic-aws-v12-full.csv.
+#
+# This is the allowlist consumed by scripts/check_focus_conformance.py for the
+# v1.2 INPUT-validation leg (T9) — an EXACT-MATCH contract, not a tolerance list.
+# It is validated against the synthetic, complete FOCUS 1.2 document above
+# (validation-only: never imported), run against the vendored 1.2.0.1 ruleset
+# (scripts/focus-ruleset-1.2/) with `--validate-version 1.2 --block-download`.
+# Unlike the v1.2 IMPORT round-trip legs (which check the 1.3 OUTPUT under a
+# --subset contract), this leg pins the complete document EXACTLY. CI fails on
+# ANY deviation, in either direction:
+#   - a failing rule not listed here (new regression);
+#   - a listed rule failing with a DIFFERENT violation count (a new violating
+#     row hiding inside a known-defective rule is still a regression);
+#   - a listed rule that no longer fails (stale entry — remove it);
+#   - a report "Fail:" total different from report-fail-count.
+# Entry format: `<rule-id> violations=<N>`. The counts are tied to the committed
+# fixture (3 data rows) — adding, removing, or repricing rows legitimately
+# changes them; re-pin the counts (and report-fail-count) deliberately in the
+# same change, never loosely.
+#
+# As of T9, the only remaining failure is a genuine validator-ruleset defect that
+# no conformant producer can satisfy. The fixture is otherwise clean: it carries
+# the full FOCUS 1.2 mandatory column set, its arithmetic is exact in float64
+# (so the ListCost/ListUnitPrice/ContractedCost/PricingQuantity "product MUST
+# match cost" checks all PASS — the unit prices x quantities land bit-exact),
+# BillingAccountId is a VARCHAR string, and PricingQuantity/ConsumedQuantity are
+# decimal-typed.
+#
+# The report's "Fail:" total: the 1 root failure below, with no composite
+# "AND failed" aggregate or "[Upstream dependency failed]" cascade lines.
+report-fail-count = 1
+#
+# InvoiceId contradictory unconditional rules. The 1.2.0.1 ruleset encodes a
+# CONTRADICTION: InvoiceId-C-004-C ("InvoiceId MUST be null") and
+# InvoiceId-C-005-C ("InvoiceId MUST NOT be null") BOTH carry an EMPTY Condition
+# ({}), so both fire UNCONDITIONALLY on every row. The conditions that should
+# gate each (per their own text: "...when the charge is/is not associated with an
+# invoice...") were dropped, leaving two mutually exclusive requirements that no
+# value of InvoiceId can satisfy simultaneously — exactly one always fails. The
+# fixture populates InvoiceId (a real export carries an invoice id), so C-005-C
+# (MUST NOT be null) PASSES and C-004-C (MUST be null) fails; nulling InvoiceId
+# would merely flip which of the pair fails. This is a validator-ruleset defect,
+# not a producer bug (the same class as the 1.3 ruleset's inverted/empty-condition
+# defects in scripts/focus_known_failures.txt — e.g. CapacityReservationStatus
+# C-004-C and PricingCurrencyContractedUnitPrice C-012-C).
+# violations=3: fires on each of the 3 fixture rows.
+InvoiceId-C-004-C violations=3

@@ -74,6 +74,24 @@ validate_csv() {
     "$report" "$repo_root/scripts/focus_known_failures.txt"
 }
 
+# Sibling of validate_csv for the v1.2 INPUT leg: validate a COMPLETE FOCUS 1.2
+# document against the vendored 1.2.0.1 ruleset (offline) and check the report
+# against the v1.2 known-failure allowlist. EXACT-match (no --subset): this is a
+# complete document, so its per-rule counts and report total are pinned. $1=csv
+# $2=label.
+validate_csv_v12() {
+  local data_file="$1" label="$2"
+  local report="$workdir/report-$label.txt"
+  ( cd "$site_packages" && "$py" -m focus_validator.main \
+      --data-file "$data_file" \
+      --validate-version 1.2 \
+      --rule-set-path "$repo_root/scripts/focus-ruleset-1.2" \
+      --block-download \
+      --output-type console ) > "$report" 2>&1 || true
+  "$py" "$repo_root/scripts/check_focus_conformance.py" \
+    "$report" "$repo_root/scripts/focus_known_failures_v12.txt"
+}
+
 echo "==> CSV leg: validating the developer-tool export (FOCUS 1.3, offline, exact-match)"
 validate_csv "$export_csv" "csv-devtool"
 
@@ -112,6 +130,16 @@ import_and_validate "$v12_dir/synthetic-v12-marked.csv"   focus-csv  "v12-marked
 import_and_validate "$v12_dir/synthetic-v12-unmarked.csv" focus-csv  "v12-unmarked" 2
 import_and_validate "$v12_dir/synthetic-v12.json"         focus-json "v12-json"     2
 import_and_validate "$v12_dir/synthetic-aws-v12.csv"      focus-csv  "v12-aws"      2
+
+# v1.2 INPUT-validation leg (T9): unlike the round-trip legs above (which validate
+# the 1.3 OUTPUT of importing a metadata-SUBSET fixture), this validates a COMPLETE
+# synthetic FOCUS 1.2 document — the full mandatory column set — directly against the
+# vendored 1.2.0.1 ruleset under an EXACT-match contract. It is validation-only (never
+# imported), so its committed known-failure list (focus_known_failures_v12.txt) pins the
+# single residual ruleset defect (the contradictory unconditional InvoiceId-C-004/005-C
+# pair) exactly. This is the leg the M1 READMEs called a fast-follow.
+echo "==> v1.2 input leg: validating a complete FOCUS 1.2 document (offline, exact-match)"
+validate_csv_v12 "$v12_dir/synthetic-aws-v12-full.csv" "v12-input-full"
 
 echo "==> Real AWS v1.2 leg (present, SKIPPED unless COSTROID_REAL_AWS_FOCUS is set)"
 if [ -n "${COSTROID_REAL_AWS_FOCUS:-}" ] && [ -f "${COSTROID_REAL_AWS_FOCUS}" ]; then
