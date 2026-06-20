@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
-description = "Costroid local-inference economics: the three-source PowerSampler abstraction and the measured/estimated energy-cost model."
+description = "Costroid local-inference economics: the four-source PowerSampler abstraction and the measured/estimated energy-cost model."
 documentation = "https://docs.rs/costroid-power"
 keywords = ["finops", "energy", "power", "inference", "ai"]
 categories = ["finance", "hardware-support"]
@@ -34,6 +34,11 @@ power = []
 # record mapping actually needs them — declared-but-unused deps are dead weight until then.
 serde.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# Test-only: the `MeasurementMode` / report serde round-trips. Not a shipping dep, so it never
+# enters the CLI/bar graph or the offline forbidden-crates surface.
+serde_json.workspace = true
 
 [lints]
 workspace = true

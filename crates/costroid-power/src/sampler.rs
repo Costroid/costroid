@@ -1,10 +1,15 @@
-//! The `PowerSampler` abstraction (§6.3) — three sources behind one trait, plus the runtime
-//! selector that satisfies R1 ("keep every feature; degrade gracefully at runtime").
+//! The `PowerSampler` abstraction (§6.3) — **four** sources behind one trait, plus the
+//! wall-meter-led runtime selector that satisfies R1 ("keep every feature; degrade gracefully
+//! at runtime").
 //!
-//! **M0 scaffold.** The trait, the three implementations, the runtime selector, and the
-//! cfg/feature gating are in place and build on every target; the *full* sysfs probing logic,
-//! the inference runner, and the benchmark harness land at **M3** (and the on-hardware sysfs
-//! confirmation is the **M3b** human handoff). No real power number is ever fabricated here.
+//! The four sources, along the revised (2026-06-20) wall-meter-led ladder (§5.3/§5.4):
+//! [`WallMeterPowerSampler`] (true total-system draw, cross-OS, recommended),
+//! [`SysfsPowerSampler`] (amdgpu `power1_average`, native-Linux on-chip),
+//! [`WindowsLhmPowerSampler`] (LibreHardwareMonitor package sensor, Windows on-chip — the M3a
+//! parser seam; live read at M3b), and [`EstimatedPowerSampler`] (the universal fallback).
+//!
+//! The full sysfs probing logic and the LHM live read land at **M3b** (the on-hardware
+//! confirmation is the human handoff). No real power number is ever fabricated here (R10).
 
 use crate::error::PowerError;
 use crate::mode::MeasurementMode;
@@ -139,6 +144,60 @@ impl PowerSampler for WallMeterPowerSampler {
 }
 
 // ============================================================================================
+// WindowsLhmPowerSampler — LibreHardwareMonitor SMU Package sensor (Windows on-chip, optional)
+// ============================================================================================
+
+/// Reads the SMU **Package** power sensor from a running LibreHardwareMonitor's separate-process
+/// JSON endpoint (`http://localhost:8085/data.json`). MPL-2.0 stays cleanly **out-of-process**
+/// — no linking, no FFI, no .NET in our binary (§5.4) — and the read is a blocking
+/// local-loopback read, not a network egress.
+///
+/// **M3a ships the parser seam only** ([`parse_package_watts`](Self::parse_package_watts) — a
+/// pure JSON→watts function, tested against a committed fixture). The live loopback read is the
+/// **M3b** field-verification on the actual 8060S (gated `#[cfg(all(target_os = "windows",
+/// feature = "power"))]`, loopback-only, with its own offline-gate carve-out), so M3a carries
+/// **zero** `TcpStream`/AF_INET code and the CLI stays byte-for-byte no-network. Until then
+/// [`probe`](PowerSampler::probe) is `false` and [`sample_watts`](PowerSampler::sample_watts)
+/// reports unavailable, so the selector falls through.
+#[derive(Debug, Clone)]
+pub struct WindowsLhmPowerSampler {
+    /// The LibreHardwareMonitor data endpoint, e.g. `http://localhost:8085/data.json`.
+    /// Carried so the scaffold's shape is final; the live read (M3b) uses it.
+    pub endpoint: String,
+}
+
+impl WindowsLhmPowerSampler {
+    /// Construct a sampler bound to an LHM JSON endpoint (default
+    /// `http://localhost:8085/data.json`). The live read lands at M3b; this constructor takes
+    /// the endpoint so callers and the selector are stable now.
+    pub fn new(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+        }
+    }
+}
+
+impl PowerSampler for WindowsLhmPowerSampler {
+    fn mode(&self) -> MeasurementMode {
+        MeasurementMode::MeasuredLhm
+    }
+
+    fn probe(&self) -> bool {
+        // Parser-only seam in M3a: the live loopback read is the M3b field-verification, so this
+        // source self-disables for now and the selector falls through to estimated.
+        false
+    }
+
+    fn sample_watts(&self) -> Result<f64, PowerError> {
+        Err(PowerError::SensorUnavailable(format!(
+            "LibreHardwareMonitor live read is not built in M3a (parser-only seam; endpoint {}); \
+             the localhost:8085 read is the M3b field-verification on the actual hardware",
+            self.endpoint
+        )))
+    }
+}
+
+// ============================================================================================
 // EstimatedPowerSampler — transparent hardware/power profile (every OS; universal fallback)
 // ============================================================================================
 
@@ -186,28 +245,39 @@ impl PowerSampler for EstimatedPowerSampler {
 }
 
 // ============================================================================================
-// Runtime selector — sysfs if present → else wall meter if configured → else estimated
+// Runtime selector (D1, wall-meter-led) — wall meter if configured → else on-chip if available
+// (sysfs on Linux / LibreHardwareMonitor on Windows) → else estimated
 // ============================================================================================
 
-/// Choose the most-authoritative usable power source (§6.3): a probed sysfs sampler wins; else a
-/// configured wall meter; else the estimated fallback (which is always available). The selected
-/// sampler's [`PowerSampler::mode`] is what gets stamped onto every record.
+/// Choose the active power source along the revised (2026-06-20) **wall-meter-led** ladder
+/// (§5.3/§5.4, D1): a configured wall meter wins (it is the truest cross-OS figure); else the
+/// on-chip package-grade source available on this host (`sysfs` on native Linux, then
+/// LibreHardwareMonitor on Windows); else the estimated fallback (always available). The
+/// selected sampler's [`PowerSampler::mode`] is what gets stamped onto every record.
 ///
-/// Takes already-constructed candidates so the caller owns configuration/discovery (kept simple
-/// for the scaffold); M3 adds full sysfs node discovery + diagnostics in front of this.
+/// This deliberately prefers a user's deliberately-configured true-draw meter over the less
+/// honest on-chip *package* reading — reversing the M0 scaffold's sysfs-first order. Takes
+/// already-constructed candidates so the caller owns configuration/discovery (kept simple for
+/// the scaffold); M3 adds full sysfs node discovery + diagnostics in front of this.
 pub fn select_sampler(
-    sysfs: Option<SysfsPowerSampler>,
     wall_meter: Option<WallMeterPowerSampler>,
+    sysfs: Option<SysfsPowerSampler>,
+    lhm: Option<WindowsLhmPowerSampler>,
     estimated: EstimatedPowerSampler,
 ) -> Box<dyn PowerSampler> {
+    if let Some(w) = wall_meter {
+        if w.probe() {
+            return Box::new(w);
+        }
+    }
     if let Some(s) = sysfs {
         if s.probe() {
             return Box::new(s);
         }
     }
-    if let Some(w) = wall_meter {
-        if w.probe() {
-            return Box::new(w);
+    if let Some(l) = lhm {
+        if l.probe() {
+            return Box::new(l);
         }
     }
     Box::new(estimated)
@@ -250,23 +320,43 @@ mod tests {
     }
 
     #[test]
-    fn sysfs_self_disables_when_unavailable_and_selector_falls_through() {
-        // On the default build (no `power` feature) and on every non-Linux target, the sysfs
-        // sampler probes false, so the selector must fall through to the wall meter.
+    fn lhm_seam_self_disables_until_the_m3b_live_read_lands() {
+        // M3a ships the LHM parser seam only; `probe` is false so the selector falls through.
+        let lhm = WindowsLhmPowerSampler::new("http://localhost:8085/data.json");
+        assert!(!lhm.probe());
+        assert_eq!(lhm.mode(), MeasurementMode::MeasuredLhm);
+        assert!(lhm.sample_watts().is_err());
+    }
+
+    #[test]
+    fn selector_is_wall_meter_led_then_falls_through_to_estimated() {
+        // D1 (wall-meter-led): a configured wall meter wins; with none configured the on-chip
+        // sources (a stub-false sysfs node + the parser-only LHM seam) self-disable, so the
+        // selector falls all the way to estimated.
         let sysfs =
             SysfsPowerSampler::new("/sys/class/drm/card0/device/hwmon/hwmon0/power1_average");
+        let lhm = WindowsLhmPowerSampler::new("http://localhost:8085/data.json");
         let (Ok(wall), Ok(est)) = (
             WallMeterPowerSampler::constant(174.0),
             EstimatedPowerSampler::new(160.0, 1.0),
         ) else {
             panic!("both fallback samplers have valid inputs")
         };
-        let chosen = select_sampler(Some(sysfs), Some(wall), est);
-        // Without the `power` feature the sysfs probe is false → wall meter wins.
-        #[cfg(not(all(target_os = "linux", feature = "power")))]
+        let chosen = select_sampler(
+            Some(wall),
+            Some(sysfs.clone()),
+            Some(lhm.clone()),
+            est.clone(),
+        );
+        // A configured wall meter always wins (it probes true on every OS).
         assert_eq!(chosen.mode(), MeasurementMode::MeasuredWallmeter);
-        // With the feature on a real node may or may not exist; either way a mode is chosen.
-        let _ = chosen.sample_watts();
+
+        // With NO wall meter, both on-chip sources self-disable here (sysfs stub-false off the
+        // `power` feature / off Linux; LHM parser-only seam), so estimated is chosen.
+        let chosen_no_wall = select_sampler(None, Some(sysfs), Some(lhm), est);
+        #[cfg(not(all(target_os = "linux", feature = "power")))]
+        assert_eq!(chosen_no_wall.mode(), MeasurementMode::Estimated);
+        let _ = chosen_no_wall.sample_watts();
     }
 
     #[test]
@@ -274,8 +364,44 @@ mod tests {
         let Ok(est) = EstimatedPowerSampler::new(160.0, 1.0) else {
             panic!("valid profile")
         };
-        let chosen = select_sampler(None, None, est);
+        let chosen = select_sampler(None, None, None, est);
         assert_eq!(chosen.mode(), MeasurementMode::Estimated);
         assert!(chosen.sample_watts().is_ok());
+    }
+
+    // The D1 *reversal* proof: a configured wall meter must beat a sysfs node that actually
+    // PROBES TRUE — which only happens on native Linux with the `power` feature + a readable
+    // µW node. We synthesize a readable node with a temp file so the test is hermetic. Under
+    // the OLD (M0) sysfs-first order this would return `MeasuredSysfs`; under D1 it returns
+    // `MeasuredWallmeter`. Gated to the only build where `SysfsPowerSampler::probe` can be true.
+    #[cfg(all(target_os = "linux", feature = "power"))]
+    #[test]
+    fn selector_prefers_a_configured_wall_meter_over_a_present_sysfs_node() {
+        let path =
+            std::env::temp_dir().join(format!("costroid-power-sysfs-{}.txt", std::process::id()));
+        // 150 W expressed in microwatts (the sysfs `power1_average` unit).
+        if std::fs::write(&path, "150000000").is_err() {
+            panic!("temp sysfs node should be writable");
+        }
+        let Some(node) = path.to_str() else {
+            panic!("temp path is valid utf-8")
+        };
+        let sysfs = SysfsPowerSampler::new(node);
+        assert!(sysfs.probe(), "the synthesized node must read (probe true)");
+
+        let (Ok(wall), Ok(est)) = (
+            WallMeterPowerSampler::constant(174.0),
+            EstimatedPowerSampler::new(160.0, 1.0),
+        ) else {
+            panic!("fallback samplers have valid inputs")
+        };
+        // Wall meter present → wins over the probing-true sysfs node (the D1 reversal).
+        let chosen = select_sampler(Some(wall), Some(sysfs.clone()), None, est.clone());
+        assert_eq!(chosen.mode(), MeasurementMode::MeasuredWallmeter);
+        // No wall meter → the probing-true sysfs node is the on-chip source chosen.
+        let chosen_no_wall = select_sampler(None, Some(sysfs), None, est);
+        assert_eq!(chosen_no_wall.mode(), MeasurementMode::MeasuredSysfs);
+
+        let _ = std::fs::remove_file(&path);
     }
 }
