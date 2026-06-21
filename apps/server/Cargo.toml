@@ -13,8 +13,10 @@ readme = "README.md"
 description = "Costroid local HTTP API + web UI — a loopback-only (127.0.0.1) server over the local cost ledger. No outbound network."
 keywords = ["finops", "cost", "server", "localhost", "ai"]
 categories = ["command-line-utilities", "web-programming::http-server"]
-# M0 scaffold — not published to crates.io until the M5 server/UI lands (publish-ladder bump = M6).
-publish = false
+# Published to crates.io (M6 T9 / D3 — the M5 server/UI has landed): `cargo install costroid-server`.
+# Its place in the publish ladder is `… → costroid → server → bar` (RELEASING.md); a topo-sort test
+# guards that order against this dep graph (server depends on costroid-core + costroid-store).
+publish = true
 
 [[bin]]
 name = "costroid-server"
@@ -47,8 +49,23 @@ costroid-providers.workspace = true
 [lints]
 workspace = true
 
-# Kept OUT of the cargo-dist release pipeline at M0 (it is a scaffold). The web UI/API ships at
-# M5; flipping `dist`/`publish` on (and choosing installers vs archives, mirroring apps/bar) is an
-# M6 packaging task.
+# cargo-dist per-package release config (M6 T9 / D3 — mirrors apps/bar). The web UI/API has
+# shipped (M5); M6 flips it into the release pipeline.
 [package.metadata.dist]
-dist = false
+# In the cargo-dist pipeline now.
+dist = true
+# Ship the loopback server as downloadable binary ARCHIVES + crates.io
+# (`cargo install costroid-server`) only — no one-click npm/Homebrew (or curl|sh / irm)
+# installers (those stay CLI-only, `costroid`). Mirrors apps/bar.
+installers = []
+# Explicit 5 targets, mirroring apps/bar: Linux gnu x86_64/aarch64, macOS x86_64/aarch64,
+# Windows x86_64. NO `x86_64-unknown-linux-musl` — the server need not static-link (it links
+# only `tiny_http`: no libdbus/GTK/TLS/async-runtime), so it builds clean on every target and
+# `precise-builds = true` keeps the release runners libdbus-free.
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]

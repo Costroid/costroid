@@ -16,8 +16,12 @@ description = "Costroid local-inference economics: the four-source PowerSampler 
 documentation = "https://docs.rs/costroid-power"
 keywords = ["finops", "energy", "power", "inference", "ai"]
 categories = ["finance", "hardware-support"]
-# M0 scaffold — not published until the M3 engine lands (publish ladder bump is an M6 task).
-publish = false
+# Published as a crates.io LIBRARY (M6 T9 / D3 — the M3 engine has landed). No dist archives:
+# the engine is a library, not a shipped binary. The bundled, dated data artifacts (`profiles/`
+# + `models/` JSON + their `.sha256` sidecars) live under the crate dir, so `cargo package`
+# includes them. Its place in the publish ladder is `… → store → power → costroid → …`
+# (RELEASING.md); a topo-sort test guards that order against this dep graph.
+publish = true
 
 [features]
 # OFF by default — mirrors how `connect` gates the network/credential subsystem. With `power`

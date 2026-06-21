@@ -17,9 +17,11 @@ description = "Costroid's local SQLite usage store: a metadata-only (R4 Cardinal
 documentation = "https://docs.rs/costroid-store"
 keywords = ["finops", "sqlite", "store", "focus", "ai"]
 categories = ["database", "command-line-utilities"]
-# M1 scaffold — not published until the store path lands fully (the publish-ladder bump
-# is an M6 task). Consumed only locally, behind the CLI's off-by-default `store` feature.
-publish = false
+# Published as a crates.io LIBRARY (M6 T9 / D3 — the store path has landed). No dist archives:
+# it is a library, consumed locally behind the CLI's off-by-default `store` feature. Its place
+# in the publish ladder is `… → store → power → costroid → …` (RELEASING.md); a topo-sort test
+# guards that order against this dep graph (store depends only on costroid-focus).
+publish = true
 
 [dependencies]
 # The FOCUS record types the store persists (metadata-only allowlist) and replays (T11).
