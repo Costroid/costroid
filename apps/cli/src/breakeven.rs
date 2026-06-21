@@ -16,8 +16,8 @@
 use anyhow::{anyhow, bail, Result};
 use costroid_core::{
     blended_cloud_per_token, breakeven_report, cloud_price_per_token, cloud_reference_points,
-    AssumptionStamp, BreakevenInputs, BreakevenOutcome, BreakevenReport, SweepPoint, TokenType,
-    UsdAmount,
+    AssumptionStamp, BreakevenInputs, BreakevenOutcome, BreakevenReport, EngineSnapshot,
+    SweepPoint, TokenType, UsdAmount,
 };
 use costroid_power::{
     bundled_models, bundled_power_profiles, estimate_run, LocalRunReport, ProfileOverrides,
@@ -38,6 +38,19 @@ const DEFAULT_CLOUD_MODEL: &str = "claude-opus-4-8";
 const ESTIMATED_RUNTIME: &str = "ollama";
 
 pub fn run_breakeven(args: &BreakevenArgs, render_options: RenderOptions) -> Result<()> {
+    let (report, cloud_model, tokens_per_day) = breakeven_report_for(args)?;
+    let document = render_breakeven(&report, &cloud_model, tokens_per_day);
+    print!("{}", document.render(render_options));
+    Ok(())
+}
+
+/// Build the break-even report for a scenario — shared by the `costroid breakeven` subcommand and
+/// the power-gated TUI overlay ([`breakeven_overlay_document`]). Pure-compute: config defaults +
+/// the bundled estimated harness + the catalog pricing → the M4 engine. Returns the report, the
+/// resolved cloud model, and the "where you are" daily volume (both for [`render_breakeven`]).
+fn breakeven_report_for(
+    args: &BreakevenArgs,
+) -> Result<(BreakevenReport, String, Option<Decimal>)> {
     // 1. Config defaults (MED3-validated), overridden by flags.
     let config = costroid_config::load().map_err(|err| anyhow!("config: {err}"))?;
     let scenario = config
@@ -157,9 +170,109 @@ pub fn run_breakeven(args: &BreakevenArgs, render_options: RenderOptions) -> Res
     // 7. Assemble the report (with the labeled, dated DeepSWE overlay) and render.
     let overlay = cloud_reference_points()?;
     let report = breakeven_report(base, sweep, stamp, overlay)?;
-    let document = render_breakeven(&report, &cloud_model, tokens_per_day);
-    print!("{}", document.render(render_options));
-    Ok(())
+    Ok((report, cloud_model, tokens_per_day))
+}
+
+/// The power-gated TUI break-even/comparison overlay document (the `b` overlay; M5 T1). Reuses the
+/// shared seam + [`render_breakeven`] for the break-even facet, and adds a comparison facet over the
+/// live snapshot's `local_inference` rows (actual local spend vs counterfactual cloud at the
+/// report's blended list-price rate). On a compute error it renders one honest error line; with no
+/// local rows it renders an honest empty state (never a fabricated free break-even, MED5).
+pub(crate) fn breakeven_overlay_document(snapshot: Option<&EngineSnapshot>) -> StyledDocument {
+    let mut doc = StyledDocument::new();
+    doc.push(StyledLine {
+        spans: vec![crate::render::StyledSpan {
+            content: "Break-even & comparison".to_string(),
+            style: SemanticStyle::Strong,
+        }],
+    });
+    doc.push(StyledLine::plain(""));
+
+    match breakeven_report_for(&BreakevenArgs::tui_overlay()) {
+        Ok((report, cloud_model, tokens_per_day)) => {
+            // The comparison facet: actual stored local spend vs counterfactual cloud list price.
+            for line in comparison_lines(snapshot, &report) {
+                doc.push(line);
+            }
+            doc.push(StyledLine::plain(""));
+            // The break-even facet — the shared renderer (carries measurement_mode + the snapshot
+            // stamp + the "counterfactual list-price estimate" label).
+            for line in render_breakeven(&report, &cloud_model, tokens_per_day).lines {
+                doc.push(line);
+            }
+        }
+        Err(err) => {
+            let mut line = StyledLine::new();
+            line.push_styled("break-even unavailable", SemanticStyle::Warn);
+            line.push_plain(format!(": {err}"));
+            doc.push(line);
+        }
+    }
+    doc
+}
+
+/// The actual-local-spend vs counterfactual-cloud comparison over the snapshot's `local_inference`
+/// rows, priced at the report's blended cloud rate. With no local rows it returns an honest empty
+/// state (MED5 — never a fabricated `e = 0` / free break-even). Carries the pricing-snapshot id.
+fn comparison_lines(
+    snapshot: Option<&EngineSnapshot>,
+    report: &BreakevenReport,
+) -> Vec<StyledLine> {
+    // The FOCUS `x_Lane` value for the local-inference lane (== `LedgerLane::LocalInference`).
+    let local = "local_inference";
+    let mut actual_spend = Decimal::ZERO;
+    let mut tokens = Decimal::ZERO;
+    if let Some(snapshot) = snapshot {
+        for row in snapshot.focus_rows.iter().filter(|row| row.x_lane == local) {
+            actual_spend = actual_spend
+                .checked_add(row.effective_cost)
+                .unwrap_or(actual_spend);
+            tokens = tokens.checked_add(row.x_consumed_tokens).unwrap_or(tokens);
+        }
+    }
+    if tokens.is_zero() {
+        return vec![StyledLine::plain(
+            "No local runs recorded yet — run `costroid bench` to populate the local lane.",
+        )];
+    }
+
+    let counterfactual = report
+        .stamp
+        .blended_cloud_per_token
+        .checked_mul(tokens)
+        .unwrap_or(Decimal::ZERO);
+    let mut actual_line = StyledLine::new();
+    actual_line.push_plain("Actual local spend: ");
+    actual_line.push_styled(
+        format!("${}", actual_spend.round_dp(4).normalize()),
+        SemanticStyle::Data,
+    );
+    actual_line.push_plain(format!(" over {} tokens", fmt_tokens(tokens)));
+
+    let mut cloud_line = StyledLine::new();
+    cloud_line.push_plain("Counterfactual cloud: ");
+    cloud_line.push_styled(
+        format!("${}", counterfactual.round_dp(4).normalize()),
+        SemanticStyle::Data,
+    );
+    cloud_line.push_plain(format!(
+        " (same {} tokens at list price)",
+        fmt_tokens(tokens)
+    ));
+
+    vec![
+        actual_line,
+        cloud_line,
+        StyledLine {
+            spans: vec![crate::render::StyledSpan {
+                content: format!(
+                    "Pricing snapshot {} (cloud is a list-price counterfactual).",
+                    report.stamp.pricing_snapshot_id
+                ),
+                style: SemanticStyle::Muted,
+            }],
+        },
+    ]
 }
 
 /// `e` — the local **energy-only** marginal rate, `energy_cost / total_tokens`, as an exact
@@ -393,6 +506,18 @@ fn render_breakeven(
         }
     }
     doc.push(verdict);
+
+    // R6/R8 honesty: the cloud side is a COUNTERFACTUAL list-price estimate (your tokens × the
+    // dated catalog list prices), never your actual negotiated cloud bill. The pricing-snapshot id
+    // it was computed against is in the assumption stamp below.
+    doc.push(StyledLine {
+        spans: vec![crate::render::StyledSpan {
+            content: "Cloud = counterfactual list-price estimate (your tokens × current list \
+                      prices — not your actual cloud bill)."
+                .to_string(),
+            style: SemanticStyle::Muted,
+        }],
+    });
 
     // "Where you are" context, if a daily volume was given.
     if let Some(volume) = tokens_per_day {
@@ -988,6 +1113,7 @@ mod tests {
             "Local-vs-cloud break-even  (vs claude-opus-4-8)",
             "",
             "Local breaks even at 1000000 tokens/day.",
+            "Cloud = counterfactual list-price estimate (your tokens × current list prices — not your actual cloud bill).",
             "",
             "Sensitivity range: 1000000 … 1000000 tokens/day",
             "",
@@ -1007,5 +1133,151 @@ mod tests {
             "Estimate — ranges + methodology, never a single hero number; reconcile against your provider invoice.",
         ];
         assert_eq!(plain, format!("{}\n", expected_lines.join("\n")));
+    }
+
+    // ---- M5 T1: the power-gated TUI break-even/comparison overlay ----
+
+    /// A snapshot carrying one `local_inference` row (built through the real `local_run_to_focus`),
+    /// so the overlay's comparison facet has actual local spend to report.
+    fn snapshot_with_one_local_row() -> EngineSnapshot {
+        use costroid_core::focus_records_from_canonical;
+        use costroid_providers::{CanonicalEvent, LocalRunEvent};
+        let Some(ts) = chrono::DateTime::from_timestamp(0, 0) else {
+            panic!("the unix epoch is a valid timestamp");
+        };
+        let event = LocalRunEvent {
+            timestamp: ts,
+            model: "gemma-4-26b-a4b".to_string(),
+            quant: "Q4_K_M".to_string(),
+            runtime_kind: "ollama".to_string(),
+            tokens_in: 1_000,
+            tokens_out: 9_000,
+            run_seconds: 10.0,
+            avg_power_watts: 100.0,
+            measurement_mode: "estimated".to_string(),
+            energy_wh: 0.5,
+            amortized_hw_cost: "0.001".to_string(),
+            local_run_cost: "0.003".to_string(),
+            electricity_rate_per_kwh: 0.16,
+            hardware_price: 2000.0,
+            hardware_lifetime_seconds: 94_608_000.0,
+            hardware_profile_id: "strix-halo-128gb@2026-06-20".to_string(),
+            benchmark_id: "test".to_string(),
+            billing_currency: "USD".to_string(),
+        };
+        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Local(event)]) else {
+            panic!("the local run normalizes to a FOCUS row");
+        };
+        EngineSnapshot {
+            generated_at: ts,
+            usage_events: Vec::new(),
+            focus_rows: rows,
+            limit_windows: Vec::new(),
+            providers: Vec::new(),
+            capabilities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn overlay_renders_comparison_and_honesty_labels() {
+        let snapshot = snapshot_with_one_local_row();
+        let plain = breakeven_overlay_document(Some(&snapshot)).render(RenderOptions::plain());
+        // The comparison facet over the snapshot's local rows.
+        assert!(
+            plain.contains("Actual local spend"),
+            "comparison spend:\n{plain}"
+        );
+        assert!(
+            plain.contains("Counterfactual cloud"),
+            "comparison cloud:\n{plain}"
+        );
+        // MED6: the counterfactual list-price label; MED7: the estimated measurement mode; plus the
+        // pricing-snapshot stamp.
+        assert!(
+            plain.contains("counterfactual list-price estimate"),
+            "MED6 label:\n{plain}"
+        );
+        assert!(
+            plain.contains("measurement: estimated"),
+            "MED7 mode:\n{plain}"
+        );
+        assert!(
+            plain.contains("pricing snapshot"),
+            "snapshot stamp:\n{plain}"
+        );
+        // Never color-alone: --plain carries no ANSI escape.
+        assert!(
+            !plain.contains('\u{1b}'),
+            "plain overlay must carry no ANSI"
+        );
+    }
+
+    #[test]
+    fn overlay_renders_the_exact_engine_outcome() {
+        // MED8: the overlay shows the engine's EXACT outcome value (recomputed via the same seam),
+        // not a fudged or merely "well-formed" verdict.
+        let Ok((report, _, _)) = breakeven_report_for(&BreakevenArgs::tui_overlay()) else {
+            panic!("the overlay scenario computes");
+        };
+        let snapshot = snapshot_with_one_local_row();
+        let plain = breakeven_overlay_document(Some(&snapshot)).render(RenderOptions::plain());
+        match &report.headline {
+            BreakevenOutcome::CrossesAt { tokens_per_day } => assert!(
+                plain.contains(&format!(
+                    "breaks even at {} tokens/day",
+                    fmt_tokens(*tokens_per_day)
+                )),
+                "overlay must show the exact crossover {}:\n{plain}",
+                fmt_tokens(*tokens_per_day)
+            ),
+            BreakevenOutcome::Infeasible {
+                v_star,
+                max_tokens_per_day,
+                ..
+            } => assert!(
+                plain.contains(&format!("break even at {} tokens/day", fmt_tokens(*v_star)))
+                    && plain.contains(&format!("{} tokens/day", fmt_tokens(*max_tokens_per_day))),
+                "overlay must show the exact infeasible v_star + ceiling:\n{plain}"
+            ),
+            BreakevenOutcome::Always => {
+                assert!(plain.contains("cheaper at every volume"), "{plain}")
+            }
+            BreakevenOutcome::Never { .. } => assert!(plain.contains("NEVER"), "{plain}"),
+        }
+    }
+
+    #[test]
+    fn overlay_with_no_local_rows_is_an_honest_empty_state() {
+        // MED5: zero local rows → an honest empty state, never a fabricated comparison/free break-even.
+        let plain = breakeven_overlay_document(None).render(RenderOptions::plain());
+        assert!(
+            plain.contains("No local runs recorded yet"),
+            "honest empty state:\n{plain}"
+        );
+        assert!(
+            !plain.contains("Actual local spend"),
+            "no fabricated comparison without local rows:\n{plain}"
+        );
+    }
+
+    #[test]
+    fn overlay_styled_and_plain_are_byte_identical_minus_ansi() {
+        let snapshot = snapshot_with_one_local_row();
+        let doc = breakeven_overlay_document(Some(&snapshot));
+        let styled = doc.render(crate::render::RenderOptions {
+            mode: crate::render::RenderMode::Ascii,
+            ansi: true,
+            width: 80,
+        });
+        let plain = doc.render(RenderOptions::plain());
+        assert!(
+            styled.contains('\u{1b}'),
+            "the styled overlay must emit ANSI (else this test is vacuous)"
+        );
+        assert_eq!(
+            strip_ansi(&styled),
+            plain,
+            "stripping ANSI from the styled overlay must equal the plain render"
+        );
     }
 }

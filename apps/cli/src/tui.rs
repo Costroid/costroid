@@ -180,6 +180,11 @@ struct App {
     /// keychain/registry (no network). Connect-gated: absent from the default build.
     #[cfg(feature = "connect")]
     connections: Vec<crate::render::ConnectionEntry>,
+    /// Whether the power-gated break-even/comparison overlay (`b`) is open (M5 T1). Modal: while
+    /// open, keys route to [`App::handle_breakeven_key`]. Absent from the default (no-power) build,
+    /// so the 9-tab TUI is byte-unchanged when the `power` feature is off.
+    #[cfg(feature = "power")]
+    breakeven_open: bool,
 }
 
 impl App {
@@ -219,6 +224,8 @@ impl App {
             alerts_anomalies: false,
             #[cfg(feature = "connect")]
             connections: Vec::new(),
+            #[cfg(feature = "power")]
+            breakeven_open: false,
         }
     }
 
@@ -280,6 +287,13 @@ impl App {
 
         if self.filter_editing {
             return self.handle_filter_key(key);
+        }
+
+        // The break-even overlay (`b`) is modal: while open, keys route to its own handler so a
+        // digit/tab does not switch tabs behind it (mirrors `handle_filter_key`). Power-gated.
+        #[cfg(feature = "power")]
+        if self.breakeven_open {
+            return self.handle_breakeven_key(key);
         }
 
         match key.code {
@@ -364,6 +378,14 @@ impl App {
                 self.set_screen(self.previous_screen);
                 AppAction::Continue
             }
+            // Open the power-gated break-even/comparison overlay (M5 T1). Modal once open (see the
+            // intercept above); `esc`/`b` close it. Absent from the default (no-power) build.
+            #[cfg(feature = "power")]
+            KeyCode::Char('b') => {
+                self.breakeven_open = true;
+                self.status = Some("local-vs-cloud break-even (estimate; no network)".to_string());
+                AppAction::Continue
+            }
             KeyCode::Esc => {
                 if self.help_open {
                     self.help_open = false;
@@ -403,7 +425,29 @@ impl App {
         }
     }
 
+    /// Modal key handling while the break-even overlay is open (M5 T1): `esc`/`b` close it, `q`
+    /// quits, `r` refreshes; every other key is swallowed so it cannot switch tabs behind the
+    /// overlay. Power-gated.
+    #[cfg(feature = "power")]
+    fn handle_breakeven_key(&mut self, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Char('q') => AppAction::Quit,
+            KeyCode::Esc | KeyCode::Char('b') => {
+                self.breakeven_open = false;
+                AppAction::Continue
+            }
+            KeyCode::Char('r') => AppAction::Refresh,
+            _ => AppAction::Continue,
+        }
+    }
+
     fn document_for_width(&self, width: u16, now: DateTime<Utc>) -> StyledDocument {
+        // The power-gated break-even overlay renders over the active tab when open (M5 T1). It is
+        // width-agnostic (rendered at draw time with the global options), so return it early.
+        #[cfg(feature = "power")]
+        if self.breakeven_open {
+            return crate::breakeven::breakeven_overlay_document(self.snapshot.as_ref());
+        }
         let options = self.render_options.with_width(width as usize);
         match &self.snapshot {
             Some(snapshot) => {
@@ -769,6 +813,11 @@ fn render_tab_bar(app: &App) -> Line<'static> {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(" a frontier ", active_style));
     }
+    #[cfg(feature = "power")]
+    if app.breakeven_open {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(" b break-even ", active_style));
+    }
     Line::from(spans)
 }
 
@@ -794,9 +843,17 @@ fn footer_line(app: &App) -> Line<'static> {
     let muted = ratatui_style(SemanticStyle::Muted, options);
     let mut spans: Vec<Span<'static>> = Vec::new();
 
-    // Current screen + live/manual badge.
+    // Current screen + live/manual badge (the break-even overlay shows its own title when open).
+    #[cfg(feature = "power")]
+    let screen_label = if app.breakeven_open {
+        "break-even".to_string()
+    } else {
+        tab_label(app.screen).to_string()
+    };
+    #[cfg(not(feature = "power"))]
+    let screen_label = tab_label(app.screen).to_string();
     spans.push(Span::styled(
-        format!(" {} ", tab_label(app.screen)),
+        format!(" {screen_label} "),
         active_chip_style(options),
     ));
     spans.push(Span::raw(" "));
@@ -813,20 +870,33 @@ fn footer_line(app: &App) -> Line<'static> {
 
     // Contextual keys.
     let mut hints: Vec<(&str, &str)> = Vec::new();
-    if app.screen == Screen::Frontier {
-        hints.push(("esc", "back"));
+    // While the power-gated break-even overlay is modal, show a focused hint set (the nav hints do
+    // nothing behind it) — kept short so the footer still fits an 80-column terminal. When closed
+    // the footer is unchanged from the default build; `b` is documented on the help screen (`?`).
+    #[cfg(feature = "power")]
+    let breakeven_open = app.breakeven_open;
+    #[cfg(not(feature = "power"))]
+    let breakeven_open = false;
+    if breakeven_open {
+        hints.push(("esc/b", "close"));
+        hints.push(("r", "refresh"));
+        hints.push(("q", "quit"));
     } else {
-        hints.push(("1-9/tab", "switch"));
-        hints.push(("a", "frontier"));
+        if app.screen == Screen::Frontier {
+            hints.push(("esc", "back"));
+        } else {
+            hints.push(("1-9/tab", "switch"));
+            hints.push(("a", "frontier"));
+        }
+        if app.screen == Screen::Trends {
+            hints.push(("d/w/m/y", "period"));
+            hints.push(("g", "group"));
+        }
+        hints.push(("f", "filter"));
+        hints.push(("r", "refresh"));
+        hints.push(("?", "help"));
+        hints.push(("q", "quit"));
     }
-    if app.screen == Screen::Trends {
-        hints.push(("d/w/m/y", "period"));
-        hints.push(("g", "group"));
-    }
-    hints.push(("f", "filter"));
-    hints.push(("r", "refresh"));
-    hints.push(("?", "help"));
-    hints.push(("q", "quit"));
     for (key, label) in hints {
         spans.push(sep());
         spans.extend(key_hint(key, label, options));
@@ -866,8 +936,9 @@ fn document_display_rows(doc: &StyledDocument, width: u16) -> usize {
 }
 
 fn draw_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(74, 19, area);
-    let lines = vec![
+    let popup = centered_rect(74, 20, area);
+    #[cfg_attr(not(feature = "power"), allow(unused_mut))]
+    let mut lines = vec![
         Line::from("1-6 now / trends / providers / models / history / budget"),
         Line::from("7          forecast (projected spend + quota ETAs)"),
         Line::from("8          anomalies (vs your own recent history)"),
@@ -884,6 +955,13 @@ fn draw_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("?          close help"),
         Line::from("q/Ctrl-C   quit"),
     ];
+    // The power-gated break-even/comparison overlay (M5 T1) — discoverable here (the footer is
+    // width-constrained). Placed with the other overlay (frontier) entries.
+    #[cfg(feature = "power")]
+    lines.insert(
+        10,
+        Line::from("b          local-vs-cloud break-even (esc/b closes)"),
+    );
     let block = Block::default().title("help").borders(Borders::ALL);
     let paragraph = Paragraph::new(Text::from(lines))
         .block(block)
@@ -2292,5 +2370,50 @@ mod connection_lane_tests {
             }),
             "Acme"
         );
+    }
+
+    /// M5 T1 — with the `power` feature OFF, the break-even overlay does not exist: the TUI still
+    /// has exactly the 9 numbered tabs and the rendered frame mentions no break-even surface. This
+    /// is the default (byte-for-byte no-network) build; the overlay is admitted only under `power`.
+    #[cfg(not(feature = "power"))]
+    #[test]
+    fn breakeven_overlay_is_absent_without_the_power_feature() {
+        assert_eq!(
+            TAB_SCREENS.len(),
+            9,
+            "the default TUI has exactly 9 numbered tabs"
+        );
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
+        // Pressing `b` is inert (no overlay state exists to open).
+        let _ = app.handle_key(key(KeyCode::Char('b')));
+        let frame = frame_to_string(&mut app, 100, 30);
+        assert!(
+            !frame.to_lowercase().contains("break-even"),
+            "no break-even surface in the default build:\n{frame}"
+        );
+    }
+
+    /// M5 T1 — with `power` ON, `b` opens the modal break-even overlay (the frame shows its title),
+    /// and `esc` closes it back to the underlying tab.
+    #[cfg(feature = "power")]
+    #[test]
+    fn breakeven_overlay_opens_and_closes_under_power() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
+        assert!(!app.breakeven_open, "the overlay starts closed");
+        let _ = app.handle_key(key(KeyCode::Char('b')));
+        assert!(app.breakeven_open, "`b` opens the overlay");
+        let frame = frame_to_string(&mut app, 100, 30);
+        assert!(
+            frame.contains("Break-even & comparison"),
+            "the open overlay renders its title:\n{frame}"
+        );
+        // Modal: a digit does not switch tabs behind the overlay; `esc` closes it.
+        let _ = app.handle_key(key(KeyCode::Char('2')));
+        assert!(
+            app.breakeven_open,
+            "a digit is swallowed while the overlay is modal"
+        );
+        let _ = app.handle_key(key(KeyCode::Esc));
+        assert!(!app.breakeven_open, "`esc` closes the overlay");
     }
 }

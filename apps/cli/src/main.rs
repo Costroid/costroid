@@ -298,6 +298,31 @@ struct BreakevenArgs {
     pricing_override: Option<std::path::PathBuf>,
 }
 
+#[cfg(feature = "power")]
+impl BreakevenArgs {
+    /// The TUI break-even overlay's scenario (M5 T1): the same values clap fills in for a bare
+    /// `costroid breakeven` (model + token basis defaulted; every override `None` → the config
+    /// scenario / derived), so the overlay and the subcommand share one break-even code path. The
+    /// literals mirror the clap `default_value`s on the fields above.
+    fn tui_overlay() -> Self {
+        Self {
+            model: "gemma-4-26b-a4b".to_string(),
+            quant: None,
+            hardware_profile: None,
+            tokens_in: 256,
+            tokens_out: 1024,
+            output_share: None,
+            utilization: None,
+            depreciation_period_days: None,
+            electricity_rate: None,
+            hardware_price: None,
+            tokens_per_day: None,
+            compare_to: None,
+            pricing_override: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum ImportFormat {
     FocusCsv,
