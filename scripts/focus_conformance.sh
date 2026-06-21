@@ -181,6 +181,17 @@ validate_csv_v12 "$v12_dir/synthetic-aws-v12-full.csv" "v12-input-full"
 echo "==> samples/ leg: validating the curated demo datasets (FOCUS 1.3, offline)"
 samples_dir="$repo_root/samples"
 
+# Integrity first (M6 T1 L1): the committed samples carry .sha256 sidecars — verify them so a
+# drifted sample (or a hand-edited cloud CSV / bench JSON) fails CLOSED here, not silently. Each
+# sidecar holds a bare filename, so `sha256sum -c` runs from the sidecar's own directory.
+echo "==> samples/ integrity: verifying committed .sha256 sidecars"
+while IFS= read -r sidecar; do
+  ( cd "$(dirname "$sidecar")" && sha256sum -c "$(basename "$sidecar")" ) || {
+    echo "FAIL: samples integrity check failed for $sidecar (a committed sample drifted from its sidecar)" >&2
+    exit 1
+  }
+done < <(find "$samples_dir" -name '*.sha256' | sort)
+
 # (a) developer_tool: export the synthetic logs. Point ONLY at samples/local-logs (neutralize
 # every other discovery override) so the export can only contain the committed sample logs.
 samples_dev_csv="$workdir/samples-dev.csv"
