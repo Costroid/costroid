@@ -28,7 +28,7 @@ mod web;
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use tiny_http::{Header, Response, Server};
@@ -44,14 +44,24 @@ fn main() -> Result<()> {
             Ok(())
         }
         Mode::SelfCheck => self_check(),
-        Mode::Serve { once } => serve(DEFAULT_PORT, once),
+        Mode::Serve(config) => serve(&config),
     }
 }
 
+/// The resolved serve configuration (M5 T8). The bind HOST is never here — it is hard-wired to
+/// loopback by [`loopback_addr`], the single bind-address constructor; only the `port` varies.
+struct ServeConfig {
+    /// Serve exactly one request then exit (the race-free offline-proof hook, M5 T7).
+    once: bool,
+    /// The loopback port (default [`DEFAULT_PORT`]).
+    port: u16,
+    /// The stored-ledger path to read.
+    ledger: PathBuf,
+}
+
 enum Mode {
-    /// Bind loopback and run the request loop. `once` serves exactly one request, then exits — the
-    /// race-free hook `scripts/offline_acceptance.sh` uses to drive a real GET under strace (M5 T7).
-    Serve { once: bool },
+    /// Bind loopback and run the request loop with the resolved [`ServeConfig`].
+    Serve(ServeConfig),
     /// One-shot: prove the binary constructs + can bind loopback, make no egress, then exit.
     /// Used by `scripts/offline_acceptance.sh` for the runtime loopback-only proof.
     SelfCheck,
@@ -59,15 +69,36 @@ enum Mode {
     Help,
 }
 
-fn parse_args(mut args: impl Iterator<Item = String>) -> Mode {
-    // The scaffold takes a single mode argument; the first arg decides (none = serve).
-    match args.next().as_deref() {
-        Some("--self-check") => Mode::SelfCheck,
-        Some("-h" | "--help") => Mode::Help,
-        Some("--serve-once") => Mode::Serve { once: true },
-        Some("serve") | None => Mode::Serve { once: false },
-        Some(_) => Mode::Help,
+/// Parse the server flags. `--port <N>` sets the loopback port; `--ledger <path>` overrides the
+/// stored-ledger path; `--serve-once` serves one request then exits. The bind host is NOT a flag —
+/// it is always loopback (T8). A malformed flag (bad/missing value, unknown arg) prints usage.
+fn parse_args(args: impl Iterator<Item = String>) -> Mode {
+    let mut once = false;
+    let mut port = DEFAULT_PORT;
+    let mut ledger: Option<PathBuf> = None;
+    let mut iter = args;
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--self-check" => return Mode::SelfCheck,
+            "-h" | "--help" => return Mode::Help,
+            "--serve-once" => once = true,
+            "serve" => {} // explicit serve mode (the default)
+            "--port" => match iter.next().and_then(|value| value.parse::<u16>().ok()) {
+                Some(value) => port = value,
+                None => return Mode::Help,
+            },
+            "--ledger" => match iter.next() {
+                Some(value) => ledger = Some(PathBuf::from(value)),
+                None => return Mode::Help,
+            },
+            _ => return Mode::Help,
+        }
     }
+    Mode::Serve(ServeConfig {
+        once,
+        port,
+        ledger: ledger.unwrap_or_else(default_ledger_path),
+    })
 }
 
 fn print_usage() {
@@ -75,12 +106,15 @@ fn print_usage() {
         "costroid-server — local-only (127.0.0.1) HTTP API + web UI over the Costroid ledger\n\
          \n\
          USAGE:\n    \
-             costroid-server [serve]      Bind 127.0.0.1:{DEFAULT_PORT} and serve (default)\n    \
-             costroid-server --serve-once Serve exactly one request, then exit (offline-proof hook)\n    \
-             costroid-server --self-check Prove loopback-bind + no egress, then exit\n    \
-             costroid-server --help       Show this help\n\
+             costroid-server [serve]        Bind 127.0.0.1:{DEFAULT_PORT} and serve (default)\n    \
+             costroid-server --port <N>     Bind 127.0.0.1:<N> instead (host is always loopback)\n    \
+             costroid-server --ledger <path> Read the stored ledger from <path>\n    \
+             costroid-server --serve-once   Serve exactly one request, then exit (offline-proof hook)\n    \
+             costroid-server --self-check   Prove loopback-bind + no egress, then exit\n    \
+             costroid-server --help         Show this help\n\
          \n\
-         The server binds loopback ONLY and makes no outbound network call (⚑ A1 / §6.11)."
+         The server binds loopback ONLY (the host is not configurable) and makes no outbound \
+         network call (⚑ A1 / §6.11)."
     );
 }
 
@@ -121,8 +155,8 @@ fn self_check() -> Result<()> {
 /// Bind loopback and serve the stored ledger views. `once` serves a single request then returns —
 /// the race-free hook the offline-acceptance real-serve leg uses (M5 T7). The bind address is built
 /// ONLY by [`loopback_addr`], so the server can never bind a routable interface by construction.
-fn serve(port: u16, once: bool) -> Result<()> {
-    let addr = loopback_addr(port);
+fn serve(config: &ServeConfig) -> Result<()> {
+    let addr = loopback_addr(config.port);
     let server = Server::http(addr)
         .map_err(|e| anyhow::anyhow!("failed to bind loopback {addr}: {e}"))
         .with_context(|| "the server binds 127.0.0.1 only and never a routable interface")?;
@@ -131,7 +165,8 @@ fn serve(port: u16, once: bool) -> Result<()> {
 
     for request in server.incoming_requests() {
         let url = request.url().to_string();
-        let (status, content_type, body) = respond_for(&url);
+        let (status, content_type, body) = respond_for(&url, &config.ledger);
+        let once = config.once;
         let response = match Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()) {
             Ok(header) => Response::from_string(body)
                 .with_status_code(status)
@@ -152,7 +187,7 @@ fn serve(port: u16, once: bool) -> Result<()> {
 /// Route a request URL to `(status, content-type, body)`. Reads the stored ledger per request
 /// (local, read-only). R4: only bounded view metadata is ever serialized — never any content.
 /// Appending `?plain` to a view returns its screen-reader/pipe-friendly text rendering.
-fn respond_for(url: &str) -> (u16, String, String) {
+fn respond_for(url: &str, ledger: &Path) -> (u16, String, String) {
     let html = "text/html; charset=utf-8".to_string();
     let json = "application/json; charset=utf-8".to_string();
     let text = "text/plain; charset=utf-8".to_string();
@@ -171,16 +206,16 @@ fn respond_for(url: &str) -> (u16, String, String) {
         "/healthz" => (200, text, "ok\n".to_string()),
         "/assets/costroid.css" => (200, css, web::CSS.to_string()),
         "/api/timeline" | "/api/comparison" | "/api/breakeven" | "/api/views" => {
-            match api_json(path) {
+            match api_json(path, ledger) {
                 Ok(body) => (200, json, body),
                 Err(message) => (500, text, message),
             }
         }
-        "/" => match views() {
+        "/" => match views(ledger) {
             Ok(views) => (200, html, web::index_html(&views)),
             Err(message) => (500, text, message),
         },
-        "/timeline" | "/comparison" | "/breakeven" => match views() {
+        "/timeline" | "/comparison" | "/breakeven" => match views(ledger) {
             Ok(views) => {
                 if plain {
                     let body = match path {
@@ -204,17 +239,16 @@ fn respond_for(url: &str) -> (u16, String, String) {
     }
 }
 
-/// Build the three views over the stored ledger (default path). Errors are bounded status messages
+/// Build the three views over the stored ledger at `ledger`. Errors are bounded status messages
 /// (schema/SQLite/pricing), never row content.
-fn views() -> std::result::Result<data::Views, String> {
-    let path = default_ledger_path();
-    let rows = data::load_rows(&path).map_err(|e| format!("ledger read failed: {e}"))?;
+fn views(ledger: &Path) -> std::result::Result<data::Views, String> {
+    let rows = data::load_rows(ledger).map_err(|e| format!("ledger read failed: {e}"))?;
     data::build_views(&rows, &data::Scenario::default())
         .map_err(|e| format!("view build failed: {e}"))
 }
 
-fn api_json(path: &str) -> std::result::Result<String, String> {
-    let views = views()?;
+fn api_json(path: &str, ledger: &Path) -> std::result::Result<String, String> {
+    let views = views(ledger)?;
     let value = match path {
         "/api/timeline" => serde_json::to_string(&views.timeline),
         "/api/comparison" => serde_json::to_string(&views.comparison),
@@ -224,7 +258,7 @@ fn api_json(path: &str) -> std::result::Result<String, String> {
     value.map_err(|e| format!("serialization failed: {e}"))
 }
 
-/// The default stored-ledger path (M5 T8 will let config/flag override it).
+/// The default stored-ledger path, overridable with `--ledger` (M5 T8).
 fn default_ledger_path() -> PathBuf {
     if let Some(dir) = env::var_os("XDG_DATA_HOME") {
         return PathBuf::from(dir).join("costroid").join("ledger.db");
@@ -233,4 +267,91 @@ fn default_ledger_path() -> PathBuf {
         return PathBuf::from(home).join(".local/share/costroid/ledger.db");
     }
     PathBuf::from("costroid-ledger.db")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> std::vec::IntoIter<String> {
+        list.iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn parse_args_defaults_to_a_loopback_serve() {
+        match parse_args(args(&[])) {
+            Mode::Serve(config) => {
+                assert_eq!(config.port, DEFAULT_PORT);
+                assert!(!config.once, "default is not serve-once");
+            }
+            _ => panic!("no args → serve"),
+        }
+    }
+
+    #[test]
+    fn parse_args_round_trips_port_ledger_and_serve_once() {
+        match parse_args(args(&[
+            "serve",
+            "--port",
+            "9000",
+            "--ledger",
+            "/tmp/costroid-x.db",
+            "--serve-once",
+        ])) {
+            Mode::Serve(config) => {
+                assert_eq!(config.port, 9000);
+                assert!(config.once);
+                assert_eq!(config.ledger, PathBuf::from("/tmp/costroid-x.db"));
+            }
+            _ => panic!("flags → serve"),
+        }
+    }
+
+    #[test]
+    fn parse_args_rejects_bad_or_unknown_flags() {
+        assert!(matches!(
+            parse_args(args(&["--port", "notaport"])),
+            Mode::Help
+        ));
+        assert!(matches!(parse_args(args(&["--port"])), Mode::Help)); // missing value
+        assert!(matches!(parse_args(args(&["--ledger"])), Mode::Help)); // missing value
+        assert!(matches!(parse_args(args(&["--bogus"])), Mode::Help));
+        assert!(matches!(
+            parse_args(args(&["--self-check"])),
+            Mode::SelfCheck
+        ));
+        assert!(matches!(parse_args(args(&["--help"])), Mode::Help));
+    }
+
+    #[test]
+    fn the_bind_host_is_always_loopback_regardless_of_port() {
+        // `loopback_addr` is the ONLY bind-address constructor — no port (incl. a parsed `--port`
+        // value) can make the server bind a routable interface (T8 / ⚑ A1).
+        for port in [0_u16, DEFAULT_PORT, 9000, 65_535] {
+            assert!(
+                loopback_addr(port).ip().is_loopback(),
+                "port {port} must bind loopback"
+            );
+        }
+    }
+
+    #[test]
+    fn routes_healthz_and_a_404_over_an_empty_ledger() {
+        let ledger = Path::new("/nonexistent/costroid/ledger-absent.db");
+        let (status, ctype, body) = respond_for("/healthz", ledger);
+        assert_eq!(status, 200);
+        assert!(ctype.starts_with("text/plain"));
+        assert_eq!(body, "ok\n");
+
+        let (status, _ctype, _body) = respond_for("/unknown-path", ledger);
+        assert_eq!(status, 404);
+
+        // A view over an absent ledger renders an honest empty page (200), never an error/leak.
+        let (status, ctype, _body) = respond_for("/breakeven", ledger);
+        assert_eq!(status, 200);
+        assert!(ctype.starts_with("text/html"));
+    }
 }
