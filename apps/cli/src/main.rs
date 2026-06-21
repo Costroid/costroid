@@ -45,6 +45,11 @@ enum Command {
     SetupStatusline(SetupStatuslineArgs),
     Export(ExportArgs),
     /// Benchmark a local model's cost-per-token (estimated, or --measure with a wall meter).
+    ///
+    /// For reproducible demo/benchmark output, set the env var `SOURCE_DATE_EPOCH` to a Unix
+    /// epoch (whole seconds, UTC) and the emitted row is stamped at that instant instead of
+    /// the wall clock — making committed artifacts byte-identical across re-runs. Unset/invalid
+    /// falls back to "now".
     #[cfg(feature = "power")]
     Bench(BenchArgs),
     /// Local-vs-cloud break-even: the daily token volume where local inference beats cloud prices.
