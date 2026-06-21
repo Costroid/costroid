@@ -128,6 +128,8 @@ pub struct BreakevenView {
     pub output_share: String,
     /// The stored local rows' measurement mode (estimated / measured / mixed) — RENDERED (MED7).
     pub measurement_mode: String,
+    /// The stored local rows' hardware profile id (`id@as_of`) — dated provenance (R8), RENDERED.
+    pub hardware_profile: String,
     pub pricing_snapshot_id: Option<String>,
     /// The labeled, dated DeepSWE-Bench $/task reference — never folded into the crossover math.
     pub deepswe_reference: Vec<CloudReference>,
@@ -313,7 +315,13 @@ pub fn build_breakeven(
     // which double-counts the amortized capex). None → no local rows → honest empty state (MED5).
     let energy = match local_energy_only_rate(rows)? {
         Some(value) => value,
-        None => return Ok(BreakevenView::no_local(scenario, &measurement_mode)),
+        None => {
+            return Ok(BreakevenView::no_local(
+                scenario,
+                &measurement_mode,
+                &hardware_profile,
+            ))
+        }
     };
 
     let (cloud, snapshot_id) = blended_cloud(&scenario.cloud_model, scenario.output_share)?;
@@ -338,7 +346,7 @@ pub fn build_breakeven(
         local_energy_per_token: energy,
         blended_cloud_per_token: cloud,
         measurement_mode: measurement_mode.clone(),
-        hardware_profile,
+        hardware_profile: hardware_profile.clone(),
         pricing_snapshot_id: snapshot_id.clone(),
         collector_version: env!("CARGO_PKG_VERSION").to_string(),
     };
@@ -351,11 +359,12 @@ pub fn build_breakeven(
         cloud,
         &snapshot_id,
         &measurement_mode,
+        &hardware_profile,
     ))
 }
 
 impl BreakevenView {
-    fn no_local(scenario: &Scenario, measurement_mode: &str) -> Self {
+    fn no_local(scenario: &Scenario, measurement_mode: &str, hardware_profile: &str) -> Self {
         Self {
             outcome: "no_local".to_string(),
             crossover_tokens_per_day: None,
@@ -374,6 +383,7 @@ impl BreakevenView {
             depreciation_days: scenario.depreciation_period_days.normalize().to_string(),
             output_share: scenario.output_share.normalize().to_string(),
             measurement_mode: measurement_mode.to_string(),
+            hardware_profile: hardware_profile.to_string(),
             pricing_snapshot_id: None,
             deepswe_reference: Vec::new(),
             no_local: true,
@@ -387,6 +397,7 @@ impl BreakevenView {
         cloud: Decimal,
         snapshot_id: &str,
         measurement_mode: &str,
+        hardware_profile: &str,
     ) -> Self {
         let (outcome, crossover, reason) = match &report.headline {
             BreakevenOutcome::CrossesAt { tokens_per_day } => (
@@ -435,6 +446,7 @@ impl BreakevenView {
             depreciation_days: scenario.depreciation_period_days.normalize().to_string(),
             output_share: scenario.output_share.normalize().to_string(),
             measurement_mode: measurement_mode.to_string(),
+            hardware_profile: hardware_profile.to_string(),
             pricing_snapshot_id: Some(snapshot_id.to_string()),
             deepswe_reference,
             no_local: false,
