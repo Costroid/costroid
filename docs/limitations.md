@@ -123,3 +123,65 @@ fixture (`synthetic-aws-v12-full.csv`) validates against the vendored 1.2 rulese
 (`scripts/focus-ruleset-1.2/`, EXACT-matched against
 `scripts/focus_known_failures_v12.txt`); the subset fixtures remain for the importer
 round-trip.
+
+## Break-even is a range, with a "never" / "infeasible" outcome (M4)
+
+The local-vs-cloud break-even (`costroid breakeven`, `costroid_core::breakeven`) is **never a single
+hero number**. Because its inputs are estimates (the energy-only rate `e`, the blended cloud rate `c`,
+the electricity rate, the hardware price, the depreciation period, and the utilization), it reports a
+**headline plus a sensitivity band** (the crossover recomputed across a range of those inputs) plus a
+full **assumption stamp** (R6/R8) — exactly what it assumed, dated. Specific caveats:
+
+- **It can be `Never`.** When the blended cloud per-token rate is at or below the local **energy floor**
+  (`c ≤ e`), the hardware capex is **never** recovered no matter how many tokens you push. Costroid says
+  so honestly (`Never`, with the reason) — it never fabricates a finite crossover.
+- **It can be `Infeasible`.** When the break-even volume `V*` exceeds the machine's tokens/day ceiling
+  (`estimated_tok_s × utilization × 86400`), the hardware physically cannot generate enough tokens to
+  break even; that is reported as `Infeasible`, not as a reachable number.
+- **One break-even lifetime.** The amortization basis is the `depreciation_period` (the calendar-fixed
+  capex term); the model manifest's per-run `hardware_lifetime_seconds` is a **separate** per-run
+  attribution and is never reused as the break-even period. Mixing the two is a typed error, not a
+  silent blend — so the capex is amortized over exactly one declared lifetime.
+- **The DeepSWE-Bench `$/task` overlay is reference-only.** It is a labeled, dated empirical cloud-side
+  reference shown beside the verdict — never part of the per-token crossover math.
+
+Every `NEVER` / `INFEASIBLE` verdict carries a textual cue (never color-alone). The full derivation is
+in [`methodology.md`](methodology.md) §5.
+
+## Interface caveats — the loopback web UI (M5)
+
+The local web app (`costroid-server`) is **loopback-only by construction**: it binds `127.0.0.1`
+(only `--port` varies, never the host), makes **no outbound call**, and embeds all assets first-party
+with **zero external/CDN references** — its guarantee is *loopback-bind, no egress* (a 127.0.0.1 listen
+does create a socket; the proof is the absence of egress, not the absence of a socket). It is a
+**separate binary, never linked into the `costroid` CLI** (which stays byte-for-byte no-network) and
+links **neither** the local-inference engine nor the credential/network crate.
+
+- **The break-even web view is text + table only (M5).** It renders the verdict sentence, the R6
+  sensitivity range, and the assumption stamp — deliberately **not** a crossover plot in M5. A
+  **static-SVG crossover plot is deferred to M6+** (the timeline + comparison views already ship inline
+  SVG, so the rendering primitive exists; adding the plot is additive). This is a scope note, not an
+  omission.
+- **The comparison view's cloud side is a counterfactual estimate.** It is the cloud **list price** for
+  the same workload (labeled as such, with the pricing-snapshot id), not a bill you were charged.
+- **It reads only the stored ledger.** The server projects the persisted three-lane FOCUS rows; the
+  energy rate `e` comes from the stored `local_inference` rows via the pure
+  `local_energy_only_rate` helper (no `core → power` edge), on the **total (in+out) token basis** shared
+  with the CLI (a cross-interface test locks the two to one value).
+
+## Uncertain-row annotation — where the cue surfaces
+
+Several rows carry an explicit **uncertain** annotation rather than a silent best-guess. Each maps to a
+real column / behavior in the code, and Costroid keeps counting the tokens while flagging the
+attribution (never color-alone — the cue is a text/shape annotation):
+
+| What is uncertain | Column / behavior | Where it surfaces |
+|---|---|---|
+| **Sub-agent (sidechain) attribution** — a sub-agent turn's logged `model`/`project` may reflect the orchestrator, so per-model/per-project attribution can be slightly off (totals unaffected) | `x_Sidechain = true`, `x_AttributionConfidence = "uncertain"` (vs `"confident"`) | annotated on the row; the `--plain`/screen-reader path spells the uncertainty in words (never a colored alarm) |
+| **Sub-agent undercount residual** — `claude-opus-4-8` lands ~0.08% under ccusage, entirely in sidechain cache-read retained after de-dup | the de-dup methodology (a benign methodology difference, documented above) | recorded in the reconciliation lane; the invoice is the ground truth |
+| **Estimated (not measured) local energy** — package-vs-wall: every on-chip reading is whole-APU package power, ~20–40% below true wall draw | `x_MeasurementMode == "estimated"` (vs `measured_*`), `x_Estimated = true` | stamped per row; the break-even view renders the measurement mode; the unverified/estimated state draws a **neutral** meter + a text cue, never a confident colored fill |
+| **Cross-check-failed limit reading** | (provider quota cross-check) | the limit meter draws **neutral** with a ` ? unverified` text cue (DESIGN-SYSTEM §components), never amber/red |
+
+The non-color cue is the load-bearing signal in every case: `--plain`/`NO_COLOR` strip all color and the
+uncertainty is still readable as text. See [`methodology.md`](methodology.md) for the package-vs-wall
+detail and [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) for the unverified-state rendering.
