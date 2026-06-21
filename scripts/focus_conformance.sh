@@ -170,6 +170,74 @@ validate_csv "$merged_csv" "merged-ledger" --subset
 echo "==> v1.2 input leg: validating a complete FOCUS 1.2 document (offline, exact-match)"
 validate_csv_v12 "$v12_dir/synthetic-aws-v12-full.csv" "v12-input-full"
 
+# Dedicated samples/ leg (M6 T1 — §6.7): the curated demo datasets under samples/ (distinct
+# from the CI fixtures/ above) must ALSO round-trip to a schema-valid FOCUS 1.3 ledger, with a
+# ROW-COUNT GUARD on every lane so an empty/short export can't pass vacuously. This is the leg
+# the README/`make demo` reads, so it is validated separately from the merged-ledger leg above.
+# Three lanes, all synthetic + (local) ESTIMATED:
+#   (a) developer_tool — the synthetic Claude/Codex logs under samples/local-logs/
+#   (b) cloud_api       — the synthetic AWS Bedrock FOCUS v1.2 export (imported to 1.3)
+#   (c) local_inference — the deterministic gemma4 bench rows (estimated; SOURCE_DATE_EPOCH pinned)
+echo "==> samples/ leg: validating the curated demo datasets (FOCUS 1.3, offline)"
+samples_dir="$repo_root/samples"
+
+# (a) developer_tool: export the synthetic logs. Point ONLY at samples/local-logs (neutralize
+# every other discovery override) so the export can only contain the committed sample logs.
+samples_dev_csv="$workdir/samples-dev.csv"
+HOME="$workdir/nohome" USERPROFILE="" ANTHROPIC_API_KEY="" CURSOR_DATA_DIR="" XDG_STATE_HOME="" \
+  CLAUDE_CONFIG_DIR="$samples_dir/local-logs/claude" \
+  CODEX_HOME="$samples_dir/local-logs/codex" \
+  "$bin" export --format csv > "$samples_dev_csv"
+samples_dev_rows=$(($(wc -l < "$samples_dev_csv") - 1))
+# Row-count guard: the synthetic logs produce exactly 14 developer_tool rows (3 Claude turns +
+# 2 Codex turns, expanded per token-meter). A silent discovery miss (0 rows) fails loudly here.
+if [ "$samples_dev_rows" -ne 14 ]; then
+  echo "FAIL: samples/local-logs export produced $samples_dev_rows rows, expected 14" >&2
+  exit 1
+fi
+validate_csv "$samples_dev_csv" "samples-dev" --subset
+
+# (b) cloud_api: import the synthetic AWS Bedrock FOCUS v1.2 export to a 1.3 ledger
+# (import_and_validate already enforces its own row-count guard — 4 rows).
+import_and_validate "$samples_dir/cloud-focus/aws-focus-v12.csv" focus-csv "samples-cloud" 4
+
+# (c) local_inference: regenerate the deterministic bench rows for the two committed benchmark
+# models (SOURCE_DATE_EPOCH = the gemma4 manifest as_of, 2026-06-20, so the rows are byte-stable
+# and equal to the committed samples/benchmark/*.bench.json — guarded byte-for-byte by the Rust
+# samples_datasets_* test + the .sha256 sidecars). Estimated mode → exactly one row each.
+samples_local_csv="$workdir/samples-local.csv"
+first=1
+for model in gemma-4-31b-dense gemma-4-26b-a4b; do
+  row_csv="$workdir/samples-bench-$model.csv"
+  SOURCE_DATE_EPOCH=1781913600 "$bin" bench \
+    --model "$model" --tokens-in 2000 --tokens-out 18000 --out csv > "$row_csv"
+  if [ "$first" -eq 1 ]; then
+    cat "$row_csv" > "$samples_local_csv"      # header + first local row
+    first=0
+  else
+    tail -n +2 "$row_csv" >> "$samples_local_csv"   # append the second local row (skip header)
+  fi
+done
+samples_local_rows=$(($(wc -l < "$samples_local_csv") - 1))
+if [ "$samples_local_rows" -ne 2 ]; then
+  echo "FAIL: samples/benchmark bench rows produced $samples_local_rows, expected 2" >&2
+  exit 1
+fi
+
+# Merged samples ledger: all three lanes in one FOCUS 1.3 document must validate (subset of the
+# documented defects), with a row-count guard on the union (14 dev + 4 cloud + 2 local = 20).
+echo "==> samples/ merged leg: developer_tool + cloud_api + local_inference (all three lanes)"
+samples_merged_csv="$workdir/samples-merged.csv"
+cp "$samples_dev_csv" "$samples_merged_csv"                       # header + developer_tool rows
+tail -n +2 "$workdir/samples-cloud.csv" >> "$samples_merged_csv" # append cloud_api rows
+tail -n +2 "$samples_local_csv" >> "$samples_merged_csv"         # append local_inference rows
+samples_merged_rows=$(($(wc -l < "$samples_merged_csv") - 1))
+if [ "$samples_merged_rows" -ne 20 ]; then
+  echo "FAIL: merged samples ledger has $samples_merged_rows rows, expected 20 (14+4+2)" >&2
+  exit 1
+fi
+validate_csv "$samples_merged_csv" "samples-merged" --subset
+
 echo "==> Real AWS v1.2 leg (present, SKIPPED unless COSTROID_REAL_AWS_FOCUS is set)"
 if [ -n "${COSTROID_REAL_AWS_FOCUS:-}" ] && [ -f "${COSTROID_REAL_AWS_FOCUS}" ]; then
   echo "    running against \$COSTROID_REAL_AWS_FOCUS=$COSTROID_REAL_AWS_FOCUS"
