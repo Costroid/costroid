@@ -53,8 +53,9 @@ For one local run, the engine (`costroid-power`) computes:
 
 - **Energy (Wh):** `x_MeasuredWh = avg_power_watts × wall_seconds / 3600`, where in `estimated` mode
   `avg_power_watts` is the profile `load_watts` (default **155 W** for `strix-halo-128gb`) and
-  `wall_seconds` is derived from the token count ÷ the model's estimated throughput. In a `measured_*`
-  mode `avg_power_watts` is the sampled draw.
+  `wall_seconds` is derived from the **generated (output) token count ÷ the model's estimated
+  throughput** (decode time dominates — `tokens_out / estimated_tok_s`, matching the engine). In a
+  `measured_*` mode `avg_power_watts` is the sampled draw.
 - **Energy cost (USD):** `energy_wh / 1000 × electricity_rate`, the dated electricity rate (default
   **0.16 USD/kWh**, a `global-household-average-template`).
 - **Amortized hardware cost (USD):** `x_AmortizedHwCost = hardware_price × wall_seconds /
