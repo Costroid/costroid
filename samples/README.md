@@ -50,8 +50,10 @@ All three are offline by construction — nothing leaves the machine.
 ## Validation
 
 A dedicated `samples/` leg in [`scripts/focus_conformance.sh`](../scripts/focus_conformance.sh)
-exports each pack to a FOCUS 1.3 ledger and runs the vendored validator (offline), with a
-**row-count guard** per lane (so an empty/short export can't pass vacuously) and the merged
-three-lane union (20 rows). The Rust integration test `apps/cli/tests/samples_datasets.rs`
-loads each pack, pins its row counts/token totals, asserts the inverse measurement-mode guard,
-and round-trips every lane through `export_focus_csv`/`export_focus_json`.
+first **verifies every committed `.sha256` sidecar** (`sha256sum -c`, fail-closed — a drifted or
+hand-edited sample fails here, so the sidecars are enforced, not decorative), then exports each
+pack to a FOCUS 1.3 ledger and runs the vendored validator (offline), with a **row-count guard**
+per lane (so an empty/short export can't pass vacuously) and the merged three-lane union (20 rows).
+The Rust integration test `apps/cli/tests/samples_datasets.rs` loads each pack, pins its row
+counts/token totals, asserts the inverse measurement-mode guard, and round-trips every lane through
+`export_focus_csv`/`export_focus_json`.
