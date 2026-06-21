@@ -27,6 +27,38 @@ cargo install costroid                 # from crates.io (compiles)
 
 Build from source: `git clone https://github.com/Costroid/costroid && cd costroid && cargo install --path apps/cli`.
 
+## Quickstart / Demo
+
+See the whole product end-to-end — all three FOCUS lanes in one ledger — over bundled **synthetic** sample data, **fully offline, with no hardware and no cloud account**:
+
+```bash
+make demo        # Linux / macOS
+```
+
+`make demo` chains `export` (synthetic dev-tool logs → `developer_tool`) + `import` (synthetic AWS Bedrock FOCUS v1.2 → `cloud_api`) + `bench` (estimated Gemma 4, no hardware → `local_inference`) + `breakeven` (local-vs-cloud, a range), then merges them into a deterministic three-lane FOCUS 1.3 ledger at `target/demo/demo-ledger.csv`. It points discovery only at `samples/local-logs` (so it can never read your real logs) and pins the clock via `SOURCE_DATE_EPOCH`, so the artifact is **byte-identical across re-runs** (`make demo-verify` proves it; `make help` lists every target). Every figure is synthetic and estimated — *"estimated — pending M3b measurement"*. *(A hero-GIF screen recording is capture-pending M3b.)*
+
+**Windows (no `make`)** — the same ordered commands as raw `cargo run` (PowerShell; the binary needs `--features power` for `bench`/`breakeven`):
+
+```powershell
+mkdir target\demo 2>$null
+# (a) developer_tool — export the synthetic dev-tool logs (discovery pointed only at the samples)
+$env:CLAUDE_CONFIG_DIR="samples\local-logs\claude"; $env:CODEX_HOME="samples\local-logs\codex"
+cargo run -q -p costroid --features power -- export --format csv > target\demo\dev.csv
+# (b) cloud_api — import the synthetic AWS Bedrock FOCUS v1.2 export
+cargo run -q -p costroid --features power -- import --format focus-csv --version 1.2 --out csv samples\cloud-focus\aws-focus-v12.csv > target\demo\cloud.csv
+# (c) local_inference — deterministic estimated Gemma 4 bench (SOURCE_DATE_EPOCH pins the clock)
+$env:SOURCE_DATE_EPOCH="1781913600"
+cargo run -q -p costroid --features power -- bench --model gemma-4-31b-dense --tokens-in 2000 --tokens-out 18000 --out csv > target\demo\local-31b.csv
+cargo run -q -p costroid --features power -- bench --model gemma-4-26b-a4b   --tokens-in 2000 --tokens-out 18000 --out csv > target\demo\local-26b.csv
+# break-even — local-vs-cloud crossover (a range, never a hero number)
+cargo run -q -p costroid --features power -- breakeven --model gemma-4-31b-dense --compare-to claude-opus-4-8 --tokens-in 2000 --tokens-out 18000 --tokens-per-day 5000000 --plain
+# merge the three lanes (identical FOCUS 1.3 headers) into one ledger (header + each lane header-skipped)
+Get-Content target\demo\dev.csv | Set-Content target\demo\demo-ledger.csv
+foreach ($f in "target\demo\cloud.csv","target\demo\local-31b.csv","target\demo\local-26b.csv") {
+  Get-Content $f | Select-Object -Skip 1 | Add-Content target\demo\demo-ledger.csv
+}
+```
+
 ## Commands
 
 | Command | What it does |

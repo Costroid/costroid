@@ -152,6 +152,32 @@ iso_run() { # <argv...>
   esac
 }
 
+# Like iso_run, but applies EXTRA `VAR=val` env overrides AFTER env_args (so they WIN over the
+# neutralized defaults — `env` is last-assignment-wins). The overrides precede a literal `--`,
+# then the argv. Used by the `make demo` leg so the developer_tool export's discovery vars
+# (CLAUDE_CONFIG_DIR/CODEX_HOME) point at samples/local-logs and are NOT clobbered by env_args'
+# blanks. The no-AF_INET / loopback assertions are identical to iso_run.
+iso_run_env() { # <VAR=val...> -- <argv...>
+  local overrides=()
+  while [ "${1:-}" != "--" ] && [ "$#" -gt 0 ]; do overrides+=("$1"); shift; done
+  [ "${1:-}" = "--" ] && shift
+  local rc log
+  case "$iso_mode" in
+    strace)
+      log="$workdir/strace.$RANDOM"
+      OUT="$(strace -f -e trace=network -qq -o "$log" env "${env_args[@]}" "${overrides[@]}" "$@")" && rc=0 || rc=$?
+      if ! assert_no_inet "$log"; then rm -f "$log"; return 90; fi
+      rm -f "$log"
+      return "$rc" ;;
+    netns)
+      OUT="$(unshare --user --map-root-user --net env "${env_args[@]}" "${overrides[@]}" "$@")" && rc=0 || rc=$?
+      return "$rc" ;;
+    *)
+      OUT="$(env "${env_args[@]}" "${overrides[@]}" "$@")" && rc=0 || rc=$?
+      return "$rc" ;;
+  esac
+}
+
 # check <description> <min-bytes> <needle|-> -- <argv...>
 check() {
   local desc="$1" minb="$2" needle="$3"; shift 3; [ "${1:-}" = "--" ] && shift
@@ -443,6 +469,86 @@ elif [ "$rc" -ne 0 ]; then echo "FAIL (exit $rc)"; fail=1
 elif [ "${#OUT}" -lt 10 ] || ! grep -qiF "break" <<<"$OUT"; then
   echo "FAIL (unexpected breakeven output: ${OUT:0:80})"; fail=1
 else echo "ok (crossover computed, no network)"; fi
+
+# ============================================================================
+# `make demo` — the one-command deterministic demo's no-network + determinism proof (M6 T2)
+# ============================================================================
+# The top-level `Makefile`'s `demo` target chains the WHOLE product over the synthetic
+# samples/ packs (export developer_tool + import cloud_api + bench local_inference +
+# breakeven), then merges them into one deterministic FOCUS 1.3 ledger. T2's deciding test:
+# every Costroid CLI invocation in the demo emits NO socket, the demo exits 0, AND the merged
+# FOCUS export is byte-identical on a second run (D5 — SOURCE_DATE_EPOCH pins the bench clock).
+#
+# We run each demo CLI STEP through iso_run (so strace asserts no AF_INET on every invocation —
+# the "CLI emits no socket" half), then assemble + diff the ledger in shell (the byte-identical
+# half). Tracing the Costroid CLI steps directly — not `make`/`cargo`/`tail` — keeps the
+# no-egress assertion authoritative and robust (it is Costroid that must not phone home). The
+# samples are pointed at via the SAME env-neutralization the Makefile uses, so this can NEVER
+# read the developer's real logs. A second full pass proves determinism. Offline, no hardware.
+echo "==> make demo: every CLI step emits no socket + the ledger is byte-identical (M6 T2)"
+demo_dir="$workdir/demo"
+mkdir -p "$demo_dir/nohome"
+samples_dir="$repo_root/samples"
+EPOCH=1781913600   # the gemma4.v1.json as_of (2026-06-20T00:00:00Z) — the D5 demo clock pin.
+
+# Build the demo ledger once. $1 = output ledger path. Each Costroid CLI step runs through
+# iso_run (no-AF_INET asserted); returns 90 on any network violation, nonzero on any step fail.
+# iso_run captures stdout via command substitution, which STRIPS the trailing newline — so each
+# captured CSV is re-written with `printf '%s\n'` to restore the final newline before it is
+# appended (otherwise a header-skipped append would merge across the lane boundary, losing a row).
+build_demo_ledger() { # <ledger-path>
+  local ledger="$1" rc
+  # (a) developer_tool — export the synthetic logs. The discovery vars MUST be applied AFTER
+  # env_args (which blanks them) to win — so this uses iso_run_env, pointing ONLY at
+  # samples/local-logs. (A plain `VAR=... iso_run` would be clobbered by env_args' CLAUDE_CONFIG_DIR=""
+  # and fall back to the fixture $HOME the script populated — reading the wrong logs.)
+  # HOME is repointed at an empty throwaway dir (the script's fixture $HOME has fixture logs
+  # copied in; a default-path read of it would pollute the count) — mirroring the
+  # focus_conformance.sh samples/ leg's `HOME=$workdir/nohome`.
+  iso_run_env "HOME=$demo_dir/nohome" "CLAUDE_CONFIG_DIR=$samples_dir/local-logs/claude" \
+    "CODEX_HOME=$samples_dir/local-logs/codex" -- "$power_bin" export --format csv && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] && return "$rc"
+  printf '%s\n' "$OUT" > "$demo_dir/dev.csv"
+  # (b) cloud_api — import the synthetic AWS Bedrock FOCUS v1.2 export.
+  iso_run "$power_bin" import --format focus-csv --version 1.2 --out csv \
+    "$samples_dir/cloud-focus/aws-focus-v12.csv" && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] && return "$rc"
+  printf '%s\n' "$OUT" > "$demo_dir/cloud.csv"
+  # (c) merge: dev header + lanes, each appended header-skipped (the focus_conformance.sh mechanism).
+  cp "$demo_dir/dev.csv" "$ledger"
+  tail -n +2 "$demo_dir/cloud.csv" >> "$ledger"
+  # local_inference — the two deterministic bench rows (SOURCE_DATE_EPOCH pinned, D5; applied
+  # after env_args via iso_run_env so the clock pin is the demo epoch, not the wall clock).
+  for model in gemma-4-31b-dense gemma-4-26b-a4b; do
+    iso_run_env "SOURCE_DATE_EPOCH=$EPOCH" -- "$power_bin" bench --model "$model" \
+      --tokens-in 2000 --tokens-out 18000 --out csv && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] && return "$rc"
+    printf '%s\n' "$OUT" | tail -n +2 >> "$ledger"
+  done
+  # break-even — part of the demo path; assert it too emits no socket (no merge contribution).
+  iso_run "$power_bin" breakeven --model gemma-4-31b-dense --compare-to claude-opus-4-8 \
+    --tokens-in 2000 --tokens-out 18000 --tokens-per-day 5000000 --plain && rc=0 || rc=$?
+  return "$rc"
+}
+
+printf '  %-52s' "make demo CLI steps emit no socket (exit 0)"
+demo_rc=0; build_demo_ledger "$demo_dir/ledger1.csv" || demo_rc=$?
+if [ "$demo_rc" -eq 90 ]; then echo "NETWORK VIOLATION"; fail=1
+elif [ "$demo_rc" -ne 0 ]; then echo "FAIL (a demo CLI step exited $demo_rc)"; fail=1
+else
+  rows=$(($(wc -l < "$demo_dir/ledger1.csv") - 1))
+  if [ "$rows" -ne 20 ]; then echo "FAIL (demo ledger has $rows rows, expected 20)"; fail=1
+  else echo "ok (3-lane ledger, 20 rows, no socket)"; fi
+fi
+
+printf '  %-52s' "make demo: byte-identical FOCUS export on re-run"
+demo_rc2=0; build_demo_ledger "$demo_dir/ledger2.csv" || demo_rc2=$?
+if [ "$demo_rc2" -eq 90 ]; then echo "NETWORK VIOLATION"; fail=1
+elif [ "$demo_rc2" -ne 0 ]; then echo "FAIL (the second demo run exited $demo_rc2)"; fail=1
+elif ! diff -q "$demo_dir/ledger1.csv" "$demo_dir/ledger2.csv" >/dev/null 2>&1; then
+  echo "FAIL (the demo ledger differs across re-runs — non-determinism)"
+  diff "$demo_dir/ledger1.csv" "$demo_dir/ledger2.csv" | sed 's/^/      /'; fail=1
+else echo "ok (D5 SOURCE_DATE_EPOCH pin holds)"; fi
 
 # ============================================================================
 # costroid-bar — the taskbar binary's runtime no-network proof (T21)
