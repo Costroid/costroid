@@ -12,7 +12,9 @@
 //!
 //! **Secrets never live here** — credentials are keychain-only (`costroid-connect`). Today the
 //! file carries `[budget]` targets (monthly $ caps, API-lane only; money is
-//! `rust_decimal::Decimal`, never f64) and the `[alerts]` opt-in (T17, default off).
+//! `rust_decimal::Decimal`, never f64), the `[alerts]` opt-in (T17, default off), and the
+//! `[breakeven]` what-if scenario defaults (M4, all optional; every numeric knob is exact
+//! `Decimal` — quote for guaranteed exactness).
 //!
 //! ```toml
 //! [budget]
@@ -28,6 +30,14 @@
 //! # quota_critical = 0.95
 //! # forecast = true     # advisory (T17b): month-end projection over the TOTAL budget; default off
 //! # anomalies = true    # advisory (T17b): a daily spend spike vs your own norm; default off
+//!
+//! [breakeven]           # `costroid breakeven` what-if defaults (M4); CLI flags override these
+//! # depreciation_period_days = 1095     # the break-even amortization calendar (the basis, MED3)
+//! # output_share = 0.5                  # output-token share for the cloud-price blend (0..=1)
+//! # utilization = 1.0                   # duty cycle for the feasibility ceiling (0..=1)
+//! # electricity_rate_per_kwh = "0.16"   # quote for exactness (a bare 0.16 is not f64-exact)
+//! # hardware_price = "2000.00"          # the amortized capex
+//! # cloud_model = "claude-opus-4-8"     # the cloud model to compare against
 //! ```
 //!
 //! `forecast` and `anomalies` are opt-in advisory SUB-flags — each off by default and each still
@@ -52,6 +62,7 @@ use serde::Deserialize;
 pub struct Config {
     budget: BudgetConfig,
     alerts: AlertsConfig,
+    breakeven: BreakevenConfig,
 }
 
 /// The `[budget]` section: optional monthly $ caps. API-lane only — a flat-fee subscription is
@@ -87,6 +98,34 @@ struct AlertsConfig {
     /// Opt-in advisory source (T17b): a daily spend-spike anomaly vs your own norm. Default false;
     /// the master `enabled` switch is still required.
     anomalies: bool,
+}
+
+/// The `[breakeven]` section (M4 T6): defaults for the `costroid breakeven` what-if scenario, all
+/// optional and overridable by CLI flags. `#[serde(default)]` ⇒ an absent section is the
+/// zero-config default and a newer file is tolerated. Every numeric knob is the exact [`Money`]
+/// newtype (a `Decimal` accepting a TOML integer/float/quoted-string — quote for guaranteed
+/// exactness, e.g. `"0.16"`). The break-even amortization basis is `depreciation_period_days`;
+/// `hardware_lifetime_seconds` is carried ONLY to reject its misuse as the break-even basis (MED3).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct BreakevenConfig {
+    /// The workload's daily token volume (context vs. the crossover).
+    tokens_per_day: Option<Money>,
+    /// The output-token share for the cloud blend (0..=1).
+    output_share: Option<Money>,
+    /// The utilization fraction for the feasibility ceiling (0..=1).
+    utilization: Option<Money>,
+    /// The break-even depreciation period, in DAYS (the calendar amortization basis, MED3).
+    depreciation_period_days: Option<Money>,
+    /// The per-run `x_AmortizedHwCost` lifetime — NOT the break-even basis. Present only so the
+    /// projection can reject it being used as one (MED3); use `depreciation_period_days` instead.
+    hardware_lifetime_seconds: Option<Money>,
+    /// Override the electricity rate (per kWh).
+    electricity_rate_per_kwh: Option<Money>,
+    /// Override the hardware purchase price (the amortized capex).
+    hardware_price: Option<Money>,
+    /// The cloud model id to compare against (a pricing-catalog model).
+    cloud_model: Option<String>,
 }
 
 impl Config {
@@ -141,6 +180,54 @@ impl Config {
             thresholds = AlertThresholds::default();
         }
         thresholds
+    }
+
+    /// Project the `[breakeven]` section into the core's config-neutral [`BreakevenScenario`] (M4
+    /// T6). Enforces the one-lifetime rule (MED3): `depreciation_period_days` is the break-even
+    /// basis; `hardware_lifetime_seconds` is the per-run `x_AmortizedHwCost` attribution only —
+    /// supplying it (especially alongside `depreciation_period_days`) is a typed error, not a
+    /// silent fallback. Physical knobs convert via `from_f64_retain` (a non-finite value drops to
+    /// `None`); money via the exact [`Money`] newtype.
+    pub fn breakeven_scenario(&self) -> Result<costroid_core::BreakevenScenario, ConfigError> {
+        let breakeven = &self.breakeven;
+        // NB: this hand-writes the MED3 four-arm match rather than reusing
+        // `costroid_core::resolve_depreciation_days` ON PURPOSE — the core helper treats
+        // `(None, None)` as an error ("break-even needs a calendar"), but the config projection
+        // must treat it as `None` (zero-config; the CLI fills it from a flag/default). The two
+        // `(None, None)` semantics genuinely differ, so reuse would break the zero-config arm.
+        let depreciation_period_days = match (
+            breakeven.depreciation_period_days,
+            breakeven.hardware_lifetime_seconds,
+        ) {
+            (Some(_), Some(_)) => {
+                return Err(ConfigError::Breakeven {
+                    detail: "[breakeven] sets both `depreciation_period_days` and \
+                             `hardware_lifetime_seconds`; the former is the break-even basis, the \
+                             latter is the per-run x_AmortizedHwCost attribution only — set just \
+                             `depreciation_period_days`"
+                        .to_string(),
+                });
+            }
+            (None, Some(_)) => {
+                return Err(ConfigError::Breakeven {
+                    detail: "[breakeven] sets `hardware_lifetime_seconds`, which is the per-run \
+                             x_AmortizedHwCost attribution, not the break-even basis — use \
+                             `depreciation_period_days`"
+                        .to_string(),
+                });
+            }
+            (Some(days), None) => Some(days.0),
+            (None, None) => None,
+        };
+        Ok(costroid_core::BreakevenScenario {
+            tokens_per_day: breakeven.tokens_per_day.map(|money| money.0),
+            output_share: breakeven.output_share.map(|money| money.0),
+            utilization: breakeven.utilization.map(|money| money.0),
+            depreciation_period_days,
+            electricity_rate_per_kwh: breakeven.electricity_rate_per_kwh.map(|money| money.0),
+            hardware_price: breakeven.hardware_price.map(|money| money.0),
+            cloud_model: breakeven.cloud_model.clone(),
+        })
     }
 }
 
@@ -223,6 +310,9 @@ pub enum ConfigError {
         path: PathBuf,
         source: toml::de::Error,
     },
+    /// A semantically-invalid `[breakeven]` scenario in an otherwise-valid file (e.g. two
+    /// break-even lifetimes — MED3). Surfaced by the [`Config::breakeven_scenario`] projection.
+    Breakeven { detail: String },
 }
 
 impl fmt::Display for ConfigError {
@@ -240,6 +330,9 @@ impl fmt::Display for ConfigError {
                 let detail = source.to_string();
                 let first = detail.lines().next().unwrap_or(&detail);
                 write!(formatter, "invalid config {}: {first}", path.display())
+            }
+            ConfigError::Breakeven { detail } => {
+                write!(formatter, "invalid [breakeven] config: {detail}")
             }
         }
     }
@@ -326,6 +419,78 @@ mod tests {
             Err(err) => panic!("absent file should default, not error: {err}"),
         };
         assert!(config.budget_targets().is_empty());
+    }
+
+    fn scenario_of(contents: &str) -> Result<costroid_core::BreakevenScenario, ConfigError> {
+        let dir = TempDir::new();
+        let path = dir.write(contents);
+        match load_from(&path) {
+            Ok(config) => config.breakeven_scenario(),
+            Err(err) => panic!("the fixture should load: {err}"),
+        }
+    }
+
+    #[test]
+    fn breakeven_section_loads_into_the_scenario() {
+        // Integers, floats, and a quoted-decimal money value all parse to exact `Decimal`.
+        let scenario = match scenario_of(
+            r#"
+[breakeven]
+tokens_per_day = 500000
+output_share = 0.25
+utilization = 0.5
+depreciation_period_days = 1000
+electricity_rate_per_kwh = "0.16"
+hardware_price = "2000.00"
+cloud_model = "claude-opus-4-8"
+"#,
+        ) {
+            Ok(scenario) => scenario,
+            Err(err) => panic!("a valid [breakeven] should project: {err}"),
+        };
+        assert_eq!(scenario.tokens_per_day, Some(cents(500_000, 0)));
+        assert_eq!(scenario.output_share, Some(cents(25, 2)));
+        assert_eq!(scenario.utilization, Some(cents(5, 1)));
+        assert_eq!(scenario.depreciation_period_days, Some(cents(1000, 0)));
+        // Quoted "0.16" is EXACT (an f64 0.16 would not be) — the reason money knobs use Money.
+        assert_eq!(scenario.electricity_rate_per_kwh, Some(cents(16, 2)));
+        assert_eq!(scenario.hardware_price, Some(cents(2000, 0)));
+        assert_eq!(scenario.cloud_model.as_deref(), Some("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn absent_breakeven_section_is_the_zero_config_default() {
+        let scenario = match scenario_of("[budget]\ntotal_monthly_usd = 60\n") {
+            Ok(scenario) => scenario,
+            Err(err) => panic!("absent [breakeven] should default: {err}"),
+        };
+        assert_eq!(scenario, costroid_core::BreakevenScenario::default());
+        assert!(scenario.depreciation_period_days.is_none());
+    }
+
+    #[test]
+    fn unknown_breakeven_key_is_ignored_forward_compat() {
+        let scenario =
+            match scenario_of("[breakeven]\ndepreciation_period_days = 1000\nfuture_knob = 42\n") {
+                Ok(scenario) => scenario,
+                Err(err) => panic!("an unknown key must be ignored, not error: {err}"),
+            };
+        assert_eq!(scenario.depreciation_period_days, Some(cents(1000, 0)));
+    }
+
+    #[test]
+    fn med3_both_lifetimes_set_is_a_typed_error() {
+        // depreciation_period_days (break-even basis) + hardware_lifetime_seconds (per-run only).
+        let result = scenario_of(
+            "[breakeven]\ndepreciation_period_days = 1000\nhardware_lifetime_seconds = 94608000\n",
+        );
+        assert!(matches!(result, Err(ConfigError::Breakeven { .. })));
+    }
+
+    #[test]
+    fn med3_hardware_lifetime_alone_is_not_the_breakeven_basis() {
+        let result = scenario_of("[breakeven]\nhardware_lifetime_seconds = 94608000\n");
+        assert!(matches!(result, Err(ConfigError::Breakeven { .. })));
     }
 
     #[test]
