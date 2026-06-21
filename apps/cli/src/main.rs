@@ -1,5 +1,7 @@
 #[cfg(feature = "power")]
 mod bench;
+#[cfg(feature = "power")]
+mod breakeven;
 #[cfg(feature = "connect")]
 mod connect;
 #[cfg(feature = "connect")]
@@ -45,6 +47,9 @@ enum Command {
     /// Benchmark a local model's cost-per-token (estimated, or --measure with a wall meter).
     #[cfg(feature = "power")]
     Bench(BenchArgs),
+    /// Local-vs-cloud break-even: the daily token volume where local inference beats cloud prices.
+    #[cfg(feature = "power")]
+    Breakeven(BreakevenArgs),
     /// Import a foreign FOCUS export (v1.2) and re-emit it as Costroid's FOCUS 1.3 ledger
     /// (the `cloud_api` lane). Pure local parse — no network.
     Import(ImportArgs),
@@ -246,6 +251,53 @@ enum RuntimeArg {
     LlamaCpp,
 }
 
+/// `costroid breakeven` flags (M4). The local economics mirror `bench`'s; the scenario knobs are
+/// new. The break-even amortization basis is `--depreciation-period-days` (MED3) — there is no
+/// `--hardware-lifetime-seconds` here (that is the per-run `x_AmortizedHwCost` attribution only).
+#[cfg(feature = "power")]
+#[derive(Debug, Parser)]
+struct BreakevenArgs {
+    /// The Gemma 4 model id whose estimated economics drive the local energy rate.
+    #[arg(long, default_value = "gemma-4-26b-a4b")]
+    model: String,
+    /// The quantization (default: the manifest's default for the model).
+    #[arg(long)]
+    quant: Option<String>,
+    /// Override the hardware/power profile (default `strix-halo-128gb`).
+    #[arg(long)]
+    hardware_profile: Option<String>,
+    /// Prompt (input) tokens per run — the local energy estimate basis.
+    #[arg(long, default_value_t = 256)]
+    tokens_in: u64,
+    /// Generated (output) tokens per run — the local energy estimate basis.
+    #[arg(long, default_value_t = 1024)]
+    tokens_out: u64,
+    /// The output-token share for the cloud-price blend (0..=1). Default: the run's own out/total.
+    #[arg(long)]
+    output_share: Option<f64>,
+    /// The utilization fraction (0..=1) for the feasibility ceiling. Default 1.0.
+    #[arg(long)]
+    utilization: Option<f64>,
+    /// The break-even depreciation period, in DAYS (the calendar amortization basis). Default 1095.
+    #[arg(long)]
+    depreciation_period_days: Option<f64>,
+    /// Override the electricity rate (per kWh) — a dated assumption (R8).
+    #[arg(long)]
+    electricity_rate: Option<f64>,
+    /// Override the hardware purchase price (the amortized capex).
+    #[arg(long)]
+    hardware_price: Option<f64>,
+    /// Your current daily token volume (context: where you sit vs. the crossover).
+    #[arg(long)]
+    tokens_per_day: Option<f64>,
+    /// The cloud model to compare against (a pricing-catalog model). Default `claude-opus-4-8`.
+    #[arg(long)]
+    compare_to: Option<String>,
+    /// A pricing-override JSON file (highest-precedence tier); default: the bundled catalog.
+    #[arg(long)]
+    pricing_override: Option<std::path::PathBuf>,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum ImportFormat {
     FocusCsv,
@@ -335,6 +387,10 @@ fn main() -> Result<()> {
         #[cfg(feature = "power")]
         Some(Command::Bench(args)) => {
             bench::run_bench(args)?;
+        }
+        #[cfg(feature = "power")]
+        Some(Command::Breakeven(args)) => {
+            breakeven::run_breakeven(args, render_options)?;
         }
         Some(Command::Alerts(args)) => {
             std::process::exit(run_alerts(args, render_options)?);
