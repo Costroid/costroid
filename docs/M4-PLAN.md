@@ -9,10 +9,34 @@
 > (0 refuted / 0 corrected). Standing rule: **re-verify before editing — the code wins.**
 >
 > **Status: 📝 PLANNED — NO CODE WRITTEN.** **D1–D4 ✅ SIGNED OFF 2026-06-21 (all recommended ★)**
-> via the question panel; now awaiting the coordinator's review of this plan BEFORE any code.
-> Branch `costroid-next` @ `3b79fcd` (M0, M1, M2, M3a merged to `main`; M3b is a separate human
-> handoff that does **not** block M4 — `PROGRESS.md:403`). Per-task dev-loop (build → independent
-> adversarial review → fix → present). Golden rules hold.
+> via the question panel. **Rev 2 (2026-06-21): coordinator review folded in — "sound, 0 blockers"
+> + 1 high / 3 med / 4 low deltas (see the Revision log below).** Now awaiting the coordinator's
+> confirmation of these deltas BEFORE any code (T0–T9). Branch `costroid-next` @ `3b79fcd` (M0, M1,
+> M2, M3a merged to `main`; M3b is a separate human handoff that does **not** block M4 —
+> `PROGRESS.md:403`). Per-task dev-loop (build → independent adversarial review → fix → present).
+> Golden rules hold.
+>
+> **Revision log — Rev 2 (coordinator deltas folded in, each with its deciding test):**
+> - **HIGH — the blended cloud $/tok is now its own tested step (new T3).** `c = in·(1−out_share) +
+>   out·out_share` was owned by no task; it becomes a **pure core helper** with its own deciding
+>   test (out_share 0 → input-only, 1 → output-only, intermediate to the cent). T2 stays per-meter;
+>   the crossover (T1) consumes `c` from this helper.
+> - **MED1 — feasibility ceiling (T1 outcome + T7 input + T8 render).** `BreakevenOutcome` gains
+>   `Infeasible { v_star, max_tokens_per_day, reason }`; the CLI computes the ceiling
+>   `estimated_tok_s · utilization · 86400` and passes it in (no `core→power` edge); `V* > ceiling
+>   → Infeasible`.
+> - **MED2 — full-precision local rate (T1 test + T7 conversion).** Never `round_dp` the local
+>   rate; derive `e` from `local_cost_per_1m ÷ 1e6` via `Decimal::from_f64_retain` (full precision);
+>   a ~1e-9 `e` must survive and select the correct Never-vs-CrossesAt branch.
+> - **MED3 — one break-even lifetime + unit (T1 + T6).** `depreciation_period` is the break-even
+>   basis; `hardware_lifetime_seconds` is the §3.2 / `x_AmortizedHwCost` per-run attribution only;
+>   T1's worked example pins the period in **days**; setting both as the break-even basis is a typed
+>   error.
+> - **LOW — T1** adds scaling-invariance (`capex×k → V*×k`; `(c−e)×k → V*×(1/k)`) + a 2nd crossover
+>   point/mix; **T4** asserts the mixed sweep marks `[N_low … never]` with **exact** endpoints (not
+>   "sanity"); **T7** pins one hand-checked end-to-end numeric `V*`; **T0** now **edits** canon
+>   §3.2's "cumulative `local_run_cost` ≤ cumulative `cloud_cost`" sentence to the calendar-fixed
+>   model (keeping the per-run block as `x_AmortizedHwCost`).
 
 ---
 
@@ -36,9 +60,11 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
 ## 1. M4 "done" criteria (close against this mechanically — never self-judged prose)
 
 1. **The M4 deciding test is green** (§6.12 line 311): a break-even **unit test that includes a
-   "never" case** — a synthetic scenario where `cloud_$/tok ≤ local_energy_$/tok` returns
-   `Never { reason }` with the documented reason, *alongside* a hand-computed real-crossover case
-   returning `CrossesAt { tokens_per_day = N }`. Pure, in `costroid-core`, no power/network.
+   "never" case** — a synthetic scenario where `blended_cloud_$/tok ≤ local_marginal_energy_$/tok`
+   returns `Never { reason }` with the documented reason — *alongside* a hand-computed
+   real-crossover case (`CrossesAt { tokens_per_day = N }`), an **`Infeasible`** case (V* above the
+   machine's tokens/day ceiling), a **full-precision** case (a ~1e-9 `e` selects the correct
+   branch), and the **scaling-invariance** identities. Pure, in `costroid-core`, no power/network.
 2. **The amortization model is the calendar-fixed one (D1).** Hardware is a fixed periodic capex
    (`hardware_price / lifetime → $/period`, utilization-independent); the per-run §3.2
    `amortized_hw_cost` stays the FOCUS-row attribution (`x_AmortizedHwCost`) and is **not** the
@@ -48,11 +74,12 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
    `costroid-focus` + `costroid-providers`); the local marginal-energy-$/token + hardware capex
    enter core as `Decimal`/`UsdAmount` inputs. The break-even math is unit-testable on synthetic
    numbers with neither `costroid-power` nor the pricing catalog linked.
-4. **Cloud side from the catalog (D3).** The deterministic crossover uses the M2 layered per-token
-   catalog (OpenAI/Anthropic/Bedrock); a new **public** core accessor resolves a model → per-input
-   / per-output `Decimal` price + the `source@as_of#hash8` snapshot id. The DeepSWE-Bench `$/task`
-   appears only as a labeled, dated overlay (`FrontierPoint.cost_per_task_usd`), never multiplied
-   into the crossover.
+4. **Cloud side from the catalog (D3), blended as its own tested step.** The deterministic
+   crossover uses the M2 layered per-token catalog (OpenAI/Anthropic/Bedrock) via a new **public**
+   core accessor (model → per-input / per-output `Decimal` + `source@as_of#hash8` snapshot id); a
+   **separate, independently-tested pure helper** blends those to the scenario's `c = in·(1 −
+   out_share) + out·out_share`. The DeepSWE-Bench `$/task` appears only as a labeled, dated overlay
+   (`FrontierPoint.cost_per_task_usd`), never multiplied into the crossover.
 5. **Output is a range + stamp, not a hero number (D4, R6).** The result carries a
    `[N_low … N_high]` sensitivity band over the adjustable inputs + the full assumption stamp
    (electricity rate, hardware price, lifetime, utilization, in/out mix, **measurement mode**,
@@ -80,6 +107,15 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
     M4 checkbox.
 12. **No prompt/response content** anywhere in the break-even path (the Cardinal Rule); scenario
     inputs are numeric knobs only.
+13. **The outcome enum is complete + feasibility-aware (MED1).** `BreakevenOutcome =
+    CrossesAt | Never { reason } | Always | Infeasible { v_star, max_tokens_per_day, reason }`; the
+    CLI supplies `max_tokens_per_day = estimated_tok_s · utilization · 86400` as a plain input (no
+    `core→power` edge), and `V* > ceiling → Infeasible`, rendered + stamped.
+14. **One break-even lifetime unit; full-precision local rate (MED3 + MED2).** `depreciation_period`
+    (the break-even basis, pinned in **days** in T1) is distinct from `hardware_lifetime_seconds`
+    (the §3.2 / `x_AmortizedHwCost` per-run attribution); setting both as the break-even basis is a
+    typed error. The local rate `e` is carried at full precision (`from_f64_retain`, never
+    `round_dp`).
 
 ---
 
@@ -147,50 +183,76 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
 
 > Each task notes its **Do**, its **Deciding test**, and its top **Risk + Mitigation**. Ordering:
 > the pure core math + its deciding test land first (T1 — the milestone gate), then the cloud
-> accessor (T2) and the range/stamp + overlay (T3/T4) it feeds, then the config (T5) and the
-> CLI/render (T6/T7) that consume them, then wire-up (T8). All `§`/`R#` refs point into
-> `docs/COSTROID-NEXT.md`.
+> per-meter accessor (T2) and the **blend helper** (T3) it feeds, the range/stamp (T4) + overlay
+> (T5), then the config (T6) and the CLI/render (T7/T8) that consume them, then wire-up (T9). All
+> `§`/`R#` refs point into `docs/COSTROID-NEXT.md`.
 
-### T0 — Reconcile the break-even canon + record D1 (docs)
-- **Do:** Confirm §3.2 (lines 124-136), §3.1.C/D, §3.3 line 144, §6.12 line 311 against this plan;
-  record the **calendar-fixed amortization decision (D1)** and the "never" pin as a one-line note
-  where §3.2's per-run formula is defined (so a future reader sees the per-run formula is the
-  FOCUS attribution, the calendar-fixed model is the break-even). No behavior change.
-- **Deciding test:** none (docs); the plan + the §3.2 note state the two amortization uses
-  explicitly.
-- **Risk (R8):** the canon §3.2 formula reads as if the per-run sum *is* the break-even.
-  **Mitigation:** the explicit note + D1 in §1.5; T1's tests encode the calendar-fixed model.
+### T0 — Reconcile the break-even canon + edit §3.2 to the calendar-fixed model (docs) **[LOW (Rev 2)]**
+- **Do:** Confirm §3.2 (lines 124-136), §3.1.C/D, §3.3 line 144, §6.12 line 311 against this plan.
+  **Edit** canon §3.2's break-even sentence (line 136) — currently "Break-even = the monthly token
+  volume / utilization at which **cumulative `local_run_cost` ≤ cumulative `cloud_cost`**" — to the
+  **calendar-fixed** model (D1): break-even is the daily volume `V*` at which
+  `hw_fixed_per_day + e·V ≤ c·V`, i.e. `V* = hw_fixed_per_day / (c − e)`, and **never** when
+  `c ≤ e`. **Keep** the §3.2 per-run formula block (`amortized_hw_cost = (hardware_price /
+  hardware_lifetime_seconds)·run_seconds`) verbatim, re-labeled as the **`x_AmortizedHwCost`
+  per-run FOCUS attribution** (a separate use of the capex), so the two models are visibly distinct.
+  No source-code behavior change.
+- **Deciding test:** none (docs); a reviewer diff shows exactly two changes — the §3.2 break-even
+  sentence now reads the calendar-fixed model, and the per-run block is retained + re-labeled as
+  `x_AmortizedHwCost`.
+- **Risk (R8):** the canon §3.2 line currently reads as if the per-run sum *is* the break-even (it
+  is linear → no crossover). **Mitigation:** this edit fixes the canon itself; D1 + T1's tests
+  encode the calendar-fixed model.
 
 ### T1 — The pure break-even core math (`costroid-core::breakeven`) **[D1] [the M4 deciding test]**
 - **Do:** A new `breakeven.rs` module. A pure function over **explicit** inputs (no power, no
-  network, no catalog): `local_marginal_energy_per_token: Decimal`, `hardware_capex: UsdAmount`,
-  `hardware_lifetime: <duration>`, blended `cloud_per_token: Decimal` (the scenario-mix-weighted
-  input/output cloud price), and a `Scenario { tokens_per_day, input_output_mix, utilization,
+  network, no catalog): `local_marginal_energy_per_token: Decimal` (= `e`, full precision —
+  MED2), `hardware_capex: UsdAmount`, `depreciation_period` (the **break-even** lifetime basis —
+  MED3), blended `cloud_per_token: Decimal` (= `c`, supplied by the T3 blend helper on the real
+  path / explicit in tests), `max_tokens_per_day: Option<Decimal>` (the feasibility ceiling
+  supplied by the caller — MED1), and a `Scenario { tokens_per_day, output_share, utilization,
   depreciation_period, electricity_rate (echo for stamp), … }`. Compute
-  `hw_fixed_per_period = hardware_capex / depreciation_period` (calendar-fixed, D1),
-  `V* = hw_fixed_per_day / (cloud_per_token − local_marginal_energy_per_token)`. Return
-  `enum BreakevenOutcome { CrossesAt { tokens_per_day }, Never { reason } }` (or `Always` if
-  `hw_fixed == 0 && c > e`). Money/rates = `Decimal`/`UsdAmount`; typed errors (reuse/extend
-  `CoreError`) for non-positive lifetime / NaN / negative inputs — **never a panic** (libs deny
-  `unwrap`/`expect`/`panic!`).
+  `hw_fixed_per_day = hardware_capex / depreciation_period_days` (calendar-fixed, D1) and
+  `V* = hw_fixed_per_day / (c − e)`. Return `enum BreakevenOutcome { CrossesAt { tokens_per_day },
+  Never { reason }, Always, Infeasible { v_star, max_tokens_per_day, reason } }`:
+  - `c ≤ e` → **`Never { reason }`** (capex never recovered at any volume);
+  - `c > e`, `hw_fixed == 0` → **`Always`**;
+  - `c > e`, `V* > max_tokens_per_day` → **`Infeasible { v_star, max_tokens_per_day, reason }`**
+    (MED1 — the crossover is real but exceeds what the machine can produce per day);
+  - else → **`CrossesAt { V* }`**.
+  Money/rates = `Decimal`/`UsdAmount`; `e` is consumed at **full precision** — the function never
+  `round_dp`s it (MED2). **MED3:** `depreciation_period` is the only break-even lifetime; a caller
+  that also supplies `hardware_lifetime_seconds` *as the break-even basis* is a **typed error**
+  (`hardware_lifetime_seconds` belongs to the §3.2 per-run attribution only). Typed errors
+  (reuse/extend `CoreError`) for non-positive period / NaN / negative inputs — **never a panic**
+  (libs deny `unwrap`/`expect`/`panic!`).
 - **Deciding test (the M4 gate):** worked-example unit tests with **exact hand-computed** values:
-  (i) a **"never" case** — `cloud_per_token ≤ local_marginal_energy_per_token` → `Never { reason }`
-  with the documented reason string; (ii) a **real crossover** — `c > e`, hand-computed
-  `V* = N tokens/day`; (iii) degenerate guards (zero/negative lifetime, NaN rate, zero hardware →
-  `Always`) are typed errors / the documented branch, not panics.
-- **M4.** **Risk (HIGH — the milestone hinges here):** picking the per-run attribution by reflex
-  and getting no crossover; or off-by-a-unit (per-day vs per-month, per-token vs per-1M).
-  **Mitigation:** D1 fixed up front; pin the period/unit in the worked examples; the "never" + the
-  crossover case both hand-computed and asserted to the cent.
+  (i) the required **"never" case** — `c ≤ e` → `Never { reason }` with the documented reason;
+  (ii) a **real crossover** — `c > e`, hand-computed `V* = N tokens/day`, the **period pinned in
+  days** (MED3);
+  (iii) a **2nd crossover at a different output mix** (LOW) — a different `c` → a different
+  hand-computed `V*`;
+  (iv) an **`Infeasible` case** (MED1) — `V* > max_tokens_per_day` → `Infeasible` with the ceiling
+  echoed;
+  (v) a **full-precision case** (MED2) — a `~1e-9` difference in `e` survives (no rounding) and
+  flips the Never-vs-CrossesAt branch at the boundary;
+  (vi) **scaling-invariance** (LOW) — `capex×k → V*×k`; `(c−e)×k → V*×(1/k)`;
+  (vii) degenerate guards (non-positive period, NaN rate, conflicting lifetimes (MED3), zero
+  hardware → `Always`) are typed errors / the documented branch, not panics.
+- **M4.** **Risk (HIGH — the milestone hinges here):** per-run-by-reflex (no crossover); a unit
+  slip (per-day vs per-month, per-token vs per-1M); silently rounding `e`. **Mitigation:** D1 fixed
+  up front; the period/unit pinned in **days** in the worked examples; the never + crossover +
+  infeasible cases hand-computed and asserted to the cent; the ~1e-9 test guards precision.
 
 ### T2 — Public cloud per-token accessor on the catalog (`costroid-core`) **[D3]**
 - **Do:** The layered catalog (`PricingCatalog`, `resolve_key` lib.rs:2086, `rate` lib.rs:2061) is
   **private** today and `bundled_pricing_value()` exposes only the curated tier as untyped JSON.
   Add a small **public** accessor — e.g. `cloud_price_per_token(model, token_type, override) ->
-  Result<Option<PricedRate>, CoreError>` returning the per-token `Decimal` (catalog per-1M ÷
-  `1_000_000`, lib.rs:1854), the `source@as_of#hash8` snapshot id (`pricing_snapshot_id`,
+  Result<Option<PricedRate>, CoreError>` returning the **per-meter** per-token `Decimal` (catalog
+  per-1M ÷ `1_000_000`, lib.rs:1854), the `source@as_of#hash8` snapshot id (`pricing_snapshot_id`,
   lib.rs:1938), and the resolved currency (USD). Reuse `PricingCatalog::layered(read_pricing_override(…))`.
-  *(New public library surface → covered by D2 sign-off.)*
+  This stays **strictly per-meter** (input vs output separately) — the mix blend is the separate
+  T3 helper. *(New public library surface → covered by D2 sign-off.)*
 - **Deciding test:** a known model (e.g. an Anthropic + an OpenAI + a Bedrock row) resolves to the
   expected per-token `Decimal` + snapshot id; an unknown model → `Ok(None)`; a known model with a
   missing meter → `Ok(None)`/documented; date-suffixed model names resolve via `strip_date_suffix`.
@@ -198,82 +260,113 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
   **Mitigation:** the accessor returns a narrow typed `PricedRate`, not the catalog; divide-by-1e6
   pinned in the test against a known JSON rate.
 
-### T3 — Sensitivity range + assumption stamp (`costroid-core`) **[D4]**
-- **Do:** Wrap T1 in a sweep over the adjustable inputs (electricity rate, hardware price,
-  lifetime, utilization, in/out mix) across a documented low/high span → a `[N_low … N_high]`
-  break-even **band** (or "never within the swept range" honestly propagated). Attach the full
-  **assumption stamp** struct (electricity rate, hardware price, lifetime, utilization, in/out mix,
-  measurement mode, hardware-profile id `id@as_of`, pricing-snapshot `source@as_of#hash8`,
-  collector version). The public `BreakevenReport` = point + band + stamp + (T4) overlay.
-- **Deciding test:** a scenario yields a **band, not a scalar**; the stamp carries every required
-  field; a "never" scenario propagates "never" through the band with the reason; the band is
-  monotone in the swept variable (sanity).
-- **M4.** **Risk (R6):** presenting a hero number; an incomplete stamp.
-  **Mitigation:** `BreakevenReport` has no single-number constructor path that omits the band; a
-  test asserts all stamp fields present + non-default.
+### T3 — Blended cloud $/token helper (`costroid-core`) **[D3 — HIGH (Rev 2)]**
+- **Do:** A **pure** helper that combines the T2 per-meter prices into the scenario's blended cloud
+  per-token: `c = input_per_token·(1 − output_share) + output_per_token·output_share`, with
+  `output_share ∈ [0, 1]` (a typed error otherwise). Bare `Decimal` in / out — no power, no
+  network. This is the value the T1 crossover consumes as `cloud_per_token`. Splitting it out keeps
+  T2 strictly per-meter and gives the mix arithmetic its own test surface (it was owned by no task
+  before Rev 2).
+- **Deciding test:** `output_share = 0` → `c == input_per_token`; `output_share = 1` → `c ==
+  output_per_token`; an **intermediate** mix (e.g. 0.25) → the hand-computed `c` **to the cent**;
+  `output_share` outside `[0,1]` → typed error; the produced `c` feeds T1 and reproduces a
+  hand-computed `V*` (closes the HIGH gap end-to-end).
+- **M4.** **Risk:** the mix is computed ad-hoc at the call site (untested) or weighted backwards
+  (input/output swapped). **Mitigation:** one named helper, the only blend path; the
+  0 / 1 / intermediate test pins direction + value.
 
-### T4 — DeepSWE-Bench `$/task` empirical overlay (labeled, NOT crossover) (`costroid-core`) **[D3]**
+### T4 — Sensitivity range + assumption stamp (`costroid-core`) **[D4]**
+- **Do:** Wrap T1 in a sweep over the adjustable inputs (electricity rate, hardware price,
+  depreciation period, utilization, output mix) across a documented low/high span → a
+  `[N_low … N_high]` break-even **band**, propagating `Never`/`Infeasible` endpoints honestly (a
+  swept endpoint that crosses into `c ≤ e` is marked **never**, not dropped). Attach the full
+  **assumption stamp** struct (electricity rate, hardware price, depreciation period, utilization,
+  output mix, measurement mode, hardware-profile id `id@as_of`, pricing-snapshot
+  `source@as_of#hash8`, collector version). The public `BreakevenReport` = point + band + stamp +
+  (T5) overlay.
+- **Deciding test:** a scenario yields a **band, not a scalar**; the stamp carries every required
+  field; a **mixed sweep that runs from feasible into `c ≤ e` marks the band `[N_low … never]` with
+  EXACT endpoints** (the hand-computed `N_low` and the precise `never` cut-over — **not** a
+  "monotone/sanity" check — LOW); a fully-"never" scenario propagates "never" across the whole band.
+- **M4.** **Risk (R6):** presenting a hero number; an incomplete stamp; a sweep that silently drops
+  "never"/"infeasible" endpoints. **Mitigation:** `BreakevenReport` has no single-number
+  constructor that omits the band; the exact-endpoint test; a stamp-completeness assertion.
+
+### T5 — DeepSWE-Bench `$/task` empirical overlay (labeled, NOT crossover) (`costroid-core`) **[D3]**
 - **Do:** Surface the dated DeepSWE v1.1 `$/task` points (via `bench_view` /
   `FrontierPoint.cost_per_task_usd`, bench.rs:170 — already shipped, fail-closed `as_of`) on the
   `BreakevenReport` as a clearly-labeled, dated reference list (model · `$/task` · `as_of` ·
   source), kept structurally separate from the crossover fields. Never multiply it into `V*`.
-- **Deciding test:** the overlay is present, dated, and labeled; **the crossover `V*` is bit-identical
-  whether or not the overlay is attached** (proves it is reference-only); a `None` cost stays
-  "n/a", never zero.
+- **Deciding test:** the overlay is present, dated, and labeled; **the crossover `V*` is
+  bit-identical whether or not the overlay is attached** (proves it is reference-only); a `None`
+  cost stays "n/a", never zero.
 - **M4.** **Risk:** the overlay bleeds into the crossover math. **Mitigation:** the overlay is a
   separate field consumed by no arithmetic; the bit-identical assertion guards it.
 
-### T5 — The scenario config section (`costroid-config`) **[D2]**
+### T6 — The scenario config section (`costroid-config`) **[D2]**
 - **Do:** Add a `[breakeven]` (or `[scenario]`) section: a `#[derive(Default, Deserialize)]
   #[serde(default)]` struct, a **private** field on `Config`, money as the `Money(Decimal)` newtype,
-  physical knobs as plain `f64`/`bool` (mirroring `AlertsConfig`). Add a projection
-  `Config::breakeven_scenario() -> costroid_core::ScenarioInput` (the neutral input type defined in
-  core, like `BudgetTargets`/`AlertThresholds`). Read-only; absent section = zero-config default;
-  unknown keys ignored. No writer, no new dependency.
+  physical knobs as plain `f64`/`bool` (mirroring `AlertsConfig`). **MED3:** the break-even basis is
+  `depreciation_period` (with an explicit unit — days); `hardware_lifetime_seconds` is accepted only
+  for the §3.2 per-run attribution, and a config that supplies **both** as the break-even basis is
+  rejected as a typed error by the projection. Add a projection `Config::breakeven_scenario() ->
+  costroid_core::ScenarioInput` (the neutral input type defined in core, like
+  `BudgetTargets`/`AlertThresholds`). Read-only; absent section = zero-config default; unknown keys
+  ignored. No writer, no new dependency.
 - **Deciding test:** a TOML `[breakeven]` loads into the scenario; an absent section =
-  `Config::default()` scenario; an unknown key is ignored (forward-compat).
-- **M4.** **Risk:** money parsed as `f64`. **Mitigation:** reuse the `Money` newtype + its
-  `deserialize_any` visitor; a string/int/float TOML value all round-trip to `Decimal`.
+  `Config::default()` scenario; an unknown key is ignored (forward-compat); a config that sets
+  **both** a break-even `depreciation_period` and a conflicting break-even lifetime is a typed error
+  (MED3).
+- **M4.** **Risk:** money parsed as `f64`; two competing lifetime knobs. **Mitigation:** reuse the
+  `Money` newtype + its `deserialize_any` visitor; one break-even lifetime field (MED3), the other
+  reserved for the per-run attribution.
 
-### T6 — The `costroid breakeven` CLI subcommand **[D2 — public CLI surface]**
-- **Do:** Four-spot registration in `apps/cli/src/main.rs`, all `#[cfg(feature = "power")]`
-  (it computes the local scalar via `costroid-power`): the `mod breakeven;` line, the
+### T7 — The `costroid breakeven` CLI subcommand **[D2 — public CLI surface]**
+- **Do:** Four-spot registration in `apps/cli/src/main.rs`, all `#[cfg(feature = "power")]` (it
+  computes the local scalar via `costroid-power`): the `mod breakeven;` line, the
   `Command::Breakeven(BreakevenArgs)` variant, the `BreakevenArgs` struct, the dispatch arm. Flags
   mirror `bench`'s economics (`--model`, `--quant`, `--electricity-rate`, `--hardware-price`,
   `--hardware-lifetime-seconds`, `--hardware-profile`) **plus** scenario flags (`--tokens-per-day`,
-  `--input-output-mix`/`--output-share`, `--utilization`, `--depreciation-period`,
-  `--compare-to`/`--cloud-model`, `--pricing-override`, reuse `--out` `ExportFormat` if a machine
-  emit is wanted). Flow: compute the local **marginal-energy** $/token + hardware capex via
-  `costroid-power` (`estimate_run` / the §3.2 energy split — pure, no subprocess), resolve the
-  blended cloud per-token via T2, call T3's `breakeven_report(…)`, hand to T7's renderer. Config
-  defaults from T5; flags override.
-- **Deciding test (`apps/cli/tests`):** `breakeven` with synthetic flags prints a crossover or a
-  "never"; a "never"-inducing flag set prints the reason; the default build does **not** know the
-  subcommand (power off); `cli_power_feature_admits_only_power_allowed` + `cli_default_build_is_power_free`
-  still pass.
-- **M4.** **Risk:** pulling a new crate (trips the offline gate) or splitting the local cost into
-  energy-only vs total incorrectly. **Mitigation:** reuse only the already-linked power symbols;
-  derive marginal energy $/token = `energy_cost / total_tokens` from `LocalRunReport`
-  (harness.rs:31-56); keep `POWER_ALLOWED` unchanged.
+  `--output-share`, `--utilization`, `--depreciation-period`, `--compare-to`/`--cloud-model`,
+  `--pricing-override`, reuse `--out` `ExportFormat` if a machine emit is wanted). Flow:
+  (1) compute the local **marginal-energy** $/token via `costroid-power` (`estimate_run` / the §3.2
+  energy split — pure, no subprocess), converting the f64 `local_cost_per_1m`/energy figure to
+  `Decimal` via **`from_f64_retain` (full precision, never `round_dp`)** (MED2); (2) compute the
+  **feasibility ceiling** `max_tokens_per_day = estimated_tok_s · utilization · 86400` (from
+  `ModelSpec.estimated_tok_s`) and pass it to core as a plain number (MED1 — **no `core→power`
+  edge**); (3) resolve per-meter cloud prices via T2 and blend via T3 → `c`; (4) call T4's
+  `breakeven_report(…)`; (5) hand to T8's renderer. Config defaults from T6; flags override.
+- **Deciding test (`apps/cli/tests`):** `breakeven` with synthetic flags **prints one hand-checked
+  end-to-end numeric `V*`** (a fixed model/price/scenario whose crossover is computed by hand and
+  asserted in the output — LOW); a "never"-inducing flag set prints the reason; a low-`--utilization`
+  set drives `Infeasible` with the ceiling shown (MED1); the default build does **not** know the
+  subcommand (power off); `cli_power_feature_admits_only_power_allowed` +
+  `cli_default_build_is_power_free` still pass.
+- **M4.** **Risk:** pulling a new crate (trips the offline gate); rounding `e`; mis-splitting
+  energy-only vs total cost. **Mitigation:** reuse only the already-linked power symbols; derive
+  marginal energy $/token = `energy_cost / total_tokens` from `LocalRunReport` (harness.rs:31-56)
+  at full precision; keep `POWER_ALLOWED` unchanged.
 
-### T7 — Human-readable break-even render + `--plain` (`apps/cli`) **[D4]**
-- **Do:** A styled `StyledDocument` (the `run_trends` pattern, `render.rs`): the
-  crossover/never sentence, the `[N_low … N_high]` band, the assumption stamp, and the labeled
-  DeepSWE overlay. Color via `SemanticStyle` only; every `Warn`/`Critical` paired with a textual
-  cue (never color-alone); `print!("{}", doc.render(render_options))`. Take
-  `render_options: render::RenderOptions` (the global `--plain` threads through `main.rs:293`).
+### T8 — Human-readable break-even render + `--plain` (`apps/cli`) **[D4]**
+- **Do:** A styled `StyledDocument` (the `run_trends` pattern, `render.rs`): the crossover / never /
+  **infeasible** sentence (MED1 — render `Infeasible { v_star, max_tokens_per_day, reason }` as
+  "would break even at V* tokens/day, but the machine tops out at N tokens/day — infeasible"), the
+  `[N_low … N_high]` band, the assumption stamp, and the labeled DeepSWE overlay. Color via
+  `SemanticStyle` only; every `Warn`/`Critical` (e.g. never / infeasible) paired with a textual cue
+  (never color-alone); `print!("{}", doc.render(render_options))`. Take `render_options:
+  render::RenderOptions` (the global `--plain` threads through `main.rs:293`).
 - **Deciding test:** `--plain` / `NO_COLOR` / non-TTY all produce **byte-identical content** to the
-  styled run minus escapes; the "never" reason renders; a snapshot of the plain output is asserted;
-  no raw `\x1b[` / `ratatui::Color` introduced.
+  styled run minus escapes; the "never" **and** "infeasible" reasons render with their numbers; a
+  snapshot of the plain output is asserted; no raw `\x1b[` / `ratatui::Color` introduced.
 - **M4.** **Risk (R-accessibility):** color-alone or a `--plain` divergence. **Mitigation:** compose
   only via the shared `StyledSpan` helpers (the single place ANSI is applied, render.rs:254); the
   byte-identical test.
 
-### T8 — Wire-up, CI, docs (all crates)
+### T9 — Wire-up, CI, docs (all crates)
 - **Do:** Run the full pre-PR gate + the `--features power` clippy/test legs; confirm the
   offline-acceptance power leg stays green (break-even adds no I/O); update `README.md`
-  (the subcommand + an example), `docs/ARCHITECTURE.md` (the `breakeven` module + the public
-  catalog accessor + "no core→power edge"), `PROGRESS.md` (M4 → built, T-list), and check the
+  (the subcommand + an example), `docs/ARCHITECTURE.md` (the `breakeven` + blend modules + the
+  public catalog accessor + "no core→power edge"), `PROGRESS.md` (M4 → built, T-list), and check the
   §6.12 M4 box + the COSTROID-NEXT/PROGRESS M4 checklist lines.
 - **Deciding test:** the full gate green; `cargo test -p costroid --test offline` +
   `scripts/offline_acceptance.sh` green; the §6.12 M4 deciding test (T1) referenced as the gate.
@@ -285,11 +378,11 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
 ## 3. What lands in M4 vs what defers to M5/M6
 
 - **In M4 (agent-ownable, CI-tested, the merge target — needs NO hardware, NO network):** the
-  pure core break-even math + the milestone deciding test (T1), the public cloud per-token
-  accessor (T2), the sensitivity range + assumption stamp (T3), the labeled DeepSWE overlay (T4),
-  the scenario config section (T5), the `costroid breakeven` CLI + styled/`--plain` render
-  (T6/T7), wire-up + docs (T8). The estimated local engine (M3a) supplies the local scalar; M3b is
-  **not** required (`PROGRESS.md:403` — "M4 can proceed on the estimated engine in parallel").
+  pure core break-even math + the milestone deciding test (T1), the public cloud per-meter accessor
+  (T2) + the blend helper (T3), the sensitivity range + assumption stamp (T4), the labeled DeepSWE
+  overlay (T5), the scenario config section (T6), the `costroid breakeven` CLI + styled/`--plain`
+  render (T7/T8), wire-up + docs (T9). The estimated local engine (M3a) supplies the local scalar;
+  M3b is **not** required (`PROGRESS.md:403` — "M4 can proceed on the estimated engine in parallel").
 - **Defers to M5 — Interfaces:** surfacing break-even in the TUI, the Axum/`tiny_http` local API,
   and the minimal three-view web UI. M4 ships the **engine + the one CLI surface**; the broader
   UI is M5.
@@ -310,14 +403,21 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
    `Decimal`. Never an `f64` dollar amount (clippy + R discipline).
 4. **The catalog is private (T2).** The new public accessor is the only new library surface — keep
    it narrow (a typed `PricedRate`, never the catalog) and covered by D2 sign-off.
-5. **Blended cloud per-token at the scenario mix.** Cloud input vs output prices differ; the
-   crossover must use the **mix-weighted** cloud per-token, not a single meter. Define the mix
-   semantics precisely (output_share ∈ [0,1]).
+5. **Blended cloud per-token at the scenario mix (now T3).** Cloud input vs output prices differ;
+   the crossover must use the **mix-weighted** cloud per-token (`c = in·(1−out_share) +
+   out·out_share`), computed by the dedicated T3 helper, not ad-hoc at the call site
+   (`output_share ∈ [0,1]`).
 6. **Utilization semantics — define honestly.** State exactly what utilization scales (the energy
    duty-cycle / whether the daily volume fits the machine-hours) so the crossover is not silently
    optimistic; it is calendar-independent for the *hardware* term (D1) but bounds the *energy* and
-   feasibility terms.
-7. **R6 "ranges not a hero number"** is a done-criterion (item 5), enforced structurally by T3.
+   the **feasibility ceiling** (`estimated_tok_s · utilization · 86400`, MED1).
+7. **R6 "ranges not a hero number"** is a done-criterion (item 5), enforced structurally by T4.
+8. **Feasibility, precision, and lifetime ambiguity (Rev 2).** A real `V*` can exceed the machine's
+   tokens/day ceiling → the **`Infeasible`** outcome (MED1), with the ceiling supplied by the CLI as
+   a plain number (no `core→power` edge). The local rate `e` must stay full-precision
+   (`from_f64_retain`, never `round_dp`) or a near-tie flips the wrong branch (MED2). Exactly one
+   break-even lifetime unit (`depreciation_period`, days) — `hardware_lifetime_seconds` is the
+   per-run §3.2 attribution only; setting both as the break-even basis is a typed error (MED3).
 
 ---
 
