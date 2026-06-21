@@ -75,7 +75,14 @@ Notes:
 - Bundled assets must live inside the crate (`costroid-core`'s pricing JSON; `costroid-bar`'s
   JetBrains Mono in `apps/bar/assets/`); cargo only packages files under the crate dir.
 - Each crate ships the root `README.md` via `readme.workspace = true` (`costroid-bar` carries its
-  own). Validate with `cargo package -p <crate> --list` / `cargo publish --dry-run -p <crate>`.
+  own). **Pre-publish gate (runnable before anything is on crates.io):** `cargo package --workspace`
+  then `cargo publish --dry-run --workspace` — the **workspace** forms, because a per-package
+  `cargo publish --dry-run -p <crate>` cannot resolve unpublished siblings (and the published
+  `costroid-focus 0.6.0` has drifted from local: M1 added fields with no version bump, so the
+  **version bump at release is what re-trues the ladder**). Use `cargo package -p <crate> --list`
+  **only** to confirm each crate's bundled assets are present (e.g. `costroid-power`'s
+  `profiles/`+`models/` JSON). The real per-package `cargo publish` below runs **in ladder order at
+  the bumped version**.
 
 ## One-time maintainer setup
 
