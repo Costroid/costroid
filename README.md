@@ -44,6 +44,15 @@ Build from source: `git clone https://github.com/Costroid/costroid && cd costroi
 
 **Opt-in connections** (behind `--features connect`, off by default): `costroid connect` / `disconnect` / `connections [--check]` link your own Anthropic/OpenAI usage-API key (stdin-only entry, instant revoke), and `costroid reconcile` puts your local estimate side by side with the vendor's billed invoice.
 
+**Local-inference economics** (behind `--features power`, off by default — pure local compute, no network): `costroid bench` estimates a local model's cost-per-token (or `--measure`s it with a wall meter), and `costroid breakeven` computes the local-vs-cloud crossover — *"local breaks even at N tokens/day, or never (or infeasible), with the reason"* — as a **range + methodology + assumption stamp**, never a single hero number. The hardware is amortized as a calendar-fixed capex; the marginal local rate is energy-only; the cloud side is the bundled per-token pricing catalog, with the dated DeepSWE-Bench `$/task` shown as a labeled reference (never the crossover math).
+
+```console
+$ costroid breakeven --compare-to claude-opus-4-8 --tokens-per-day 5000000 --plain
+Local breaks even at 87214 tokens/day.
+At your 5000000 tokens/day: local is already cheaper
+Sensitivity range: 69771 … 107804 tokens/day
+```
+
 ## Surfaces
 
 - **TUI** — 9 numbered tabs (`1` now, `2` trends, `3` providers, `4` models, `5` history, `6` budget, `7` forecast, `8` anomalies, `9` activity) plus an `a`/`esc` frontier overlay. Charts/meters/bars draw in braille dots, painted in Costroid's palette; `--plain`/`NO_COLOR` strip all color with byte-identical output.
