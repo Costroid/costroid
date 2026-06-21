@@ -52,8 +52,10 @@ engine's per-run local economics:
 | Gemma 4 26B A4B (fast MoE) | ~96 | 8.072917 Wh | $0.0012916667 | $0.003963724 | $0.0052553907 |
 
 *(All figures **estimated — pending M3b measurement**. Energy = `155 W × wall_seconds / 3600`,
-where `wall_seconds = total_tokens / estimated_tok_s`; the slower dense model burns more wall-clock
-time, hence more Wh and more amortized capex for the same token count.)*
+where `wall_seconds = tokens_out / estimated_tok_s` — **decode time dominates**, so the wall-clock is
+estimated from the **generated (output) tokens only**, matching the engine
+([`crates/costroid-power/src/harness.rs`](../crates/costroid-power/src/harness.rs)); the slower dense
+model burns more wall-clock time, hence more Wh and more amortized capex for the same token count.)*
 
 ### The energy floor (marginal cost)
 
@@ -82,10 +84,12 @@ Cloud dollars are sourced from Costroid's bundled **layered pricing catalog**
 | `claude-opus-4-8` | $5 | $25 | **$0.46** | $23 |
 | `claude-sonnet-4-6` | $3 | $15 | **$0.276** | $13.8 |
 
-So one 20k-token run that costs roughly **$0.01–$0.04 of electricity** locally (**estimated —
-pending M3b measurement**) would cost **$0.28–$0.46** at cloud list price — the cloud is **~10–40×**
-the marginal energy cost per run. If marginal cost were the whole story, local would win
-overwhelmingly. It is not.
+So one 20k-token run whose **marginal energy cost** is roughly **$0.001–$0.010** locally
+(energy-only, **estimated — pending M3b measurement**) would cost **$0.28–$0.46** at cloud list
+price — the cloud is **~30–350×** the marginal energy cost per run. If marginal cost were the whole
+story, local would win overwhelmingly. It is not: the amortized hardware capex (here **$0.004–$0.032
+per run** — the energy-plus-capex per-run total is **$0.005–$0.042**) is what flips the economics,
+which is the break-even story below.
 
 ## Break-even — where local actually wins
 
