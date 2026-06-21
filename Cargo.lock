@@ -1161,7 +1161,13 @@ name = "costroid-server"
 version = "0.6.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "costroid-core",
+ "costroid-providers",
+ "costroid-store",
+ "rust_decimal",
+ "serde",
+ "serde_json",
  "tiny_http",
 ]
 

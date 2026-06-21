@@ -23,12 +23,26 @@ path = "src/main.rs"
 [dependencies]
 # A binary lives in apps/ → `anyhow` is the sanctioned error type here (library crates use
 # `thiserror`). The server is local-only: it links `tiny_http` (inbound loopback listener) and
-# reads the ledger via `costroid-core`. It pulls NO HTTP client, NO TLS, NO async runtime — the
-# per-binary `SERVER_ALLOWED` allowlist in `apps/cli/tests/offline.rs` enforces exactly that, and
-# `scripts/offline_acceptance.sh` proves the loopback-only / no-egress behavior at runtime.
+# reads the stored ledger via `costroid-store` + `costroid-core` (M5). It pulls NO HTTP client, NO
+# TLS, NO async runtime, and NEVER `costroid-power` (no core→power edge) — the per-binary
+# `SERVER_ALLOWED` allowlist in `apps/cli/tests/offline.rs` enforces exactly that (incl. a
+# no-`costroid-power` negative assert), and `scripts/offline_acceptance.sh` proves the loopback-only
+# / no-egress behavior at runtime. `serde`/`serde_json`/`chrono`/`rust_decimal` are already in the
+# CLI's default graph (via `costroid-core`), so they add nothing to the server-delta; only
+# `costroid-store` adds the reviewed local-SQLite subtree (T7).
 anyhow.workspace = true
+chrono.workspace = true
 costroid-core.workspace = true
+costroid-store.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tiny_http.workspace = true
+
+[dev-dependencies]
+# Test-only: build 3-lane FOCUS fixtures via `focus_records_from_canonical` (core, public) +
+# `CanonicalEvent`/`LocalRunEvent` (providers). Not linked into the shipped binary.
+costroid-providers.workspace = true
 
 [lints]
 workspace = true
