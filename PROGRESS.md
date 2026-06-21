@@ -40,18 +40,24 @@
 > of vendored htmx/uPlot — same guarantees, swap-in additive) is recorded at §6.11. Detail:
 > **[`docs/M5-PLAN.md`](docs/M5-PLAN.md)** (Rev 2).
 >
-> **Current milestone: M6 (Quality, docs, data, demo, packaging) — the FINAL milestone.** Plan
-> synthesized in **[`docs/M6-PLAN.md`](docs/M6-PLAN.md)**; the deciding test is the §6.12
-> Definition-of-Done checklist. In scope: cross-OS test *execution* (vs the M0 build-only matrix);
-> bundled synthetic sample datasets (local usage + AWS FOCUS + a benchmark pack — the whole demo with
-> no Strix Halo / no cloud); README + Mermaid architecture + methodology page + `docs/limitations.md`
-> consolidation; the versioned benchmark dataset + a blog-ready writeup; release packaging (flip
-> `dist`/`publish` on `costroid-power`/`costroid-store`/`costroid-server`, place them in the
-> RELEASING.md ladder). **M3b dependency does NOT block M6:** everything ships now on
-> synthetic/estimated fixtures, every estimated figure stamped "estimated — pending M3b measurement"
-> (R8/R10); the real-number refresh + hero-GIF capture are a small post-M3b human follow-up.
-> **⛔ STOP at the M6 plan boundary for the coordinator's pre-coding plan review before any code.**
-> The superseded M5/M4/M3a records follow for history.
+> **Current milestone: M6 (Quality, docs, data, demo, packaging) — the FINAL milestone — ✅ BUILT
+> (T0–T11); ⛔ at the milestone boundary awaiting the human's final fresh-eyes review before the
+> PR/merge to `main`.** Executed per **[`docs/M6-PLAN.md`](docs/M6-PLAN.md)** (Rev 2; D1–D5 signed
+> off) on the per-task dev loop (fresh-context build → independent adversarial review → fold-in →
+> commit), each task green. Delivered: synthetic `samples/` + a dedicated conformance leg + the
+> inverse measurement-mode guard (T1); a deterministic, fully-offline, hardware-free `make demo` +
+> an offline-acceptance leg (T2); cross-OS CI **test execution** on macOS+Windows + the enforced
+> keychain mock invariant (T3); README (problem statement, Mermaid, "what ccusage doesn't" table,
+> hero-GIF placeholder) + `methodology.md` + `limitations.md` consolidation + `ARCHITECTURE` §10.1
+> reconcile + the `PENDING_M3B_STAMP` doc-test machinery (`check_doc_stamps.sh` + `docs_presence` +
+> the e-formula cross-check) (T4–T7); the versioned benchmark dataset + a stamped Gemma-4-vs-cloud
+> writeup + `check_benchmarks.sh` + the `POST-M3B-REFRESH` runbook with a drift-guard (T8); the
+> `dist`/`publish` flip on `costroid-power`/`costroid-store`/`costroid-server` + the RELEASING ladder
+> + a publish-ladder topo-sort test (T9); issue templates + the CHANGELOG costroid-next entry (T10).
+> The **§6.12 DoD close-out** (each box evidenced) is in the plan; the full gate is green. **M3b does
+> NOT block M6:** every local-inference figure is stamped "estimated — pending M3b measurement"
+> (R8/R10); the real-number refresh + hero-GIF capture are the scoped post-M3b human follow-up
+> (`docs/POST-M3B-REFRESH.md`). The superseded M5/M4/M3a records follow for history.
 >
 > **(superseded) M5 — ✅ BUILT (T0–T9), reviewed at the boundary, tidy folded in, merged as PR #6.**
 >
@@ -426,12 +432,40 @@ starting **M1**.
   `local_energy_only_rate` (no `core→power` edge), cross-interface-locked; server-rendered
   HTML/inline-SVG views (D2 deviation, §6.11); loopback-only `--serve-once` strace proof; the
   byte-for-byte no-network CLI intact. Boundary review (0 blockers/highs) accepted + tidy folded in.
-- [ ] **M6** — tests/CI/datasets/docs/demo/packaging; benchmark dataset + writeup; ARCHITECTURE
-  reconciled. *(current — plan in [`docs/M6-PLAN.md`](docs/M6-PLAN.md); ⛔ awaiting pre-coding review.)*
+- [x] **M6** — tests/CI/datasets/docs/demo/packaging; benchmark dataset + writeup; ARCHITECTURE
+  reconciled. **✅ BUILT (T0–T11); ⛔ at the milestone boundary awaiting the human's final review
+  before the PR/merge.** Per [`docs/M6-PLAN.md`](docs/M6-PLAN.md) (Rev 2; D1–D5 signed off): synthetic
+  `samples/` + dedicated conformance leg (T1), deterministic offline `make demo` (T2), cross-OS CI
+  test execution + the keychain mock invariant (T3), README/methodology/limitations/ARCHITECTURE +
+  the `PENDING_M3B_STAMP` doc-test machinery (T4–T7), the versioned benchmark dataset + stamped
+  Gemma-4-vs-cloud writeup + `check_benchmarks.sh` + the `POST-M3B-REFRESH` drift-guard (T8), the
+  `dist`/`publish` flip on power/store/server + the publish-ladder topo-sort test (T9), issue
+  templates + CHANGELOG (T10). The **§6.12 DoD close-out** is in the plan; the full gate is green.
 
 ---
 
 ## Handoff note (latest)
+
+- **2026-06-22 (q) — M6 BUILT (T0–T11), the FINAL milestone; ⛔ STOP at the milestone boundary for
+  the human's final fresh-eyes review before the PR/merge to `main`.** Branch `costroid-next` off
+  `main` @ `631b5a4`. M6-PLAN was reviewed pre-coding (Rev 2) + D1–D5 signed off, then T1–T11 ran on
+  the per-task dev loop (fresh-context build → independent adversarial review → fold-in → commit),
+  each green; every review verdict was APPROVE / APPROVE-WITH-FIXES and every fold-in landed +
+  re-verified (T1 L1 sidecar gate; T2 HIGH hermetic Windows demo + UTF-8; T3 APPROVE; T4–T7 the two
+  optional crate edges; T8 the `wall_seconds` out-token basis + wording; T9 stale Cargo.toml comments;
+  T10 server `--version`). **Full gate re-run on the integrated tree — all green** (fmt · clippy
+  `--workspace -D warnings` · `test --workspace` 0 failures · power/store/server/connect · `cargo
+  deny` default+all-features · MSRV 1.88 · power-profile/pricing/benchmark/doc-stamp integrity ·
+  FOCUS conformance 10 holds incl. the samples 3-lane leg · `make demo` + byte-identical re-run ·
+  `dist generate --check` clean, server = 5 archives no musl · `offline_acceptance.sh </dev/null`
+  PASSED). The **§6.12 DoD close-out** (each box evidenced) is appended to
+  [`docs/M6-PLAN.md`](docs/M6-PLAN.md). **Cross-OS test execution is the CI arbiter** (the macOS/
+  Windows legs run in CI, not on this Linux box). **M3b stays a separate human handoff and does NOT
+  block M6** — every local-inference figure is stamped "estimated — pending M3b measurement"; the
+  real-number refresh + hero-GIF capture are the scoped post-M3b follow-up in
+  [`docs/POST-M3B-REFRESH.md`](docs/POST-M3B-REFRESH.md). M6 commit range `f71e31e..HEAD`. **Next:
+  the human's final boundary review, then push `costroid-next` → CI-green → merge to `main`** (NOT
+  done by the agent). The earlier M5 note (p) follows for history.
 
 - **2026-06-21 (p) — M5 MERGED (PR #6); M6 PLAN synthesized; ⛔ STOP for the pre-coding plan
   review.** `main` tip `631b5a4` includes M0–M5; `costroid-next` recreated off it, tree clean.

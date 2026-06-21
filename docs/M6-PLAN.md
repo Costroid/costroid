@@ -228,3 +228,42 @@ bash scripts/check_power_profiles.sh && bash scripts/check_pricing_snapshots.sh 
 bash scripts/offline_acceptance.sh </dev/null   # includes the CLI-only `make demo` leg (byte-identical re-run)
 ```
 Cross-OS test execution is the **CI** arbiter (T3) — "green in WSL is not green" (§2.3).
+
+---
+
+## §6.12 Definition of Done — CLOSE-OUT (T11, 2026-06-22)
+
+M6 built T0–T11 on the per-task dev loop (fresh-context build → independent adversarial review →
+fold-in → commit), `costroid-next` off `main` @ `631b5a4`. **Full gate re-run on the integrated tree
+— all green** (the M6 deciding test): `fmt` · `clippy --workspace --all-targets -D warnings` ·
+`test --workspace` (0 failures) · power feature clippy+test · `costroid-store`/`costroid-server`/
+`connect-test-support` · `cargo deny` default **and** `--all-features` · MSRV 1.88 (workspace +
+power) · `check_power_profiles.sh` · `check_pricing_snapshots.sh` · `check_benchmarks.sh` ·
+`check_doc_stamps.sh` · FOCUS conformance (10 "conformance holds", exit 0, incl. the samples 3-lane
+merged leg) · `make demo` + `make demo-verify` (byte-identical) · `dist generate --check` (clean;
+`costroid-server` = 5 archives, no musl/npm/Homebrew) · `offline_acceptance.sh </dev/null` (CLI/bar
+no socket, server loopback-only no egress). **Each box closed against a named test/artifact, never
+prose:**
+
+| # | §6.12 box | Status | Evidence |
+|---|---|---|---|
+| 1 | New crates integrated; existing behavior intact | ✅ | 10-member workspace builds/tests green; the pre-M6 CLI/TUI/bar suites still pass (e.g. 211 + 178 + … rows, 0 failures); the byte-for-byte no-network CLI is unchanged. |
+| 2 | Cross-platform build + distribution green; power/cfg gates | ✅ | **T3** promoted the macOS+Windows CI job to test execution; **T9** flipped `dist`/`publish` (server = 5 archives no musl; power/store = crates.io libs); `dist generate --check` clean; the `power` feature gates compile/lint/test clean in both states. |
+| 3 | Unified 3-lane FOCUS ledger; v1.2-in/v1.3-out; CI-validated | ✅ | FOCUS conformance green incl. the dedicated **samples 3-lane merged leg** (`developer_tool`+`cloud_api`+`local_inference`, 20 rows) with row-count guards (T1). |
+| 4 | Four-source PowerSampler; measured cross-OS via wall meter; mode stamped | ✅ (M3a) | Documented in **methodology.md** (the ladder + package-vs-wall) + **T8**; estimated mode is the default; `x_MeasurementMode` stamped per row; the **inverse guard** asserts every committed row is `"estimated"`. Real captured numbers are the **post-M3b** human refresh (`POST-M3B-REFRESH.md`) — does not block M6. |
+| 5 | Break-even + scenario modeling; honest ranges | ✅ (M4) | **methodology.md** §4 (e-formula, sensitivity band, Never/Infeasible) pinned by `methodology_crosscheck.rs`; the **benchmark writeup** presents ranges + a break-even volume, never a hero number. |
+| 6 | CLI/TUI + API + 3-view web UI (local-only) | ✅ (M5) | `costroid-server` loopback-only proven by `offline_acceptance.sh` (no egress) + the per-binary `SERVER_ALLOWED` allowlist; the power-gated TUI overlay (`b`). |
+| 7 | Full tests, CI gates, datasets, docs, demo, packaging, benchmark | ✅ | **T1** samples + conformance leg; **T2** `make demo`; **T4–T7** README/methodology/limitations/ARCHITECTURE + doc-test machinery; **T8** versioned benchmark dataset + writeup + `check_benchmarks.sh`; **T9** packaging; **T10** issue templates + CHANGELOG. |
+| 8 | Cardinal Rule (R4): no prompt/response content anywhere | ✅ | Samples are metadata-only (the R4 field-name scan + inverse measurement-mode guard); the bug-report form has a required "no prompt content / secrets / real logs" check; the store remains structurally metadata-only. |
+| 9 | Accessibility: `--plain` + never color-alone | ✅ (regression) | M6 adds no new **runtime** visual; the M1–M5 `--plain`/never-color-alone visuals + their snapshot tests still pass (DoD-9 does not govern the doc Mermaid/GIF). limitations.md documents the non-color uncertain-row cue. |
+| 10 | Offline intact: CLI byte-for-byte; server loopback-only; offline+strace green | ✅ | `cargo test -p costroid --test offline` (9 passed) + `offline_acceptance.sh` PASSED; the `make demo` leg runs CLI-only under the no-inet assertion. |
+| 11 | Each milestone closed against a written deciding test (M6 = this checklist) | ✅ | **This close-out** (the §6.12 checklist, each box evidenced). |
+| 12 | ARCHITECTURE reconciled with the new scope | ✅ (T7) | **ARCHITECTURE §10.1** additively reconciles the final 10-member graph, the three lanes, the loopback server path, the offline model, and the M6 additions. |
+
+**Per-task review ledger (all APPROVE / APPROVE-WITH-FIXES, every fold-in landed + re-verified):**
+T1 (L1 sidecar gate) · T2 (HIGH Windows-demo hermetic + LOW UTF-8) · T3 (APPROVE, no fixes) ·
+T4–T7 (MEDIUM: two optional crate edges) · T8 (MEDIUM wall_seconds basis + 2 LOW wording) ·
+T9 (LOW stale Cargo.toml comments) · T10 (LOW server `--version`). M6 commit range: `f71e31e..HEAD`.
+
+**⛔ Milestone boundary:** M6 is BUILT + self-verified green; **awaiting the human's final fresh-eyes
+boundary review before the PR / merge to `main`.** Do not merge from the agent.
