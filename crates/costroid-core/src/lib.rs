@@ -43,6 +43,15 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// The single canonical honesty stamp (R8/R10) for every **estimated/synthetic hero figure** that
+/// ships before the M3b on-hardware measurement run. It is defined here ONCE and reused everywhere —
+/// docs, sample READMEs, the benchmark writeup, and the doc-stamp scanner
+/// (`scripts/check_doc_stamps.sh`, which reads this very literal out of the source, so the stamp text
+/// can never drift between the docs and the test that enforces it). Until M3b lands, every estimated
+/// cost / energy / throughput number a Costroid surface presents carries this exact phrase; the
+/// post-M3b refresh (`docs/POST-M3B-REFRESH.md`) is the documented step that flips them to "measured".
+pub const PENDING_M3B_STAMP: &str = "estimated — pending M3b measurement";
+
 mod bench;
 pub use bench::{
     bench_view, cloud_reference_points, BenchDisclaimer, BenchFrontier, BenchView, FrontierPoint,
