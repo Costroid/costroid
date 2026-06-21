@@ -1,10 +1,11 @@
 # M6 — Quality, docs, data, demo, packaging (the FINAL milestone)
 
-> **Status:** **Rev 2 (2026-06-21)** — the coordinator's pre-coding plan review (sound; 0 blockers /
-> 1 high / 4 med / ~12 low) is folded in (see the Rev-2 changelog below). **D1–D4 SIGNED OFF** at the
-> recommended defaults; **one new CLI-surface item (D5) is SURFACED for sign-off** (the bench
-> determinism source). ⛔ Re-committed docs-only — **awaiting the coordinator's confirm of these
-> deltas + the D5 sign-off before any T1+ code.** Scope canon: [`docs/COSTROID-NEXT.md`](COSTROID-NEXT.md)
+> **Status:** **Rev 2 CONFIRMED — coding cleared 2026-06-21.** The coordinator's pre-coding plan
+> review (0 blockers / 1 high / 4 med / ~12 low) is folded in (see the Rev-2 changelog below);
+> **D1–D5 ALL SIGNED OFF** (D1–D4 at the recommended defaults; **D5 → honor `SOURCE_DATE_EPOCH`**);
+> the Rev 2 deltas are **confirmed → T1 cleared**. Now executing M6 on the per-task dev loop
+> (fresh-context build → independent adversarial review → fold-in), task by task, stopping at the
+> milestone boundary for the final review. Scope canon: [`docs/COSTROID-NEXT.md`](COSTROID-NEXT.md)
 > §6.6–6.12. **Deciding test for the milestone = the §6.12 Definition-of-Done checklist** (closed
 > against, never self-judged by prose). Branch `costroid-next` off `main` @ `631b5a4` (M0–M5 merged,
 > PRs #2–#6); tree clean.
@@ -104,22 +105,21 @@ The human signed off all four at the recommended default; the plan below builds 
 - **D3 — Packaging → ✅ MIRROR `apps/bar`.** `costroid-power` + `costroid-store` = crates.io libraries (`publish = true`, no dist archives). `costroid-server` = binary → archives + crates.io (no npm/Homebrew/musl), `publish = true` + `dist = true` (archive installers only). **Publish ladder:** `focus → providers → core → config → connect → store → power → costroid → server → bar`. *(Drives T9.)*
 - **D4 — Cross-OS test-execution scope → ✅ CORE + POWER + SERVER + OFFLINE-STATIC.** macOS + Windows run `cargo test --workspace` + `cargo test -p costroid --features power` + `cargo test -p costroid-server` + the static `--test offline` dependency proof. **Linux-only stays:** the strace dynamic offline-acceptance harness, the FOCUS-validator conformance, `cargo deny`, the MSRV check (toolchain/OS-pinned for determinism). *(Drives T3.)*
 
-### D5 — ⏳ SURFACED for sign-off (new in Rev 2): the bench timestamp source
+### D5 — ✅ SIGNED OFF 2026-06-21: honor `SOURCE_DATE_EPOCH` (the bench timestamp source)
 
 `costroid bench` currently stamps each local-run row with `chrono::Utc::now()`
 ([`apps/cli/src/bench.rs:128`](../apps/cli/src/bench.rs#L128)). A **deterministic** `make demo` (T2) +
 benchmark goldens (T8) — and the "byte-identical re-run" deciding tests — require a **fixed clock**.
-This changes observable CLI behavior, so it needs the human's sign-off (CLAUDE.md: "changing the
-public CLI surface").
+Because it changes observable CLI behavior it was surfaced for sign-off (CLAUDE.md: "changing the
+public CLI surface"). **Decision (human, recommended option):**
 
-- **Recommend:** honor the de-facto reproducible-builds env var **`SOURCE_DATE_EPOCH`** when set
-  (the row timestamp = that epoch); otherwise keep `Utc::now()` unchanged. The demo/benchmark scripts
-  export `SOURCE_DATE_EPOCH` derived from the profile/manifest `as_of` (never "now"), so committed
-  artifacts are byte-stable while the default interactive `bench` is untouched. No new flag; one
-  env-var read; documented in `--help` + methodology.
-- **Alt A:** a `--as-of <RFC3339>` flag instead of the env var (explicit, but adds CLI surface).
-- **Alt B:** keep `Utc::now()` and **strip/normalize** the timestamp in the demo/golden comparison
-  only (no CLI change, but the goldens can't assert the real stamped row verbatim).
+- **✅ Honor the de-facto reproducible-builds env var `SOURCE_DATE_EPOCH`** when set (the row
+  timestamp = that epoch); otherwise keep `Utc::now()` unchanged. The demo/benchmark scripts export
+  `SOURCE_DATE_EPOCH` derived from the profile/manifest `as_of` (never "now"), so committed artifacts
+  are byte-stable while the default interactive `bench` is untouched. **No new flag**; one env-var
+  read; documented in `--help` + methodology. *(Drives the T2/T8 determinism sub-tasks.)*
+- *(Not chosen: a `--as-of` flag — adds permanent CLI surface; or normalize-in-comparison-only —
+  weaker determinism, goldens can't assert the stamped row verbatim.)*
 
 ---
 
