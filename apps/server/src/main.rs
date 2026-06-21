@@ -14,14 +14,17 @@
 //! socket*. The loopback bind address is constructed **only** from [`Ipv4Addr::LOCALHOST`]
 //! ([`loopback_addr`]) — the server cannot bind a routable interface by construction.
 //!
-//! # Status — M5 (in progress)
+//! # Status — M5
 //! Reads the stored 3-lane ledger via `costroid-store` + `costroid-core` (NEVER `costroid-power` —
-//! no `core→power` edge) and serves three views (timeline / comparison / break-even) + a JSON API
-//! over loopback, plus `/healthz` and a `--serve-once` mode (the race-free offline-proof hook).
-//! T3/T4 land the data models + routing + JSON API; the embedded static assets (htmx + uPlot) and
-//! the rich HTML views land at T5/T6.
+//! no `core→power` edge) and serves three views (timeline / comparison / break-even) — server-
+//! rendered HTML (tables + inline SVG, no JS) + a `?plain` text fallback + a JSON API — over
+//! loopback, plus `/healthz` and a `--serve-once` mode (the race-free offline-proof hook). All
+//! assets are embedded first-party (the `include_str!` stylesheet in [`web`]): zero external
+//! references, fully offline. (D2 chose vendored htmx + uPlot; the offline build cannot fetch them,
+//! so this ships first-party embedded assets — same guarantees — flagged for the coordinator.)
 
 mod data;
+mod web;
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -127,9 +130,8 @@ fn serve(port: u16, once: bool) -> Result<()> {
     println!("costroid-server ready on http://{addr} (loopback only; no outbound egress)");
 
     for request in server.incoming_requests() {
-        // Route on the path only (drop any query string); `.next()` on a split always yields one.
-        let path = request.url().split('?').next().unwrap_or("/").to_string();
-        let (status, content_type, body) = respond_for(&path);
+        let url = request.url().to_string();
+        let (status, content_type, body) = respond_for(&url);
         let response = match Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()) {
             Ok(header) => Response::from_string(body)
                 .with_status_code(status)
@@ -147,14 +149,27 @@ fn serve(port: u16, once: bool) -> Result<()> {
     Ok(())
 }
 
-/// Route a request path to `(status, content-type, body)`. Reads the stored ledger per request
+/// Route a request URL to `(status, content-type, body)`. Reads the stored ledger per request
 /// (local, read-only). R4: only bounded view metadata is ever serialized — never any content.
-fn respond_for(path: &str) -> (u16, String, String) {
+/// Appending `?plain` to a view returns its screen-reader/pipe-friendly text rendering.
+fn respond_for(url: &str) -> (u16, String, String) {
     let html = "text/html; charset=utf-8".to_string();
     let json = "application/json; charset=utf-8".to_string();
     let text = "text/plain; charset=utf-8".to_string();
+    let css = "text/css; charset=utf-8".to_string();
+    let path = url.split('?').next().unwrap_or("/");
+    let plain = url
+        .split('?')
+        .nth(1)
+        .map(|query| {
+            query
+                .split('&')
+                .any(|p| p == "plain" || p.starts_with("plain="))
+        })
+        .unwrap_or(false);
     match path {
         "/healthz" => (200, text, "ok\n".to_string()),
+        "/assets/costroid.css" => (200, css, web::CSS.to_string()),
         "/api/timeline" | "/api/comparison" | "/api/breakeven" | "/api/views" => {
             match api_json(path) {
                 Ok(body) => (200, json, body),
@@ -162,11 +177,27 @@ fn respond_for(path: &str) -> (u16, String, String) {
             }
         }
         "/" => match views() {
-            Ok(views) => (200, html, index_html(&views)),
+            Ok(views) => (200, html, web::index_html(&views)),
             Err(message) => (500, text, message),
         },
         "/timeline" | "/comparison" | "/breakeven" => match views() {
-            Ok(views) => (200, html, view_html(path, &views)),
+            Ok(views) => {
+                if plain {
+                    let body = match path {
+                        "/timeline" => web::timeline_plain(&views.timeline),
+                        "/comparison" => web::comparison_plain(&views.comparison),
+                        _ => web::breakeven_plain(&views.breakeven),
+                    };
+                    (200, text, body)
+                } else {
+                    let body = match path {
+                        "/timeline" => web::timeline_html(&views.timeline),
+                        "/comparison" => web::comparison_html(&views.comparison),
+                        _ => web::breakeven_html(&views.breakeven),
+                    };
+                    (200, html, body)
+                }
+            }
             Err(message) => (500, text, message),
         },
         _ => (404, text, "not found\n".to_string()),
@@ -202,41 +233,4 @@ fn default_ledger_path() -> PathBuf {
         return PathBuf::from(home).join(".local/share/costroid/ledger.db");
     }
     PathBuf::from("costroid-ledger.db")
-}
-
-/// The index page. Server-rendered, no external references (works fully offline). The rich views +
-/// embedded charts land at M5 T5/T6; this links to them + the JSON API.
-fn index_html(_views: &data::Views) -> String {
-    "<!doctype html><html lang=en><head><meta charset=utf-8>\
-     <title>Costroid — local cost views</title></head><body>\
-     <h1>Costroid</h1>\
-     <p>Local-only views over your stored cost ledger (loopback; no network).</p>\
-     <ul>\
-     <li><a href=\"/timeline\">Timeline</a> — spend over time</li>\
-     <li><a href=\"/comparison\">Comparison</a> — actual local vs counterfactual cloud</li>\
-     <li><a href=\"/breakeven\">Break-even</a> — local-vs-cloud crossover</li>\
-     </ul>\
-     <p>JSON API: <code>/api/timeline</code>, <code>/api/comparison</code>, <code>/api/breakeven</code>.</p>\
-     </body></html>"
-        .to_string()
-}
-
-/// A per-view page. M5 T4 renders the view's JSON as an offline, screen-readable fallback; M5 T6
-/// replaces this with the proper tables + embedded uPlot charts (keeping a no-JS fallback).
-fn view_html(path: &str, views: &data::Views) -> String {
-    let (title, json) = match path {
-        "/timeline" => ("Timeline", serde_json::to_string_pretty(&views.timeline)),
-        "/comparison" => (
-            "Comparison",
-            serde_json::to_string_pretty(&views.comparison),
-        ),
-        _ => ("Break-even", serde_json::to_string_pretty(&views.breakeven)),
-    };
-    let body = json.unwrap_or_else(|_| "{}".to_string());
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <title>Costroid — {title}</title></head><body>\
-         <h1>{title}</h1><p><a href=\"/\">&larr; back</a></p>\
-         <pre>{body}</pre></body></html>"
-    )
 }

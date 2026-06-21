@@ -1,0 +1,74 @@
+/* Costroid local web UI — first-party stylesheet, embedded in the binary via include_str! (M5
+   T5/T6). No external references; the page works fully offline. Costroid palette: Carbon ground,
+   Bone text, cold cyan Data, Signal-lime Accent, Ash muted, warm coral for the critical cue.
+   Never color-alone: every signal also carries text/shape (the tables + verdict sentences). */
+
+:root {
+  --carbon: #0e1116;
+  --graphite: #161b22;
+  --slate: #21262d;
+  --ash: #8b949e;
+  --bone: #e6edf3;
+  --cyan: #39c5cf;
+  --lime: #9ae64b;
+  --coral: #ff7b72;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1.5rem clamp(1rem, 4vw, 3rem);
+  background: var(--carbon);
+  color: var(--bone);
+  font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h1, h2 { font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; color: var(--cyan); }
+
+a { color: var(--cyan); text-decoration: none; }
+a:hover, a:focus { text-decoration: underline; }
+
+nav { margin: 0.75rem 0 1.25rem; }
+nav a { margin-right: 1rem; }
+nav a.active { color: var(--lime); font-weight: 600; }
+
+.muted { color: var(--ash); }
+.accent { color: var(--lime); }
+.data { color: var(--cyan); }
+.warn { color: var(--coral); }
+
+.note {
+  color: var(--ash);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 1rem;
+  border-left: 2px solid var(--slate);
+  padding-left: 0.75rem;
+}
+
+.verdict {
+  font-size: 1.1rem;
+  margin: 0.5rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--graphite);
+  border-radius: 6px;
+  border-left: 3px solid var(--lime);
+}
+.verdict.warn { border-left-color: var(--coral); }
+
+table { border-collapse: collapse; width: 100%; max-width: 60rem; margin: 0.5rem 0 1rem; }
+caption { text-align: left; color: var(--ash); font-size: 0.85rem; padding-bottom: 0.35rem; }
+th, td { text-align: left; padding: 0.35rem 0.75rem; border-bottom: 1px solid var(--slate); }
+th { color: var(--ash); font-weight: 500; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--cyan); }
+
+.chart { background: var(--graphite); border-radius: 6px; padding: 0.5rem; margin: 0.5rem 0 1rem; }
+.chart rect { fill: var(--cyan); }
+.chart rect.cloud { fill: var(--coral); }
+.chart text { fill: var(--ash); font-size: 10px; }
+
+footer { margin-top: 2rem; color: var(--ash); font-size: 0.8rem; }
