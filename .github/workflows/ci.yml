@@ -195,6 +195,12 @@ jobs:
       - name: Verify doc honesty stamps
         run: bash scripts/check_doc_stamps.sh
 
+      # R8/R10 benchmark-dataset integrity (M6 T8): every committed benchmark manifest + raw
+      # `costroid bench` output under benchmarks/ is byte-for-byte its committed sidecar (catches
+      # an edited published figure). A pure sha256sum -c, fail-closed; offline.
+      - name: Verify benchmark-dataset integrity
+        run: bash scripts/check_benchmarks.sh
+
       # Exports the committed fixtures to FOCUS CSV and runs the official validator
       # (offline, vendored rulesets) against the documented known-failure allowlists:
       # the FOCUS 1.3 CSV leg (exact), the JSON-equivalence leg, the synthetic v1.2-in
