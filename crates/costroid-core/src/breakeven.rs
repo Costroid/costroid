@@ -400,6 +400,30 @@ pub fn breakeven_report(
     })
 }
 
+/// The config-neutral break-even scenario knobs (T6) — the projection target for the
+/// `[breakeven]` config section (mirrors [`crate::BudgetTargets`]/[`crate::AlertThresholds`], so
+/// `costroid-config` depends on `costroid-core`, never the reverse). Every field is optional: a
+/// missing config (or unset knob) leaves it `None`, and the CLI fills it from a flag or a default.
+/// `depreciation_period_days` is the **single** break-even amortization basis (MED3) — the config
+/// projection has already rejected any conflicting lifetime before building this.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BreakevenScenario {
+    /// The workload's daily token volume (context: where you are vs. the crossover `V*`).
+    pub tokens_per_day: Option<Decimal>,
+    /// The output-token share for the cloud blend (0..=1).
+    pub output_share: Option<Decimal>,
+    /// The utilization fraction for the feasibility ceiling (0..=1).
+    pub utilization: Option<Decimal>,
+    /// The break-even depreciation period in days (the calendar amortization basis, MED3).
+    pub depreciation_period_days: Option<Decimal>,
+    /// Override the electricity rate (per kWh) used to derive the local energy rate.
+    pub electricity_rate_per_kwh: Option<Decimal>,
+    /// Override the hardware purchase price (the amortized capex).
+    pub hardware_price: Option<Decimal>,
+    /// The cloud model to compare against (a pricing-catalog model id).
+    pub cloud_model: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     // Repo rule: clippy denies `unwrap`/`expect` even in tests; use `let-else { panic! }`.

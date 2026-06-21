@@ -53,7 +53,7 @@ pub mod breakeven;
 pub use breakeven::{
     blended_cloud_per_token, breakeven, breakeven_report, days_from_seconds,
     resolve_depreciation_days, AssumptionStamp, BreakevenBand, BreakevenInputs, BreakevenOutcome,
-    BreakevenReport, CloudReferencePoint, SensitivityPoint, SweepPoint,
+    BreakevenReport, BreakevenScenario, CloudReferencePoint, SensitivityPoint, SweepPoint,
 };
 
 pub mod reconcile;
