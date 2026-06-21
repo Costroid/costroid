@@ -64,19 +64,29 @@ pub fn run_breakeven(args: &BreakevenArgs, render_options: RenderOptions) -> Res
         Some(value) => Some(finite_decimal(value, "tokens-per-day")?),
         None => scenario.tokens_per_day,
     };
+    // Reject a non-positive daily volume (flag OR config) at the CLI boundary, mirroring the
+    // utilization guard — a zero/negative "where you are" volume is meaningless.
+    if let Some(volume) = tokens_per_day {
+        if volume <= Decimal::ZERO {
+            bail!("tokens-per-day must be positive, got {volume}");
+        }
+    }
 
     // 2. Local energy-only e + the feasibility ceiling, via costroid-power's estimated harness.
     let manifest = bundled_models()?;
     let (spec, quant) = manifest.resolve(&args.model, args.quant.as_deref())?;
     let profiles = bundled_power_profiles()?;
     let electricity_rate = first_f64(args.electricity_rate, scenario.electricity_rate_per_kwh);
-    let hardware_price = first_f64(args.hardware_price, scenario.hardware_price);
     let overrides = ProfileOverrides {
         hardware_profile_id: args.hardware_profile.clone(),
         // The estimated sampler's load is the profile default (no CLI override — bench's rule).
         load_watts: None,
+        // electricity_rate stays on the f64 power-profile path (it feeds the energy estimate).
         electricity_rate_per_kwh: electricity_rate,
-        hardware_price,
+        // Break-even computes the capex separately (exact for a config Decimal — see `resolve_capex`);
+        // the profile's hardware_price would only feed the per-run amortized cost, which break-even
+        // does not use, so leave it at the profile default here.
+        hardware_price: None,
         // NOT the break-even basis (MED3): the break-even calendar is `depreciation_period_days`.
         // The per-run lifetime only affects the report's (unused-here) x_AmortizedHwCost.
         hardware_lifetime_seconds: None,
@@ -105,10 +115,13 @@ pub fn run_breakeven(args: &BreakevenArgs, render_options: RenderOptions) -> Res
         output_share,
     )?;
 
-    // 4. The base scenario + the capex.
-    let capex_decimal = Decimal::from_f64_retain(resolved.hardware_price)
-        .ok_or_else(|| anyhow!("hardware price is not a finite number"))?;
-    let capex = UsdAmount::from_usd(capex_decimal);
+    // 4. The base scenario + the capex (the config's exact Decimal is threaded straight through;
+    //    from_f64_retain is used only for the flag (f64) path or the f64 profile default).
+    let capex = UsdAmount::from_usd(resolve_capex(
+        args.hardware_price,
+        scenario.hardware_price,
+        resolved.hardware_price,
+    )?);
     let base = BreakevenInputs {
         local_energy_per_token: energy_per_token,
         hardware_capex: capex,
@@ -188,6 +201,22 @@ fn resolve_decimal(
     match flag {
         Some(value) => finite_decimal(value, "scenario value"),
         None => Ok(config.unwrap_or(default)),
+    }
+}
+
+/// Resolve the amortized capex: flag → config → profile default. The config value is an EXACT
+/// `Decimal` threaded straight through (no f64 round-trip); only the flag (f64) path and the f64
+/// profile default go through `from_f64_retain` (L1/L3 — preserve config exactness).
+fn resolve_capex(
+    flag: Option<f64>,
+    config: Option<Decimal>,
+    profile_default: f64,
+) -> Result<Decimal> {
+    match (flag, config) {
+        (Some(value), _) => finite_decimal(value, "hardware-price"),
+        (None, Some(decimal)) => Ok(decimal),
+        (None, None) => Decimal::from_f64_retain(profile_default)
+            .ok_or_else(|| anyhow!("hardware price is not a finite number")),
     }
 }
 
@@ -779,5 +808,113 @@ mod tests {
             "below-crossover cue must be textual"
         );
         assert!(no_escape(&plain), "no ANSI under --plain");
+    }
+
+    /// Remove every ANSI CSI sequence (`\x1b[...m`) so a styled render can be compared to plain.
+    fn strip_ansi(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for next in chars.by_ref() {
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn snapshot_stamp() -> AssumptionStamp {
+        AssumptionStamp {
+            electricity_rate_per_kwh: dec(16, 2),
+            hardware_price: UsdAmount::from_usd(Decimal::from(2000)),
+            depreciation_period_days: Decimal::from(1000),
+            utilization: Decimal::ONE,
+            output_share: dec(5, 1),
+            local_energy_per_token: dec(5, 7),
+            blended_cloud_per_token: dec(25, 7),
+            measurement_mode: "estimated".to_string(),
+            hardware_profile: "strix-halo-128gb@2026-06-20".to_string(),
+            pricing_snapshot_id: "curated@2026-06-02".to_string(),
+            collector_version: "0.6.0".to_string(),
+        }
+    }
+
+    fn crossover_snapshot_report() -> BreakevenReport {
+        // e=0.0000005, capex $2000 / 1000 days = $2/day, c=0.0000025 → V* = 1,000,000.
+        let inputs = BreakevenInputs {
+            local_energy_per_token: dec(5, 7),
+            hardware_capex: UsdAmount::from_usd(Decimal::from(2000)),
+            depreciation_period_days: Decimal::from(1000),
+            cloud_per_token: dec(25, 7),
+            max_tokens_per_day: None,
+        };
+        let Ok(headline) = breakeven(&inputs) else {
+            panic!("the snapshot scenario must be a crossover");
+        };
+        BreakevenReport {
+            headline,
+            sensitivity: Vec::new(),
+            stamp: snapshot_stamp(),
+            cloud_reference: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn styled_and_plain_render_are_byte_identical_minus_ansi() {
+        // T8: --plain is the styled render with the ANSI stripped — byte-for-byte. A below-crossover
+        // scenario makes the styled render actually emit color (Accent + Warn), so it is non-vacuous.
+        let report = crossover_snapshot_report();
+        let doc = render_breakeven(&report, "claude-opus-4-8", Some(Decimal::from(500_000)));
+        let styled = doc.render(crate::render::RenderOptions {
+            mode: crate::render::RenderMode::Ascii,
+            ansi: true,
+            width: 80,
+        });
+        let plain = doc.render(RenderOptions::plain());
+        assert!(
+            styled.contains('\u{1b}'),
+            "the styled render must emit ANSI (else this test is vacuous)"
+        );
+        assert_eq!(
+            strip_ansi(&styled),
+            plain,
+            "stripping ANSI from the styled render must equal the plain render"
+        );
+    }
+
+    #[test]
+    fn plain_crossover_snapshot_is_pinned() {
+        // A representative CrossesAt report's --plain output, pinned line-for-line (T8) — catches
+        // any format / label / ordering / unit regression.
+        let plain = render_breakeven(&crossover_snapshot_report(), "claude-opus-4-8", None)
+            .render(RenderOptions::plain());
+        let expected_lines = [
+            "Local-vs-cloud break-even  (vs claude-opus-4-8)",
+            "",
+            "Local breaks even at 1000000 tokens/day.",
+            "",
+            "Sensitivity range: 1000000 … 1000000 tokens/day",
+            "",
+            "Assumptions (estimate — your tokens × current prices):",
+            "  electricity: $0.16/kWh",
+            "  hardware: $2000",
+            "  depreciation: 1000 days",
+            "  utilization: 1",
+            "  output share: 0.5",
+            "  local energy: $0.5/1M tok",
+            "  cloud blended: $2.5/1M tok",
+            "  measurement: estimated",
+            "  hardware profile: strix-halo-128gb@2026-06-20",
+            "  pricing snapshot: curated@2026-06-02",
+            "  collector: 0.6.0",
+            "",
+            "Estimate — ranges + methodology, never a single hero number; reconcile against your provider invoice.",
+        ];
+        assert_eq!(plain, format!("{}\n", expected_lines.join("\n")));
     }
 }
