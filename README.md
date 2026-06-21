@@ -4,7 +4,13 @@
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-Costroid shows what your AI coding tools actually cost — both the subscription limits you're burning through (Claude Code and Codex 5-hour and weekly caps, with reset countdowns) and the real dollars on your API bill, by model. By default it runs entirely from the local logs those tools already write, sends nothing anywhere, and normalizes everything into the open [FOCUS](https://focus.finops.org) 1.3 standard. Subscription limits and API costs are modeled separately, because they're different things: a subscription has a quota % and a reset timer; an API key has summable per-model dollars.
+## The problem
+
+AI coding tools spread your spend across three places that no single tool ties together: a **subscription** with opaque 5-hour and weekly caps (Claude Code, Codex) that you only notice when you hit them; a metered **API bill** in real dollars by model; and — increasingly — **your own hardware**, where running an open-weights model locally has a real but invisible energy-plus-amortization cost. Costroid puts all three in one place, by default entirely from the local logs those tools already write, with **nothing leaving the machine**, and normalizes everything into the open [FOCUS](https://focus.finops.org) standard so it is portable and vendor-neutral. Subscription limits and API costs are modeled **separately**, because they are different things: a subscription has a quota % and a reset timer; an API key has summable per-model dollars; and local inference has a measured/estimated cost-per-token with a break-even against the cloud.
+
+![Costroid demo](docs/assets/costroid-demo.gif)
+
+> **Hero GIF: capture pending M3b.** The 60–90s screen recording of a real run is captured on real hardware after the M3b wall-meter measurement run; until then this placeholder stands in (no committed asset — *capture pending M3b*). Every local-inference figure Costroid shows today is **estimated — pending M3b measurement** (see [methodology](docs/methodology.md)).
 
 **Feature-complete at v0.6.0.** Edition 2021, Apache-2.0. MSRV 1.88 (libraries + CLI), 1.92 (the taskbar).
 
@@ -97,6 +103,67 @@ Sensitivity range: 69771 … 107804 tokens/day
 ## Providers
 
 Claude Code and Codex (full cost + quota); Cursor (detect-only — cost/quota "unavailable"). Cursor live quota, GitHub Copilot, Antigravity, and Gemini own-key are discovery-gated and never built speculatively.
+
+## What this does that ccusage doesn't
+
+[ccusage](https://github.com/ryoppippi/ccusage) is the great single-tool token-cost reader; Costroid is a broader, standards-native cost lens. These are **feature contrasts**, not a ranking:
+
+| Capability | ccusage | Costroid |
+|---|---|---|
+| Claude Code / Codex token cost from local logs | yes | yes |
+| **FOCUS-native output** (the open FinOps standard, portable/vendor-neutral) | no | **FOCUS 1.3 in/out** (v1.2 import → v1.3 export) |
+| **Three-lane ledger** — developer-tool + cloud-API + local-inference, in one ledger (never summed across) | dev-tool only | **all three lanes** |
+| **Cloud/API cost lane** — import an AWS Data Exports / Bedrock FOCUS bill, multi-currency | no | **yes** (`costroid import`) |
+| **Local-inference economics** — measured/estimated cost-per-token for a model on your own hardware | no | **yes** (`costroid bench`, the `power` feature) |
+| **Break-even** — local-vs-cloud crossover ("breaks even at N tokens/day, or never, with the reason") | no | **yes** (`costroid breakeven`) |
+| **Loopback web UI** — a local-only (`127.0.0.1`) three-view app, zero external requests | no | **yes** (`costroid-server`) |
+| **Estimate-vs-invoice reconciliation** against the provider's billed amount | no | **yes** (`costroid reconcile`) |
+| **Zero-network default**, enforced (strace offline-acceptance + forbidden-crates gate) | n/a | **yes** (byte-for-byte no-network CLI) |
+
+## Architecture at a glance
+
+A Rust Cargo workspace — **10 members** (3 apps + 7 crates) — feeding one three-lane FOCUS ledger; the loopback web server is a separate binary that never links the CLI or the local-inference engine. (Full canon: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).)
+
+```mermaid
+flowchart TD
+  subgraph apps["apps"]
+    cli["costroid (apps/cli)<br/>CLI + TUI + statusline"]
+    bar["costroid-bar (apps/bar)<br/>egui/eframe taskbar"]
+    server["costroid-server (apps/server)<br/>loopback-only HTTP + web UI"]
+  end
+  subgraph crates["crates"]
+    core["costroid-core<br/>engine: cost calc, FOCUS, bench, breakeven, reconcile"]
+    providers["costroid-providers<br/>Claude/Codex/Cursor adapters + FOCUS import"]
+    focus["costroid-focus<br/>FOCUS 1.3 types"]
+    config["costroid-config<br/>budget/alerts TOML"]
+    connect["costroid-connect<br/>ALL network + secrets (feature-gated, OFF)"]
+    power["costroid-power<br/>local-inference engine (leaf, power feature)"]
+    store["costroid-store<br/>SQLite ledger (store feature)"]
+  end
+
+  cli --> core
+  cli --> config
+  bar --> core
+  bar --> config
+  cli -. "feature: connect" .-> connect
+  connect --> core
+  core --> providers
+  core --> focus
+  config --> core
+  server --> core
+  server --> store
+  store --> focus
+  cli -. "feature: power (CLI orchestrates; no core->power edge)" .-> power
+
+  subgraph lanes["one FOCUS ledger — three lanes, never summed across"]
+    dev["developer_tool<br/>(Claude/Codex logs)"]
+    cloud["cloud_api<br/>(imported FOCUS bills)"]
+    local["local_inference<br/>(costroid bench)"]
+  end
+  providers --> dev
+  providers --> cloud
+  power --> local
+```
 
 ## Guarantees
 
