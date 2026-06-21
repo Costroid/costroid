@@ -26,6 +26,7 @@
 //! FOCUS charge, linear in run-seconds → no crossover) and is **not** used here. See
 //! `docs/M4-PLAN.md` (D1) and `docs/COSTROID-NEXT.md` §3.2.
 
+use costroid_focus::{FocusRecord, LedgerLane};
 use rust_decimal::Decimal;
 
 use crate::vendor_report::UsdAmount;
@@ -258,6 +259,70 @@ pub fn blended_cloud_per_token(
         .ok_or_else(|| CoreError::Breakeven("blended cloud rate overflowed".to_string()))
 }
 
+/// The local **energy-only** marginal rate `e` (USD/token), derived from STORED `local_inference`
+/// FOCUS rows — the server's source of `e` (M5 T2). The M4 CLI computes the same value live from a
+/// `costroid-power` estimate (`energy_only_rate`, `apps/cli/src/breakeven.rs`); this is the
+/// equivalent path over the persisted ledger, with **no `core→power` edge** (it takes plain
+/// `FocusRecord`s). A cross-interface test asserts the two agree for the same run.
+///
+/// For each `local_inference`-lane row it takes the energy-only cost
+/// `effective_cost − x_amortized_hw_cost` — the amortized capex is the break-even **fixed** term
+/// `hw_fixed_per_day`, so folding it into `e` would double-count it — over the row's
+/// `x_consumed_tokens` (the **total** in+out basis after M5 T2), and returns `Σ energy / Σ tokens`
+/// at **full precision** (never `round_dp`).
+///
+/// Fail-closed: a `local_inference` row with a **null** `x_amortized_hw_cost` is a typed
+/// [`CoreError::Breakeven`] — never silently treated as 0 (which would inflate `e`); **no**
+/// `local_inference` rows at all is an honest `Ok(None)` (the caller renders "no local runs
+/// recorded yet", never a fabricated `e = 0`). Non-local rows (dev-tool / cloud) are ignored.
+///
+/// Assumes a single currency across the local rows (USD canonical — the break-even `c` is USD);
+/// mixing currencies is a caller concern.
+pub fn local_energy_only_rate(rows: &[FocusRecord]) -> Result<Option<Decimal>, CoreError> {
+    let local = LedgerLane::LocalInference.as_str();
+    let mut energy_sum = Decimal::ZERO;
+    let mut token_sum = Decimal::ZERO;
+    let mut saw_local = false;
+    for row in rows {
+        if row.x_lane != local {
+            continue;
+        }
+        // A local_inference row MUST carry x_amortized_hw_cost (`local_run_to_focus` stamps it). A
+        // null on a local row is malformed: fail closed rather than treat it as 0 (→ inflated `e`).
+        let Some(amortized) = row.x_amortized_hw_cost else {
+            return Err(CoreError::Breakeven(
+                "local_inference row is missing x_amortized_hw_cost — cannot derive the \
+                 energy-only rate (a null amortized cost must never be treated as 0)"
+                    .to_string(),
+            ));
+        };
+        saw_local = true;
+        let energy = row
+            .effective_cost
+            .checked_sub(amortized)
+            .ok_or_else(|| CoreError::Breakeven("energy-only cost underflowed".to_string()))?;
+        energy_sum = energy_sum
+            .checked_add(energy)
+            .ok_or_else(|| CoreError::Breakeven("energy sum overflowed".to_string()))?;
+        token_sum = token_sum
+            .checked_add(row.x_consumed_tokens)
+            .ok_or_else(|| CoreError::Breakeven("token sum overflowed".to_string()))?;
+    }
+    if !saw_local {
+        return Ok(None);
+    }
+    if token_sum.is_zero() {
+        return Err(CoreError::Breakeven(
+            "local_inference rows carry zero total tokens — cannot derive an energy-only rate"
+                .to_string(),
+        ));
+    }
+    let rate = energy_sum
+        .checked_div(token_sum)
+        .ok_or_else(|| CoreError::Breakeven("energy-only rate division failed".to_string()))?;
+    Ok(Some(rate))
+}
+
 /// The full assumption stamp (R6/R8): exactly what a break-even comparison assumed, so the result
 /// is a methodology + a range, never an unexplained hero number. Carries the dated provenance the
 /// schema already records elsewhere (`x_HardwareProfile`, `x_PricingSnapshotId`, the measurement
@@ -437,6 +502,158 @@ mod tests {
     /// Numeric equality independent of trailing-zero scale.
     fn same(a: Decimal, b: Decimal) -> bool {
         a.normalize() == b.normalize()
+    }
+
+    /// Build a minimal FOCUS row on a given lane for the `local_energy_only_rate` tests, with the
+    /// energy-only inputs (`effective_cost`, `x_amortized_hw_cost`, `x_consumed_tokens`) set.
+    fn focus_row(
+        lane: LedgerLane,
+        effective: Decimal,
+        amortized: Option<Decimal>,
+        tokens: Decimal,
+    ) -> FocusRecord {
+        use costroid_focus::{FocusAccessPath, TokenType, UnpricedUsage};
+        let Some(ts) = chrono::DateTime::from_timestamp(0, 0) else {
+            panic!("the unix epoch is a valid timestamp");
+        };
+        let Ok(mut row) = FocusRecord::unpriced_usage(UnpricedUsage {
+            lane,
+            timestamp: ts,
+            tool: "ollama".to_string(),
+            model: "gemma-4-26b-a4b".to_string(),
+            token_type: TokenType::Output,
+            token_count: 0,
+            project: None,
+            access_path: FocusAccessPath::Unknown,
+            service_name: "ollama".to_string(),
+            service_provider_name: "ollama".to_string(),
+            host_provider_name: "ollama".to_string(),
+            invoice_issuer_name: "ollama".to_string(),
+            billing_currency: "USD".to_string(),
+        }) else {
+            panic!("a minimal FOCUS row should build");
+        };
+        row.effective_cost = effective;
+        row.x_amortized_hw_cost = amortized;
+        row.x_consumed_tokens = tokens;
+        row
+    }
+
+    #[test]
+    fn energy_only_rate_subtracts_amortized_over_total_tokens() {
+        // One local row: energy-only = effective − amortized = 0.005 − 0.003 = 0.002 over 1000
+        // TOTAL tokens → e = 0.000002/token (exact). The amortized capex is NOT in `e`.
+        let rows = [focus_row(
+            LedgerLane::LocalInference,
+            dec(5, 3),
+            Some(dec(3, 3)),
+            Decimal::from(1_000),
+        )];
+        let Ok(Some(rate)) = local_energy_only_rate(&rows) else {
+            panic!("a single priced local row yields a rate");
+        };
+        assert!(
+            same(rate, dec(2, 6)),
+            "energy-only rate is 0.000002/token, got {rate}"
+        );
+
+        // Two local rows sum energy and tokens (0.004 / 2000 = 0.000002), same e.
+        let rows = [
+            focus_row(
+                LedgerLane::LocalInference,
+                dec(5, 3),
+                Some(dec(3, 3)),
+                Decimal::from(1_000),
+            ),
+            focus_row(
+                LedgerLane::LocalInference,
+                dec(5, 3),
+                Some(dec(3, 3)),
+                Decimal::from(1_000),
+            ),
+        ];
+        let Ok(Some(rate)) = local_energy_only_rate(&rows) else {
+            panic!("two local rows yield a summed rate");
+        };
+        assert!(
+            same(rate, dec(2, 6)),
+            "summed energy-only rate is 0.000002/token, got {rate}"
+        );
+    }
+
+    #[test]
+    fn energy_only_rate_ignores_non_local_lanes() {
+        // A dev-tool row and a cloud row (both with NO amortized) are ignored — the lane filter
+        // precedes the amortized check, so their null amortized never errors — and the rate equals
+        // the local-only rate (0.000002/token).
+        let rows = [
+            focus_row(
+                LedgerLane::DeveloperTool,
+                dec(999, 2),
+                None,
+                Decimal::from(5_000),
+            ),
+            focus_row(LedgerLane::CloudApi, dec(7, 0), None, Decimal::from(3_000)),
+            focus_row(
+                LedgerLane::LocalInference,
+                dec(5, 3),
+                Some(dec(3, 3)),
+                Decimal::from(1_000),
+            ),
+        ];
+        let Ok(Some(rate)) = local_energy_only_rate(&rows) else {
+            panic!("the local row among mixed lanes yields a rate");
+        };
+        assert!(
+            same(rate, dec(2, 6)),
+            "non-local lanes are ignored, got {rate}"
+        );
+    }
+
+    #[test]
+    fn energy_only_rate_fails_closed_on_missing_amortized() {
+        // A local row with a NULL x_amortized_hw_cost is malformed — a typed error, never →0.
+        let rows = [focus_row(
+            LedgerLane::LocalInference,
+            dec(5, 3),
+            None,
+            Decimal::from(1_000),
+        )];
+        match local_energy_only_rate(&rows) {
+            Err(CoreError::Breakeven(msg)) => {
+                assert!(
+                    msg.contains("x_amortized_hw_cost"),
+                    "the error names the missing column: {msg}"
+                );
+            }
+            other => panic!("a missing amortized cost must fail closed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn energy_only_rate_is_none_with_no_local_rows() {
+        // No local rows (empty, or only dev-tool/cloud) → honest Ok(None), never a fabricated e=0.
+        let Ok(none) = local_energy_only_rate(&[]) else {
+            panic!("an empty ledger yields Ok(None)");
+        };
+        assert!(none.is_none(), "no rows at all → None");
+
+        let rows = [
+            focus_row(
+                LedgerLane::DeveloperTool,
+                dec(999, 2),
+                None,
+                Decimal::from(5_000),
+            ),
+            focus_row(LedgerLane::CloudApi, dec(7, 0), None, Decimal::from(3_000)),
+        ];
+        let Ok(none) = local_energy_only_rate(&rows) else {
+            panic!("a ledger with no local rows yields Ok(None)");
+        };
+        assert!(
+            none.is_none(),
+            "no local_inference rows → None (no fabricated e=0)"
+        );
     }
 
     #[test]

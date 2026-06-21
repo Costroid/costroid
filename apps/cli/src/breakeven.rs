@@ -693,6 +693,97 @@ mod tests {
         );
     }
 
+    /// BLOCKER (M5 T2) — the CROSS-INTERFACE basis lock. The CLI's `energy_only_rate` (over a
+    /// `costroid-power` estimate) and the server's `core::local_energy_only_rate` (over a STORED
+    /// `local_inference` row, built through the real `local_run_to_focus`) must agree for the same
+    /// run. They agree ONLY because both divide energy by the **total** (in+out) token basis: the
+    /// row's `x_consumed_tokens` is `tokens_in + tokens_out` (the T2 fix). With `amortized > 0` the
+    /// `effective − amortized` subtraction is non-vacuous, and the discriminator below proves the
+    /// equality would BREAK on an output-only basis — so a regression of `local_run_to_focus` to
+    /// `tokens_out` fails this test.
+    #[test]
+    fn server_e_from_a_stored_row_equals_the_cli_energy_only_rate() {
+        use costroid_core::{focus_records_from_canonical, local_energy_only_rate};
+        use costroid_providers::{CanonicalEvent, LocalRunEvent};
+
+        // The same run, expressed for the CLI side: energy_cost 2.0, local_run_cost 5.0 →
+        // amortized 3.0 (> 0, non-vacuous), tokens_in 400_000 + tokens_out 600_000 = 1_000_000.
+        let report = report_with(2.0, 5.0, 400_000, 600_000);
+        let Ok(cli_e) = energy_only_rate(&report) else {
+            panic!("the CLI energy-only rate must compute");
+        };
+
+        // The same run, expressed for the server side: a stored `local_inference` row built through
+        // the REAL `local_run_to_focus` (via `focus_records_from_canonical`). Cost strings are taken
+        // from the report so `effective_cost − x_amortized_hw_cost == energy_cost` exactly.
+        let (Some(local_run_cost), Some(amortized)) = (
+            Decimal::from_f64_retain(report.local_run_cost),
+            Decimal::from_f64_retain(report.amortized_hw_cost),
+        ) else {
+            panic!("the report costs are finite");
+        };
+        assert!(
+            amortized > Decimal::ZERO,
+            "amortized must be > 0 (non-vacuous): {amortized}"
+        );
+        let Some(ts) = chrono::DateTime::from_timestamp(0, 0) else {
+            panic!("the unix epoch is a valid timestamp");
+        };
+        let event = LocalRunEvent {
+            timestamp: ts,
+            model: report.model.clone(),
+            quant: report.quant.clone(),
+            runtime_kind: report.runtime_kind.clone(),
+            tokens_in: report.tokens_in,
+            tokens_out: report.tokens_out,
+            run_seconds: report.run_seconds,
+            avg_power_watts: report.avg_power_watts,
+            measurement_mode: "estimated".to_string(),
+            energy_wh: report.energy_wh,
+            amortized_hw_cost: amortized.to_string(),
+            local_run_cost: local_run_cost.to_string(),
+            electricity_rate_per_kwh: report.electricity_rate_per_kwh,
+            hardware_price: report.hardware_price,
+            hardware_lifetime_seconds: report.hardware_lifetime_seconds,
+            hardware_profile_id: report.hardware_profile_stamp.clone(),
+            benchmark_id: report.benchmark_id.clone(),
+            billing_currency: report.currency.clone(),
+        };
+        let Ok(rows) = focus_records_from_canonical(&[CanonicalEvent::Local(event)]) else {
+            panic!("the local run normalizes to a FOCUS row");
+        };
+        // The stored row carries the TOTAL token basis (the T2 fix) and a positive amortized cost.
+        assert_eq!(rows.len(), 1, "a local run is one row");
+        assert_eq!(
+            rows[0].x_consumed_tokens,
+            Decimal::from(1_000_000_u64),
+            "x_consumed_tokens must be the TOTAL (in+out) basis"
+        );
+        assert!(matches!(rows[0].x_amortized_hw_cost, Some(a) if a > Decimal::ZERO));
+
+        let Ok(Some(server_e)) = local_energy_only_rate(&rows) else {
+            panic!("the server energy-only rate must compute from the stored row");
+        };
+
+        // The basis lock: the two interfaces agree.
+        assert!(
+            same(server_e, cli_e),
+            "server e ({server_e}) must equal the CLI energy_only_rate ({cli_e})"
+        );
+
+        // Discriminator: the equality holds because the basis is TOTAL (1_000_000). An output-only
+        // basis (600_000) would give a different e — so this test fails if the basis ever regresses.
+        let Some(output_only_e) = Decimal::from_f64_retain(report.energy_cost)
+            .and_then(|energy| energy.checked_div(Decimal::from(report.tokens_out)))
+        else {
+            panic!("the output-only rate divides");
+        };
+        assert!(
+            !same(server_e, output_only_e),
+            "the total-basis e ({server_e}) must differ from the output-only e ({output_only_e})"
+        );
+    }
+
     #[test]
     fn feasibility_ceiling_is_tok_s_times_utilization_times_a_day() {
         // 50 tok/s · 0.5 utilization · 86,400 s/day = 2,160,000 tokens/day.
