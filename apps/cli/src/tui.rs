@@ -2258,6 +2258,51 @@ mod tests {
             .iter()
             .all(|bucket| bucket.group.value.contains("opus")));
     }
+
+    /// M5 T1 — with the `power` feature OFF, the break-even overlay does not exist: the TUI still
+    /// has exactly the 9 numbered tabs and the rendered frame mentions no break-even surface. This
+    /// is the default (byte-for-byte no-network) build; the overlay is admitted only under `power`.
+    #[cfg(not(feature = "power"))]
+    #[test]
+    fn breakeven_overlay_is_absent_without_the_power_feature() {
+        assert_eq!(
+            TAB_SCREENS.len(),
+            9,
+            "the default TUI has exactly 9 numbered tabs"
+        );
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
+        // Pressing `b` is inert (no overlay state exists to open).
+        let _ = app.handle_key(key(KeyCode::Char('b')));
+        let frame = frame_to_string(&mut app, 100, 30);
+        assert!(
+            !frame.to_lowercase().contains("break-even"),
+            "no break-even surface in the default build:\n{frame}"
+        );
+    }
+
+    /// M5 T1 — with `power` ON, `b` opens the modal break-even overlay (the frame shows its title),
+    /// and `esc` closes it back to the underlying tab.
+    #[cfg(feature = "power")]
+    #[test]
+    fn breakeven_overlay_opens_and_closes_under_power() {
+        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
+        assert!(!app.breakeven_open, "the overlay starts closed");
+        let _ = app.handle_key(key(KeyCode::Char('b')));
+        assert!(app.breakeven_open, "`b` opens the overlay");
+        let frame = frame_to_string(&mut app, 100, 30);
+        assert!(
+            frame.contains("Break-even & comparison"),
+            "the open overlay renders its title:\n{frame}"
+        );
+        // Modal: a digit does not switch tabs behind the overlay; `esc` closes it.
+        let _ = app.handle_key(key(KeyCode::Char('2')));
+        assert!(
+            app.breakeven_open,
+            "a digit is swallowed while the overlay is modal"
+        );
+        let _ = app.handle_key(key(KeyCode::Esc));
+        assert!(!app.breakeven_open, "`esc` closes the overlay");
+    }
 }
 
 /// Connect-gated tests for the Providers-tab connection lane (`connection_entries` +
@@ -2370,50 +2415,5 @@ mod connection_lane_tests {
             }),
             "Acme"
         );
-    }
-
-    /// M5 T1 — with the `power` feature OFF, the break-even overlay does not exist: the TUI still
-    /// has exactly the 9 numbered tabs and the rendered frame mentions no break-even surface. This
-    /// is the default (byte-for-byte no-network) build; the overlay is admitted only under `power`.
-    #[cfg(not(feature = "power"))]
-    #[test]
-    fn breakeven_overlay_is_absent_without_the_power_feature() {
-        assert_eq!(
-            TAB_SCREENS.len(),
-            9,
-            "the default TUI has exactly 9 numbered tabs"
-        );
-        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
-        // Pressing `b` is inert (no overlay state exists to open).
-        let _ = app.handle_key(key(KeyCode::Char('b')));
-        let frame = frame_to_string(&mut app, 100, 30);
-        assert!(
-            !frame.to_lowercase().contains("break-even"),
-            "no break-even surface in the default build:\n{frame}"
-        );
-    }
-
-    /// M5 T1 — with `power` ON, `b` opens the modal break-even overlay (the frame shows its title),
-    /// and `esc` closes it back to the underlying tab.
-    #[cfg(feature = "power")]
-    #[test]
-    fn breakeven_overlay_opens_and_closes_under_power() {
-        let mut app = app_with_snapshot(StartScreen::Now, RenderMode::Ascii);
-        assert!(!app.breakeven_open, "the overlay starts closed");
-        let _ = app.handle_key(key(KeyCode::Char('b')));
-        assert!(app.breakeven_open, "`b` opens the overlay");
-        let frame = frame_to_string(&mut app, 100, 30);
-        assert!(
-            frame.contains("Break-even & comparison"),
-            "the open overlay renders its title:\n{frame}"
-        );
-        // Modal: a digit does not switch tabs behind the overlay; `esc` closes it.
-        let _ = app.handle_key(key(KeyCode::Char('2')));
-        assert!(
-            app.breakeven_open,
-            "a digit is swallowed while the overlay is modal"
-        );
-        let _ = app.handle_key(key(KeyCode::Esc));
-        assert!(!app.breakeven_open, "`esc` closes the overlay");
     }
 }
