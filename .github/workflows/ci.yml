@@ -189,6 +189,12 @@ jobs:
       - name: Verify power-profile + model-manifest integrity
         run: bash scripts/check_power_profiles.sh
 
+      # R8/R10 doc-honesty (M6): every doc that presents an estimated/synthetic local-inference
+      # HERO figure (cost/energy/throughput) must carry the one canonical stamp, read straight out
+      # of the Rust const PENDING_M3B_STAMP so the text can't drift. A pure text scan; offline.
+      - name: Verify doc honesty stamps
+        run: bash scripts/check_doc_stamps.sh
+
       # Exports the committed fixtures to FOCUS CSV and runs the official validator
       # (offline, vendored rulesets) against the documented known-failure allowlists:
       # the FOCUS 1.3 CSV leg (exact), the JSON-equivalence leg, the synthetic v1.2-in
