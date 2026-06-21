@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: Costroid version
-      description: "Output of `costroid --version` (or `costroid-bar --version` / `costroid-server --version`)."
+      description: "Output of `costroid --version` (or `costroid-bar --version`). For `costroid-server`, the git commit / release tag you built from."
       placeholder: "e.g. 0.6.0"
     validations:
       required: true
