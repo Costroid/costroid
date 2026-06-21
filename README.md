@@ -55,8 +55,9 @@ Sensitivity range: 69771 … 107804 tokens/day
 
 ## Surfaces
 
-- **TUI** — 9 numbered tabs (`1` now, `2` trends, `3` providers, `4` models, `5` history, `6` budget, `7` forecast, `8` anomalies, `9` activity) plus an `a`/`esc` frontier overlay. Charts/meters/bars draw in braille dots, painted in Costroid's palette; `--plain`/`NO_COLOR` strip all color with byte-identical output.
+- **TUI** — 9 numbered tabs (`1` now, `2` trends, `3` providers, `4` models, `5` history, `6` budget, `7` forecast, `8` anomalies, `9` activity) plus an `a`/`esc` frontier overlay. Charts/meters/bars draw in braille dots, painted in Costroid's palette; `--plain`/`NO_COLOR` strip all color with byte-identical output. Built with `--features power`, a `b` overlay adds the local-vs-cloud break-even + a comparison facet (estimate; no network).
 - **Taskbar** (`costroid-bar`) — always-on tray glance (your most-constrained quota meter, in the dot-density warning language) plus a live cockpit (Overview, opt-in alert banner, Budget / Forecast / Anomalies / Providers). egui/eframe + tray-icon, AccessKit on, a pure consumer of the same local data. macOS/Windows tray paths compile but are not yet field-verified.
+- **Local web app** (`costroid-server`) — a **loopback-only** (`127.0.0.1`) HTTP server over your stored ledger with three views: **timeline** (spend over time, by tool/model), **comparison** (actual local vs counterfactual cloud list price for the same workload), and **break-even** (the local-vs-cloud crossover). Server-rendered HTML (tables + inline SVG, no JS) + a `?plain` text fallback + a JSON API (`/api/...`); **all assets are embedded in the binary, with zero external requests — it works fully offline**. A separate binary, **never linked into the `costroid` CLI** (which stays byte-for-byte no-network) and never linked to the local-inference engine; its guarantee is *loopback-bind, no outbound egress* (proven by a static allowlist + a runtime strace check).
 
 ## Providers
 
