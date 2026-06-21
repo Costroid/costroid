@@ -72,7 +72,7 @@ foreach ($f in "target\demo\cloud.csv","target\demo\local-31b.csv","target\demo\
 
 | Command | What it does |
 |---|---|
-| `costroid` / `now` | Live Claude + Codex 5h/weekly limits with reset countdowns, plus current API spend by model |
+| `costroid` (the default view) | Live Claude + Codex 5h/weekly limits with reset countdowns, plus current API spend by model |
 | `costroid trends` | Spend over time — `--period day\|week\|month\|year`, `--group model\|app\|total` |
 | `costroid frontier` | Cost-vs-quality frontier and where your spend sits; advisory, sourced, API-cost rows only |
 | `costroid statusline` | Compact one-line status for shell / tmux / Starship (`--wrap '<cmd>'` escape hatch) |

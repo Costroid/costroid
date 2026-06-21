@@ -110,6 +110,10 @@ benchmarked 31B-dense run versus `claude-opus-4-8` (**estimated — pending M3b 
 | 26B A4B vs `claude-opus-4-8` | ~**79,636 tokens/day** | ~63,709 – 96,459 tokens/day |
 | 12B Unified vs `claude-opus-4-8` | ~**80,132 tokens/day** | ~64,106 – 97,188 tokens/day |
 
+*(Provenance: the versioned manifest's `cloud_comparison` records the `claude-opus-4-8` break-even
+per run; the `claude-sonnet-4-6` row is reproduced from a direct `costroid breakeven --compare-to
+claude-sonnet-4-6` call against the same catalog — see [Reproduce it](#reproduce-it).)*
+
 Read this carefully:
 
 - **Below ~80k tokens/day** (vs Opus list price), **cloud is cheaper on dollars.** A light user —
