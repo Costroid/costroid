@@ -25,9 +25,12 @@
 >   `Infeasible { v_star, max_tokens_per_day, reason }`; the CLI computes the ceiling
 >   `estimated_tok_s · utilization · 86400` and passes it in (no `core→power` edge); `V* > ceiling
 >   → Infeasible`.
-> - **MED2 — full-precision local rate (T1 test + T7 conversion).** Never `round_dp` the local
->   rate; derive `e` from `local_cost_per_1m ÷ 1e6` via `Decimal::from_f64_retain` (full precision);
->   a ~1e-9 `e` must survive and select the correct Never-vs-CrossesAt branch.
+> - **MED2 — full-precision, energy-only local rate (T1 test + T7 conversion).** The marginal rate
+>   `e` is **energy-only**: `e = energy_cost / total_tokens` (`LocalRunReport.energy_cost`,
+>   harness.rs:42) — **NEVER** `local_cost_per_1m ÷ 1e6`, which includes `amortized_hw_cost` and
+>   would double-count the capex that is already the fixed term `hw_fixed_per_day` (corrupting the
+>   crossover). Carry it at full precision via `Decimal::from_f64_retain` on `energy_cost` (never
+>   `round_dp`); a ~1e-9 `e` must survive and select the correct Never-vs-CrossesAt branch.
 > - **MED3 — one break-even lifetime + unit (T1 + T6).** `depreciation_period` is the break-even
 >   basis; `hardware_lifetime_seconds` is the §3.2 / `x_AmortizedHwCost` per-run attribution only;
 >   T1's worked example pins the period in **days**; setting both as the break-even basis is a typed
@@ -329,19 +332,23 @@ visual has a `--plain` ASCII equivalent and never relies on color alone.
   `--hardware-lifetime-seconds`, `--hardware-profile`) **plus** scenario flags (`--tokens-per-day`,
   `--output-share`, `--utilization`, `--depreciation-period`, `--compare-to`/`--cloud-model`,
   `--pricing-override`, reuse `--out` `ExportFormat` if a machine emit is wanted). Flow:
-  (1) compute the local **marginal-energy** $/token via `costroid-power` (`estimate_run` / the §3.2
-  energy split — pure, no subprocess), converting the f64 `local_cost_per_1m`/energy figure to
-  `Decimal` via **`from_f64_retain` (full precision, never `round_dp`)** (MED2); (2) compute the
+  (1) compute the **energy-only** marginal rate `e = energy_cost / total_tokens` from
+  `LocalRunReport.energy_cost` (harness.rs:42) via `estimate_run` (pure, no subprocess) — **NOT**
+  `local_cost_per_1m ÷ 1e6` (that includes `amortized_hw_cost` → double-counts the capex already in
+  `hw_fixed_per_day`) — converting the f64 `energy_cost` to `Decimal` via **`from_f64_retain` (full
+  precision, never `round_dp`)** (MED2); (2) compute the
   **feasibility ceiling** `max_tokens_per_day = estimated_tok_s · utilization · 86400` (from
   `ModelSpec.estimated_tok_s`) and pass it to core as a plain number (MED1 — **no `core→power`
   edge**); (3) resolve per-meter cloud prices via T2 and blend via T3 → `c`; (4) call T4's
   `breakeven_report(…)`; (5) hand to T8's renderer. Config defaults from T6; flags override.
 - **Deciding test (`apps/cli/tests`):** `breakeven` with synthetic flags **prints one hand-checked
-  end-to-end numeric `V*`** (a fixed model/price/scenario whose crossover is computed by hand and
-  asserted in the output — LOW); a "never"-inducing flag set prints the reason; a low-`--utilization`
-  set drives `Infeasible` with the ceiling shown (MED1); the default build does **not** know the
-  subcommand (power off); `cli_power_feature_admits_only_power_allowed` +
-  `cli_default_build_is_power_free` still pass.
+  end-to-end numeric `V*`** computed with **energy-only `e`** (`energy_cost / total_tokens`) — the
+  fixed model/price/scenario is chosen so the asserted `V*` is **wrong if anyone used the total
+  `local_cost_per_1m` rate instead**, so this test is the one place that catches the energy-only
+  slip (T1 takes `e` as an explicit input and cannot catch it); a "never"-inducing flag set prints
+  the reason; a low-`--utilization` set drives `Infeasible` with the ceiling shown (MED1); the
+  default build does **not** know the subcommand (power off);
+  `cli_power_feature_admits_only_power_allowed` + `cli_default_build_is_power_free` still pass.
 - **M4.** **Risk:** pulling a new crate (trips the offline gate); rounding `e`; mis-splitting
   energy-only vs total cost. **Mitigation:** reuse only the already-linked power symbols; derive
   marginal energy $/token = `energy_cost / total_tokens` from `LocalRunReport` (harness.rs:31-56)

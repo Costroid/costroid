@@ -123,17 +123,35 @@ Every Gemma 4 ships a draft model for speculative decoding (a throughput lever t
 
 ## 3.2 The cost model (implement exactly, with deterministic tests)
 
+**Per-run cost + FOCUS-row attribution** (the `x_AmortizedHwCost` attribution — what a single
+local run charged):
 ```
 energy_kWh        = (avg_power_watts * run_seconds) / 3_600_000
 energy_cost       = energy_kWh * electricity_rate_per_kWh
-amortized_hw_cost = (hardware_price / hardware_lifetime_seconds) * run_seconds
+amortized_hw_cost = (hardware_price / hardware_lifetime_seconds) * run_seconds   # → x_AmortizedHwCost
 local_run_cost    = energy_cost + amortized_hw_cost
 local_cost_per_1M = (local_run_cost / tokens_in_run) * 1_000_000
 
 cloud_cost        = input_tokens  * input_price_per_token
                   + output_tokens * output_price_per_token   # from pinned pricing snapshot
 ```
-Break-even = the monthly token volume / utilization at which cumulative `local_run_cost` ≤ cumulative `cloud_cost`. Always surface the assumptions used (electricity rate, hardware price, lifetime, utilization), the **measurement mode**, and the **pricing-snapshot date/hash**.
+
+**Break-even — the calendar-fixed model (M4; see `docs/M4-PLAN.md` D1).** The per-run
+`amortized_hw_cost` above is *linear in run-seconds* (≈ linear in tokens), so summing it over a
+period yields no volume crossover — it is the per-row **FOCUS attribution only**, not the
+break-even basis. Break-even amortizes the hardware as a **calendar-fixed capex**
+(`hw_fixed_per_day = hardware_price / lifetime_days`, utilization-independent) and uses the
+**energy-only** marginal rate `e = energy_cost / total_tokens` (never `local_cost_per_1M`, which
+already includes the capex):
+```
+local_per_day(V) = hw_fixed_per_day + e * V          # e = energy-only $/token (marginal)
+cloud_per_day(V) = c * V                             # c = blended cloud $/token at the in/out mix
+break-even V*    = hw_fixed_per_day / (c - e)        # daily token volume where local ≤ cloud
+                = NEVER  when c ≤ e                   # capex never recovered at any volume
+```
+Always surface the assumptions used (electricity rate, hardware price, lifetime, utilization, in/out
+mix), the **measurement mode**, and the **pricing-snapshot date/hash** — as a range + methodology,
+never a single hero number.
 
 ## 3.3 Implementation milestones (the required spine — keep build + tests green after each)
 
