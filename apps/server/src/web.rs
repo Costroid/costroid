@@ -276,8 +276,14 @@ pub fn breakeven_html(view: &BreakevenView) -> String {
     body.push_str(
         "<h2>Assumptions (estimate)</h2><table><tr><th>assumption</th><th>value</th></tr>",
     );
-    let row =
-        |k: &str, v: &str| format!("<tr><td>{}</td><td class=\"num\">{}</td></tr>", k, esc(v));
+    // Both the key and value are escaped (keys are literals today, but never interpolate unescaped).
+    let row = |k: &str, v: &str| {
+        format!(
+            "<tr><td>{}</td><td class=\"num\">{}</td></tr>",
+            esc(k),
+            esc(v)
+        )
+    };
     if let Some(e) = &view.local_energy_per_million_usd {
         body.push_str(&row("local energy ($/1M tok)", e));
     }
@@ -289,6 +295,9 @@ pub fn breakeven_html(view: &BreakevenView) -> String {
     body.push_str(&row("depreciation (days)", &view.depreciation_days));
     body.push_str(&row("output share", &view.output_share));
     body.push_str(&row("measurement", &view.measurement_mode));
+    if !view.hardware_profile.is_empty() {
+        body.push_str(&row("hardware profile", &view.hardware_profile));
+    }
     if let Some(snap) = &view.pricing_snapshot_id {
         body.push_str(&row("pricing snapshot", snap));
     }

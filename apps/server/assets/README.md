@@ -17,6 +17,8 @@ assets** instead: the views are **server-rendered HTML (tables + inline SVG, no 
 the `include_str!` stylesheet above. This satisfies the same guarantees D2 cares about — all assets
 embedded in the binary, zero CDN references, fully offline, and accessible (no-JS by default).
 
-Swapping in the real libraries later is **additive**: drop `htmx.min.js` / `uPlot.iife.min.js` /
-`uPlot.min.css` (with their upstream LICENSE files) into this directory, embed them, and add the
-`<script>`/`<link>` references — the no-JS server-rendered tables remain the `<noscript>` fallback.
+The current views ship **no JavaScript at all** — the tables + inline SVG are always present (there
+is nothing to gate behind `<noscript>`). Swapping in the real libraries later is **additive**: drop
+`htmx.min.js` / `uPlot.iife.min.js` / `uPlot.min.css` (with their upstream LICENSE files) into this
+directory, embed them, add the `<script>`/`<link>` references, and wrap the existing tables in
+`<noscript>` so they remain the scripting-off fallback.

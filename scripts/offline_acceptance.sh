@@ -534,24 +534,35 @@ else echo "ok (loopback bind, no egress)"; fi
 # authoritative otherwise.
 printf '  %-52s' "server --serve-once: real GET, no egress, no external URL"
 if [ "$iso_mode" = strace ] && command -v curl >/dev/null 2>&1; then
-  serve_log="$workdir/strace.server-serve"
-  strace -f -e trace=network -qq -o "$serve_log" env "${env_args[@]}" "$server_bin" --serve-once \
-    >/dev/null 2>&1 &
-  serve_pid=$!
-  serve_body="$(curl -s --max-time 10 --retry 50 --retry-connrefused --retry-delay 0 \
-    "http://127.0.0.1:7878/breakeven" 2>/dev/null || true)"
-  kill "$serve_pid" 2>/dev/null || true
-  wait "$serve_pid" 2>/dev/null || true
   serve_rc=0
-  if [ -f "$serve_log" ] && ! assert_loopback_only "$serve_log"; then serve_rc=90; fi
+  # Drive a real GET through several routes (each a fresh `--serve-once`, since it serves exactly one
+  # request then exits): the index AND a view, so a CDN ref injected into any one route is caught at
+  # runtime too (the static web-design test scans every page; this is the runtime backstop).
+  for serve_path in "/" "/breakeven"; do
+    serve_log="$workdir/strace.server-serve"
+    strace -f -e trace=network -qq -o "$serve_log" env "${env_args[@]}" "$server_bin" --serve-once \
+      >/dev/null 2>&1 &
+    serve_pid=$!
+    serve_body="$(curl -s --max-time 10 --retry 50 --retry-connrefused --retry-delay 0 \
+      "http://127.0.0.1:7878${serve_path}" 2>/dev/null || true)"
+    kill "$serve_pid" 2>/dev/null || true
+    wait "$serve_pid" 2>/dev/null || true
+    if [ -f "$serve_log" ] && ! assert_loopback_only "$serve_log"; then serve_rc=90; fi
+    if [ "$serve_rc" -ne 90 ] && ! grep -qF "/assets/costroid.css" <<<"$serve_body"; then
+      echo "FAIL (served '$serve_path' missing the embedded stylesheet — real serve did not work)"
+      serve_rc=91
+    fi
+    if [ "$serve_rc" -eq 0 ] && grep -qiE 'https?://|//cdn' <<<"$serve_body"; then
+      echo "FAIL (external URL in served '$serve_path' — the web UI must be fully offline)"
+      grep -ioE 'https?://[^" ]*|//cdn[^" ]*' <<<"$serve_body" | sed 's/^/      /'
+      serve_rc=92
+    fi
+    rm -f "$serve_log"
+    [ "$serve_rc" -ne 0 ] && break
+  done
   if [ "$serve_rc" -eq 90 ]; then echo "LOOPBACK/EGRESS VIOLATION"; fail=1
-  elif ! grep -qF "/assets/costroid.css" <<<"$serve_body"; then
-    echo "FAIL (served page missing the embedded stylesheet — real serve did not work)"; fail=1
-  elif grep -qiE 'https?://|//cdn' <<<"$serve_body"; then
-    echo "FAIL (external URL in the served page — the web UI must be fully offline)"
-    grep -ioE 'https?://[^" ]*|//cdn[^" ]*' <<<"$serve_body" | sed 's/^/      /'; fail=1
-  else echo "ok (real serve, loopback-only, embedded assets only)"; fi
-  rm -f "$serve_log"
+  elif [ "$serve_rc" -ne 0 ]; then fail=1
+  else echo "ok (real serve / + /breakeven, loopback-only, embedded assets only)"; fi
 else
   echo "skipped (needs strace + curl; static SERVER_ALLOWED + --self-check authoritative)"
 fi
