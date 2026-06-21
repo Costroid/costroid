@@ -207,10 +207,14 @@ The next build ([`COSTROID-NEXT.md`](COSTROID-NEXT.md), tracked live in [`../PRO
 | `apps/server` → `costroid-server` | The loopback-only HTTP API + web UI (§10). `costroid-server → costroid-core + costroid-store` (it links **neither** `costroid-power` **nor** `costroid-connect`). | **binary** → archives + crates.io, **mirroring `apps/bar`** (`dist = true`, `installers = []` — archives only, **no npm/Homebrew/musl**) |
 
 **Dependency direction (final, no cycles):** `apps → core → {providers, focus}`; `apps → config → core`;
-under the apps' off-by-default `connect` feature `app → connect → core`; `costroid-server → core + store`;
-`costroid-store → focus`; and **no `core → power` edge** — `costroid-power` stays a leaf and the
-`costroid bench`/`breakeven` CLI (under the off-by-default `power` CLI feature) is the only place core and
-power meet, by handing core a pre-computed enriched `LocalRunEvent` / plain `Decimal`s. The **M6 publish
+under the apps' off-by-default `connect` feature `app → connect → core` (**both** `apps/cli` *and* `apps/bar`
+gate an optional `costroid-connect` edge this way — the bar's is the read-only Providers display);
+`costroid-server → core + store`; `costroid-store → focus`; and **no `core → power` edge** — `costroid-power`
+stays a leaf and the `costroid bench`/`breakeven` CLI (under the off-by-default `power` CLI feature) is the
+only place core and power meet, by handing core a pre-computed enriched `LocalRunEvent` / plain `Decimal`s.
+The CLI also gates an optional `costroid-store` edge under its off-by-default `store` feature (the SQLite
+ledger is never in the default CLI graph). These optional feature edges (`cli/bar -.connect.->`,
+`cli -.power.->`, `cli -.store.->`) are shown dotted in the README architecture diagram. The **M6 publish
 ladder** extends the original one: `focus → providers → core → config → connect → store → power → costroid
 → server → bar` (a topological order of the actual `Cargo.toml` dep graph, asserted by a test). MSRV stays
 **1.88** for libs + CLI (incl. the two new crates) and **1.92** for the bar.
