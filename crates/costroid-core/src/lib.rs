@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Utc};
 use costroid_focus::{
-    to_csv_string, to_json_string, FocusAccessPath, FocusError, LedgerLane, TokenType,
-    UnpricedUsage, ATTRIBUTION_UNCERTAIN, DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD,
+    to_csv_string, to_json_string, FocusAccessPath, FocusError, LedgerLane, UnpricedUsage,
+    ATTRIBUTION_UNCERTAIN, DEFAULT_BILLING_CURRENCY, PRICING_CATEGORY_STANDARD,
     PRICING_STATUS_MISSING_PRICE, PRICING_UNIT_TOKENS,
 };
 // Re-export FOCUS's record type from the engine crate: the apps depend on `core`, not on
@@ -14,6 +14,10 @@ use costroid_focus::{
 // which scopes `FocusRecord`s by vendor before `LocalCostEstimate::from_focus_records` —
 // reaches it here rather than taking a direct `focus` edge.
 pub use costroid_focus::FocusRecord;
+// `TokenType` appears in this crate's public API (the M4 `cloud_price_per_token` accessor's
+// meter argument); re-export it so a core-only consumer (the CLI's `breakeven` command) can
+// name it without a direct `costroid-focus` edge — same rationale as `FocusRecord` above.
+pub use costroid_focus::TokenType;
 use costroid_providers::{
     default_providers, read_cursor_config, AccessPath, CanonicalEvent, CloudUsageEvent,
     CursorConfig, LimitStatus, LimitWindow, LocalRunEvent, Provider, UsageEvent,
@@ -43,6 +47,11 @@ mod bench;
 pub use bench::{
     bench_view, BenchDisclaimer, BenchFrontier, BenchView, FrontierPoint, FrontierStanding,
     OverlayAppearance, OverlayModel, RepricingDelta, RepricingStatus,
+};
+
+pub mod breakeven;
+pub use breakeven::{
+    breakeven, days_from_seconds, resolve_depreciation_days, BreakevenInputs, BreakevenOutcome,
 };
 
 pub mod reconcile;
@@ -2183,6 +2192,134 @@ impl PricingCatalog {
     }
 }
 
+/// A resolved per-token cloud list price for one `(model, meter)`, with its R8 provenance — the
+/// public, catalog-derived input to the M4 break-even cloud side (T2/D3). The price is per
+/// **single token**, USD (the catalog's per-1M rate ÷ 1_000_000), exact `Decimal`, never `f64`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CloudTokenPrice {
+    /// The catalog key the requested model resolved to (may be a date-stripped base of the input).
+    pub resolved_model: String,
+    /// Descriptive provider (`anthropic`/`openai`/`bedrock`); the catalog is keyed by model+meter,
+    /// not provider, so this is carried data, not a lookup key.
+    pub provider: String,
+    /// Per **single token**, USD.
+    pub price_per_token: Decimal,
+    /// The billing currency (always `USD` today).
+    pub currency: String,
+    /// The winning tier's R8 stamp: `"{source}@{as_of}#{hash8}"` (or `"{source}@{as_of}"`).
+    pub snapshot_id: String,
+}
+
+/// Resolve a model + meter to its per-token cloud list price from the layered pricing catalog
+/// (`override > curated > LiteLLM long-tail`) — the cloud side of the M4 break-even (T2/D3).
+///
+/// `override_json` is the optional user pricing-override file content (read it with
+/// [`read_pricing_override`]); `None` uses the bundled tiers only. Returns `Ok(None)` when the
+/// model is unknown **or** the model is known but carries no rate for the requested meter
+/// (`missing_price`) — the caller decides how to surface that. A malformed override is a typed
+/// [`CoreError`]. The price is per **single token** (catalog per-1M ÷ 1_000_000), USD.
+pub fn cloud_price_per_token(
+    model: &str,
+    token_type: TokenType,
+    override_json: Option<&str>,
+) -> Result<Option<CloudTokenPrice>, CoreError> {
+    let catalog = PricingCatalog::layered(override_json)?;
+    // Resolve the raw model id to its catalog key (exact or date-stripped base, higher tier wins).
+    // Own it as a `String` so the two match arms have a uniform type (the `rate` lookup takes `&str`).
+    let key = match catalog.resolve_key(model) {
+        Some(key) => key.to_string(),
+        None => return Ok(None),
+    };
+    let Some(rate) = catalog.rate(&key, token_type) else {
+        return Ok(None);
+    };
+    // Per single token: the per-1M list price ÷ 1_000_000 (mirrors `apply_pricing`), via
+    // `checked_div` so a pathological rate is a typed error, never a panic.
+    let price_per_token = rate
+        .price
+        .checked_div(Decimal::from(1_000_000_u64))
+        .ok_or_else(|| {
+            CoreError::PricingValidation(format!(
+                "per-token price overflowed for {}:{}",
+                rate.model, rate.meter
+            ))
+        })?;
+    Ok(Some(CloudTokenPrice {
+        resolved_model: rate.model.clone(),
+        provider: rate.provider.clone(),
+        price_per_token,
+        currency: catalog.currency.clone(),
+        snapshot_id: rate.snapshot_id.clone(),
+    }))
+}
+
+#[cfg(test)]
+mod cloud_price_tests {
+    // Repo rule: clippy denies `unwrap`/`expect` even in tests; use `let-else { panic! }`.
+    use super::*;
+
+    fn price(model: &str, tt: TokenType) -> Option<CloudTokenPrice> {
+        match cloud_price_per_token(model, tt, None) {
+            Ok(p) => p,
+            Err(e) => panic!("the bundled catalog must load: {e}"),
+        }
+    }
+
+    fn per_token_eq(a: Decimal, b: Decimal) -> bool {
+        a.normalize() == b.normalize()
+    }
+
+    #[test]
+    fn resolves_anthropic_openai_bedrock_to_per_token_decimal_and_snapshot() {
+        // Anthropic (curated): $3.00 / 1M input → $0.000003/token; stamp curated@2026-06-02.
+        let Some(sonnet) = price("claude-sonnet-4-6", TokenType::Input) else {
+            panic!("a known anthropic model must resolve");
+        };
+        assert!(per_token_eq(sonnet.price_per_token, Decimal::new(3, 6)));
+        assert_eq!(sonnet.provider, "anthropic");
+        assert_eq!(sonnet.currency, DEFAULT_BILLING_CURRENCY);
+        assert_eq!(sonnet.snapshot_id, "curated@2026-06-02");
+        assert_eq!(sonnet.resolved_model, "claude-sonnet-4-6");
+
+        // OpenAI (curated): $5.00 / 1M input → $0.000005/token.
+        let Some(gpt) = price("gpt-5.5", TokenType::Input) else {
+            panic!("a known openai model must resolve");
+        };
+        assert!(per_token_eq(gpt.price_per_token, Decimal::new(5, 6)));
+        assert_eq!(gpt.provider, "openai");
+
+        // Bedrock (litellm long-tail): $12.5 / 1M input → $0.0000125/token; the litellm R8 stamp.
+        let Some(bedrock) = price("ai21.j2-mid-v1", TokenType::Input) else {
+            panic!("a known bedrock model must resolve from the long tail");
+        };
+        assert!(per_token_eq(bedrock.price_per_token, Decimal::new(125, 7)));
+        assert_eq!(bedrock.provider, "bedrock");
+        assert_eq!(bedrock.snapshot_id, "litellm@2026-06-18#36c8994e");
+    }
+
+    #[test]
+    fn an_unknown_model_is_none_not_an_error() {
+        assert!(price("no-such-model-xyz", TokenType::Input).is_none());
+    }
+
+    #[test]
+    fn a_known_model_missing_the_meter_is_none() {
+        // gpt-5.5 carries input/output/cache_read but no cache_write meter → missing_price → None.
+        assert!(price("gpt-5.5", TokenType::CacheWrite).is_none());
+    }
+
+    #[test]
+    fn a_dated_model_id_resolves_via_its_base() {
+        // strip_date_suffix maps the dated id onto the curated base key.
+        let Some(p) = price("claude-sonnet-4-6-20260101", TokenType::Output) else {
+            panic!("a dated model id must resolve to its base");
+        };
+        // $15.00 / 1M output → $0.000015/token; resolved to the base key.
+        assert!(per_token_eq(p.price_per_token, Decimal::new(15, 6)));
+        assert_eq!(p.resolved_model, "claude-sonnet-4-6");
+    }
+}
+
 fn is_supported_meter(value: &str) -> bool {
     matches!(value, "input" | "output" | "cache_read" | "cache_write")
 }
@@ -3475,6 +3612,9 @@ pub enum CoreError {
 
     #[error("import failed: {0}")]
     Import(String),
+
+    #[error("break-even input is invalid: {0}")]
+    Breakeven(String),
 }
 
 #[cfg(test)]
