@@ -40,14 +40,62 @@ pub fn err<T: std::fmt::Debug, E>(result: Result<T, E>) -> E {
     }
 }
 
-/// Install the process-global keyring **mock** backend (idempotent), so every
-/// [`crate::CredentialStore`] built afterward stores secrets in an in-memory map instead
-/// of the real OS keychain. Must run before any `CredentialStore` is created.
+/// **KEYCHAIN MOCK INVARIANT (M6 T3 — non-negotiable, enforced below).**
+///
+/// Any test — in this crate or any dependent crate — that constructs a
+/// [`crate::CredentialStore`] or otherwise builds a [`keyring::Entry`] that could touch a
+/// keychain MUST call [`install_mock_keychain`] **first**. The mock is a process-global
+/// in-memory backend; once installed, every `Entry` built afterward is a `MockCredential`,
+/// so no test can ever reach a developer's — or a CI runner's — real OS keychain (which
+/// would prompt, hang, or, worse, read/write a real secret).
+///
+/// This is enforced, not merely documented: [`install_mock_keychain`] self-verifies via
+/// [`assert_mock_keychain_active`] that the mock backend is actually live afterward, and
+/// the dedicated `keychain_mock_invariant_is_enforced` guard test (in `lib.rs`) fails
+/// loudly if a freshly built `Entry` is anything other than the mock. The verification
+/// only *inspects which backend type was built* (`Entry::get_credential().downcast_ref`) —
+/// it performs no keychain read/write — so the check itself never touches a real keychain.
+///
+/// Install the process-global keyring **mock** backend (idempotent + self-verifying), so
+/// every [`crate::CredentialStore`] built afterward stores secrets in an in-memory map
+/// instead of the real OS keychain. Must run before any `CredentialStore` is created.
 pub fn install_mock_keychain() {
     static MOCK: Once = Once::new();
     MOCK.call_once(|| {
         keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
     });
+    // Fail loudly (and immediately) if the mock did not actually take effect — defense in
+    // depth so a future refactor that breaks the install can never silently fall through to
+    // a real OS keychain on a CI runner.
+    assert_mock_keychain_active();
+}
+
+/// Assert that the process-global keyring backend is the in-memory **mock**, panicking
+/// loudly otherwise. This is the *enforcement* behind the mock invariant: it builds a
+/// throwaway probe [`keyring::Entry`] with the same identifiers a real `CredentialStore`
+/// uses and downcasts its credential to [`keyring::mock::MockCredential`] — which succeeds
+/// **only** when the mock builder is the active default. Building the probe `Entry` and
+/// downcasting are purely in-memory (no `get_password`/`set_password`), so this check never
+/// performs keychain I/O even if, hypothetically, a real backend were active.
+///
+/// Call this in any test path where reaching a real OS keychain would be a correctness or
+/// safety bug (CI prompts/hangs, or touching a real secret).
+#[track_caller]
+pub fn assert_mock_keychain_active() {
+    let probe = match keyring::Entry::new(crate::keychain_service(), "apikey:__mock_probe__") {
+        Ok(entry) => entry,
+        Err(err) => panic!("keychain mock probe Entry could not be built: {err:?}"),
+    };
+    assert!(
+        probe
+            .get_credential()
+            .downcast_ref::<keyring::mock::MockCredential>()
+            .is_some(),
+        "KEYCHAIN MOCK INVARIANT VIOLATED: the active keyring backend is NOT the in-memory \
+         mock. A test built (or is about to build) a real OS-keychain Entry. Call \
+         `install_mock_keychain()` before constructing any `CredentialStore`/`Entry`. \
+         (No real keychain was read or written — this probe only inspects the backend type.)"
+    );
 }
 
 /// Tight per-request limits so loopback tests finish fast.
