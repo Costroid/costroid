@@ -190,3 +190,66 @@ The next build ([`COSTROID-NEXT.md`](COSTROID-NEXT.md), tracked live in [`../PRO
 - **Local models = the Gemma 4 family (Apache-2.0), user-downloaded; Costroid ships no weights.** The M3 benchmark set standardizes on one family: `31B Dense` (dense flagship / coding counterexample), `26B A4B` (3.8B-active fast MoE), `12B Unified` + `E2B`/`E4B` (compute-efficient / edge). Apache-2.0 is on the permissive allowlist (the same license Costroid ships under); **pin to Gemma 4** — Gemma 1–3's custom *"Gemma Terms of Use"* is non-OSI / field-of-use-restricted. Quality is taken from each model's published score (cite source+date, R10); tok/s are confirmed at M3b.
 - **MSRV:** the two new crates inherit **1.88** today (their M0 deps build on it); each may raise its own `rust-version` later if a heavy dep demands it (as `apps/bar` does at 1.92).
 - **CI:** a new `cross-platform` job builds the workspace (`--all-targets`) on macOS + Windows per push; full cross-OS clippy/test *execution* hardens at M6. All existing gates (deny, MSRV-1.88, FOCUS-conformance, offline-acceptance, forbidden-crates) stay intact and now also cover the server's loopback-only proof.
+
+### 10.1 Final scope (M6 close) — the 10-member workspace
+
+> This subsection **reconciles** §2 (which describes the v0.6.0 7-package state) with the Costroid-Next
+> final scope, additively. The §2 ladder and table remain correct for the original seven; the three new
+> members below extend them. The code wins on any conflict.
+
+**The workspace is 10 members — 3 apps + 7 crates** (`apps/{cli,bar,server}` +
+`crates/costroid-{focus,providers,core,config,connect,power,store}`):
+
+| New member | Role | Publish / dist (M6 packaging) |
+|---|---|---|
+| `crates/costroid-power` | Local-inference engine (the four-source wall-meter-led `PowerSampler`, the §3.2 energy/cost model, the subprocess runner, the benchmark harness, the dated profile + Gemma 4 manifest). A **leaf** (serde / serde_json / thiserror only). Off-by-default `power` feature. | crates.io **library** (`publish = true`, no dist archives — mirrors the bar's library posture) |
+| `crates/costroid-store` | SQLite ledger store (`rusqlite`, bundled). Off-by-default `store` feature. `costroid-store → costroid-focus`. | crates.io **library** (`publish = true`, no dist archives) |
+| `apps/server` → `costroid-server` | The loopback-only HTTP API + web UI (§10). `costroid-server → costroid-core + costroid-store` (it links **neither** `costroid-power` **nor** `costroid-connect`). | **binary** → archives + crates.io, **mirroring `apps/bar`** (`dist = true`, `installers = []` — archives only, **no npm/Homebrew/musl**) |
+
+**Dependency direction (final, no cycles):** `apps → core → {providers, focus}`; `apps → config → core`;
+under the apps' off-by-default `connect` feature `app → connect → core`; `costroid-server → core + store`;
+`costroid-store → focus`; and **no `core → power` edge** — `costroid-power` stays a leaf and the
+`costroid bench`/`breakeven` CLI (under the off-by-default `power` CLI feature) is the only place core and
+power meet, by handing core a pre-computed enriched `LocalRunEvent` / plain `Decimal`s. The **M6 publish
+ladder** extends the original one: `focus → providers → core → config → connect → store → power → costroid
+→ server → bar` (a topological order of the actual `Cargo.toml` dep graph, asserted by a test). MSRV stays
+**1.88** for libs + CLI (incl. the two new crates) and **1.92** for the bar.
+
+**The three-lane ledger (final).** One FOCUS ledger carries three lanes (`x_Lane` ∈ `developer_tool` /
+`cloud_api` / `local_inference`), **never summed across each other** (the typed lane-separation guard);
+v1.2-in / v1.3-out. The local lane stamps `x_MeasurementMode` (the measurement ladder) and the energy/cost
+columns; `local_energy_only_rate` derives the break-even `e` over the **total (in+out) token basis**.
+
+**The offline model (final) — per-binary allowlists.** Two distinct guarantees, each enforced:
+- the **`costroid` CLI** (and `costroid-bar`) is **byte-for-byte no-network** — `apps/cli/tests/offline.rs`
+  BFS-resolves each binary's graph against `ALWAYS_FORBIDDEN_CRATES` (every outbound network/TLS/telemetry/
+  async-runtime crate), and `scripts/offline_acceptance.sh` proves no `AF_INET` egress under strace;
+- the **`costroid-server`** is **loopback-only** — its own `SERVER_ALLOWED` subset-allowlist (the reviewed
+  inbound-listen subtree + the local-SQLite `STORE_ALLOWED` subtree, plus a negative assert that it links no
+  `costroid-power`) and a real-serve `--serve-once` strace leg (loopback bind allowed; any non-loopback
+  bind/connect forbidden; the served page references only embedded same-origin assets).
+- all network + credential code stays in **`costroid-connect`**, feature-gated **off**.
+
+**M6 release-hardening additions** (no new product capability):
+- **Cross-OS test *execution*** — the `cross-platform` CI job runs `cargo test` (not just build) on macOS +
+  Windows (`--workspace` + `-p costroid --features power` + `-p costroid-server` + the static `--test
+  offline` dependency proof), with a non-optional keychain-mock invariant guard; Linux keeps the strace
+  offline-acceptance, the FOCUS validator, `cargo deny`, and the MSRV check.
+- **Bundled `samples/`** — curated synthetic demo datasets (one pack per lane), distinct from CI
+  `fixtures/`, read by the demo + docs; a dedicated `samples/` FOCUS-conformance leg with a row-count guard,
+  and the **inverse honesty guard** (every committed `local_inference` row is `x_MeasurementMode ==
+  "estimated"`).
+- **`make demo`** — a top-level Makefile chaining export → import → bench (estimated) → breakeven → a merged
+  three-lane FOCUS 1.3 ledger, **fully offline, no hardware**, deterministic (the clock is pinned via
+  `SOURCE_DATE_EPOCH`, honored by `bench` per D5), with the raw `cargo` equivalents documented for Windows.
+- **Versioned benchmark dataset + writeup** — a `benchmarks/` manifest + raw **synthetic** outputs + a
+  blog-ready writeup, every figure carrying the canonical R8/R10 stamp (`costroid_core::PENDING_M3B_STAMP`),
+  integrity-checked by `scripts/check_benchmarks.sh`; the real captured numbers land in a documented
+  `docs/POST-M3B-REFRESH.md` follow-up.
+- **Doc-honesty machinery** — `scripts/check_doc_stamps.sh` (no un-stamped local-inference hero figure in
+  the scanned docs) reads the one canonical stamp out of the Rust source; a `docs_presence` test asserts the
+  README / `methodology.md` / `limitations.md` required sections exist; and an `e`-formula cross-check test
+  pins the methodology worked example to `local_energy_only_rate`.
+- **Packaging the new crates** — `publish`/`dist` flipped per the table above; the server's dist mirrors the
+  bar (archives only, the explicit 5 targets, no npm/Homebrew/musl); `cargo deny` and the per-crate license
+  metadata cover all three new crates.
