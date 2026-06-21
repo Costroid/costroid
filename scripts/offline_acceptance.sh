@@ -490,7 +490,8 @@ else
 fi
 
 # ============================================================================
-# costroid-server — the local HTTP/web-UI binary's loopback-only / no-egress proof (M0)
+# costroid-server — the local HTTP/web-UI binary's loopback-only / no-egress proof
+# (M0 construction-time `--self-check` + M5 T7 real-serve `--serve-once` GET)
 # ============================================================================
 # The server is a SEPARATE binary (it links `tiny_http`, name-banned in the CLI/bar offline
 # gate) with its own reviewed per-binary allowlist (SERVER_ALLOWED in apps/cli/tests/offline.rs).
@@ -523,6 +524,37 @@ elif [ "${#OUT}" -lt 5 ] || ! grep -qiF "server self-check ok" <<<"$OUT"; then
 elif [ "$iso_mode" != strace ]; then
   echo "ok (loopback-only assertion strace-gated; static SERVER_ALLOWED authoritative here)"
 else echo "ok (loopback bind, no egress)"; fi
+
+# M5 T7 — the REAL serve path: drive an actual loopback GET through `--serve-once` under strace and
+# assert (a) a served page carrying ONLY the embedded same-origin stylesheet (no external/CDN URL →
+# the web UI works fully offline), and (b) no AF_INET egress (loopback-only). A race-free harness:
+# `--serve-once` serves exactly one request then exits, and `curl --retry-connrefused` waits for the
+# bind without a sleep; the server is then reaped (killed if curl never connected, so the script
+# cannot hang). Strace+curl-gated (CI has both); the static SERVER_ALLOWED + --self-check remain
+# authoritative otherwise.
+printf '  %-52s' "server --serve-once: real GET, no egress, no external URL"
+if [ "$iso_mode" = strace ] && command -v curl >/dev/null 2>&1; then
+  serve_log="$workdir/strace.server-serve"
+  strace -f -e trace=network -qq -o "$serve_log" env "${env_args[@]}" "$server_bin" --serve-once \
+    >/dev/null 2>&1 &
+  serve_pid=$!
+  serve_body="$(curl -s --max-time 10 --retry 50 --retry-connrefused --retry-delay 0 \
+    "http://127.0.0.1:7878/breakeven" 2>/dev/null || true)"
+  kill "$serve_pid" 2>/dev/null || true
+  wait "$serve_pid" 2>/dev/null || true
+  serve_rc=0
+  if [ -f "$serve_log" ] && ! assert_loopback_only "$serve_log"; then serve_rc=90; fi
+  if [ "$serve_rc" -eq 90 ]; then echo "LOOPBACK/EGRESS VIOLATION"; fail=1
+  elif ! grep -qF "/assets/costroid.css" <<<"$serve_body"; then
+    echo "FAIL (served page missing the embedded stylesheet — real serve did not work)"; fail=1
+  elif grep -qiE 'https?://|//cdn' <<<"$serve_body"; then
+    echo "FAIL (external URL in the served page — the web UI must be fully offline)"
+    grep -ioE 'https?://[^" ]*|//cdn[^" ]*' <<<"$serve_body" | sed 's/^/      /'; fail=1
+  else echo "ok (real serve, loopback-only, embedded assets only)"; fi
+  rm -f "$serve_log"
+else
+  echo "skipped (needs strace + curl; static SERVER_ALLOWED + --self-check authoritative)"
+fi
 
 echo
 if [ "$fail" -ne 0 ]; then
