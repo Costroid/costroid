@@ -88,13 +88,13 @@ costroid-config = { path = "crates/costroid-config", version = "0.6.0" }
 costroid-connect = { path = "crates/costroid-connect", version = "0.6.0" }
 costroid-core = { path = "crates/costroid-core", version = "0.6.0" }
 costroid-focus = { path = "crates/costroid-focus", version = "0.6.0" }
-# `costroid-power` is `publish = false` for now (M0 scaffold; the publish-ladder bump is an M6
-# task), so no published crate may depend on it yet — it is consumed only locally via this path.
+# `costroid-power` is `publish = true` since M6 T9 (the crates.io library flip) and sits in the
+# publish ladder before `costroid`; deps record the version + use the path locally.
 costroid-power = { path = "crates/costroid-power", version = "0.6.0" }
 costroid-providers = { path = "crates/costroid-providers", version = "0.6.0" }
-# `costroid-store` is `publish = false` for now (M1 scaffold; the publish-ladder bump is an
-# M6 task), so no published crate may depend on it yet — it is consumed only locally via
-# this path, behind the CLI's off-by-default `store` feature.
+# `costroid-store` is `publish = true` since M6 T9 (the crates.io library flip); it is consumed
+# only behind the CLI's off-by-default `store` feature + by `costroid-server`, and sits in the
+# publish ladder before `costroid`/`costroid-server`.
 costroid-store = { path = "crates/costroid-store", version = "0.6.0" }
 
 # The egui taskbar GUI stack (Step 6 / `apps/bar` only — the default `costroid` CLI
