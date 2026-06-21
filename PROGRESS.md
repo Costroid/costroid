@@ -25,21 +25,35 @@
 > `Infeasible` ceiling, the sensitivity band + assumption stamp, the DeepSWE overlay, the pure
 > `costroid-core::breakeven` engine + the `costroid breakeven` CLI. Detail: **[`docs/M4-PLAN.md`](docs/M4-PLAN.md)**.
 >
-> **Current milestone: M5 (Interfaces) — ✅ BUILT (T0–T9); ⛔ STOP at the milestone boundary for the
-> coordinator's independent review before any merge to `main`.** Executed on the per-task dev-loop per
-> **[`docs/M5-PLAN.md`](docs/M5-PLAN.md)** (Rev 2). Two interfaces over the merged ledger + the M4
-> engine: **(A)** a power-gated TUI break-even/comparison overlay (`b`; reuses `render_breakeven`;
-> the 9-tab TUI is byte-unchanged with `power` off), and **(B)** the **`costroid-server`** loopback
-> HTTP API + a three-view web UI (timeline / comparison / break-even) — server-rendered HTML (no JS)
-> + a `?plain` text fallback + a JSON API, **all assets embedded, zero external requests**. Highlights:
-> the **BLOCKER** total-token basis fix (`local_run_to_focus` stamps `tokens_in + tokens_out`) + the
-> pure core **`local_energy_only_rate`** helper (the server's `e`, energy-only, no `core→power` edge),
-> locked by a **cross-interface** test; the offline proof extended (`SERVER_ALLOWED` grown to the
-> reviewed local-SQLite subtree + a no-`costroid-power` negative assert + a real-serve `--serve-once`
-> strace leg + an embedded-only scan); honesty cues rendered (counterfactual list-price label,
-> measurement mode, no-local empty states). **Deviation flagged for the coordinator:** D2 chose
-> vendored htmx + uPlot, but the offline build cannot fetch them, so M5 ships first-party embedded
-> assets (same guarantees). The superseded M4/M3a records follow for history.
+> **M5 (Interfaces) — ✅ MERGED to `main`** (PR #6, 2026-06-21; CI green; `main` tip `631b5a4`,
+> `costroid-next` recreated off it). Two interfaces over the merged ledger + the M4 engine:
+> **(A)** a power-gated TUI break-even/comparison overlay (`b`; reuses `render_breakeven`; the 9-tab
+> TUI is byte-unchanged with `power` off), and **(B)** the **`costroid-server`** loopback HTTP API +
+> a three-view web UI (timeline / comparison / break-even) — server-rendered HTML (no JS) + a
+> `?plain` text fallback + a JSON API, **all assets embedded, zero external requests**. The
+> **BLOCKER** total-token basis fix (`local_run_to_focus` stamps `tokens_in + tokens_out`) + the pure
+> core **`local_energy_only_rate`** helper (the server's `e`, energy-only, no `core→power` edge),
+> locked by a **cross-interface** test; the offline proof extended (`SERVER_ALLOWED` + a
+> no-`costroid-power` negative assert + a real-serve `--serve-once` strace leg + an embedded-only
+> scan). The milestone-boundary review (0 blockers/highs; 4 low + 2 info) was accepted and the
+> pre-merge tidy folded in (PRs #6); the **D2 deviation** (server-rendered HTML + inline SVG instead
+> of vendored htmx/uPlot — same guarantees, swap-in additive) is recorded at §6.11. Detail:
+> **[`docs/M5-PLAN.md`](docs/M5-PLAN.md)** (Rev 2).
+>
+> **Current milestone: M6 (Quality, docs, data, demo, packaging) — the FINAL milestone.** Plan
+> synthesized in **[`docs/M6-PLAN.md`](docs/M6-PLAN.md)**; the deciding test is the §6.12
+> Definition-of-Done checklist. In scope: cross-OS test *execution* (vs the M0 build-only matrix);
+> bundled synthetic sample datasets (local usage + AWS FOCUS + a benchmark pack — the whole demo with
+> no Strix Halo / no cloud); README + Mermaid architecture + methodology page + `docs/limitations.md`
+> consolidation; the versioned benchmark dataset + a blog-ready writeup; release packaging (flip
+> `dist`/`publish` on `costroid-power`/`costroid-store`/`costroid-server`, place them in the
+> RELEASING.md ladder). **M3b dependency does NOT block M6:** everything ships now on
+> synthetic/estimated fixtures, every estimated figure stamped "estimated — pending M3b measurement"
+> (R8/R10); the real-number refresh + hero-GIF capture are a small post-M3b human follow-up.
+> **⛔ STOP at the M6 plan boundary for the coordinator's pre-coding plan review before any code.**
+> The superseded M5/M4/M3a records follow for history.
+>
+> **(superseded) M5 — ✅ BUILT (T0–T9), reviewed at the boundary, tidy folded in, merged as PR #6.**
 >
 > **(superseded) M3a — ✅ BUILT
 > (T0–T13); ⛔ STOP at the milestone boundary for the human's fresh-eyes review before any
@@ -407,12 +421,31 @@ starting **M1**.
   `e`; one-lifetime rule (MED3); sensitivity band + assumption stamp (R6/R8); DeepSWE overlay is
   reference-only (D3); pure `costroid-core::breakeven` (no `core→power` edge) + `costroid breakeven`
   CLI (`--plain`) behind the off-by-default `power` feature. See [`docs/M4-PLAN.md`](docs/M4-PLAN.md).
-- [ ] **M5** — CLI/TUI + tiny_http local API + 3-view embedded web UI (loopback-only).
-- [ ] **M6** — tests/CI/datasets/docs/demo/packaging; benchmark dataset + writeup; ARCHITECTURE reconciled.
+- [x] **M5** — CLI/TUI + tiny_http local API + 3-view embedded web UI (loopback-only).
+  **✅ MERGED to `main` (PR #6, 2026-06-21; CI green).** Total-token e-basis + pure
+  `local_energy_only_rate` (no `core→power` edge), cross-interface-locked; server-rendered
+  HTML/inline-SVG views (D2 deviation, §6.11); loopback-only `--serve-once` strace proof; the
+  byte-for-byte no-network CLI intact. Boundary review (0 blockers/highs) accepted + tidy folded in.
+- [ ] **M6** — tests/CI/datasets/docs/demo/packaging; benchmark dataset + writeup; ARCHITECTURE
+  reconciled. *(current — plan in [`docs/M6-PLAN.md`](docs/M6-PLAN.md); ⛔ awaiting pre-coding review.)*
 
 ---
 
 ## Handoff note (latest)
+
+- **2026-06-21 (p) — M5 MERGED (PR #6); M6 PLAN synthesized; ⛔ STOP for the pre-coding plan
+  review.** `main` tip `631b5a4` includes M0–M5; `costroid-next` recreated off it, tree clean.
+  M5's pre-merge tidy (L1-1 fail-closed no-JS assert · L1-3 static `/` route · L4-01 hand-computed
+  timeline asserts · L4-02 §6.11 D2-deviation pointer + A3/uPlot SUPERSEDED · L4-03 R4 field-name
+  scan · L3-1 break-even-web text-only scope note) landed and merged. **M6 (the FINAL milestone)**
+  is now planned in **[`docs/M6-PLAN.md`](docs/M6-PLAN.md)**: cross-OS test execution, synthetic
+  sample datasets, README/methodology/limitations docs, the versioned benchmark dataset + writeup,
+  and release packaging (flip `dist`/`publish` on the three new crates). **Synthetic-now /
+  real-post-M3b split is explicit:** every estimated figure is stamped "estimated — pending M3b
+  measurement" (R8/R10); the real-number refresh + hero-GIF capture are a scoped post-M3b human
+  follow-up. **No M6 code until D1–D4 are signed off and the plan is reviewed** (CLAUDE.md "ask
+  first"). The next action is the coordinator's pre-coding plan review. The earlier M3a note (n)
+  follows for history.
 
 - **2026-06-20 (n) — M3a COMPLETE (T0–T13); ⛔ STOP at the milestone boundary for the human's
   full fresh-eyes review before any merge to `main`.** Branch `costroid-next`. All tasks landed
