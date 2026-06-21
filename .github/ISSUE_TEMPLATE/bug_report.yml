@@ -1,0 +1,71 @@
+name: Bug report
+description: Something Costroid does wrong (a crash, a wrong number, a parsing miss, a display glitch).
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Costroid is local-first and privacy-first** — please do **not** paste
+        any prompt/response content, API keys, tokens, account ids, or real provider logs. Costroid
+        only needs bounded metadata (versions, commands, token counts, error text). Redact anything
+        sensitive before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Costroid version
+      description: "Output of `costroid --version` (or `costroid-bar --version` / `costroid-server --version`)."
+      placeholder: "e.g. 0.6.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface?
+      options:
+        - costroid (CLI)
+        - costroid (TUI)
+        - costroid statusline
+        - costroid-bar (taskbar)
+        - costroid-server (local web UI / API)
+        - costroid bench / breakeven (power feature)
+        - costroid import / export / reconcile
+        - other / not sure
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / environment
+      placeholder: "e.g. Ubuntu 24.04 / macOS 15 / Windows 11 / WSL2"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command / steps to reproduce
+      description: The exact command(s) you ran (with any flags). Redact paths if they reveal anything sensitive.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Error text, the wrong figure, the glitch. Paste output (already metadata-only) here.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have NOT included any prompt/response content, API keys, tokens, account ids, or real provider logs.
+          required: true

@@ -10,14 +10,28 @@ are estimates (your tokens × current prices), reconcilable against your provide
 
 ## [Unreleased]
 
+> **The "Costroid-Next" feature set (M1–M6).** Local-inference economics, a cloud/API cost lane, a
+> break-even calculator, and a loopback web UI on top of the shipped v0.6.0 tool — still local-first,
+> zero-network by default, no telemetry. **Every local-inference figure is estimated — pending M3b
+> measurement** (a real captured joules/token on the target hardware); see
+> [docs/methodology.md](docs/methodology.md) and [docs/limitations.md](docs/limitations.md).
+
 ### Added
 
+- **Unified three-lane FOCUS ledger** (M1): one FOCUS v1.2-in / v1.3-out ledger across `developer_tool` usage, `cloud_api` spend, and `local_inference`, never summed across lanes; an opt-in SQLite store (`costroid-store`, off-by-default `store` feature) and `costroid import` for foreign FOCUS v1.2 exports.
+- **Cloud/API cost lane** (M2): a bundled LiteLLM pricing snapshot + layered catalog, foreign-authoritative pricing + multi-currency import, AWS Data Exports FOCUS + Bedrock Application Inference Profile attribution, and estimate-vs-invoice reconciliation.
+- **Local-inference economics engine** (M3a; `costroid-power`, off-by-default `power` feature): the four-source wall-meter-led `PowerSampler`, a subprocess llama.cpp/Ollama benchmark runner, a dated/stamped hardware+electricity profile + Gemma 4 manifest, the 7 local `x_` columns, and `costroid bench` (estimated by default — no hardware; honors `SOURCE_DATE_EPOCH` for reproducible output).
+- **Break-even + scenario engine** (M4): calendar-fixed amortization, the energy-only marginal rate `e` over the total (in+out) token basis, a sensitivity band, a "never"/infeasible outcome, and `costroid breakeven`.
+- **Loopback web UI + HTTP API** (M5; `costroid-server`, new binary): a `127.0.0.1`-only server with three server-rendered views (timeline / comparison / break-even), a `?plain` text fallback + a JSON API, all assets embedded, zero external requests; plus a power-gated TUI break-even overlay (`b`).
+- **Bundled synthetic sample datasets + `make demo`** (M6): `samples/` (synthetic dev-tool logs + AWS FOCUS + a benchmark pack) and a deterministic, fully-offline, hardware-free `make demo`; a versioned benchmark dataset + a Gemma-4-vs-cloud methodology writeup; a methodology page; a Mermaid architecture diagram + a "what ccusage doesn't" table in the README.
 - Activity TUI tab (`9`): weeks×weekdays token heatmap in the dot-density language, plus stats (total tokens, active days, busiest day, top model, current/longest streak); `--plain` lists facts.
 - Per-model color coding: stable per-model hue by spend rank (leading `●`/`*` dot + colored spend-bar) on Now and Models.
 - `costroid_core::now_model_spend_breakdown` — pure display helper (per-model API-lane spend, highest first, `~`-hedged + share fraction) for the taskbar.
 
 ### Changed
 
+- **Cross-OS CI** now runs full **test execution** on macOS + Windows (was build-only); the Linux-only strace offline-acceptance, FOCUS conformance, `cargo deny`, and MSRV gates are unchanged.
+- **Packaging:** `costroid-power` + `costroid-store` are now published crates.io libraries, and `costroid-server` ships binary archives + crates.io (mirroring `costroid-bar` — no npm/Homebrew/musl); all three join the publish ladder (`focus → providers → core → config → connect → store → power → costroid → server → bar`, asserted by a test).
 - CLI/TUI now renders in color via the `SemanticStyle` palette (cyan data, lime accent, ash-muted labels, bold figures); near/over-limit lane keeps its `!`/`!!`/`OVER` text cue.
 - TUI gains a top tab strip (active tab as reverse-video lime chip) and a colorized contextual hint bar.
 - Color gated on a color TTY; `--plain`/`NO_COLOR` emit zero escapes with byte-identical output; color never the only cue.
