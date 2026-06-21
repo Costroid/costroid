@@ -20,16 +20,26 @@
 > `costroid-next` rebased onto it). M3b (a real captured joules/token, wall-meter-primary) remains a
 > separate human handoff and does **not** block M4.
 >
-> **Current milestone: M4 (break-even + scenario engine) — ✅ BUILT (T0–T9); ⛔ STOP at the
-> milestone boundary for the coordinator's fresh-eyes review before any merge to `main`.** Executed
-> end-to-end on the per-task dev-loop (build → independent adversarial review → fold-in → commit),
-> each task green: calendar-fixed amortization (D1 — a real crossover + a "never"/"infeasible"
-> outcome), the **energy-only** marginal `e` (never `local_cost_per_1m` — no capex double-count),
-> the `Infeasible` feasibility ceiling (MED1), the one break-even lifetime rule (MED3), a sensitivity
-> **band** + full assumption stamp (R6/R8), the reference-only DeepSWE-Bench `$/task` overlay (D3),
-> the pure `costroid-core::breakeven` engine (no `core→power` edge) + the `costroid breakeven` CLI
-> (`--plain`) behind the off-by-default `power` feature. Detail:
-> **[`docs/M4-PLAN.md`](docs/M4-PLAN.md)**. The superseded M3a-at-boundary record follows for history.
+> **M4 (break-even + scenario engine) — ✅ MERGED to `main`** (`costroid-next` is off `main` @
+> `b888565`, which includes M0–M4): calendar-fixed amortization, the energy-only marginal `e`, the
+> `Infeasible` ceiling, the sensitivity band + assumption stamp, the DeepSWE overlay, the pure
+> `costroid-core::breakeven` engine + the `costroid breakeven` CLI. Detail: **[`docs/M4-PLAN.md`](docs/M4-PLAN.md)**.
+>
+> **Current milestone: M5 (Interfaces) — ✅ BUILT (T0–T9); ⛔ STOP at the milestone boundary for the
+> coordinator's independent review before any merge to `main`.** Executed on the per-task dev-loop per
+> **[`docs/M5-PLAN.md`](docs/M5-PLAN.md)** (Rev 2). Two interfaces over the merged ledger + the M4
+> engine: **(A)** a power-gated TUI break-even/comparison overlay (`b`; reuses `render_breakeven`;
+> the 9-tab TUI is byte-unchanged with `power` off), and **(B)** the **`costroid-server`** loopback
+> HTTP API + a three-view web UI (timeline / comparison / break-even) — server-rendered HTML (no JS)
+> + a `?plain` text fallback + a JSON API, **all assets embedded, zero external requests**. Highlights:
+> the **BLOCKER** total-token basis fix (`local_run_to_focus` stamps `tokens_in + tokens_out`) + the
+> pure core **`local_energy_only_rate`** helper (the server's `e`, energy-only, no `core→power` edge),
+> locked by a **cross-interface** test; the offline proof extended (`SERVER_ALLOWED` grown to the
+> reviewed local-SQLite subtree + a no-`costroid-power` negative assert + a real-serve `--serve-once`
+> strace leg + an embedded-only scan); honesty cues rendered (counterfactual list-price label,
+> measurement mode, no-local empty states). **Deviation flagged for the coordinator:** D2 chose
+> vendored htmx + uPlot, but the offline build cannot fetch them, so M5 ships first-party embedded
+> assets (same guarantees). The superseded M4/M3a records follow for history.
 >
 > **(superseded) M3a — ✅ BUILT
 > (T0–T13); ⛔ STOP at the milestone boundary for the human's fresh-eyes review before any
@@ -292,7 +302,7 @@ flagship, all on the 128 GB APU. **License is clean** — Apache-2.0 (verified v
 > (name collision only with the *DeepSWE-Preview* model, which is no longer in our local set — unrelated;
 > do not conflate).
 
-### M4 — Break-even + scenario engine — ✅ BUILT (T0–T9), ⛔ at the milestone boundary
+### M4 — Break-even + scenario engine — ✅ MERGED to `main`
 - **Status:** built on `costroid-next` (T0–T9) per [`docs/M4-PLAN.md`](docs/M4-PLAN.md), each task on
   the per-task dev-loop with an independent adversarial review (all APPROVE; nits folded in).
   Highlights: calendar-fixed amortization (D1 — a real crossover + a "never" case); the **energy-only**
@@ -315,12 +325,24 @@ flagship, all on the 128 GB APU. **License is clean** — Apache-2.0 (verified v
 - **Deliverable:** "for this workload, local breaks even at N tokens/day — or never, with the reason."
   **Deciding test:** a break-even unit test including a **"never" case**.
 
-### M5 — Interfaces
-- CLI/TUI surface over the new ledger; the `costroid-server` **Axum-equivalent (tiny_http) local API**;
-  the **three-view web UI** (timeline / comparison / break-even) as **embedded static assets** (A3,
-  §6.11) over `127.0.0.1` — bundled, never hosted. Every view ships a `--plain` path; never color-alone.
-- **Deliverable:** a coherent local app over the ledger. **Deciding test:** the loopback-only proof
-  still passes with the real routes (server binds 127.0.0.1, no egress).
+### M5 — Interfaces — ✅ BUILT (T0–T9), ⛔ at the milestone boundary
+- **Status:** built on `costroid-next` (T0–T9) per [`docs/M5-PLAN.md`](docs/M5-PLAN.md) (Rev 2). Two
+  interfaces over the merged ledger + the M4 engine: a power-gated TUI break-even/comparison overlay
+  (`b`; reuses `render_breakeven`; 9-tab TUI byte-unchanged with `power` off), and the
+  **`costroid-server`** loopback HTTP API + the **three-view web UI** (timeline / comparison /
+  break-even) as **embedded static assets** over `127.0.0.1` — server-rendered HTML (no JS) + a
+  `?plain` text fallback + a JSON API; never color-alone (text verdicts + tables); **zero external
+  requests**. The **BLOCKER** total-token basis fix + the pure core `local_energy_only_rate` helper
+  (the server's `e`, no `core→power` edge), locked by a cross-interface test. ⛔ Awaiting the
+  coordinator's milestone-boundary review before merge.
+- **Deviation flagged:** D2 chose vendored htmx + uPlot; the offline build cannot fetch them, so M5
+  ships first-party embedded assets (server-rendered SVG + `include_str!` CSS) — same guarantees
+  (embedded, zero CDN, offline, accessible). Swapping in the real libs is additive.
+- **Deliverable:** a coherent local app over the ledger. **Deciding test (green):** the loopback-only
+  proof still passes with the real routes — `SERVER_ALLOWED` (the reviewed local-listen + local-SQLite
+  subtrees) + a no-`costroid-power` negative assert + the `scripts/offline_acceptance.sh` real-serve
+  `--serve-once` strace leg (loopback bind, no egress) + the embedded-only scan; the `costroid` CLI
+  stays byte-for-byte no-network.
 
 ### M6 — Quality, docs, data, demo, packaging
 - Full test suite + CI gates; bundled sample datasets (synthetic local usage + AWS FOCUS + benchmark
