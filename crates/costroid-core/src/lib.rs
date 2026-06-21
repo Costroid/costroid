@@ -52,8 +52,9 @@ pub use bench::{
 pub mod breakeven;
 pub use breakeven::{
     blended_cloud_per_token, breakeven, breakeven_report, days_from_seconds,
-    resolve_depreciation_days, AssumptionStamp, BreakevenBand, BreakevenInputs, BreakevenOutcome,
-    BreakevenReport, BreakevenScenario, CloudReferencePoint, SensitivityPoint, SweepPoint,
+    local_energy_only_rate, resolve_depreciation_days, AssumptionStamp, BreakevenBand,
+    BreakevenInputs, BreakevenOutcome, BreakevenReport, BreakevenScenario, CloudReferencePoint,
+    SensitivityPoint, SweepPoint,
 };
 
 pub mod reconcile;
@@ -190,8 +191,9 @@ pub fn focus_records_from_usage(events: &[UsageEvent]) -> Result<Vec<FocusRecord
 ///   [`cloud_usage_to_focus`]; the cloud bill is authoritative, so a present
 ///   `billed_cost` is preserved verbatim (not recomputed).
 /// - [`CanonicalEvent::Local`] becomes one `local_inference`-lane row via
-///   [`local_run_to_focus`]; only the lane + token count are carried (the energy
-///   columns are deferred to M3).
+///   [`local_run_to_focus`]; the token count carried is the **total** (`tokens_in +
+///   tokens_out`) basis — matching the cloud blended `c`, the workload `V`, and the M4
+///   CLI's energy-only rate — and the M3 energy columns ride along.
 ///
 /// This does not sum across lanes — mixing estimated dev-tool rows with authoritative
 /// cloud-bill rows is guarded separately (T6). T5 only produces correctly-laned rows.
@@ -361,7 +363,12 @@ fn local_run_to_focus(local: &LocalRunEvent) -> Result<FocusRecord, CoreError> {
         tool: local.runtime_kind.clone(),
         model: local.model.clone(),
         token_type: TokenType::Output,
-        token_count: local.tokens_out,
+        // BLOCKER (M5 T2): the break-even basis is TOTAL tokens (in+out) — it must match the cloud
+        // blended `c` (priced over in+out), the workload volume `V`, and the M4 CLI's
+        // `energy_only_rate` (`energy_cost / (tokens_in + tokens_out)`). So `x_consumed_tokens` is
+        // the total; the row stays a single combined meter (`token_type` Output). `saturating_add`
+        // keeps this panic-free in library code (token counts never realistically overflow `u64`).
+        token_count: local.tokens_in.saturating_add(local.tokens_out),
         project: None,
         access_path: FocusAccessPath::Unknown,
         service_name: local.runtime_kind.clone(),
@@ -8626,7 +8633,9 @@ mod tests {
         assert_eq!(rows.len(), 1, "a local run is one row");
         let row = &rows[0];
         assert_eq!(row.x_lane, "local_inference");
-        assert_eq!(row.x_consumed_tokens, Decimal::from(1_200_u64));
+        // BLOCKER (M5 T2): the local row carries the TOTAL token basis (tokens_in + tokens_out =
+        // 500 + 1_200 = 1_700), matching the break-even total-token convention — not output-only.
+        assert_eq!(row.x_consumed_tokens, Decimal::from(1_700_u64));
         assert_eq!(row.x_token_type, "output");
         assert_eq!(row.x_model, "gemma-4-26b-a4b");
 

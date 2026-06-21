@@ -92,8 +92,8 @@ fn bench_estimated_mode_emits_a_local_row_equivalent_to_the_library() {
         row.get("x_Model").map(String::as_str),
         Some("gemma-4-26b-a4b")
     );
-    // Consumed tokens = generated tokens (tokens_out).
-    assert_eq!(cell_f64(&row, "x_ConsumedTokens") as u64, 9_600);
+    // Consumed tokens = the TOTAL (in+out) basis (M5 T2): tokens_in 1000 + tokens_out 9600 = 10600.
+    assert_eq!(cell_f64(&row, "x_ConsumedTokens") as u64, 10_600);
 
     // Value-equivalence: recompute the same estimate via the library and compare the economics.
     let Ok(manifest) = bundled_models() else {
