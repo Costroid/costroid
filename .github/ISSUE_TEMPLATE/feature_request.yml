@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest a capability or improvement for Costroid.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Costroid is a **local-first, zero-network-by-default, no-telemetry** developer tool. Requests
+        that would require a cloud backend, telemetry, or routing credentials through a server are out
+        of scope by design (see [docs/ROADMAP.md](../blob/main/docs/ROADMAP.md) and the golden rules in
+        `CLAUDE.md`). New provider integrations have their own template — please use **Provider request**.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to see/do that Costroid doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the command/output/UI look like? (Sketch the surface.)
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Fits the local-first design
+      options:
+        - label: This does not require a cloud backend, telemetry, or sending data off the machine by default.
+          required: true

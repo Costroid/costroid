@@ -1,0 +1,47 @@
+name: Provider request
+description: Ask for support for an AI coding tool / provider Costroid doesn't yet read.
+title: "[Provider]: "
+labels: ["provider", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Costroid reads costs/limits from **local artifacts the tool already writes** (the default path),
+        a sanctioned push/hook, sanctioned OAuth, or **your own API key** — and **never** reuses a
+        session/cookie against an undocumented endpoint (that's an account-ban + ToS line; such data stays
+        "unavailable"). See the auth-source ladder in `CLAUDE.md`. The most useful thing you can provide is
+        **where the data lives on disk** and **its format** — that's what lets a local-first adapter exist.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / tool
+      placeholder: "e.g. GitHub Copilot, Cursor (live quota), Gemini CLI, Antigravity"
+    validations:
+      required: true
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Which data source could Costroid use? (auth-source ladder)
+      options:
+        - "Tier 0 — local artifacts on disk (logs/db the tool already writes)"
+        - "Tier 1 — a sanctioned push/hook (e.g. a statusLine capture)"
+        - "Tier 2 — sanctioned OAuth (documented; system browser + loopback)"
+        - "Tier 3 — your own API key (a documented usage/billing API)"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Where does the data live on disk? (path + format)
+      description: "Directory/file path(s) and format (JSONL transcript? SQLite db? JSON cache?). Redact any real content — describe the SHAPE, don't paste real logs."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Documentation links
+      description: Links to any official docs for the log format / usage API (so an adapter can be built without ToS-crossing reverse-engineering).
+    validations:
+      required: false
