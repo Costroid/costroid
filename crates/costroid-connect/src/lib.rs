@@ -142,6 +142,15 @@ pub fn gemini_usage_report() -> UsageReportOutcome {
 /// OAuth in T9/T10).
 const KEYCHAIN_SERVICE: &str = "costroid";
 
+/// The keychain `service` the real [`CredentialStore`] uses, exposed for the
+/// `test_support` mock-invariant probe so its throwaway `Entry` matches the production
+/// identifiers (one source of truth — no magic string in the guard). Available only to the
+/// in-crate tests and the opt-in `test-support` harness; never part of the production API.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn keychain_service() -> &'static str {
+    KEYCHAIN_SERVICE
+}
+
 /// The keychain account for a vendor's own usage/billing **API key**.
 fn apikey_account(vendor: ApiVendor) -> String {
     format!("apikey:{}", vendor.slug())
@@ -694,6 +703,39 @@ mod tests {
         MOCK_KEYCHAIN.call_once(|| {
             keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
         });
+        // Enforce the M6 T3 mock invariant locally too: if the install ever fails to take
+        // effect, fail loudly before any `Entry` could reach a real OS keychain.
+        crate::test_support::assert_mock_keychain_active();
+    }
+
+    // ---- The keychain mock invariant (M6 T3 — enforced, not just documented) ----
+
+    /// The non-optional keychain guard (Hazard 1): after `install_mock_keychain()` the
+    /// active backend MUST be the in-memory mock, so no test — here or in any dependent
+    /// crate, on any CI runner OS — can construct a `CredentialStore`/`Entry` that reaches a
+    /// real OS keychain. This asserts the enforcement mechanism actually discriminates: the
+    /// probe downcasts to `MockCredential` only when the mock is live. If a future refactor
+    /// breaks the mock install, this test fails loudly instead of silently hitting the
+    /// runner's keychain. (The check inspects the built backend type only — no keychain I/O.)
+    #[test]
+    fn keychain_mock_invariant_is_enforced() {
+        use_mock_keychain();
+        // The public enforcement entry point: panics loudly unless the mock is active.
+        crate::test_support::assert_mock_keychain_active();
+
+        // And prove it discriminates: a freshly built real store's entries are all the
+        // in-memory mock backend (never an OS-native credential) once the mock is installed.
+        let store = ok(CredentialStore::new());
+        for entry in &store.entries {
+            assert!(
+                entry
+                    .get_credential()
+                    .downcast_ref::<keyring::mock::MockCredential>()
+                    .is_some(),
+                "CredentialStore entry is not the in-memory mock — a real OS keychain backend \
+                 is active; the mock invariant is broken"
+            );
+        }
     }
 
     /// A unique, auto-cleaned temp directory (no `tempfile` dep — keeps the dev-dep
