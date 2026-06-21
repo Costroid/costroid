@@ -11,6 +11,13 @@
 //!
 //! Emits a `local_inference` FOCUS row (CSV/JSON), with the measurement mode + the dated
 //! assumptions stamped (R6/R8/R10). Offline by construction — no network crate.
+//!
+//! **Reproducible output (D5):** the emitted row's timestamp normally comes from the wall
+//! clock (`Utc::now()`). When the de-facto reproducible-builds env var `SOURCE_DATE_EPOCH`
+//! is set to a valid Unix epoch (whole seconds, UTC), the row is stamped at that instant
+//! instead — so committed demo/benchmark artifacts are byte-identical across re-runs. An
+//! invalid/empty value falls back to `Utc::now()` (never an error). This affects only the
+//! row's timestamp; the economics are unchanged.
 
 use anyhow::{bail, Result};
 use costroid_power::{
@@ -121,11 +128,26 @@ pub fn run_bench(args: &BenchArgs) -> Result<()> {
     Ok(())
 }
 
+/// The bench-row timestamp source (D5). Honors `SOURCE_DATE_EPOCH` for reproducible output:
+/// a valid Unix epoch (whole seconds, UTC) is used verbatim; an unset/empty/invalid value
+/// falls back to the wall clock. Never errors — a malformed override silently degrades to
+/// `Utc::now()` (the default interactive behavior).
+fn bench_timestamp() -> chrono::DateTime<chrono::Utc> {
+    if let Some(epoch) = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<i64>().ok())
+        .and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0))
+    {
+        return epoch;
+    }
+    chrono::Utc::now()
+}
+
 /// Build the provider-neutral [`LocalRunEvent`] from the harness report — formatting the f64
 /// money figures to clean decimal strings (never f64 money in the FOCUS row).
 fn report_to_local_event(report: &LocalRunReport) -> LocalRunEvent {
     LocalRunEvent {
-        timestamp: chrono::Utc::now(),
+        timestamp: bench_timestamp(),
         model: report.model.clone(),
         quant: report.quant.clone(),
         runtime_kind: report.runtime_kind.clone(),
@@ -152,4 +174,70 @@ fn money_string(value: f64) -> String {
     rust_decimal::Decimal::from_f64_retain(value)
         .map(|d| d.round_dp(10).normalize().to_string())
         .unwrap_or_else(|| "0".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bench_timestamp;
+    use std::sync::Mutex;
+
+    // `SOURCE_DATE_EPOCH` is process-global; serialize the env-mutating tests so they can't race.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// 2026-06-20T00:00:00Z — the gemma4 manifest `as_of`, the demo/benchmark pin (D5).
+    const AS_OF_EPOCH: i64 = 1_781_913_600;
+
+    #[test]
+    fn source_date_epoch_pins_the_bench_timestamp_byte_identically() {
+        let Ok(_guard) = ENV_LOCK.lock() else {
+            panic!("env lock poisoned")
+        };
+        // The lock serializes env mutation against the sibling test; nothing else in this
+        // binary reads SOURCE_DATE_EPOCH concurrently. (edition 2021: set_var is safe.)
+        std::env::set_var("SOURCE_DATE_EPOCH", AS_OF_EPOCH.to_string());
+
+        let first = bench_timestamp();
+        let second = bench_timestamp();
+        // Byte-identical across re-runs (the determinism guarantee the demo/benchmark goldens need).
+        assert_eq!(
+            first.to_rfc3339(),
+            second.to_rfc3339(),
+            "a fixed SOURCE_DATE_EPOCH must yield a byte-identical timestamp"
+        );
+        // And it equals the pinned epoch (whole-second UTC).
+        assert_eq!(first.timestamp(), AS_OF_EPOCH);
+        assert_eq!(first.to_rfc3339(), "2026-06-20T00:00:00+00:00");
+
+        std::env::remove_var("SOURCE_DATE_EPOCH");
+    }
+
+    #[test]
+    fn empty_or_invalid_source_date_epoch_falls_back_to_now_without_erroring() {
+        let Ok(_guard) = ENV_LOCK.lock() else {
+            panic!("env lock poisoned")
+        };
+        let before = chrono::Utc::now();
+
+        // Invalid (non-numeric) → fall back to now. (serialized by ENV_LOCK; edition 2021: safe.)
+        std::env::set_var("SOURCE_DATE_EPOCH", "not-an-epoch");
+        let invalid = bench_timestamp();
+
+        // Empty → fall back to now.
+        std::env::set_var("SOURCE_DATE_EPOCH", "");
+        let empty = bench_timestamp();
+
+        // Unset → fall back to now.
+        std::env::remove_var("SOURCE_DATE_EPOCH");
+        let unset = bench_timestamp();
+
+        let after = chrono::Utc::now();
+        // We don't assert an exact value (it's the wall clock), only that it parsed/ran and is
+        // bracketed by the surrounding `now()` reads — i.e. it really used the fallback.
+        for ts in [invalid, empty, unset] {
+            assert!(
+                ts >= before && ts <= after,
+                "an invalid/empty/unset SOURCE_DATE_EPOCH must fall back to Utc::now()"
+            );
+        }
+    }
 }
