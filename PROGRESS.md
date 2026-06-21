@@ -133,7 +133,7 @@ binary** (separate, loopback-only). FOCUS 1.2-in / 1.3-out extends `costroid-foc
 |---|---|---|
 | **A1** | HTTP API/web UI placement | **Separate `costroid-server` binary** (`apps/server`), never linked into `costroid`/`costroid-bar`. Uses the **blocking `tiny_http`** server (no `tokio`, sidesteps the async-runtime ban). Own reviewed per-binary allowlist `SERVER_ALLOWED` + a runtime **loopback-only** proof. CLI stays byte-for-byte no-network. **DONE** (scaffolded + gated). |
 | **A2** | Local inference | **Subprocess** to user-installed `llama.cpp`/Ollama (CLI/stdout, **not** the localhost HTTP API — so `costroid-power` needs no HTTP client). `unsafe_code = "forbid"` rules out FFI bindings; subprocess adds zero heavy deps. Output contract (model id, quant, flags, tok/s, token counts) defined for M3 golden tests. **LOCKED** (no dep needed). |
-| **A3** | Web-UI sub-stack | **Maud + htmx + uPlot** (server-rendered, no WASM toolchain, MSRV-safe). Maud/rust-embed are Rust deps (spiked clean); htmx/uPlot are **vendored JS assets** (license-only). Leptos/Dioxus→WASM only if a richer SPA is later required. **LOCKED** (deps spiked; integration = M5). |
+| **A3** | Web-UI sub-stack | **Maud + htmx + uPlot** (server-rendered, no WASM toolchain, MSRV-safe). Maud/rust-embed are Rust deps (spiked clean); htmx/uPlot are **vendored JS assets** (license-only). Leptos/Dioxus→WASM only if a richer SPA is later required. ~~**LOCKED** (deps spiked; integration = M5).~~ **SUPERSEDED at M5:** the offline build cannot fetch the htmx/uPlot upstreams, so M5 ships **server-rendered HTML (tables + inline SVG, no JS) + an `include_str!` first-party stylesheet** — same guarantees; `maud`/`rust-embed`/htmx/uPlot **deferred, not dropped** (swap-in additive — see §6.11 / `docs/ARCHITECTURE.md` §10). |
 | **A4** | Per-crate MSRV | `costroid-{focus,core,providers,config}` + CLI stay **1.88**; `apps/bar` stays **1.92**. `costroid-power`/`costroid-server` **inherit 1.88** today (their M0 deps build on 1.88); each may declare its own higher `rust-version` later if a heavy dep demands it. **DONE.** |
 | **A5** | Storage | **DuckDB REJECTED by the M0 spike** (see B). Adopt the **pre-approved SQLite fallback (R11)**: `rusqlite` (bundled `libsqlite3-sys`). To protect core's 1.88 MSRV + publish ladder, the store lands **behind a feature / in a dedicated crate** at M1, not unconditionally in `costroid-core`. **DECIDED** (integration = M1). |
 
@@ -148,7 +148,7 @@ per-target graph resolution (offline, all 6 shipped targets), MSRV 1.88 check, f
 |---|---|---|---|---|---|---|
 | **Server (`tiny_http`)** | ✅ ADOPT | `=0.12.0` (+ `ascii`, `chunked_transfer`, `httpdate`) | +4 over CLI | MIT, Apache-2.0, MIT/Apache-2.0 | ✅ builds | clean (only `tiny_http` itself — the reviewed inbound listener) |
 | **Web UI (`maud`+`rust-embed`)** | ✅ ADOPT | `maud=0.27.0`, `rust-embed=8.7.2` | 31 (combined w/ server) | MIT, Apache-2.0 OR MIT, Unlicense OR MIT, `(MIT OR Apache-2.0) AND Unicode-3.0` | ✅ builds | clean (no async/HTTP-client/TLS) |
-| **Chart lib (uPlot)** | ✅ ADOPT | vendored JS (M5) | 0 Rust deps | **MIT** (uPlot), htmx 0BSD/MIT | n/a | n/a (static asset, embedded via `rust-embed`) |
+| **Chart lib (uPlot)** | ~~✅ ADOPT~~ **SUPERSEDED at M5** | ~~vendored JS (M5)~~ → none shipped | 0 Rust deps | **MIT** (uPlot), htmx 0BSD/MIT | n/a | n/a — M5 ships **inline server-rendered SVG (no JS)** instead; uPlot **deferred, not dropped** (swap-in additive — see A3 / §6.11) |
 | **Inference path** | ✅ ADOPT (subprocess) | — (std::process) | 0 | — | n/a | n/a (no crate; no FFI per A2) |
 | **Storage — DuckDB** | ❌ **REJECT** | `1.10504.0` bundled | **268** | pulls **`webpki-roots` (CDLA-Permissive-2.0)** → not on allowlist | (compiles) | **FAILS:** graph contains `reqwest, hyper, hyper-util, hyper-rustls, tokio`; `libduckdb-sys` has a **build-dep on `reqwest`** (build fetches network) |
 | **Storage — SQLite (fallback)** | ✅ **ADOPT (R11)** | `rusqlite=0.37.0` (`libsqlite3-sys=0.35.0`, bundled) | **15** | MIT, MIT/Apache-2.0, Zlib | ✅ builds | clean |
@@ -338,6 +338,10 @@ flagship, all on the 128 GB APU. **License is clean** — Apache-2.0 (verified v
 - **Deviation flagged:** D2 chose vendored htmx + uPlot; the offline build cannot fetch them, so M5
   ships first-party embedded assets (server-rendered SVG + `include_str!` CSS) — same guarantees
   (embedded, zero CDN, offline, accessible). Swapping in the real libs is additive.
+- **Scope note (not an omission):** the break-even **web** view is intentionally **text + table only**
+  in M5 (the verdict sentence, the R6 sensitivity range, and the assumption stamp — never color-alone).
+  A static-SVG crossover plot is **deferred to M6** (the timeline + comparison views already ship inline
+  SVG, so the rendering primitive is in place — adding the plot is additive).
 - **Deliverable:** a coherent local app over the ledger. **Deciding test (green):** the loopback-only
   proof still passes with the real routes — `SERVER_ALLOWED` (the reviewed local-listen + local-SQLite
   subtrees) + a no-`costroid-power` negative assert + the `scripts/offline_acceptance.sh` real-serve
