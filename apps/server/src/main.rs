@@ -211,10 +211,9 @@ fn respond_for(url: &str, ledger: &Path) -> (u16, String, String) {
                 Err(message) => (500, text, message),
             }
         }
-        "/" => match views(ledger) {
-            Ok(views) => (200, html, web::index_html(&views)),
-            Err(message) => (500, text, message),
-        },
+        // The home page is fully static (nav + description) — no ledger read, so `/` can never 500
+        // on a corrupt ledger.
+        "/" => (200, html, web::index_html()),
         "/timeline" | "/comparison" | "/breakeven" => match views(ledger) {
             Ok(views) => {
                 if plain {

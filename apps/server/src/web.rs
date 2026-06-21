@@ -13,7 +13,7 @@
 //! (server-rendered SVG + `include_str!` CSS) — same guarantees (embedded, zero CDN, offline,
 //! accessible). Swapping in the real libs later is additive (files into `assets/` + `<script>`).
 
-use crate::data::{BreakevenView, ComparisonView, GroupSpend, TimelineBucket, TimelineView, Views};
+use crate::data::{BreakevenView, ComparisonView, GroupSpend, TimelineBucket, TimelineView};
 
 /// The first-party stylesheet, embedded in the binary (no external reference; works offline).
 pub const CSS: &str = include_str!("../assets/costroid.css");
@@ -109,7 +109,9 @@ fn to_f64(value: &str) -> f64 {
     value.parse::<f64>().unwrap_or(0.0)
 }
 
-pub fn index_html(_views: &Views) -> String {
+/// The home page is fully static (a nav + a description) — it reads nothing from the ledger, so the
+/// `/` route serves it without a ledger read (it cannot 500 on a corrupt ledger).
+pub fn index_html() -> String {
     let body = "<p class=\"muted\">Local-only views over your stored cost ledger.</p>\
         <ul>\
         <li><a href=\"/timeline\">Timeline</a> — spend over time, by tool/model</li>\
@@ -455,7 +457,7 @@ mod tests {
         rows
     }
 
-    fn views() -> Views {
+    fn views() -> data::Views {
         let Ok(views) = data::build_views(&local_rows(), &Scenario::default()) else {
             panic!("views build");
         };
@@ -468,7 +470,7 @@ mod tests {
     fn served_markup_references_only_embedded_same_origin_assets() {
         let views = views();
         let pages = [
-            index_html(&views),
+            index_html(),
             timeline_html(&views.timeline),
             comparison_html(&views.comparison),
             breakeven_html(&views.breakeven),
@@ -492,6 +494,12 @@ mod tests {
             assert!(!page.contains("http://"), "no http scheme:\n{page}");
             assert!(!page.contains("https://"), "no https scheme:\n{page}");
             assert!(!page.contains("//cdn"), "no CDN reference:\n{page}");
+            // The no-JS guarantee is fail-closed: NO `<script>` tag is ever served (the views are
+            // server-rendered tables + inline SVG — nothing to execute).
+            assert!(
+                !page.to_lowercase().contains("<script"),
+                "the views ship no JavaScript (no <script> tag):\n{page}"
+            );
         }
         // The CSS is non-empty and carries no external url() reference.
         assert!(!CSS.is_empty(), "the embedded CSS is non-empty");
