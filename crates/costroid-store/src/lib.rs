@@ -126,6 +126,26 @@ pub const USAGE_ROWS_COLUMNS: &[&str] = &[
     "x_measurement_mode",
 ];
 
+/// Substrings that no R4-safe metadata column name — or, by extension, any field name a
+/// downstream consumer (the SQLite store, the loopback server's JSON/HTML views) serializes —
+/// may contain: every free-text-capable or content-bearing shape (R4, the Cardinal Rule). Checked
+/// case-insensitively. Promoted out of the store's test module (M5 T3) so the `costroid-server` R4
+/// test shares one source of truth rather than re-declaring the list.
+///
+/// (`"text"` also catches the SQLite `TEXT` type keyword, so callers checking a DDL string strip
+/// the type tokens first; callers checking real *column/field names* apply it verbatim.)
+pub const FORBIDDEN_SUBSTRINGS: &[&str] = &[
+    "description",
+    "resource",
+    "tags",
+    "content",
+    "prompt",
+    "completion",
+    "message",
+    "text", // catches `sku_price_details`-style free text *and* any *_text column
+    "sku_price_details",
+];
+
 /// `CREATE TABLE` DDL for the [`usage_rows`](USAGE_ROWS_TABLE) metadata-allowlist table.
 ///
 /// Exposed as a function so the fail-closed R4 schema test can read the exact DDL the
@@ -684,20 +704,6 @@ mod tests {
     use super::*;
     use chrono::{LocalResult, TimeZone};
     use costroid_focus::DEFAULT_BILLING_CURRENCY;
-
-    /// Substrings no `usage_rows` column name (or the DDL at large) may contain — every
-    /// free-text-capable or content-bearing shape (R4). Checked case-insensitively.
-    const FORBIDDEN_SUBSTRINGS: &[&str] = &[
-        "description",
-        "resource",
-        "tags",
-        "content",
-        "prompt",
-        "completion",
-        "message",
-        "text", // catches `sku_price_details`-style free text *and* any *_text column
-        "sku_price_details",
-    ];
 
     fn record(lane: LedgerLane, billed_cents: i64) -> FocusRecord {
         let timestamp = match Utc.with_ymd_and_hms(2026, 1, 15, 12, 34, 56) {

@@ -325,25 +325,49 @@ const BAR_ACCESSKIT_ALLOWED: &[&str] = &[
 
 /// Every crate the local HTTP/web-UI binary (`costroid-server`) adds to its resolved graph over
 /// the default CLI build, unioned across all shipped targets (`costroid-server` itself excluded —
-/// it is the root). This is the reviewed **local-listen subtree**: `tiny_http` (the blocking,
-/// loopback-bound HTTP *server*) and its three pure-Rust transitives (`ascii`, `chunked_transfer`,
-/// `httpdate`).
+/// it is the root). Two reviewed subtrees, all LOCAL:
+///   1. the **inbound local-listen subtree** — `tiny_http` (the blocking, loopback-bound HTTP
+///      *server*) and its pure-Rust transitives (`ascii`, `chunked_transfer`, `httpdate`); and
+///   2. the **local-SQLite ledger subtree** (M5 T3: the server reads the stored 3-lane ledger via
+///      `costroid-store`) — `costroid-store` + `rusqlite` + the bundled `libsqlite3-sys` + its `cc`
+///      build toolchain (`cc`/`jobserver`/`shlex`/`find-msvc-tools`) + system-lib discovery
+///      (`pkg-config`/`vcpkg`) + rusqlite's pure-Rust support crates (`hashlink`/`fallible-iterator`/
+///      `fallible-streaming-iterator`). This is exactly the reviewed [`STORE_ALLOWED`] set — SQLite
+///      is an embedded, in-process engine that links NO network/TLS/telemetry/async-runtime crate.
 ///
 /// `tiny_http` is in [`ALWAYS_FORBIDDEN_CRATES`] because the CLI/bar must carry no HTTP server;
 /// it is admitted **only here**, for the server binary, and it is an **inbound** local listener —
-/// NOT an outbound client. The server binds `127.0.0.1` only and makes no `connect()` egress; that
-/// behavior is proven at RUNTIME by the loopback-only check in `scripts/offline_acceptance.sh`
-/// (allow a loopback bind; forbid any non-loopback bind/connect), turning this static allowlist
-/// into a behavioral no-egress guarantee.
+/// NOT an outbound client. The server binds `127.0.0.1` only, makes no `connect()` egress, and
+/// links **no `costroid-power`** (no `core→power` edge — asserted negatively in the server test);
+/// the no-egress behavior is proven at RUNTIME by the loopback-only check in
+/// `scripts/offline_acceptance.sh` (allow a loopback bind; forbid any non-loopback bind/connect),
+/// turning this static allowlist into a behavioral no-egress guarantee.
 ///
-/// It is a **subset-allowlist**, exactly like [`CONNECT_ALLOWED`] / [`BAR_ACCESSKIT_ALLOWED`]: the
-/// server test asserts the real server-delta is a SUBSET of it, so a future dependency bump that
-/// pulls a NEW crate (an outbound HTTP/TLS/telemetry path, or a `tiny_http` feature that adds an
-/// SSL/socket crate) fails the gate until a human reviews it. Every genuine outbound
-/// network/TLS/telemetry crate is absent from this list. Regenerate after a deliberate dependency
-/// change with the `#[ignore]` `print_server_delta` test:
+/// It is a **subset-allowlist**, exactly like [`CONNECT_ALLOWED`] / [`STORE_ALLOWED`] /
+/// [`BAR_ACCESSKIT_ALLOWED`]: the server test asserts the real server-delta is a SUBSET of it, so a
+/// future dependency bump that pulls a NEW crate (an outbound HTTP/TLS/telemetry path, or a
+/// `tiny_http`/rusqlite feature that adds an SSL/socket crate) fails the gate until a human reviews
+/// it. Every genuine outbound network/TLS/telemetry crate is absent from this list. Regenerate
+/// after a deliberate dependency change with the `#[ignore]` `print_server_delta` test:
 /// `cargo test -p costroid --test offline print_server_delta -- --ignored --nocapture`.
-const SERVER_ALLOWED: &[&str] = &["ascii", "chunked_transfer", "httpdate", "tiny_http"];
+const SERVER_ALLOWED: &[&str] = &[
+    "ascii",
+    "cc", // also in STORE_ALLOWED — the bundled-SQLite `cc` build toolchain.
+    "chunked_transfer",
+    "costroid-store", // the local-SQLite ledger crate (the server's read source, M5 T3).
+    "fallible-iterator",
+    "fallible-streaming-iterator",
+    "find-msvc-tools",
+    "hashlink",
+    "httpdate",
+    "jobserver",
+    "libsqlite3-sys",
+    "pkg-config",
+    "rusqlite",
+    "shlex",
+    "tiny_http",
+    "vcpkg",
+];
 
 /// Every crate the CLI's off-by-default `store` feature adds to its resolved graph over the
 /// default CLI build, unioned across all shipped targets (`costroid-store` is the gated home —
@@ -938,6 +962,15 @@ fn server_build_admits_only_the_reviewed_local_listen_subtree() {
         "the `{SERVER_CRATE}` build must not link `{CONNECT_CRATE}` — the local HTTP/web-UI \
          server is local-only (it reads the ledger via `costroid-core`), so it links no \
          network/keychain code."
+    );
+
+    // No `core→power` edge (M5 D3): the server reads the local energy rate from the STORED ledger
+    // (`costroid_core::local_energy_only_rate`), never a live `costroid-power` estimate — so the
+    // local-inference engine (and its subprocess/measurement surface) must be absent from the graph.
+    assert!(
+        !names.contains("costroid-power"),
+        "the `{SERVER_CRATE}` build must not link `costroid-power` — the server has no `core→power` \
+         edge; it derives the local energy rate from stored `local_inference` rows (M5 D3)."
     );
 
     // Every outbound network/TLS/telemetry/async-runtime crate is forbidden EXCEPT the reviewed
