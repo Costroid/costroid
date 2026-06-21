@@ -16,7 +16,22 @@
 > independently reviewed at the milestone boundary (APPROVED, no high/medium), re-verified on a
 > clean build, merged. Detail: **[`docs/M2-PLAN.md`](docs/M2-PLAN.md)**.
 >
-> **Current milestone: M3a (dual-mode local-inference engine, Gemma 4 family) — ✅ BUILT
+> **M3a (dual-mode local-inference engine, Gemma 4 family) — ✅ MERGED to `main`** (2026-06-20;
+> `costroid-next` rebased onto it). M3b (a real captured joules/token, wall-meter-primary) remains a
+> separate human handoff and does **not** block M4.
+>
+> **Current milestone: M4 (break-even + scenario engine) — ✅ BUILT (T0–T9); ⛔ STOP at the
+> milestone boundary for the coordinator's fresh-eyes review before any merge to `main`.** Executed
+> end-to-end on the per-task dev-loop (build → independent adversarial review → fold-in → commit),
+> each task green: calendar-fixed amortization (D1 — a real crossover + a "never"/"infeasible"
+> outcome), the **energy-only** marginal `e` (never `local_cost_per_1m` — no capex double-count),
+> the `Infeasible` feasibility ceiling (MED1), the one break-even lifetime rule (MED3), a sensitivity
+> **band** + full assumption stamp (R6/R8), the reference-only DeepSWE-Bench `$/task` overlay (D3),
+> the pure `costroid-core::breakeven` engine (no `core→power` edge) + the `costroid breakeven` CLI
+> (`--plain`) behind the off-by-default `power` feature. Detail:
+> **[`docs/M4-PLAN.md`](docs/M4-PLAN.md)**. The superseded M3a-at-boundary record follows for history.
+>
+> **(superseded) M3a — ✅ BUILT
 > (T0–T13); ⛔ STOP at the milestone boundary for the human's fresh-eyes review before any
 > merge to `main`.** D1–D5 signed off (all recommended); every task landed on the per-task
 > dev-loop (build → independent adversarial review → fold-in → commit), each green; the
@@ -277,7 +292,16 @@ flagship, all on the 128 GB APU. **License is clean** — Apache-2.0 (verified v
 > (name collision only with the *DeepSWE-Preview* model, which is no longer in our local set — unrelated;
 > do not conflate).
 
-### M4 — Break-even + scenario engine
+### M4 — Break-even + scenario engine — ✅ BUILT (T0–T9), ⛔ at the milestone boundary
+- **Status:** built on `costroid-next` (T0–T9) per [`docs/M4-PLAN.md`](docs/M4-PLAN.md), each task on
+  the per-task dev-loop with an independent adversarial review (all APPROVE; nits folded in).
+  Highlights: calendar-fixed amortization (D1 — a real crossover + a "never" case); the **energy-only**
+  marginal `e = energy_cost/total_tokens` (never `local_cost_per_1m`, which would double-count the
+  capex); the `Infeasible` feasibility ceiling (MED1); the one break-even lifetime rule (MED3); a
+  sensitivity **band** + full assumption stamp (R6/R8); the DeepSWE-Bench `$/task` overlay as a
+  labeled, dated reference (never the crossover math, D3); the pure `costroid-core::breakeven` engine
+  (no `core→power` edge) + the `costroid breakeven` CLI (`--plain`) behind the off-by-default
+  `power` feature. ⛔ Awaiting the coordinator's milestone-boundary review before merge.
 - Workload-profile crossover vs named cloud prices (OpenAI/Anthropic/Bedrock), both directions, incl.
   amortized hardware + utilization; scenario inputs (mix, utilization, electricity rate, depreciation,
   pricing-snapshot date). Present **ranges + methodology, never a single hero number** (R6).
@@ -351,7 +375,12 @@ starting **M1**.
   3-lane merged ledger validated. Reviewed per-task + mid-point + a final boundary sweep (all
   APPROVE). See [`docs/M3-PLAN.md`](docs/M3-PLAN.md).
 - [ ] **M3b** — native-Linux sysfs `power1_average` confirmation + captured joules/token *(human)*.
-- [ ] **M4** — break-even + scenario engine (incl. "never" case); DeepSWE-Bench dated snapshot wired.
+- [x] **M4** — break-even + scenario engine (incl. "never" case); DeepSWE-Bench dated snapshot wired.
+  **✅ BUILT (T0–T9); ⛔ at the milestone boundary awaiting the coordinator's review before merge.**
+  Calendar-fixed amortization (D1) → a real crossover + a "never"/"infeasible" outcome; energy-only
+  `e`; one-lifetime rule (MED3); sensitivity band + assumption stamp (R6/R8); DeepSWE overlay is
+  reference-only (D3); pure `costroid-core::breakeven` (no `core→power` edge) + `costroid breakeven`
+  CLI (`--plain`) behind the off-by-default `power` feature. See [`docs/M4-PLAN.md`](docs/M4-PLAN.md).
 - [ ] **M5** — CLI/TUI + tiny_http local API + 3-view embedded web UI (loopback-only).
 - [ ] **M6** — tests/CI/datasets/docs/demo/packaging; benchmark dataset + writeup; ARCHITECTURE reconciled.
 

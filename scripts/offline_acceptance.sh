@@ -434,6 +434,16 @@ elif [ "${#OUT}" -lt 10 ] || ! grep -qiF "local_inference" <<<"$OUT"; then
   echo "FAIL (unexpected bench output: ${OUT:0:80})"; fail=1
 else echo "ok (engine linked, estimated bench, no network)"; fi
 
+# The M4 break-even path (pure-compute: estimated harness + the bundled pricing catalog + the
+# read-only config; no subprocess, no `core->power` edge) must also make NO network call.
+printf '  %-52s' "power build: breakeven leaks no network"
+rc=0; iso_run "$power_bin" breakeven --plain --tokens-per-day 5000000 || rc=$?
+if [ "$rc" -eq 90 ]; then echo "NETWORK VIOLATION"; fail=1
+elif [ "$rc" -ne 0 ]; then echo "FAIL (exit $rc)"; fail=1
+elif [ "${#OUT}" -lt 10 ] || ! grep -qiF "break" <<<"$OUT"; then
+  echo "FAIL (unexpected breakeven output: ${OUT:0:80})"; fail=1
+else echo "ok (crossover computed, no network)"; fi
+
 # ============================================================================
 # costroid-bar — the taskbar binary's runtime no-network proof (T21)
 # ============================================================================
