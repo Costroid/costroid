@@ -64,17 +64,27 @@ jobs:
           cargo test -p costroid --features power
           cargo test -p costroid-power --features power
 
-  # Cross-platform build gate (⚑ Readiness gate / §6.6 / R2). The repo's full fmt+clippy+test
-  # runs on Linux (the `pre-pr` job above); the existing distribution already proves macOS/Windows
-  # *release* builds via cargo-dist. This job adds a per-push macOS + Windows **build** gate so the
-  # workspace's cross-platform buildability (including the new `costroid-server`/`costroid-power`
-  # crates and all test code, via `--all-targets`) is verified on every change, not only at release.
-  # `costroid` links no system libs; `costroid-connect`'s keychain uses the OS-native backend
-  # (security-framework on macOS, Windows-native on Windows — no libdbus/GTK apt deps needed); the
-  # bar's GTK tray is Linux-target-gated, so it compiles cleanly here too. Full cross-OS clippy +
-  # test *execution* (vs the Linux job's) is deferred to M6 hardening.
+  # Cross-platform TEST-EXECUTION gate (⚑ Readiness gate / §6.6 / R2 — promoted from build-only
+  # in M6 T3 / D4). The repo's full fmt+clippy+test runs on Linux (the `pre-pr` job above); the
+  # existing distribution already proves macOS/Windows *release* builds via cargo-dist. This job
+  # now RUNS the test suites on macOS + Windows (not just `cargo build`), so the workspace's
+  # cross-platform behavior — including the new `costroid-server`/`costroid-power` crates — is
+  # verified on every change, not only at release. `costroid` links no system libs;
+  # `costroid-connect`'s keychain uses the OS-native backend (security-framework on macOS,
+  # Windows-native on Windows — no libdbus/GTK apt deps needed) and is kept safe in tests by the
+  # process-global mock + the M6 T3 enforced mock invariant (no test reaches a runner's real OS
+  # keychain — see costroid-connect::test_support); the bar's GTK tray is Linux-target-gated, so
+  # it compiles cleanly here too.
+  #
+  # D4 scope (exactly): `cargo test --workspace`, `cargo test -p costroid --features power`,
+  # `cargo test -p costroid-server`, and the portable static `--test offline` dependency proof.
+  # Linux-only stays Linux-only (the strace dynamic offline-acceptance harness, the FOCUS
+  # validator, cargo-deny, and the MSRV check are toolchain/OS-pinned for determinism and do not
+  # move here). On macOS, which is already provisioned, a `make demo` smoke leg also proves the
+  # one-command deterministic demo runs + re-runs byte-identically (D2/T2); Windows has no `make`,
+  # so the demo is not run there (the README documents the raw `cargo run` equivalents).
   cross-platform:
-    name: cross-platform build (${{ matrix.os }})
+    name: cross-platform test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -87,15 +97,33 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build workspace (all targets, incl. test code)
-        run: cargo build --workspace --all-targets
+      - name: Test workspace
+        run: cargo test --workspace
 
-      # The `power` feature gates the `costroid bench` subcommand (M3) + the `costroid-power`
-      # engine's cfg paths off the default build, so `--workspace` above never compiles them.
-      # Build them here too, on macOS + Windows, so the non-Linux "unavailable" sysfs stub + the
-      # cross-OS bench/harness/LHM-parser code stay green everywhere.
-      - name: Build power feature (cross-OS)
-        run: cargo build -p costroid --features power --all-targets
+      # The `power` feature gates the `costroid bench`/`breakeven` subcommands (M3) + the
+      # `costroid-power` engine's cfg paths off the default build, so `--workspace` above never
+      # compiles them. Run them here too, on macOS + Windows, so the non-Linux "unavailable" sysfs
+      # stub + the cross-OS bench/harness/LHM-parser code stay green everywhere.
+      - name: Test power feature (cross-OS)
+        run: cargo test -p costroid --features power
+
+      # The loopback-only local web/API server (M5): exercise its tests cross-OS.
+      - name: Test server (cross-OS)
+        run: cargo test -p costroid-server
+
+      # The static no-network/no-telemetry dependency proof is portable (no strace) — it asserts
+      # no networking/telemetry crate is even linked. Run it on every OS so the offline guarantee
+      # is proven cross-platform, not only on the Linux offline-acceptance job.
+      - name: Static no-network/no-telemetry dependency proof (portable)
+        run: cargo test -p costroid --test offline -- --nocapture
+
+      # macOS-only (it has `make`; Windows does not): prove the one-command deterministic demo
+      # runs end-to-end and re-runs byte-identically (D2/T2). `make demo-verify` runs `make demo`
+      # twice and diffs the merged FOCUS-1.3 ledger, failing on any drift — exit 0 + byte-identical
+      # re-run in one target. The demo is fully offline + synthetic + hardware-free.
+      - name: make demo smoke (macOS only — byte-identical re-run)
+        if: runner.os == 'macOS'
+        run: make demo-verify
 
   msrv:
     name: MSRV (Rust 1.88)
