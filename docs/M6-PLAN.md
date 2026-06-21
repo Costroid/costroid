@@ -1,16 +1,61 @@
 # M6 — Quality, docs, data, demo, packaging (the FINAL milestone)
 
-> **Status:** PLAN SYNTHESIZED 2026-06-21 — ⛔ awaiting the coordinator's **pre-coding plan
-> review** + the **D1–D4 sign-off** below. **No M6 code is written until then** (CLAUDE.md "ask
-> first"). Scope canon: [`docs/COSTROID-NEXT.md`](COSTROID-NEXT.md) §6.6–6.12. **Deciding test for
-> the milestone = the §6.12 Definition-of-Done checklist** (closed against, never self-judged by
-> prose). Branch `costroid-next` off `main` @ `631b5a4` (M0–M5 merged, PRs #2–#6); tree clean.
+> **Status:** **Rev 2 (2026-06-21)** — the coordinator's pre-coding plan review (sound; 0 blockers /
+> 1 high / 4 med / ~12 low) is folded in (see the Rev-2 changelog below). **D1–D4 SIGNED OFF** at the
+> recommended defaults; **one new CLI-surface item (D5) is SURFACED for sign-off** (the bench
+> determinism source). ⛔ Re-committed docs-only — **awaiting the coordinator's confirm of these
+> deltas + the D5 sign-off before any T1+ code.** Scope canon: [`docs/COSTROID-NEXT.md`](COSTROID-NEXT.md)
+> §6.6–6.12. **Deciding test for the milestone = the §6.12 Definition-of-Done checklist** (closed
+> against, never self-judged by prose). Branch `costroid-next` off `main` @ `631b5a4` (M0–M5 merged,
+> PRs #2–#6); tree clean.
 
 M6 is the **release-ready** milestone: it adds no new product capability — it hardens what M1–M5
 built (cross-OS test execution, professional docs, bundled demo data, a deterministic demo, and the
 release flip for the three new crates) and **closes the whole project against §6.12**. The actual
 release **tag/publish stays a human step** (tag-triggered, see [`RELEASING.md`](../RELEASING.md));
 M6 makes everything ready for that human to pull the trigger.
+
+---
+
+## Rev 2 changelog — coordinator's pre-coding review, folded in (2026-06-21)
+
+**HIGH**
+- **PKG-1 — publish deciding-test is now the WORKSPACE form.** T9 + RELEASING.md no longer claim a
+  per-package `cargo publish --dry-run -p <crate>` as the *runnable pre-publish gate* — that cannot
+  run before the siblings are on crates.io and the published `focus 0.6.0` has drifted from local (M1
+  added fields with no bump). The runnable gate is `cargo package --workspace` /
+  `cargo publish --dry-run --workspace`; `cargo package -p <crate> --list` is kept **only** as the
+  bundled-assets-presence check. Real per-package publish stays the **human ladder at the bumped
+  version** — and **the version bump is what makes the ladder clean** (re-trues `focus`).
+
+**MED**
+- **(M1) bench determinism is a CLI-surface change → SURFACED as D5.** `apps/cli/src/bench.rs:128`
+  stamps `chrono::Utc::now()`; a deterministic demo/benchmark golden needs a fixed clock. Scoped a
+  sub-task to honor `SOURCE_DATE_EPOCH` (default → the profile `as_of`), pin the T2/T8 goldens, and
+  assert a **byte-identical re-run**. Because it changes observable CLI behavior, it is **D5 (sign-off
+  required)**, not an internal detail.
+- **(M2) `make demo` cross-OS** — scoped Linux/macOS via `make` (+ a macOS CI smoke leg, since D4
+  already tests macOS), with the **raw `cargo` equivalents documented for Windows** (no `make`).
+- **(M3) `POST-M3B-REFRESH.md` is a closed file-by-file checklist** — each file + `.sha256` regen +
+  `as_of` bump + integrity re-pass, guarded by a **drift-guard test** (T8).
+- **(M4) doc deciding-tests are named** — a docs-presence test + a `scripts/check_doc_stamps.sh`
+  scanning against **one canonical stamp constant**; T5's e-formula is a **real cross-check** (not a
+  prose claim); plus the **INVERSE guard**: every committed FOCUS sample/benchmark/demo row asserts
+  `x_MeasurementMode == "estimated"`. Hazard 4's "same as M3a" wording corrected.
+
+**LOW (batch, all folded into the tasks below):** PKG-2 publish only at the bumped version · PKG-3
+reserve the three crate names (RELEASING note) · `apps/server` `[package.metadata.dist]` =
+`installers = []` + the explicit 5 targets (mirror bar) + assert no npm/homebrew/musl artifact +
+`dist generate --check` · the keychain guard is **non-optional** + a written mock invariant + T0
+audit wording fixed · `check_benchmarks.sh` rooted at `benchmarks/` · the demo runs CLI-only under
+the `assert_no_inet` harness · **omit** competitor star counts · a one-line SBOM/signing defer ·
+a dedicated `samples/` conformance leg with a row-count guard · `measurement_mode` recorded in the
+manifest · a publish-ladder **topo-sort assertion**.
+
+**REFUTED (coordinator withdrew / confirmed non-issues — no action):** the D2 static-hero
+suggestion and the D3 "server needs its own `limitations.md` caveat" suggestion (both withdrawn);
+bare `cargo test --workspace` **is** keychain-safe (the guard is added as defense-in-depth, not a
+fix); **DoD-9 does not govern doc Mermaid/GIF** (the DoD-9 row no longer cites T4).
 
 ---
 
@@ -27,7 +72,9 @@ Read the repo; **the code wins over any doc**. Findings that shape this plan:
 
 **CI** ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) — 7 jobs: `pre-pr` (Linux fmt/clippy/test + connect + power feature legs), **`cross-platform` (macOS+Windows BUILD-ONLY — the §6.6 hardening target)**, `msrv` (1.88), `focus-conformance` (validator + pricing/power integrity sha256), `license` (cargo-deny offline), `advisories` (cargo-deny online), `offline-acceptance` (Linux strace static + dynamic). The `cross-platform` job header already names M6 as where test *execution* lands.
 
-**Release** ([`RELEASING.md`](../RELEASING.md) + [`dist-workspace.toml`](../dist-workspace.toml)): cargo-dist 0.32, `precise-builds = true` (only `-p costroid` shipped — keeps libdbus off release runners), SHA-256 + keyless provenance, shell/PS/Homebrew/npm + crates.io for the CLI, archives + crates.io for the bar (no npm/Homebrew/musl). Publish ladder today: `focus → providers → core → config → connect → costroid → costroid-bar`. **Connect tests use a keyring MOCK** (`install_mock_keychain`); the real `keyring::Entry` path is `connect`-feature-gated → the default `cargo test --workspace` is keychain-safe cross-OS.
+**Release** ([`RELEASING.md`](../RELEASING.md) + [`dist-workspace.toml`](../dist-workspace.toml)): cargo-dist 0.32, `precise-builds = true` (only `-p costroid` shipped — keeps libdbus off release runners), SHA-256 + keyless provenance, shell/PS/Homebrew/npm + crates.io for the CLI, archives + crates.io for the bar (no npm/Homebrew/musl). Publish ladder today: `focus → providers → core → config → connect → costroid → costroid-bar`. The three new members are unpublished, and **the published `focus 0.6.0` has drifted from local** (M1 added fields with no version bump) — so the version bump at release is what re-trues the ladder (PKG-1/PKG-2).
+
+**Keychain invariant (the D4 cross-OS guard).** Bare `cargo test --workspace` is keychain-safe: every `costroid-connect` test that reaches `keyring` first installs the process-global **mock** (`install_mock_keychain`), and the real `keyring::Entry` (the `CredentialStore`) is only constructed under the `connect`/`connect-test-support` features + the runtime `connect` action — none of which the default workspace test exercises. T3 makes this a **written, enforced invariant** (a non-optional guard), not an incidental fact, so a future test that constructs a real `Entry` without the mock fails loudly rather than touching a CI runner's OS keychain.
 
 **Fixtures** (`fixtures/`, the existing discipline — synthetic, never real user data): `claude-code/`, `codex/`, `cursor/`, `discovery/`, `focus/v1.2/` (incl. `synthetic-aws-v12*.csv`), `local/` (llama/ollama/LHM goldens), `wsl-windows/`. M3 data artifacts: `crates/costroid-power/{profiles/hardware.v1.json,models/gemma4.v1.json}` each with a `.sha256` sidecar + a fail-closed `check_power_profiles.sh` integrity gate.
 
@@ -57,6 +104,23 @@ The human signed off all four at the recommended default; the plan below builds 
 - **D3 — Packaging → ✅ MIRROR `apps/bar`.** `costroid-power` + `costroid-store` = crates.io libraries (`publish = true`, no dist archives). `costroid-server` = binary → archives + crates.io (no npm/Homebrew/musl), `publish = true` + `dist = true` (archive installers only). **Publish ladder:** `focus → providers → core → config → connect → store → power → costroid → server → bar`. *(Drives T9.)*
 - **D4 — Cross-OS test-execution scope → ✅ CORE + POWER + SERVER + OFFLINE-STATIC.** macOS + Windows run `cargo test --workspace` + `cargo test -p costroid --features power` + `cargo test -p costroid-server` + the static `--test offline` dependency proof. **Linux-only stays:** the strace dynamic offline-acceptance harness, the FOCUS-validator conformance, `cargo deny`, the MSRV check (toolchain/OS-pinned for determinism). *(Drives T3.)*
 
+### D5 — ⏳ SURFACED for sign-off (new in Rev 2): the bench timestamp source
+
+`costroid bench` currently stamps each local-run row with `chrono::Utc::now()`
+([`apps/cli/src/bench.rs:128`](../apps/cli/src/bench.rs#L128)). A **deterministic** `make demo` (T2) +
+benchmark goldens (T8) — and the "byte-identical re-run" deciding tests — require a **fixed clock**.
+This changes observable CLI behavior, so it needs the human's sign-off (CLAUDE.md: "changing the
+public CLI surface").
+
+- **Recommend:** honor the de-facto reproducible-builds env var **`SOURCE_DATE_EPOCH`** when set
+  (the row timestamp = that epoch); otherwise keep `Utc::now()` unchanged. The demo/benchmark scripts
+  export `SOURCE_DATE_EPOCH` derived from the profile/manifest `as_of` (never "now"), so committed
+  artifacts are byte-stable while the default interactive `bench` is untouched. No new flag; one
+  env-var read; documented in `--help` + methodology.
+- **Alt A:** a `--as-of <RFC3339>` flag instead of the env var (explicit, but adds CLI surface).
+- **Alt B:** keep `Utc::now()` and **strip/normalize** the timestamp in the demo/golden comparison
+  only (no CLI change, but the goldens can't assert the real stamped row verbatim).
+
 ---
 
 ## Ordered task breakdown (T0..T11) — each with its deciding test + §6.12 DoD mapping
@@ -72,39 +136,44 @@ The human signed off all four at the recommended default; the plan below builds 
 
 ### T1 — Synthetic sample datasets (§6.7)
 - **Do:** a curated, discoverable `samples/` tree (distinct from CI `fixtures/`, but same synthetic discipline) the demo + docs read: **(a)** a synthetic local-usage ledger (a `costroid-store` SQLite DB or the JSONL the importer reads), **(b)** a demo-grade synthetic AWS FOCUS v1.2 export, **(c)** a benchmark pack (synthetic `bench` outputs keyed to the Gemma 4 manifest). Each carries a `README.md` stamping it synthetic + estimated. No real data; no weights.
-- **Deciding test:** a Rust test (in `costroid-core` or an `apps/server`/`apps/cli` integration test) loads each sample and asserts it parses + round-trips to **FOCUS 1.3 (schema-valid)**; the conformance gate gains a `samples/` leg (or reuses the existing merged-ledger leg). Offline, no hardware. **→ DoD-7, DoD-3 (regression).**
+- **Deciding test:** a Rust test (in `costroid-core` or an `apps/server`/`apps/cli` integration test) loads each sample and asserts it parses + round-trips to **FOCUS 1.3 (schema-valid)**; a **dedicated `samples/` conformance leg** is added to `scripts/focus_conformance.sh` (not folded into the merged-ledger leg) with a **row-count guard** (the leg fails if the export is empty/short, so it can't pass vacuously). The **INVERSE honesty guard** (shared with T8): every local-lane row in every committed sample asserts `x_MeasurementMode == "estimated"` (`MeasurementMode::Estimated`) — no committed artifact may claim a measured number pre-M3b. Offline, no hardware. **→ DoD-7, DoD-3 (regression), DoD-8 (R4 metadata-only).**
 
 ### T2 — `make demo` / one-command deterministic path (§6.9)
-- **Do:** a top-level `Makefile` (+ a thin cross-platform fallback script) chaining **import → bench (estimated) → (synthetic power capture) → breakeven/compare → export FOCUS** over the T1 samples, `--features power`, **fully offline, no hardware**, deterministic output. A `make demo` README quickstart line.
-- **Deciding test:** a CI leg (Linux, inside `offline-acceptance` or a new step) runs the demo end-to-end and asserts **exit 0 + the expected FOCUS-1.3 artifact**; the CLI legs emit **no socket** (the existing static `offline` + strace harness still green). **→ DoD-7, DoD-10 (regression).**
+- **Do:** a top-level `Makefile` (Linux + macOS — `make` is POSIX) chaining **import → bench (estimated) → breakeven/compare → export FOCUS** over the T1 samples, `--features power`, **fully offline, no hardware**, deterministic output. **Windows:** no `make` — the README documents the **raw `cargo run` equivalents** (the same ordered commands) so the demo path exists on every OS. Determinism comes from **D5** (the scripts export `SOURCE_DATE_EPOCH` from the sample/profile `as_of`, never "now"), so the exported FOCUS artifact is **byte-identical across re-runs**.
+- **Deciding test:** an `offline-acceptance` leg (Linux) runs `make demo` end-to-end **CLI-only under the `assert_no_inet` harness** and asserts **exit 0 + a byte-identical FOCUS-1.3 export on a second run**; a **macOS CI smoke leg** runs the same `make demo` (D4 already provisions macOS). The CLI legs emit **no socket** (the static `--test offline` + strace harness stay green). **→ DoD-7, DoD-10 (regression).**
 
 ### T3 — CI: cross-OS test *execution* (§6.6)
-- **Do:** promote the `cross-platform` job from `cargo build` to **`cargo test`** per D4: `cargo test --workspace`, `cargo test -p costroid --features power`, `cargo test -p costroid-server`, `cargo test -p costroid --test offline` on macOS + Windows. **Confirm** the default workspace test never touches a real OS keychain on the runners (connect tests are mock-backed + feature-gated — verify, add a guard if needed). **Keep Linux-only:** strace offline-acceptance, FOCUS conformance, cargo-deny, MSRV (unchanged).
-- **Deciding test:** the CI matrix is **green with test execution on all three OSes**; the Linux-only gates are byte-unchanged; no keychain prompt/hang on mac/win. **→ DoD-2, DoD-1 (regression).**
+- **Do:** promote the `cross-platform` job from `cargo build` to **`cargo test`** per D4: `cargo test --workspace`, `cargo test -p costroid --features power`, `cargo test -p costroid-server`, `cargo test -p costroid --test offline` on macOS + Windows. Add a **non-optional keychain guard** (not "if needed"): a test/assertion + a **written mock invariant** (a doc-comment in `costroid-connect::test_support` that any keyring-touching test MUST `install_mock_keychain` first) so a future real-`Entry` test fails loudly instead of hitting a runner's OS keychain. **Keep Linux-only:** strace offline-acceptance, FOCUS conformance, cargo-deny, MSRV (unchanged).
+- **Deciding test:** the CI matrix is **green with test execution on all three OSes**; the Linux-only gates are byte-unchanged; no keychain prompt/hang on mac/win; the keychain guard is present + the invariant documented. **→ DoD-2, DoD-1 (regression).**
 
 ### T4 — README rewrite (§6.8)
-- **Do:** one-paragraph problem statement; a **hero-GIF placeholder** (stamped "capture pending M3b", D2); a **one-command quickstart** (`cargo install costroid` / `make demo`); a **"what this does that ccusage doesn't"** table (FOCUS-native, 3-lane ledger, local-inference economics, break-even, loopback web UI, reconciliation, zero-network default — sourced from §5.7, star counts omitted/verified); a **Mermaid** architecture diagram of the crate graph + the three lanes + the loopback server.
-- **Deciding test:** a doc-presence test (or a CI markdown check) asserts the README contains each required section + a fenced `mermaid` block; **no un-stamped real/hero number**; the Mermaid parses. **→ DoD-7.**
+- **Do:** one-paragraph problem statement; a **hero-GIF placeholder** (stamped "capture pending M3b", D2); a **one-command quickstart** (`cargo install costroid` / `make demo`); a **"what this does that ccusage doesn't"** table (FOCUS-native, 3-lane ledger, local-inference economics, break-even, loopback web UI, reconciliation, zero-network default — feature contrasts only, **competitor star counts OMITTED** as drift-prone/unverifiable offline); a **Mermaid** architecture diagram of the crate graph + the three lanes + the loopback server.
+- **Deciding test:** the **docs-presence test** (T-shared, see T5) asserts the README contains each required section + a fenced `mermaid` block; `scripts/check_doc_stamps.sh` asserts **no un-stamped real/hero number** (every figure carries the canonical stamp constant); the Mermaid block parses. **→ DoD-7.** *(DoD-9 does NOT govern the Mermaid/GIF — accessibility applies to runtime visuals, not doc images.)*
 
 ### T5 — Methodology page (§6.8)
 - **Do:** `docs/methodology.md` — exactly how energy/token is derived: **measured vs estimated** (`x_MeasurementMode` ladder), **package-power vs wall** (the ~20–40% caveat), the **energy-only `e` over total (in+out) tokens** basis (the M5 lock), and the break-even math (calendar-fixed amortization, the sensitivity band, the "never"/infeasible case). Cross-link limitations + ARCHITECTURE.
-- **Deciding test:** the page exists + is linked from README/ARCHITECTURE; its `e` formula and the measured ladder **match the code** (`local_energy_only_rate`, `MeasurementMode`) — a reviewer-checkable consistency claim, plus a test that the cited default electricity rate equals the profile's. **→ DoD-7, DoD-5 (regression).**
+- **Named deciding tests** (the doc-test machinery, shared by T4/T6/T8):
+  - **`docs_presence` test** (a `#[test]` in `apps/cli` or a small `xtask`-style test) — asserts each required doc + each required section/anchor exists (README sections, the `mermaid` fence, `methodology.md`, `limitations.md` headings).
+  - **`scripts/check_doc_stamps.sh`** — scans the docs for figure patterns and fails on any un-stamped number, checked against **one canonical stamp constant** (a single `PENDING_M3B_STAMP` string defined once and reused, so the stamp text can't drift between docs and tests).
+  - **e-formula real cross-check** — a `#[test]` computes `local_energy_only_rate` on a fixture and asserts the **numeric result** matches the worked example printed in `methodology.md` (a real value comparison, not a prose "matches the code" claim); a second assert ties the cited default electricity rate to `hardware.v1.json`. **→ DoD-7, DoD-5 (regression).**
 
 ### T6 — `docs/limitations.md` consolidation (§6.8)
 - **Do:** extend (don't replace) the M3-era file with **M4** (break-even ranges; the "never" outcome; one-lifetime rule), **M5** (interface caveats: text/table break-even web view; loopback-only), and an explicit **uncertain-row annotation** cross-ref (`x_AttributionConfidence`, sub-agent undercount, package-vs-wall) showing where the UI surfaces it.
-- **Deciding test:** limitations.md covers sub-agent undercount + package-vs-wall + the uncertain-row annotation, and each claim maps to a real column/behavior in code. **→ DoD-7, DoD-9 (regression: the annotation is the non-color cue).**
+- **Deciding test:** the `docs_presence` test asserts limitations.md covers sub-agent undercount + package-vs-wall + the uncertain-row annotation, and each claim maps to a real column/behavior in code (`x_AttributionConfidence`, `x_MeasurementMode`). **→ DoD-7.** *(DoD-9 — never color-alone — is satisfied by the M1–M5 runtime visuals and regression-guarded at T11; documenting the cue here is a DoD-7 doc artifact, not a DoD-9 claim.)*
 
 ### T7 — `ARCHITECTURE.md` reconcile (§6.8, DoD-12)
 - **Do:** extend the existing doc with the M6 close: the final 10-member crate graph, the three-lane ledger, the loopback server data path (§10 — verify against `apps/server`), the offline model (per-binary allowlists; CLI byte-for-byte; server loopback-only), the datasets/demo/packaging additions. **Reconcile, never rewrite.**
 - **Deciding test:** ARCHITECTURE describes the final scope with **no contradiction against the code** (crate graph, lanes, server path, offline guarantees); a reviewer diff confirms additive edits. **→ DoD-12.**
 
 ### T8 — Benchmark dataset + writeup (§6.10) *(D1)*
-- **Do:** a **versioned manifest** (`benchmarks/<id>/manifest.v1.json` mirroring the `gemma4.v1.json` schema style — `schema`/`as_of`/`source`/per-run records) + **raw synthetic outputs** + a **blog-ready methodology writeup** (`docs/benchmark-gemma4-vs-cloud.md`): "what Gemma 4 31B Dense (Apache-2.0) actually costs locally on a 128 GB APU vs Bedrock/Anthropic", full reproduction details. **Every figure stamped "estimated — pending M3b measurement"** (R8/R10). Add the manifest to the `check_power_profiles.sh`-style sha256 integrity gate. Write `docs/POST-M3B-REFRESH.md` (the scoped human follow-up).
-- **Deciding test:** the manifest validates + has a committed `.sha256` the integrity gate checks; a test asserts **no un-stamped hero number** in the writeup (every cost/tok-s figure carries the estimated/pending-M3b stamp); the reproduction steps run via `make demo`. **→ DoD-7.**
+- **Do:** a **versioned manifest** (`benchmarks/<id>/manifest.v1.json` mirroring the `gemma4.v1.json` schema style — `schema`/`as_of`/`source`/per-run records) that **records `measurement_mode` per run** (= `"estimated"` now; the field the post-M3b refresh flips to `"measured_wallmeter"`) + **raw synthetic outputs** + a **blog-ready methodology writeup** (`docs/benchmark-gemma4-vs-cloud.md`): "what Gemma 4 31B Dense (Apache-2.0) actually costs locally on a 128 GB APU vs Bedrock/Anthropic", full reproduction details. **Every figure stamped with the canonical `PENDING_M3B_STAMP`** (R8/R10). A new **`scripts/check_benchmarks.sh` rooted at `benchmarks/`** (a sibling of `check_power_profiles.sh`) sha256-verifies every manifest + raw output and is wired into the conformance CI job.
+- **`docs/POST-M3B-REFRESH.md` = a CLOSED file-by-file checklist** — for each artifact the human refreshes after the wall-meter run: the file path, the figures/fields to replace, the **`.sha256` regen**, the **`as_of` bump**, the **`measurement_mode` flip**, and the **integrity re-pass** (`check_benchmarks.sh`). A **drift-guard test** asserts the checklist enumerates exactly the set of committed benchmark artifacts (so a new artifact added later can't silently escape the refresh list).
+- **Deciding test:** `check_benchmarks.sh` passes (every manifest/output matches its committed `.sha256`); `check_doc_stamps.sh` finds **no un-stamped hero number** in the writeup; the **inverse guard** (shared with T1) asserts every manifest run + every committed sample row carries `measurement_mode`/`x_MeasurementMode == "estimated"`; the reproduction steps run via `make demo`; the POST-M3B drift-guard test passes. **→ DoD-7.**
 
 ### T9 — Packaging: flip dist/publish on the new crates (§6.9) *(D3)*
-- **Do:** per D3 — `publish = true` on `costroid-power` + `costroid-store` (crates.io libraries; bundled assets — power's `profiles/`+`models/` JSON — included via `cargo package`); `publish = true` + `[package.metadata.dist] dist = true` (archive installers, no npm/Homebrew/musl) on `costroid-server`. Workspace deps gain `version` (publishable). Update [`RELEASING.md`](../RELEASING.md): the new ladder `focus → providers → core → config → connect → store → power → costroid → server → bar`, the server archive row, and the "what ships" list. Keep `precise-builds = true` (CLI stays connect-OFF on release runners; the server has no libdbus/GTK deps → builds clean on all targets).
-- **Deciding test:** `cargo package -p <crate> --list` / `cargo publish --dry-run` succeeds for power/store/server with their bundled assets present; `dist plan` includes the `costroid-server` archives for the 5 targets (no musl); RELEASING ladder + dist config consistent; the offline/forbidden-crates gates still green (server stays loopback-only). **→ DoD-2, DoD-7.**
+- **Do:** per D3 — `publish = true` on `costroid-power` + `costroid-store` (crates.io libraries; bundled assets — power's `profiles/`+`models/` JSON — included via `cargo package`); on `costroid-server` set `publish = true` **and** `[package.metadata.dist]` to **mirror `apps/bar`**: `dist = true`, **`installers = []`** (archives only — no npm/Homebrew/musl), and the **explicit 5 targets** (Linux gnu x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64 — *no* `x86_64-unknown-linux-musl`, since the server need not static-link). Workspace path-deps gain `version` (publishable). Keep `precise-builds = true` (CLI stays connect-OFF on release runners; the server has no libdbus/GTK deps → builds clean on all targets).
+- **RELEASING.md updates:** the new ladder `focus → providers → core → config → connect → store → power → costroid → server → bar`; the server archive row in "what ships"; **PKG-2** — publish happens **only at the bumped workspace version** (the bump re-trues the drifted `focus`); **PKG-3** — a note to **reserve the three crate names** (`costroid-power`/`-store`/`-server`) on crates.io early (a placeholder publish or name hold) so the ladder isn't blocked at release; a **one-line defer** for SBOM + OS code-signing (out of scope this milestone, tracked in SECURITY.md).
+- **Deciding test (PKG-1 — runnable pre-publish gate):** `cargo package --workspace` + `cargo publish --dry-run --workspace` succeed (the **workspace** forms — a per-package `--dry-run -p <crate>` is *not* runnable pre-publish: unpublished siblings + the drifted published `focus 0.6.0`). `cargo package -p <crate> --list` is used **only** to assert each new crate's bundled assets are present. `dist plan` / `dist generate --check` show the `costroid-server` **archives for the 5 targets** and **assert no npm/Homebrew/musl artifact** is generated for it. A **ladder topo-sort assertion** (a small test) verifies the RELEASING ladder is a valid topological order of the actual `Cargo.toml` dep graph (so the documented order can't drift from the code). The offline/forbidden-crates gates stay green (server loopback-only). Real per-package `cargo publish` stays the **human ladder at the bumped version**. **→ DoD-2, DoD-7.**
 
 ### T10 — Packaging polish: issue templates, changelog, license (§6.9)
 - **Do:** `.github/ISSUE_TEMPLATE/` (bug report, feature request, provider-request) + `config.yml`; a CHANGELOG **Unreleased** section consolidating M1–M6 (the costroid-next feature set); confirm the LICENSE + per-crate license metadata + `cargo deny` cover the three new crates. **The version bump + tag is a human release step** (RELEASING.md) — M6 stages the CHANGELOG, does not tag.
@@ -128,7 +197,7 @@ The human signed off all four at the recommended default; the plan below builds 
 | 6 — CLI/TUI + API + 3-view web UI (local-only) | M5 | regression T3, T11 |
 | 7 — full tests, CI gates, datasets, docs, demo, packaging, benchmark | **M6** | **T1,T2,T4,T5,T6,T8,T9,T10** |
 | 8 — Cardinal Rule (R4): no prompt/response content anywhere | M1–M5 | regression T1, T3, T11 |
-| 9 — accessibility: `--plain` + never color-alone on every new visual | M1–M5 | T4/T6 (docs note the cues); regression T11 |
+| 9 — accessibility: `--plain` + never color-alone on every new visual | M1–M5 (runtime visuals) | regression T11 — *does NOT govern the doc Mermaid/GIF* |
 | 10 — offline intact: CLI byte-for-byte; server loopback-only; offline+strace green | M0–M5 | regression **T2, T3, T9, T11** |
 | 11 — each milestone closed against a written deciding test | M1–M5 | **T0, T11 (M6's)** |
 | 12 — ARCHITECTURE reconciled with the new scope | — | **T7** |
@@ -137,10 +206,10 @@ The human signed off all four at the recommended default; the plan below builds 
 
 ## Hazards to watch (carry into the per-task dev loop)
 
-1. **Cross-OS keychain (T3):** confirm `cargo test --workspace` never opens a real OS keychain on mac/win runners (connect is mock-backed + feature-gated — verify, don't assume).
-2. **Publish-ability (T9):** workspace path-deps need a `version` to publish; bundled assets must live under the crate dir (`cargo package --list` is the proof). `precise-builds` must keep the release runners libdbus-free.
-3. **Determinism (T2/T8):** the demo + benchmark outputs must be byte-stable (no timestamps/RNG in committed artifacts) so the deciding tests aren't flaky — stamp dates from the dated profile/manifest, never "now".
-4. **R8/R10 honesty (T4/T5/T8):** every estimated/synthetic figure carries the stamp; CI asserts **no un-stamped hero number** — the same discipline M3a's CI already enforces for power.
+1. **Cross-OS keychain (T3):** `cargo test --workspace` is keychain-safe today (mock-backed + feature-gated), but T3 adds a **non-optional guard + a written mock invariant** so a future real-`Entry` test can't silently reach a runner's OS keychain — defense-in-depth, not a fix for a present bug.
+2. **Publish-ability (T9):** workspace path-deps need a `version` to publish; bundled assets must live under the crate dir (`cargo package -p <crate> --list` is the assets proof; `cargo package --workspace` is the runnable pre-publish gate). `precise-builds` must keep the release runners libdbus-free. The published `focus 0.6.0` has drifted from local — only the version bump re-trues the ladder.
+3. **Determinism (T2/T8, D5):** committed demo/benchmark artifacts must be byte-stable. `bench` stamps `Utc::now()` today (D5) — the demo/benchmark scripts pin the clock via `SOURCE_DATE_EPOCH` (from the dated `as_of`, never "now"); the deciding tests assert a byte-identical re-run, so a stray timestamp/RNG fails loudly rather than flaking.
+4. **R8/R10 honesty (T1/T4/T5/T8):** every estimated/synthetic figure carries the canonical `PENDING_M3B_STAMP`. The enforcement is **new M6 machinery** — `check_doc_stamps.sh` (no un-stamped hero number in docs) + the inverse `x_MeasurementMode == "estimated"` guard on every committed row — applying the **same honesty principle** M3a established for power (M3a's CI asserts *no real power number* via synthetic fixtures; it does not scan docs — that is this milestone's addition).
 5. **Additive docs (T6/T7):** extend `limitations.md` / `ARCHITECTURE.md`, never replace (the code wins; don't introduce a doc that drifts from it).
 
 ---
@@ -152,10 +221,10 @@ cargo fmt --all -- --check \
  && cargo clippy --workspace --all-targets -- -D warnings \
  && cargo test --workspace
 cargo clippy -p costroid --features power --all-targets -- -D warnings && cargo test -p costroid --features power
-cargo test -p costroid-power --features power && cargo test -p costroid-store --features store
+cargo test -p costroid-power --features power && cargo test -p costroid-store --features store && cargo test -p costroid-server
 cargo deny check licenses bans && cargo deny --all-features check licenses bans
 cargo +1.88.0 check --workspace --all-targets --exclude costroid-bar
-bash scripts/check_power_profiles.sh && bash scripts/check_pricing_snapshots.sh
-bash scripts/offline_acceptance.sh </dev/null
+bash scripts/check_power_profiles.sh && bash scripts/check_pricing_snapshots.sh && bash scripts/check_benchmarks.sh
+bash scripts/offline_acceptance.sh </dev/null   # includes the CLI-only `make demo` leg (byte-identical re-run)
 ```
 Cross-OS test execution is the **CI** arbiter (T3) — "green in WSL is not green" (§2.3).
