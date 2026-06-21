@@ -273,6 +273,36 @@ pub struct BenchView {
 // Computation.
 // ---------------------------------------------------------------------------
 
+/// The dated, labeled DeepSWE-Bench (and corroborating) `$/task` reference points for the M4
+/// break-even overlay (T5/D3). Loads the bundled, fail-closed benchmark snapshot and maps every
+/// point to a [`crate::breakeven::CloudReferencePoint`] carrying its benchmark name, model, own
+/// reported avg `$/task` (`None` → "n/a", never zero), and the benchmark's `as_of` + `source`.
+///
+/// This is an EMPIRICAL OVERLAY only — clearly labeled and dated context shown beside the verdict.
+/// It is **never** multiplied into the deterministic per-token crossover (that uses the pricing
+/// catalog, D3); the break-even `V*` is identical with or without it.
+pub fn cloud_reference_points() -> Result<Vec<crate::breakeven::CloudReferencePoint>, CoreError> {
+    Ok(reference_points_from(&BenchmarkTable::bundled()?))
+}
+
+/// Map a (validated) benchmark table to the labeled cloud-reference overlay. Split from
+/// [`cloud_reference_points`] so the JSON → loader → `None`-cost round-trip is unit-testable.
+fn reference_points_from(table: &BenchmarkTable) -> Vec<crate::breakeven::CloudReferencePoint> {
+    let mut points = Vec::new();
+    for benchmark in &table.benchmarks {
+        for point in &benchmark.points {
+            points.push(crate::breakeven::CloudReferencePoint {
+                benchmark: benchmark.name.clone(),
+                model: point.model_id.clone(),
+                dollars_per_task: point.cost_per_task_usd,
+                as_of: benchmark.as_of.clone(),
+                source: benchmark.source.clone(),
+            });
+        }
+    }
+    points
+}
+
 /// Build the frontier view: bundled benchmarks (dominance computed) + an honest
 /// API-billed overlay drawn from the existing snapshot's `focus_rows`.
 pub fn bench_view(snapshot: &EngineSnapshot) -> Result<BenchView, CoreError> {
@@ -632,6 +662,57 @@ mod tests {
         assert_eq!(table.benchmarks[0].as_of, "2026-06-14");
         assert_eq!(table.benchmarks[1].name, "CursorBench v3.1");
         assert_eq!(table.benchmarks[1].as_of, "2026-05-18");
+    }
+
+    // T5 — the cloud-reference overlay is dated, labeled, and includes DeepSWE v1.1 with $/task.
+    #[test]
+    fn cloud_reference_points_are_dated_labeled_and_include_deepswe() {
+        let points = match cloud_reference_points() {
+            Ok(points) => points,
+            Err(err) => panic!("the bundled overlay must load: {err}"),
+        };
+        assert!(
+            !points.is_empty(),
+            "the overlay must surface reference points"
+        );
+        // Every point is DATED (parseable as_of) and LABELED (non-empty benchmark + source).
+        for point in &points {
+            assert!(
+                NaiveDate::parse_from_str(point.as_of.trim(), "%Y-%m-%d").is_ok(),
+                "reference point {} carries a parseable as_of, got {:?}",
+                point.model,
+                point.as_of
+            );
+            assert!(
+                !point.benchmark.trim().is_empty(),
+                "labeled with a benchmark"
+            );
+            assert!(!point.source.trim().is_empty(), "labeled with a source");
+        }
+        // DeepSWE v1.1 is present, dated 2026-06-14, with a real $/task (Some, never zeroed).
+        let Some(deepswe) = points.iter().find(|p| p.benchmark == "DeepSWE v1.1") else {
+            panic!("DeepSWE v1.1 must appear in the overlay");
+        };
+        assert_eq!(deepswe.as_of, "2026-06-14");
+        assert!(
+            deepswe.dollars_per_task.is_some(),
+            "the DeepSWE points carry their own reported $/task"
+        );
+    }
+
+    // T5 — a JSON null cost_per_task_usd survives the loader as None (n/a), never coerced to zero.
+    #[test]
+    fn a_null_cost_per_task_carries_through_as_none() {
+        let json = r#"{"schema_version":"1","benchmarks":[{"name":"X","role":"primary","source":"https://x","as_of":"2026-06-14","cost_note":"n","points":[{"model_id":"gpt-5.5","label":"g","score_pct":"70.0","cost_per_task_usd":null}]}]}"#;
+        let Ok(table) = BenchmarkTable::from_json(json) else {
+            panic!("a benchmark with a null cost must still parse + validate");
+        };
+        let points = reference_points_from(&table);
+        assert_eq!(points.len(), 1);
+        assert_eq!(
+            points[0].dollars_per_task, None,
+            "a JSON null cost must map to None (n/a), never 0"
+        );
     }
 
     // 2 — the as_of guard is fail-closed: sentinel / empty / impossible date all reject.

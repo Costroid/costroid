@@ -218,6 +218,188 @@ pub fn breakeven(inputs: &BreakevenInputs) -> Result<BreakevenOutcome, CoreError
     })
 }
 
+/// Blend the per-meter cloud prices into the scenario's single cloud per-token rate `c` (T3/D3):
+///
+/// ```text
+/// c = input_per_token * (1 - output_share) + output_per_token * output_share
+/// ```
+///
+/// `output_share` is the fraction of tokens that are **output**, in `[0, 1]` (outside → typed
+/// error). This is the value the T1 [`breakeven`] crossover consumes as `cloud_per_token`. Pure
+/// `Decimal` arithmetic; splitting it out keeps [`crate::cloud_price_per_token`] strictly per-meter
+/// and gives the mix weighting its own test surface. Per-token prices must be non-negative.
+pub fn blended_cloud_per_token(
+    input_per_token: Decimal,
+    output_per_token: Decimal,
+    output_share: Decimal,
+) -> Result<Decimal, CoreError> {
+    if output_share < Decimal::ZERO || output_share > Decimal::ONE {
+        return Err(CoreError::Breakeven(format!(
+            "output_share must be in [0, 1], got {output_share}"
+        )));
+    }
+    if input_per_token < Decimal::ZERO || output_per_token < Decimal::ZERO {
+        return Err(CoreError::Breakeven(format!(
+            "per-token cloud prices must be non-negative, got input {input_per_token} / output {output_per_token}"
+        )));
+    }
+    // `1 - output_share` ∈ [0, 1]; checked arithmetic so a pathological pair never panics.
+    let input_share = Decimal::ONE
+        .checked_sub(output_share)
+        .ok_or_else(|| CoreError::Breakeven("input share underflowed".to_string()))?;
+    let input_term = input_per_token
+        .checked_mul(input_share)
+        .ok_or_else(|| CoreError::Breakeven("blended input term overflowed".to_string()))?;
+    let output_term = output_per_token
+        .checked_mul(output_share)
+        .ok_or_else(|| CoreError::Breakeven("blended output term overflowed".to_string()))?;
+    input_term
+        .checked_add(output_term)
+        .ok_or_else(|| CoreError::Breakeven("blended cloud rate overflowed".to_string()))
+}
+
+/// The full assumption stamp (R6/R8): exactly what a break-even comparison assumed, so the result
+/// is a methodology + a range, never an unexplained hero number. Carries the dated provenance the
+/// schema already records elsewhere (`x_HardwareProfile`, `x_PricingSnapshotId`, the measurement
+/// mode), reused here rather than reinvented.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssumptionStamp {
+    pub electricity_rate_per_kwh: Decimal,
+    pub hardware_price: UsdAmount,
+    pub depreciation_period_days: Decimal,
+    /// The utilization fraction assumed (0..=1).
+    pub utilization: Decimal,
+    /// The output-token share assumed for the cloud blend (0..=1).
+    pub output_share: Decimal,
+    /// `e` — the energy-only local marginal rate, USD/token (full precision).
+    pub local_energy_per_token: Decimal,
+    /// `c` — the blended cloud rate, USD/token, at `output_share`.
+    pub blended_cloud_per_token: Decimal,
+    /// The power measurement mode (`estimated` / `measured_*`).
+    pub measurement_mode: String,
+    /// The dated hardware-profile id, `"{id}@{as_of}"`.
+    pub hardware_profile: String,
+    /// The winning pricing tier's R8 stamp, `"{source}@{as_of}#{hash8}"`.
+    pub pricing_snapshot_id: String,
+    /// The Costroid version that produced the comparison.
+    pub collector_version: String,
+}
+
+/// A clearly-labeled, dated DeepSWE-Bench `$/task` reference point (T5/D3). This is an empirical
+/// cloud-side OVERLAY — informational context shown beside the verdict — and is **never** part of
+/// the deterministic per-token crossover math.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CloudReferencePoint {
+    pub benchmark: String,
+    pub model: String,
+    /// The benchmark's own reported avg `$/task`; `None` → "n/a" (never zero, never a guess).
+    pub dollars_per_task: Option<Decimal>,
+    pub as_of: String,
+    pub source: String,
+}
+
+/// One labeled alternative input set for the sensitivity sweep (e.g. the low/high extreme of a
+/// swept assumption). The caller builds these — it knows which knobs it varied and by how much.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SweepPoint {
+    pub label: String,
+    pub inputs: BreakevenInputs,
+}
+
+/// The break-even outcome at one swept scenario point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SensitivityPoint {
+    pub label: String,
+    pub outcome: BreakevenOutcome,
+}
+
+/// The summarized sensitivity band over the headline + all swept points (R6 — a range, not a hero
+/// number). `low`/`high` are the smallest/largest *feasible* crossover volumes seen; the flags
+/// record when some point can never break even, is unreachable on the hardware, or is always
+/// cheaper (a degenerate crossover at 0).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreakevenBand {
+    pub low: Option<Decimal>,
+    pub high: Option<Decimal>,
+    pub has_always: bool,
+    pub has_never: bool,
+    pub has_infeasible: bool,
+}
+
+/// The full M4 break-even result (T4/D4): the headline outcome at the expected inputs, the
+/// sensitivity sweep, the assumption stamp, and the labeled DeepSWE-Bench overlay (T5). Emitted as
+/// its own structure — a break-even is a comparison, not a FOCUS charge row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreakevenReport {
+    pub headline: BreakevenOutcome,
+    pub sensitivity: Vec<SensitivityPoint>,
+    pub stamp: AssumptionStamp,
+    pub cloud_reference: Vec<CloudReferencePoint>,
+}
+
+impl BreakevenReport {
+    /// Summarize the headline + every swept point into a [`BreakevenBand`] (R6). `Always` counts
+    /// as a feasible crossover at volume 0 (cheaper from the first token).
+    pub fn band(&self) -> BreakevenBand {
+        let mut band = BreakevenBand {
+            low: None,
+            high: None,
+            has_always: false,
+            has_never: false,
+            has_infeasible: false,
+        };
+        let outcomes =
+            std::iter::once(&self.headline).chain(self.sensitivity.iter().map(|p| &p.outcome));
+        for outcome in outcomes {
+            match outcome {
+                BreakevenOutcome::CrossesAt { tokens_per_day } => {
+                    fold_band(&mut band, *tokens_per_day);
+                }
+                BreakevenOutcome::Always => {
+                    band.has_always = true;
+                    fold_band(&mut band, Decimal::ZERO);
+                }
+                BreakevenOutcome::Never { .. } => band.has_never = true,
+                BreakevenOutcome::Infeasible { .. } => band.has_infeasible = true,
+            }
+        }
+        band
+    }
+}
+
+/// Fold a feasible crossover volume into the band's low/high extremes.
+fn fold_band(band: &mut BreakevenBand, v: Decimal) {
+    band.low = Some(band.low.map_or(v, |low| low.min(v)));
+    band.high = Some(band.high.map_or(v, |high| high.max(v)));
+}
+
+/// Assemble the full break-even report (T4): compute the headline outcome and the outcome at every
+/// swept point, attaching the assumption stamp + the labeled cloud reference. A swept point with a
+/// non-physical input is a typed error (the caller built the sweep); `Never`/`Infeasible` are
+/// honest outcomes, never dropped.
+pub fn breakeven_report(
+    base: BreakevenInputs,
+    sweep: Vec<SweepPoint>,
+    stamp: AssumptionStamp,
+    cloud_reference: Vec<CloudReferencePoint>,
+) -> Result<BreakevenReport, CoreError> {
+    let headline = breakeven(&base)?;
+    let mut sensitivity = Vec::with_capacity(sweep.len());
+    for point in sweep {
+        let outcome = breakeven(&point.inputs)?;
+        sensitivity.push(SensitivityPoint {
+            label: point.label,
+            outcome,
+        });
+    }
+    Ok(BreakevenReport {
+        headline,
+        sensitivity,
+        stamp,
+        cloud_reference,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     // Repo rule: clippy denies `unwrap`/`expect` even in tests; use `let-else { panic! }`.
@@ -233,6 +415,78 @@ mod tests {
         a.normalize() == b.normalize()
     }
 
+    #[test]
+    fn blend_endpoints_are_input_only_and_output_only() {
+        let input = dec(3, 6); // $0.000003/token
+        let output = dec(15, 6); // $0.000015/token
+        let Ok(at_zero) = blended_cloud_per_token(input, output, Decimal::ZERO) else {
+            panic!("share 0 must blend");
+        };
+        assert!(same(at_zero, input), "output_share 0 → input-only");
+        let Ok(at_one) = blended_cloud_per_token(input, output, Decimal::ONE) else {
+            panic!("share 1 must blend");
+        };
+        assert!(same(at_one, output), "output_share 1 → output-only");
+    }
+
+    #[test]
+    fn blend_intermediate_mix_is_exact_to_the_cent() {
+        // input 0.000003, output 0.000015, share 0.25 →
+        // 0.000003·0.75 + 0.000015·0.25 = 0.00000225 + 0.00000375 = 0.000006.
+        let Ok(c) = blended_cloud_per_token(dec(3, 6), dec(15, 6), dec(25, 2)) else {
+            panic!("intermediate mix must blend");
+        };
+        assert!(
+            same(c, dec(6, 6)),
+            "blended c must be exactly 0.000006, got {c}"
+        );
+    }
+
+    #[test]
+    fn blend_rejects_out_of_range_share_and_negative_prices() {
+        for bad_share in [dec(-1, 1), dec(11, 1)] {
+            // -0.1 and 1.1
+            assert!(matches!(
+                blended_cloud_per_token(dec(3, 6), dec(15, 6), bad_share),
+                Err(CoreError::Breakeven(_))
+            ));
+        }
+        // Both halves of the OR guard: a negative INPUT price and a negative OUTPUT price.
+        assert!(matches!(
+            blended_cloud_per_token(dec(-1, 6), dec(15, 6), dec(25, 2)),
+            Err(CoreError::Breakeven(_))
+        ));
+        assert!(matches!(
+            blended_cloud_per_token(dec(3, 6), dec(-1, 6), dec(25, 2)),
+            Err(CoreError::Breakeven(_))
+        ));
+    }
+
+    #[test]
+    fn blended_c_feeds_the_crossover_end_to_end() {
+        // HIGH (Rev 2): T2 per-meter prices → T3 blend → T1 crossover, reproducing a hand V*.
+        // input 0.000003, output 0.000015, share 0.25 → c = 0.000006.
+        let Ok(c) = blended_cloud_per_token(dec(3, 6), dec(15, 6), dec(25, 2)) else {
+            panic!("blend must succeed");
+        };
+        // capex $2000 / 1000 days = $2/day; e (energy-only) = 0.000001 → margin 0.000005 →
+        // V* = 2 / 0.000005 = 400,000 tokens/day.
+        let inputs = BreakevenInputs {
+            local_energy_per_token: dec(1, 6),
+            hardware_capex: UsdAmount::from_usd(Decimal::from(2000)),
+            depreciation_period_days: Decimal::from(1000),
+            cloud_per_token: c,
+            max_tokens_per_day: None,
+        };
+        let Ok(BreakevenOutcome::CrossesAt { tokens_per_day }) = breakeven(&inputs) else {
+            panic!("blended c must drive a crossover");
+        };
+        assert!(
+            same(tokens_per_day, Decimal::from(400_000)),
+            "blended-c crossover must be 400,000 tokens/day, got {tokens_per_day}"
+        );
+    }
+
     /// The shared worked example (pinned in DAYS — MED3):
     /// capex $2000 over 1000 days → hw_fixed = $2.00/day; e = $0.0000005/token (energy-only);
     /// c = $0.0000025/token → margin $0.0000020 → V* = 2.00 / 0.0000020 = 1,000,000 tokens/day.
@@ -244,6 +498,164 @@ mod tests {
             cloud_per_token: dec(25, 7), // 0.0000025
             max_tokens_per_day: None,
         }
+    }
+
+    fn stamp() -> AssumptionStamp {
+        AssumptionStamp {
+            electricity_rate_per_kwh: dec(16, 2),
+            hardware_price: UsdAmount::from_usd(Decimal::from(2000)),
+            depreciation_period_days: Decimal::from(1000),
+            utilization: dec(5, 1),
+            output_share: dec(25, 2),
+            local_energy_per_token: dec(5, 7),
+            blended_cloud_per_token: dec(25, 7),
+            measurement_mode: "estimated".to_string(),
+            hardware_profile: "strix-halo-128gb@2026-06-20".to_string(),
+            // The R8 "{source}@{as_of}#{hash8}" form (the litellm tier carries a content hash;
+            // the stamp stores whatever provenance id the caller supplies, opaquely).
+            pricing_snapshot_id: "litellm@2026-06-18#36c8994e".to_string(),
+            collector_version: "0.6.0".to_string(),
+        }
+    }
+
+    /// A `BreakevenInputs` clone of the base with a different cloud rate (to sweep the mix/price).
+    fn with_cloud(c: Decimal) -> BreakevenInputs {
+        BreakevenInputs {
+            cloud_per_token: c,
+            ..base_inputs()
+        }
+    }
+
+    #[test]
+    fn the_report_is_a_band_not_a_scalar_with_a_full_stamp() {
+        // Headline base V* = 1,000,000; two cheaper-cloud sweep points give larger V*.
+        // c=0.0000015 → margin 0.0000010 → V* = 2/0.0000010 = 2,000,000.
+        let sweep = vec![
+            SweepPoint {
+                label: "cloud=low".to_string(),
+                inputs: with_cloud(dec(15, 7)), // 0.0000015 → V* 2,000,000
+            },
+            SweepPoint {
+                label: "cloud=high".to_string(),
+                inputs: with_cloud(dec(45, 7)), // 0.0000045 → V* 500,000
+            },
+        ];
+        let Ok(report) = breakeven_report(base_inputs(), sweep, stamp(), Vec::new()) else {
+            panic!("the report must assemble");
+        };
+        // It is a RANGE: more than one outcome, summarized into a low..high band.
+        assert_eq!(report.sensitivity.len(), 2);
+        let band = report.band();
+        assert!(
+            same(band.low.unwrap_or(Decimal::MAX), Decimal::from(500_000)),
+            "band low = the cheapest-volume crossover (500,000), got {:?}",
+            band.low
+        );
+        assert!(
+            same(band.high.unwrap_or(Decimal::ZERO), Decimal::from(2_000_000)),
+            "band high = the largest crossover (2,000,000), got {:?}",
+            band.high
+        );
+        assert!(!band.has_never && !band.has_infeasible);
+        // The full stamp is present (R6/R8) — a representative spot-check across its fields.
+        assert_eq!(report.stamp.measurement_mode, "estimated");
+        assert_eq!(report.stamp.hardware_profile, "strix-halo-128gb@2026-06-20");
+        assert_eq!(
+            report.stamp.pricing_snapshot_id,
+            "litellm@2026-06-18#36c8994e"
+        );
+        assert!(same(report.stamp.local_energy_per_token, dec(5, 7)));
+    }
+
+    #[test]
+    fn a_mixed_sweep_marks_the_band_low_to_never_with_exact_endpoints() {
+        // The sweep runs from a feasible crossover into c <= e (never). The band must report the
+        // EXACT feasible low endpoint AND flag the "never" endpoint — not drop it, not "sanity".
+        let sweep = vec![
+            SweepPoint {
+                label: "cloud=high".to_string(),
+                inputs: with_cloud(dec(45, 7)), // 0.0000045 → V* 500,000 (the feasible end)
+            },
+            SweepPoint {
+                label: "cloud=at_energy".to_string(),
+                inputs: with_cloud(dec(5, 7)), // c == e → Never
+            },
+        ];
+        // Headline base = V* 1,000,000; feasible sweep point = 500,000; never point flags has_never.
+        let Ok(report) = breakeven_report(base_inputs(), sweep, stamp(), Vec::new()) else {
+            panic!("the report must assemble");
+        };
+        let band = report.band();
+        assert!(
+            same(band.low.unwrap_or(Decimal::MAX), Decimal::from(500_000)),
+            "exact band low = 500,000, got {:?}",
+            band.low
+        );
+        assert!(
+            same(band.high.unwrap_or(Decimal::ZERO), Decimal::from(1_000_000)),
+            "exact band high = 1,000,000 (the headline), got {:?}",
+            band.high
+        );
+        assert!(
+            band.has_never,
+            "the c<=e endpoint must be marked never, not dropped"
+        );
+        assert!(!band.has_infeasible);
+    }
+
+    #[test]
+    fn an_all_never_sweep_propagates_never_with_no_feasible_band() {
+        // Every point has c <= e → the whole band is "never" (no feasible low/high).
+        let never_inputs = with_cloud(dec(3, 7)); // 0.0000003 < e 0.0000005
+        let sweep = vec![SweepPoint {
+            label: "cloud=lower".to_string(),
+            inputs: with_cloud(dec(1, 7)), // 0.0000001 < e
+        }];
+        let Ok(report) = breakeven_report(never_inputs, sweep, stamp(), Vec::new()) else {
+            panic!("the report must assemble");
+        };
+        assert!(matches!(report.headline, BreakevenOutcome::Never { .. }));
+        let band = report.band();
+        assert!(band.has_never);
+        assert!(
+            band.low.is_none() && band.high.is_none(),
+            "no feasible crossover anywhere"
+        );
+    }
+
+    #[test]
+    fn the_cloud_overlay_never_changes_the_crossover_and_carries_none_as_na() {
+        // (T5/D3) The DeepSWE-Bench $/task overlay is reference-only: the headline + band must be
+        // BIT-IDENTICAL whether or not it is attached. A None $/task is carried as None (→ "n/a"),
+        // never coerced to zero.
+        let overlay = vec![
+            CloudReferencePoint {
+                benchmark: "DeepSWE v1.1".to_string(),
+                model: "claude-opus-4-8".to_string(),
+                dollars_per_task: Some(dec(1322, 2)), // $13.22
+                as_of: "2026-06-14".to_string(),
+                source: "https://deepswe.datacurve.ai".to_string(),
+            },
+            CloudReferencePoint {
+                benchmark: "DeepSWE v1.1".to_string(),
+                model: "no-published-cost".to_string(),
+                dollars_per_task: None, // stays "n/a", never zero
+                as_of: "2026-06-14".to_string(),
+                source: "https://deepswe.datacurve.ai".to_string(),
+            },
+        ];
+        let Ok(without) = breakeven_report(base_inputs(), Vec::new(), stamp(), Vec::new()) else {
+            panic!("report without overlay");
+        };
+        let Ok(with) = breakeven_report(base_inputs(), Vec::new(), stamp(), overlay) else {
+            panic!("report with overlay");
+        };
+        // The crossover math is untouched by the overlay (bit-identical headline + band).
+        assert_eq!(with.headline, without.headline);
+        assert_eq!(with.band(), without.band());
+        // The overlay is carried verbatim, and a missing cost stays None (not 0).
+        assert_eq!(with.cloud_reference.len(), 2);
+        assert_eq!(with.cloud_reference[1].dollars_per_task, None);
     }
 
     #[test]

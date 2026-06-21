@@ -45,13 +45,15 @@ use thiserror::Error;
 
 mod bench;
 pub use bench::{
-    bench_view, BenchDisclaimer, BenchFrontier, BenchView, FrontierPoint, FrontierStanding,
-    OverlayAppearance, OverlayModel, RepricingDelta, RepricingStatus,
+    bench_view, cloud_reference_points, BenchDisclaimer, BenchFrontier, BenchView, FrontierPoint,
+    FrontierStanding, OverlayAppearance, OverlayModel, RepricingDelta, RepricingStatus,
 };
 
 pub mod breakeven;
 pub use breakeven::{
-    breakeven, days_from_seconds, resolve_depreciation_days, BreakevenInputs, BreakevenOutcome,
+    blended_cloud_per_token, breakeven, breakeven_report, days_from_seconds,
+    resolve_depreciation_days, AssumptionStamp, BreakevenBand, BreakevenInputs, BreakevenOutcome,
+    BreakevenReport, CloudReferencePoint, SensitivityPoint, SweepPoint,
 };
 
 pub mod reconcile;
