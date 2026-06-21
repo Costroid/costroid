@@ -687,36 +687,86 @@ mod tests {
     fn timeline_buckets_and_groups_sum_the_effective_cost() {
         let rows = rows_3_lane();
         let view = build_timeline(&rows, &Scenario::default());
-        // Both events share one day → at least one bucket, and the per-group breakdown is non-empty.
-        assert!(
-            !view.buckets.is_empty(),
-            "a populated ledger yields timeline buckets"
+        // Both events fall on the same UTC day → EXACTLY one daily bucket, summing BOTH rows'
+        // effective cost (re-derived from the same rows, so the bucketing + summing is pinned, not
+        // merely "non-empty").
+        assert_eq!(
+            view.buckets.len(),
+            1,
+            "both rows share one day → one bucket"
         );
-        assert!(
-            !view.by_group.is_empty(),
-            "the per-group breakdown is non-empty"
+        let expected_total: Decimal = rows.iter().map(|row| row.effective_cost).sum();
+        assert_eq!(
+            view.buckets[0].effective_usd,
+            money(expected_total),
+            "the single bucket sums every row's effective cost"
         );
+        // EXACTLY two (lane, model) groups: the local run + the cloud row, each with hand-computed
+        // token counts (local = in 1000 + out 9000 on the total basis; cloud = 1000).
+        assert_eq!(view.by_group.len(), 2, "one local group + one cloud group");
+        let Some(local) = view.by_group.iter().find(|g| g.lane == LOCAL_LANE) else {
+            panic!("the local_inference group is present");
+        };
+        assert_eq!(local.group, "gemma-4-26b-a4b");
+        assert_eq!(
+            local.effective_usd, "0.005",
+            "the local group's effective spend = the local run cost"
+        );
+        assert_eq!(
+            local.tokens, "10000",
+            "local tokens = in 1000 + out 9000 (the total-token basis)"
+        );
+        let Some(cloud) = view.by_group.iter().find(|g| g.lane == "cloud_api") else {
+            panic!("the cloud_api group is present");
+        };
+        assert_eq!(cloud.group, "claude-opus-4-8");
+        assert_eq!(cloud.tokens, "1000", "the cloud row's token count");
+    }
+
+    /// Recursively collect every JSON object KEY (field name) reachable in `value`.
+    fn collect_field_names(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    out.push(key.clone());
+                    collect_field_names(child, out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    collect_field_names(item, out);
+                }
+            }
+            _ => {}
+        }
     }
 
     #[test]
     fn views_expose_only_bounded_metadata_never_content_r4() {
-        // R4 (the Cardinal Rule): the serialized view JSON carries NO content-bearing field name,
-        // sharing the store's promoted FORBIDDEN_SUBSTRINGS source of truth.
+        // R4 (the Cardinal Rule): the serialized view JSON carries NO content-bearing FIELD NAME.
+        // We scan the object KEYS (field names) — NOT values — sharing the store's promoted
+        // FORBIDDEN_SUBSTRINGS source of truth: a forbidden token appearing inside a value is fine
+        // (legitimate ids/enums may contain it); as a key it would be a content leak.
         let rows = rows_3_lane();
         let Ok(views) = build_views(&rows, &Scenario::default()) else {
             panic!("views build");
         };
-        let Ok(json) = serde_json::to_string(&views) else {
+        let Ok(value) = serde_json::to_value(&views) else {
             panic!("views serialize");
         };
-        let lower = json.to_lowercase();
+        let mut field_names = Vec::new();
+        collect_field_names(&value, &mut field_names);
+        assert!(
+            !field_names.is_empty(),
+            "the views serialize to named fields"
+        );
         for forbidden in costroid_store::FORBIDDEN_SUBSTRINGS {
-            // `"text"` is a substring of legitimate values here (none), but as a FIELD-NAME guard it
-            // must not appear as a key; our slim models use none of these as field names.
-            assert!(
-                !lower.contains(forbidden),
-                "R4 violation: the view JSON contains forbidden substring `{forbidden}`:\n{json}"
-            );
+            for name in &field_names {
+                assert!(
+                    !name.to_lowercase().contains(forbidden),
+                    "R4 violation: field name `{name}` contains forbidden substring `{forbidden}`"
+                );
+            }
         }
     }
 
