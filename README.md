@@ -146,6 +146,7 @@ flowchart TD
   bar --> core
   bar --> config
   cli -. "feature: connect" .-> connect
+  bar -. "feature: connect" .-> connect
   connect --> core
   core --> providers
   core --> focus
@@ -154,6 +155,7 @@ flowchart TD
   server --> store
   store --> focus
   cli -. "feature: power (CLI orchestrates; no core->power edge)" .-> power
+  cli -. "feature: store" .-> store
 
   subgraph lanes["one FOCUS ledger — three lanes, never summed across"]
     dev["developer_tool<br/>(Claude/Codex logs)"]
