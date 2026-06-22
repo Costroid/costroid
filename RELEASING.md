@@ -25,7 +25,9 @@ Via [cargo-dist](https://github.com/axodotdev/cargo-dist) (binary `dist`, config
   static-link: it links only `tiny_http`, no libdbus/GTK/TLS/async-runtime) — + crates.io
   (`cargo install costroid-server`). **No npm/Homebrew/script installers** (archives only, mirroring
   the bar). The server binds `127.0.0.1` only and makes no outbound network. Needs no extra apt
-  headers (no GTK/libdbus), so `precise-builds` keeps the release runners libdbus-free.
+  headers (no GTK/libdbus), so `precise-builds` keeps the release runners libdbus-free. (It does link
+  `costroid-store` → `rusqlite` **bundled**, which compiles a vendored SQLite C amalgamation — so the
+  build runner needs a working C compiler `cc`; the cargo-dist GitHub runners already have one.)
 - **Integrity:** every artifact (both binaries) gets a SHA-256 checksum + a keyless GitHub
   build-provenance attestation (Actions OIDC). **Not** OS code-signed yet — first run shows the
   macOS "unidentified developer" / Windows SmartScreen prompt. See [SECURITY.md](SECURITY.md).

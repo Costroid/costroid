@@ -463,9 +463,18 @@ starting **M1**.
   Windows legs run in CI, not on this Linux box). **M3b stays a separate human handoff and does NOT
   block M6** — every local-inference figure is stamped "estimated — pending M3b measurement"; the
   real-number refresh + hero-GIF capture are the scoped post-M3b follow-up in
-  [`docs/POST-M3B-REFRESH.md`](docs/POST-M3B-REFRESH.md). M6 commit range `f71e31e..HEAD`. **Next:
-  the human's final boundary review, then push `costroid-next` → CI-green → merge to `main`** (NOT
-  done by the agent). The earlier M5 note (p) follows for history.
+  [`docs/POST-M3B-REFRESH.md`](docs/POST-M3B-REFRESH.md). M6 commit range `f71e31e..HEAD`.
+  **Boundary review (independent) APPROVE — 0 blockers/0 highs;** a short pre-merge tidy (DOC-1 the
+  methodology tool-leak + a docs_presence no-tool-XML guard; DOC-2 the README hero-GIF text
+  placeholder; the stale `costroid-store` workspace comment; M6-2 the raw-bench inverse guard) folded
+  in before PR #7. **Deferred from M6 (tracked, non-blocking — do at/after merge):**
+  **M6-3** — a deterministic engine-vs-committed regen-diff guard for the benchmark raw outputs +
+  fix the slightly-overstated "byte-for-byte" comment at `scripts/focus_conformance.sh:217` (the
+  samples leg regenerates + validates the bench rows but does not byte-diff the committed
+  `*.bench.json`; the `.sha256` sidecars + the Rust tests cover content today). **M6-4** — label the
+  README's illustrative break-even figure as illustrative (or CI-generate it). **Next: the human's
+  final boundary review, then push `costroid-next` → CI-green → merge to `main` (PR #7)** (NOT done
+  by the agent). The earlier M5 note (p) follows for history.
 
 - **2026-06-21 (p) — M5 MERGED (PR #6); M6 PLAN synthesized; ⛔ STOP for the pre-coding plan
   review.** `main` tip `631b5a4` includes M0–M5; `costroid-next` recreated off it, tree clean.

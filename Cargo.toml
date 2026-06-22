@@ -18,8 +18,9 @@ members = [
     "crates/costroid-providers",
     # The local SQLite usage store (M1). A metadata-only (R4) persistent ledger of FOCUS
     # rows; SQLite via `rusqlite` (`bundled`) — DuckDB was rejected at M0. A leaf crate
-    # (deps: costroid-focus) consumed only behind the CLI's off-by-default `store`
-    # feature — never linked into the default CLI/bar/server graph.
+    # (deps: costroid-focus). Reachable two ways: behind the CLI's off-by-default `store`
+    # feature, AND linked unconditionally by `costroid-server` (M5; the server reads the
+    # stored ledger). Never in the DEFAULT `costroid`/`costroid-bar` graph.
     "crates/costroid-store",
 ]
 resolver = "2"
