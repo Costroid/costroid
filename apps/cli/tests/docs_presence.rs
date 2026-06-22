@@ -10,10 +10,30 @@
 //!
 //! Fully offline; a pure text scan of committed files.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Recursively collect every committed `*.md` file under `dir` (skipping `target/` and `.git/`).
+fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if path.is_dir() {
+            if name == "target" || name == ".git" {
+                continue;
+            }
+            collect_md(&path, out);
+        } else if name.ends_with(".md") {
+            out.push(path);
+        }
+    }
 }
 
 fn read(rel: &str) -> String {
@@ -142,6 +162,37 @@ fn limitations_covers_the_uncertain_row_annotation_and_m4_m5() {
             "never a colored alarm",
         ],
     );
+}
+
+#[test]
+fn no_committed_markdown_contains_tool_call_leakage() {
+    // Regression guard (M6 boundary tidy, DOC-1): a builder agent once left a stray
+    // `</content></invoke>` at the tail of docs/methodology.md. NO committed Markdown doc may ship
+    // agent tool-call XML. Scan every `*.md` under the repo (excluding target/ + .git/) for the
+    // leak markers. This test file is `.rs`, so the markers below are not themselves scanned.
+    let root = repo_root();
+    let mut md_files = Vec::new();
+    collect_md(&root, &mut md_files);
+    assert!(
+        md_files.len() >= 5,
+        "expected to find the committed markdown docs (found {}); the walk is broken",
+        md_files.len()
+    );
+    const LEAK_MARKERS: &[&str] = &["</invoke>", "</content>", "<parameter "];
+    for path in &md_files {
+        let text = match std::fs::read_to_string(path) {
+            Ok(value) => value,
+            Err(err) => panic!("reading {} should succeed: {err}", path.display()),
+        };
+        for marker in LEAK_MARKERS {
+            assert!(
+                !text.contains(marker),
+                "{} contains tool-call leakage marker {marker:?} — a shipped doc must never carry \
+                 agent tool-call XML (delete the stray markup)",
+                path.display()
+            );
+        }
+    }
 }
 
 #[test]
