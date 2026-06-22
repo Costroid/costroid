@@ -150,5 +150,3 @@ color-alone).
   offline model): [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - The post-M3b figure refresh: [`docs/POST-M3B-REFRESH.md`](POST-M3B-REFRESH.md) *(landed with the
   benchmark dataset, T8)*.
-</content>
-</invoke>
