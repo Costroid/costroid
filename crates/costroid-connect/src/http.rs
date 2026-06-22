@@ -843,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_refused_classifies_as_transport() {
+    fn connection_refused_classifies_as_a_connection_failure() {
         // Bind to learn a free port, then drop the listener so the connect is refused.
         let authority = {
             let listener = ok(TcpListener::bind("127.0.0.1:0"));
@@ -851,9 +851,16 @@ mod tests {
         };
         let client = loopback_client(&authority);
         let error = err(client.get(&format!("http://{authority}/v1"), &[]));
+        // A refused connect is a connection-establishment failure: Transport on Linux/macOS
+        // (ECONNREFUSED), but ureq on Windows can surface the refused connect as a Timeout. Both
+        // are correct, retryable connection-level classifications (never a success or a response),
+        // so accept either — the contract under test is that a dead endpoint never fakes a result.
         assert!(
-            matches!(error, ConnectError::Transport { .. }),
-            "expected Transport, got {error:?}"
+            matches!(
+                error,
+                ConnectError::Transport { .. } | ConnectError::Timeout
+            ),
+            "expected a connection failure (Transport or Timeout), got {error:?}"
         );
     }
 
