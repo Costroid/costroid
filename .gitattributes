@@ -1,0 +1,19 @@
+# Costroid is developed on Linux/WSL (LF). Several committed data files are compared
+# BYTE-FOR-BYTE in golden tests (e.g. crates/costroid-core/tests/v12_round_trip_golden.rs)
+# and/or are sha256-pinned (scripts/check_{power_profiles,pricing_snapshots,benchmarks}.sh).
+# They MUST check out with LF on every OS — otherwise Windows `core.autocrlf` rewrites the
+# LF blobs to CRLF on checkout and the golden/integrity checks fail. `eol=lf` overrides
+# autocrlf unconditionally. (Caught by M6 cross-OS CI: the v1.2→v1.3 round-trip golden.)
+*.csv    text eol=lf
+*.json   text eol=lf
+*.jsonl  text eol=lf
+*.sha256 text eol=lf
+
+# Binary assets — never line-ending-normalized.
+*.ttf    binary
+*.otf    binary
+*.woff   binary
+*.woff2  binary
+*.png    binary
+*.gif    binary
+*.ico    binary
