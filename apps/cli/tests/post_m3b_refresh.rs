@@ -159,3 +159,45 @@ fn every_committed_manifest_run_is_strictly_estimated() {
     }
     assert!(runs_checked > 0, "no manifest runs were checked (vacuous)");
 }
+
+#[test]
+fn every_committed_raw_bench_focus_row_is_strictly_estimated() {
+    // Inverse honesty guard (M6-2): not just the manifest summary — every FOCUS row in every
+    // committed `benchmarks/<id>/raw/*.bench.json` (the deterministic `costroid bench --out json`
+    // output) must carry `x_MeasurementMode == "estimated"`. A shipped raw artifact can never claim
+    // a measured number before the M3b wall-meter run lands. Raw shape: `{ "rows": [ { ... } ] }`.
+    let artifacts = committed_benchmark_artifacts();
+    let root = repo_root();
+    let raw_files: Vec<&String> = artifacts
+        .iter()
+        .filter(|p| p.ends_with(".bench.json"))
+        .collect();
+    assert!(
+        !raw_files.is_empty(),
+        "there must be at least one committed raw bench output under benchmarks/<id>/raw/"
+    );
+
+    let mut rows_checked = 0usize;
+    for raw_path in raw_files {
+        let json = read(&root.join(raw_path));
+        let value: serde_json::Value = match serde_json::from_str(&json) {
+            Ok(v) => v,
+            Err(err) => panic!("{raw_path} should be valid JSON: {err}"),
+        };
+        let Some(rows) = value.get("rows").and_then(|r| r.as_array()) else {
+            panic!("{raw_path} must have a `rows` array (FOCUS export shape)");
+        };
+        assert!(!rows.is_empty(), "{raw_path} `rows` must be non-empty");
+        for row in rows {
+            let mode = row.get("x_MeasurementMode").and_then(|m| m.as_str());
+            assert_eq!(
+                mode,
+                Some("estimated"),
+                "{raw_path}: every FOCUS row must be x_MeasurementMode == \"estimated\" pre-M3b, \
+                 got {mode:?}"
+            );
+            rows_checked += 1;
+        }
+    }
+    assert!(rows_checked > 0, "no raw bench rows were checked (vacuous)");
+}
