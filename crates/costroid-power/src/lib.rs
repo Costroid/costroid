@@ -23,6 +23,7 @@
 pub mod cost;
 mod error;
 pub mod harness;
+mod measured;
 mod mode;
 pub mod models;
 pub mod profile;
@@ -35,6 +36,7 @@ pub use harness::{
     average_watts, benchmark_id, compute_report, estimate_run, run_measured, LocalRunReport,
     DEFAULT_BENCHMARK_SUITE,
 };
+pub use measured::{measured_mode_for, MEASURED_MODELS};
 pub use mode::MeasurementMode;
 pub use models::{bundled_models, ModelManifest, ModelQuality, ModelSpec, GEMMA4_MANIFEST_AS_OF};
 pub use profile::{
