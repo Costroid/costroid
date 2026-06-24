@@ -42,7 +42,9 @@ is honest and reproducible:
   and report the average **and** the spread (the band feeds the sensitivity, not a single hero
   number).
 - **The run is `llama.cpp`, not the committed `ollama`.** The committed dataset records
-  `runtime_kind: "ollama"`; the measured GPU run is **llama.cpp** (ROCm/HIP). Update the manifest
+  `runtime_kind: "ollama"`; the measured GPU run is **llama.cpp** (ROCm/HIP) — so **pass
+  `--runtime llama.cpp` to the `bench` command below; the default is `ollama`**, and omitting it
+  stamps the row `x_RuntimeKind = "ollama"`, contradicting the measured run. Update the manifest
   run's `runtime_kind` (→ `llama.cpp`) and `quant` if it differs; the regenerated raw row then
   carries `x_RuntimeKind` / `x_BenchmarkId` (`…/llama.cpp`) from the runner.
 - **Size `.wslconfig` so 31b-Q4 weights + KV fit the ROCm GTT pool.** The 31B-dense `Q4_K_M` weights
@@ -62,6 +64,7 @@ is honest and reproducible:
 EPOCH=1781913600   # KEEP the dated as_of pin — the row timestamp must stay byte-deterministic (D5)
 SOURCE_DATE_EPOCH=$EPOCH cargo run -q -p costroid --features power -- \
   bench --model gemma-4-31b-dense --tokens-in 2000 --tokens-out 18000 \
+  --runtime llama.cpp \
   --measure --wall-meter-watts <MEASURED_WATTS> --out json
 ```
 
@@ -99,6 +102,9 @@ This is what authorizes a measured benchmark row to ship — do it **together wi
       ("gemma-4-31b-dense", MeasurementMode::MeasuredWallmeter),
   ];
   ```
+  Then **update the `measured_models_is_empty_pre_m3b` test in that same file** — it asserts
+  `MEASURED_MODELS.is_empty()` (and `measured_mode_for("gemma-4-31b-dense").is_none()`), both of
+  which become false the moment you add the entry, so amend or remove it or `cargo test` goes red.
 - Add the **matching** mirror entry in
   [`apps/cli/tests/post_m3b_refresh.rs`](../apps/cli/tests/post_m3b_refresh.rs):
   ```rust
