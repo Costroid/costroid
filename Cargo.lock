@@ -1050,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "costroid"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-bar"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-config"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "costroid-core",
  "rust_decimal",
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-connect"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "costroid-core",
  "keyring",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "costroid-focus",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-focus"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "csv",
@@ -1137,7 +1137,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-power"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1146,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-providers"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "csv",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-server"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "costroid-store"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "costroid-focus",

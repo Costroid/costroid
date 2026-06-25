@@ -10,10 +10,13 @@ are estimates (your tokens × current prices), reconcilable against your provide
 
 ## [Unreleased]
 
-> **The "Costroid-Next" feature set (M1–M6).** Local-inference economics, a cloud/API cost lane, a
-> break-even calculator, and a loopback web UI on top of the shipped v0.6.0 tool — still local-first,
-> zero-network by default, no telemetry. **Every local-inference figure is estimated — pending M3b
-> measurement** (a real captured joules/token on the target hardware); see
+## [0.7.0] - 2026-06-25
+
+> **The "Costroid-Next" feature set (M1–M6 + M3b).** Local-inference economics, a cloud/API cost
+> lane, a break-even calculator, and a loopback web UI on top of the shipped v0.6.0 tool — still
+> local-first, zero-network by default, no telemetry. **`gemma-4-31b-dense` now carries a real
+> wall-meter measurement (M3b); the other local models remain estimated — pending M3b measurement**
+> (a real captured joules/token on the target hardware); see
 > [docs/methodology.md](docs/methodology.md) and [docs/limitations.md](docs/limitations.md).
 
 ### Added
@@ -21,6 +24,7 @@ are estimates (your tokens × current prices), reconcilable against your provide
 - **Unified three-lane FOCUS ledger** (M1): one FOCUS v1.2-in / v1.3-out ledger across `developer_tool` usage, `cloud_api` spend, and `local_inference`, never summed across lanes; an opt-in SQLite store (`costroid-store`, off-by-default `store` feature) and `costroid import` for foreign FOCUS v1.2 exports.
 - **Cloud/API cost lane** (M2): a bundled LiteLLM pricing snapshot + layered catalog, foreign-authoritative pricing + multi-currency import, AWS Data Exports FOCUS + Bedrock Application Inference Profile attribution, and estimate-vs-invoice reconciliation.
 - **Local-inference economics engine** (M3a; `costroid-power`, off-by-default `power` feature): the four-source wall-meter-led `PowerSampler`, a subprocess llama.cpp/Ollama benchmark runner, a dated/stamped hardware+electricity profile + Gemma 4 manifest, the 7 local `x_` columns, and `costroid bench` (estimated by default — no hardware; honors `SOURCE_DATE_EPOCH` for reproducible output).
+- **First real measured local-inference data** (M3b): `gemma-4-31b-dense` flipped from estimated to a captured **wall-meter measurement** (96 W, ~9.7 tok/s; Apache-2.0 Gemma 4 run via llama.cpp Vulkan on an AMD Strix Halo APU), authorized by a human-gated `MEASURED_MODELS` allowlist + a provenance guard that fails the build on a fabricated or half-flipped measured claim. The other local models stay **estimated — pending M3b measurement**.
 - **Break-even + scenario engine** (M4): calendar-fixed amortization, the energy-only marginal rate `e` over the total (in+out) token basis, a sensitivity band, a "never"/infeasible outcome, and `costroid breakeven`.
 - **Loopback web UI + HTTP API** (M5; `costroid-server`, new binary): a `127.0.0.1`-only server with three server-rendered views (timeline / comparison / break-even), a `?plain` text fallback + a JSON API, all assets embedded, zero external requests; plus a power-gated TUI break-even overlay (`b`).
 - **Bundled synthetic sample datasets + `make demo`** (M6): `samples/` (synthetic dev-tool logs + AWS FOCUS + a benchmark pack) and a deterministic, fully-offline, hardware-free `make demo`; a versioned benchmark dataset + a Gemma-4-vs-cloud methodology writeup; a methodology page; a Mermaid architecture diagram + a "what ccusage doesn't" table in the README.
@@ -125,7 +129,8 @@ are estimates (your tokens × current prices), reconcilable against your provide
 - Exact-`Decimal` `tokens × price` cost from bundled, dated pricing; verified to the cent against ccusage.
 - Packaged releases via cargo-dist (shell, PowerShell, Homebrew, npm) + crates.io (`cargo install costroid` / `cargo binstall costroid`), each artifact SHA-256-checksummed and build-provenance-attested.
 
-[Unreleased]: https://github.com/Costroid/costroid/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Costroid/costroid/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Costroid/costroid/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Costroid/costroid/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Costroid/costroid/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Costroid/costroid/compare/v0.3.0...v0.4.0
