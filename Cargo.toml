@@ -26,7 +26,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -85,18 +85,18 @@ ureq = { version = "=3.3.0", default-features = false, features = [
 # Internal deps carry both `path` (used for local workspace builds) and `version`
 # (required by crates.io: a path-only dependency is rejected on publish). Cargo
 # uses the path locally and records only the version in the published manifest.
-costroid-config = { path = "crates/costroid-config", version = "0.6.0" }
-costroid-connect = { path = "crates/costroid-connect", version = "0.6.0" }
-costroid-core = { path = "crates/costroid-core", version = "0.6.0" }
-costroid-focus = { path = "crates/costroid-focus", version = "0.6.0" }
+costroid-config = { path = "crates/costroid-config", version = "0.7.0" }
+costroid-connect = { path = "crates/costroid-connect", version = "0.7.0" }
+costroid-core = { path = "crates/costroid-core", version = "0.7.0" }
+costroid-focus = { path = "crates/costroid-focus", version = "0.7.0" }
 # `costroid-power` is `publish = true` since M6 T9 (the crates.io library flip) and sits in the
 # publish ladder before `costroid`; deps record the version + use the path locally.
-costroid-power = { path = "crates/costroid-power", version = "0.6.0" }
-costroid-providers = { path = "crates/costroid-providers", version = "0.6.0" }
+costroid-power = { path = "crates/costroid-power", version = "0.7.0" }
+costroid-providers = { path = "crates/costroid-providers", version = "0.7.0" }
 # `costroid-store` is `publish = true` since M6 T9 (the crates.io library flip); it is consumed
 # only behind the CLI's off-by-default `store` feature + by `costroid-server`, and sits in the
 # publish ladder before `costroid`/`costroid-server`.
-costroid-store = { path = "crates/costroid-store", version = "0.6.0" }
+costroid-store = { path = "crates/costroid-store", version = "0.7.0" }
 
 # The egui taskbar GUI stack (Step 6 / `apps/bar` only — the default `costroid` CLI
 # never links these). All MIT/Apache-2.0, no webview/Tauri. The `glow` (OpenGL)
