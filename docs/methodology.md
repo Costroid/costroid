@@ -29,9 +29,10 @@ honest:
 
 `x_Estimated` is cleared (`false`) **only** for the three `measured_*` modes; an `estimated` row always
 carries `x_Estimated = true`. By default `costroid bench` runs in **`estimated`** mode (no hardware
-required), so everything ships and demos with zero hardware — and the **inverse honesty guard** asserts
-that every committed sample/benchmark row is `x_MeasurementMode == "estimated"` (no shipped artifact may
-claim a measured number before M3b).
+required), so everything ships and demos with zero hardware — and the **provenance honesty guard**
+asserts that every committed **sample** row, and every **benchmark** row whose model is not on
+`costroid_power::MEASURED_MODELS`, is `x_MeasurementMode == "estimated"` (a shipped artifact may claim a
+measured number **only** for an allowlisted, attested model — as of M3b Phase 2, `gemma-4-31b-dense`).
 
 ## 2. Package power vs wall power (the ~20–40% caveat)
 

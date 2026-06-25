@@ -2,8 +2,8 @@
 //!
 //! Honesty in code (R10): a benchmark row may claim a *measured* number only if a human has
 //! attested — here, in committed source — that the shipped `benchmarks/**` data for that model is a
-//! real captured run. This module is that single source of truth; it is **empty** until the M3b
-//! wall-meter run lands.
+//! real captured run. This module is that single source of truth; as of M3b Phase 2 it holds the
+//! one attested wall-meter measurement (`gemma-4-31b-dense`); every other model stays estimated.
 //!
 //! The post-M3b drift-guard (`apps/cli/tests/post_m3b_refresh.rs`) keys off [`MEASURED_MODELS`]:
 //! a benchmark row claiming a measured mode whose model is **absent** here FAILS the build (a
@@ -17,12 +17,13 @@ use crate::mode::MeasurementMode;
 /// The authoritative, human-gated allowlist of model ids whose committed `benchmarks/**` dataset
 /// carries a **real measured run** — paired with the exact [`MeasurementMode`] that run used.
 ///
-/// **Empty until the M3b wall-meter run lands.** Adding an entry is a human ATTESTATION (R10) that
-/// this model's shipped benchmark *manifest run* AND *raw FOCUS row* are real captured numbers, not
-/// estimates. See the module docs for the guard contract.
+/// Adding an entry is a human ATTESTATION (R10) that this model's shipped benchmark *manifest run*
+/// AND *raw FOCUS row* are real captured numbers, not estimates. See the module docs for the guard
+/// contract. M3b Phase 2 (2026-06-25) added `gemma-4-31b-dense`; every other model stays estimated.
 pub const MEASURED_MODELS: &[(&str, MeasurementMode)] = &[
-    // Phase 2 (human, after the wall-meter run), e.g.:
-    //   ("gemma-4-31b-dense", MeasurementMode::MeasuredWallmeter),
+    // M3b Phase 2 (2026-06-25): measured on the Strix Halo (Radeon 8060S, gfx1151) via llama.cpp
+    // Vulkan, PM 231 E wall meter @ 96 W steady decode. See docs/M3B-PHASE2-FLIP-PLAN.md.
+    ("gemma-4-31b-dense", MeasurementMode::MeasuredWallmeter),
 ];
 
 /// Find a model's declared measured mode in an allowlist slice. The seam exists so the lookup logic
@@ -46,14 +47,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn measured_models_is_empty_pre_m3b() {
-        // The all-estimated invariant lives here as code: nothing is attested measured yet, so the
-        // benchmarks drift-guard's empty-allowlist case == "every committed row must be estimated".
-        assert!(
-            MEASURED_MODELS.is_empty(),
-            "MEASURED_MODELS must stay empty until the M3b measurement run is committed"
+    fn measured_models_after_m3b_phase2() {
+        // M3b Phase 2 (2026-06-25): exactly one model is attested measured — gemma-4-31b-dense
+        // (wall meter) — and every other model resolves to None (its committed rows stay estimated).
+        assert_eq!(
+            MEASURED_MODELS.len(),
+            1,
+            "M3b Phase 2 adds exactly one measured model (gemma-4-31b-dense)"
         );
-        assert!(measured_mode_for("gemma-4-31b-dense").is_none());
+        assert_eq!(
+            measured_mode_for("gemma-4-31b-dense"),
+            Some(MeasurementMode::MeasuredWallmeter)
+        );
+        // A model NOT on the allowlist resolves to None (still estimated — pending M3b).
+        assert!(measured_mode_for("gemma-4-26b-a4b").is_none());
     }
 
     #[test]
