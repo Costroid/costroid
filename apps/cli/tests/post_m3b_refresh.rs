@@ -11,17 +11,18 @@
 //!    of the loop: the human-facing checklist can't drift from what is actually shipped.)
 //!
 //! 2. **Provenance guard (M3b).** Every committed benchmark row's measurement claim must match the
-//!    authoritative, human-gated allowlist `costroid_power::MEASURED_MODELS` (EMPTY pre-M3b). A
-//!    model NOT on the allowlist MUST be `estimated` in BOTH its manifest run and its joined raw
-//!    row; a model ON the allowlist MUST carry exactly its declared measured mode in BOTH, with
-//!    `x_Estimated` cleared. A measured row whose model is absent from the allowlist FAILS — bare
-//!    cross-consistency would let a *fabricated* measured row pass, so the allowlist is the anchor.
-//!    With the empty allowlist this is exactly the pre-M3b "every committed row is estimated"
-//!    invariant (so the gate is green now, zero data change).
+//!    authoritative, human-gated allowlist `costroid_power::MEASURED_MODELS` (as of M3b Phase 2:
+//!    `gemma-4-31b-dense` measured, every other model estimated). A model NOT on the allowlist MUST
+//!    be `estimated` in BOTH its manifest run and its joined raw row; a model ON the allowlist MUST
+//!    carry exactly its declared measured mode in BOTH, with `x_Estimated` cleared. A measured row
+//!    whose model is absent from the allowlist FAILS — bare cross-consistency would let a
+//!    *fabricated* measured row pass, so the allowlist is the anchor. For a model off the allowlist
+//!    this is exactly the "every committed row is estimated" invariant; for `gemma-4-31b-dense` it
+//!    requires the measured claim end-to-end (manifest run + raw row + `x_Estimated = false`).
 //!
 //!    Because `apps/cli` links `costroid-power` only behind the `power` feature, this test (which
 //!    runs in the default `cargo test --workspace`) consults a string **mirror** of the allowlist
-//!    (`MEASURED_MODELS_MIRROR`, empty today); the `#[cfg(feature = "power")]` tie below pins the
+//!    (`MEASURED_MODELS_MIRROR`, the `gemma-4-31b-dense` entry today); the `#[cfg(feature = "power")]` tie below pins the
 //!    mirror to the authoritative const, and CI runs `cargo test -p costroid --features power`, so
 //!    a drift fails there. (Same necessary pattern `samples_datasets.rs` uses for the `"estimated"`
 //!    literal — a test-local shadow with an anti-drift pin, not a second source of truth.)
@@ -143,12 +144,13 @@ fn benchmarks_json_tokens(text: &str) -> Vec<String> {
 const ESTIMATED_MODE: &str = "estimated";
 
 /// Default-build mirror of `costroid_power::MEASURED_MODELS` — the crate const can't be linked
-/// without the `power` feature, and this guard must run in `cargo test --workspace`. **EMPTY today.**
-/// The `#[cfg(feature = "power")]` tie below pins it to the authoritative const; CI runs
-/// `cargo test -p costroid --features power`, so any drift FAILS there.
+/// without the `power` feature, and this guard must run in `cargo test --workspace`. Holds the M3b
+/// Phase-2 `gemma-4-31b-dense` attestation today. The `#[cfg(feature = "power")]` tie below pins it
+/// to the authoritative const; CI runs `cargo test -p costroid --features power`, so any drift FAILS there.
 const MEASURED_MODELS_MIRROR: &[(&str, &str)] = &[
-    // Phase 2 (human, after the wall-meter run) — mirror of crates/costroid-power MEASURED_MODELS:
-    //   ("gemma-4-31b-dense", "measured_wallmeter"),
+    // M3b Phase 2 (2026-06-25) — mirror of crates/costroid-power MEASURED_MODELS (tied to the const
+    // under #[cfg(feature = "power")] by mirror_equals_the_authoritative_measured_models):
+    ("gemma-4-31b-dense", "measured_wallmeter"),
 ];
 
 /// Tally of what the guard actually inspected — so the real test can reject a vacuous pass.
@@ -412,9 +414,9 @@ fn check_benchmark_provenance(
 #[test]
 fn benchmark_dataset_provenance_matches_the_measured_models_allowlist() {
     // The committed benchmarks/** must satisfy the allowlist-anchored provenance guard. With the
-    // empty mirror this is exactly "every committed run + row is estimated" (green now, zero data
-    // change); once the human flips 31b to measured + adds it to the allowlist, the same guard
-    // enforces the measured claim is backed end-to-end (manifest run + raw row + x_Estimated).
+    // M3b Phase-2 mirror (gemma-4-31b-dense), the guard requires 31b measured end-to-end (manifest
+    // run + raw row + x_Estimated = false) and every other model estimated; doing either the data
+    // flip or the allowlist flip alone would fail it.
     let bench_root = repo_root().join("benchmarks");
     assert!(bench_root.is_dir(), "benchmarks/ must exist");
     let stats = match check_benchmark_provenance(&bench_root, MEASURED_MODELS_MIRROR) {

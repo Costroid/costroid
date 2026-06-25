@@ -7,15 +7,17 @@ It pairs with the technical [`methodology.md`](methodology.md) (the exact formul
 [`limitations.md`](limitations.md) (what Costroid cannot know). When this doc disagrees with the
 code, **the code wins** — every number below is what the engine emits.
 
-> **Honesty stamp (R8/R10).** Every local cost, energy, and throughput figure in this writeup is
-> **estimated — pending M3b measurement**. The throughput (tok/s) numbers are **community-analog
-> estimates** from the bundled Gemma 4 manifest, not measurements on this hardware; the energy is
-> **derived** from a dated, stamped, overridable power profile, not a real captured joules/token;
-> the cloud dollars are a **counterfactual list-price estimate** (your tokens × current catalog
-> list prices), never an actual cloud invoice. Model **quality** is **as published** (cited, never
-> re-derived). Real captured numbers fill these placeholders in a documented post-M3b refresh
-> ([`POST-M3B-REFRESH.md`](POST-M3B-REFRESH.md)). **Cost is always an estimate** — reconcile
-> against the provider bill.
+> **Honesty stamp (R8/R10).** This writeup is now **mixed measured/estimated** (M3b Phase 2). The
+> **Gemma 4 31B Dense** local cost, energy, and throughput figures are a **real wall-meter
+> measurement** (llama.cpp Vulkan on the Strix Halo, 96 W, 2026-06-25). The **26B/12B** figures are
+> still **estimated — pending M3b measurement**: their throughput (tok/s) numbers are
+> **community-analog estimates** from the bundled Gemma 4 manifest, not measurements on this
+> hardware, and their energy is **derived** from a dated, stamped, overridable power profile, not a
+> captured joules/token. The cloud dollars are a **counterfactual list-price estimate** (your tokens
+> × current catalog list prices), never an actual cloud invoice. Model **quality** is **as
+> published** (cited, never re-derived). The remaining estimated models flip in a later pass of the
+> documented post-M3b refresh ([`POST-M3B-REFRESH.md`](POST-M3B-REFRESH.md)). **Cost is always an
+> estimate** — reconcile against the provider bill.
 
 ## The honest headline
 
@@ -27,48 +29,52 @@ per-token meter, no rate-limit windows), and **marginal cost** (the energy floor
 crossover is a **volume** story, not a free lunch — so this writeup presents **ranges and a
 break-even volume**, never a single hero number.
 
-For the estimated **Gemma 4 31B Dense** run benchmarked here, local breaks even versus
-`claude-opus-4-8` list pricing at roughly **81,000 tokens/day** (sensitivity band ≈ **65,000 –
-99,000 tokens/day**) — *estimated — pending M3b measurement*. Below that, cloud is cheaper on
+For the **measured** **Gemma 4 31B Dense** run benchmarked here (wall meter, 96 W, llama.cpp
+Vulkan, 2026-06-25), local breaks even versus `claude-opus-4-8` list pricing at roughly **80,800
+tokens/day** (sensitivity band ≈ **65,000 – 98,000 tokens/day**). Below that, cloud is cheaper on
 dollars alone.
 
 ## The benchmark
 
 Hardware target: **AMD Strix Halo / Ryzen AI Max+ 395**, Radeon 8060S iGPU (gfx1151, RDNA3.5),
-**128 GB** unified memory (~215 GB/s — inference is memory-bandwidth-bound). Profile
-`strix-halo-128gb@2026-06-20`: **155 W** system load (an estimated, overridable assumption — *estimated
-— pending M3b measurement*), **$2,000** hardware price, **3-year** (1,095-day) amortization,
-electricity **$0.16/kWh** (a dated `global-household-average-template`).
+**128 GB** unified memory (~215 GB/s — inference is memory-bandwidth-bound). Shared assumptions:
+**$2,000** hardware price, **3-year** (1,095-day) amortization, electricity **$0.16/kWh** (a dated
+`global-household-average-template`). System power: the **31B Dense** run is a **measured 96 W** (PM
+231 E wall meter, steady decode); the **26B/12B** runs use the profile `strix-halo-128gb@2026-06-20`
+**155 W** estimate (an overridable assumption — *estimated — pending M3b measurement*).
 
-Workload per run: **2,000 prompt + 18,000 generated = 20,000 tokens**, `Q4_K_M`, `ollama`,
-estimated mode (no model weights, no hardware, no subprocess). The three benchmarked models, their
-**estimated** throughput (tok/s — community analog, *estimated — pending M3b measurement*), and the
+Workload: **2,000 prompt + 18,000 generated = 20,000 tokens**, `Q4_K_M`. The **26B/12B** are
+`ollama`, **estimated** mode (no weights, no hardware, no subprocess). The **31B Dense** is the
+**measured** `llama.cpp` (Vulkan) run — a real decode of **18,000 generated tokens** from the fixed
+~18-token benchmark prompt (**18,018 total**). The three benchmarked models, their throughput (**31B
+measured; 26B/12B community-analog estimates — *estimated — pending M3b measurement***), and the
 engine's per-run local economics:
 
-| Model (Apache-2.0) | est. tok/s | Energy (Wh) | Energy-only cost | Amortized HW | Local run cost |
+| Model (Apache-2.0) | tok/s | Energy (Wh) | Energy-only cost | Amortized HW | Local run cost |
 |---|---|---|---|---|---|
-| Gemma 4 31B Dense | ~12 | 64.583333 Wh | $0.0103333333 | $0.031709792 | $0.0420431253 |
-| Gemma 4 12B Unified | ~30 | 25.833333 Wh | $0.0041333333 | $0.0126839168 | $0.0168172501 |
-| Gemma 4 26B A4B (fast MoE) | ~96 | 8.072917 Wh | $0.0012916667 | $0.003963724 | $0.0052553907 |
+| Gemma 4 31B Dense **(measured)** | 9.698 | 49.494614 Wh | $0.0079191382 | $0.0392365975 | $0.0471557357 |
+| Gemma 4 12B Unified *(estimated)* | ~30 | 25.833333 Wh | $0.0041333333 | $0.0126839168 | $0.0168172501 |
+| Gemma 4 26B A4B (fast MoE) *(estimated)* | ~96 | 8.072917 Wh | $0.0012916667 | $0.003963724 | $0.0052553907 |
 
-*(All figures **estimated — pending M3b measurement**. Energy = `155 W × wall_seconds / 3600`,
-where `wall_seconds = tokens_out / estimated_tok_s` — **decode time dominates**, so the wall-clock is
-estimated from the **generated (output) tokens only**, matching the engine
-([`crates/costroid-power/src/harness.rs`](../crates/costroid-power/src/harness.rs)); the slower dense
-model burns more wall-clock time, hence more Wh and more amortized capex for the same token count.)*
+*(The **31B Dense** row is a **measured wall-meter run** (96 W, llama.cpp Vulkan, 2026-06-25) over its
+real **18,018-token** decode; the **12B/26B** rows are **estimated — pending M3b measurement** over
+the 20,000-token workload. Energy = `avg_watts × wall_seconds / 3600` with `wall_seconds = tokens_out
+/ tok_s` — **decode time dominates**, so the wall-clock tracks the **generated (output) tokens only**,
+matching the engine ([`crates/costroid-power/src/harness.rs`](../crates/costroid-power/src/harness.rs));
+the measured 31B used `avg_watts = 96`, the estimated rows `155`. Energy-only cost cross-checks as
+`Wh / 1000 × $0.16/kWh`.)*
 
 ### The energy floor (marginal cost)
 
 The **marginal** local cost is energy-only — the per-token rate `e` over the **total (in+out)**
 token basis (see [`methodology.md`](methodology.md) §4). It excludes the amortized capex (that is
-the break-even *fixed* term, not a marginal cost). For these estimated runs (**estimated — pending
-M3b measurement**):
+the break-even *fixed* term, not a marginal cost):
 
 | Model | energy-only `e` |
 |---|---|
-| Gemma 4 31B Dense | ~$0.52 per million tokens |
-| Gemma 4 12B Unified | ~$0.21 per million tokens |
-| Gemma 4 26B A4B | ~$0.065 per million tokens |
+| Gemma 4 31B Dense **(measured)** | ~$0.44 per million tokens |
+| Gemma 4 12B Unified *(estimated — pending M3b measurement)* | ~$0.21 per million tokens |
+| Gemma 4 26B A4B *(estimated — pending M3b measurement)* | ~$0.065 per million tokens |
 
 So the **electricity** to generate a million tokens locally is a fraction of a dollar — far below
 any cloud list price. That is the seductive part. The catch is the capex you carry to get there.
@@ -84,12 +90,12 @@ Cloud dollars are sourced from Costroid's bundled **layered pricing catalog**
 | `claude-opus-4-8` | $5 | $25 | **$0.46** | $23 |
 | `claude-sonnet-4-6` | $3 | $15 | **$0.276** | $13.8 |
 
-So one 20k-token run whose **marginal energy cost** is roughly **$0.001–$0.010** locally
-(energy-only, **estimated — pending M3b measurement**) would cost **$0.28–$0.46** at cloud list
-price — the cloud is **~30–350×** the marginal energy cost per run. If marginal cost were the whole
-story, local would win overwhelmingly. It is not: the amortized hardware capex (here **$0.004–$0.032
-per run** — the energy-plus-capex per-run total is **$0.005–$0.042**) is what flips the economics,
-which is the break-even story below.
+So one ~20k-token run whose **marginal energy cost** is roughly **$0.001–$0.008** locally
+(energy-only; 31B **measured**, 26B/12B **estimated — pending M3b measurement**) would cost
+**$0.28–$0.46** at cloud list price — the cloud is **~35–350×** the marginal energy cost per run. If
+marginal cost were the whole story, local would win overwhelmingly. It is not: the amortized hardware
+capex (here **$0.004–$0.039 per run** — the energy-plus-capex per-run total is **$0.005–$0.047**) is
+what flips the economics, which is the break-even story below.
 
 ## Break-even — where local actually wins
 
@@ -100,19 +106,22 @@ hw_fixed_per_day = hardware_price ÷ depreciation_period_days   # $2000 / 1095 �
 V*               = hw_fixed_per_day ÷ (c − e)                   # tokens/day to break even
 ```
 
-where `c` is the blended cloud per-token rate and `e` is the energy-only local rate. For the
-benchmarked 31B-dense run versus `claude-opus-4-8` (**estimated — pending M3b measurement**):
+where `c` is the blended cloud per-token rate and `e` is the energy-only local rate (for 31B, the
+**measured** `e` over the comparable 20,000-token workload — see the basis note below):
 
 | Compared cloud model | break-even volume | sensitivity band |
 |---|---|---|
-| 31B Dense vs `claude-opus-4-8` | ~**81,237 tokens/day** | ~64,990 – 98,818 tokens/day |
-| 31B Dense vs `claude-sonnet-4-6` | ~**137,502 tokens/day** | ~110,002 – 167,824 tokens/day |
-| 26B A4B vs `claude-opus-4-8` | ~**79,636 tokens/day** | ~63,709 – 96,459 tokens/day |
-| 12B Unified vs `claude-opus-4-8` | ~**80,132 tokens/day** | ~64,106 – 97,188 tokens/day |
+| 31B Dense vs `claude-opus-4-8` **(measured)** | ~**80,803 tokens/day** | ~64,643 – 98,177 tokens/day |
+| 31B Dense vs `claude-sonnet-4-6` **(measured)** | ~**136,264 tokens/day** | ~109,011 – 165,983 tokens/day |
+| 26B A4B vs `claude-opus-4-8` *(estimated)* | ~**79,636 tokens/day** | ~63,709 – 96,459 tokens/day |
+| 12B Unified vs `claude-opus-4-8` *(estimated)* | ~**80,132 tokens/day** | ~64,106 – 97,188 tokens/day |
 
 *(Provenance: the versioned manifest's `cloud_comparison` records the `claude-opus-4-8` break-even
-per run; the `claude-sonnet-4-6` row is reproduced from a direct `costroid breakeven --compare-to
-claude-sonnet-4-6` call against the same catalog — see [Reproduce it](#reproduce-it).)*
+per run; the `claude-sonnet-4-6` row is reproduced via the engine formula against the same catalog —
+see [Reproduce it](#reproduce-it). **Token basis:** the 31B run's own marginal `e` is over its real
+18,018-token measured run (~$0.44/M, the table above); its **break-even** `e` is the same measured
+energy over the comparable **20,000-token** workload (~$0.40/M), so the 31B crossover stays
+comparable to the unchanged 26B/12B rows and the unchanged cloud list prices.)*
 
 Read this carefully:
 
@@ -146,41 +155,45 @@ Dollars-per-token is the *least* compelling reason at low volume. The real reaso
 
 ## Reproduce it
 
-Everything here is deterministic and offline. The versioned dataset lives in
+The versioned dataset lives in
 [`benchmarks/gemma4-vs-cloud-2026-06/`](../benchmarks/gemma4-vs-cloud-2026-06/) (manifest + raw
 `costroid bench` outputs + `.sha256` sidecars), guarded by `scripts/check_benchmarks.sh`.
 
+The **26B/12B estimated rows are deterministic and offline** — they regenerate byte-for-byte (D5
+pins the bench-row timestamp to the manifest `as_of`):
+
 ```bash
-# Determinism (D5): pin the bench-row timestamp to the manifest as_of (2026-06-20).
-EPOCH=1781913600
-
-# Per-model local economics (one FOCUS-1.3 local_inference row each):
+EPOCH=1781913600   # 2026-06-20T00:00:00Z
 SOURCE_DATE_EPOCH=$EPOCH cargo run -q -p costroid --features power -- \
-  bench --model gemma-4-31b-dense --tokens-in 2000 --tokens-out 18000 --out json
-
-# The local-vs-cloud break-even (cloud priced from the bundled catalog):
+  bench --model gemma-4-26b-a4b --tokens-in 2000 --tokens-out 18000 --out json
 cargo run -q -p costroid --features power -- \
-  breakeven --model gemma-4-31b-dense --tokens-in 2000 --tokens-out 18000 \
+  breakeven --model gemma-4-26b-a4b --tokens-in 2000 --tokens-out 18000 \
   --compare-to claude-opus-4-8 --plain
 
 # The full one-command demo (import → bench → break-even → export FOCUS), offline:
 make demo
 ```
 
-The raw outputs regenerate byte-for-byte (the `SOURCE_DATE_EPOCH` pin); `check_benchmarks.sh`
-verifies the committed `.sha256` sidecars. See the dataset
-[`README.md`](../benchmarks/gemma4-vs-cloud-2026-06/README.md) for the exact regen loop.
+The **31B Dense row is a captured wall-meter MEASUREMENT — not byte-regenerable** (it needs the
+Strix Halo + a PM 231 E meter + the user's GGUF; a re-measurement varies run-to-run). Its committed
+bytes are pinned by `gemma-4-31b-dense.bench.json.sha256`; the capture command + the exact break-even
+derivation (the estimated `costroid breakeven` CLI reproduces the *estimated* ~81,237/day, **not**
+the measured 80,803/day) are documented in the dataset
+[`README.md`](../benchmarks/gemma4-vs-cloud-2026-06/README.md). `check_benchmarks.sh` verifies all
+three `.sha256` sidecars.
 
 ## Caveats (read these)
 
-- **Package power vs wall power.** The 155 W is calibrated to **system** draw. On an APU the iGPU
-  shares a rail with the CPU, so no on-chip sensor isolates GPU-only watts — a wall meter (true
-  total draw) is typically **~20–40% higher** than the on-chip package figure. The measured ladder
-  *leads* with the wall meter for exactly this reason. See [`methodology.md`](methodology.md) §2.
-- **Estimated, not measured.** Until the M3b on-hardware wall-meter run lands, every figure is
-  **estimated — pending M3b measurement**; the throughput is a community analog, not a reading on
-  this machine. [`POST-M3B-REFRESH.md`](POST-M3B-REFRESH.md) is the closed checklist of exactly
-  which figures the real run replaces.
+- **Package power vs wall power.** The estimated **155 W** (26B/12B) is calibrated to **system**
+  draw. On an APU the iGPU shares a rail with the CPU, so no on-chip sensor isolates GPU-only watts —
+  a wall meter (true total draw) is typically **~20–40% higher** than the on-chip package figure.
+  The measured ladder *leads* with the wall meter for exactly this reason — and the **31B Dense**
+  figure here **is** that wall-meter reading (96 W). See [`methodology.md`](methodology.md) §2.
+- **31B measured; 26B/12B estimated.** The **31B Dense** figures are a real M3b wall-meter run
+  (2026-06-25). The **26B/12B** figures are still **estimated — pending M3b measurement** (the
+  throughput is a community analog, not a reading on this machine).
+  [`POST-M3B-REFRESH.md`](POST-M3B-REFRESH.md) is the closed checklist of exactly which figures a
+  later measured pass replaces.
 - **A range, never a hero number.** The break-even moves with electricity, hardware price, and the
   output mix; treat the band as the answer, not its midpoint.
 

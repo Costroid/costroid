@@ -5,8 +5,9 @@ energy, and throughput figure is **estimated — pending M3b measurement** (R8/R
 dated power profile + a community-analog throughput estimate, never a real captured joules/token.
 
 The M3b refresh is a **per-model PARTIAL flip.** The human-decided run measures **one** model —
-`gemma-4-31b-dense`, in WSL2 on the Strix Halo (gfx1151) via GPU-accelerated **llama.cpp** + a
-display-only wall meter — and leaves the others estimated until they too are measured. The flip is
+`gemma-4-31b-dense`, in WSL2 on the Strix Halo (gfx1151) via GPU-accelerated **llama.cpp (Vulkan
+backend)** + a display-only wall meter — and leaves the others estimated until they too are measured.
+The flip is
 **provenance-anchored**: a benchmark row may claim a measured number **only** for a model on the
 authoritative allowlist `costroid_power::MEASURED_MODELS` (and its test mirror). The drift-guard
 [`apps/cli/tests/post_m3b_refresh.rs`](../apps/cli/tests/post_m3b_refresh.rs) enforces
@@ -41,20 +42,27 @@ is honest and reproducible:
   immediately before and after the decode window; `avg_watts = Δkwh / window_hours`. Take **≥3 runs**
   and report the average **and** the spread (the band feeds the sensitivity, not a single hero
   number).
-- **The run is `llama.cpp`, not the committed `ollama`.** The committed dataset records
-  `runtime_kind: "ollama"`; the measured GPU run is **llama.cpp** (ROCm/HIP) — so **pass
-  `--runtime llama.cpp` to the `bench` command below; the default is `ollama`**, and omitting it
-  stamps the row `x_RuntimeKind = "ollama"`, contradicting the measured run. Update the manifest
-  run's `runtime_kind` (→ `llama.cpp`) and `quant` if it differs; the regenerated raw row then
-  carries `x_RuntimeKind` / `x_BenchmarkId` (`…/llama.cpp`) from the runner.
-- **Size `.wslconfig` so 31b-Q4 weights + KV fit the ROCm GTT pool.** The 31B-dense `Q4_K_M` weights
-  **plus** the KV cache for the 20,000-token window must fit the WSL2 GPU GTT allocation. Set the
-  `.wslconfig` memory high enough (record the value you used) and the gfx1151 ROCm env so the iGPU,
-  not the CPU, runs the decode.
-- **HARD-abort unless `rocm-smi` shows the iGPU busy + weights resident and tok/s ≈ 10–13.** Before
-  trusting a run, confirm `rocm-smi` reports GPU utilization + the weights resident in VRAM/GTT and a
-  decode rate in the **~10–13 tok/s** GPU band. A silent **CPU fallback** (≈2–4 tok/s, no GPU
-  residency) must **abort the run** — never record a CPU number as if it were the GPU.
+- **The run is `llama.cpp` on the Vulkan backend, not the committed `ollama`.** The committed dataset
+  recorded `runtime_kind: "ollama"`; the measured GPU run is **llama.cpp on the Vulkan backend** —
+  the Windows `llama-completion.exe` driven from WSL2 via interop (NOT ROCm; see the GPU-offload note
+  below) — so **pass `--runtime llama.cpp` to the `bench` command below; the default is `ollama`**,
+  and omitting it stamps the row `x_RuntimeKind = "ollama"`, contradicting the measured run. Set the
+  **header** `local.runtime_kind` (→ `llama.cpp`) and `quant` if it differs (the per-run manifest
+  object has **no** `runtime_kind` field — only the header does); the regenerated raw row then carries
+  `x_RuntimeKind` / `x_BenchmarkId` (`…/llama.cpp`) from the runner.
+- **Size `.wslconfig` so 31b-Q4 weights + KV fit the GPU GTT pool.** The 31B-dense `Q4_K_M` weights
+  **plus** the KV cache (the `-fit` default chose `n_ctx 262144`) must fit the WSL2 GPU GTT
+  allocation. Set the `.wslconfig` memory high enough (record the value you used) so the iGPU, not the
+  CPU, runs the decode. (The GPU wrapper prepends `-ngl 999 -fa 1 --ignore-eos -no-cnv`.)
+- **HARD-abort unless the GPU is actually decoding (≈10–13 tok/s), confirmed by the Vulkan signals —
+  NOT `rocm-smi`.** `rocm-smi` is **unsupported under WSL2**, so do not gate on it. Instead confirm
+  GPU offload from: `rocminfo` / `llama-completion.exe --list-devices` (the gfx1151 device is
+  enumerated), the llama.cpp **Vulkan startup logs** (`ggml_vulkan: Found N Vulkan devices`, the
+  layers reported *offloaded to GPU*, and a *Vulkan* KV/compute buffer allocation), and **Windows
+  Task Manager** GPU load during decode. A silent **CPU fallback** (≈2–4 tok/s, no GPU offload in the
+  logs, no Task-Manager GPU load) must **abort the run** — never record a CPU number as if it were the
+  GPU. (The committed 31B run measured **~9.7 tok/s** over the full 18,000-token generation — the
+  decode averages just below the short-run ~10–13 band as the KV cache grows.)
 - **Wall = total-system draw, idle-inclusive.** The wall meter reads the **whole machine** (PSU, RAM,
   fans, storage, conversion losses). **Record the idle draw** separately so the captured `load_watts`
   is understood as total-system-under-load, idle-inclusive (consistent with the profile's
