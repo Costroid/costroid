@@ -24,7 +24,7 @@
 //! (the local scalar enters as an input; `costroid-core` keeps no `costroid-power` edge). The
 //! per-run `amortized_hw_cost` of §3.2 is a *different* attribution (the per-row `x_AmortizedHwCost`
 //! FOCUS charge, linear in run-seconds → no crossover) and is **not** used here. See
-//! `docs/M4-PLAN.md` (D1) and `docs/COSTROID-NEXT.md` §3.2.
+//! `docs/ARCHITECTURE.md` §10 and `docs/methodology.md` (the break-even math + worked example).
 
 use costroid_focus::{FocusRecord, LedgerLane};
 use rust_decimal::Decimal;

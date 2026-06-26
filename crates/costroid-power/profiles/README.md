@@ -1,7 +1,8 @@
 # Bundled power/cost-assumption profiles (M3, R8)
 
 `hardware.v1.json` is the **dated, stamped, overridable** assumption set the local-inference
-**estimated mode** uses (COSTROID-NEXT.md §3.2 cost model, §6.4). It is a **vendored data
+**estimated mode** uses (the energy/cost model — see [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md)
+§10 and [`docs/methodology.md`](../../../docs/methodology.md)). It is a **vendored data
 artifact**, compiled into `costroid-power` via `include_str!` — **never fetched** at build or
 runtime (R8), mirroring `costroid-core/pricing/`'s posture.
 
@@ -15,8 +16,8 @@ runtime (R8), mirroring `costroid-core/pricing/`'s posture.
 ## Honesty (R6 / R10)
 
 Every value is an **ESTIMATE**, flagged `"estimated": true`, sourced from the
-community-measured Strix Halo ranges in COSTROID-NEXT.md §5.2 (load ~137–174 W, idle
-~10–20 W) — **never a measured number** (a real captured figure is the M3b on-hardware
+community-measured Strix Halo ranges (load ~137–174 W, idle ~10–20 W; hand-authored, not
+fetched) — **never a measured number** (a real captured figure is the M3b on-hardware
 handoff). The default electricity rate `0.16 USD/kWh` is a deliberately-round
 **`global-household-average-template`** so estimated local rows land in the USD lane by
 default; set your own (e.g. the Turkey EPDK residential tariff) via `costroid bench
@@ -26,7 +27,7 @@ default; set your own (e.g. the Turkey EPDK residential tariff) via `costroid be
 
 | Field | Value |
 |---|---|
-| Source | Community-measured ranges, COSTROID-NEXT.md §5.2 (hand-authored, not fetched) |
+| Source | Community-measured Strix Halo ranges (hand-authored, not fetched) |
 | `as_of` | 2026-06-20 |
 | Integrity | `hardware.v1.json.sha256` (fail-closed `sha256sum -c` in CI via `scripts/check_power_profiles.sh`) |
 | License | Costroid's own (Apache-2.0) — synthesized assumptions, no third-party data |

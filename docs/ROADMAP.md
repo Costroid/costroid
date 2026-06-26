@@ -4,7 +4,7 @@ Forward-looking only. For what shipped, see [CHANGELOG.md](../CHANGELOG.md); for
 
 ## 1. Status
 
-**Feature-complete at v0.6.0** — the build plan (Steps 0–6: cost lane → Claude `statusLine` quota + generalized quota model → connections → analytical tabs + alerts → egui taskbar) is **DONE**. All 7 crates publish to crates.io.
+**Feature-complete at v0.7.0.** The original v0.6.0 build (cost lane → Claude `statusLine` quota → connections → analytical tabs + alerts → egui taskbar) plus the **"Costroid-Next" arc** — a three-lane FOCUS ledger, a cloud/API cost lane, local-inference economics, a break-even calculator, and a loopback web UI (M1–M6) — are **DONE and shipped**, with the first M3b wall-meter measurement (`gemma-4-31b-dense`; the other local models stay *estimated — pending M3b measurement*). All 10 workspace members publish to crates.io.
 
 ## 2. Non-blocking fast-follows
 

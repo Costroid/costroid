@@ -1,8 +1,6 @@
 # Costroid agent operating manual
 
-Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — subscription limits (Claude Code / Codex 5-hour + weekly caps with reset countdowns) and real API-bill dollars by model — by default entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace (Apache-2.0, edition 2021), **feature-complete at v0.6.0**. This file is the operating manual: read it before doing anything. Scope/status + deferred adapters live in [`docs/ROADMAP.md`](docs/ROADMAP.md); the technical canon is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) + [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md). **When a doc disagrees with the code, the code wins** — verify any symbol/path/flag in the code before relying on it; never invent one.
-
-> **Active build (post-v0.6.0):** the "Costroid-Next" feature set ([`docs/COSTROID-NEXT.md`](docs/COSTROID-NEXT.md)) — local-inference economics, cloud/API cost lane, break-even, local web UI. **Resume by reading [`PROGRESS.md`](PROGRESS.md)** (living plan/checklist + handoff note), then run the verification gate it lists. M0 (scaffold), **M1 (FOCUS three-lane ledger)** (PR #2), and **M2 (cloud/API cost lane: bundled LiteLLM pricing snapshot + layered catalog, foreign-authoritative pricing + multi-currency import, AWS Data Exports FOCUS + Bedrock AIP attribution, the merged dev-tool+cloud ledger, estimate-vs-invoice reconciliation) are DONE and merged to `main`** (PR #3, 2026-06-20; CI green); **M3a (dual-mode local-inference engine, Gemma 4 family) is BUILT — at the milestone boundary awaiting the human's fresh-eyes review before merge** (the four-source wall-meter-led `PowerSampler`, the subprocess llama.cpp/Ollama runner, the benchmark harness, the dated/stamped hardware+electricity profile + Gemma 4 manifest, the 7 local `x_` columns through focus/store/core, and the `costroid bench` CLI behind the off-by-default `power` feature; deterministic cost-math on synthetic power fixtures, measured-vs-estimated stamped per row, 3-lane merged ledger validated). **M3b (a real captured joules/token — wall-meter-primary; needs C2 only for the optional native-Linux sysfs path) is a separate human handoff and does NOT block M4.** New members: `crates/costroid-power` (off-by-default `power` feature; the local-inference engine), `apps/server` (`costroid-server`, loopback-only), and `crates/costroid-store` (off-by-default `store` feature, SQLite) — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §10.
+Costroid is a secure, open-source, FOCUS-native developer tool that shows what your AI coding tools cost — subscription limits (Claude Code / Codex 5-hour + weekly caps with reset countdowns), real API-bill dollars by model, and the measured/estimated cost of running open-weights models on your own hardware — by default entirely from local data, with nothing leaving the machine. It is a Rust Cargo workspace (Apache-2.0, edition 2021), **feature-complete at v0.7.0**: the "Costroid-Next" arc (three-lane FOCUS ledger, cloud/API cost lane, local-inference economics, break-even, loopback web UI) shipped M1–M6 plus the first M3b wall-meter measurement (`gemma-4-31b-dense`; every other local model stays *estimated — pending M3b measurement*). This file is the operating manual: read it before doing anything. Scope + deferred adapters live in [`docs/ROADMAP.md`](docs/ROADMAP.md); release history in [`CHANGELOG.md`](CHANGELOG.md); the technical canon is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) + [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md); measurement honesty in [`docs/methodology.md`](docs/methodology.md) + [`docs/limitations.md`](docs/limitations.md). **When a doc disagrees with the code, the code wins** — verify any symbol/path/flag in the code before relying on it; never invent one.
 
 ---
 
@@ -27,26 +25,32 @@ If a task seems to require breaking one, **stop and ask the human**.
 costroid/
 ├─ crates/
 │  ├─ costroid-focus/      FOCUS schema types + serde — pure data, no business logic
-│  ├─ costroid-providers/  Provider trait + Capability descriptor + Claude Code/Codex/Cursor adapters + WSL-aware log discovery
-│  ├─ costroid-core/       engine: orchestration, cost calc, bundled pricing, bench/frontier, vendor_report, reconcile, display helpers
+│  ├─ costroid-providers/  Provider trait + Claude/Codex/Cursor adapters + WSL-aware log discovery + FOCUS v1.2 import
+│  ├─ costroid-core/       engine: orchestration, cost calc, bundled pricing, bench/frontier, breakeven, vendor_report, reconcile, display helpers
 │  ├─ costroid-config/     shared read-only [budget]/[alerts] TOML schema + loader (both apps; no writer)
-│  └─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default
+│  ├─ costroid-connect/    ALL network + credential code; feature-gated, OFF by default
+│  ├─ costroid-store/      SQLite (rusqlite, bundled) metadata-only FOCUS ledger; off-by-default `store` feature; leaf
+│  └─ costroid-power/      local-inference economics engine (PowerSampler + subprocess runner + harness); off-by-default `power` feature; leaf
 ├─ apps/
-│  ├─ cli/                 package `costroid`, binary `costroid` — CLI + Ratatui TUI + statusline + setup-statusline + --live + alerts + connect/disconnect/connections + reconcile
-│  └─ bar/                 binary `costroid-bar` — egui/eframe + tray-icon taskbar
+│  ├─ cli/                 package `costroid` — CLI + Ratatui TUI + statusline + --live + alerts + connect/reconcile + (power) bench/breakeven + import
+│  ├─ bar/                 binary `costroid-bar` — egui/eframe + tray-icon taskbar
+│  └─ server/              binary `costroid-server` — loopback-only (127.0.0.1) HTTP API + 3-view embedded web UI
 └─ .github/workflows/      CI + cargo-dist release pipeline
 ```
 
 (No `costroid-mcp` — name intentionally unclaimed.)
 
 **Per-crate responsibility:**
-- `costroid-focus` — FOCUS record types + (de)serialization only; no internal deps.
-- `costroid-providers` — the `Provider` trait + `Capability` descriptor, the three adapters, WSL-aware log discovery; emits provider-neutral `UsageEvent`/`LimitWindow`; no internal deps.
-- `costroid-core` — the engine: orchestrates providers, normalizes to FOCUS, computes estimated cost, houses bench/frontier, the provider-neutral `vendor_report` types, the pure `reconcile` estimate-vs-invoice engine, and money/share display helpers. No UI code, no `costroid-connect` dep.
+- `costroid-focus` — FOCUS record types + (de)serialization only (v1.2-in / v1.3-out); no internal deps.
+- `costroid-providers` — the `Provider` trait + `Capability` descriptor, the three adapters, WSL-aware log discovery, the FOCUS v1.2 importer; emits provider-neutral `UsageEvent`/`LimitWindow`; no internal deps.
+- `costroid-core` — the engine: orchestrates providers, normalizes to FOCUS, computes estimated cost, houses bench/frontier, the pure `breakeven` engine (no `core→power` edge), the provider-neutral `vendor_report` types, the pure `reconcile` estimate-vs-invoice engine, and money/share display helpers. No UI code, no `costroid-connect`/`costroid-power` dep.
 - `costroid-config` — pure local-only leaf: the `[budget]`/`[alerts]` TOML schema + loader so both apps share one schema; no network/keychain/writer (missing file = zero-config default).
 - `costroid-connect` — all network + credential code, feature-gated off by default: the OS-keychain `CredentialStore`, the non-secret `ConnectionRegistry`, the authorized-host HTTPS client (`AuthorizedClient`, HTTPS-only/GET-only, redirects+proxies disabled, off-host refused before I/O), and the Anthropic + OpenAI usage-API adapters parsing into `costroid-core::vendor_report` (Gemini = first-class unavailable). Secrets wrapped in `secrecy::SecretString`.
-- `apps/cli` — `clap` parsing, the Ratatui TUI, the statusline emitter (`--capture-only`/`--wrap`), `setup-statusline` (`--undo`), `--live`, the opt-in `alerts`/`alerts --check`, and the feature-gated `connect`/`disconnect`/`connections` + `reconcile`.
+- `costroid-store` — the metadata-only (R4 — no prompt/response content) SQLite ledger of FOCUS rows via `rusqlite` (bundled); fail-closed whitelist schema. Reachable behind the CLI's `store` feature and linked unconditionally by `costroid-server`; never in the default CLI/bar graph.
+- `costroid-power` — the local-inference engine: the four-source wall-meter-led `PowerSampler`, the subprocess llama.cpp/Ollama runner + benchmark harness, the dated/stamped hardware+electricity profile + Gemma 4 manifest. Off-by-default `power` feature; a leaf (no `core` edge — the CLI orchestrates and hands `core` a pre-computed `LocalRunEvent`). Never asserts a real power number in CI (synthetic fixtures only); `MEASURED_MODELS` is the human-gated measured allowlist.
+- `apps/cli` — `clap` parsing, the Ratatui TUI, the statusline emitter (`--capture-only`/`--wrap`), `setup-statusline` (`--undo`), `--live`, the opt-in `alerts`/`alerts --check`, the feature-gated `connect`/`disconnect`/`connections` + `reconcile`, the `power`-gated `bench`/`breakeven`, and `import`.
 - `apps/bar` — `costroid-bar`: a pure core consumer (no new data path/compute/telemetry). Tray glance + live cockpit; the Providers lane is display-only + zero-network. AccessKit on; never color-alone.
+- `apps/server` — `costroid-server`: a separate binary, **never linked into `costroid`/`costroid-bar`**. A blocking `tiny_http` server bound to `127.0.0.1` by construction; three server-rendered views (timeline / comparison / break-even) + `?plain` + a JSON API, all assets embedded, zero external requests. Reviewed `SERVER_ALLOWED` allowlist + a runtime loopback-only proof.
 
 **TUI:** 9 numbered tabs — 1 now, 2 trends, 3 providers, 4 models, 5 history, 6 budget, 7 forecast, 8 anomalies, 9 activity — plus the `a`/`esc` Frontier overlay. Colorful via the `SemanticStyle` palette; `--plain`/`NO_COLOR` strip all color.
 
@@ -57,7 +61,7 @@ costroid/
 ## Conventions
 
 - **Dependency direction:** `apps → core → {providers, focus}`; `apps → config → core`; `connect → core` (behind the apps' off-by-default `connect` feature). No cycles. `costroid-focus`/`costroid-providers` have no internal deps.
-- **crates.io publish ladder:** focus → providers → core → config → connect → costroid → costroid-bar (see [`RELEASING.md`](RELEASING.md)).
+- **crates.io publish ladder:** focus → providers → core → config → connect → store → power → costroid → costroid-server → costroid-bar (see [`RELEASING.md`](RELEASING.md); a topo-sort test guards the order).
 - **Errors:** `thiserror` for typed errors in library crates; `anyhow` only in the binaries (`apps/`).
 - **MSRV:** 1.88 (libs + CLI), 1.92 (the bar). Tracked + tested in CI.
 - **Lockfile:** commit `Cargo.lock` (Costroid ships a binary). `.gitignore` ignores `/target`, not `Cargo.lock`.

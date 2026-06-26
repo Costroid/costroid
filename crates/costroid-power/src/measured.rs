@@ -22,7 +22,7 @@ use crate::mode::MeasurementMode;
 /// contract. M3b Phase 2 (2026-06-25) added `gemma-4-31b-dense`; every other model stays estimated.
 pub const MEASURED_MODELS: &[(&str, MeasurementMode)] = &[
     // M3b Phase 2 (2026-06-25): measured on the Strix Halo (Radeon 8060S, gfx1151) via llama.cpp
-    // Vulkan, PM 231 E wall meter @ 96 W steady decode. See docs/M3B-PHASE2-FLIP-PLAN.md.
+    // Vulkan, PM 231 E wall meter @ 96 W steady decode. See docs/POST-M3B-REFRESH.md + methodology.md.
     ("gemma-4-31b-dense", MeasurementMode::MeasuredWallmeter),
 ];
 

@@ -1,7 +1,8 @@
 # Bundled local-model manifest — Gemma 4 family (M3, R10)
 
 `gemma4.v1.json` is the dated, sha256-stamped manifest of the **Gemma 4 family (Apache-2.0)**
-Costroid standardizes its local-inference benchmarks on (COSTROID-NEXT.md §3.1.E / §5.5). It is
+Costroid standardizes its local-inference benchmarks on (the M3 benchmark family — see
+[`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) §10). It is
 a **vendored data artifact**, compiled into `costroid-power` via `include_str!` — **never
 fetched**. Costroid ships **no weights** (user-downloaded GGUF).
 
