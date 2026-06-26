@@ -1,6 +1,6 @@
 # Costroid — Architecture (technical canon)
 
-The single **technical** source of truth. When this doc disagrees with the code, **the code wins** — verify any symbol/path here against the source before relying on it. Scope/sequencing and the going-forward roadmap live in [ROADMAP.md](ROADMAP.md); the design language lives in [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md). Status: **v0.6.0 — feature-complete** (Steps 0–6 done).
+The single **technical** source of truth. When this doc disagrees with the code, **the code wins** — verify any symbol/path here against the source before relying on it. Scope/sequencing and the going-forward roadmap live in [ROADMAP.md](ROADMAP.md); the design language lives in [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md). Status: **v0.7.0 — feature-complete** (the v0.6.0 build Steps 0–6 plus the Costroid-Next M1–M6 arc + the first M3b wall-meter measurement, all done).
 
 ## 1. Purpose & principles
 
@@ -173,7 +173,7 @@ Embedded in `costroid-core` via `include_str!` at `crates/costroid-core/pricing/
 - **Opus real-log quirk:** ~0.08% under ccusage on opus totals — isolated to re-logged sub-agent (sidechain) cache-read de-dup; mainline matches to the cent.
 - **WSL Windows-root scan** is `/mnt/c` only and evidence-based (includes any Windows profile holding logs); a set `USERPROFILE` (even empty) suppresses the scan.
 - **DeepSWE vs CursorBench:** quality/score from the benchmarks (DeepSWE primary/neutral, CursorBench corroborating/vendor); the **dollar** axis from Costroid's own cache-correct cost (DeepSWE's $/task is cache-miss-priced ~5×). Un-benchmarked models show as gaps, never guessed.
-- **`tracing` + TOML config** are planned conventions, not wired (zero-config on built-in consts today). No `costroid-mcp` (crates.io name intentionally unclaimed). macOS/Windows tray paths compile but are **not field-verified**.
+- **`tracing`** is a planned convention, not wired (no structured logging today). The **TOML user-config** at `${XDG_CONFIG_HOME:-$HOME/.config}/costroid/config.toml` *is* wired (the read-only `costroid-config` `[budget]`/`[alerts]`/`[breakeven]` schema, loaded by the CLI and the bar); a missing file is the zero-config default. No `costroid-mcp` (crates.io name intentionally unclaimed). macOS/Windows tray paths compile but are **not field-verified**.
 
 ## 10. Costroid-Next (post-v0.6.0) — M0 decisions & scaffold
 
