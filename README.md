@@ -1,1 +1,77 @@
-# costroid
+# Costroid
+
+**Open-source, self-hostable, [FOCUS](https://focus.finops.org/)-native cost platform (FinOps).**
+
+Costroid ingests cost & usage data from cloud providers, SaaS services, and AI/LLM sources, normalizes everything into a single **FOCUS-conformant** data model, and provides cost allocation, unit economics, invoice reconciliation, a dashboard, and an optional natural-language (agentic) query layer. It is designed to run **entirely on your own infrastructure** — no data leaves your environment.
+
+> **FOCUS** = FinOps Open Cost and Usage Specification, an open standard from the FinOps Foundation for representing cloud/SaaS/AI cost & usage in one schema.
+
+---
+
+## Status
+
+🚧 **Early / greenfield.** Actively being built from scratch in Go + TypeScript. Not yet usable. APIs, schema, and layout will change.
+
+Current focus: the first vertical slice — **AWS FOCUS export → normalized store → one dashboard view.**
+
+---
+
+## Why
+
+Cloud, SaaS, and especially AI/token spend are exploding and fragmented across providers, each with its own billing format. Existing platforms are mostly closed SaaS that require exporting sensitive billing data to a third party, and the open-source options are narrow (e.g. Kubernetes-only). Costroid's goals:
+
+- **One schema for everything** — cloud + SaaS + AI/token spend, all normalized to FOCUS.
+- **Self-hostable / data-sovereign** — runs on your own infrastructure with no mandatory external calls.
+- **Open** — transparent, auditable, no vendor lock-in.
+
+---
+
+## Architecture (high level)
+
+Costroid is a **Go** backend (single static binary) plus a **TypeScript** dashboard and an optional agent service.
+
+```
+Sources ──▶ Ingestion ──▶ FOCUS engine ──▶ Storage ──▶ API ──▶ Dashboard (web)
+(cloud/     (per-source   (normalize +     (DuckDB       │        Agent / MCP (optional)
+ SaaS/AI)    connectors)   validate)        default)      │
+                                                          └──▶ allocation · pricing · reconciliation
+```
+
+- **Backend (Go):** ingestion, FOCUS engine (schema + version-aware transforms + validation), storage, allocation, pricing/Price Sheet, invoice reconciliation, API.
+- **Frontend (TypeScript/React):** dashboard consuming the API.
+- **Agent (TypeScript, optional):** natural-language querying over the API via MCP.
+- **Storage:** DuckDB + Parquet embedded by default (zero-ops, local); ClickHouse optional for scale-out.
+
+For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./AGENTS.md)** — it is the source of truth for anyone (human or agent) working in this repo.
+
+---
+
+## Getting started
+
+> 🚧 **Not yet runnable** — the project is being scaffolded. The `make` targets and `.env.example` referenced here are the **intended** interface and don't exist yet.
+
+**Prerequisites:** Go (latest stable), Node (LTS) + pnpm, DuckDB. Developed on WSL2 Ubuntu.
+
+```bash
+git clone https://github.com/Costroid/costroid.git
+cd costroid
+```
+
+Planned top-level commands, to be added during scaffolding (see [`AGENTS.md`](./AGENTS.md) → *Working here*):
+
+- `make dev` — run backend + dashboard locally
+- `make test` — run all tests (Go + TS)
+- `make build` — build the binary + dashboard
+- `make lint` — run linters/formatters
+
+A `.env.example` will be added; copy it to `.env` and fill in values.
+
+---
+
+## Contributing
+
+Read **[`AGENTS.md`](./AGENTS.md)** first — it defines the invariants, coding standards, and the **verify-before-done** workflow. Keep changes small and single-purpose; use Conventional Commits; never commit secrets.
+
+## License
+
+The core is licensed under the **[Apache License 2.0](./LICENSE)**. Any enterprise modules (if and when added) live in a separate directory under a separate license — see that directory's own `LICENSE`.
