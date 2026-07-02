@@ -147,3 +147,23 @@ A running log of technical and architectural decisions for Costroid, with the re
 **Status:** Accepted (2026-07-02; grounded in the ratified FOCUS 1.4 spec — corrections appendix, ChargeClass column, CorrectionHandling/DeliveryHandling attributes — and AWS Data Exports delivery documentation)
 **Decision:** (a) **Ingestion-level supersede** is per-(connector, source, billing-period) transactional batch replacement — FOCUS 1.4's "Replacement"/Overwrite style, which is also AWS's primary correction path (closed periods are restated in place, officially up to ~2 weeks after close and, for refunds/credits/support fees, without a documented upper bound). (b) **Correction rows** (`ChargeClass = "Correction"`) are additive rows belonging to the billing-period batch that delivered them — never rewritten into the corrected period's batch. FOCUS defines no row-level supersede mechanism. (c) **Time-series views aggregate by ChargePeriod**, so correction rows (which keep the original incurred timeframe per the spec's correction-handling examples) retroactively adjust the original days at query time. This is intended, documented, and tested behavior — cost history legitimately changes when providers issue corrections. (d) **Restatement visibility:** re-ingesting a period whose content changed reports the per-period cost delta at the CLI. (e) Delta/Ledger-style (append-based) correction sources are NOT handled yet; when a connector needs them, that gets its own decision entry.
 **Why:** This is the minimal design that satisfies "supersede prior data, never double-count" (D16) while staying inside what FOCUS 1.4 actually specifies: replacement handles provider restatements, additivity handles correction rows, and ChargePeriod aggregation merges them without any dedup machinery. Never-hard-freeze follows from the documented unbounded restatement window.
+
+## D27 — Positioning language: sovereignty-first, not "FinOps dashboard"
+**Status:** Accepted (2026-07-02, ratifying strategy candidate 1 — see `docs/strategy.md`)
+**Decision:** Public positioning (README, site, announcements) leads with **"self-hosted, FOCUS-native cost platform for teams whose billing data can't leave their infrastructure"** — never "open-source FinOps dashboard".
+**Why:** Visibility alone is the weakest product foundation (strategy notes, Structural risks §1); the sovereignty framing names the buyers no SaaS competitor can reach.
+
+## D28 — Pricing posture: flat tiers, never %-of-spend
+**Status:** Accepted (2026-07-02, ratifying strategy candidate 2)
+**Decision:** If and when any paid tier exists, pricing is **flat tiers** — never a percentage of managed spend.
+**Why:** %-of-spend pricing meets well-documented buyer resistance and taxes exactly the customers whose spend grows. Recorded now so future commercial work doesn't drift into the resented default.
+
+## D29 — Connector priority: hyperscalers → AI vendors → generic FOCUS/CSV import; no per-SaaS scrapers in core
+**Status:** Accepted (2026-07-02, ratifying strategy candidate 3)
+**Decision:** Connector roadmap order: (1) hyperscalers (AWS shipped; then Azure, GCP), (2) AI vendors via their usage/cost APIs (Cardinal Rule D7 applies in full), (3) a **generic FOCUS/CSV import** covering everything else. Per-SaaS-vendor scraper connectors are **not** built in the open core.
+**Why:** The per-vendor SaaS long tail is unbounded; the generic import covers it at fixed cost while the conversion layer — the technical moat — stays focused on the sources that matter (strategy notes, Dead ends).
+
+## D30 — First target users: regulated / data-residency-bound organizations
+**Status:** Accepted (2026-07-02, ratifying strategy candidate 4)
+**Decision:** The first users Costroid designs, documents, and validates for are **organizations that cannot use SaaS FinOps at all** — data-residency-bound and regulated sectors (finance under in-country-systems rules, EU-sovereignty-constrained, public sector).
+**Why:** For these buyers self-hosting is a hard requirement, not a preference; they are unreachable by every SaaS-only competitor and are the natural proof of the D27 positioning (strategy notes, Target market note).

@@ -121,16 +121,13 @@ Revisit this file when any of these fires:
 - FOCUS 1.5 is ratified → align the AI/token and Price Sheet schema (D4).
 - A Tokenomics/AI-cost standard is published.
 
-## Candidate decisions (not yet in decisions.md — ratify or reject)
+## Candidate decisions
 
-1. Positioning language for README/site: "self-hosted, FOCUS-native cost platform
-   for teams whose billing data can't leave their infrastructure" over "open-source
-   FinOps dashboard".
-2. Pricing posture if a paid tier ever exists: flat tiers, never %-of-spend.
-3. Connector priority: hyperscalers (native FOCUS) → AI vendors (usage/cost APIs) →
-   generic FOCUS/CSV import; **no** per-SaaS-vendor scrapers in core.
-4. First target users: regulated / data-residency-bound organizations that cannot
-   use SaaS FinOps at all.
+All four candidates were ratified on 2026-07-02 and now live in `decisions.md` as
+**D27** (positioning language), **D28** (flat tiers, never %-of-spend), **D29**
+(connector priority; no per-SaaS scrapers in core), and **D30** (first target
+users: regulated / data-residency-bound organizations). Future candidates go here
+first, then get ratified or rejected into the decision log.
 
 ## Key sources
 
