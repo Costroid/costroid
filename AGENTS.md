@@ -33,7 +33,7 @@ Open-source, self-hostable, **FOCUS-native** cost platform (FinOps). It ingests 
 
 ## Stack & shape
 
-- **Go** (latest stable) — the backend core: ingestion, FOCUS engine, analytics, allocation, pricing, reconciliation, API. Ships as a single static binary (self-host friendly). Standard `cmd/ internal/ pkg/` layout.
+- **Go** (latest stable) — the backend core: ingestion, FOCUS engine, analytics, allocation, pricing, reconciliation, API. Ships as a single self-contained binary (self-host friendly; see decisions.md D22). Standard `cmd/ internal/ pkg/` layout.
 - **TypeScript** (Node LTS, pnpm) — a React-based dashboard and an optional agentic/MCP service. These consume the Go API and hold no separate source of truth.
 - **Storage:** **DuckDB + Parquet embedded** is the default (zero-ops, local). **ClickHouse** is an optional scale-out backend behind a storage interface — swappable, never required.
 - Keep these concerns cleanly separated: ingestion (per-source connectors behind a stable, documented interface), FOCUS engine (schema + versioned transforms + validation), storage, allocation, pricing / Price Sheet, reconciliation, API, web, agent. **Propose the concrete file layout as you scaffold** — don't over-plan it up front.
@@ -69,4 +69,24 @@ Open-source, self-hostable, **FOCUS-native** cost platform (FinOps). It ingests 
 
 Ship the **smallest useful vertical slice first**: AWS FOCUS export → normalized store → one dashboard view. Broaden (Azure/GCP, AI connectors, reconciliation, K8s, agent) only after that path works end-to-end. Keep the pricing / Price Sheet catalog forward-compatible with FOCUS 1.5 throughout. (A detailed roadmap, if wanted, belongs in the README or a dedicated roadmap doc if ever added — not here.)
 
-Environment: WSL2 Ubuntu; Go latest stable, Node LTS, pnpm, DuckDB. Confirm exact versions against your machine.
+## Environment & tooling
+
+Dev machine: WSL2 Ubuntu (x86_64), repo at `~/costroid`. Go latest stable, Node LTS,
+pnpm, DuckDB — confirm exact versions against the machine and include them in reports
+(`go version && node --version && pnpm --version`).
+
+- **Agents have no sudo.** Never run `sudo`/`apt`. If a tool is missing, install it
+  user-locally (tarball, or `apt-get download` + `dpkg -x`, into `~/.local/<tool>`;
+  symlink the binary into `~/.local/bin`, which is on PATH) and declare it in your
+  report. If root is genuinely unavoidable, print the exact command for the human
+  (who can sudo interactively) and stop that step — don't fake it.
+- The Go/Node/pnpm toolchain is user-local under `~/.local`; `make`/`gcc`/`git`/`gh`
+  are system-installed. Don't reinstall or upgrade any of them mid-task.
+- **Repo-pinned tools — never install globally:** golangci-lint (`make lint`
+  bootstraps the pinned version into `./bin`), oapi-codegen (go.mod `tool` directive →
+  `go tool oapi-codegen`), pnpm itself (`packageManager` in package.json). Run
+  `pnpm install` once at the repo root before web targets.
+- Verification scripts that start dev servers: `setsid cmd &` puts the child in a new
+  session whose process group is **not** `$!` — kill the child's PGID
+  (`ps -o pgid= -p <child-pid>`) or `pkill` the specific processes, then confirm the
+  ports actually closed.
