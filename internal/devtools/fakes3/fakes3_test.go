@@ -95,6 +95,27 @@ func TestListObjectsV2PrefixAndPagination(t *testing.T) {
 	}
 }
 
+// TestListObjectsV2MaxKeysZero proves max-keys=0 with matching keys
+// serves an empty page instead of panicking (it previously indexed the
+// truncated-to-empty page for its last key).
+func TestListObjectsV2MaxKeysZero(t *testing.T) {
+	srv := httptest.NewServer(New(newFixture(t)))
+	defer srv.Close()
+
+	resp, body := doGet(t, srv.URL+"/demo?list-type=2&prefix=exports/&max-keys=0", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{"<KeyCount>0</KeyCount>", "<IsTruncated>false</IsTruncated>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("max-keys=0 response %s missing %s", body, want)
+		}
+	}
+	if strings.Contains(body, "<Key>") {
+		t.Errorf("max-keys=0 response leaked keys: %s", body)
+	}
+}
+
 func TestGetObjectETagAndIfMatch(t *testing.T) {
 	srv := httptest.NewServer(New(newFixture(t)))
 	defer srv.Close()

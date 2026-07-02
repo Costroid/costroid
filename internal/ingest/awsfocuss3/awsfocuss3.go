@@ -185,14 +185,20 @@ func discover(ctx context.Context, client api, bucket, prefix string) ([]*Connec
 		return nil, classify(err, "listing "+root+"/metadata/")
 	}
 
-	type period struct{ partition, manifest string }
-	byPeriod := map[string]period{}
+	type period struct {
+		partition string
+		manifests []string
+	}
+	byPeriod := map[string]*period{}
 	for key := range meta {
 		m := manifestKey.FindStringSubmatch(strings.TrimPrefix(key, prefix+"/"))
 		if m == nil {
 			continue
 		}
-		byPeriod[m[2]] = period{partition: m[1], manifest: key}
+		if byPeriod[m[2]] == nil {
+			byPeriod[m[2]] = &period{partition: m[1]}
+		}
+		byPeriod[m[2]].manifests = append(byPeriod[m[2]].manifests, key)
 	}
 	if len(byPeriod) == 0 {
 		return nil, fmt.Errorf("no billing periods found under %s — expected "+
@@ -211,7 +217,17 @@ func discover(ctx context.Context, client api, bucket, prefix string) ([]*Connec
 	conns := make([]*Connector, 0, len(periods))
 	for _, p := range periods {
 		info := byPeriod[p]
-		files, err := currentFiles(ctx, client, bucket, prefix, info.partition, info.manifest)
+		if len(info.manifests) > 1 {
+			// AWS writes exactly one partition-level manifest per period;
+			// picking one of several by map order would nondeterministically
+			// ingest whichever delivery the stray copy describes.
+			sort.Strings(info.manifests)
+			return nil, fmt.Errorf("billing period %s has %d partition-level manifests (s3://%s/%s) — "+
+				"AWS Data Exports writes exactly one per partition, so a stray copy is an anomaly; "+
+				"remove the extra object(s) and re-run ingest",
+				p, len(info.manifests), bucket, strings.Join(info.manifests, ", s3://"+bucket+"/"))
+		}
+		files, err := currentFiles(ctx, client, bucket, prefix, info.partition, info.manifests[0])
 		if err != nil {
 			return nil, err
 		}
@@ -377,6 +393,9 @@ func classify(err error, action string) error {
 				"exact least-privilege policy): %w", action, err)
 		case "NoSuchBucket":
 			return fmt.Errorf("bucket not found while %s — check the --bucket value: %w", action, err)
+		case "PreconditionFailed":
+			return fmt.Errorf("stale object while %s — the export was re-delivered mid-read; "+
+				"re-run ingest — discovery will pick up the new manifest: %w", action, err)
 		}
 	}
 	return fmt.Errorf("%s: %w", action, err)

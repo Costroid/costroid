@@ -8,7 +8,9 @@ package focus
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -231,22 +233,60 @@ func ParseRecord(raw RawRecord) (*CostRecord, error) {
 }
 
 // ParseTags parses a serialized FOCUS Tags value into a key→value map,
-// enforcing the KeyValueFormat attribute: a JSON object whose values are
-// string, number, boolean, or null — never objects or arrays. Numbers are
-// kept as json.Number so they round-trip exactly.
+// enforcing the KeyValueFormat attribute: a single JSON object whose keys
+// are unique (ATT-KeyValueFormat-A-002-M) and whose values are string,
+// number, boolean, or null — never objects or arrays. Numbers are kept as
+// json.Number so they round-trip exactly. It walks the tokens itself
+// because encoding/json's map decoding silently keeps the last duplicate
+// key and ignores trailing data after the object.
 func ParseTags(s string) (map[string]any, error) {
 	dec := json.NewDecoder(strings.NewReader(s))
 	dec.UseNumber()
-	var tags map[string]any
-	if err := dec.Decode(&tags); err != nil {
+
+	open, err := dec.Token()
+	if err != nil {
 		return nil, fmt.Errorf("parsing key-value JSON: %w", err)
 	}
-	for k, v := range tags {
-		switch v.(type) {
-		case string, bool, json.Number, nil:
-		default:
-			return nil, fmt.Errorf("tag %q has a JSON %T value; KeyValueFormat allows string, number, boolean, or null", k, v)
+	if open != json.Delim('{') {
+		if open == nil {
+			return nil, errors.New("key-value JSON is null; KeyValueFormat requires an object")
 		}
+		return nil, fmt.Errorf("key-value JSON is not an object (starts with %v)", open)
+	}
+
+	tags := map[string]any{}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("parsing key-value JSON: %w", err)
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return nil, fmt.Errorf("parsing key-value JSON: object key %v is not a string", keyTok)
+		}
+		if _, dup := tags[key]; dup {
+			return nil, fmt.Errorf("duplicate tag key %q; KeyValueFormat requires unique keys", key)
+		}
+		valTok, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("parsing key-value JSON: %w", err)
+		}
+		switch v := valTok.(type) {
+		case json.Delim:
+			kind := "object"
+			if v == json.Delim('[') {
+				kind = "array"
+			}
+			return nil, fmt.Errorf("tag %q has a JSON %s value; KeyValueFormat allows string, number, boolean, or null", key, kind)
+		default:
+			tags[key] = valTok
+		}
+	}
+	if _, err := dec.Token(); err != nil { // the closing '}'
+		return nil, fmt.Errorf("parsing key-value JSON: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("trailing data after the key-value object; KeyValueFormat is a single JSON object")
 	}
 	return tags, nil
 }

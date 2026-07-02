@@ -144,7 +144,7 @@ func TestRunRejectsOverScaleValues(t *testing.T) {
 	header := "BilledCost,EffectiveCost,ListCost,ContractedCost,BillingCurrency," +
 		"BillingPeriodStart,BillingPeriodEnd,ChargeCategory,ChargePeriodStart,ChargePeriodEnd," +
 		"BillingAccountId,ServiceName,ServiceCategory,ProviderName,InvoiceIssuerName"
-	row := "0.1234567890123,1,1,1,USD," + // 13 fractional digits
+	row := "0.1234567890123456789,1,1,1,USD," + // 19 fractional digits
 		"2026-05-01T00:00:00Z,2026-06-01T00:00:00Z,Usage,2026-05-01T00:00:00Z,2026-05-02T00:00:00Z," +
 		"999999999999,AWS Lambda,Compute,AWS,\"Amazon Web Services, Inc.\""
 	path := writeGzCSV(t, header+"\n"+row+"\n")
@@ -161,12 +161,12 @@ func TestRunRejectsOverScaleValues(t *testing.T) {
 		t.Fatalf("RowErrors = %+v, want exactly row 1", rowErrs)
 	}
 	msg := rowErrs.First[0].Errs[0].Error()
-	if !strings.Contains(msg, "BilledCost") || !strings.Contains(msg, "more than 12 fractional digits") {
-		t.Errorf("row error %q, want the column name and the 12-digit scale limit", msg)
+	if !strings.Contains(msg, "BilledCost") || !strings.Contains(msg, "more than 18 fractional digits") {
+		t.Errorf("row error %q, want the column name and the 18-digit scale limit", msg)
 	}
 
 	// Trailing zeros beyond the limit lose nothing and must pass.
-	okRow := strings.Replace(row, "0.1234567890123", "0.1234500000000", 1)
+	okRow := strings.Replace(row, "0.1234567890123456789", "0.1234567890123456700", 1)
 	okPath := writeGzCSV(t, header+"\n"+okRow+"\n")
 	res, err := ingest.Run(ctx, awsfocus.New(okPath), store, focus.DefaultTenant)
 	if err != nil {

@@ -175,7 +175,13 @@ func (h *Handler) listObjectsV2(w http.ResponseWriter, r *http.Request, bucket s
 		}
 	}
 	result := listBucketResult{Name: bucket, Prefix: prefix, MaxKeys: maxKeys}
-	if len(keys) > maxKeys {
+	switch {
+	case maxKeys == 0:
+		// max-keys=0 previously panicked (an empty page indexed for its
+		// last key). Serve an empty, non-truncated page so pagers
+		// terminate instead of looping on a missing continuation token.
+		keys = nil
+	case len(keys) > maxKeys:
 		keys, result.IsTruncated = keys[:maxKeys], true
 		result.NextContinuationToken = keys[len(keys)-1]
 	}

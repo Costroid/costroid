@@ -134,8 +134,12 @@ func (s *DuckDB) ReplaceIngestBatch(ctx context.Context, batch Batch, records []
 }
 
 // insertRecordSQL binds monetary/quantity parameters as strings and casts
-// them to DECIMAL inside DuckDB, so values stay exact end to end.
-const insertRecordSQL = `INSERT INTO cost_records (
+// them to DECIMAL inside DuckDB, so values stay exact end to end. The
+// cast scale is bound to MaxDecimalScale because DuckDB's parameter-bound
+// CAST silently ROUNDS to the target scale instead of erroring — a cast
+// narrower than the columns would corrupt values the pipeline already
+// accepted as exact (decision D25).
+var insertRecordSQL = fmt.Sprintf(`INSERT INTO cost_records (
 	x_tenant_id, batch_connector, batch_source_identity,
 	billing_account_id, billing_account_name, billing_account_type,
 	sub_account_id, sub_account_name, sub_account_type,
@@ -159,15 +163,15 @@ const insertRecordSQL = `INSERT INTO cost_records (
 	?, ?, ?, ?,
 	?, ?, ?, ?,
 	?, ?,
-	CAST(? AS DECIMAL(38,12)), CAST(? AS DECIMAL(38,12)), CAST(? AS DECIMAL(38,12)), CAST(? AS DECIMAL(38,12)),
-	?, CAST(? AS DECIMAL(38,12)), ?, CAST(? AS DECIMAL(38,12)), CAST(? AS DECIMAL(38,12)),
-	CAST(? AS DECIMAL(38,12)), ?,
+	CAST(? AS DECIMAL(38,%[1]d)), CAST(? AS DECIMAL(38,%[1]d)), CAST(? AS DECIMAL(38,%[1]d)), CAST(? AS DECIMAL(38,%[1]d)),
+	?, CAST(? AS DECIMAL(38,%[1]d)), ?, CAST(? AS DECIMAL(38,%[1]d)), CAST(? AS DECIMAL(38,%[1]d)),
+	CAST(? AS DECIMAL(38,%[1]d)), ?,
 	?, ?, ?,
 	?, ?, ?,
 	?, ?, ?,
 	?, ?, ?,
 	?
-)`
+)`, MaxDecimalScale)
 
 func insertRecordArgs(batch Batch, r *focus.CostRecord) []any {
 	return []any{

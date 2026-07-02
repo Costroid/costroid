@@ -442,6 +442,70 @@ func TestDiscoverMissingCredentials(t *testing.T) {
 	}
 }
 
+// TestRecordsRedeliveryRaceReportsActionably proves an If-Match race —
+// the export re-delivered between Discover and Records, so the pinned
+// ETag no longer matches (HTTP 412) — surfaces the actionable re-run
+// message instead of a raw SDK error.
+func TestRecordsRedeliveryRaceReportsActionably(t *testing.T) {
+	ctx := context.Background()
+	tree := t.TempDir()
+	copyTree(t, fixture, tree)
+	_, url := startFake(t, tree)
+	hermeticEnv(t, url, true)
+
+	conns, err := awsfocuss3.Discover(ctx, bucket, prefix)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// Re-deliver a 2026-05 chunk after discovery: same key, new bytes,
+	// new content-derived ETag.
+	writeGzCSV(t, filepath.Join(tree, bucket, prefix, "data/BILLING_PERIOD=2026-05/costroid-demo-00001.csv.gz"),
+		"AvailabilityZone,ServiceName\neu-central-1a,AWS Lambda\n")
+
+	reader, err := conns[0].Records(ctx)
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+	_, err = reader.Next()
+	if err == nil {
+		t.Fatal("Next succeeded despite the mid-read re-delivery")
+	}
+	for _, part := range []string{"re-delivered mid-read", "re-run ingest", "discovery will pick up the new manifest"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("412 race error %q does not contain %q", err, part)
+		}
+	}
+}
+
+// TestDiscoverRejectsMultiplePartitionManifests proves a partition holding
+// more than one partition-level manifest — an anomaly AWS never writes —
+// errors listing the candidates instead of nondeterministically picking one.
+func TestDiscoverRejectsMultiplePartitionManifests(t *testing.T) {
+	tree := t.TempDir()
+	copyTree(t, fixture, tree)
+	stray := prefix + "/metadata/BILLING_PERIOD=2026-05/stray-copy-Manifest.json"
+	writeFile(t, filepath.Join(tree, bucket, stray),
+		`{"dataFiles": ["s3://demo/exports/costroid-demo/data/BILLING_PERIOD=2026-05/costroid-demo-00001.csv.gz"]}`)
+	_, url := startFake(t, tree)
+	hermeticEnv(t, url, true)
+
+	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix)
+	if err == nil {
+		t.Fatal("Discover succeeded despite two partition-level manifests")
+	}
+	for _, part := range []string{
+		"billing period 2026-05 has 2 partition-level manifests",
+		"s3://demo/" + prefix + "/metadata/BILLING_PERIOD=2026-05/costroid-demo-Manifest.json",
+		"s3://demo/" + stray,
+	} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("multi-manifest error %q does not contain %q", err, part)
+		}
+	}
+}
+
 func mkdir(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -12,8 +12,10 @@ type CostsState =
   | { status: "ready"; costs: DailyCosts };
 
 // A service's color is a deterministic function of its name alone
-// (FNV-1a hash onto the validated palette), so it never shifts when other
-// services appear or disappear across ingests, reloads, or date ranges.
+// (an FNV-1a-style hash onto the validated palette — "style" because it
+// hashes UTF-16 code units via charCodeAt, whereas canonical FNV-1a is
+// defined over octets), so it never shifts when other services appear or
+// disappear across ingests, reloads, or date ranges.
 // Distinct services can hash to the same slot and then share a color —
 // an accepted trade-off of a fixed 8-color palette.
 const SERIES_SLOTS = 8;
