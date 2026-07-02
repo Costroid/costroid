@@ -76,10 +76,50 @@ func (c *Connector) Records(_ context.Context) (ingest.RecordReader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening export file: %w", err)
 	}
-	gz, err := gzip.NewReader(f)
+	stream, err := NewGzipCSVStream(f, 0)
 	if err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("reading gzip export %s: %w", c.path, err)
+		return nil, fmt.Errorf("reading export %s: %w", c.path, err)
+	}
+	return &reader{file: f, stream: stream}, nil
+}
+
+type reader struct {
+	file   *os.File
+	stream *GzipCSVStream
+}
+
+// Next implements ingest.RecordReader.
+func (r *reader) Next() (ingest.Row, error) { return r.stream.Next() }
+
+// Close implements ingest.RecordReader.
+func (r *reader) Close() error {
+	gzErr := r.stream.Close()
+	if err := r.file.Close(); err != nil {
+		return err
+	}
+	return gzErr
+}
+
+// GzipCSVStream parses one gzipped AWS FOCUS CSV stream: it strips a
+// UTF-8 BOM if present, keys each data row by the stream's own header
+// row, and numbers rows from rowOffset so multi-chunk exports (each
+// chunk a complete CSV with its own header) keep coherent numbering.
+// It is shared by the local-file connector and the S3 connector.
+type GzipCSVStream struct {
+	gz     *gzip.Reader
+	csv    *csv.Reader
+	header []string
+	row    int
+}
+
+// NewGzipCSVStream opens a gzipped CSV stream over r and consumes its
+// header row. Row numbering continues from rowOffset (0 for the first or
+// only chunk).
+func NewGzipCSVStream(r io.Reader, rowOffset int) (*GzipCSVStream, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("reading gzip: %w", err)
 	}
 	// A UTF-8 BOM would otherwise become part of the first header name,
 	// silently nulling the first column of every record.
@@ -93,42 +133,30 @@ func (c *Connector) Records(_ context.Context) (ingest.RecordReader, error) {
 	header, err := cr.Read()
 	if err != nil {
 		_ = gz.Close()
-		_ = f.Close()
-		return nil, fmt.Errorf("reading export CSV header: %w", err)
+		return nil, fmt.Errorf("reading CSV header: %w", err)
 	}
-	return &reader{file: f, gz: gz, csv: cr, header: append([]string(nil), header...)}, nil
+	return &GzipCSVStream{gz: gz, csv: cr, header: append([]string(nil), header...), row: rowOffset}, nil
 }
 
-type reader struct {
-	file   *os.File
-	gz     *gzip.Reader
-	csv    *csv.Reader
-	header []string
-	row    int
-}
-
-// Next implements ingest.RecordReader.
-func (r *reader) Next() (ingest.Row, error) {
-	fields, err := r.csv.Read()
+// Next returns the next data row, or io.EOF after the last one.
+func (s *GzipCSVStream) Next() (ingest.Row, error) {
+	fields, err := s.csv.Read()
 	if err == io.EOF {
 		return ingest.Row{}, io.EOF
 	}
-	r.row++
+	s.row++
 	if err != nil {
-		return ingest.Row{}, fmt.Errorf("reading export CSV row %d: %w", r.row, err)
+		return ingest.Row{}, fmt.Errorf("reading CSV row %d: %w", s.row, err)
 	}
-	rec := make(focus.RawRecord, len(r.header))
-	for i, name := range r.header {
+	rec := make(focus.RawRecord, len(s.header))
+	for i, name := range s.header {
 		rec[name] = fields[i]
 	}
-	return ingest.Row{Number: r.row, Record: rec}, nil
+	return ingest.Row{Number: s.row, Record: rec}, nil
 }
 
-// Close implements ingest.RecordReader.
-func (r *reader) Close() error {
-	gzErr := r.gz.Close()
-	if err := r.file.Close(); err != nil {
-		return err
-	}
-	return gzErr
-}
+// Rows returns the number of the last data row read.
+func (s *GzipCSVStream) Rows() int { return s.row }
+
+// Close releases the gzip reader; the caller owns the underlying reader.
+func (s *GzipCSVStream) Close() error { return s.gz.Close() }

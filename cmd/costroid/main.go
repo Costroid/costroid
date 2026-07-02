@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/awsfocus"
+	"github.com/Costroid/costroid/internal/ingest/awsfocuss3"
 	"github.com/Costroid/costroid/internal/storage"
 	"github.com/Costroid/costroid/internal/webdist"
 )
@@ -33,7 +35,12 @@ const usage = `usage: costroid <command> [flags]
 commands:
   serve   serve the HTTP API and dashboard  (costroid serve [--addr host:port])
   ingest  ingest a cost export into the store
-          (costroid ingest --connector aws-focus --path <file> [--tenant default])
+          local file:  costroid ingest --connector aws-focus --path <file> [--tenant default]
+          live S3:     costroid ingest --connector aws-focus-s3 --bucket <b> --prefix <p>
+                       [--period YYYY-MM] [--tenant default]
+                       (--prefix is the export root: the configured S3 prefix plus the
+                       export name; auth via the ambient AWS credential chain only;
+                       without --period every discovered billing period is ingested)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
 store allows a single process at a time: stop 'costroid serve' before
@@ -132,47 +139,107 @@ func serve(args []string) error {
 
 func ingestCmd(args []string) error {
 	flags := flag.NewFlagSet("ingest", flag.ContinueOnError)
-	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus")`)
-	pathFlag := flags.String("path", "", "path to the export file to ingest")
+	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3")`)
+	pathFlag := flags.String("path", "", "path to the export file to ingest (aws-focus)")
+	bucketFlag := flags.String("bucket", "", "S3 bucket holding the AWS Data Export (aws-focus-s3)")
+	prefixFlag := flags.String("prefix", "", "export root prefix: the export's configured S3 prefix plus its name (aws-focus-s3)")
+	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return err
 	}
 
-	var conn ingest.Connector
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	switch *connectorFlag {
 	case awsfocus.Name:
 		if *pathFlag == "" {
 			return errors.New("--path is required for the aws-focus connector")
 		}
-		conn = awsfocus.New(*pathFlag)
+		return runIngest(ctx, []ingestJob{{conn: awsfocus.New(*pathFlag)}}, *tenantFlag)
+	case awsfocuss3.Name:
+		if *bucketFlag == "" || *prefixFlag == "" {
+			return errors.New("--bucket and --prefix are required for the aws-focus-s3 connector")
+		}
+		// Discover before opening (and locking) the store: a failed
+		// discovery must not block a running server.
+		conns, err := awsfocuss3.Discover(ctx, *bucketFlag, *prefixFlag)
+		if err != nil {
+			return err
+		}
+		jobs, err := s3Jobs(conns, *periodFlag)
+		if err != nil {
+			return err
+		}
+		return runIngest(ctx, jobs, *tenantFlag)
 	case "":
-		return errors.New("--connector is required (available: \"aws-focus\")")
+		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3")`)
 	default:
-		return fmt.Errorf("unknown connector %q (available: \"aws-focus\")", *connectorFlag)
+		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3")`, *connectorFlag)
 	}
+}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+// ingestJob is one connector run; period labels multi-period output.
+type ingestJob struct {
+	conn   ingest.Connector
+	period string
+}
 
+// s3Jobs maps discovered per-period connectors to jobs, filtered to one
+// billing period when requested.
+func s3Jobs(conns []*awsfocuss3.Connector, period string) ([]ingestJob, error) {
+	var jobs []ingestJob
+	var available []string
+	for _, conn := range conns {
+		available = append(available, conn.BillingPeriod())
+		if period == "" || conn.BillingPeriod() == period {
+			jobs = append(jobs, ingestJob{conn: conn, period: conn.BillingPeriod()})
+		}
+	}
+	if len(jobs) == 0 {
+		return nil, fmt.Errorf("billing period %s not found in the export (discovered: %s)",
+			period, strings.Join(available, ", "))
+	}
+	return jobs, nil
+}
+
+// runIngest opens the store once and runs every job through the shared
+// pipeline. Each period's replace is transactional and independent, so
+// one failing period doesn't roll back the others; the exit status is
+// non-zero if any failed, and every period's outcome is printed.
+func runIngest(ctx context.Context, jobs []ingestJob, tenant string) error {
 	store, err := storage.Open(ctx, dataDir())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = store.Close() }()
 
-	result, err := ingest.Run(ctx, conn, store, *tenantFlag)
-	if err != nil {
-		return err
+	var failed []string
+	for _, job := range jobs {
+		label := ""
+		if job.period != "" {
+			label = "period " + job.period + ": "
+		}
+		result, err := ingest.Run(ctx, job.conn, store, tenant)
+		if err != nil {
+			failed = append(failed, job.period)
+			fmt.Fprintf(os.Stderr, "costroid: %sfailed: %v\n", label, err)
+			continue
+		}
+		if result.Unchanged {
+			fmt.Printf("%ssource content unchanged; batch %s/%s kept as is (%d record(s), tenant %s)\n",
+				label, result.Batch.Connector, result.Batch.SourceIdentity, result.Records, result.Batch.TenantID)
+			continue
+		}
+		fmt.Printf("%singested %d record(s) as batch %s/%s (tenant %s, %s)\n",
+			label, result.Records, result.Batch.Connector, result.Batch.SourceIdentity,
+			result.Batch.TenantID, result.Batch.ContentHash)
 	}
-	if result.Unchanged {
-		fmt.Printf("source content unchanged; batch %s/%s kept as is (%d record(s), tenant %s)\n",
-			result.Batch.Connector, result.Batch.SourceIdentity, result.Records, result.Batch.TenantID)
-		return nil
+	if len(failed) > 0 {
+		return fmt.Errorf("%d of %d period(s) failed (%s); each period replaces independently, so the successful ones are stored",
+			len(failed), len(jobs), strings.Join(failed, ", "))
 	}
-	fmt.Printf("ingested %d record(s) as batch %s/%s (tenant %s, %s)\n",
-		result.Records, result.Batch.Connector, result.Batch.SourceIdentity,
-		result.Batch.TenantID, result.Batch.ContentHash)
 	return nil
 }
 

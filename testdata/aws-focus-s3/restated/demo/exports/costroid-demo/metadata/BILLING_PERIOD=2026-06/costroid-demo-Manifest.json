@@ -1,0 +1,8 @@
+{
+  "exportName": "costroid-demo",
+  "executionId": "20260715T090000Z-e5f6a7b8",
+  "billingPeriod": "2026-06",
+  "dataFiles": [
+    "s3://demo/exports/costroid-demo/data/BILLING_PERIOD=2026-06/20260715T090000Z-e5f6a7b8/costroid-demo-00001.csv.gz"
+  ]
+}

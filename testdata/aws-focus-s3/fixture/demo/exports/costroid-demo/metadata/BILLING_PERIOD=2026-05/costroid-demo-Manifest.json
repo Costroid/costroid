@@ -1,0 +1,259 @@
+{
+  "exportId": "0f9f8e7d-6c5b-4a31-9d2e-1f0a9b8c7d6e",
+  "exportName": "costroid-demo",
+  "executionId": "20260702T120000Z-99887766",
+  "billingPeriod": "2026-05",
+  "dataFiles": [
+    {
+      "s3Uri": "s3://demo/exports/costroid-demo/data/BILLING_PERIOD=2026-05/costroid-demo-00001.csv.gz",
+      "size": 1451
+    },
+    {
+      "s3Uri": "s3://demo/exports/costroid-demo/data/BILLING_PERIOD=2026-05/costroid-demo-00002.csv.gz",
+      "size": 1387
+    }
+  ],
+  "columns": [
+    {
+      "name": "AvailabilityZone",
+      "type": "string"
+    },
+    {
+      "name": "BilledCost",
+      "type": "string"
+    },
+    {
+      "name": "BillingAccountId",
+      "type": "string"
+    },
+    {
+      "name": "BillingAccountName",
+      "type": "string"
+    },
+    {
+      "name": "BillingAccountType",
+      "type": "string"
+    },
+    {
+      "name": "BillingCurrency",
+      "type": "string"
+    },
+    {
+      "name": "BillingPeriodEnd",
+      "type": "string"
+    },
+    {
+      "name": "BillingPeriodStart",
+      "type": "string"
+    },
+    {
+      "name": "CapacityReservationId",
+      "type": "string"
+    },
+    {
+      "name": "CapacityReservationStatus",
+      "type": "string"
+    },
+    {
+      "name": "ChargeCategory",
+      "type": "string"
+    },
+    {
+      "name": "ChargeClass",
+      "type": "string"
+    },
+    {
+      "name": "ChargeDescription",
+      "type": "string"
+    },
+    {
+      "name": "ChargeFrequency",
+      "type": "string"
+    },
+    {
+      "name": "ChargePeriodEnd",
+      "type": "string"
+    },
+    {
+      "name": "ChargePeriodStart",
+      "type": "string"
+    },
+    {
+      "name": "CommitmentDiscountCategory",
+      "type": "string"
+    },
+    {
+      "name": "CommitmentDiscountId",
+      "type": "string"
+    },
+    {
+      "name": "CommitmentDiscountName",
+      "type": "string"
+    },
+    {
+      "name": "CommitmentDiscountQuantity",
+      "type": "string"
+    },
+    {
+      "name": "CommitmentDiscountStatus",
+      "type": "string"
+    },
+    {
+      "name": "CommitmentDiscountType",
+      "type": "string"
+    },
+    {
+      "name": "CommitmentDiscountUnit",
+      "type": "string"
+    },
+    {
+      "name": "ConsumedQuantity",
+      "type": "string"
+    },
+    {
+      "name": "ConsumedUnit",
+      "type": "string"
+    },
+    {
+      "name": "ContractedCost",
+      "type": "string"
+    },
+    {
+      "name": "ContractedUnitPrice",
+      "type": "string"
+    },
+    {
+      "name": "EffectiveCost",
+      "type": "string"
+    },
+    {
+      "name": "InvoiceId",
+      "type": "string"
+    },
+    {
+      "name": "InvoiceIssuerName",
+      "type": "string"
+    },
+    {
+      "name": "ListCost",
+      "type": "string"
+    },
+    {
+      "name": "ListUnitPrice",
+      "type": "string"
+    },
+    {
+      "name": "PricingCategory",
+      "type": "string"
+    },
+    {
+      "name": "PricingCurrency",
+      "type": "string"
+    },
+    {
+      "name": "PricingCurrencyContractedUnitPrice",
+      "type": "string"
+    },
+    {
+      "name": "PricingCurrencyEffectiveCost",
+      "type": "string"
+    },
+    {
+      "name": "PricingCurrencyListUnitPrice",
+      "type": "string"
+    },
+    {
+      "name": "PricingQuantity",
+      "type": "string"
+    },
+    {
+      "name": "PricingUnit",
+      "type": "string"
+    },
+    {
+      "name": "ProviderName",
+      "type": "string"
+    },
+    {
+      "name": "PublisherName",
+      "type": "string"
+    },
+    {
+      "name": "RegionId",
+      "type": "string"
+    },
+    {
+      "name": "RegionName",
+      "type": "string"
+    },
+    {
+      "name": "ResourceId",
+      "type": "string"
+    },
+    {
+      "name": "ResourceName",
+      "type": "string"
+    },
+    {
+      "name": "ResourceType",
+      "type": "string"
+    },
+    {
+      "name": "ServiceCategory",
+      "type": "string"
+    },
+    {
+      "name": "ServiceName",
+      "type": "string"
+    },
+    {
+      "name": "ServiceSubcategory",
+      "type": "string"
+    },
+    {
+      "name": "SkuId",
+      "type": "string"
+    },
+    {
+      "name": "SkuMeter",
+      "type": "string"
+    },
+    {
+      "name": "SkuPriceId",
+      "type": "string"
+    },
+    {
+      "name": "SkuPriceDetails",
+      "type": "string"
+    },
+    {
+      "name": "SubAccountId",
+      "type": "string"
+    },
+    {
+      "name": "SubAccountName",
+      "type": "string"
+    },
+    {
+      "name": "SubAccountType",
+      "type": "string"
+    },
+    {
+      "name": "Tags",
+      "type": "string"
+    },
+    {
+      "name": "x_Discounts",
+      "type": "string"
+    },
+    {
+      "name": "x_Operation",
+      "type": "string"
+    },
+    {
+      "name": "x_ServiceCode",
+      "type": "string"
+    }
+  ],
+  "additionalOutputFiles": []
+}
