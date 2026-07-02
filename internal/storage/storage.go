@@ -16,6 +16,12 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 )
 
+// MaxDecimalScale is the fractional-digit capacity of the store's
+// monetary and quantity columns (DECIMAL(38,12)). Values with more
+// significant fractional digits must be rejected at ingest time — the
+// store never rounds silently (exactness invariant).
+const MaxDecimalScale = 12
+
 // Store is the storage interface (decision D5). It is deliberately sized
 // to the current slice and grows per-slice — new query and lifecycle
 // methods are added as features need them, never speculatively.

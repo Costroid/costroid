@@ -107,6 +107,19 @@ func DefaultRules() []Rule {
 		})
 	}
 
+	rules = append(rules, Rule{
+		ID:          "CAU-Tags-C-001-M",
+		Description: "Tags MUST conform to KeyValueFormat requirements.",
+		Check: func(r RawRecord) error {
+			if v := r["Tags"]; v != "" {
+				if _, err := ParseTags(v); err != nil {
+					return fmt.Errorf("column Tags: %w", err)
+				}
+			}
+			return nil
+		},
+	})
+
 	// Decimal columns: parseable as exact decimals when present.
 	for _, c := range []struct{ id, col string }{
 		{"CAU-BilledCost-C-001-M", "BilledCost"},
@@ -116,7 +129,7 @@ func DefaultRules() []Rule {
 		{"CAU-PricingQuantity-C-001-M", "PricingQuantity"},
 		{"CAU-ConsumedQuantity-C-001-M", "ConsumedQuantity"},
 		{"CAU-ListUnitPrice-C-001-M", "ListUnitPrice"},
-		{"CAU-ContractedUnitPrice-C-001-M", "ContractedUnitPrice"},
+		{"CAU-ContractedUnitPrice-C-002-M", "ContractedUnitPrice"},
 	} {
 		rules = append(rules, Rule{
 			ID:          c.id,

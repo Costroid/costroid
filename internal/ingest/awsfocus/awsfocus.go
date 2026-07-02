@@ -9,6 +9,8 @@
 package awsfocus
 
 import (
+	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -24,6 +26,9 @@ import (
 
 // Name is the connector's registry name.
 const Name = "aws-focus"
+
+// utf8BOM is the UTF-8 byte order mark some tools prepend to CSV files.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // Connector reads one local AWS FOCUS 1.2 export file.
 type Connector struct {
@@ -76,7 +81,13 @@ func (c *Connector) Records(_ context.Context) (ingest.RecordReader, error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("reading gzip export %s: %w", c.path, err)
 	}
-	cr := csv.NewReader(gz)
+	// A UTF-8 BOM would otherwise become part of the first header name,
+	// silently nulling the first column of every record.
+	br := bufio.NewReader(gz)
+	if bom, err := br.Peek(len(utf8BOM)); err == nil && bytes.Equal(bom, utf8BOM) {
+		_, _ = br.Discard(len(utf8BOM))
+	}
+	cr := csv.NewReader(br)
 	cr.ReuseRecord = true
 
 	header, err := cr.Read()

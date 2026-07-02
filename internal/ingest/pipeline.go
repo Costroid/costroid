@@ -10,6 +10,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/storage"
 )
@@ -135,6 +137,10 @@ func Run(ctx context.Context, conn Connector, store storage.Store, tenant string
 			addRowErrors(row.Number, err)
 			continue
 		}
+		if errs := storeScaleErrors(rec); len(errs) > 0 {
+			addRowErrors(row.Number, errs...)
+			continue
+		}
 		rec.XTenantID = tenant
 		records = append(records, *rec)
 	}
@@ -148,4 +154,34 @@ func Run(ctx context.Context, conn Connector, store storage.Store, tenant string
 		return Result{}, fmt.Errorf("replacing ingest batch: %w", err)
 	}
 	return Result{Batch: batch, Records: replaced.RecordCount, Unchanged: replaced.Unchanged}, nil
+}
+
+// storeScaleErrors reports monetary/quantity values that exceed the
+// store's fractional-digit capacity (storage.MaxDecimalScale). Such rows
+// abort the ingest with an actionable error — silently rounding them in
+// the store would violate the exactness invariant. Trailing zeros beyond
+// the limit are fine: only values whose exactness would be lost fail.
+func storeScaleErrors(rec *focus.CostRecord) []error {
+	var errs []error
+	check := func(col string, d decimal.Decimal) {
+		if !d.Equal(d.Truncate(storage.MaxDecimalScale)) {
+			errs = append(errs, fmt.Errorf(
+				"column %s: value %s has more than %d fractional digits; the embedded store holds DECIMAL(38,%d) and never rounds silently",
+				col, d, storage.MaxDecimalScale, storage.MaxDecimalScale))
+		}
+	}
+	checkNull := func(col string, d decimal.NullDecimal) {
+		if d.Valid {
+			check(col, d.Decimal)
+		}
+	}
+	check("BilledCost", rec.BilledCost)
+	check("EffectiveCost", rec.EffectiveCost)
+	check("ListCost", rec.ListCost)
+	check("ContractedCost", rec.ContractedCost)
+	checkNull("PricingQuantity", rec.PricingQuantity)
+	checkNull("ListUnitPrice", rec.ListUnitPrice)
+	checkNull("ContractedUnitPrice", rec.ContractedUnitPrice)
+	checkNull("ConsumedQuantity", rec.ConsumedQuantity)
+	return errs
 }

@@ -11,15 +11,20 @@ type CostsState =
   | { status: "error"; message: string }
   | { status: "ready"; costs: DailyCosts };
 
-// Series slots are assigned to services sorted by name, so a service
-// keeps its color across reloads and date ranges (validated palette;
-// slots beyond the palette fall back to the muted ink).
+// A service's color is a deterministic function of its name alone
+// (FNV-1a hash onto the validated palette), so it never shifts when other
+// services appear or disappear across ingests, reloads, or date ranges.
+// Distinct services can hash to the same slot and then share a color —
+// an accepted trade-off of a fixed 8-color palette.
 const SERIES_SLOTS = 8;
 
-function seriesColor(slot: number): string {
-  return slot < SERIES_SLOTS
-    ? `var(--viz-series-${slot + 1})`
-    : "var(--viz-muted)";
+function serviceColor(name: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < name.length; i++) {
+    hash ^= name.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `var(--viz-series-${((hash >>> 0) % SERIES_SLOTS) + 1})`;
 }
 
 // Chart geometry (SVG user units).
@@ -29,20 +34,25 @@ const MARGIN = { top: 20, right: 8, bottom: 24, left: 48 };
 const MAX_BAR_WIDTH = 24;
 const SEGMENT_GAP = 2;
 
-/** Y-axis tick values from 0 to a "nice" ceiling of max. */
-function yTicks(max: number): number[] {
+/**
+ * Y-axis ticks from 0 to a "nice" ceiling of max. Values are computed as
+ * step multiples and labels formatted to the step's decimal places, so
+ * labels never show float-accumulation noise ("0.30000000000000004").
+ */
+function yTicks(max: number): { value: number; label: string }[] {
   if (max <= 0) {
-    return [0];
+    return [{ value: 0, label: "0" }];
   }
   const rough = max / 4;
-  const power = 10 ** Math.floor(Math.log10(rough));
-  const step =
-    [1, 2, 5, 10].map((m) => m * power).find((s) => s >= rough) ?? rough;
-  const ticks: number[] = [];
-  for (let v = 0; v < max + step; v += step) {
-    ticks.push(v);
-  }
-  return ticks;
+  const exp = Math.floor(Math.log10(rough));
+  const mult = [1, 2, 5, 10].find((m) => m * 10 ** exp >= rough) ?? 10;
+  const step = mult * 10 ** exp;
+  const decimals = Math.max(0, mult === 10 ? -(exp + 1) : -exp);
+  const count = Math.ceil(max / step - 1e-9);
+  return Array.from({ length: count + 1 }, (_, i) => ({
+    value: i * step,
+    label: (i * step).toFixed(decimals),
+  }));
 }
 
 /** SVG path for a bar segment; only the topmost gets rounded top corners. */
@@ -131,11 +141,19 @@ function Chart({ costs }: { costs: DailyCosts }) {
   const services = [
     ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.serviceName))),
   ].sort();
-  const slotOf = new Map(services.map((name, i) => [name, i]));
 
-  const dayTotals = costs.days.map((d) => Number(d.total));
-  const ticks = yTicks(Math.max(...dayTotals));
-  const top = ticks[ticks.length - 1] || 1;
+  // The stacked bars render positive costs only: FOCUS Credit/Adjustment
+  // rows can be negative, and a diverging below-baseline geometry is a
+  // later slice. The y-scale therefore spans each day's positive-segment
+  // sum — the rendered stack height. Net day totals (which can be lower)
+  // appear only as the cap labels and the grand total, labeled as net.
+  const positiveServices = (day: DailyCosts["days"][number]) =>
+    day.services.filter((s) => Number(s.cost) > 0);
+  const dayPositiveSums = costs.days.map((d) =>
+    positiveServices(d).reduce((sum, s) => sum + Number(s.cost), 0),
+  );
+  const ticks = yTicks(Math.max(...dayPositiveSums));
+  const top = ticks[ticks.length - 1].value || 1;
 
   const plotWidth = WIDTH - MARGIN.left - MARGIN.right;
   const plotHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
@@ -144,10 +162,13 @@ function Chart({ costs }: { costs: DailyCosts }) {
   const barWidth = Math.min(MAX_BAR_WIDTH, band * 0.6);
   const yOf = (value: number) => baseline - (value / top) * plotHeight;
 
+  // Long ranges: label every k-th day so at most ~12 date labels render.
+  const labelEvery = Math.max(1, Math.ceil(costs.days.length / 12));
+
   return (
     <div>
       <p className="daily-costs-total">
-        Period total: <strong>{costs.total}</strong> {costs.currency}
+        Period total (net): <strong>{costs.total}</strong> {costs.currency}
       </p>
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
@@ -156,32 +177,33 @@ function Chart({ costs }: { costs: DailyCosts }) {
         className="daily-costs-chart"
       >
         {ticks.map((tick) => (
-          <g key={tick}>
+          <g key={tick.label}>
             <line
               x1={MARGIN.left}
               x2={WIDTH - MARGIN.right}
-              y1={yOf(tick)}
-              y2={yOf(tick)}
-              className={tick === 0 ? "viz-baseline" : "viz-grid"}
+              y1={yOf(tick.value)}
+              y2={yOf(tick.value)}
+              className={tick.value === 0 ? "viz-baseline" : "viz-grid"}
             />
             <text
               x={MARGIN.left - 8}
-              y={yOf(tick) + 3}
+              y={yOf(tick.value) + 3}
               className="viz-tick"
               textAnchor="end"
             >
-              {tick}
+              {tick.label}
             </text>
           </g>
         ))}
         {costs.days.map((day, i) => {
           const x = MARGIN.left + i * band + (band - barWidth) / 2;
+          const positive = positiveServices(day);
           let cursor = baseline;
           return (
             <g key={day.date}>
-              {day.services.map((svc, j) => {
+              {positive.map((svc, j) => {
                 const height = (Number(svc.cost) / top) * plotHeight;
-                const isTop = j === day.services.length - 1;
+                const isTop = j === positive.length - 1;
                 const segmentBottom = cursor;
                 cursor -= height;
                 const gap = isTop ? 0 : SEGMENT_GAP;
@@ -199,9 +221,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
                       drawnHeight,
                       isTop,
                     )}
-                    fill={seriesColor(
-                      slotOf.get(svc.serviceName) ?? SERIES_SLOTS,
-                    )}
+                    fill={serviceColor(svc.serviceName)}
                   >
                     <title>{`${svc.serviceName}: ${svc.cost} ${costs.currency} (${day.date})`}</title>
                   </path>
@@ -213,16 +233,19 @@ function Chart({ costs }: { costs: DailyCosts }) {
                 className="viz-cap"
                 textAnchor="middle"
               >
+                <title>Net day total</title>
                 {day.total}
               </text>
-              <text
-                x={x + barWidth / 2}
-                y={baseline + 16}
-                className="viz-tick"
-                textAnchor="middle"
-              >
-                {day.date.slice(5)}
-              </text>
+              {i % labelEvery === 0 && (
+                <text
+                  x={x + barWidth / 2}
+                  y={baseline + 16}
+                  className="viz-tick"
+                  textAnchor="middle"
+                >
+                  {day.date.slice(5)}
+                </text>
+              )}
             </g>
           );
         })}
@@ -232,9 +255,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
           <li key={name}>
             <span
               className="daily-costs-swatch"
-              style={{
-                background: seriesColor(slotOf.get(name) ?? SERIES_SLOTS),
-              }}
+              style={{ background: serviceColor(name) }}
             />
             {name}
           </li>
@@ -251,7 +272,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
                   {name}
                 </th>
               ))}
-              <th scope="col">Total</th>
+              <th scope="col">Total (net)</th>
             </tr>
           </thead>
           <tbody>

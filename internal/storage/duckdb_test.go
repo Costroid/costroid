@@ -37,7 +37,7 @@ func testRecord(t *testing.T, service string, day time.Time, cost string) focus.
 		ContractedCost:      d,
 		ServiceName:         service,
 		ServiceCategory:     "Compute",
-		Tags:                map[string]string{"user:team": "platform"},
+		Tags:                map[string]any{"user:team": "platform", "user:opted-in": true},
 	}
 }
 

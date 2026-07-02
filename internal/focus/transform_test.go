@@ -134,7 +134,7 @@ func TestParseRecord(t *testing.T) {
 		"InvoiceIssuerName":   "Amazon Web Services, Inc.",
 		"ConsumedQuantity":    "24",
 		"ConsumedUnit":        "Hrs",
-		"Tags":                `{"user:env": "prod", "user:team": "platform"}`,
+		"Tags":                `{"user:env": "prod", "user:team": "platform", "user:opted-in": true, "user:owner": null}`,
 	}
 	rec, err := ParseRecord(raw)
 	if err != nil {
@@ -155,6 +155,14 @@ func TestParseRecord(t *testing.T) {
 	if rec.Tags["user:team"] != "platform" {
 		t.Errorf("Tags = %v, want user:team=platform", rec.Tags)
 	}
+	// Valueless (label-style) tags carry boolean true per the FOCUS spec;
+	// null-valued tag keys are allowed too (KeyValueFormat).
+	if rec.Tags["user:opted-in"] != true {
+		t.Errorf("Tags = %v, want user:opted-in=true", rec.Tags)
+	}
+	if v, ok := rec.Tags["user:owner"]; !ok || v != nil {
+		t.Errorf("Tags = %v, want user:owner present and null", rec.Tags)
+	}
 
 	bad := RawRecord{}
 	for k, v := range raw {
@@ -163,5 +171,15 @@ func TestParseRecord(t *testing.T) {
 	bad["BilledCost"] = "not-a-number"
 	if _, err := ParseRecord(bad); err == nil {
 		t.Error("ParseRecord accepted an unparseable BilledCost")
+	}
+
+	// KeyValueFormat forbids object and array tag values.
+	bad = RawRecord{}
+	for k, v := range raw {
+		bad[k] = v
+	}
+	bad["Tags"] = `{"user:env": ["prod", "dev"]}`
+	if _, err := ParseRecord(bad); err == nil {
+		t.Error("ParseRecord accepted an array-valued tag")
 	}
 }

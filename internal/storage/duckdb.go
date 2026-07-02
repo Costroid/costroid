@@ -44,10 +44,13 @@ func Open(ctx context.Context, dataDir string) (*DuckDB, error) {
 	path := filepath.Join(dataDir, DatabaseFile)
 
 	db, err := sql.Open("duckdb", path)
-	if err == nil {
-		err = db.PingContext(ctx)
-	}
 	if err != nil {
+		return nil, fmt.Errorf("opening DuckDB database %s: %w", path, err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		// The failed pool still holds the DuckDB instance (and its file
+		// lock) until closed.
+		_ = db.Close()
 		if strings.Contains(err.Error(), "Could not set lock on file") {
 			return nil, fmt.Errorf("the Costroid database in %s is in use by another process — "+
 				"the embedded store allows a single process at a time, so stop the other "+
@@ -278,13 +281,14 @@ func nullDecimal(d decimal.NullDecimal) any {
 }
 
 // tagsJSON serializes the Tags map as canonical JSON text (or SQL NULL).
-func tagsJSON(tags map[string]string) any {
+func tagsJSON(tags map[string]any) any {
 	if len(tags) == 0 {
 		return nil
 	}
 	b, err := json.Marshal(tags)
 	if err != nil {
-		// Unreachable: map[string]string always marshals.
+		// Unreachable: Tags values are JSON scalars (string, bool,
+		// json.Number, nil) per focus.ParseTags, which always marshal.
 		return nil
 	}
 	return string(b)

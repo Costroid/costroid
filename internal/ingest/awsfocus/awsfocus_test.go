@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,6 +98,30 @@ func TestRecordsParsesHeaderAndRows(t *testing.T) {
 	}
 	if count != 42 {
 		t.Errorf("data rows = %d, want 42", count)
+	}
+}
+
+// TestRecordsStripsUTF8BOM proves a BOM'd export parses with the first
+// header column intact — without stripping, the BOM becomes part of the
+// first header name and silently nulls that column on every record.
+func TestRecordsStripsUTF8BOM(t *testing.T) {
+	reader, err := New("../../../testdata/aws-focus-1.2/bom-export.csv.gz").Records(context.Background())
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	row, err := reader.Next()
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if got := row.Record["AvailabilityZone"]; got != "eu-central-1a" {
+		t.Errorf("first column AvailabilityZone = %q, want eu-central-1a", got)
+	}
+	for col := range row.Record {
+		if strings.HasPrefix(col, "\uFEFF") {
+			t.Errorf("column %q still carries the BOM", col)
+		}
 	}
 }
 

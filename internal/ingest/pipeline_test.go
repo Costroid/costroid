@@ -4,8 +4,12 @@
 package ingest_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +23,7 @@ import (
 const (
 	sampleExport  = "../../testdata/aws-focus-1.2/sample-export.csv.gz"
 	invalidExport = "../../testdata/aws-focus-1.2/invalid-export.csv.gz"
+	bomExport     = "../../testdata/aws-focus-1.2/bom-export.csv.gz"
 )
 
 func openStore(t *testing.T) *storage.DuckDB {
@@ -107,6 +112,86 @@ func assertSampleTotals(t *testing.T, daily storage.DailyCosts) {
 			}
 		}
 	}
+}
+
+// TestRunBOMExport proves a UTF-8-BOM'd export (the sample data with a
+// BOM prepended) ingests completely, with the first column intact.
+func TestRunBOMExport(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+
+	res, err := ingest.Run(ctx, awsfocus.New(bomExport), store, focus.DefaultTenant)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Records != 42 || res.Unchanged {
+		t.Fatalf("Run = %+v, want 42 fresh records", res)
+	}
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	assertSampleTotals(t, daily)
+}
+
+// TestRunRejectsOverScaleValues proves values with more fractional digits
+// than the store holds exactly (storage.MaxDecimalScale) abort the ingest
+// with a row-numbered error instead of being silently rounded.
+func TestRunRejectsOverScaleValues(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+
+	header := "BilledCost,EffectiveCost,ListCost,ContractedCost,BillingCurrency," +
+		"BillingPeriodStart,BillingPeriodEnd,ChargeCategory,ChargePeriodStart,ChargePeriodEnd," +
+		"BillingAccountId,ServiceName,ServiceCategory,ProviderName,InvoiceIssuerName"
+	row := "0.1234567890123,1,1,1,USD," + // 13 fractional digits
+		"2026-05-01T00:00:00Z,2026-06-01T00:00:00Z,Usage,2026-05-01T00:00:00Z,2026-05-02T00:00:00Z," +
+		"999999999999,AWS Lambda,Compute,AWS,\"Amazon Web Services, Inc.\""
+	path := writeGzCSV(t, header+"\n"+row+"\n")
+
+	_, err := ingest.Run(ctx, awsfocus.New(path), store, focus.DefaultTenant)
+	if err == nil {
+		t.Fatal("Run accepted a value exceeding the store's decimal scale")
+	}
+	var rowErrs *ingest.RowErrors
+	if !errors.As(err, &rowErrs) {
+		t.Fatalf("Run error = %v (%T), want *ingest.RowErrors", err, err)
+	}
+	if rowErrs.Total != 1 || len(rowErrs.First) != 1 || rowErrs.First[0].Row != 1 {
+		t.Fatalf("RowErrors = %+v, want exactly row 1", rowErrs)
+	}
+	msg := rowErrs.First[0].Errs[0].Error()
+	if !strings.Contains(msg, "BilledCost") || !strings.Contains(msg, "more than 12 fractional digits") {
+		t.Errorf("row error %q, want the column name and the 12-digit scale limit", msg)
+	}
+
+	// Trailing zeros beyond the limit lose nothing and must pass.
+	okRow := strings.Replace(row, "0.1234567890123", "0.1234500000000", 1)
+	okPath := writeGzCSV(t, header+"\n"+okRow+"\n")
+	res, err := ingest.Run(ctx, awsfocus.New(okPath), store, focus.DefaultTenant)
+	if err != nil {
+		t.Fatalf("Run rejected a trailing-zero value: %v", err)
+	}
+	if res.Records != 1 {
+		t.Fatalf("Run = %+v, want 1 record", res)
+	}
+}
+
+func writeGzCSV(t *testing.T, content string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write([]byte(content)); err != nil {
+		t.Fatalf("writing test gzip: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("closing test gzip: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "export.csv.gz")
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("writing test export: %v", err)
+	}
+	return path
 }
 
 // TestRunInvalidExportAbortsWithRowNumbers proves validation failures

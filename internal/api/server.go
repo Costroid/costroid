@@ -126,11 +126,16 @@ func staticHandler(static fs.FS) http.Handler {
 	files := http.FileServerFS(static)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		// All checks run on the decoded, cleaned path: the raw path can
+		// hide API routes behind encodings (e.g. /%2Fapi/... decodes to
+		// //api/..., which must 404, not fall back to index.html).
+		cleaned := path.Clean(r.URL.Path)
+		name := strings.TrimPrefix(cleaned, "/")
 		if hasDotSegment(name) {
 			http.NotFound(w, r)
 			return
@@ -143,7 +148,7 @@ func staticHandler(static fs.FS) http.Handler {
 			}
 			// Unknown /api/ paths and asset-like paths (with a file
 			// extension) are real 404s, not the SPA fallback.
-			if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/healthz" || path.Ext(name) != "" {
+			if strings.HasPrefix(cleaned, "/api/") || cleaned == "/healthz" || path.Ext(name) != "" {
 				http.NotFound(w, r)
 				return
 			}

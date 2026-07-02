@@ -63,6 +63,7 @@ func TestStaticHandler(t *testing.T) {
 		wantStatus   int
 		wantContains string
 		wantExcludes string
+		wantAllow    string
 	}{
 		{
 			name:   "root serves the app",
@@ -100,9 +101,19 @@ func TestStaticHandler(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:   "non-GET request to a static path is rejected",
+			name:   "percent-encoded slash cannot smuggle an API path past the exclusion",
+			method: http.MethodGet, path: "/%2Fapi/v1/nope",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:   "non-GET request to a static path is rejected with Allow",
 			method: http.MethodPost, path: "/costs",
-			wantStatus: http.StatusMethodNotAllowed,
+			wantStatus: http.StatusMethodNotAllowed, wantAllow: "GET, HEAD",
+		},
+		{
+			name:   "non-GET request to the root is rejected with Allow",
+			method: http.MethodPost, path: "/",
+			wantStatus: http.StatusMethodNotAllowed, wantAllow: "GET, HEAD",
 		},
 		{
 			name:   "meta API route is unaffected",
@@ -128,6 +139,10 @@ func TestStaticHandler(t *testing.T) {
 			}
 			if tt.wantExcludes != "" && strings.Contains(body, tt.wantExcludes) {
 				t.Errorf("%s %s body %q must not contain %q", tt.method, tt.path, body, tt.wantExcludes)
+			}
+			// RFC 9110 §15.5.6: 405 responses MUST carry an Allow header.
+			if got := rec.Header().Get("Allow"); got != tt.wantAllow {
+				t.Errorf("%s %s Allow header = %q, want %q", tt.method, tt.path, got, tt.wantAllow)
 			}
 		})
 	}

@@ -117,8 +117,12 @@ type CostRecord struct {
 	RegionName       string
 	AvailabilityZone string
 
-	// Tags is the FOCUS Tags column as a key→value map.
-	Tags map[string]string
+	// Tags is the FOCUS Tags column as a key→value map. Per the spec's
+	// KeyValueFormat attribute, values are JSON scalars — string, number,
+	// boolean, or null — never objects or arrays (valueless label-style
+	// tags carry boolean true). Values are string, bool, json.Number, or
+	// nil; numbers stay json.Number so they round-trip exactly.
+	Tags map[string]any
 }
 
 // RawRecord is one source row as raw column-name→value strings, before
@@ -217,11 +221,34 @@ func ParseRecord(raw RawRecord) (*CostRecord, error) {
 	}
 
 	if tags := raw["Tags"]; tags != "" {
-		if err := json.Unmarshal([]byte(tags), &rec.Tags); err != nil {
-			return nil, fmt.Errorf("column Tags: parsing key-value JSON: %w", err)
+		parsed, err := ParseTags(tags)
+		if err != nil {
+			return nil, fmt.Errorf("column Tags: %w", err)
 		}
+		rec.Tags = parsed
 	}
 	return rec, nil
+}
+
+// ParseTags parses a serialized FOCUS Tags value into a key→value map,
+// enforcing the KeyValueFormat attribute: a JSON object whose values are
+// string, number, boolean, or null — never objects or arrays. Numbers are
+// kept as json.Number so they round-trip exactly.
+func ParseTags(s string) (map[string]any, error) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var tags map[string]any
+	if err := dec.Decode(&tags); err != nil {
+		return nil, fmt.Errorf("parsing key-value JSON: %w", err)
+	}
+	for k, v := range tags {
+		switch v.(type) {
+		case string, bool, json.Number, nil:
+		default:
+			return nil, fmt.Errorf("tag %q has a JSON %T value; KeyValueFormat allows string, number, boolean, or null", k, v)
+		}
+	}
+	return tags, nil
 }
 
 // ParseDecimal parses a FOCUS numeric value without precision loss.

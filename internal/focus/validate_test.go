@@ -90,6 +90,22 @@ func TestValidate(t *testing.T) {
 			wantRuleIDs: []string{"CAU-ServiceProviderName-C-003-M"},
 		},
 		{
+			name: "tags with boolean, number, and null values conform",
+			mutate: func(r RawRecord) {
+				r["Tags"] = `{"user:env": "prod", "user:opted-in": true, "user:weight": 3, "user:owner": null}`
+			},
+		},
+		{
+			name:        "tag with an object value violates KeyValueFormat",
+			mutate:      func(r RawRecord) { r["Tags"] = `{"user:env": {"nested": "no"}}` },
+			wantRuleIDs: []string{"CAU-Tags-C-001-M"},
+		},
+		{
+			name:        "tags that are not a JSON object violate KeyValueFormat",
+			mutate:      func(r RawRecord) { r["Tags"] = `not-json` },
+			wantRuleIDs: []string{"CAU-Tags-C-001-M"},
+		},
+		{
 			name:   "multiple violations are all reported",
 			mutate: func(r RawRecord) { r["ChargeCategory"] = ""; r["ServiceName"] = "" },
 			wantRuleIDs: []string{
