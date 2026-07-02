@@ -4,93 +4,242 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
+
+	"github.com/shopspring/decimal"
+
+	"github.com/Costroid/costroid/internal/storage"
 )
 
-func TestHandler(t *testing.T) {
-	static := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Costroid</title>")},
+// fakeStore records the query it received and returns canned costs.
+type fakeStore struct {
+	daily      storage.DailyCosts
+	gotTenant  string
+	gotStart   time.Time
+	gotEnd     time.Time
+	queryCount int
+}
+
+func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time) (storage.DailyCosts, error) {
+	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
+	f.queryCount++
+	return f.daily, nil
+}
+
+func testStatic() fstest.MapFS {
+	return fstest.MapFS{
+		"index.html":    &fstest.MapFile{Data: []byte(`<!doctype html><div id="root"></div>`)},
+		"assets/app.js": &fstest.MapFile{Data: []byte(`console.log("app")`)},
+		".gitkeep":      &fstest.MapFile{Data: []byte("")},
 	}
-	handler := NewHandler("1.2.3-test", static)
+}
+
+func dec(t *testing.T, s string) decimal.Decimal {
+	t.Helper()
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		t.Fatalf("bad decimal %q: %v", s, err)
+	}
+	return d
+}
+
+// TestStaticHandler covers the slice-0 review fix: no directory listings,
+// no dotfiles, SPA fallback for unknown extensionless GET paths, and API
+// routes unaffected.
+func TestStaticHandler(t *testing.T) {
+	handler := NewHandler("0.1.0-test", testStatic(), &fakeStore{})
 
 	tests := []struct {
-		name       string
-		method     string
-		path       string
-		wantStatus int
-		check      func(t *testing.T, body []byte)
+		name         string
+		method       string
+		path         string
+		wantStatus   int
+		wantContains string
+		wantExcludes string
 	}{
 		{
-			name:       "healthz is alive",
-			method:     http.MethodGet,
-			path:       "/healthz",
-			wantStatus: http.StatusOK,
-			check: func(t *testing.T, body []byte) {
-				if got := string(body); got != "ok" {
-					t.Errorf("body = %q, want %q", got, "ok")
-				}
-			},
+			name:   "root serves the app",
+			method: http.MethodGet, path: "/",
+			wantStatus: http.StatusOK, wantContains: `<div id="root">`,
 		},
 		{
-			name:       "meta reports identity and versions",
-			method:     http.MethodGet,
-			path:       "/api/v1/meta",
-			wantStatus: http.StatusOK,
-			check: func(t *testing.T, body []byte) {
-				var meta Meta
-				if err := json.Unmarshal(body, &meta); err != nil {
-					t.Fatalf("unmarshaling body %q: %v", body, err)
-				}
-				want := Meta{Name: "costroid", Version: "1.2.3-test", FocusVersion: "1.4"}
-				if meta != want {
-					t.Errorf("meta = %+v, want %+v", meta, want)
-				}
-			},
+			name:   "existing asset is served",
+			method: http.MethodGet, path: "/assets/app.js",
+			wantStatus: http.StatusOK, wantContains: "console.log",
 		},
 		{
-			name:       "root serves the dashboard",
-			method:     http.MethodGet,
-			path:       "/",
-			wantStatus: http.StatusOK,
-			check: func(t *testing.T, body []byte) {
-				if got := string(body); got != "<!doctype html><title>Costroid</title>" {
-					t.Errorf("body = %q, want the static index.html", got)
-				}
-			},
+			name:   "directory path does not list contents",
+			method: http.MethodGet, path: "/assets/",
+			wantStatus: http.StatusOK, wantContains: `<div id="root">`, wantExcludes: "app.js",
 		},
 		{
-			// Non-GET requests don't match the generated "GET /api/v1/meta"
-			// route; they fall through to the catch-all static handler.
-			name:       "non-GET meta is not served",
-			method:     http.MethodPost,
-			path:       "/api/v1/meta",
+			name:   "unknown extensionless path falls back to index.html",
+			method: http.MethodGet, path: "/costs",
+			wantStatus: http.StatusOK, wantContains: `<div id="root">`,
+		},
+		{
+			name:   "dotfiles are never served",
+			method: http.MethodGet, path: "/.gitkeep",
 			wantStatus: http.StatusNotFound,
 		},
+		{
+			name:   "missing asset with extension is a real 404",
+			method: http.MethodGet, path: "/nope.js",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:   "unknown API path is a real 404, not the SPA fallback",
+			method: http.MethodGet, path: "/api/v1/nope",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:   "non-GET request to a static path is rejected",
+			method: http.MethodPost, path: "/costs",
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:   "meta API route is unaffected",
+			method: http.MethodGet, path: "/api/v1/meta",
+			wantStatus: http.StatusOK, wantContains: `"version":"0.1.0-test"`,
+		},
+		{
+			name:   "healthz is unaffected",
+			method: http.MethodGet, path: "/healthz",
+			wantStatus: http.StatusOK, wantContains: "ok",
+		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, req)
-
-			res := rec.Result()
-			defer func() { _ = res.Body.Close() }()
-			body, err := io.ReadAll(res.Body)
-			if err != nil {
-				t.Fatalf("reading body: %v", err)
+			handler.ServeHTTP(rec, httptest.NewRequest(tt.method, tt.path, nil))
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("%s %s = %d, want %d (body: %q)", tt.method, tt.path, rec.Code, tt.wantStatus, rec.Body)
 			}
-			if res.StatusCode != tt.wantStatus {
-				t.Fatalf("status = %d, want %d (body: %q)", res.StatusCode, tt.wantStatus, body)
+			body := rec.Body.String()
+			if tt.wantContains != "" && !strings.Contains(body, tt.wantContains) {
+				t.Errorf("%s %s body %q does not contain %q", tt.method, tt.path, body, tt.wantContains)
 			}
-			if tt.check != nil {
-				tt.check(t, body)
+			if tt.wantExcludes != "" && strings.Contains(body, tt.wantExcludes) {
+				t.Errorf("%s %s body %q must not contain %q", tt.method, tt.path, body, tt.wantExcludes)
 			}
 		})
+	}
+}
+
+func TestGetMeta(t *testing.T) {
+	handler := NewHandler("1.2.3-test", testStatic(), &fakeStore{})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var meta Meta
+	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
+		t.Fatalf("unmarshaling body %q: %v", rec.Body, err)
+	}
+	want := Meta{Name: "costroid", Version: "1.2.3-test", FocusVersion: "1.4"}
+	if meta != want {
+		t.Errorf("meta = %+v, want %+v", meta, want)
+	}
+}
+
+func TestGetDailyCosts(t *testing.T) {
+	store := &fakeStore{daily: storage.DailyCosts{
+		Currency: "USD",
+		Days: []storage.DayCosts{
+			{
+				Date: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+				Services: []storage.ServiceCost{
+					{ServiceName: "AWS Lambda", Cost: dec(t, "0.1896")},
+					{ServiceName: "Amazon Elastic Compute Cloud", Cost: dec(t, "3.6288")},
+				},
+			},
+			{
+				Date: time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC),
+				Services: []storage.ServiceCost{
+					{ServiceName: "AWS Lambda", Cost: dec(t, "0.1896")},
+				},
+			},
+		},
+	}}
+	handler := NewHandler("0.1.0-test", testStatic(), store)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if store.gotTenant != "default" {
+		t.Errorf("queried tenant %q, want default", store.gotTenant)
+	}
+	if !store.gotStart.IsZero() || !store.gotEnd.IsZero() {
+		t.Errorf("default range = [%s, %s], want unbounded (zero times)", store.gotStart, store.gotEnd)
+	}
+
+	var got DailyCosts
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Currency != "USD" {
+		t.Errorf("currency = %q, want USD", got.Currency)
+	}
+	if got.Total != "4.008" {
+		t.Errorf("period total = %q, want 4.008", got.Total)
+	}
+	if len(got.Days) != 2 {
+		t.Fatalf("days = %+v, want 2", got.Days)
+	}
+	day0 := got.Days[0]
+	if day0.Date.Format(time.DateOnly) != "2026-05-01" || day0.Total != "3.8184" {
+		t.Errorf("day 0 = %s total %q, want 2026-05-01 total 3.8184", day0.Date, day0.Total)
+	}
+	if len(day0.Services) != 2 || day0.Services[0].ServiceName != "AWS Lambda" || day0.Services[0].Cost != "0.1896" {
+		t.Errorf("day 0 services = %+v", day0.Services)
+	}
+	if got.Days[1].Total != "0.1896" {
+		t.Errorf("day 1 total = %q, want 0.1896", got.Days[1].Total)
+	}
+}
+
+func TestGetDailyCostsDateParams(t *testing.T) {
+	store := &fakeStore{}
+	handler := NewHandler("0.1.0-test", testStatic(), store)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?start=2026-05-02&end=2026-05-03", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if got := store.gotStart.Format(time.DateOnly); got != "2026-05-02" {
+		t.Errorf("start = %s, want 2026-05-02", got)
+	}
+	if got := store.gotEnd.Format(time.DateOnly); got != "2026-05-03" {
+		t.Errorf("end = %s, want 2026-05-03", got)
+	}
+
+	// The generated binding wrapper rejects invalid dates with 400
+	// before the handler runs.
+	before := store.queryCount
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?start=bogus", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid date status = %d, want 400", rec.Code)
+	}
+	if store.queryCount != before {
+		t.Error("handler queried the store despite an invalid date param")
+	}
+
+	// Empty store: empty days array (not null), zero total, no currency.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily", nil))
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"currency":"","days":[],"total":"0"}` {
+		t.Errorf("empty store response = %s", body)
 	}
 }

@@ -35,6 +35,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Meta"
+  /api/v1/costs/daily:
+    get:
+      operationId: getDailyCosts
+      summary: Daily cost by service
+      description: >-
+        Total daily BilledCost per service, plus per-day and period
+        totals. Ordering is deterministic: days ascending, services
+        sorted by name. Costs are decimal strings — never floats — so no
+        precision is lost.
+      parameters:
+        - name: start
+          in: query
+          description: >-
+            Inclusive first calendar day (UTC) to include. Defaults to
+            the full range of stored data.
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          description: >-
+            Inclusive last calendar day (UTC) to include. Defaults to
+            the full range of stored data.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Daily costs grouped by service for the requested period.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyCosts"
+        "400":
+          description: Invalid start or end date.
+          content:
+            text/plain:
+              schema:
+                type: string
 components:
   schemas:
     Meta:
@@ -56,3 +95,60 @@ components:
           type: string
           description: FOCUS specification version the internal model targets (decision D4).
           example: "1.4"
+    DailyCosts:
+      type: object
+      required:
+        - currency
+        - days
+        - total
+      properties:
+        currency:
+          type: string
+          description: >-
+            Billing currency of all listed costs (FOCUS BillingCurrency).
+            Empty when no data matched the requested period.
+          example: USD
+        days:
+          type: array
+          description: One entry per calendar day with data, days ascending.
+          items:
+            $ref: "#/components/schemas/DailyCost"
+        total:
+          type: string
+          description: Total cost of the whole period, as a decimal string.
+          example: "32.7663"
+    DailyCost:
+      type: object
+      required:
+        - date
+        - total
+        - services
+      properties:
+        date:
+          type: string
+          format: date
+          description: The UTC calendar day.
+          example: "2026-06-01"
+        total:
+          type: string
+          description: Total cost of the day, as a decimal string.
+          example: "4.6809"
+        services:
+          type: array
+          description: Per-service costs, sorted by service name.
+          items:
+            $ref: "#/components/schemas/ServiceCost"
+    ServiceCost:
+      type: object
+      required:
+        - serviceName
+        - cost
+      properties:
+        serviceName:
+          type: string
+          description: FOCUS ServiceName.
+          example: Amazon Elastic Compute Cloud
+        cost:
+          type: string
+          description: Cost total, as a decimal string.
+          example: "2.4192"

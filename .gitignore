@@ -8,8 +8,14 @@
 # Dependencies
 node_modules/
 
+# Local data store (see $COSTROID_DATA_DIR in .env.example)
+/data/
+
 # Environment (keep .env.example current instead)
 .env
+
+# Logs
+*.log
 
 # Editor junk
 .vscode/

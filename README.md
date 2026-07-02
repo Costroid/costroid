@@ -48,7 +48,7 @@ For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./
 
 ## Getting started
 
-> 🚧 **Scaffold only** — the repo builds and runs (API + dashboard shell), but there are no product features yet: no ingestion, no storage, no FOCUS pipeline.
+> 🚧 **First vertical slice** — the repo builds and runs the first end-to-end path: ingest a local AWS FOCUS 1.2 export (gzipped CSV) into the embedded DuckDB store and view daily cost by service in the dashboard. Everything else is still to come.
 
 **Prerequisites:** Go (latest stable), Node (LTS) + pnpm, DuckDB. Developed on WSL2 Ubuntu.
 
@@ -67,7 +67,13 @@ Top-level commands (see [`AGENTS.md`](./AGENTS.md) → *Working here*):
 - `make fmt` — apply formatters
 - `make generate` — regenerate Go/TS code from `contracts/openapi.yaml`
 
-After `make build`, run `./bin/costroid serve` and open <http://localhost:8080>. Available environment variables are documented in `.env.example` (`.env` is git-ignored).
+After `make build`, run `./bin/costroid serve` and open <http://localhost:8080>. To load data, stop the server (the embedded store allows a single process at a time) and ingest an AWS FOCUS export:
+
+```bash
+./bin/costroid ingest --connector aws-focus --path <your-focus-export.csv.gz>
+```
+
+A synthetic sample lives at `testdata/aws-focus-1.2/sample-export.csv.gz`. Available environment variables are documented in `.env.example` (`.env` is git-ignored).
 
 ---
 

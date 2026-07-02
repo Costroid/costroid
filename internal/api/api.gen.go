@@ -6,9 +6,37 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// DailyCost defines model for DailyCost.
+type DailyCost struct {
+	// Date The UTC calendar day.
+	Date openapi_types.Date `json:"date"`
+
+	// Services Per-service costs, sorted by service name.
+	Services []ServiceCost `json:"services"`
+
+	// Total Total cost of the day, as a decimal string.
+	Total string `json:"total"`
+}
+
+// DailyCosts defines model for DailyCosts.
+type DailyCosts struct {
+	// Currency Billing currency of all listed costs (FOCUS BillingCurrency). Empty when no data matched the requested period.
+	Currency string `json:"currency"`
+
+	// Days One entry per calendar day with data, days ascending.
+	Days []DailyCost `json:"days"`
+
+	// Total Total cost of the whole period, as a decimal string.
+	Total string `json:"total"`
+}
 
 // Meta defines model for Meta.
 type Meta struct {
@@ -22,8 +50,29 @@ type Meta struct {
 	Version string `json:"version"`
 }
 
+// ServiceCost defines model for ServiceCost.
+type ServiceCost struct {
+	// Cost Cost total, as a decimal string.
+	Cost string `json:"cost"`
+
+	// ServiceName FOCUS ServiceName.
+	ServiceName string `json:"serviceName"`
+}
+
+// GetDailyCostsParams defines parameters for GetDailyCosts.
+type GetDailyCostsParams struct {
+	// Start Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data.
+	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data.
+	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Daily cost by service
+	// (GET /api/v1/costs/daily)
+	GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams)
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
@@ -40,6 +89,52 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetDailyCosts operation middleware
+func (siw *ServerInterfaceWrapper) GetDailyCosts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDailyCostsParams
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDailyCosts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetMeta operation middleware
 func (siw *ServerInterfaceWrapper) GetMeta(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +284,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 

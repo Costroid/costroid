@@ -34,3 +34,102 @@ dt {
 dd {
   margin: 0;
 }
+
+/* Daily cost by service — validated categorical palette with dark-mode
+ * steps of the same hues (never an automatic flip). */
+.daily-costs {
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #1baf7a;
+  --viz-series-3: #eda100;
+  --viz-series-4: #008300;
+  --viz-series-5: #4a3aa7;
+  --viz-series-6: #e34948;
+  --viz-series-7: #e87ba4;
+  --viz-series-8: #eb6834;
+  --viz-grid: #e1e0d9;
+  --viz-baseline: #c3c2b7;
+  --viz-muted: #898781;
+  --viz-ink-secondary: #52514e;
+}
+
+@media (prefers-color-scheme: dark) {
+  .daily-costs {
+    --viz-series-1: #3987e5;
+    --viz-series-2: #199e70;
+    --viz-series-3: #c98500;
+    --viz-series-4: #008300;
+    --viz-series-5: #9085e9;
+    --viz-series-6: #e66767;
+    --viz-series-7: #d55181;
+    --viz-series-8: #d95926;
+    --viz-grid: #2c2c2a;
+    --viz-baseline: #383835;
+    --viz-ink-secondary: #c3c2b7;
+  }
+}
+
+.daily-costs-chart {
+  width: 100%;
+  height: auto;
+}
+
+.daily-costs-chart .viz-grid {
+  stroke: var(--viz-grid);
+  stroke-width: 1;
+}
+
+.daily-costs-chart .viz-baseline {
+  stroke: var(--viz-baseline);
+  stroke-width: 1;
+}
+
+.daily-costs-chart .viz-tick {
+  fill: var(--viz-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-costs-chart .viz-cap {
+  fill: var(--viz-ink-secondary);
+  font-size: 11px;
+}
+
+.daily-costs-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+.daily-costs-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.daily-costs-swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+}
+
+.daily-costs-table table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-costs-table th,
+.daily-costs-table td {
+  border-bottom: 1px solid var(--viz-grid);
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  text-align: left;
+}
+
+.daily-costs-empty pre {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border-radius: 4px;
+  overflow-x: auto;
+  padding: 0.75rem;
+}

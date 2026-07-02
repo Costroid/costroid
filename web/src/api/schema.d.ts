@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/costs/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daily cost by service
+         * @description Total daily BilledCost per service, plus per-day and period totals. Ordering is deterministic: days ascending, services sorted by name. Costs are decimal strings — never floats — so no precision is lost.
+         */
+        get: operations["getDailyCosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -58,6 +78,47 @@ export interface components {
              * @example 1.4
              */
             focusVersion: string;
+        };
+        DailyCosts: {
+            /**
+             * @description Billing currency of all listed costs (FOCUS BillingCurrency). Empty when no data matched the requested period.
+             * @example USD
+             */
+            currency: string;
+            /** @description One entry per calendar day with data, days ascending. */
+            days: components["schemas"]["DailyCost"][];
+            /**
+             * @description Total cost of the whole period, as a decimal string.
+             * @example 32.7663
+             */
+            total: string;
+        };
+        DailyCost: {
+            /**
+             * Format: date
+             * @description The UTC calendar day.
+             * @example 2026-06-01
+             */
+            date: string;
+            /**
+             * @description Total cost of the day, as a decimal string.
+             * @example 4.6809
+             */
+            total: string;
+            /** @description Per-service costs, sorted by service name. */
+            services: components["schemas"]["ServiceCost"][];
+        };
+        ServiceCost: {
+            /**
+             * @description FOCUS ServiceName.
+             * @example Amazon Elastic Compute Cloud
+             */
+            serviceName: string;
+            /**
+             * @description Cost total, as a decimal string.
+             * @example 2.4192
+             */
+            cost: string;
         };
     };
     responses: never;
@@ -104,6 +165,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Meta"];
+                };
+            };
+        };
+    };
+    getDailyCosts: {
+        parameters: {
+            query?: {
+                /** @description Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data. */
+                start?: string;
+                /** @description Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data. */
+                end?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily costs grouped by service for the requested period. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyCosts"];
+                };
+            };
+            /** @description Invalid start or end date. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
         };

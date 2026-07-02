@@ -13,6 +13,8 @@ function fakeResponse(status: number, body: unknown): Response {
   } as Response;
 }
 
+const emptyCosts = { currency: "", total: "0", days: [] };
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -22,13 +24,15 @@ describe("App", () => {
   it("renders meta values fetched from the API", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() =>
+      vi.fn((input: RequestInfo | URL) =>
         Promise.resolve(
-          fakeResponse(200, {
-            name: "costroid",
-            version: "0.1.0-test",
-            focusVersion: "1.4",
-          }),
+          String(input) === "/api/v1/meta"
+            ? fakeResponse(200, {
+                name: "costroid",
+                version: "0.1.0-test",
+                focusVersion: "1.4",
+              })
+            : fakeResponse(200, emptyCosts),
         ),
       ),
     );
@@ -49,7 +53,9 @@ describe("App", () => {
 
     render(<App />);
 
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("500");
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts.some((alert) => alert.textContent?.includes("500"))).toBe(
+      true,
+    );
   });
 });

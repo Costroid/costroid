@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import DailyCosts from "./DailyCosts";
 
 type Meta = components["schemas"]["Meta"];
 
@@ -57,6 +58,7 @@ export default function App() {
           <dd>{state.meta.focusVersion}</dd>
         </dl>
       )}
+      <DailyCosts />
     </main>
   );
 }
