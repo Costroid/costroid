@@ -41,13 +41,15 @@ Open-source, self-hostable, **FOCUS-native** cost platform (FinOps). It ingests 
 
 ## FOCUS notes (domain knowledge an agent likely won't have)
 
-- Model the internal schema on the **current stable FOCUS** (1.4 at time of writing); normalize older versions (1.0–1.3) with version-aware transforms.
-- Stay **forward-compatible with 1.5** (it adds a **Price Sheet** dataset and **AI model identity + input/output token** columns) — design the pricing catalog and token/usage columns now so 1.5 drops in without a rewrite.
+- Model the internal schema on the **current stable FOCUS** (1.4, ratified June 2026); normalize older versions with version-aware transforms. The spec ships **semiannually (June/December)**: 1.2 (May 2025: SaaS/PaaS scope, multi-currency, virtual-currency/token units), 1.3 (Dec 2025: Contract Commitment dataset, split/shared-cost allocation columns), 1.4 (June 2026: **Invoice Detail + Billing Period datasets** — the standardized basis for invoice reconciliation). Expect schema churn; treat transforms as versioned migrations, not one-off mappings.
+- Stay **forward-compatible with 1.5** (expected Dec 2026: SKU/Price Sheet dataset and **AI model identity + token** columns — scope not yet ratified and may shift; the high-cardinality AI-data question, OpenTelemetry vs a new dataset, is an open working-group debate). Design the pricing catalog and token/usage columns now so 1.5 drops in without a rewrite.
 - Use **1.2+ non-monetary unit** support (credits/tokens) for AI cost.
 - **Validate** for FOCUS conformance (mirror the open-source FOCUS Validator's rules).
-- Native FOCUS emitters to target first: **AWS, Azure, GCP**. Adoption is uneven — write fallback parsers where native FOCUS is missing (especially AI vendors).
-- Ingestion is **incremental, idempotent, and correction-aware**: provider bills arrive in pieces and get restated mid-period — use FOCUS 1.4 correction handling to supersede prior data, never double-count. (See decisions.md D16.)
+- **Real provider exports are version-skewed and imperfect** (mid-2026: providers emit 1.0–1.3; Azure export fields unpopulated in preview, GCP export pre-GA, `x_` extension columns everywhere; no provider is fully conformant). Target **AWS, Azure, GCP** first, but normalization must both up-convert older versions and gap-fill — this conversion layer is the technical moat, not plumbing.
+- **Don't wait for SaaS/AI vendors to emit FOCUS natively** — OpenAI/Anthropic expose raw usage/cost APIs only, with no sign of change. Own the conversion. The FinOps Foundation's `focus_converters` repo is abandoned (last pushed Aug 2024): reference material only, never a dependency.
+- Ingestion is **incremental, idempotent, and correction-aware**: provider bills arrive in pieces and get restated mid-period — use FOCUS 1.4 correction handling to supersede prior data, never double-count. The most-reported reconciliation traps besides corrections: refund **billing-period placement** and `EffectiveCost` **amortization semantics**. (See decisions.md D16.)
 - For **Kubernetes / on-prem allocation**, integrate or adapt **OpenCost** (Go, Apache-2.0) rather than reinventing it.
+- Market/positioning context, competitor watchlist, and revisit triggers: `docs/strategy.md`.
 
 ## Data model
 
