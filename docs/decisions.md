@@ -110,3 +110,15 @@ A running log of technical and architectural decisions for Costroid, with the re
 **Status:** Accepted
 **Decision:** Ship **automated, versioned, forward-only schema migrations** from v0.1 onward. Upgrading a Costroid deployment must migrate a user's existing store (DuckDB/Parquet, and any scale-out backend) without manual intervention or data loss.
 **Why:** Users run and upgrade Costroid themselves — there is no ops team to hand-migrate their data. Migrations are trivial to establish at the start and very expensive to bolt on once real deployments hold data.
+
+## D20 — API contract format: OpenAPI 3.0
+**Status:** Accepted (2026-07-02)
+**Decision:** The shared contract (D10) is **OpenAPI 3.0.x**, living at `contracts/openapi.yaml`. Go server types/scaffolding are generated with oapi-codegen v2 (standard-library `net/http` server target); TypeScript types with openapi-typescript. Generated code is committed and regenerated via `make generate`.
+**Why:** The API is REST/JSON consumed by a browser dashboard — OpenAPI needs no gateway or proxy layer (unlike gRPC), has the broadest ecosystem for third parties integrating with a self-hosted API, and its Go/TS codegen is mature. 3.0.x over 3.1 because oapi-codegen has no native 3.1 support.
+**Scope note:** This fixes the contract format and type generation only; the dashboard's runtime fetch approach is an implementation detail (openapi-typescript's companion client `openapi-fetch` entered maintenance mode in 2026, so plain typed `fetch` is the default).
+**Rejected:** protobuf/classic gRPC (browsers need grpc-web or a gateway — extra runtime infrastructure against the zero-ops single-binary default, D8); Connect RPC (attractive hybrid, but a heavier toolchain than warranted now and a smaller integration ecosystem than OpenAPI).
+
+## D21 — First AWS connector ingests a local FOCUS export file; live S3 sync comes later
+**Status:** Accepted (2026-07-02)
+**Decision:** The first AWS connector (the D13 slice) reads an **already-downloaded AWS FOCUS export from a local path**, with a synthetic sample committed under `testdata/`. Live S3 sync — AWS SDK, least-privilege read-only IAM — plus the D17 credential-handling subsystem and incremental-fetch state are deferred to separate, subsequent slices built on the same connector interface (D16).
+**Why:** Keeps the first end-to-end slice verifiable offline with no cloud account or credentials, and defers the credential subsystem until there is a working pipeline to attach it to. The connector interface is unchanged either way, so the S3 fetcher slots in without rework.
