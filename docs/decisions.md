@@ -127,3 +127,13 @@ A running log of technical and architectural decisions for Costroid, with the re
 **Status:** Accepted (2026-07-02)
 **Decision:** The embedded storage default (D5) is implemented with DuckDB's official Go driver, `github.com/duckdb/duckdb-go/v2`, which requires CGO (DuckDB's static libraries are bundled at build time). The distribution promise is therefore a **single self-contained binary** — one executable, no external DuckDB install — rather than a fully statically linked one. AGENTS.md was amended accordingly ("static" → "self-contained"). Cross-compilation and musl-static builds are constrained by CGO and are not release goals for now.
 **Why:** There is no pure-Go DuckDB implementation, and DuckDB-embedded is settled (D5). The self-host experience users actually care about — download one file, run it — is preserved; full static linking was an implementation detail of that promise, not the promise itself.
+
+## D23 — Money semantics at the API and view layer
+**Status:** Accepted (2026-07-02, ratifying choices shipped and verified in slice 1)
+**Decision:** (a) The API transports monetary values as **decimal strings** — JSON floats are never used for money. (b) The dashboard's cost views report **BilledCost** as the default metric; `EffectiveCost` stays in the schema for future amortization views (D18a). (c) Queries whose result would mix currencies **fail with an explicit error** rather than converting — conversion requires a rates-source decision that has not been made.
+**Why:** Decimal strings preserve the exactness invariant end-to-end (floats corrupt billing figures); BilledCost is the invoice-facing number for the first views; silent currency conversion produces confidently wrong totals. Any future conversion feature supersedes (c) with its own decision entry naming the rates source.
+
+## D24 — AWS credentials: ambient SDK chain; no credential persistence until a source requires stored secrets
+**Status:** Accepted (2026-07-02)
+**Decision:** Connectors that can use platform-native identity do so. The AWS S3 connector authenticates via the AWS SDK's **default credential chain** (env vars, shared config/SSO profiles, IAM roles) and Costroid **persists no AWS credentials anywhere**. The encrypted-at-rest credential store anticipated by D17 is built when the first source that genuinely requires stored secrets lands (AI vendors' API keys), not before.
+**Why:** The ambient chain is exactly D17's preferred short-lived, least-privilege path. Building a credential store now would add unused attack surface, and storing AWS keys would nudge users toward long-lived credentials — the pattern D17 exists to avoid.
