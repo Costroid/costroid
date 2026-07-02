@@ -34,6 +34,14 @@ const DefaultTenant = "default"
 // 1.4 (requirements-model rule CAU-ChargeCategory-C-003-M).
 var ChargeCategories = []string{"Usage", "Purchase", "Tax", "Credit", "Adjustment"}
 
+// ChargeClassCorrection is the only non-null ChargeClass value per FOCUS
+// 1.4: a charge correcting a charge in a previously CLOSED billing
+// period. Correction rows are additive — they arrive in a later open
+// billing period while keeping the ORIGINAL incurred timeframe in
+// ChargePeriodStart/End, so ChargePeriod-based aggregation retroactively
+// adjusts the corrected days (decision D26).
+const ChargeClassCorrection = "Correction"
+
 // CostRecord is one row of the internal Cost and Usage dataset. It
 // mirrors the FOCUS 1.4 column library (decision D3): every field
 // corresponds to a FOCUS 1.4 CostAndUsage column, plus the x_TenantId

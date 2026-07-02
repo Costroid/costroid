@@ -37,10 +37,12 @@ commands:
   ingest  ingest a cost export into the store
           local file:  costroid ingest --connector aws-focus --path <file> [--tenant default]
           live S3:     costroid ingest --connector aws-focus-s3 --bucket <b> --prefix <p>
-                       [--period YYYY-MM] [--tenant default]
+                       [--period YYYY-MM] [--tenant default] [--force]
                        (--prefix is the export root: the configured S3 prefix plus the
                        export name; auth via the ambient AWS credential chain only;
-                       without --period every discovered billing period is ingested)
+                       without --period every discovered billing period is ingested;
+                       periods whose stored manifest state is unchanged are skipped
+                       without fetching anything — --force re-processes them)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
 store allows a single process at a time: stop 'costroid serve' before
@@ -145,6 +147,7 @@ func ingestCmd(args []string) error {
 	prefixFlag := flags.String("prefix", "", "export root prefix: the export's configured S3 prefix plus its name (aws-focus-s3)")
 	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
+	forceFlag := flags.Bool("force", false, "re-process every period even when its stored manifest state is unchanged (aws-focus-s3)")
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return err
 	}
@@ -157,22 +160,54 @@ func ingestCmd(args []string) error {
 		if *pathFlag == "" {
 			return errors.New("--path is required for the aws-focus connector")
 		}
-		return runIngest(ctx, []ingestJob{{conn: awsfocus.New(*pathFlag)}}, *tenantFlag)
+		store, err := storage.Open(ctx, dataDir())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		return runIngest(ctx, store, []ingestJob{{conn: awsfocus.New(*pathFlag)}}, *tenantFlag)
 	case awsfocuss3.Name:
 		if *bucketFlag == "" || *prefixFlag == "" {
 			return errors.New("--bucket and --prefix are required for the aws-focus-s3 connector")
 		}
-		// Discover before opening (and locking) the store: a failed
-		// discovery must not block a running server.
-		conns, err := awsfocuss3.Discover(ctx, *bucketFlag, *prefixFlag)
+		// The store opens (and locks) BEFORE discovery: discovery needs
+		// the stored sync tuples to skip unchanged periods (migration
+		// 0003). The consequence for a running `costroid serve` is a
+		// fail-fast on the store lock with its actionable in-use message,
+		// instead of the pre-slice-3 behavior of discovering first.
+		store, err := storage.Open(ctx, dataDir())
 		if err != nil {
 			return err
 		}
-		jobs, err := s3Jobs(conns, *periodFlag)
+		defer func() { _ = store.Close() }()
+
+		// --force bypasses the tuple skip by discovering with no prior
+		// state; every period then falls through to the content-hash
+		// path, which still short-circuits byte-identical deliveries.
+		prior := map[string]awsfocuss3.ManifestState{}
+		if !*forceFlag {
+			states, err := store.SyncStates(ctx, awsfocuss3.Name)
+			if err != nil {
+				return err
+			}
+			for id, st := range states {
+				prior[id] = awsfocuss3.ManifestState{
+					Key:          st.ManifestKey,
+					ETag:         st.ManifestETag,
+					LastModified: st.ManifestLastModified,
+					Size:         st.ManifestSize,
+				}
+			}
+		}
+		periods, err := awsfocuss3.Discover(ctx, *bucketFlag, *prefixFlag, prior)
 		if err != nil {
 			return err
 		}
-		return runIngest(ctx, jobs, *tenantFlag)
+		jobs, err := s3Jobs(periods, *periodFlag)
+		if err != nil {
+			return err
+		}
+		return runIngest(ctx, store, jobs, *tenantFlag)
 	case "":
 		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3")`)
 	default:
@@ -180,22 +215,48 @@ func ingestCmd(args []string) error {
 	}
 }
 
-// ingestJob is one connector run; period labels multi-period output.
+// ingestJob is one connector run; period labels multi-period output. A
+// job with a nil conn is a skipped period (unchanged sync tuple): nothing
+// runs, only the skip line prints.
 type ingestJob struct {
 	conn   ingest.Connector
 	period string
+	// skippedSince is the stored manifest LastModified of a skipped
+	// period, printed on its skip line.
+	skippedSince time.Time
+	// sync, when non-nil, is upserted after the job runs successfully —
+	// on EVERY outcome (fresh, replaced, and unchanged short-circuit) —
+	// so a touched-but-identical delivery cannot permanently defeat the
+	// tuple skip (see storage.SyncState).
+	sync *storage.SyncState
 }
 
-// s3Jobs maps discovered per-period connectors to jobs, filtered to one
-// billing period when requested.
-func s3Jobs(conns []*awsfocuss3.Connector, period string) ([]ingestJob, error) {
+// s3Jobs maps discovered billing periods to jobs, filtered to one
+// billing period when requested. Skipped periods stay in the job list —
+// they print their skip line and keep --period filtering working.
+func s3Jobs(periods []awsfocuss3.Period, period string) ([]ingestJob, error) {
 	var jobs []ingestJob
 	var available []string
-	for _, conn := range conns {
-		available = append(available, conn.BillingPeriod())
-		if period == "" || conn.BillingPeriod() == period {
-			jobs = append(jobs, ingestJob{conn: conn, period: conn.BillingPeriod()})
+	for _, p := range periods {
+		available = append(available, p.Billing)
+		if period != "" && p.Billing != period {
+			continue
 		}
+		job := ingestJob{period: p.Billing}
+		if p.Skipped() {
+			job.skippedSince = p.Manifest.LastModified
+		} else {
+			job.conn = p.Conn
+			job.sync = &storage.SyncState{
+				Connector:            p.Conn.Name(),
+				SourceIdentity:       p.Conn.SourceIdentity(),
+				ManifestKey:          p.Manifest.Key,
+				ManifestETag:         p.Manifest.ETag,
+				ManifestLastModified: p.Manifest.LastModified,
+				ManifestSize:         p.Manifest.Size,
+			}
+		}
+		jobs = append(jobs, job)
 	}
 	if len(jobs) == 0 {
 		return nil, fmt.Errorf("billing period %s not found in the export (discovered: %s)",
@@ -204,22 +265,20 @@ func s3Jobs(conns []*awsfocuss3.Connector, period string) ([]ingestJob, error) {
 	return jobs, nil
 }
 
-// runIngest opens the store once and runs every job through the shared
-// pipeline. Each period's replace is transactional and independent, so
-// one failing period doesn't roll back the others; the exit status is
-// non-zero if any failed, and every period's outcome is printed.
-func runIngest(ctx context.Context, jobs []ingestJob, tenant string) error {
-	store, err := storage.Open(ctx, dataDir())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-
+// runIngest runs every job through the shared pipeline. Each period's
+// replace is transactional and independent, so one failing period
+// doesn't roll back the others; the exit status is non-zero if any
+// failed, and every period's outcome is printed.
+func runIngest(ctx context.Context, store storage.Store, jobs []ingestJob, tenant string) error {
 	var failed []string
 	for _, job := range jobs {
 		label := ""
 		if job.period != "" {
 			label = "period " + job.period + ": "
+		}
+		if job.conn == nil {
+			fmt.Printf("%sunchanged since %s; skipped\n", label, job.skippedSince.UTC().Format(time.RFC3339))
+			continue
 		}
 		result, err := ingest.Run(ctx, job.conn, store, tenant)
 		if err != nil {
@@ -227,14 +286,27 @@ func runIngest(ctx context.Context, jobs []ingestJob, tenant string) error {
 			fmt.Fprintf(os.Stderr, "costroid: %sfailed: %v\n", label, err)
 			continue
 		}
-		if result.Unchanged {
+		if job.sync != nil {
+			if err := store.UpsertSyncState(ctx, *job.sync); err != nil {
+				failed = append(failed, job.period)
+				fmt.Fprintf(os.Stderr, "costroid: %sfailed recording sync state: %v\n", label, err)
+				continue
+			}
+		}
+		switch {
+		case result.Unchanged:
 			fmt.Printf("%ssource content unchanged; batch %s/%s kept as is (%d record(s), tenant %s)\n",
 				label, result.Batch.Connector, result.Batch.SourceIdentity, result.Records, result.Batch.TenantID)
-			continue
+		case result.Replaced:
+			// Restatement visibility (decision D26d): the period's stored
+			// BilledCost total before → after the replace.
+			fmt.Printf("%sreplaced (%d records; BilledCost %s → %s)\n",
+				label, result.Records, result.PreviousBilledCost, result.NewBilledCost)
+		default:
+			fmt.Printf("%singested %d record(s) as batch %s/%s (tenant %s, %s)\n",
+				label, result.Records, result.Batch.Connector, result.Batch.SourceIdentity,
+				result.Batch.TenantID, result.Batch.ContentHash)
 		}
-		fmt.Printf("%singested %d record(s) as batch %s/%s (tenant %s, %s)\n",
-			label, result.Records, result.Batch.Connector, result.Batch.SourceIdentity,
-			result.Batch.TenantID, result.Batch.ContentHash)
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("%d of %d period(s) failed (%s); each period replaces independently, so the successful ones are stored",

@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,11 +40,23 @@ import (
 type Handler struct {
 	dir       string
 	forbidden []string
+
+	mu            sync.Mutex
+	getObjectKeys []string
 }
 
 // New returns a Handler serving <dir>/<bucket>/<key...>.
 func New(dir string) *Handler {
 	return &Handler{dir: dir}
+}
+
+// GetObjectKeys returns the "<bucket>/<key>" of every GetObject request
+// served so far, in order — test instrumentation for the incremental-sync
+// proofs (a tuple-skipped period must cost ZERO GetObject calls).
+func (h *Handler) GetObjectKeys() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.getObjectKeys...)
 }
 
 // Forbid makes every request whose "<bucket>/<key-or-list-prefix>" starts
@@ -204,6 +217,9 @@ func (h *Handler) listObjectsV2(w http.ResponseWriter, r *http.Request, bucket s
 }
 
 func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	h.mu.Lock()
+	h.getObjectKeys = append(h.getObjectKeys, bucket+"/"+key)
+	h.mu.Unlock()
 	if h.isForbidden(bucket, key) {
 		writeError(w, http.StatusForbidden, "AccessDenied", "Access Denied")
 		return

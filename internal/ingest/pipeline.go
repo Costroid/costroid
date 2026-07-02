@@ -29,6 +29,13 @@ type Result struct {
 	// Unchanged is true when the source content matched the stored
 	// batch and the store short-circuited to a no-op.
 	Unchanged bool
+	// Replaced is true when changed content replaced a previously
+	// stored batch; PreviousBilledCost and NewBilledCost then carry the
+	// store's batch totals before and after, for restatement visibility
+	// (decision D26d).
+	Replaced           bool
+	PreviousBilledCost decimal.Decimal
+	NewBilledCost      decimal.Decimal
 }
 
 // RowError is one offending row of an aborted ingest, with every
@@ -153,7 +160,14 @@ func Run(ctx context.Context, conn Connector, store storage.Store, tenant string
 	if err != nil {
 		return Result{}, fmt.Errorf("replacing ingest batch: %w", err)
 	}
-	return Result{Batch: batch, Records: replaced.RecordCount, Unchanged: replaced.Unchanged}, nil
+	return Result{
+		Batch:              batch,
+		Records:            replaced.RecordCount,
+		Unchanged:          replaced.Unchanged,
+		Replaced:           replaced.Replaced,
+		PreviousBilledCost: replaced.PreviousBilledCost,
+		NewBilledCost:      replaced.NewBilledCost,
+	}, nil
 }
 
 // storeScaleErrors reports monetary/quantity values that exceed the

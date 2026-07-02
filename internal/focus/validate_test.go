@@ -50,6 +50,15 @@ func TestValidate(t *testing.T) {
 			wantRuleIDs: []string{"CAU-ChargeCategory-C-002-M"},
 		},
 		{
+			name:   "correction charge class conforms",
+			mutate: func(r RawRecord) { r["ChargeClass"] = "Correction" },
+		},
+		{
+			name:        "charge class outside the allowed value set",
+			mutate:      func(r RawRecord) { r["ChargeClass"] = "Refund" },
+			wantRuleIDs: []string{"CAU-ChargeClass-C-003-M"},
+		},
+		{
 			name:        "charge period end not after start",
 			mutate:      func(r RawRecord) { r["ChargePeriodEnd"] = "2026-05-01T00:00:00.000Z" },
 			wantRuleIDs: []string{"CAU-ChargePeriodEnd-C-004-M"},

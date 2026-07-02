@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Costroid/costroid/internal/devtools/fakes3"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
@@ -26,9 +28,27 @@ import (
 const (
 	fixture      = "../../../testdata/aws-focus-s3/fixture"
 	restated     = "../../../testdata/aws-focus-s3/restated"
+	corrections  = "../../../testdata/aws-focus-s3/corrections"
 	sampleExport = "../../../testdata/aws-focus-1.2/sample-export.csv.gz"
 	bucket       = "demo"
 	prefix       = "exports/costroid-demo"
+)
+
+// The committed corrections fixture (period 2026-07) carries three normal
+// July-1 rows plus a ChargeClass="Correction" pair whose ChargePeriod
+// lies on MAY 1: a reversal of the prod EC2 charge billed at the
+// incorrect $0.1008 rate and its re-entry at the corrected $0.0504 rate.
+// The expected arithmetic, asserted below and in the e2e:
+const (
+	correctionReversal = "-2.4192" // 24 h × $0.1008, reversed
+	correctionReentry  = "1.2096"  // 24 h × $0.0504
+	// net May-1 shift = -2.4192 + 1.2096 = -1.2096:
+	may1EC2Corrected = "2.4192" // 3.6288 - 1.2096
+	may1EC2Original  = "3.6288"
+	// July 1's normal rows: EC2 2.4192 + S3 0.575 + Lambda 0.1264.
+	july1EC2    = "2.4192"
+	july1S3     = "0.575"
+	july1Lambda = "0.1264"
 )
 
 // hermeticEnv pins the ENTIRE ambient AWS credential chain to test-local
@@ -68,12 +88,12 @@ func TestDiscoverFixture(t *testing.T) {
 	_, url := startFake(t, fixture)
 	hermeticEnv(t, url, true)
 
-	conns, err := awsfocuss3.Discover(context.Background(), bucket, prefix)
+	periods, err := awsfocuss3.Discover(context.Background(), bucket, prefix, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(conns) != 2 {
-		t.Fatalf("Discover found %d period(s), want 2", len(conns))
+	if len(periods) != 2 {
+		t.Fatalf("Discover found %d period(s), want 2", len(periods))
 	}
 	wantIdentity := map[string]string{
 		"2026-05": "demo/exports/costroid-demo/2026-05",
@@ -81,7 +101,17 @@ func TestDiscoverFixture(t *testing.T) {
 	}
 	hashes := map[string]string{}
 	for i, want := range []string{"2026-05", "2026-06"} {
-		c := conns[i]
+		p := periods[i]
+		if p.Skipped() {
+			t.Fatalf("period %d skipped with no prior sync state", i)
+		}
+		if p.Manifest.Key == "" || p.Manifest.ETag == "" || p.Manifest.LastModified.IsZero() || p.Manifest.Size == 0 {
+			t.Errorf("period %d manifest state incomplete: %+v", i, p.Manifest)
+		}
+		c := p.Conn
+		if c.BillingPeriod() != p.Billing {
+			t.Errorf("period %d Billing = %q but connector period = %q", i, p.Billing, c.BillingPeriod())
+		}
 		if c.Name() != "aws-focus-s3" {
 			t.Errorf("Name = %q, want aws-focus-s3", c.Name())
 		}
@@ -121,11 +151,11 @@ func TestRecordsEquivalentToLocalConnector(t *testing.T) {
 	_, url := startFake(t, fixture)
 	hermeticEnv(t, url, true)
 
-	conns, err := awsfocuss3.Discover(ctx, bucket, prefix)
+	periods, err := awsfocuss3.Discover(ctx, bucket, prefix, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	s3Rows := readAll(t, ctx, conns[0]) // 2026-05: the sample data split into two chunks
+	s3Rows := readAll(t, ctx, periods[0].Conn) // 2026-05: the sample data split into two chunks
 
 	local := awsfocus.New(sampleExport)
 	localRows := readAll(t, ctx, local)
@@ -187,24 +217,25 @@ func TestIngestIdempotencyAndRestatement(t *testing.T) {
 
 	ingestAll := func() []ingest.Result {
 		t.Helper()
-		conns, err := awsfocuss3.Discover(ctx, bucket, prefix)
+		periods, err := awsfocuss3.Discover(ctx, bucket, prefix, nil)
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
-		results := make([]ingest.Result, 0, len(conns))
-		for _, conn := range conns {
-			res, err := ingest.Run(ctx, conn, store, focus.DefaultTenant)
+		results := make([]ingest.Result, 0, len(periods))
+		for _, p := range periods {
+			res, err := ingest.Run(ctx, p.Conn, store, focus.DefaultTenant)
 			if err != nil {
-				t.Fatalf("Run(%s): %v", conn.BillingPeriod(), err)
+				t.Fatalf("Run(%s): %v", p.Billing, err)
 			}
 			results = append(results, res)
 		}
 		return results
 	}
 
-	// Fresh ingest: both periods stored, 42 records each.
+	// Fresh ingest: both periods stored, 42 records each, nothing
+	// reported as replaced.
 	for i, res := range ingestAll() {
-		if res.Unchanged || res.Records != 42 {
+		if res.Unchanged || res.Replaced || res.Records != 42 {
 			t.Fatalf("fresh ingest %d = %+v, want 42 fresh records", i, res)
 		}
 	}
@@ -234,6 +265,19 @@ func TestIngestIdempotencyAndRestatement(t *testing.T) {
 	}
 	if results[1].Unchanged || results[1].Records != 42 {
 		t.Errorf("2026-06 after restatement = %+v, want replaced with 42 records", results[1])
+	}
+	// Restatement visibility (D26d): the store reports the period's
+	// BilledCost total before → after the replace. The committed June
+	// fixture totals (3.6288+0.1896+0.8625)×7 = 32.7663 before and, with
+	// EC2 doubled in the restatement, (7.2576+0.1896+0.8625)×7 = 58.1679.
+	if !results[1].Replaced {
+		t.Errorf("2026-06 restatement not reported as replaced: %+v", results[1])
+	}
+	if got := results[1].PreviousBilledCost.String(); got != "32.7663" {
+		t.Errorf("2026-06 previous BilledCost = %s, want 32.7663", got)
+	}
+	if got := results[1].NewBilledCost.String(); got != "58.1679" {
+		t.Errorf("2026-06 new BilledCost = %s, want 58.1679", got)
 	}
 	assertDays(t, ctx, store, 14, map[string]string{
 		"Amazon Elastic Compute Cloud":  "3.6288",
@@ -311,11 +355,11 @@ func TestRecordsStripsBOMViaSharedParser(t *testing.T) {
 	_, url := startFake(t, tree)
 	hermeticEnv(t, url, true)
 
-	conns, err := awsfocuss3.Discover(ctx, bucket, prefix)
+	periods, err := awsfocuss3.Discover(ctx, bucket, prefix, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	rows := readAll(t, ctx, conns[0])
+	rows := readAll(t, ctx, periods[0].Conn)
 	if len(rows) != 1 || rows[0].Record["AvailabilityZone"] != "eu-central-1a" {
 		t.Errorf("rows = %+v, want one row with an intact first column", rows)
 	}
@@ -395,7 +439,7 @@ func TestDiscoverErrors(t *testing.T) {
 			_, url := startFake(t, tree)
 			hermeticEnv(t, url, true)
 
-			_, err := awsfocuss3.Discover(context.Background(), tt.bucket, prefix)
+			_, err := awsfocuss3.Discover(context.Background(), tt.bucket, prefix, nil)
 			if err == nil {
 				t.Fatal("Discover succeeded, want an error")
 			}
@@ -411,7 +455,7 @@ func TestDiscoverAccessDenied(t *testing.T) {
 	fake.Forbid(bucket + "/" + prefix)
 	hermeticEnv(t, url, true)
 
-	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix)
+	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix, nil)
 	if err == nil {
 		t.Fatal("Discover succeeded despite AccessDenied")
 	}
@@ -430,7 +474,7 @@ func TestDiscoverMissingCredentials(t *testing.T) {
 	hermeticEnv(t, url, false)
 
 	start := time.Now()
-	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix)
+	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix, nil)
 	if err == nil {
 		t.Fatal("Discover succeeded without any credentials")
 	}
@@ -439,6 +483,272 @@ func TestDiscoverMissingCredentials(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Errorf("credential failure took %s, want fast failure", elapsed)
+	}
+}
+
+// TestIngestCorrectionRetroactivity proves D26c end to end at the store
+// boundary: ingesting the corrections period (2026-07) retroactively
+// shifts MAY 1 by exactly the fixture's documented net (-1.2096 on EC2),
+// leaves every other May day and all of June untouched, and adds July 1's
+// normal rows — because time-series aggregation is by ChargePeriod and
+// the correction rows keep their original May timeframe.
+func TestIngestCorrectionRetroactivity(t *testing.T) {
+	// The documented fixture arithmetic must be internally consistent:
+	// original + reversal + re-entry = corrected May-1 EC2 total.
+	if got := decimal.RequireFromString(may1EC2Original).
+		Add(decimal.RequireFromString(correctionReversal)).
+		Add(decimal.RequireFromString(correctionReentry)); got.String() != may1EC2Corrected {
+		t.Fatalf("fixture constants are inconsistent: %s + %s + %s = %s, want %s",
+			may1EC2Original, correctionReversal, correctionReentry, got, may1EC2Corrected)
+	}
+
+	ctx := context.Background()
+	tree := t.TempDir()
+	copyTree(t, fixture, tree)
+	_, url := startFake(t, tree)
+	hermeticEnv(t, url, true)
+
+	store, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ingestAll := func() {
+		t.Helper()
+		periods, err := awsfocuss3.Discover(ctx, bucket, prefix, nil)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		for _, p := range periods {
+			if _, err := ingest.Run(ctx, p.Conn, store, focus.DefaultTenant); err != nil {
+				t.Fatalf("Run(%s): %v", p.Billing, err)
+			}
+		}
+	}
+
+	ingestAll() // 2026-05 + 2026-06
+	baseline, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	if len(baseline.Days) != 14 {
+		t.Fatalf("baseline holds %d day(s), want 14", len(baseline.Days))
+	}
+
+	copyTree(t, corrections, tree) // adds period 2026-07
+	ingestAll()                    // 05/06 short-circuit unchanged; 07 fresh
+
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	if len(daily.Days) != 15 {
+		t.Fatalf("store holds %d day(s) after the correction period, want 15 (7 May + 7 June + 1 July)", len(daily.Days))
+	}
+
+	mayNormal := map[string]string{
+		"Amazon Elastic Compute Cloud":  may1EC2Original,
+		"AWS Lambda":                    "0.1896",
+		"Amazon Simple Storage Service": "0.8625",
+	}
+	tests := []struct {
+		date     time.Time
+		services map[string]string
+	}{
+		// May 1 is the corrected day: EC2 3.6288 - 2.4192 + 1.2096 = 2.4192.
+		{time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), map[string]string{
+			"Amazon Elastic Compute Cloud":  may1EC2Corrected,
+			"AWS Lambda":                    "0.1896",
+			"Amazon Simple Storage Service": "0.8625",
+		}},
+		// July 1 carries exactly the period's normal rows.
+		{time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), map[string]string{
+			"Amazon Elastic Compute Cloud":  july1EC2,
+			"AWS Lambda":                    july1Lambda,
+			"Amazon Simple Storage Service": july1S3,
+		}},
+	}
+	// Every remaining May and June day is untouched.
+	for d := 2; d <= 7; d++ {
+		tests = append(tests, struct {
+			date     time.Time
+			services map[string]string
+		}{time.Date(2026, 5, d, 0, 0, 0, 0, time.UTC), mayNormal})
+	}
+	for d := 1; d <= 7; d++ {
+		tests = append(tests, struct {
+			date     time.Time
+			services map[string]string
+		}{time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC), mayNormal})
+	}
+
+	byDate := map[string]map[string]string{}
+	for _, day := range daily.Days {
+		services := map[string]string{}
+		for _, svc := range day.Services {
+			services[svc.ServiceName] = svc.Cost.String()
+		}
+		byDate[day.Date.Format(time.DateOnly)] = services
+	}
+	for _, tt := range tests {
+		date := tt.date.Format(time.DateOnly)
+		got, ok := byDate[date]
+		if !ok {
+			t.Errorf("day %s missing from daily costs", date)
+			continue
+		}
+		if len(got) != len(tt.services) {
+			t.Errorf("day %s services = %v, want %v", date, got, tt.services)
+			continue
+		}
+		for svc, want := range tt.services {
+			if got[svc] != want {
+				t.Errorf("day %s %s = %s, want %s", date, svc, got[svc], want)
+			}
+		}
+	}
+}
+
+// syncOutcome is one period's result of a CLI-equivalent sync pass.
+type syncOutcome struct {
+	period    string
+	skipped   bool
+	unchanged bool
+	replaced  bool
+	records   int
+}
+
+// syncAll mirrors the CLI's sync flow exactly: read the stored tuples
+// (none when force), discover with them, run every non-skipped period
+// through the pipeline, and upsert the tuple after EVERY successful
+// outcome — fresh, replaced, and unchanged short-circuit alike.
+func syncAll(t *testing.T, ctx context.Context, store *storage.DuckDB, force bool) []syncOutcome {
+	t.Helper()
+	prior := map[string]awsfocuss3.ManifestState{}
+	if !force {
+		states, err := store.SyncStates(ctx, awsfocuss3.Name)
+		if err != nil {
+			t.Fatalf("SyncStates: %v", err)
+		}
+		for id, st := range states {
+			prior[id] = awsfocuss3.ManifestState{
+				Key:          st.ManifestKey,
+				ETag:         st.ManifestETag,
+				LastModified: st.ManifestLastModified,
+				Size:         st.ManifestSize,
+			}
+		}
+	}
+	periods, err := awsfocuss3.Discover(ctx, bucket, prefix, prior)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	var out []syncOutcome
+	for _, p := range periods {
+		if p.Skipped() {
+			out = append(out, syncOutcome{period: p.Billing, skipped: true})
+			continue
+		}
+		res, err := ingest.Run(ctx, p.Conn, store, focus.DefaultTenant)
+		if err != nil {
+			t.Fatalf("Run(%s): %v", p.Billing, err)
+		}
+		if err := store.UpsertSyncState(ctx, storage.SyncState{
+			Connector:            p.Conn.Name(),
+			SourceIdentity:       p.Conn.SourceIdentity(),
+			ManifestKey:          p.Manifest.Key,
+			ManifestETag:         p.Manifest.ETag,
+			ManifestLastModified: p.Manifest.LastModified,
+			ManifestSize:         p.Manifest.Size,
+		}); err != nil {
+			t.Fatalf("UpsertSyncState(%s): %v", p.Billing, err)
+		}
+		out = append(out, syncOutcome{period: p.Billing, unchanged: res.Unchanged, replaced: res.Replaced, records: res.Records})
+	}
+	return out
+}
+
+// TestIncrementalSyncTupleSkip proves the manifest-tuple skip end to end
+// with an instrumented fake: an unchanged re-sync performs ZERO GetObject
+// calls; a bumped manifest LastModified re-processes exactly that period
+// (whose identical content then hash-short-circuits); the tuple upserted
+// on that Unchanged outcome makes the following sync skip again; and a
+// forced sync bypasses the tuple skip.
+func TestIncrementalSyncTupleSkip(t *testing.T) {
+	ctx := context.Background()
+	tree := t.TempDir()
+	copyTree(t, fixture, tree)
+	fake, url := startFake(t, tree)
+	hermeticEnv(t, url, true)
+
+	store, err := storage.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Sync 1: no stored tuples — both periods ingest fresh.
+	for _, o := range syncAll(t, ctx, store, false) {
+		if o.skipped || o.unchanged || o.records != 42 {
+			t.Fatalf("first sync %s = %+v, want 42 fresh records", o.period, o)
+		}
+	}
+
+	// Sync 2: unchanged tuples — both periods skipped, ZERO GetObject
+	// calls (not even the manifests are fetched).
+	before := len(fake.GetObjectKeys())
+	for _, o := range syncAll(t, ctx, store, false) {
+		if !o.skipped {
+			t.Fatalf("unchanged re-sync %s = %+v, want skipped", o.period, o)
+		}
+	}
+	if calls := fake.GetObjectKeys()[before:]; len(calls) != 0 {
+		t.Fatalf("unchanged re-sync performed %d GetObject call(s): %v", len(calls), calls)
+	}
+
+	// Touch 2026-06's partition manifest: identical bytes, later
+	// LastModified. The tuple misses for exactly that period; its
+	// unchanged content then short-circuits on the hash path.
+	bumpMtime(t, filepath.Join(tree, bucket, prefix, "metadata/BILLING_PERIOD=2026-06/costroid-demo-Manifest.json"), 2*time.Second)
+	outcomes := syncAll(t, ctx, store, false)
+	if !outcomes[0].skipped {
+		t.Errorf("2026-05 after unrelated touch = %+v, want skipped", outcomes[0])
+	}
+	if outcomes[1].skipped || !outcomes[1].unchanged {
+		t.Errorf("touched 2026-06 = %+v, want re-processed and hash-short-circuited", outcomes[1])
+	}
+
+	// The tuple was upserted on that Unchanged outcome, so the next
+	// sync tuple-skips both periods again — with zero GETs.
+	before = len(fake.GetObjectKeys())
+	for _, o := range syncAll(t, ctx, store, false) {
+		if !o.skipped {
+			t.Fatalf("sync after touched-but-identical %s = %+v, want skipped", o.period, o)
+		}
+	}
+	if calls := fake.GetObjectKeys()[before:]; len(calls) != 0 {
+		t.Fatalf("sync after touched-but-identical performed %d GetObject call(s): %v", len(calls), calls)
+	}
+
+	// force (the CLI's --force) bypasses the tuple skip; identical
+	// content still short-circuits on the hash path.
+	for _, o := range syncAll(t, ctx, store, true) {
+		if o.skipped || !o.unchanged {
+			t.Fatalf("forced sync %s = %+v, want processed via the hash path", o.period, o)
+		}
+	}
+}
+
+func bumpMtime(t *testing.T, path string, d time.Duration) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	bumped := info.ModTime().Add(d)
+	if err := os.Chtimes(path, bumped, bumped); err != nil {
+		t.Fatalf("chtimes %s: %v", path, err)
 	}
 }
 
@@ -453,7 +763,7 @@ func TestRecordsRedeliveryRaceReportsActionably(t *testing.T) {
 	_, url := startFake(t, tree)
 	hermeticEnv(t, url, true)
 
-	conns, err := awsfocuss3.Discover(ctx, bucket, prefix)
+	periods, err := awsfocuss3.Discover(ctx, bucket, prefix, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -463,7 +773,7 @@ func TestRecordsRedeliveryRaceReportsActionably(t *testing.T) {
 	writeGzCSV(t, filepath.Join(tree, bucket, prefix, "data/BILLING_PERIOD=2026-05/costroid-demo-00001.csv.gz"),
 		"AvailabilityZone,ServiceName\neu-central-1a,AWS Lambda\n")
 
-	reader, err := conns[0].Records(ctx)
+	reader, err := periods[0].Conn.Records(ctx)
 	if err != nil {
 		t.Fatalf("Records: %v", err)
 	}
@@ -491,7 +801,7 @@ func TestDiscoverRejectsMultiplePartitionManifests(t *testing.T) {
 	_, url := startFake(t, tree)
 	hermeticEnv(t, url, true)
 
-	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix)
+	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix, nil)
 	if err == nil {
 		t.Fatal("Discover succeeded despite two partition-level manifests")
 	}

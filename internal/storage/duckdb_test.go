@@ -176,8 +176,12 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 		testRecord(t, "AWS Lambda", day(1), "0.1264"),
 		testRecord(t, "AWS Lambda", day(2), "0.0632"),
 	}
-	if _, err := store.ReplaceIngestBatch(ctx, batch, records); err != nil {
+	first, err := store.ReplaceIngestBatch(ctx, batch, records)
+	if err != nil {
 		t.Fatalf("first ReplaceIngestBatch: %v", err)
+	}
+	if first.Replaced || first.NewBilledCost.String() != "0.1896" {
+		t.Fatalf("first ReplaceIngestBatch = %+v, want fresh (not replaced) with new total 0.1896", first)
 	}
 
 	// Same key, same content hash: short-circuits to a no-op.
@@ -185,11 +189,12 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unchanged ReplaceIngestBatch: %v", err)
 	}
-	if !res.Unchanged || res.RecordCount != 2 {
+	if !res.Unchanged || res.Replaced || res.RecordCount != 2 {
 		t.Fatalf("unchanged ReplaceIngestBatch = %+v, want unchanged with 2 records", res)
 	}
 
-	// Same key, changed content: replaces — never duplicates.
+	// Same key, changed content: replaces — never duplicates — and
+	// reports the batch's BilledCost totals before → after (D26d).
 	changed := batch
 	changed.ContentHash = "sha256:bbbb"
 	res, err = store.ReplaceIngestBatch(ctx, changed, records[:1])
@@ -198,6 +203,9 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	}
 	if res.Unchanged || res.RecordCount != 1 {
 		t.Fatalf("changed ReplaceIngestBatch = %+v, want replace with 1 record", res)
+	}
+	if !res.Replaced || res.PreviousBilledCost.String() != "0.1896" || res.NewBilledCost.String() != "0.1264" {
+		t.Fatalf("changed ReplaceIngestBatch = %+v, want replaced with BilledCost 0.1896 → 0.1264", res)
 	}
 	got, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
 	if err != nil {
@@ -220,6 +228,76 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	}
 	if len(got.Days) != 2 {
 		t.Fatalf("after second batch, days = %+v, want 2 days", got.Days)
+	}
+}
+
+// TestSyncStateRoundTrip proves the sync-state tuple (migration 0003)
+// persists exactly — including the TIMESTAMP round-trip of LastModified —
+// and that upserting replaces rather than duplicates.
+func TestSyncStateRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	empty, err := store.SyncStates(ctx, "aws-focus-s3")
+	if err != nil {
+		t.Fatalf("SyncStates on empty store: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty store holds sync states: %+v", empty)
+	}
+
+	st := SyncState{
+		Connector:            "aws-focus-s3",
+		SourceIdentity:       "demo/exports/costroid-demo/2026-05",
+		ManifestKey:          "exports/costroid-demo/metadata/BILLING_PERIOD=2026-05/costroid-demo-Manifest.json",
+		ManifestETag:         `"9e107d9d372bb6826bd81d3542a419d6"`,
+		ManifestLastModified: time.Date(2026, 7, 2, 12, 0, 0, 123_000_000, time.UTC), // ms precision, as S3 lists
+		ManifestSize:         1451,
+	}
+	if err := store.UpsertSyncState(ctx, st); err != nil {
+		t.Fatalf("UpsertSyncState: %v", err)
+	}
+	got, err := store.SyncStates(ctx, "aws-focus-s3")
+	if err != nil {
+		t.Fatalf("SyncStates: %v", err)
+	}
+	stored, ok := got[st.SourceIdentity]
+	if !ok || len(got) != 1 {
+		t.Fatalf("SyncStates = %+v, want exactly %s", got, st.SourceIdentity)
+	}
+	if stored.ManifestKey != st.ManifestKey || stored.ManifestETag != st.ManifestETag ||
+		!stored.ManifestLastModified.Equal(st.ManifestLastModified) || stored.ManifestSize != st.ManifestSize {
+		t.Fatalf("stored tuple = %+v, want %+v", stored, st)
+	}
+
+	// Upserting the same identity replaces the tuple.
+	st.ManifestETag = `"new"`
+	st.ManifestLastModified = st.ManifestLastModified.Add(time.Hour)
+	st.ManifestSize = 999
+	if err := store.UpsertSyncState(ctx, st); err != nil {
+		t.Fatalf("second UpsertSyncState: %v", err)
+	}
+	got, err = store.SyncStates(ctx, "aws-focus-s3")
+	if err != nil {
+		t.Fatalf("SyncStates after upsert: %v", err)
+	}
+	stored = got[st.SourceIdentity]
+	if len(got) != 1 || stored.ManifestETag != `"new"` ||
+		!stored.ManifestLastModified.Equal(st.ManifestLastModified) || stored.ManifestSize != 999 {
+		t.Fatalf("after upsert SyncStates = %+v, want the replaced tuple", got)
+	}
+
+	// Other connectors see nothing.
+	other, err := store.SyncStates(ctx, "aws-focus")
+	if err != nil {
+		t.Fatalf("SyncStates(other): %v", err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("other connector sees %+v, want nothing", other)
 	}
 }
 

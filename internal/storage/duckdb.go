@@ -81,6 +81,7 @@ func (s *DuckDB) ReplaceIngestBatch(ctx context.Context, batch Batch, records []
 
 	// Unchanged-content short-circuit: same replace key, same content
 	// hash, same tenant — nothing to rewrite.
+	result := ReplaceResult{RecordCount: len(records)}
 	var storedHash, storedTenant string
 	var storedCount int
 	err = tx.QueryRowContext(ctx,
@@ -91,6 +92,13 @@ func (s *DuckDB) ReplaceIngestBatch(ctx context.Context, batch Batch, records []
 	case err == nil:
 		if storedHash == batch.ContentHash && storedTenant == batch.TenantID {
 			return ReplaceResult{RecordCount: storedCount, Unchanged: true}, nil
+		}
+		// Changed content replaces a stored batch: report the cost delta
+		// (decision D26d) from what the store actually held.
+		result.Replaced = true
+		result.PreviousBilledCost, err = batchBilledCost(ctx, tx, batch)
+		if err != nil {
+			return ReplaceResult{}, fmt.Errorf("totaling prior batch cost: %w", err)
 		}
 	case errors.Is(err, sql.ErrNoRows):
 		// First ingest of this batch.
@@ -127,10 +135,28 @@ func (s *DuckDB) ReplaceIngestBatch(ctx context.Context, batch Batch, records []
 		}
 	}
 
+	// Total the new content from what was just stored, so the reported
+	// delta reflects the store, not the connector.
+	if result.NewBilledCost, err = batchBilledCost(ctx, tx, batch); err != nil {
+		return ReplaceResult{}, fmt.Errorf("totaling new batch cost: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return ReplaceResult{}, fmt.Errorf("committing replace transaction: %w", err)
 	}
-	return ReplaceResult{RecordCount: len(records)}, nil
+	return result, nil
+}
+
+// batchBilledCost totals the stored BilledCost of one batch inside tx.
+func batchBilledCost(ctx context.Context, tx *sql.Tx, batch Batch) (decimal.Decimal, error) {
+	var sum duckdb.Decimal
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(billed_cost), CAST(0 AS DECIMAL(38,18)))
+		 FROM cost_records WHERE batch_connector = ? AND batch_source_identity = ?`,
+		batch.Connector, batch.SourceIdentity).Scan(&sum); err != nil {
+		return decimal.Decimal{}, err
+	}
+	return decimal.NewFromBigInt(sum.Value, -int32(sum.Scale)), nil //nolint:gosec // DuckDB DECIMAL scale is at most 38.
 }
 
 // insertRecordSQL binds monetary/quantity parameters as strings and casts
@@ -266,6 +292,51 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)
 	}
 	return result, nil
+}
+
+// SyncStates implements Store.
+func (s *DuckDB) SyncStates(ctx context.Context, connector string) (map[string]SyncState, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT source_identity, manifest_key, manifest_etag, manifest_last_modified, manifest_size
+		 FROM sync_state WHERE connector = ?`, connector)
+	if err != nil {
+		return nil, fmt.Errorf("querying sync state: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	states := map[string]SyncState{}
+	for rows.Next() {
+		st := SyncState{Connector: connector}
+		if err := rows.Scan(&st.SourceIdentity, &st.ManifestKey, &st.ManifestETag,
+			&st.ManifestLastModified, &st.ManifestSize); err != nil {
+			return nil, fmt.Errorf("scanning sync state: %w", err)
+		}
+		st.ManifestLastModified = st.ManifestLastModified.UTC()
+		states[st.SourceIdentity] = st
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying sync state: %w", err)
+	}
+	return states, nil
+}
+
+// UpsertSyncState implements Store.
+func (s *DuckDB) UpsertSyncState(ctx context.Context, state SyncState) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO sync_state (connector, source_identity, manifest_key, manifest_etag,
+			manifest_last_modified, manifest_size, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (connector, source_identity) DO UPDATE SET
+			manifest_key = excluded.manifest_key,
+			manifest_etag = excluded.manifest_etag,
+			manifest_last_modified = excluded.manifest_last_modified,
+			manifest_size = excluded.manifest_size,
+			updated_at = excluded.updated_at`,
+		state.Connector, state.SourceIdentity, state.ManifestKey, state.ManifestETag,
+		state.ManifestLastModified.UTC(), state.ManifestSize, time.Now().UTC()); err != nil {
+		return fmt.Errorf("upserting sync state: %w", err)
+	}
+	return nil
 }
 
 // nullString maps the model's "" (null) convention to SQL NULL.

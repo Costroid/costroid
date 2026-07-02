@@ -4,8 +4,13 @@
 // Package awsfocus implements the "aws-focus" connector (decisions D16,
 // D21): it reads an already-downloaded AWS Data Exports "FOCUS 1.2 with
 // AWS columns" export — a gzipped CSV — from a local path. Live S3 sync
-// and credentials are a later slice on the same connector contract; this
-// package never touches the network.
+// lives in the sibling awsfocuss3 package; this package never touches
+// the network.
+//
+// The connector keeps NO incremental sync state (unlike aws-focus-s3's
+// manifest tuple): reading a local file has no fetch cost to save, and
+// the pipeline's content-hash short-circuit already makes re-ingesting
+// an unchanged file a no-op.
 package awsfocus
 
 import (

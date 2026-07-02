@@ -43,9 +43,12 @@ import (
 //     correction/supersede machinery (D16, "correction-aware") deferred
 //     to a later slice — connectors must not try to emulate it.
 //
-// Incremental fetch state ("only fetch what changed since last run") is
-// likewise a later slice; the contract leaves room for it but defines
-// none of it yet.
+// Incremental fetch state ("only fetch what changed since last run")
+// lives OUTSIDE this interface: connectors whose discovery can decide
+// cheaply that a source is unchanged (e.g. the aws-focus-s3 manifest
+// tuple, persisted via storage.SyncState) skip it before a Connector for
+// the source is even constructed. The Connector interface itself defines
+// no sync state and remains frozen (decision D16).
 type Connector interface {
 	// Name is the connector's unique registry name, e.g. "aws-focus".
 	// It is the first half of the replace key and must be stable across

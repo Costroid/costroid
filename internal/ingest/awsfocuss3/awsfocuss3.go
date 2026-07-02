@@ -30,10 +30,23 @@
 //     chunk files are read in manifest order with row numbering
 //     continuing across chunks.
 //
-// Discover yields one ingest.Connector per billing period, so the
-// pipeline's pinned replace semantics (see the ingest package) give
-// restatement handling per period: AWS re-delivers a period → same
-// SourceIdentity → transactional replace; identical content → no-op.
+// Discover yields one Period per billing period, so the pipeline's
+// pinned replace semantics (see the ingest package) give restatement
+// handling per period: AWS re-delivers a period → same SourceIdentity →
+// transactional replace; identical content → no-op.
+//
+// # Incremental sync
+//
+// Discovery takes the stored sync tuples (see storage.SyncState) and
+// skips every billing period whose partition-level manifest's listed
+// (key, ETag, LastModified, size) tuple is unchanged — such a period
+// costs ZERO GetObject calls per sync, because the tuple check runs on
+// the metadata/ LISTING alone, before the manifest would be fetched.
+// Changed or unknown tuples proceed exactly as before: manifest GET →
+// content hash → replace or unchanged short-circuit (the hash stays as
+// the second-level guard). Periods are never hard-frozen — every sync
+// LISTs and re-decides all of them, because AWS restates closed periods
+// in place with no reliable upper bound.
 //
 // # Source identity
 //
@@ -115,6 +128,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -135,11 +149,59 @@ type api interface {
 	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 }
 
+// ManifestState is the change-detection tuple of a billing period's
+// partition-level manifest as returned by ListObjectsV2 — no GetObject
+// involved. The partition-level manifest is overwritten on every refresh
+// and delivered only AFTER all data files (the delivery's atomic commit
+// point), so an unchanged tuple proves the period's delivery is the one
+// already synced. LastModified is the load-bearing change signal: S3
+// ETags are not content digests under SSE-KMS or multipart upload, so
+// the key, ETag, and size corroborate rather than decide.
+type ManifestState struct {
+	Key          string
+	ETag         string
+	LastModified time.Time
+	Size         int64
+}
+
+// Equal reports whether two tuples match; used for the incremental-sync
+// skip decision.
+func (m ManifestState) Equal(o ManifestState) bool {
+	return m.Key == o.Key && m.ETag == o.ETag && m.LastModified.Equal(o.LastModified) && m.Size == o.Size
+}
+
+// Period is one discovered billing period. A period whose stored sync
+// tuple matched the listing is SKIPPED: it carries no Connector and
+// discovery spent zero GetObject calls on it — not even its manifest was
+// fetched. Periods are never hard-frozen: every sync re-lists and
+// re-decides all of them, because AWS restates closed periods in place
+// (officially up to ~2 weeks after close; refunds and credits without a
+// documented upper bound).
+type Period struct {
+	// Billing is the billing period, "YYYY-MM".
+	Billing string
+	// Manifest is the listed tuple of the period's partition-level
+	// manifest. The caller persists it after every successful sync
+	// outcome so the next run can skip the period.
+	Manifest ManifestState
+	// Conn reads the period's current data files; nil when the period
+	// was skipped.
+	Conn *Connector
+}
+
+// Skipped reports whether discovery skipped the period because its
+// stored sync tuple matched the listing.
+func (p Period) Skipped() bool { return p.Conn == nil }
+
 // Discover authenticates via the ambient AWS credential chain (D24),
 // lists the AWS Data Export under s3://<bucket>/<prefix>, and returns
-// one connector per discovered billing period, oldest first. See the
-// package documentation for the discovery model and required IAM policy.
-func Discover(ctx context.Context, bucket, prefix string) ([]*Connector, error) {
+// one Period per discovered billing period, oldest first. prior holds
+// the stored sync tuples keyed by source identity ("<bucket>/<prefix>/
+// <period>"); periods whose listed manifest tuple equals the stored one
+// are skipped without any GetObject call. Pass nil to process every
+// period (e.g. --force). See the package documentation for the
+// discovery model and required IAM policy.
+func Discover(ctx context.Context, bucket, prefix string, prior map[string]ManifestState) ([]Period, error) {
 	if bucket == "" || prefix == "" {
 		return nil, errors.New("bucket and prefix must not be empty")
 	}
@@ -167,7 +229,7 @@ func Discover(ctx context.Context, bucket, prefix string) ([]*Connector, error) 
 		// ETag + If-Match instead, so the warning is pure noise.
 		o.DisableLogOutputChecksumValidationSkipped = true
 	})
-	return discover(ctx, client, bucket, prefix)
+	return discover(ctx, client, bucket, prefix, prior)
 }
 
 // manifestKey matches a PARTITION-LEVEL manifest: the billing-period
@@ -176,7 +238,7 @@ func Discover(ctx context.Context, bucket, prefix string) ([]*Connector, error) 
 // folder deeper and must not match).
 var manifestKey = regexp.MustCompile(`^metadata/(BILLING_PERIOD=(\d{4}-\d{2}))/[^/]*Manifest\.json$`)
 
-func discover(ctx context.Context, client api, bucket, prefix string) ([]*Connector, error) {
+func discover(ctx context.Context, client api, bucket, prefix string, prior map[string]ManifestState) ([]Period, error) {
 	prefix = strings.Trim(prefix, "/")
 	root := "s3://" + bucket + "/" + prefix
 
@@ -214,7 +276,7 @@ func discover(ctx context.Context, client api, bucket, prefix string) ([]*Connec
 	}
 	sort.Strings(periods)
 
-	conns := make([]*Connector, 0, len(periods))
+	out := make([]Period, 0, len(periods))
 	for _, p := range periods {
 		info := byPeriod[p]
 		if len(info.manifests) > 1 {
@@ -227,19 +289,40 @@ func discover(ctx context.Context, client api, bucket, prefix string) ([]*Connec
 				"remove the extra object(s) and re-run ingest",
 				p, len(info.manifests), bucket, strings.Join(info.manifests, ", s3://"+bucket+"/"))
 		}
+		obj := meta[info.manifests[0]]
+		state := ManifestState{Key: info.manifests[0], ETag: obj.etag, LastModified: obj.lastModified, Size: obj.size}
+
+		// The incremental-sync skip (decision D16): an unchanged manifest
+		// tuple means the period's current delivery is the one already
+		// synced — skip it before fetching anything.
+		if stored, ok := prior[sourceIdentity(bucket, prefix, p)]; ok && stored.Equal(state) {
+			out = append(out, Period{Billing: p, Manifest: state})
+			continue
+		}
+
 		files, err := currentFiles(ctx, client, bucket, prefix, info.partition, info.manifests[0])
 		if err != nil {
 			return nil, err
 		}
-		conns = append(conns, &Connector{
-			client: client,
-			bucket: bucket,
-			prefix: prefix,
-			period: p,
-			files:  files,
+		out = append(out, Period{
+			Billing:  p,
+			Manifest: state,
+			Conn: &Connector{
+				client: client,
+				bucket: bucket,
+				prefix: prefix,
+				period: p,
+				files:  files,
+			},
 		})
 	}
-	return conns, nil
+	return out, nil
+}
+
+// sourceIdentity builds the replace-key identity of one billing period;
+// Connector.SourceIdentity returns the same value.
+func sourceIdentity(bucket, prefix, period string) string {
+	return bucket + "/" + prefix + "/" + period
 }
 
 // manifest is the subset of the Data Exports Manifest.json the connector
@@ -342,25 +425,32 @@ func currentFiles(ctx context.Context, client api, bucket, prefix, partition, ma
 
 	// One data/<partition>/ listing yields every chunk's ETag (covering
 	// both delivery modes' layouts) without downloading anything.
-	etags, err := listAll(ctx, client, bucket, prefix+"/data/"+partition+"/")
+	objects, err := listAll(ctx, client, bucket, prefix+"/data/"+partition+"/")
 	if err != nil {
 		return nil, classify(err, "listing s3://"+bucket+"/"+prefix+"/data/"+partition+"/")
 	}
 	files := make([]dataFile, 0, len(keys))
 	for _, key := range keys {
-		etag, ok := etags[key]
+		obj, ok := objects[key]
 		if !ok {
 			return nil, fmt.Errorf("manifest %s lists s3://%s/%s but the object is missing — "+
 				"the export delivery may be in progress; retry once it completes", manifestURI, bucket, key)
 		}
-		files = append(files, dataFile{key: key, etag: etag})
+		files = append(files, dataFile{key: key, etag: obj.etag})
 	}
 	return files, nil
 }
 
-// listAll pages through ListObjectsV2 and returns key → ETag.
-func listAll(ctx context.Context, client api, bucket, prefix string) (map[string]string, error) {
-	out := map[string]string{}
+// objectInfo is the per-key metadata every ListObjectsV2 entry carries.
+type objectInfo struct {
+	etag         string
+	lastModified time.Time
+	size         int64
+}
+
+// listAll pages through ListObjectsV2 and returns key → objectInfo.
+func listAll(ctx context.Context, client api, bucket, prefix string) (map[string]objectInfo, error) {
+	out := map[string]objectInfo{}
 	var token *string
 	for {
 		resp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
@@ -372,7 +462,11 @@ func listAll(ctx context.Context, client api, bucket, prefix string) (map[string
 			return nil, err
 		}
 		for _, obj := range resp.Contents {
-			out[aws.ToString(obj.Key)] = aws.ToString(obj.ETag)
+			out[aws.ToString(obj.Key)] = objectInfo{
+				etag:         aws.ToString(obj.ETag),
+				lastModified: aws.ToTime(obj.LastModified).UTC(),
+				size:         aws.ToInt64(obj.Size),
+			}
 		}
 		if !aws.ToBool(resp.IsTruncated) {
 			return out, nil
