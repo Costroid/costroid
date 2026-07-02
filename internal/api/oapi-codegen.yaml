@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The Costroid Authors
+
+# oapi-codegen configuration. Run from the repo root via `make generate`.
+package: api
+output: internal/api/api.gen.go
+generate:
+  models: true
+  std-http-server: true

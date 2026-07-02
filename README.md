@@ -48,23 +48,26 @@ For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./
 
 ## Getting started
 
-> 🚧 **Not yet runnable** — the project is being scaffolded. The `make` targets and `.env.example` referenced here are the **intended** interface and don't exist yet.
+> 🚧 **Scaffold only** — the repo builds and runs (API + dashboard shell), but there are no product features yet: no ingestion, no storage, no FOCUS pipeline.
 
 **Prerequisites:** Go (latest stable), Node (LTS) + pnpm, DuckDB. Developed on WSL2 Ubuntu.
 
 ```bash
 git clone https://github.com/Costroid/costroid.git
 cd costroid
+pnpm install
 ```
 
-Planned top-level commands, to be added during scaffolding (see [`AGENTS.md`](./AGENTS.md) → *Working here*):
+Top-level commands (see [`AGENTS.md`](./AGENTS.md) → *Working here*):
 
-- `make dev` — run backend + dashboard locally
+- `make dev` — run the Go API + Vite dev server together
 - `make test` — run all tests (Go + TS)
-- `make build` — build the binary + dashboard
-- `make lint` — run linters/formatters
+- `make build` — build the dashboard + single binary at `bin/costroid`
+- `make lint` — linters + format checks (Go + TS)
+- `make fmt` — apply formatters
+- `make generate` — regenerate Go/TS code from `contracts/openapi.yaml`
 
-A `.env.example` will be added; copy it to `.env` and fill in values.
+After `make build`, run `./bin/costroid serve` and open <http://localhost:8080>. Available environment variables are documented in `.env.example` (`.env` is git-ignored).
 
 ---
 

@@ -1,0 +1,18 @@
+# Build output
+/bin/
+/web/dist/
+# Populated from web/dist by `make build`; only the embed placeholder is committed.
+/internal/webdist/dist/*
+!/internal/webdist/dist/.gitkeep
+
+# Dependencies
+node_modules/
+
+# Environment (keep .env.example current instead)
+.env
+
+# Editor junk
+.vscode/
+.idea/
+*.swp
+.DS_Store

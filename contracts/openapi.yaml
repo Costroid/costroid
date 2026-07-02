@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The Costroid Authors
+
+# THE contract source of truth (decision D20). Go and TypeScript code are
+# generated from this file via `make generate` — never hand-edit generated code.
+openapi: 3.0.3
+info:
+  title: Costroid API
+  description: HTTP API of the Costroid self-hosted FOCUS-native cost platform.
+  version: 0.1.0
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness check
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+  /api/v1/meta:
+    get:
+      operationId: getMeta
+      summary: Instance metadata
+      responses:
+        "200":
+          description: Metadata about this Costroid instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meta"
+components:
+  schemas:
+    Meta:
+      type: object
+      required:
+        - name
+        - version
+        - focusVersion
+      properties:
+        name:
+          type: string
+          description: Service name.
+          example: costroid
+        version:
+          type: string
+          description: Version of the running Costroid binary.
+          example: 0.1.0-dev
+        focusVersion:
+          type: string
+          description: FOCUS specification version the internal model targets (decision D4).
+          example: "1.4"

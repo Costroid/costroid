@@ -1,0 +1,6 @@
+# Build output
+dist
+
+# Generated from contracts/openapi.yaml — a fixed point of the generator,
+# not of Prettier. `make fmt` must never rewrite it.
+src/api/schema.d.ts
