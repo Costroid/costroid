@@ -122,3 +122,8 @@ A running log of technical and architectural decisions for Costroid, with the re
 **Status:** Accepted (2026-07-02)
 **Decision:** The first AWS connector (the D13 slice) reads an **already-downloaded AWS FOCUS export from a local path**, with a synthetic sample committed under `testdata/`. Live S3 sync — AWS SDK, least-privilege read-only IAM — plus the D17 credential-handling subsystem and incremental-fetch state are deferred to separate, subsequent slices built on the same connector interface (D16).
 **Why:** Keeps the first end-to-end slice verifiable offline with no cloud account or credentials, and defers the credential subsystem until there is a working pipeline to attach it to. The connector interface is unchanged either way, so the S3 fetcher slots in without rework.
+
+## D22 — DuckDB via CGO: single self-contained binary, not fully static
+**Status:** Accepted (2026-07-02)
+**Decision:** The embedded storage default (D5) is implemented with DuckDB's official Go driver, `github.com/duckdb/duckdb-go/v2`, which requires CGO (DuckDB's static libraries are bundled at build time). The distribution promise is therefore a **single self-contained binary** — one executable, no external DuckDB install — rather than a fully statically linked one. AGENTS.md was amended accordingly ("static" → "self-contained"). Cross-compilation and musl-static builds are constrained by CGO and are not release goals for now.
+**Why:** There is no pure-Go DuckDB implementation, and DuckDB-embedded is settled (D5). The self-host experience users actually care about — download one file, run it — is preserved; full static linking was an implementation detail of that promise, not the promise itself.
