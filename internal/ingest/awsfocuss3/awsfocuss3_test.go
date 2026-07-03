@@ -374,18 +374,24 @@ func TestDiscoverErrors(t *testing.T) {
 		build       func(t *testing.T, root string) // root = <tree>/<bucket>
 		bucket      string
 		wantErrPart string
+		// global marks source-level failures that abort Discover itself;
+		// everything else degrades to the period's Err (slice-3 review
+		// fix-up: one poisoned period must not block the others).
+		global bool
 	}{
 		{
 			name:        "empty prefix",
 			build:       func(t *testing.T, root string) { mkdir(t, filepath.Join(root, "unrelated")) },
 			bucket:      bucket,
 			wantErrPart: "no billing periods found",
+			global:      true,
 		},
 		{
 			name:        "missing bucket",
 			build:       func(t *testing.T, root string) {},
 			bucket:      "no-such-bucket",
 			wantErrPart: "bucket not found",
+			global:      true,
 		},
 		{
 			name: "malformed manifest JSON",
@@ -439,12 +445,31 @@ func TestDiscoverErrors(t *testing.T) {
 			_, url := startFake(t, tree)
 			hermeticEnv(t, url, true)
 
-			_, err := awsfocuss3.Discover(context.Background(), tt.bucket, prefix, nil)
-			if err == nil {
-				t.Fatal("Discover succeeded, want an error")
+			periods, err := awsfocuss3.Discover(context.Background(), tt.bucket, prefix, nil)
+			if tt.global {
+				if err == nil {
+					t.Fatal("Discover succeeded, want a source-level error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErrPart) {
+					t.Errorf("Discover error %q does not contain %q", err, tt.wantErrPart)
+				}
+				return
 			}
-			if !strings.Contains(err.Error(), tt.wantErrPart) {
-				t.Errorf("Discover error %q does not contain %q", err, tt.wantErrPart)
+			if err != nil {
+				t.Fatalf("Discover aborted on a per-period anomaly: %v", err)
+			}
+			if len(periods) != 1 || periods[0].Billing != "2026-05" {
+				t.Fatalf("Discover periods = %+v, want exactly 2026-05", periods)
+			}
+			p := periods[0]
+			if p.Err == nil {
+				t.Fatal("poisoned period carries no error")
+			}
+			if p.Skipped() || p.Conn != nil {
+				t.Errorf("poisoned period = %+v, want neither skipped nor connected", p)
+			}
+			if !strings.Contains(p.Err.Error(), tt.wantErrPart) {
+				t.Errorf("period error %q does not contain %q", p.Err, tt.wantErrPart)
 			}
 		})
 	}
@@ -791,7 +816,9 @@ func TestRecordsRedeliveryRaceReportsActionably(t *testing.T) {
 
 // TestDiscoverRejectsMultiplePartitionManifests proves a partition holding
 // more than one partition-level manifest — an anomaly AWS never writes —
-// errors listing the candidates instead of nondeterministically picking one.
+// poisons exactly that period, listing the candidates instead of
+// nondeterministically picking one, while the other periods still sync
+// (slice-3 review fix-up: per-period degradation).
 func TestDiscoverRejectsMultiplePartitionManifests(t *testing.T) {
 	tree := t.TempDir()
 	copyTree(t, fixture, tree)
@@ -801,18 +828,29 @@ func TestDiscoverRejectsMultiplePartitionManifests(t *testing.T) {
 	_, url := startFake(t, tree)
 	hermeticEnv(t, url, true)
 
-	_, err := awsfocuss3.Discover(context.Background(), bucket, prefix, nil)
-	if err == nil {
-		t.Fatal("Discover succeeded despite two partition-level manifests")
+	periods, err := awsfocuss3.Discover(context.Background(), bucket, prefix, nil)
+	if err != nil {
+		t.Fatalf("Discover aborted on a single poisoned period: %v", err)
+	}
+	if len(periods) != 2 {
+		t.Fatalf("Discover found %d period(s), want 2", len(periods))
+	}
+	poisoned := periods[0]
+	if poisoned.Billing != "2026-05" || poisoned.Err == nil {
+		t.Fatalf("period 2026-05 = %+v, want its multi-manifest error", poisoned)
 	}
 	for _, part := range []string{
 		"billing period 2026-05 has 2 partition-level manifests",
 		"s3://demo/" + prefix + "/metadata/BILLING_PERIOD=2026-05/costroid-demo-Manifest.json",
 		"s3://demo/" + stray,
 	} {
-		if !strings.Contains(err.Error(), part) {
-			t.Errorf("multi-manifest error %q does not contain %q", err, part)
+		if !strings.Contains(poisoned.Err.Error(), part) {
+			t.Errorf("multi-manifest error %q does not contain %q", poisoned.Err, part)
 		}
+	}
+	healthy := periods[1]
+	if healthy.Billing != "2026-06" || healthy.Err != nil || healthy.Conn == nil {
+		t.Fatalf("period 2026-06 = %+v, want unaffected and readable", healthy)
 	}
 }
 

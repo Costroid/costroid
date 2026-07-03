@@ -56,7 +56,7 @@ func TestValidate(t *testing.T) {
 		{
 			name:        "charge class outside the allowed value set",
 			mutate:      func(r RawRecord) { r["ChargeClass"] = "Refund" },
-			wantRuleIDs: []string{"CAU-ChargeClass-C-003-M"},
+			wantRuleIDs: []string{"CAU-ChargeClass-C-005-C"},
 		},
 		{
 			name:        "charge period end not after start",

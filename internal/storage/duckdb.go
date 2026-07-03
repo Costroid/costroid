@@ -45,18 +45,13 @@ func Open(ctx context.Context, dataDir string) (*DuckDB, error) {
 
 	db, err := sql.Open("duckdb", path)
 	if err != nil {
-		return nil, fmt.Errorf("opening DuckDB database %s: %w", path, err)
+		return nil, openError(err, dataDir, path)
 	}
 	if err := db.PingContext(ctx); err != nil {
 		// The failed pool still holds the DuckDB instance (and its file
 		// lock) until closed.
 		_ = db.Close()
-		if strings.Contains(err.Error(), "Could not set lock on file") {
-			return nil, fmt.Errorf("the Costroid database in %s is in use by another process — "+
-				"the embedded store allows a single process at a time, so stop the other "+
-				"costroid process (e.g. `costroid serve`) before running this command", dataDir)
-		}
-		return nil, fmt.Errorf("opening DuckDB database %s: %w", path, err)
+		return nil, openError(err, dataDir, path)
 	}
 
 	if err := migrate(ctx, db); err != nil {
@@ -64,6 +59,21 @@ func Open(ctx context.Context, dataDir string) (*DuckDB, error) {
 		return nil, fmt.Errorf("migrating database %s: %w", path, err)
 	}
 	return &DuckDB{db: db}, nil
+}
+
+// openError classifies embedded-database open failures into actionable
+// messages. The single-writer lock refusal must be classified on BOTH
+// open paths: duckdb-go v2 implements database/sql's DriverContext, so
+// sql.Open itself opens the database file (and takes — or is refused —
+// its lock) rather than deferring to the first use; PingContext only
+// covers whatever failure sql.Open did not surface.
+func openError(err error, dataDir, path string) error {
+	if strings.Contains(err.Error(), "Could not set lock on file") {
+		return fmt.Errorf("the Costroid database in %s is in use by another process — "+
+			"the embedded store allows a single process at a time, so stop the other "+
+			"costroid process (e.g. `costroid serve`) before running this command", dataDir)
+	}
+	return fmt.Errorf("opening DuckDB database %s: %w", path, err)
 }
 
 // Close implements Store.
@@ -147,12 +157,17 @@ func (s *DuckDB) ReplaceIngestBatch(ctx context.Context, batch Batch, records []
 	return result, nil
 }
 
+// batchBilledCostSQL totals one batch's stored BilledCost. The zero
+// literal's cast scale is bound to MaxDecimalScale like insertRecordSQL,
+// so the store's decimal scale has a single source of truth.
+var batchBilledCostSQL = fmt.Sprintf(
+	`SELECT COALESCE(SUM(billed_cost), CAST(0 AS DECIMAL(38,%d)))
+	 FROM cost_records WHERE batch_connector = ? AND batch_source_identity = ?`, MaxDecimalScale)
+
 // batchBilledCost totals the stored BilledCost of one batch inside tx.
 func batchBilledCost(ctx context.Context, tx *sql.Tx, batch Batch) (decimal.Decimal, error) {
 	var sum duckdb.Decimal
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(billed_cost), CAST(0 AS DECIMAL(38,18)))
-		 FROM cost_records WHERE batch_connector = ? AND batch_source_identity = ?`,
+	if err := tx.QueryRowContext(ctx, batchBilledCostSQL,
 		batch.Connector, batch.SourceIdentity).Scan(&sum); err != nil {
 		return decimal.Decimal{}, err
 	}
@@ -294,11 +309,17 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 	return result, nil
 }
 
-// SyncStates implements Store.
+// SyncStates implements Store. TenantID is joined from the source's
+// stored ingest batch (see SyncState.TenantID) — it is not a column of
+// the sync tuple itself.
 func (s *DuckDB) SyncStates(ctx context.Context, connector string) (map[string]SyncState, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT source_identity, manifest_key, manifest_etag, manifest_last_modified, manifest_size
-		 FROM sync_state WHERE connector = ?`, connector)
+		`SELECT s.source_identity, s.manifest_key, s.manifest_etag, s.manifest_last_modified,
+			s.manifest_size, COALESCE(b.tenant_id, '')
+		 FROM sync_state s
+		 LEFT JOIN ingest_batches b
+		   ON b.connector = s.connector AND b.source_identity = s.source_identity
+		 WHERE s.connector = ?`, connector)
 	if err != nil {
 		return nil, fmt.Errorf("querying sync state: %w", err)
 	}
@@ -308,7 +329,7 @@ func (s *DuckDB) SyncStates(ctx context.Context, connector string) (map[string]S
 	for rows.Next() {
 		st := SyncState{Connector: connector}
 		if err := rows.Scan(&st.SourceIdentity, &st.ManifestKey, &st.ManifestETag,
-			&st.ManifestLastModified, &st.ManifestSize); err != nil {
+			&st.ManifestLastModified, &st.ManifestSize, &st.TenantID); err != nil {
 			return nil, fmt.Errorf("scanning sync state: %w", err)
 		}
 		st.ManifestLastModified = st.ManifestLastModified.UTC()

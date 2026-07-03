@@ -48,8 +48,8 @@ func DefaultRules() []Rule {
 			},
 		},
 		{
-			ID:          "CAU-ChargeClass-C-003-M",
-			Description: `ChargeClass MUST be "Correction" when the charge corrects a previously closed billing period, and null otherwise.`,
+			ID:          "CAU-ChargeClass-C-005-C",
+			Description: `ChargeClass MUST be "Correction" when ChargeClass is not null.`,
 			Check: func(r RawRecord) error {
 				if v := r["ChargeClass"]; v != "" && v != ChargeClassCorrection {
 					return fmt.Errorf("ChargeClass %q is not allowed; the only non-null value is %q", v, ChargeClassCorrection)

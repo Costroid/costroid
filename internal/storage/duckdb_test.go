@@ -4,7 +4,13 @@
 package storage
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,6 +304,135 @@ func TestSyncStateRoundTrip(t *testing.T) {
 	}
 	if len(other) != 0 {
 		t.Fatalf("other connector sees %+v, want nothing", other)
+	}
+}
+
+// TestSyncStatesJoinBatchTenant proves SyncStates reports each source's
+// stored batch tenant (joined from ingest_batches, empty without a
+// batch) — the tenant-aware tuple skip (slice-3 review fix-up) depends
+// on it.
+func TestSyncStatesJoinBatchTenant(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	st := SyncState{
+		Connector:            "aws-focus-s3",
+		SourceIdentity:       "demo/exports/costroid-demo/2026-05",
+		ManifestKey:          "exports/costroid-demo/metadata/BILLING_PERIOD=2026-05/costroid-demo-Manifest.json",
+		ManifestETag:         `"9e107d9d372bb6826bd81d3542a419d6"`,
+		ManifestLastModified: time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC),
+		ManifestSize:         1451,
+	}
+	if err := store.UpsertSyncState(ctx, st); err != nil {
+		t.Fatalf("UpsertSyncState: %v", err)
+	}
+
+	// No stored batch yet: the joined tenant is empty, which no
+	// requested tenant equals — the caller falls through to the hash path.
+	states, err := store.SyncStates(ctx, "aws-focus-s3")
+	if err != nil {
+		t.Fatalf("SyncStates: %v", err)
+	}
+	if got := states[st.SourceIdentity].TenantID; got != "" {
+		t.Fatalf("TenantID without a batch = %q, want empty", got)
+	}
+
+	// With a stored batch, the batch's tenant is reported.
+	batch := Batch{
+		Connector:      "aws-focus-s3",
+		SourceIdentity: st.SourceIdentity,
+		ContentHash:    "sha256:aaaa",
+		TenantID:       "acme",
+	}
+	if _, err := store.ReplaceIngestBatch(ctx, batch, []focus.CostRecord{
+		testRecord(t, "AWS Lambda", day(1), "0.1264"),
+	}); err != nil {
+		t.Fatalf("ReplaceIngestBatch: %v", err)
+	}
+	states, err = store.SyncStates(ctx, "aws-focus-s3")
+	if err != nil {
+		t.Fatalf("SyncStates: %v", err)
+	}
+	if got := states[st.SourceIdentity].TenantID; got != "acme" {
+		t.Fatalf("TenantID = %q, want acme", got)
+	}
+}
+
+// TestHelperHoldStore is not a real test: it is the child half of
+// TestOpenLockedByAnotherProcessIsActionable, re-executed as a separate
+// process that opens the store and holds it until its stdin closes.
+func TestHelperHoldStore(t *testing.T) {
+	dir := os.Getenv("COSTROID_TEST_HOLD_STORE_DIR")
+	if dir == "" {
+		t.Skip("helper for the cross-process lock test only")
+	}
+	store, err := Open(context.Background(), dir)
+	if err != nil {
+		fmt.Println("HELPER_OPEN_ERROR:", err)
+		return
+	}
+	fmt.Println("HELPER_READY")
+	_, _ = io.Copy(io.Discard, os.Stdin) // hold the store until the parent closes stdin
+	_ = store.Close()
+}
+
+// TestOpenLockedByAnotherProcessIsActionable proves the single-writer
+// classification CROSS-PROCESS: duckdb-go v2 keeps a process-global
+// instance cache, so a same-process double-open of the same file
+// succeeds by design and proves nothing — only a second process is
+// refused the file lock. The second Open must return the actionable
+// in-use message, not the raw DuckDB error (slice-3 review fix-up).
+func TestOpenLockedByAnotherProcessIsActionable(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperHoldStore$", "-test.v")
+	cmd.Env = append(os.Environ(), "COSTROID_TEST_HOLD_STORE_DIR="+dir)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting helper process: %v", err)
+	}
+	defer func() {
+		_ = stdin.Close() // releases the helper's io.Copy, letting it close the store and exit
+		_ = cmd.Wait()
+	}()
+
+	scanner := bufio.NewScanner(stdout)
+	ready := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "HELPER_OPEN_ERROR") {
+			t.Fatalf("helper process failed to open the store: %s", line)
+		}
+		if strings.Contains(line, "HELPER_READY") {
+			ready = true
+			break
+		}
+	}
+	if !ready {
+		t.Fatalf("helper process never reported the store open (scan error: %v)", scanner.Err())
+	}
+
+	_, err = Open(ctx, dir)
+	if err == nil {
+		t.Fatal("Open succeeded while another process holds the store")
+	}
+	for _, part := range []string{"in use by another process", "single process at a time", "stop the other"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("cross-process Open error %q does not contain %q", err, part)
+		}
 	}
 }
 

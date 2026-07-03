@@ -170,11 +170,20 @@ func Run(ctx context.Context, conn Connector, store storage.Store, tenant string
 	}, nil
 }
 
+// maxStoreIntegerAbs is the smallest magnitude the store cannot hold:
+// DECIMAL(38,MaxDecimalScale) keeps 38−MaxDecimalScale integer digits,
+// so any |value| ≥ 10^(38−MaxDecimalScale) would overflow the column.
+var maxStoreIntegerAbs = decimal.New(1, 38-storage.MaxDecimalScale)
+
 // storeScaleErrors reports monetary/quantity values that exceed the
-// store's fractional-digit capacity (storage.MaxDecimalScale). Such rows
-// abort the ingest with an actionable error — silently rounding them in
-// the store would violate the exactness invariant. Trailing zeros beyond
-// the limit are fine: only values whose exactness would be lost fail.
+// store's decimal capacity — more fractional digits than
+// storage.MaxDecimalScale, or an integer part beyond the
+// 38−MaxDecimalScale digits DECIMAL(38,MaxDecimalScale) keeps. Such rows
+// abort the ingest with a row-numbered, column-named error — silently
+// rounding in the store would violate the exactness invariant, and an
+// overflowing insert would otherwise abort mid-transaction with a raw
+// DuckDB error. Trailing zeros beyond the scale limit are fine: only
+// values whose exactness would be lost fail.
 func storeScaleErrors(rec *focus.CostRecord) []error {
 	var errs []error
 	check := func(col string, d decimal.Decimal) {
@@ -182,6 +191,11 @@ func storeScaleErrors(rec *focus.CostRecord) []error {
 			errs = append(errs, fmt.Errorf(
 				"column %s: value %s has more than %d fractional digits; the embedded store holds DECIMAL(38,%d) and never rounds silently",
 				col, d, storage.MaxDecimalScale, storage.MaxDecimalScale))
+		}
+		if d.Abs().Cmp(maxStoreIntegerAbs) >= 0 {
+			errs = append(errs, fmt.Errorf(
+				"column %s: value %s has more than %d integer digits; the embedded store holds DECIMAL(38,%d) and never truncates silently",
+				col, d, 38-storage.MaxDecimalScale, storage.MaxDecimalScale))
 		}
 	}
 	checkNull := func(col string, d decimal.NullDecimal) {

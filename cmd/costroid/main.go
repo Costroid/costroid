@@ -170,11 +170,12 @@ func ingestCmd(args []string) error {
 		if *bucketFlag == "" || *prefixFlag == "" {
 			return errors.New("--bucket and --prefix are required for the aws-focus-s3 connector")
 		}
-		// The store opens (and locks) BEFORE discovery: discovery needs
-		// the stored sync tuples to skip unchanged periods (migration
-		// 0003). The consequence for a running `costroid serve` is a
-		// fail-fast on the store lock with its actionable in-use message,
-		// instead of the pre-slice-3 behavior of discovering first.
+		// The store opens BEFORE discovery: discovery needs the stored
+		// sync tuples to skip unchanged periods (migration 0003).
+		// duckdb-go v2 is a DriverContext driver, so storage.Open takes
+		// the single-writer file lock inside sql.Open itself — a running
+		// `costroid serve` therefore fails fast right here with the
+		// store's actionable in-use message.
 		store, err := storage.Open(ctx, dataDir())
 		if err != nil {
 			return err
@@ -191,6 +192,14 @@ func ingestCmd(args []string) error {
 				return err
 			}
 			for id, st := range states {
+				// The tuple skip is tenant-aware (slice-3 review fix-up):
+				// a batch homed under a different tenant must not be
+				// skipped. Dropping its tuple sends the period down the
+				// content-hash path, whose tenant-sensitive short-circuit
+				// re-homes the stored records.
+				if st.TenantID != *tenantFlag {
+					continue
+				}
 				prior[id] = awsfocuss3.ManifestState{
 					Key:          st.ManifestKey,
 					ETag:         st.ManifestETag,
@@ -217,10 +226,15 @@ func ingestCmd(args []string) error {
 
 // ingestJob is one connector run; period labels multi-period output. A
 // job with a nil conn is a skipped period (unchanged sync tuple): nothing
-// runs, only the skip line prints.
+// runs, only the skip line prints. A job with a discovery error runs
+// nothing either — it prints its per-period failure and counts against
+// the exit status, without blocking the other periods.
 type ingestJob struct {
 	conn   ingest.Connector
 	period string
+	// discoveryErr is the period's discovery failure (e.g. a manifest
+	// anomaly); reported per period like a pipeline failure.
+	discoveryErr error
 	// skippedSince is the stored manifest LastModified of a skipped
 	// period, printed on its skip line.
 	skippedSince time.Time
@@ -243,9 +257,12 @@ func s3Jobs(periods []awsfocuss3.Period, period string) ([]ingestJob, error) {
 			continue
 		}
 		job := ingestJob{period: p.Billing}
-		if p.Skipped() {
+		switch {
+		case p.Err != nil:
+			job.discoveryErr = p.Err
+		case p.Skipped():
 			job.skippedSince = p.Manifest.LastModified
-		} else {
+		default:
 			job.conn = p.Conn
 			job.sync = &storage.SyncState{
 				Connector:            p.Conn.Name(),
@@ -275,6 +292,11 @@ func runIngest(ctx context.Context, store storage.Store, jobs []ingestJob, tenan
 		label := ""
 		if job.period != "" {
 			label = "period " + job.period + ": "
+		}
+		if job.discoveryErr != nil {
+			failed = append(failed, job.period)
+			fmt.Fprintf(os.Stderr, "costroid: %sfailed: %v\n", label, job.discoveryErr)
+			continue
 		}
 		if job.conn == nil {
 			fmt.Printf("%sunchanged since %s; skipped\n", label, job.skippedSince.UTC().Format(time.RFC3339))

@@ -5,6 +5,20 @@
 // interface (decision D5). The embedded DuckDB implementation is the
 // default and only backend today; a scale-out backend (ClickHouse) will
 // someday live behind the same interface.
+//
+// # Decimal capacity trade-off (decision D25)
+//
+// Money and quantity columns are DECIMAL(38,18): migration 0002 widened
+// the original DECIMAL(38,12), trading integer capacity for fractional
+// precision — 26 integer digits down to 20 — because FOCUS providers
+// emit 16-fractional-digit unit prices while >20-integer-digit money or
+// quantity values do not occur in practice. Values that exceed either
+// bound are rejected at ingest with a row-numbered, column-named error;
+// the store never rounds or truncates silently. A pre-existing stored
+// value whose integer part would not fit the widened type makes
+// migration 0002 itself fail — loudly and transactionally, leaving the
+// store on the prior schema version — so an upgrade can abort but can
+// never corrupt data.
 package storage
 
 import (
@@ -84,6 +98,16 @@ type SyncState struct {
 	ManifestETag         string
 	ManifestLastModified time.Time
 	ManifestSize         int64
+
+	// TenantID is the tenant recorded on the source's stored ingest
+	// batch (empty when no batch is stored). It is not a column of the
+	// sync tuple — SyncStates joins it from ingest_batches — and exists
+	// so callers can make the tuple skip tenant-aware: a sync targeting
+	// a different tenant must NOT skip an unchanged source, because the
+	// stored records would stay homed under the old tenant. Such sources
+	// fall through to the content-hash path, whose tenant-sensitive
+	// short-circuit re-homes the batch (see ReplaceIngestBatch).
+	TenantID string
 }
 
 // Batch identifies and describes one ingest batch. The pair (Connector,

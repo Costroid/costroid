@@ -177,6 +177,54 @@ func TestRunRejectsOverScaleValues(t *testing.T) {
 	}
 }
 
+// TestRunRejectsOverMagnitudeValues proves values whose integer part
+// exceeds the store's 38−MaxDecimalScale digit capacity abort the ingest
+// with the same row-numbered, column-named error shape as over-scale
+// values — instead of aborting mid-transaction with a raw DuckDB error —
+// and that the exact boundary value still ingests.
+func TestRunRejectsOverMagnitudeValues(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+
+	header := "BilledCost,EffectiveCost,ListCost,ContractedCost,BillingCurrency," +
+		"BillingPeriodStart,BillingPeriodEnd,ChargeCategory,ChargePeriodStart,ChargePeriodEnd," +
+		"BillingAccountId,ServiceName,ServiceCategory,ProviderName,InvoiceIssuerName"
+	rowWith := func(billedCost string) string {
+		return billedCost + ",1,1,1,USD," +
+			"2026-05-01T00:00:00Z,2026-06-01T00:00:00Z,Usage,2026-05-01T00:00:00Z,2026-05-02T00:00:00Z," +
+			"999999999999,AWS Lambda,Compute,AWS,\"Amazon Web Services, Inc.\""
+	}
+
+	// 20 integer digits — the exact capacity of DECIMAL(38,18) — must
+	// ingest and be stored (the guard is no tighter than the store).
+	atLimit := strings.Repeat("9", 20)
+	res, err := ingest.Run(ctx, awsfocus.New(writeGzCSV(t, header+"\n"+rowWith(atLimit)+"\n")), store, focus.DefaultTenant)
+	if err != nil {
+		t.Fatalf("Run rejected the 20-integer-digit boundary value: %v", err)
+	}
+	if res.Records != 1 {
+		t.Fatalf("Run = %+v, want 1 record", res)
+	}
+
+	// 21 integer digits overflow: row-numbered, column-named abort.
+	overLimit := "1" + strings.Repeat("0", 20)
+	_, err = ingest.Run(ctx, awsfocus.New(writeGzCSV(t, header+"\n"+rowWith(overLimit)+"\n")), store, focus.DefaultTenant)
+	if err == nil {
+		t.Fatal("Run accepted a value exceeding the store's integer-digit capacity")
+	}
+	var rowErrs *ingest.RowErrors
+	if !errors.As(err, &rowErrs) {
+		t.Fatalf("Run error = %v (%T), want *ingest.RowErrors", err, err)
+	}
+	if rowErrs.Total != 1 || len(rowErrs.First) != 1 || rowErrs.First[0].Row != 1 {
+		t.Fatalf("RowErrors = %+v, want exactly row 1", rowErrs)
+	}
+	msg := rowErrs.First[0].Errs[0].Error()
+	if !strings.Contains(msg, "BilledCost") || !strings.Contains(msg, "more than 20 integer digits") {
+		t.Errorf("row error %q, want the column name and the 20-integer-digit limit", msg)
+	}
+}
+
 func writeGzCSV(t *testing.T, content string) string {
 	t.Helper()
 	var buf bytes.Buffer

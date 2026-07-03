@@ -185,13 +185,20 @@ type Period struct {
 	// outcome so the next run can skip the period.
 	Manifest ManifestState
 	// Conn reads the period's current data files; nil when the period
-	// was skipped.
+	// was skipped or failed discovery.
 	Conn *Connector
+	// Err is the period's discovery failure (manifest anomaly, missing
+	// object, unsupported format, ...). Discovery degrades such failures
+	// to the period instead of aborting the whole run, so one poisoned
+	// period never blocks syncing — or --period-targeting — the others.
+	// Only source-level failures (listing, no periods at all) abort
+	// discovery itself.
+	Err error
 }
 
 // Skipped reports whether discovery skipped the period because its
 // stored sync tuple matched the listing.
-func (p Period) Skipped() bool { return p.Conn == nil }
+func (p Period) Skipped() bool { return p.Conn == nil && p.Err == nil }
 
 // Discover authenticates via the ambient AWS credential chain (D24),
 // lists the AWS Data Export under s3://<bucket>/<prefix>, and returns
@@ -199,8 +206,9 @@ func (p Period) Skipped() bool { return p.Conn == nil }
 // the stored sync tuples keyed by source identity ("<bucket>/<prefix>/
 // <period>"); periods whose listed manifest tuple equals the stored one
 // are skipped without any GetObject call. Pass nil to process every
-// period (e.g. --force). See the package documentation for the
-// discovery model and required IAM policy.
+// period (e.g. --force). A period whose manifest is anomalous carries
+// the failure in Period.Err instead of aborting discovery. See the
+// package documentation for the discovery model and required IAM policy.
 func Discover(ctx context.Context, bucket, prefix string, prior map[string]ManifestState) ([]Period, error) {
 	if bucket == "" || prefix == "" {
 		return nil, errors.New("bucket and prefix must not be empty")
@@ -282,12 +290,15 @@ func discover(ctx context.Context, client api, bucket, prefix string, prior map[
 		if len(info.manifests) > 1 {
 			// AWS writes exactly one partition-level manifest per period;
 			// picking one of several by map order would nondeterministically
-			// ingest whichever delivery the stray copy describes.
+			// ingest whichever delivery the stray copy describes. The
+			// anomaly poisons only this period (slice-3 review fix-up).
 			sort.Strings(info.manifests)
-			return nil, fmt.Errorf("billing period %s has %d partition-level manifests (s3://%s/%s) — "+
-				"AWS Data Exports writes exactly one per partition, so a stray copy is an anomaly; "+
-				"remove the extra object(s) and re-run ingest",
-				p, len(info.manifests), bucket, strings.Join(info.manifests, ", s3://"+bucket+"/"))
+			out = append(out, Period{Billing: p, Err: fmt.Errorf(
+				"billing period %s has %d partition-level manifests (s3://%s/%s) — "+
+					"AWS Data Exports writes exactly one per partition, so a stray copy is an anomaly; "+
+					"remove the extra object(s) and re-run ingest",
+				p, len(info.manifests), bucket, strings.Join(info.manifests, ", s3://"+bucket+"/"))})
+			continue
 		}
 		obj := meta[info.manifests[0]]
 		state := ManifestState{Key: info.manifests[0], ETag: obj.etag, LastModified: obj.lastModified, Size: obj.size}
@@ -302,7 +313,10 @@ func discover(ctx context.Context, client api, bucket, prefix string, prior map[
 
 		files, err := currentFiles(ctx, client, bucket, prefix, info.partition, info.manifests[0])
 		if err != nil {
-			return nil, err
+			// Degrade to a per-period failure: the other periods still
+			// sync, and runIngest reports this one on its own line.
+			out = append(out, Period{Billing: p, Manifest: state, Err: err})
+			continue
 		}
 		out = append(out, Period{
 			Billing:  p,
