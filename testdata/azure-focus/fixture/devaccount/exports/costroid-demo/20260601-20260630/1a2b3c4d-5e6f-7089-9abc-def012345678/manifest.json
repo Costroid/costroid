@@ -1,0 +1,37 @@
+{
+  "blobCount": 1,
+  "blobs": [
+    {
+      "blobName": "costroid-demo/20260601-20260630/1a2b3c4d-5e6f-7089-9abc-def012345678/part_0_0001.csv.gz",
+      "byteCount": 915,
+      "dataRowCount": 5
+    }
+  ],
+  "byteCount": 915,
+  "dataRowCount": 5,
+  "deliveryConfig": {
+    "compressionMode": "gzip",
+    "containerUri": "/subscriptions/0aaaaaaa-1111-2222-3333-444444444444/resourceGroups/prod/providers/Microsoft.Storage/storageAccounts/devaccount",
+    "dataOverwriteBehavior": "CreateNewReport",
+    "fileFormat": "Csv",
+    "partitionData": true,
+    "rootFolderPath": "costroid-demo"
+  },
+  "exportConfig": {
+    "apiVersion": "2023-07-01-preview",
+    "dataVersion": "1.2-preview",
+    "exportName": "costroid-demo",
+    "granularity": "Daily",
+    "resourceId": "/subscriptions/0aaaaaaa-1111-2222-3333-444444444444/providers/Microsoft.CostManagement/exports/costroid-demo",
+    "timeFrame": "Custom",
+    "type": "FocusCost"
+  },
+  "manifestVersion": "2024-04-01",
+  "runInfo": {
+    "endDate": "2026-06-30T00:00:00Z",
+    "executionType": "Scheduled",
+    "runId": "1a2b3c4d-5e6f-7089-9abc-def012345678",
+    "startDate": "2026-06-01T00:00:00",
+    "submittedTime": "2026-07-02T07:02:45.9876543Z"
+  }
+}

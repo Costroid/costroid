@@ -75,6 +75,14 @@ type Store interface {
 	// stale tuple and permanently defeat the skip.
 	UpsertSyncState(ctx context.Context, state SyncState) error
 
+	// ManifestAttributions returns one connector's cached manifest
+	// attributions, keyed by manifest key (see ManifestAttribution).
+	ManifestAttributions(ctx context.Context, connector string) (map[string]ManifestAttribution, error)
+
+	// UpsertManifestAttribution caches one manifest blob's attribution,
+	// replacing any stored one for the same (connector, manifest key).
+	UpsertManifestAttribution(ctx context.Context, attr ManifestAttribution) error
+
 	// Close releases the underlying database. The embedded store is
 	// single-writer (DuckDB): it must be closed before another process
 	// can open the same data directory.
@@ -108,6 +116,39 @@ type SyncState struct {
 	// fall through to the content-hash path, whose tenant-sensitive
 	// short-circuit re-homes the batch (see ReplaceIngestBatch).
 	TenantID string
+}
+
+// ManifestAttribution is one manifest blob's cached attribution
+// (migration 0004): the blob's listed change-detection tuple (ETag,
+// LastModified, size) mapped to the billing period and run submission
+// time its body declares. Export manifests are immutable once written —
+// a refresh writes a new run folder — so once a manifest has been
+// fetched its attribution is permanent: a listed manifest whose tuple
+// matches the cached row needs no fetch at all. That keeps an unchanged
+// re-sync at zero Get Blob calls even when superseded runs' manifests
+// remain listed forever (Azure's CreateNewReport mode). A cache row
+// whose manifest disappears from the listing goes stale harmlessly.
+type ManifestAttribution struct {
+	Connector string
+	// ManifestKey uniquely identifies the manifest blob within the
+	// connector, e.g. "<account-host>/<container>/<blob path>".
+	ManifestKey  string
+	ETag         string
+	LastModified time.Time
+	// Size is the blob's listed Content-Length in bytes.
+	Size int64
+	// BillingPeriod is the "YYYY-MM" the manifest's run covers, derived
+	// from the manifest body's run start date.
+	BillingPeriod string
+	// SubmittedTime is when the manifest's export run was submitted; the
+	// run with the latest SubmittedTime is a period's current one.
+	SubmittedTime time.Time
+	// ExportName is the export the manifest belongs to
+	// (exportConfig.exportName). Two different exports delivering under
+	// one prefix would silently replace each other's data per period, so
+	// discovery refuses such periods — which requires knowing each
+	// manifest's export without re-fetching it.
+	ExportName string
 }
 
 // Batch identifies and describes one ingest batch. The pair (Connector,

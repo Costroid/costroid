@@ -360,6 +360,58 @@ func (s *DuckDB) UpsertSyncState(ctx context.Context, state SyncState) error {
 	return nil
 }
 
+// ManifestAttributions implements Store.
+func (s *DuckDB) ManifestAttributions(ctx context.Context, connector string) (map[string]ManifestAttribution, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT manifest_key, etag, last_modified, size_bytes, billing_period, submitted_time, export_name
+		 FROM manifest_attributions WHERE connector = ?`, connector)
+	if err != nil {
+		return nil, fmt.Errorf("querying manifest attributions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	attrs := map[string]ManifestAttribution{}
+	for rows.Next() {
+		a := ManifestAttribution{Connector: connector}
+		if err := rows.Scan(&a.ManifestKey, &a.ETag, &a.LastModified, &a.Size,
+			&a.BillingPeriod, &a.SubmittedTime, &a.ExportName); err != nil {
+			return nil, fmt.Errorf("scanning manifest attribution: %w", err)
+		}
+		a.LastModified = a.LastModified.UTC()
+		// TIMESTAMP holds microseconds, so a submitted time with finer
+		// fractional digits (Azure emits seven) rounds trips truncated;
+		// current-run selection compares runs whose submission times
+		// differ by far more than that.
+		a.SubmittedTime = a.SubmittedTime.UTC()
+		attrs[a.ManifestKey] = a
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying manifest attributions: %w", err)
+	}
+	return attrs, nil
+}
+
+// UpsertManifestAttribution implements Store.
+func (s *DuckDB) UpsertManifestAttribution(ctx context.Context, attr ManifestAttribution) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO manifest_attributions (connector, manifest_key, etag, last_modified,
+			size_bytes, billing_period, submitted_time, export_name, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (connector, manifest_key) DO UPDATE SET
+			etag = excluded.etag,
+			last_modified = excluded.last_modified,
+			size_bytes = excluded.size_bytes,
+			billing_period = excluded.billing_period,
+			submitted_time = excluded.submitted_time,
+			export_name = excluded.export_name,
+			updated_at = excluded.updated_at`,
+		attr.Connector, attr.ManifestKey, attr.ETag, attr.LastModified.UTC(),
+		attr.Size, attr.BillingPeriod, attr.SubmittedTime.UTC(), attr.ExportName, time.Now().UTC()); err != nil {
+		return fmt.Errorf("upserting manifest attribution: %w", err)
+	}
+	return nil
+}
+
 // nullString maps the model's "" (null) convention to SQL NULL.
 func nullString(s string) any {
 	if s == "" {

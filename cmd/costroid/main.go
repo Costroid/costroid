@@ -23,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/awsfocus"
 	"github.com/Costroid/costroid/internal/ingest/awsfocuss3"
+	"github.com/Costroid/costroid/internal/ingest/azurefocus"
 	"github.com/Costroid/costroid/internal/storage"
 	"github.com/Costroid/costroid/internal/webdist"
 )
@@ -43,6 +44,14 @@ commands:
                        without --period every discovered billing period is ingested;
                        periods whose stored manifest state is unchanged are skipped
                        without fetching anything — --force re-processes them)
+          live Azure:  costroid ingest --connector azure-focus --account-url <u>
+                       --container <c> --prefix <p>
+                       [--period YYYY-MM] [--tenant default] [--force]
+                       (--account-url is the storage account's blob endpoint, e.g.
+                       https://<account>.blob.core.windows.net/; --prefix is the export
+                       root: the export's storage directory plus the export name; auth
+                       via the ambient Azure credential chain only — no SAS, no keys;
+                       the same --period/--force/skip semantics as aws-focus-s3)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
 store allows a single process at a time: stop 'costroid serve' before
@@ -141,13 +150,15 @@ func serve(args []string) error {
 
 func ingestCmd(args []string) error {
 	flags := flag.NewFlagSet("ingest", flag.ContinueOnError)
-	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3")`)
+	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3", "azure-focus")`)
 	pathFlag := flags.String("path", "", "path to the export file to ingest (aws-focus)")
 	bucketFlag := flags.String("bucket", "", "S3 bucket holding the AWS Data Export (aws-focus-s3)")
-	prefixFlag := flags.String("prefix", "", "export root prefix: the export's configured S3 prefix plus its name (aws-focus-s3)")
-	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3; default: all discovered)")
+	accountURLFlag := flags.String("account-url", "", "Azure storage account blob endpoint, e.g. https://<account>.blob.core.windows.net/ (azure-focus)")
+	containerFlag := flags.String("container", "", "Azure blob container holding the Cost Management export (azure-focus)")
+	prefixFlag := flags.String("prefix", "", "export root prefix: the export's configured directory/prefix plus its name (aws-focus-s3, azure-focus)")
+	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
-	forceFlag := flags.Bool("force", false, "re-process every period even when its stored manifest state is unchanged (aws-focus-s3)")
+	forceFlag := flags.Bool("force", false, "re-process every period even when its stored manifest state is unchanged (aws-focus-s3, azure-focus)")
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return err
 	}
@@ -217,10 +228,51 @@ func ingestCmd(args []string) error {
 			return err
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
+	case azurefocus.Name:
+		if *accountURLFlag == "" || *containerFlag == "" || *prefixFlag == "" {
+			return errors.New("--account-url, --container, and --prefix are required for the azure-focus connector")
+		}
+		// Same shape as aws-focus-s3: the store opens (and locks) before
+		// discovery, which needs both the stored sync tuples and the
+		// manifest-attribution cache (migration 0004).
+		store, err := storage.Open(ctx, dataDir())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+
+		prior := map[string]azurefocus.ManifestState{}
+		if !*forceFlag {
+			states, err := store.SyncStates(ctx, azurefocus.Name)
+			if err != nil {
+				return err
+			}
+			for id, st := range states {
+				// Tenant-aware tuple skip, exactly as for aws-focus-s3.
+				if st.TenantID != *tenantFlag {
+					continue
+				}
+				prior[id] = azurefocus.ManifestState{
+					Key:          st.ManifestKey,
+					ETag:         st.ManifestETag,
+					LastModified: st.ManifestLastModified,
+					Size:         st.ManifestSize,
+				}
+			}
+		}
+		periods, err := azurefocus.Discover(ctx, *accountURLFlag, *containerFlag, *prefixFlag, prior, store)
+		if err != nil {
+			return err
+		}
+		jobs, err := azureJobs(periods, *periodFlag)
+		if err != nil {
+			return err
+		}
+		return runIngest(ctx, store, jobs, *tenantFlag)
 	case "":
-		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3")`)
+		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus")`)
 	default:
-		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3")`, *connectorFlag)
+		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3", "azure-focus")`, *connectorFlag)
 	}
 }
 
@@ -249,6 +301,42 @@ type ingestJob struct {
 // billing period when requested. Skipped periods stay in the job list —
 // they print their skip line and keep --period filtering working.
 func s3Jobs(periods []awsfocuss3.Period, period string) ([]ingestJob, error) {
+	var jobs []ingestJob
+	var available []string
+	for _, p := range periods {
+		available = append(available, p.Billing)
+		if period != "" && p.Billing != period {
+			continue
+		}
+		job := ingestJob{period: p.Billing}
+		switch {
+		case p.Err != nil:
+			job.discoveryErr = p.Err
+		case p.Skipped():
+			job.skippedSince = p.Manifest.LastModified
+		default:
+			job.conn = p.Conn
+			job.sync = &storage.SyncState{
+				Connector:            p.Conn.Name(),
+				SourceIdentity:       p.Conn.SourceIdentity(),
+				ManifestKey:          p.Manifest.Key,
+				ManifestETag:         p.Manifest.ETag,
+				ManifestLastModified: p.Manifest.LastModified,
+				ManifestSize:         p.Manifest.Size,
+			}
+		}
+		jobs = append(jobs, job)
+	}
+	if len(jobs) == 0 {
+		return nil, fmt.Errorf("billing period %s not found in the export (discovered: %s)",
+			period, strings.Join(available, ", "))
+	}
+	return jobs, nil
+}
+
+// azureJobs maps discovered Azure billing periods to jobs, filtered to
+// one billing period when requested — the azure-focus twin of s3Jobs.
+func azureJobs(periods []azurefocus.Period, period string) ([]ingestJob, error) {
 	var jobs []ingestJob
 	var available []string
 	for _, p := range periods {

@@ -307,6 +307,78 @@ func TestSyncStateRoundTrip(t *testing.T) {
 	}
 }
 
+// TestManifestAttributionRoundTrip proves the attribution cache
+// (migration 0004) persists exactly — including the TIMESTAMP
+// round-trip of both times at microsecond precision — and that
+// upserting replaces rather than duplicates.
+func TestManifestAttributionRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	empty, err := store.ManifestAttributions(ctx, "azure-focus")
+	if err != nil {
+		t.Fatalf("ManifestAttributions on empty store: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty store holds attributions: %+v", empty)
+	}
+
+	a := ManifestAttribution{
+		Connector:     "azure-focus",
+		ManifestKey:   "acct.blob.core.windows.net/exports/costroid-demo/20260601-20260630/run-a/manifest.json",
+		ETag:          `"0xabc123"`,
+		LastModified:  time.Date(2026, 6, 5, 9, 19, 2, 0, time.UTC),
+		Size:          2048,
+		BillingPeriod: "2026-06",
+		SubmittedTime: time.Date(2026, 6, 5, 9, 19, 1, 901_396_000, time.UTC), // µs precision
+		ExportName:    "costroid-demo",
+	}
+	if err := store.UpsertManifestAttribution(ctx, a); err != nil {
+		t.Fatalf("UpsertManifestAttribution: %v", err)
+	}
+	got, err := store.ManifestAttributions(ctx, "azure-focus")
+	if err != nil {
+		t.Fatalf("ManifestAttributions: %v", err)
+	}
+	stored, ok := got[a.ManifestKey]
+	if !ok || len(got) != 1 {
+		t.Fatalf("ManifestAttributions = %+v, want exactly %s", got, a.ManifestKey)
+	}
+	if stored.ETag != a.ETag || !stored.LastModified.Equal(a.LastModified) || stored.Size != a.Size ||
+		stored.BillingPeriod != a.BillingPeriod || !stored.SubmittedTime.Equal(a.SubmittedTime) ||
+		stored.ExportName != a.ExportName {
+		t.Fatalf("stored attribution = %+v, want %+v", stored, a)
+	}
+
+	// Upserting the same key replaces.
+	a.ETag = `"0xdef456"`
+	a.SubmittedTime = a.SubmittedTime.Add(time.Hour)
+	if err := store.UpsertManifestAttribution(ctx, a); err != nil {
+		t.Fatalf("second UpsertManifestAttribution: %v", err)
+	}
+	got, err = store.ManifestAttributions(ctx, "azure-focus")
+	if err != nil {
+		t.Fatalf("ManifestAttributions after upsert: %v", err)
+	}
+	stored = got[a.ManifestKey]
+	if len(got) != 1 || stored.ETag != `"0xdef456"` || !stored.SubmittedTime.Equal(a.SubmittedTime) {
+		t.Fatalf("after upsert = %+v, want the replaced attribution", got)
+	}
+
+	// Other connectors see nothing.
+	other, err := store.ManifestAttributions(ctx, "aws-focus-s3")
+	if err != nil {
+		t.Fatalf("ManifestAttributions(other): %v", err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("other connector sees %+v, want nothing", other)
+	}
+}
+
 // TestSyncStatesJoinBatchTenant proves SyncStates reports each source's
 // stored batch tenant (joined from ingest_batches, empty without a
 // batch) — the tenant-aware tuple skip (slice-3 review fix-up) depends
