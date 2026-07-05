@@ -33,7 +33,7 @@ var transforms = map[Version]Transform{
 	V1_1: nil, // registry slot — not yet implemented
 	V1_2: transform12To14,
 	V1_3: nil, // registry slot — not yet implemented
-	V1_4: nil, // registry slot — identity transform, not yet needed
+	V1_4: transform14To14,
 }
 
 // TransformTo14 returns the transform normalizing data of the given
@@ -96,6 +96,25 @@ var columns14 = []string{
 	"SubAccountName",
 	"SubAccountType",
 	"Tags",
+}
+
+// transform14To14 is the identity transform for data already in the
+// internal FOCUS 1.4 shape: it copies the 1.4 columns this slice carries
+// through unchanged and drops anything else. It is what lets a connector
+// SYNTHESIZE 1.4-shaped RawRecords directly — the AI-vendor connectors
+// (anthropic-cost, openai-cost) are the repo's first non-FOCUS sources,
+// with no upstream FOCUS export to transform — and still flow through the
+// one shared read → transform → validate → replace pipeline. Declaring
+// focus.V1_4 selects this transform; the connector owns the source→1.4
+// mapping in its own godoc rule table.
+func transform14To14(raw RawRecord) (RawRecord, error) {
+	out := make(RawRecord, len(columns14))
+	for _, col := range columns14 {
+		if v, ok := raw[col]; ok && v != "" {
+			out[col] = v
+		}
+	}
+	return out, nil
 }
 
 // transform12To14 normalizes a FOCUS 1.2 record into the 1.4 shape.

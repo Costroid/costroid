@@ -23,9 +23,11 @@ import (
 	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
+	"github.com/Costroid/costroid/internal/ingest/anthropiccost"
 	"github.com/Costroid/costroid/internal/ingest/awsfocus"
 	"github.com/Costroid/costroid/internal/ingest/awsfocuss3"
 	"github.com/Costroid/costroid/internal/ingest/azurefocus"
+	"github.com/Costroid/costroid/internal/ingest/openaicost"
 	"github.com/Costroid/costroid/internal/storage"
 	"github.com/Costroid/costroid/internal/webdist"
 )
@@ -59,6 +61,14 @@ commands:
                        root: the export's storage directory plus the export name; auth
                        via the ambient Azure credential chain only — no SAS, no keys;
                        the same --period/--force/skip semantics as aws-focus-s3)
+          AI vendors:  costroid ingest --connector anthropic-cost|openai-cost
+                       [--credential <slot>] [--base-url <url>] [--since YYYY-MM]
+                       [--period YYYY-MM] [--tenant default] [--force]
+                       (one UTC calendar month per billing period; default window is the
+                       last 12 months; the Admin API key comes from the encrypted
+                       credential store — set it first with 'costroid credentials set
+                       <slot>' (slot defaults to the connector name); --force is a
+                       documented no-op for these connectors — they keep no sync state)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
 store allows a single process at a time: stop 'costroid serve' before
@@ -327,15 +337,19 @@ func serve(args []string) error {
 
 func ingestCmd(args []string) error {
 	flags := flag.NewFlagSet("ingest", flag.ContinueOnError)
-	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3", "azure-focus")`)
+	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost")`)
 	pathFlag := flags.String("path", "", "path to the export file to ingest (aws-focus)")
 	bucketFlag := flags.String("bucket", "", "S3 bucket holding the AWS Data Export (aws-focus-s3)")
 	accountURLFlag := flags.String("account-url", "", "Azure storage account blob endpoint, e.g. https://<account>.blob.core.windows.net/ (azure-focus)")
 	containerFlag := flags.String("container", "", "Azure blob container holding the Cost Management export (azure-focus)")
 	prefixFlag := flags.String("prefix", "", "export root prefix: the export's configured directory/prefix plus its name (aws-focus-s3, azure-focus)")
-	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus; default: all discovered)")
+	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus, anthropic-cost, openai-cost; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
-	forceFlag := flags.Bool("force", false, "re-process every period even when its stored manifest state is unchanged (aws-focus-s3, azure-focus)")
+	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus; a documented no-op for anthropic-cost/openai-cost, which keep no sync state)")
+	credentialFlag := flags.String("credential", "", "credential slot name holding the Admin API key (anthropic-cost, openai-cost; default: the connector name)")
+	baseURLFlag := flags.String("base-url", "", "API base URL (anthropic-cost, openai-cost; default: the vendor's production endpoint)")
+	sinceFlag := flags.String("since", "", "ingest calendar months from this one forward, YYYY-MM (anthropic-cost, openai-cost; default: the last 12 months)")
+	keyFileFlag := flags.String("key-file", "", keyFileFlagUsage)
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return err
 	}
@@ -446,11 +460,95 @@ func ingestCmd(args []string) error {
 			return err
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
+	case anthropiccost.Name:
+		slot := firstNonEmpty(*credentialFlag, anthropiccost.Name)
+		baseURL := firstNonEmpty(*baseURLFlag, anthropiccost.DefaultBaseURL)
+		secret, store, err := openVaultSecret(ctx, *keyFileFlag, slot)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		periods, err := anthropiccost.Discover(ctx, aiHTTPClient(), baseURL, slot, secret, *sinceFlag, *periodFlag)
+		if err != nil {
+			return err
+		}
+		jobs := make([]ingestJob, 0, len(periods))
+		for _, p := range periods {
+			jobs = append(jobs, aiJob(p.Month, p.Conn, p.Err))
+		}
+		return runIngest(ctx, store, jobs, *tenantFlag)
+	case openaicost.Name:
+		slot := firstNonEmpty(*credentialFlag, openaicost.Name)
+		baseURL := firstNonEmpty(*baseURLFlag, openaicost.DefaultBaseURL)
+		secret, store, err := openVaultSecret(ctx, *keyFileFlag, slot)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		periods, err := openaicost.Discover(ctx, aiHTTPClient(), baseURL, slot, secret, *sinceFlag, *periodFlag)
+		if err != nil {
+			return err
+		}
+		jobs := make([]ingestJob, 0, len(periods))
+		for _, p := range periods {
+			jobs = append(jobs, aiJob(p.Month, p.Conn, p.Err))
+		}
+		return runIngest(ctx, store, jobs, *tenantFlag)
 	case "":
-		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus")`)
+		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost")`)
 	default:
-		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3", "azure-focus")`, *connectorFlag)
+		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost")`, *connectorFlag)
 	}
+}
+
+// firstNonEmpty returns a if non-empty, else b.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// aiHTTPClient is the HTTP client the AI-vendor connectors use: a per-request
+// timeout, otherwise the stdlib default.
+func aiHTTPClient() *http.Client {
+	return &http.Client{Timeout: 60 * time.Second}
+}
+
+// aiJob builds one ingest job for an AI-vendor connector's discovered month.
+// These connectors keep no sync state, so no tuple is upserted.
+func aiJob(month string, conn ingest.Connector, discoveryErr error) ingestJob {
+	if discoveryErr != nil {
+		return ingestJob{period: month, discoveryErr: discoveryErr}
+	}
+	return ingestJob{period: month, conn: conn}
+}
+
+// openVaultSecret opens the store (taking the single-writer lock), opens the
+// credential vault, and loads the named slot's secret — failing fast, BEFORE
+// any network dial, if the key file or credential is missing. On success the
+// caller owns closing the returned store.
+func openVaultSecret(ctx context.Context, keyFileFlag, slot string) (credentials.Secret, *storage.DuckDB, error) {
+	store, err := storage.Open(ctx, dataDir())
+	if err != nil {
+		return credentials.Secret{}, nil, err
+	}
+	keyPath, err := credentials.ResolveKeyPath(keyFileFlag)
+	if err != nil {
+		_ = store.Close()
+		return credentials.Secret{}, nil, err
+	}
+	vault, err := credentials.Open(keyPath, store)
+	if err != nil {
+		_ = store.Close()
+		return credentials.Secret{}, nil, err
+	}
+	secret, err := vault.Get(ctx, slot)
+	if err != nil {
+		_ = store.Close()
+		return credentials.Secret{}, nil, err
+	}
+	return secret, store, nil
 }
 
 // ingestJob is one connector run; period labels multi-period output. A

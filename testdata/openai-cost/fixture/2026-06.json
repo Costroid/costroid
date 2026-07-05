@@ -1,0 +1,28 @@
+[
+  {
+    "object": "bucket",
+    "start_time": 1780272000,
+    "end_time": 1780358400,
+    "results": [
+      {
+        "object": "organization.costs.result",
+        "amount": { "value": 45.6789, "currency": "usd" },
+        "line_item": "gpt-4.1, input",
+        "project_id": "proj_alpha"
+      }
+    ]
+  },
+  {
+    "object": "bucket",
+    "start_time": 1780358400,
+    "end_time": 1780444800,
+    "results": [
+      {
+        "object": "organization.costs.result",
+        "amount": { "value": 7.0, "currency": "usd" },
+        "line_item": "o3, input",
+        "project_id": "proj_beta"
+      }
+    ]
+  }
+]

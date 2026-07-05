@@ -16,7 +16,7 @@ func TestTransformTo14Registry(t *testing.T) {
 		{V1_1, true},           // registry slot, not implemented
 		{V1_2, false},          // implemented in this slice
 		{V1_3, true},           // registry slot, not implemented
-		{V1_4, true},           // identity slot, not needed yet
+		{V1_4, false},          // identity transform (synthesized 1.4 sources)
 		{Version("2.0"), true}, // unknown version
 	}
 	for _, tt := range tests {
@@ -111,6 +111,44 @@ func TestTransform12To14(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTransform14To14(t *testing.T) {
+	transform, err := TransformTo14(V1_4)
+	if err != nil {
+		t.Fatalf("TransformTo14(1.4): %v", err)
+	}
+	in := RawRecord{
+		"BilledCost":          "1.2378912",
+		"EffectiveCost":       "1.2378912",
+		"ListCost":            "1.2378912",
+		"ContractedCost":      "1.2378912",
+		"BillingCurrency":     "USD",
+		"ChargeCategory":      "Usage",
+		"ServiceName":         "Claude API",
+		"ServiceProviderName": "Anthropic",
+		"InvoiceIssuerName":   "Anthropic",
+		"SkuMeter":            "claude-opus-4-6",
+		"":                    "empty-key-dropped", // absent from columns14
+		"x_SomethingCustom":   "dropped",           // not a 1.4 column
+		"BillingAccountName":  "",                  // empty stays absent
+	}
+	out, err := transform(in)
+	if err != nil {
+		t.Fatalf("identity transform: %v", err)
+	}
+	// The 1.4 columns pass through unchanged.
+	for _, col := range []string{"BilledCost", "BillingCurrency", "ChargeCategory", "ServiceName", "ServiceProviderName", "InvoiceIssuerName", "SkuMeter"} {
+		if out[col] != in[col] {
+			t.Errorf("column %s = %q, want %q (identity)", col, out[col], in[col])
+		}
+	}
+	// Non-1.4 and empty columns are dropped.
+	for _, col := range []string{"x_SomethingCustom", "", "BillingAccountName"} {
+		if _, ok := out[col]; ok {
+			t.Errorf("column %q survived the identity transform, want dropped", col)
+		}
 	}
 }
 

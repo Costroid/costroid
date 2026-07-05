@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The Costroid Authors
+
+// Package fakeopenai is a development/test-only fake of the single read-only
+// OpenAI Admin endpoint the openai-cost connector uses — GET
+// /v1/organization/costs — served over an http.Handler backed by a local
+// directory of canned per-month responses. It exists so the connector and
+// the CLI can be verified fully offline; it is NOT product surface and must
+// never ship in a release code path. Everything is stdlib-only.
+//
+// The directory holds one file per month, "<YYYY-MM>.json", each a JSON
+// ARRAY of cost buckets (the elements of the real response's "data" array).
+// A month with no file serves an empty data array. The handler enforces the
+// Authorization: Bearer header (401 on mismatch), and paginates with a small
+// page size so the connector genuinely follows has_more/next_page cursors.
+package fakeopenai
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// AdminKey is the fake's expected Admin API key, shaped like a real OpenAI
+// admin key so hygiene assertions have something to catch.
+const AdminKey = "sk-admin-FAKEcanary000000000000000000000000000000000000T3BlbkFJ"
+
+// costsPath is the only served path.
+const costsPath = "/v1/organization/costs"
+
+// Handler serves canned costs responses from a directory.
+type Handler struct {
+	dir    string
+	apiKey string
+
+	// PageSize caps buckets per page (0 → 1). Set it before serving.
+	PageSize int
+
+	// LogWriter, when set, receives one line per request (method, path, and
+	// whether a cursor was presented) — never any header or key.
+	LogWriter io.Writer
+
+	mu       sync.Mutex
+	requests []Request
+}
+
+// Request records one served request for test assertions.
+type Request struct {
+	Method    string
+	Path      string
+	HadCursor bool
+}
+
+// New returns a Handler serving <dir>/<YYYY-MM>.json, expecting AdminKey.
+func New(dir string) *Handler { return &Handler{dir: dir, apiKey: AdminKey} }
+
+// NewWithKey returns a Handler that expects a specific API key.
+func NewWithKey(dir, apiKey string) *Handler { return &Handler{dir: dir, apiKey: apiKey} }
+
+// Requests returns the served requests in order (test instrumentation).
+func (h *Handler) Requests() []Request {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Request(nil), h.requests...)
+}
+
+// ServeHTTP implements http.Handler.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	hadCursor := r.URL.Query().Get("page") != ""
+	h.mu.Lock()
+	h.requests = append(h.requests, Request{Method: r.Method, Path: r.URL.Path, HadCursor: hadCursor})
+	h.mu.Unlock()
+	if h.LogWriter != nil {
+		_, _ = fmt.Fprintf(h.LogWriter, "fakeopenai: %s %s cursor=%t\n", r.Method, r.URL.Path, hadCursor)
+	}
+
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is supported")
+		return
+	}
+	if r.URL.Path != costsPath {
+		writeError(w, http.StatusNotFound, "not_found", "only the costs endpoint is implemented")
+		return
+	}
+	// Auth: Authorization: Bearer <key>; never echo what was presented.
+	if r.Header.Get("Authorization") != "Bearer "+h.apiKey {
+		writeError(w, http.StatusUnauthorized, "invalid_api_key", "invalid Authorization bearer token")
+		return
+	}
+
+	q := r.URL.Query()
+	month, err := monthFromUnix(q.Get("start_time"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "start_time must be Unix seconds")
+		return
+	}
+
+	buckets, err := h.loadMonth(month)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "api_error", err.Error())
+		return
+	}
+
+	start := 0
+	if p := q.Get("page"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n >= 0 {
+			start = n
+		}
+	}
+	size := h.PageSize
+	if size <= 0 {
+		size = 1
+	}
+	if start > len(buckets) {
+		start = len(buckets)
+	}
+	end := start + size
+	hasMore := end < len(buckets)
+	if end > len(buckets) {
+		end = len(buckets)
+	}
+	var nextPage *string
+	if hasMore {
+		s := strconv.Itoa(end)
+		nextPage = &s
+	}
+
+	writeJSON(w, http.StatusOK, response{
+		Object:   "page",
+		Data:     buckets[start:end],
+		HasMore:  hasMore,
+		NextPage: nextPage,
+	})
+}
+
+func (h *Handler) loadMonth(month string) ([]json.RawMessage, error) {
+	body, err := os.ReadFile(filepath.Join(h.dir, month+".json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []json.RawMessage{}, nil
+		}
+		return nil, err
+	}
+	var buckets []json.RawMessage
+	if err := json.Unmarshal(body, &buckets); err != nil {
+		return nil, fmt.Errorf("fixture %s.json is not a JSON array of buckets: %v", month, err)
+	}
+	return buckets, nil
+}
+
+func monthFromUnix(s string) (string, error) {
+	secs, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return "", err
+	}
+	return time.Unix(secs, 0).UTC().Format("2006-01"), nil
+}
+
+// response mirrors the real envelope (object="page", null next_page when
+// there are no more pages).
+type response struct {
+	Object   string            `json:"object"`
+	Data     []json.RawMessage `json:"data"`
+	HasMore  bool              `json:"has_more"`
+	NextPage *string           `json:"next_page"`
+}
+
+type apiError struct {
+	Error errBody `json:"error"`
+}
+
+type errBody struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, apiError{Error: errBody{Type: code, Message: message}})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}

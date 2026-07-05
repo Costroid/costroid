@@ -1,0 +1,34 @@
+[
+  {
+    "object": "bucket",
+    "start_time": 1777593600,
+    "end_time": 1777680000,
+    "results": [
+      {
+        "object": "organization.costs.result",
+        "amount": { "value": 10.0, "currency": "usd" },
+        "line_item": "gpt-4o, input",
+        "project_id": "proj_alpha"
+      },
+      {
+        "object": "organization.costs.result",
+        "amount": { "value": 100.0, "currency": "usd" },
+        "line_item": "gpt-4o, output",
+        "project_id": "proj_beta"
+      }
+    ]
+  },
+  {
+    "object": "bucket",
+    "start_time": 1777680000,
+    "end_time": 1777766400,
+    "results": [
+      {
+        "object": "organization.costs.result",
+        "amount": { "value": -3.25, "currency": "usd" },
+        "line_item": "Promotional credit",
+        "project_id": null
+      }
+    ]
+  }
+]
