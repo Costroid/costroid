@@ -479,6 +479,11 @@ func ingestCmd(args []string) error {
 		}
 		jobs := make([]ingestJob, 0, len(periods))
 		for _, p := range periods {
+			if p.Conn != nil {
+				if s := p.Conn.AnomalySummary(); s != "" {
+					fmt.Printf("period %s: %s\n", p.Month, s)
+				}
+			}
 			jobs = append(jobs, aiJob(p.Month, p.Conn, p.Err))
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
@@ -496,6 +501,11 @@ func ingestCmd(args []string) error {
 		}
 		jobs := make([]ingestJob, 0, len(periods))
 		for _, p := range periods {
+			if p.Conn != nil {
+				if s := p.Conn.AnomalySummary(); s != "" {
+					fmt.Printf("period %s: %s\n", p.Month, s)
+				}
+			}
 			jobs = append(jobs, aiJob(p.Month, p.Conn, p.Err))
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)

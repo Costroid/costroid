@@ -4,15 +4,12 @@
     "ending_at": "2026-06-02T00:00:00Z",
     "results": [
       {
-        "amount": "8000.5",
-        "currency": "USD",
-        "description": "Claude Opus 4 Usage - Input Tokens",
         "model": "claude-opus-4-6",
         "workspace_id": "wrkspc_alpha",
-        "cost_type": "tokens",
         "context_window": "0-200k",
+        "inference_geo": "us",
         "service_tier": "standard",
-        "token_type": "uncached_input_tokens"
+        "uncached_input_tokens": 3000000
       }
     ]
   },
@@ -21,15 +18,12 @@
     "ending_at": "2026-06-03T00:00:00Z",
     "results": [
       {
-        "amount": "1200",
-        "currency": "USD",
-        "description": "Claude Haiku 4 Batch Usage - Output Tokens",
         "model": "claude-haiku-4",
         "workspace_id": "wrkspc_beta",
-        "cost_type": "tokens",
         "context_window": "0-200k",
+        "inference_geo": "us",
         "service_tier": "batch",
-        "token_type": "output_tokens"
+        "output_tokens": 4000000
       }
     ]
   }

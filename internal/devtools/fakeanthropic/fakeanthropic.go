@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
-// Package fakeanthropic is a development/test-only fake of the single
-// read-only Anthropic Admin endpoint the anthropic-cost connector uses —
-// GET /v1/organizations/cost_report — served over an http.Handler backed by
-// a local directory of canned per-month responses. It exists so the
+// Package fakeanthropic is a development/test-only fake of the two read-only
+// Anthropic Admin endpoints the anthropic-cost connector uses —
+// GET /v1/organizations/cost_report and GET
+// /v1/organizations/usage_report/messages — served over an http.Handler backed
+// by a local directory of canned per-month responses. It exists so the
 // connector and the CLI can be verified fully offline; it is NOT product
 // surface and must never ship in a release code path. Everything is
 // stdlib-only.
 //
-// The directory holds one file per month, "<YYYY-MM>.json", each a JSON
-// ARRAY of cost buckets (the elements of the real response's "data" array).
-// A month with no file serves an empty data array — exactly what the
-// connector treats as an empty (restated-to-zero) month. The handler
-// enforces the x-api-key header (401 on mismatch, as the real API does),
-// requires anthropic-version, and paginates with a small page size so the
-// connector genuinely follows has_more/next_page cursors.
+// The directory holds, per month, "<YYYY-MM>.json" (a JSON ARRAY of cost
+// buckets) and "<YYYY-MM>.usage.json" (a JSON ARRAY of usage buckets) — each
+// the elements of the real response's "data" array. A month with no file serves
+// an empty data array — exactly what the connector treats as an empty
+// (restated-to-zero) month. The handler enforces the x-api-key header (401 on
+// mismatch, as the real API does), requires anthropic-version, asserts each
+// endpoint's request SHAPE per parameter (the usage path gets its own check),
+// and paginates with a small page size so the connector genuinely follows
+// has_more/next_page cursors on BOTH endpoints.
 package fakeanthropic
 
 import (
@@ -40,8 +43,11 @@ const AdminKey = "sk-ant-admin01-FAKEcanary0000000000000000000000000000000000AA"
 // anthropicVersion is the API version the real endpoint requires.
 const anthropicVersion = "2023-06-01"
 
-// costReportPath is the only served path.
-const costReportPath = "/v1/organizations/cost_report"
+// costReportPath and usageReportPath are the two served paths.
+const (
+	costReportPath  = "/v1/organizations/cost_report"
+	usageReportPath = "/v1/organizations/usage_report/messages"
+)
 
 // Handler serves canned cost-report responses from a directory.
 type Handler struct {
@@ -60,6 +66,12 @@ type Handler struct {
 	// RetryAfter is the Retry-After header value sent on those 429s. Keep it
 	// tiny (e.g. "0.01" seconds) so tests never sleep for real.
 	RetryAfter string
+
+	// UsageFailMonth, when non-empty, makes the usage_report/messages endpoint
+	// answer 500 for that "YYYY-MM" (the month derived from starting_at), so the
+	// connector's usage-fetch-failure degrade path can be exercised while other
+	// months ingest. Test-only. Set it before serving.
+	UsageFailMonth string
 
 	// LogWriter, when set, receives one line per request (method, path, and
 	// whether a cursor was presented) — never any header or key.
@@ -104,8 +116,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is supported")
 		return
 	}
-	if r.URL.Path != costReportPath {
-		writeError(w, http.StatusNotFound, "not_found", "only the cost report endpoint is implemented")
+	if r.URL.Path != costReportPath && r.URL.Path != usageReportPath {
+		writeError(w, http.StatusNotFound, "not_found", "only the cost report and usage report endpoints are implemented")
 		return
 	}
 	// Auth: the x-api-key must match; never echo what was presented.
@@ -119,28 +131,51 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	// Assert the connector's request SHAPE per parameter (never a whole-query
-	// string compare), so a connector that regresses its parameters fails
-	// visibly instead of silently. The rate-limit gate runs first so a
-	// well-shaped request can still be throttled.
-	if h.rateLimited(w) {
-		return
-	}
-	if !requireShape(w, q) {
-		return
-	}
 	month, err := monthFromRFC3339(q.Get("starting_at"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "starting_at must be an RFC 3339 timestamp")
 		return
 	}
 
+	if r.URL.Path == usageReportPath {
+		// The usage endpoint gets its OWN per-parameter shape check.
+		if !requireUsageShape(w, q) {
+			return
+		}
+		if h.UsageFailMonth != "" && month == h.UsageFailMonth {
+			writeError(w, http.StatusInternalServerError, "api_error", "usage report temporarily unavailable")
+			return
+		}
+		buckets, err := h.loadUsageMonth(month)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "api_error", err.Error())
+			return
+		}
+		h.paginate(w, q, buckets)
+		return
+	}
+
+	// Cost report path. Assert the connector's request SHAPE per parameter
+	// (never a whole-query string compare), so a connector that regresses its
+	// parameters fails visibly instead of silently. The rate-limit gate runs
+	// first so a well-shaped request can still be throttled.
+	if h.rateLimited(w) {
+		return
+	}
+	if !requireShape(w, q) {
+		return
+	}
 	buckets, err := h.loadMonth(month)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "api_error", err.Error())
 		return
 	}
+	h.paginate(w, q, buckets)
+}
 
+// paginate serves one page of buckets honoring the page cursor and PageSize,
+// setting has_more/next_page — the shared pagination for both endpoints.
+func (h *Handler) paginate(w http.ResponseWriter, q url.Values, buckets []json.RawMessage) {
 	start := 0
 	if p := q.Get("page"); p != "" {
 		if n, err := strconv.Atoi(p); err == nil && n >= 0 {
@@ -163,7 +198,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		nextPage = strconv.Itoa(end)
 	}
-
 	writeJSON(w, http.StatusOK, response{
 		Data:     buckets[start:end],
 		HasMore:  hasMore,
@@ -216,6 +250,31 @@ func requireShape(w http.ResponseWriter, q url.Values) bool {
 	return true
 }
 
+// requireUsageShape verifies the connector's documented usage_report/messages
+// request parameters per parameter: the bracketed group_by[]= must be EXACTLY
+// the five join dims (never a bare group_by=), bucket_width=1d, limit=31.
+func requireUsageShape(w http.ResponseWriter, q url.Values) bool {
+	if len(q["group_by"]) != 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request_error",
+			"group_by must be sent bracketed as group_by[]=, not bare group_by=")
+		return false
+	}
+	if !equalStringSet(q["group_by[]"], []string{"model", "workspace_id", "context_window", "inference_geo", "service_tier"}) {
+		writeError(w, http.StatusBadRequest, "invalid_request_error",
+			"group_by[] must be exactly {model, workspace_id, context_window, inference_geo, service_tier}")
+		return false
+	}
+	if got := q.Get("bucket_width"); got != "1d" {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "bucket_width must be 1d, got "+got)
+		return false
+	}
+	if got := q.Get("limit"); got != "31" {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "limit must be 31, got "+got)
+		return false
+	}
+	return true
+}
+
 // equalStringSet reports whether got and want hold the same values,
 // order-independent (a multiset compare).
 func equalStringSet(got, want []string) bool {
@@ -229,10 +288,22 @@ func equalStringSet(got, want []string) bool {
 	return slices.Equal(g, w)
 }
 
-// loadMonth reads <dir>/<month>.json as a JSON array of buckets; a missing
-// file is an empty month.
+// loadMonth reads <dir>/<month>.json as a JSON array of cost buckets; a
+// missing file is an empty month.
 func (h *Handler) loadMonth(month string) ([]json.RawMessage, error) {
-	body, err := os.ReadFile(filepath.Join(h.dir, month+".json"))
+	return loadBuckets(filepath.Join(h.dir, month+".json"), month+".json")
+}
+
+// loadUsageMonth reads <dir>/<month>.usage.json as a JSON array of usage
+// buckets; a missing file is an empty month.
+func (h *Handler) loadUsageMonth(month string) ([]json.RawMessage, error) {
+	return loadBuckets(filepath.Join(h.dir, month+".usage.json"), month+".usage.json")
+}
+
+// loadBuckets reads a JSON array of raw bucket objects from path; a missing
+// file is an empty month.
+func loadBuckets(path, label string) ([]json.RawMessage, error) {
+	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []json.RawMessage{}, nil
@@ -241,7 +312,7 @@ func (h *Handler) loadMonth(month string) ([]json.RawMessage, error) {
 	}
 	var buckets []json.RawMessage
 	if err := json.Unmarshal(body, &buckets); err != nil {
-		return nil, fmt.Errorf("fixture %s.json is not a JSON array of buckets: %v", month, err)
+		return nil, fmt.Errorf("fixture %s is not a JSON array of buckets: %v", label, err)
 	}
 	return buckets, nil
 }

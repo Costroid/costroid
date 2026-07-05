@@ -1,0 +1,88 @@
+[
+  {
+    "starting_at": "2026-05-01T00:00:00Z",
+    "ending_at": "2026-05-02T00:00:00Z",
+    "results": [
+      {
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "context_window": "0-200k",
+        "inference_geo": "us",
+        "service_tier": "standard",
+        "uncached_input_tokens": 600000,
+        "cache_read_input_tokens": 300000,
+        "cache_creation": { "ephemeral_5m_input_tokens": 100000 }
+      },
+      {
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "context_window": "0-200k",
+        "inference_geo": "eu",
+        "service_tier": "standard",
+        "uncached_input_tokens": 800000
+      },
+      {
+        "model": "claude-sonnet-4-5",
+        "workspace_id": "wrkspc_beta",
+        "context_window": "0-200k",
+        "inference_geo": "us",
+        "service_tier": "standard",
+        "output_tokens": 2000000
+      },
+      {
+        "model": "claude-haiku-4",
+        "workspace_id": "wrkspc_beta",
+        "context_window": "0-200k",
+        "inference_geo": "us",
+        "service_tier": "batch",
+        "uncached_input_tokens": 500000
+      },
+      {
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "context_window": "0-200k",
+        "inference_geo": "us",
+        "service_tier": "priority",
+        "uncached_input_tokens": 999
+      },
+      {
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "context_window": "0-200k",
+        "inference_geo": "us",
+        "service_tier": "standard",
+        "server_tool_use": { "web_search_requests": 5 }
+      }
+    ]
+  },
+  {
+    "starting_at": "2026-05-02T00:00:00Z",
+    "ending_at": "2026-05-03T00:00:00Z",
+    "results": [
+      {
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_gamma",
+        "context_window": "0-200k",
+        "inference_geo": "us",
+        "service_tier": "standard",
+        "output_tokens": 50000
+      },
+      {
+        "model": "claude-sonnet-4-5",
+        "workspace_id": "wrkspc_beta",
+        "context_window": "0-200k",
+        "inference_geo": "eu",
+        "service_tier": "flex_discount",
+        "output_tokens": 123
+      },
+      {
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_delta",
+        "context_window": "0-200k",
+        "inference_geo": "us",
+        "service_tier": "standard",
+        "uncached_input_tokens": 42
+      }
+    ]
+  }
+]

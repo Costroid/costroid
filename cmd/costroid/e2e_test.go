@@ -18,9 +18,12 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Costroid/costroid/internal/api"
 	"github.com/Costroid/costroid/internal/devtools/fakeanthropic"
 	"github.com/Costroid/costroid/internal/devtools/fakeopenai"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest/aiconn"
 	"github.com/Costroid/costroid/internal/storage"
 )
@@ -134,7 +137,23 @@ func TestOfflineE2EAICost(t *testing.T) {
 			t.Errorf("empty month %s did not ingest an empty batch:\n%s", m, anthOut)
 		}
 	}
+	// The Anthropic ingest reports the per-period usage⇔cost reconciliation
+	// anomalies (priority/flex tiers, web search, collision, orphan usage) that
+	// are counted but never emitted as FOCUS rows (decision D33).
+	if !strings.Contains(anthOut, "usage/cost reconciliation:") {
+		t.Errorf("anthropic ingest missing the anomaly summary line:\n%s", anthOut)
+	}
 	mustCLI("", "ingest", "--connector", "openai-cost", oaiBase, "--since", "2026-05")
+
+	// --- token quantities landed in the store, money invariant (decision D33) ---
+	// A minted row carries the token count + minted SKU; money is untouched.
+	assertEnriched(t, "anthropic-cost", "anthropic/claude-opus-4-6/uncached_input_tokens/0-200k", "1500000")
+	assertEnriched(t, "openai-cost", "openai/gpt-4o, input", "1500000")
+	// Grand-total BilledCost equals the pre-enrichment fixture totals (May+June;
+	// later window months are empty): 117.845678+92.005 and 139.7067890123456789
+	// +52.6789. Enrichment moved no money.
+	assertBilledTotal(t, "anthropic-cost", "209.850678")
+	assertBilledTotal(t, "openai-cost", "192.3856890123456789")
 
 	// --- daily-cost API shows AI spend alongside cloud data (default tenant) ---
 	daily := dailyView(t)
@@ -155,6 +174,13 @@ func TestOfflineE2EAICost(t *testing.T) {
 			t.Errorf("re-sync did not report month %s unchanged:\n%s", m, reOut)
 		}
 	}
+	// The unchanged re-sync still fetched BOTH endpoints (the ContentHash covers
+	// cost AND usage payloads, so a quantity-only restatement cannot be missed).
+	for _, path := range []string{"/v1/organizations/cost_report", "/v1/organizations/usage_report/messages"} {
+		if !strings.Contains(fakeLog.String(), path) {
+			t.Errorf("expected the fake to have served %s (both endpoints fetched)", path)
+		}
+	}
 
 	// --- --force is accepted and byte-identical content still reports unchanged ---
 	forceOut := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--since", "2026-05", "--force")
@@ -173,19 +199,39 @@ func TestOfflineE2EAICost(t *testing.T) {
 		t.Errorf("--period 2026-06 did not process 2026-06:\n%s", periodOut)
 	}
 
-	// --- restatement: swap in the restated month, re-sync, show the delta ---
+	// --- money restatement: swap in the restated month, re-sync, show the delta ---
+	// The restated dirs change only cost amounts; the usage files stay from the
+	// fixture overlay, so the enrichment is unchanged and only money moves.
 	copyTree(t, "../../testdata/anthropic-cost/restated", anthDir)
 	copyTree(t, "../../testdata/openai-cost/restated", oaiDir)
 	restatedAnth := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--since", "2026-05")
-	if !strings.Contains(restatedAnth, "period 2026-05: replaced (3 records; BilledCost 74.845678 → 72.5)") {
+	if !strings.Contains(restatedAnth, "period 2026-05: replaced (10 records; BilledCost 117.845678 → 115.5)") {
 		t.Errorf("anthropic restatement delta missing/wrong:\n%s", restatedAnth)
 	}
 	if !strings.Contains(restatedAnth, "period 2026-06: source content unchanged") {
 		t.Errorf("unchanged June should still short-circuit after May restatement:\n%s", restatedAnth)
 	}
 	restatedOai := mustCLI("", "ingest", "--connector", "openai-cost", oaiBase, "--period", "2026-05")
-	if !strings.Contains(restatedOai, "period 2026-05: replaced (3 records; BilledCost 132.7067890123456789 → 106.75)") {
+	if !strings.Contains(restatedOai, "period 2026-05: replaced (5 records; BilledCost 139.7067890123456789 → 113.75)") {
 		t.Errorf("openai restatement delta missing/wrong (exact-decimal preservation):\n%s", restatedOai)
+	}
+
+	// --- quantity-only restatement (ContentHash-covers-usage proof) ---
+	// Overlay ONLY a changed usage file (the cost stays the just-restated 115.5).
+	// The re-sync must report `replaced` with UNCHANGED BilledCost totals — which
+	// only happens if ContentHash covers the usage payloads (else it would
+	// short-circuit as `unchanged` and the changed token count would be lost).
+	beforeQty := storedConsumedQuantity(t, focus.DefaultTenant, "anthropic-cost",
+		"anthropic/claude-opus-4-6/uncached_input_tokens/0-200k")
+	copyTree(t, "../../testdata/anthropic-cost/restated-usage", anthDir)
+	qtyOnly := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--period", "2026-05")
+	if !strings.Contains(qtyOnly, "period 2026-05: replaced (10 records; BilledCost 115.5 → 115.5)") {
+		t.Errorf("quantity-only restatement should replace with UNCHANGED money:\n%s", qtyOnly)
+	}
+	afterQty := storedConsumedQuantity(t, focus.DefaultTenant, "anthropic-cost",
+		"anthropic/claude-opus-4-6/uncached_input_tokens/0-200k")
+	if !beforeQty.Equal(decimal.RequireFromString("1500000")) || !afterQty.Equal(decimal.RequireFromString("1400000")) {
+		t.Errorf("quantity-only restatement did not update the stored token count: before=%s after=%s (want 1500000 → 1400000)", beforeQty, afterQty)
 	}
 
 	// --- tenant switch re-homes (azure/s3 parity) ---
@@ -242,6 +288,26 @@ func TestOfflineE2EAICost(t *testing.T) {
 		"ingest", "--connector", "anthropic-cost", anthBase,
 		"--credential", "anthropic-bad", "--period", "2026-05")
 
+	// A usage-report fetch failure degrades ONLY that month to an actionable
+	// per-period error (never a silently quantity-less ingest) while the other
+	// months still ingest — failure isolation (ANT-12).
+	anthFake.UsageFailMonth = "2026-05"
+	failOut, failErr := runCLI([]string{"ingest", "--connector", "anthropic-cost", anthBase, "--since", "2026-05"}, "")
+	transcript.WriteString("\n# negative: usage fetch failure isolates one period\n" + failOut)
+	if failErr != nil {
+		transcript.WriteString(failErr.Error() + "\n")
+	}
+	anthFake.UsageFailMonth = ""
+	if failErr == nil {
+		t.Error("usage-fetch failure did not fail the run")
+	}
+	if !strings.Contains(failOut, "period 2026-05: failed") || !strings.Contains(failOut, "HTTP 500") {
+		t.Errorf("May should degrade actionably on a usage-fetch failure:\n%s", failOut)
+	}
+	if !strings.Contains(failOut, "period 2026-06:") {
+		t.Errorf("June should still ingest while May degraded (failure isolation):\n%s", failOut)
+	}
+
 	// A world-readable key file is refused.
 	if err := os.Chmod(keyPath, 0o644); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -295,6 +361,64 @@ func runCLI(args []string, stdin string) (string, error) {
 	os.Stdin, os.Stdout, os.Stderr = origIn, origOut, origErr
 	_ = inR.Close()
 	return <-captured, err
+}
+
+// aiRows opens the store and returns the enrichment-relevant projection of one
+// tenant+connector's stored cost rows.
+func aiRows(t *testing.T, tenant, connector string) []storage.AIRow {
+	t.Helper()
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	rows, err := store.EnrichedAIRows(context.Background(), tenant, connector)
+	if err != nil {
+		t.Fatalf("EnrichedAIRows(%s, %s): %v", tenant, connector, err)
+	}
+	return rows
+}
+
+// assertEnriched asserts the default-tenant row with the given minted SkuId
+// carries the expected token count and "Tokens" unit.
+func assertEnriched(t *testing.T, connector, skuID, wantQty string) {
+	t.Helper()
+	for _, r := range aiRows(t, focus.DefaultTenant, connector) {
+		if r.SkuID == skuID {
+			if !r.ConsumedQuantity.Valid || !r.ConsumedQuantity.Decimal.Equal(decimal.RequireFromString(wantQty)) || r.ConsumedUnit != "Tokens" {
+				t.Errorf("%s %s: consumed=%v unit=%q, want %s Tokens", connector, skuID, r.ConsumedQuantity, r.ConsumedUnit, wantQty)
+			}
+			return
+		}
+	}
+	t.Errorf("%s: no stored row with SkuId %q", connector, skuID)
+}
+
+// assertBilledTotal asserts a connector's default-tenant total BilledCost.
+func assertBilledTotal(t *testing.T, connector, want string) {
+	t.Helper()
+	sum := decimal.Zero
+	for _, r := range aiRows(t, focus.DefaultTenant, connector) {
+		sum = sum.Add(r.BilledCost)
+	}
+	if !sum.Equal(decimal.RequireFromString(want)) {
+		t.Errorf("%s grand-total BilledCost = %s, want %s (pre-enrichment fixture total)", connector, sum, want)
+	}
+}
+
+// storedConsumedQuantity returns the stored token count for one minted SkuId.
+func storedConsumedQuantity(t *testing.T, tenant, connector, skuID string) decimal.Decimal {
+	t.Helper()
+	for _, r := range aiRows(t, tenant, connector) {
+		if r.SkuID == skuID {
+			if !r.ConsumedQuantity.Valid {
+				t.Fatalf("%s %s has a null consumed_quantity", connector, skuID)
+			}
+			return r.ConsumedQuantity.Decimal
+		}
+	}
+	t.Fatalf("%s: no stored row with SkuId %q", connector, skuID)
+	return decimal.Decimal{}
 }
 
 // dailyView opens the store and queries the daily-cost API for the default

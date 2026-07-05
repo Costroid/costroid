@@ -58,10 +58,17 @@ func readAll(t *testing.T, conn ingest.Connector) []ingest.Row {
 	}
 }
 
+// enrichmentCols are the seven columns an enriched row gains atomically (OAI-11).
+var enrichmentCols = []string{
+	"ConsumedQuantity", "ConsumedUnit", "SkuId", "SkuPriceId", "SkuMeter", "PricingQuantity", "PricingUnit",
+}
+
 // TestDiscoverAndRecords proves one month's costs are fetched and synthesized
 // into FOCUS-1.4 records per the OAI rules — dollars straight from the JSON
-// literal, project SubAccountId, line_item ChargeDescription, Unix-second
-// buckets → RFC 3339, and a negative credit passing through.
+// literal, project SubAccountId, line_item ChargeDescription, the same-row
+// quantity enrichment (OAI-11) with a VERBATIM line_item SkuId, and money-only
+// rows (null-quantity credit, unknown-unit line item) carrying NONE of the
+// enrichment columns.
 func TestDiscoverAndRecords(t *testing.T) {
 	_, baseURL := startFake(t, fixture)
 	secret := credentials.NewSecret(fakeopenai.AdminKey)
@@ -79,43 +86,139 @@ func TestDiscoverAndRecords(t *testing.T) {
 	}
 
 	rows := readAll(t, conn)
-	if len(rows) != 3 {
-		t.Fatalf("got %d records, want 3", len(rows))
+	if len(rows) != 5 {
+		t.Fatalf("got %d records, want 5", len(rows))
 	}
 
 	input := rows[0].Record
 	for col, want := range map[string]string{
-		"BilledCost":          "12.5",
-		"EffectiveCost":       "12.5",
-		"ListCost":            "12.5",
-		"ContractedCost":      "12.5",
-		"BillingCurrency":     "USD",
-		"ChargeCategory":      "Usage",
-		"ChargeFrequency":     "Usage-Based",
-		"ChargePeriodStart":   "2026-05-01T00:00:00Z",
-		"ChargePeriodEnd":     "2026-05-02T00:00:00Z",
-		"BillingPeriodStart":  "2026-05-01T00:00:00Z",
-		"BillingPeriodEnd":    "2026-06-01T00:00:00Z",
-		"BillingAccountId":    "api.openai.com/openai-cost",
-		"ServiceProviderName": "OpenAI",
-		"InvoiceIssuerName":   "OpenAI",
-		"ServiceName":         "OpenAI API",
-		"ServiceCategory":     "AI and Machine Learning",
-		"ChargeDescription":   "gpt-4o, input",
-		"SubAccountId":        "proj_alpha",
+		"BilledCost":        "12.5",
+		"EffectiveCost":     "12.5",
+		"ListCost":          "12.5",
+		"ContractedCost":    "12.5",
+		"BillingCurrency":   "USD",
+		"ChargePeriodStart": "2026-05-01T00:00:00Z",
+		"BillingAccountId":  "api.openai.com/openai-cost",
+		"ServiceName":       "OpenAI API",
+		"ChargeDescription": "gpt-4o, input",
+		"SubAccountId":      "proj_alpha",
+		"ConsumedQuantity":  "1500000",
+		"ConsumedUnit":      "Tokens",
+		"SkuId":             "openai/gpt-4o, input", // line_item kept VERBATIM
+		"SkuPriceId":        "openai/gpt-4o, input",
+		"SkuMeter":          "Input Tokens",
+		"PricingQuantity":   "1.5",
+		"PricingUnit":       "1000000 Tokens",
 	} {
 		if input[col] != want {
 			t.Errorf("input row %s = %q, want %q", col, input[col], want)
 		}
 	}
 
-	// The credit row: -3.25, project null → no SubAccountId.
-	credit := rows[2].Record
+	// Row 2 — cached input maps to the Cache Read meter, SkuId still verbatim.
+	cached := rows[2].Record
+	if cached["SkuMeter"] != "Cache Read Tokens" ||
+		cached["SkuId"] != "openai/gpt-4o, cached input" ||
+		cached["ConsumedQuantity"] != "900000" || cached["PricingQuantity"] != "0.9" {
+		t.Errorf("cached-input row wrong: meter=%q sku=%q qty=%q pq=%q",
+			cached["SkuMeter"], cached["SkuId"], cached["ConsumedQuantity"], cached["PricingQuantity"])
+	}
+
+	// Row 3 — credit: -3.25, null quantity, project null → money-only.
+	credit := rows[3].Record
 	if credit["BilledCost"] != "-3.25" {
 		t.Errorf("credit BilledCost = %q, want -3.25", credit["BilledCost"])
 	}
 	if _, ok := credit["SubAccountId"]; ok {
 		t.Errorf("credit SubAccountId should be absent, got %q", credit["SubAccountId"])
+	}
+	assertMoneyOnly(t, "credit", credit)
+
+	// Row 4 — unknown unit (quantity present, but line_item has no direction
+	// suffix): stays money-only, never guessing a unit.
+	unknown := rows[4].Record
+	if unknown["ChargeDescription"] != "assistants api | file search" || unknown["BilledCost"] != "5" {
+		t.Errorf("unknown-unit row wrong: desc=%q billed=%q", unknown["ChargeDescription"], unknown["BilledCost"])
+	}
+	assertMoneyOnly(t, "unknown-unit", unknown)
+}
+
+// assertMoneyOnly asserts a row carries NONE of the seven enrichment columns.
+func assertMoneyOnly(t *testing.T, label string, rec map[string]string) {
+	t.Helper()
+	for _, col := range enrichmentCols {
+		if v, ok := rec[col]; ok {
+			t.Errorf("%s row should be money-only but carries %s=%q", label, col, v)
+		}
+	}
+}
+
+// TestQuantitySurvivesFloat64 proves the token quantity is built from its exact
+// JSON literal, never through float64 (the day-1 output quantity has more
+// precision than a float64 holds). Fails if someone decodes quantity as float64.
+func TestQuantitySurvivesFloat64(t *testing.T) {
+	const corruptible = "1234567890123456789"
+	f, err := strconv.ParseFloat(corruptible, 64)
+	if err != nil {
+		t.Fatalf("parsing the corruptible value: %v", err)
+	}
+	if viaFloat := decimal.NewFromFloat(f).String(); viaFloat == corruptible {
+		t.Fatalf("test value %q does not corrupt under float64 (got %q)", corruptible, viaFloat)
+	}
+
+	_, baseURL := startFake(t, fixture)
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+	periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", "2026-05")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	rows := readAll(t, periods[0].Conn)
+	if got := rows[1].Record["ConsumedQuantity"]; got != corruptible {
+		t.Fatalf("ConsumedQuantity = %q, want the exact literal %q", got, corruptible)
+	}
+}
+
+// TestUnknownUnitOrphanSummary proves the unknown-unit quantity row is counted
+// into the per-period orphan summary (never guessed into a FOCUS unit).
+func TestUnknownUnitOrphanSummary(t *testing.T) {
+	_, baseURL := startFake(t, fixture)
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+	periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", "2026-05")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	s := periods[0].Conn.AnomalySummary()
+	if !strings.HasPrefix(s, "usage/cost reconciliation:") || !strings.Contains(s, "unit could not be safely derived") {
+		t.Errorf("summary = %q, want the unknown-unit orphan line", s)
+	}
+	// A clean month (June: both rows recognized) reports nothing.
+	june, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", "2026-06")
+	if err != nil {
+		t.Fatalf("Discover June: %v", err)
+	}
+	if got := june[0].Conn.AnomalySummary(); got != "" {
+		t.Errorf("clean June should report no anomalies, got %q", got)
+	}
+}
+
+// TestMoneyInvariantUnderEnrichment proves per-period and grand-total BilledCost
+// equal the pre-enrichment fixture totals — enrichment moved no money (D33).
+func TestMoneyInvariantUnderEnrichment(t *testing.T) {
+	_, baseURL := startFake(t, fixture)
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+	perMonth := map[string]string{"2026-05": "139.7067890123456789", "2026-06": "52.6789"}
+	for month, want := range perMonth {
+		periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", month)
+		if err != nil {
+			t.Fatalf("Discover %s: %v", month, err)
+		}
+		sum := decimal.Zero
+		for _, row := range readAll(t, periods[0].Conn) {
+			sum = sum.Add(decimal.RequireFromString(row.Record["BilledCost"]))
+		}
+		if !sum.Equal(decimal.RequireFromString(want)) {
+			t.Errorf("%s total BilledCost = %s, want %s", month, sum, want)
+		}
 	}
 }
 
@@ -228,8 +331,8 @@ func TestRateLimitedThenSucceeds(t *testing.T) {
 	if got := len(fake.Requests()); got != 3 {
 		t.Errorf("served %d requests, want 3 (two 429s then one success)", got)
 	}
-	if rows := readAll(t, periods[0].Conn); len(rows) != 3 {
-		t.Errorf("got %d records after retrying, want 3", len(rows))
+	if rows := readAll(t, periods[0].Conn); len(rows) != 5 {
+		t.Errorf("got %d records after retrying, want 5", len(rows))
 	}
 }
 

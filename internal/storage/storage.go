@@ -244,3 +244,19 @@ type ServiceCost struct {
 	ServiceName string
 	Cost        decimal.Decimal
 }
+
+// AIRow is the enrichment-relevant projection of one stored cost record,
+// returned by DuckDB.EnrichedAIRows for verifying token-quantity enrichment
+// (decision D33) landed without disturbing money. It is not a query surface —
+// no API endpoint consumes it — only a store-level assertion helper.
+type AIRow struct {
+	ChargeDescription string
+	SkuID             string
+	SkuPriceID        string
+	SkuMeter          string
+	ConsumedQuantity  decimal.NullDecimal
+	ConsumedUnit      string
+	PricingQuantity   decimal.NullDecimal
+	PricingUnit       string
+	BilledCost        decimal.Decimal
+}

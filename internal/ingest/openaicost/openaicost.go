@@ -80,9 +80,42 @@
 //	OAI-9   ChargeDescription               line_item when present.
 //	OAI-10  SubAccountId                    project_id when grouped by project,
 //	                                         else null.
+//	OAI-11  ConsumedQuantity / ConsumedUnit The costs endpoint returns a nullable
+//	        SkuId / SkuPriceId / SkuMeter    `quantity` field (the token count of
+//	        PricingQuantity / PricingUnit    the grouped line, decoded from its
+//	                                         JSON literal — never float64). SAME
+//	                                         ROW, no join. When quantity is
+//	                                         non-null AND the line_item ends in a
+//	                                         documented direction suffix
+//	                                         (", input" / ", output" /
+//	                                         ", cached input"), the row gains,
+//	                                         atomically: ConsumedQuantity = the
+//	                                         count; ConsumedUnit = "Tokens";
+//	                                         SkuId = "openai/" + line_item VERBATIM
+//	                                         (line_item is already an opaque key
+//	                                         and input/output are distinct SKUs, so
+//	                                         the suffix stays IN — FROZEN
+//	                                         convention, decision D33);
+//	                                         SkuPriceId = SkuId; SkuMeter = the
+//	                                         friendly meter; PricingQuantity =
+//	                                         quantity ÷ 1,000,000 by exact shift;
+//	                                         PricingUnit = "1000000 Tokens". Money
+//	                                         columns stay byte-identical (money
+//	                                         invariance, decision D33).
+//	OAI-12  orphans & tolerance             Unknown units, call-fee line items
+//	                                         (e.g. web search), and null-quantity
+//	                                         rows stay money-only (no SKU columns,
+//	                                         quantity null) and are counted in the
+//	                                         per-period anomaly summary. A unit is
+//	                                         NEVER guessed; a non-"Tokens"
+//	                                         ConsumedUnit is never emitted.
 //
-// ConsumedQuantity stays null this slice (the costs endpoint's cost metadata
-// carries no token quantities; this does not reverse decision D4).
+// line_item is an opaque, undocumented display string; a model name is NEVER
+// parsed out of it into any column. ListUnitPrice/ContractedUnitPrice stay null
+// on enriched rows (documented deviation, decision D33 — unit prices need vendor
+// price lists, a later slice). ContentHash needs NO change: quantity arrives
+// inside the same cost data payload already hashed, so a quantity-only
+// restatement changes the hashed bytes and supersedes normally.
 package openaicost
 
 import (
@@ -214,6 +247,7 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		monthStart:  start,
 		monthEnd:    end,
 		buckets:     buckets,
+		summary:     openaiAnomalies(buckets),
 		contentHash: contentHash(rawBuckets),
 	}, nil
 }
@@ -302,10 +336,74 @@ type bucket struct {
 }
 
 // result is one cost line. Only cost metadata is read (Cardinal Rule).
+// Quantity is the nullable token count of the grouped line (OAI-11), kept as a
+// raw JSON literal so the exact decimal survives (never through float64).
 type result struct {
-	Amount    amount `json:"amount"`
-	LineItem  string `json:"line_item"`
-	ProjectID string `json:"project_id"`
+	Amount    amount          `json:"amount"`
+	LineItem  string          `json:"line_item"`
+	ProjectID string          `json:"project_id"`
+	Quantity  json.RawMessage `json:"quantity"`
+}
+
+// openaiSkuMeter maps a line_item's documented trailing direction suffix to a
+// SkuMeter, reporting ok=false when no direction suffix is recognized. The
+// ", cached input" case is checked before ", input" (the latter is not a suffix
+// of the former, but the order documents intent). A unit is never guessed
+// (decision D33): an unrecognized line_item leaves the row money-only.
+func openaiSkuMeter(lineItem string) (meter string, ok bool) {
+	switch {
+	case strings.HasSuffix(lineItem, ", cached input"):
+		return "Cache Read Tokens", true
+	case strings.HasSuffix(lineItem, ", output"):
+		return "Output Tokens", true
+	case strings.HasSuffix(lineItem, ", input"):
+		return "Input Tokens", true
+	default:
+		return "", false
+	}
+}
+
+// quantityLiteral returns the row's non-null quantity literal, or "" when the
+// quantity field is absent or JSON null.
+func quantityLiteral(res result) string {
+	s := strings.TrimSpace(string(res.Quantity))
+	if s == "" || s == "null" {
+		return ""
+	}
+	return s
+}
+
+// anomalySummary counts the per-period surfaces OAI-12 leaves money-only:
+// cost rows that carry a quantity whose line_item unit could not be safely
+// derived. String renders one summary line (empty when there is nothing to
+// report).
+type anomalySummary struct {
+	unknownUnitRows int
+}
+
+func (s anomalySummary) String() string {
+	if s.unknownUnitRows == 0 {
+		return ""
+	}
+	return fmt.Sprintf("usage/cost reconciliation: %d cost row(s) carry a quantity whose line_item unit "+
+		"could not be safely derived; left unpriced (a unit is never guessed — decision D33)", s.unknownUnitRows)
+}
+
+// openaiAnomalies counts the OAI-12 orphans over a month's cost buckets so the
+// summary can be reported at Discover time (before any record is read).
+func openaiAnomalies(buckets []bucket) anomalySummary {
+	var s anomalySummary
+	for _, b := range buckets {
+		for _, res := range b.Results {
+			if quantityLiteral(res) == "" {
+				continue
+			}
+			if _, ok := openaiSkuMeter(res.LineItem); !ok {
+				s.unknownUnitRows++
+			}
+		}
+	}
+	return s
 }
 
 // amount is the money object; Value is kept as a raw JSON literal so the
@@ -323,13 +421,15 @@ func contentHash(rawBuckets [][]byte) string {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
-// Connector reads one billing month of the OpenAI costs report.
+// Connector reads one billing month of the OpenAI costs report, enriching each
+// row from its same-row quantity (OAI-11).
 type Connector struct {
 	slot        string
 	month       string
 	monthStart  time.Time
 	monthEnd    time.Time
 	buckets     []bucket
+	summary     anomalySummary
 	contentHash string
 }
 
@@ -341,6 +441,11 @@ func (c *Connector) FOCUSVersion() focus.Version { return focus.V1_4 }
 
 // Month returns the connector's billing month ("YYYY-MM").
 func (c *Connector) Month() string { return c.month }
+
+// AnomalySummary returns one line summarizing this month's OAI-12 orphans
+// (quantity-bearing rows whose unit could not be derived), or "" when there is
+// nothing to report.
+func (c *Connector) AnomalySummary() string { return c.summary.String() }
 
 func (c *Connector) SourceIdentity() string {
 	return providerHost + "/" + c.slot + "/" + c.month
@@ -435,6 +540,27 @@ func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
 	}
 	if res.ProjectID != "" {
 		rec["SubAccountId"] = res.ProjectID
+	}
+	// Enrichment (OAI-11): same-row, no join. Only when the quantity is non-null
+	// AND the line_item's suffix unambiguously names a token direction does the
+	// row gain the full quantity/SKU set, atomically. Everything else stays
+	// money-only (OAI-12). The SkuId keeps line_item VERBATIM (including the
+	// direction suffix), and the decimal is built from the JSON literal — never
+	// float64.
+	if qty := quantityLiteral(res); qty != "" {
+		if meter, ok := openaiSkuMeter(res.LineItem); ok {
+			d, err := decimal.NewFromString(qty)
+			if err == nil {
+				sku := "openai/" + res.LineItem
+				rec["ConsumedQuantity"] = d.String()
+				rec["ConsumedUnit"] = "Tokens"
+				rec["SkuId"] = sku
+				rec["SkuPriceId"] = sku
+				rec["SkuMeter"] = meter
+				rec["PricingQuantity"] = d.Shift(-6).String()
+				rec["PricingUnit"] = "1000000 Tokens"
+			}
+		}
 	}
 	return rec, nil
 }

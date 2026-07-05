@@ -8,13 +8,22 @@
         "object": "organization.costs.result",
         "amount": { "value": 10.0, "currency": "usd" },
         "line_item": "gpt-4o, input",
-        "project_id": "proj_alpha"
+        "project_id": "proj_alpha",
+        "quantity": 1500000
       },
       {
         "object": "organization.costs.result",
         "amount": { "value": 100.0, "currency": "usd" },
         "line_item": "gpt-4o, output",
-        "project_id": "proj_beta"
+        "project_id": "proj_beta",
+        "quantity": 1234567890123456789
+      },
+      {
+        "object": "organization.costs.result",
+        "amount": { "value": 2.0, "currency": "usd" },
+        "line_item": "gpt-4o, cached input",
+        "project_id": "proj_alpha",
+        "quantity": 900000
       }
     ]
   },
@@ -27,7 +36,15 @@
         "object": "organization.costs.result",
         "amount": { "value": -3.25, "currency": "usd" },
         "line_item": "Promotional credit",
-        "project_id": null
+        "project_id": null,
+        "quantity": null
+      },
+      {
+        "object": "organization.costs.result",
+        "amount": { "value": 5.0, "currency": "usd" },
+        "line_item": "assistants api | file search",
+        "project_id": "proj_gamma",
+        "quantity": 42
       }
     ]
   }

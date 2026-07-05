@@ -23,12 +23,12 @@
       {
         "amount": "1200",
         "currency": "USD",
-        "description": "Claude Haiku 4 Usage - Output Tokens",
+        "description": "Claude Haiku 4 Batch Usage - Output Tokens",
         "model": "claude-haiku-4",
         "workspace_id": "wrkspc_beta",
         "cost_type": "tokens",
         "context_window": "0-200k",
-        "service_tier": "standard",
+        "service_tier": "batch",
         "token_type": "output_tokens"
       }
     ]

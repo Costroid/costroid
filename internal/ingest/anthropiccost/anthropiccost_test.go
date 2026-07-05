@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/devtools/fakeanthropic"
 	"github.com/Costroid/costroid/internal/ingest"
@@ -50,10 +52,18 @@ func readAll(t *testing.T, conn ingest.Connector) []ingest.Row {
 	}
 }
 
-// TestDiscoverAndRecords proves one month's cost report is fetched and
-// synthesized into FOCUS-1.4 records per the ANT rules — including the
-// cents→dollars shift, the workspace SubAccountId, the model SkuMeter, and a
-// negative credit passing through unchanged.
+// enrichmentCols are the seven columns an enriched row gains atomically (ANT-13)
+// — all present together on a minted row, all absent on a money-only row.
+var enrichmentCols = []string{
+	"ConsumedQuantity", "ConsumedUnit", "SkuId", "SkuPriceId", "SkuMeter", "PricingQuantity", "PricingUnit",
+}
+
+// TestDiscoverAndRecords proves one month's cost report is fetched, joined with
+// the usage report, and synthesized into FOCUS-1.4 records per the ANT rules —
+// the cents→dollars shift, the workspace SubAccountId, the enriched token row
+// (ConsumedQuantity/minted SKU/PricingQuantity), the batch-tier SkuPriceId, and
+// money-only rows (session_usage, code_execution, credit, collision) carrying
+// NONE of the enrichment columns (ANT-10 re-point + all-or-none atomicity).
 func TestDiscoverAndRecords(t *testing.T) {
 	_, baseURL := startFake(t, fixture)
 	secret := credentials.NewSecret(fakeanthropic.AdminKey)
@@ -74,11 +84,13 @@ func TestDiscoverAndRecords(t *testing.T) {
 	}
 
 	rows := readAll(t, conn)
-	if len(rows) != 3 {
-		t.Fatalf("got %d records, want 3 (2 on day 1 + 1 credit)", len(rows))
+	if len(rows) != 10 {
+		t.Fatalf("got %d records, want 10", len(rows))
 	}
 
-	// Day-1 Opus row: 1234.5678 cents → 12.345678 dollars.
+	// Row 0 — Opus uncached input, enriched by the summed-across-geo usage
+	// (700000 us + 800000 eu = 1,500,000). SkuMeter is now the meter name, NOT
+	// the model id (ANT-10 re-point); model identity stays in ChargeDescription.
 	opus := rows[0].Record
 	for col, want := range map[string]string{
 		"BilledCost":          "12.345678",
@@ -86,39 +98,168 @@ func TestDiscoverAndRecords(t *testing.T) {
 		"ListCost":            "12.345678",
 		"ContractedCost":      "12.345678",
 		"BillingCurrency":     "USD",
-		"ChargeCategory":      "Usage",
-		"ChargeFrequency":     "Usage-Based",
 		"ChargePeriodStart":   "2026-05-01T00:00:00Z",
-		"ChargePeriodEnd":     "2026-05-02T00:00:00Z",
-		"BillingPeriodStart":  "2026-05-01T00:00:00Z",
-		"BillingPeriodEnd":    "2026-06-01T00:00:00Z",
 		"BillingAccountId":    "api.anthropic.com/anthropic-cost",
 		"ServiceProviderName": "Anthropic",
-		"InvoiceIssuerName":   "Anthropic",
 		"ServiceName":         "Claude API",
-		"ServiceCategory":     "AI and Machine Learning",
 		"ChargeDescription":   "Claude Opus 4 Usage - Input Tokens",
-		"SkuMeter":            "claude-opus-4-6",
 		"SubAccountId":        "wrkspc_alpha",
+		"ConsumedQuantity":    "1500000",
+		"ConsumedUnit":        "Tokens",
+		"SkuId":               "anthropic/claude-opus-4-6/uncached_input_tokens/0-200k",
+		"SkuPriceId":          "anthropic/claude-opus-4-6/uncached_input_tokens/0-200k/standard",
+		"SkuMeter":            "Input Tokens",
+		"PricingQuantity":     "1.5",
+		"PricingUnit":         "1000000 Tokens",
 	} {
 		if opus[col] != want {
 			t.Errorf("opus row %s = %q, want %q", col, opus[col], want)
 		}
 	}
-	if _, ok := opus["ChargeClass"]; ok {
-		t.Errorf("ChargeClass should be null, got %q", opus["ChargeClass"])
+	if opus["SkuMeter"] == "claude-opus-4-6" {
+		t.Error("SkuMeter must not carry the model id (ANT-10 re-point)")
 	}
 
-	// The credit row: -250 cents → -2.5, no model, no workspace.
-	credit := rows[2].Record
+	// Row 2 — cache-write 5m: the nested cache_creation token type mints its
+	// meter and SkuId with the dotted token_type.
+	cache5m := rows[2].Record
+	if cache5m["SkuMeter"] != "Cache Write Tokens (5m)" ||
+		cache5m["SkuId"] != "anthropic/claude-opus-4-6/cache_creation.ephemeral_5m_input_tokens/0-200k" ||
+		cache5m["ConsumedQuantity"] != "100000" {
+		t.Errorf("cache-5m row wrong: meter=%q sku=%q qty=%q", cache5m["SkuMeter"], cache5m["SkuId"], cache5m["ConsumedQuantity"])
+	}
+
+	// Row 4 — Haiku BATCH tier: the SkuPriceId carries the batch tier.
+	haiku := rows[4].Record
+	if haiku["SkuPriceId"] != "anthropic/claude-haiku-4/uncached_input_tokens/0-200k/batch" ||
+		haiku["ConsumedQuantity"] != "500000" {
+		t.Errorf("haiku batch row wrong: skuPriceId=%q qty=%q", haiku["SkuPriceId"], haiku["ConsumedQuantity"])
+	}
+
+	// Row 5 — session_usage: money-only (BilledCost 5), NO enrichment columns.
+	session := rows[5].Record
+	if session["BilledCost"] != "5" {
+		t.Errorf("session_usage BilledCost = %q, want 5", session["BilledCost"])
+	}
+	assertMoneyOnly(t, "session_usage", session)
+
+	// Row 7 — credit: -250 cents → -2.5, no workspace, money-only.
+	credit := rows[7].Record
 	if credit["BilledCost"] != "-2.5" {
 		t.Errorf("credit BilledCost = %q, want -2.5", credit["BilledCost"])
 	}
-	if _, ok := credit["SkuMeter"]; ok {
-		t.Errorf("credit SkuMeter should be absent, got %q", credit["SkuMeter"])
-	}
 	if _, ok := credit["SubAccountId"]; ok {
 		t.Errorf("credit SubAccountId should be absent, got %q", credit["SubAccountId"])
+	}
+	assertMoneyOnly(t, "credit", credit)
+
+	// Rows 8 & 9 — collision (two cost rows share one usage key): enrich NONE.
+	assertMoneyOnly(t, "collision-A", rows[8].Record)
+	assertMoneyOnly(t, "collision-B", rows[9].Record)
+}
+
+// assertMoneyOnly asserts a row carries NONE of the seven enrichment columns —
+// the all-or-none guarantee for unjoined/ineligible rows.
+func assertMoneyOnly(t *testing.T, label string, rec map[string]string) {
+	t.Helper()
+	for _, col := range enrichmentCols {
+		if v, ok := rec[col]; ok {
+			t.Errorf("%s row should be money-only but carries %s=%q", label, col, v)
+		}
+	}
+}
+
+// TestMoneyInvariantUnderEnrichment is the money-invariance proof (decision
+// D33): the per-period and grand-total BilledCost equal the values computed from
+// the cost fixtures ALONE (the pre-enrichment cents-shifts), and every row's
+// four money columns are byte-identical to that value — enrichment decorated
+// the rows without moving a cent.
+func TestMoneyInvariantUnderEnrichment(t *testing.T) {
+	_, baseURL := startFake(t, fixture)
+	secret := credentials.NewSecret(fakeanthropic.AdminKey)
+
+	perMonth := map[string]string{"2026-05": "117.845678", "2026-06": "92.005"}
+	grand := decimal.Zero
+	for _, month := range []string{"2026-05", "2026-06"} {
+		periods, err := anthropiccost.Discover(context.Background(), http.DefaultClient, baseURL, anthropiccost.Name, secret, "", month)
+		if err != nil {
+			t.Fatalf("Discover %s: %v", month, err)
+		}
+		sum := decimal.Zero
+		for _, row := range readAll(t, periods[0].Conn) {
+			billed := decimal.RequireFromString(row.Record["BilledCost"])
+			// The money quad must all equal BilledCost (ANT-4) regardless of
+			// whether the row was enriched.
+			for _, col := range []string{"EffectiveCost", "ListCost", "ContractedCost"} {
+				if !decimal.RequireFromString(row.Record[col]).Equal(billed) {
+					t.Errorf("%s %s = %q, want == BilledCost %s", month, col, row.Record[col], billed)
+				}
+			}
+			sum = sum.Add(billed)
+		}
+		if want := decimal.RequireFromString(perMonth[month]); !sum.Equal(want) {
+			t.Errorf("%s total BilledCost = %s, want %s (pre-enrichment fixture total)", month, sum, want)
+		}
+		grand = grand.Add(sum)
+	}
+	if want := decimal.RequireFromString("209.850678"); !grand.Equal(want) {
+		t.Errorf("grand-total BilledCost = %s, want %s", grand, want)
+	}
+}
+
+// TestAnomalySummaryReported proves the per-period orphan/collision surfaces are
+// counted into a summary line (never emitted as FOCUS rows), and that a clean
+// month reports nothing.
+func TestAnomalySummaryReported(t *testing.T) {
+	_, baseURL := startFake(t, fixture)
+	secret := credentials.NewSecret(fakeanthropic.AdminKey)
+
+	may, err := anthropiccost.Discover(context.Background(), http.DefaultClient, baseURL, anthropiccost.Name, secret, "", "2026-05")
+	if err != nil {
+		t.Fatalf("Discover May: %v", err)
+	}
+	s := may[0].Conn.AnomalySummary()
+	if !strings.HasPrefix(s, "usage/cost reconciliation:") {
+		t.Errorf("May summary = %q, want the reconciliation prefix", s)
+	}
+	for _, want := range []string{"collision", "cost-orphaned usage", "priority/flex-tier", "web-search"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("May summary %q missing %q", s, want)
+		}
+	}
+
+	june, err := anthropiccost.Discover(context.Background(), http.DefaultClient, baseURL, anthropiccost.Name, secret, "", "2026-06")
+	if err != nil {
+		t.Fatalf("Discover June: %v", err)
+	}
+	if got := june[0].Conn.AnomalySummary(); got != "" {
+		t.Errorf("clean June should report no anomalies, got %q", got)
+	}
+}
+
+// TestUsageFetchFailureDegradesPeriod proves a usage-fetch failure degrades the
+// whole month to a per-period error (never a silently quantity-less ingest)
+// while OTHER months still ingest.
+func TestUsageFetchFailureDegradesPeriod(t *testing.T) {
+	fake, baseURL := startFake(t, fixture)
+	fake.UsageFailMonth = "2026-05"
+	secret := credentials.NewSecret(fakeanthropic.AdminKey)
+
+	periods, err := anthropiccost.Discover(context.Background(), http.DefaultClient, baseURL, anthropiccost.Name, secret, "2026-05", "")
+	if err != nil {
+		t.Fatalf("Discover aborted instead of degrading one period: %v", err)
+	}
+	byMonth := map[string]anthropiccost.Period{}
+	for _, p := range periods {
+		byMonth[p.Month] = p
+	}
+	if p := byMonth["2026-05"]; p.Err == nil || p.Conn != nil {
+		t.Errorf("2026-05 should have degraded to a per-period error, got %+v", p)
+	} else if !strings.Contains(p.Err.Error(), "HTTP 500") {
+		t.Errorf("2026-05 error = %v, want the usage-fetch HTTP 500 failure", p.Err)
+	}
+	if p := byMonth["2026-06"]; p.Err != nil || p.Conn == nil {
+		t.Errorf("2026-06 should still ingest, got %+v", p)
 	}
 }
 
@@ -202,12 +343,25 @@ func TestRateLimitedThenSucceeds(t *testing.T) {
 	if periods[0].Err != nil || periods[0].Conn == nil {
 		t.Fatalf("period = %+v, want it to succeed after the retries", periods[0])
 	}
-	if got := len(fake.Requests()); got != 3 {
-		t.Errorf("served %d requests, want 3 (two 429s then one success)", got)
+	// The 429s only gate the cost endpoint; count cost requests specifically
+	// (the connector also fetches the usage endpoint).
+	if got := countPath(fake.Requests(), "/v1/organizations/cost_report"); got != 3 {
+		t.Errorf("served %d cost requests, want 3 (two 429s then one success)", got)
 	}
-	if rows := readAll(t, periods[0].Conn); len(rows) != 3 {
-		t.Errorf("got %d records after retrying, want 3", len(rows))
+	if rows := readAll(t, periods[0].Conn); len(rows) != 10 {
+		t.Errorf("got %d records after retrying, want 10", len(rows))
 	}
+}
+
+// countPath counts served requests whose path equals p.
+func countPath(reqs []fakeanthropic.Request, p string) int {
+	n := 0
+	for _, r := range reqs {
+		if r.Path == p {
+			n++
+		}
+	}
+	return n
 }
 
 // TestRateLimitGivesUp proves the retry loop is BOUNDED: a fake that always
@@ -227,9 +381,13 @@ func TestRateLimitGivesUp(t *testing.T) {
 	if periods[0].Err == nil || !strings.Contains(periods[0].Err.Error(), "HTTP 429") {
 		t.Errorf("give-up error = %v, want a bounded-retry HTTP 429 failure", periods[0].Err)
 	}
-	// One initial attempt plus max429Retries retries.
-	if got := len(fake.Requests()); got != 6 {
-		t.Errorf("served %d requests, want 6 (1 + 5 bounded retries)", got)
+	// One initial attempt plus max429Retries retries, all on the cost endpoint;
+	// the usage endpoint is never reached because the cost fetch fails first.
+	if got := countPath(fake.Requests(), "/v1/organizations/cost_report"); got != 6 {
+		t.Errorf("served %d cost requests, want 6 (1 + 5 bounded retries)", got)
+	}
+	if got := countPath(fake.Requests(), "/v1/organizations/usage_report/messages"); got != 0 {
+		t.Errorf("usage endpoint reached %d times, want 0 (cost fetch failed first)", got)
 	}
 }
 

@@ -15,6 +15,28 @@
         "token_type": "uncached_input_tokens"
       },
       {
+        "amount": "400",
+        "currency": "USD",
+        "description": "Claude Opus 4 Usage - Cache Read",
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "cost_type": "tokens",
+        "context_window": "0-200k",
+        "service_tier": "standard",
+        "token_type": "cache_read_input_tokens"
+      },
+      {
+        "amount": "800",
+        "currency": "USD",
+        "description": "Claude Opus 4 Usage - Cache Write 5m",
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "cost_type": "tokens",
+        "context_window": "0-200k",
+        "service_tier": "standard",
+        "token_type": "cache_creation.ephemeral_5m_input_tokens"
+      },
+      {
         "amount": "6500",
         "currency": "USD",
         "description": "Claude Sonnet 4.5 Usage - Output Tokens",
@@ -24,6 +46,25 @@
         "context_window": "0-200k",
         "service_tier": "standard",
         "token_type": "output_tokens"
+      },
+      {
+        "amount": "2000",
+        "currency": "USD",
+        "description": "Claude Haiku 4 Batch Usage - Input Tokens",
+        "model": "claude-haiku-4",
+        "workspace_id": "wrkspc_beta",
+        "cost_type": "tokens",
+        "context_window": "0-200k",
+        "service_tier": "batch",
+        "token_type": "uncached_input_tokens"
+      },
+      {
+        "amount": "500",
+        "currency": "USD",
+        "description": "Claude Opus 4 - Session Usage",
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "cost_type": "session_usage"
       }
     ]
   },
@@ -32,12 +73,42 @@
     "ending_at": "2026-05-03T00:00:00Z",
     "results": [
       {
+        "amount": "300",
+        "currency": "USD",
+        "description": "Claude Code - Code Execution",
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_alpha",
+        "cost_type": "code_execution"
+      },
+      {
         "amount": "-250",
         "currency": "USD",
         "description": "Developer promotional credit",
         "model": null,
         "workspace_id": null,
         "cost_type": null
+      },
+      {
+        "amount": "100",
+        "currency": "USD",
+        "description": "Claude Opus 4 Usage - Output Tokens",
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_gamma",
+        "cost_type": "tokens",
+        "context_window": "0-200k",
+        "service_tier": "standard",
+        "token_type": "output_tokens"
+      },
+      {
+        "amount": "200",
+        "currency": "USD",
+        "description": "Claude Opus 4 Usage - Output Tokens",
+        "model": "claude-opus-4-6",
+        "workspace_id": "wrkspc_gamma",
+        "cost_type": "tokens",
+        "context_window": "0-200k",
+        "service_tier": "standard",
+        "token_type": "output_tokens"
       }
     ]
   }

@@ -44,15 +44,19 @@
 // a different org would supersede the old org's data; single-org-per-slot
 // is the supported v1 shape.
 //
-// # ContentHash — data elements only
+// # ContentHash — data elements only, over BOTH payload sets
 //
 // ContentHash is "sha256:<hex>" over the concatenated raw bytes of the
-// response data-array elements (the bucket objects exactly as received) in
-// fetch order, EXCLUDING the pagination envelope: has_more/next_page cursor
+// response data-array elements (the bucket objects exactly as received) —
+// FIRST the cost_report elements, THEN the usage_report/messages elements — in
+// fetch order, EXCLUDING each pagination envelope: has_more/next_page cursor
 // tokens are undocumented and may be time-derived (the API's own example
 // next_page is a timestamp), so including them would defeat the store's
-// unchanged short-circuit. Discover fetches each month's pages once up
-// front and caches the payloads, so ContentHash and Records share one fetch.
+// unchanged short-circuit. It covers the usage payloads too because a
+// quantity-only restatement (unchanged money, changed token counts) MUST NOT
+// be skipped by the unchanged short-circuit — the enrichment it drives changed.
+// Discover fetches each month's cost AND usage pages once up front and caches
+// the payloads, so ContentHash and Records share one fetch.
 //
 // # --force
 //
@@ -89,16 +93,82 @@
 //	                                         ChargeClass null. Negative
 //	                                         amounts (credits/refunds) pass
 //	                                         through unchanged.
-//	ANT-10  ChargeDescription / SkuMeter    raw description; SkuMeter = model
-//	                                         id when the bucket carries one.
+//	ANT-10  ChargeDescription / SkuMeter    ChargeDescription = raw description
+//	                                         (model identity lives here). SkuMeter
+//	                                         is null UNLESS the row is enriched
+//	                                         (ANT-13) — FOCUS 1.4 requires
+//	                                         SkuMeter be null when SkuId is null.
+//	                                         [Behavior change vs slice 5, which
+//	                                         set SkuMeter = model on every
+//	                                         model-bearing row: that was a latent
+//	                                         conformance bug; first re-sync of
+//	                                         existing data reports `replaced`.]
 //	ANT-11  SubAccountId                    workspace_id when grouped by
 //	                                         workspace, else null.
+//	ANT-12  usage fetch                     In the SAME per-month sync run, the
+//	                                         usage_report/messages endpoint is
+//	                                         fetched (1d buckets; group_by[]=
+//	                                         model, workspace_id, context_window,
+//	                                         inference_geo, service_tier; cursor
+//	                                         paginated). A usage failure degrades
+//	                                         the whole month to a per-period error
+//	                                         (never a silently quantity-less
+//	                                         ingest). ContentHash covers both
+//	                                         payload sets (see above).
+//	ANT-13  join & mint (enrichment)        Each usage row unpivots to up to five
+//	                                         (token_type, quantity) pairs (nested
+//	                                         cache_creation descended); quantities
+//	                                         PRE-AGGREGATE per (day, model,
+//	                                         context_window, workspace_id,
+//	                                         inference_geo, service_tier,
+//	                                         token_type) — duplicate buckets SUM.
+//	                                         A cost row with cost_type=="tokens"
+//	                                         joins on (model, context_window,
+//	                                         workspace_id [empty tolerated],
+//	                                         inference_geo [null cost-side matches
+//	                                         usage summed across all geo values],
+//	                                         service_tier ∈ {standard,batch},
+//	                                         token_type). On a UNIQUE match the
+//	                                         row gains, atomically (all-or-none):
+//	                                         ConsumedQuantity = token count;
+//	                                         ConsumedUnit = "Tokens";
+//	                                         SkuId = anthropic/<model>/<token_type>/
+//	                                         <context_window>;
+//	                                         SkuPriceId = <SkuId>/<service_tier>;
+//	                                         SkuMeter = the friendly meter name;
+//	                                         PricingQuantity = quantity ÷ 1,000,000
+//	                                         by exact decimal shift;
+//	                                         PricingUnit = "1000000 Tokens". These
+//	                                         minted SKU identifiers are a Costroid
+//	                                         convention (decision D33) — FROZEN
+//	                                         once shipped. BilledCost and the other
+//	                                         money columns stay byte-identical
+//	                                         (money invariance, decision D33).
+//	ANT-14  ambiguity & orphans             If MORE THAN ONE cost row matches one
+//	                                         aggregated usage key, enrich NONE and
+//	                                         count the collision. Priority/flex-tier
+//	                                         usage, web_search_requests counts, and
+//	                                         standard/batch usage keys with no cost
+//	                                         row are counted in the per-period
+//	                                         anomaly summary (one log line) and
+//	                                         NEVER emitted as FOCUS rows (D33). Cost
+//	                                         rows with cost_type ∉ {tokens}
+//	                                         (web_search, code_execution,
+//	                                         session_usage, unknown future values)
+//	                                         ingest money-only: quantity-null and
+//	                                         SkuMeter/SkuId/SkuPriceId null.
 //
-// ConsumedQuantity stays null this slice: the cost endpoint carries no token
-// quantities (this does not reverse decision D4; token-quantity ingestion
-// via the usage endpoint is a later slice). Priority Tier costs are EXCLUDED
-// from the cost-report endpoint by Anthropic; tracking them via the usage
-// report is out of scope.
+// ListUnitPrice/ContractedUnitPrice stay null on minted rows (documented
+// deviation, decision D33): unit prices need vendor price lists, a later slice —
+// stated honestly rather than synthesized. ConsumedQuantity is thus non-null
+// only on enriched rows; the FOCUS 1.3+ coupling (ConsumedQuantity requires a
+// non-null SkuPriceId; ConsumedUnit non-null iff ConsumedQuantity non-null;
+// SkuMeter null when SkuId null) is enforced by this connector's all-or-none
+// mint and its tests, NOT by the per-column validator.
+//
+// The draft-1.5 SkuPriceDetails model-identity properties (spec PR #2442) are
+// intentionally deferred (decision D33): its property set changed mid-review, so
+// adopting 1.5 will be a rename onto these minted identifiers, not a remodel.
 package anthropiccost
 
 import (
@@ -137,9 +207,18 @@ const providerHost = "api.anthropic.com"
 // anthropicVersion is the required API version header.
 const anthropicVersion = "2023-06-01"
 
-// costReportPath is the endpoint path (kept out of error messages, which
+// costReportPath is the cost endpoint path (kept out of error messages, which
 // never echo full request URLs).
 const costReportPath = "/v1/organizations/cost_report"
+
+// usageReportPath is the token-usage endpoint path — the ONLY token-usage
+// endpoint — fetched in the same sync run as the cost report (ANT-12).
+const usageReportPath = "/v1/organizations/usage_report/messages"
+
+// usageLimit is the requested usage-page bucket size. Usage buckets are 1d, so
+// a whole month fits in at most 31 buckets; the fake paginates independently to
+// exercise the cursor path.
+const usageLimit = "31"
 
 // maxBodyBytes caps how much of a response body is read into memory or an
 // error message.
@@ -190,13 +269,41 @@ func Discover(ctx context.Context, client *http.Client, baseURL, slot string, se
 	return out, nil
 }
 
-// fetchMonth pages through one month's cost report, following
-// has_more/next_page, and returns a Connector caching the fetched buckets.
+// fetchMonth pages through one month's cost report AND its token usage report
+// (ANT-12), following has_more/next_page on each, joins the usage quantities
+// onto the cost tokens rows (ANT-13/14), and returns a Connector caching the
+// enriched buckets. A usage failure degrades the whole month (returns an error
+// → Period.Err), so the month is never ingested with silently-missing
+// quantities.
 func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, month string) (*Connector, error) {
 	start, end, err := aiconn.MonthBounds(month)
 	if err != nil {
 		return nil, err
 	}
+	rawCost, buckets, err := fetchCost(ctx, client, base, apiKey, month, start, end)
+	if err != nil {
+		return nil, err
+	}
+	rawUsage, usage, err := fetchUsage(ctx, client, base, apiKey, month, start, end)
+	if err != nil {
+		return nil, err
+	}
+	enrich, summary := enrichMonth(buckets, usage)
+	return &Connector{
+		slot:        slot,
+		month:       month,
+		monthStart:  start,
+		monthEnd:    end,
+		buckets:     buckets,
+		enrich:      enrich,
+		summary:     summary,
+		contentHash: contentHash(rawCost, rawUsage),
+	}, nil
+}
+
+// fetchCost pages through one month's cost report, returning the raw data-
+// element bytes (for ContentHash) and the parsed buckets.
+func fetchCost(ctx context.Context, client *http.Client, base, apiKey, month string, start, end time.Time) ([][]byte, []bucket, error) {
 	var (
 		rawBuckets [][]byte
 		buckets    []bucket
@@ -211,19 +318,19 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		if page != "" {
 			q.Set("page", page)
 		}
-		body, err := doGet(ctx, client, base+costReportPath+"?"+encodeQuery(q), apiKey, month)
+		body, err := doGet(ctx, client, base+costReportPath+"?"+encodeQuery(q, costGroupBy), apiKey, month, "cost report")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		var resp costReport
+		var resp pagedResponse
 		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("anthropic-cost %s: decoding cost report response: %w", month, err)
+			return nil, nil, fmt.Errorf("anthropic-cost %s: decoding cost report response: %w", month, err)
 		}
 		for _, raw := range resp.Data {
 			rawBuckets = append(rawBuckets, raw)
 			var b bucket
 			if err := json.Unmarshal(raw, &b); err != nil {
-				return nil, fmt.Errorf("anthropic-cost %s: decoding cost bucket: %w", month, err)
+				return nil, nil, fmt.Errorf("anthropic-cost %s: decoding cost bucket: %w", month, err)
 			}
 			buckets = append(buckets, b)
 		}
@@ -232,38 +339,78 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		}
 		page = resp.NextPage
 	}
-	return &Connector{
-		slot:        slot,
-		month:       month,
-		monthStart:  start,
-		monthEnd:    end,
-		buckets:     buckets,
-		contentHash: contentHash(rawBuckets),
-	}, nil
+	return rawBuckets, buckets, nil
 }
 
-// groupBy is the finest documented grouping combination. Anthropic documents
-// the parameter as the bracketed, repeated group_by[]= (not a bare
-// group_by=), so encodeQuery emits it with literal brackets.
-var groupBy = []string{"description", "workspace_id"}
+// fetchUsage pages through one month's token usage report, returning the raw
+// data-element bytes (for ContentHash) and the parsed usage buckets.
+func fetchUsage(ctx context.Context, client *http.Client, base, apiKey, month string, start, end time.Time) ([][]byte, []usageBucket, error) {
+	var (
+		rawBuckets [][]byte
+		buckets    []usageBucket
+		page       string
+	)
+	for {
+		q := url.Values{}
+		q.Set("starting_at", start.Format(time.RFC3339))
+		q.Set("ending_at", end.Format(time.RFC3339))
+		q.Set("bucket_width", "1d")
+		q.Set("limit", usageLimit)
+		if page != "" {
+			q.Set("page", page)
+		}
+		body, err := doGet(ctx, client, base+usageReportPath+"?"+encodeQuery(q, usageGroupBy), apiKey, month, "usage report")
+		if err != nil {
+			return nil, nil, err
+		}
+		var resp pagedResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, nil, fmt.Errorf("anthropic-cost %s: decoding usage report response: %w", month, err)
+		}
+		for _, raw := range resp.Data {
+			rawBuckets = append(rawBuckets, raw)
+			var b usageBucket
+			if err := json.Unmarshal(raw, &b); err != nil {
+				return nil, nil, fmt.Errorf("anthropic-cost %s: decoding usage bucket: %w", month, err)
+			}
+			buckets = append(buckets, b)
+		}
+		if !resp.HasMore || resp.NextPage == "" {
+			break
+		}
+		page = resp.NextPage
+	}
+	return rawBuckets, buckets, nil
+}
 
-// encodeQuery renders q plus the repeated group_by[]= parameters with LITERAL
-// brackets, so the wire key is exactly "group_by[]" (url.Values.Encode would
-// percent-encode the brackets, and a bare "group_by" is the wrong parameter
-// name for this endpoint). The group_by values are fixed identifiers needing
-// no escaping.
-func encodeQuery(q url.Values) string {
+// costGroupBy is the finest documented cost grouping combination. Anthropic
+// documents the parameter as the bracketed, repeated group_by[]= (not a bare
+// group_by=), so encodeQuery emits it with literal brackets.
+var costGroupBy = []string{"description", "workspace_id"}
+
+// usageGroupBy is the five join dims requested from usage_report/messages
+// (ANT-12) — the cost-side join dimensions, and ONLY those (never api_key_id /
+// account_id / service_account_id / speed).
+var usageGroupBy = []string{"model", "workspace_id", "context_window", "inference_geo", "service_tier"}
+
+// encodeQuery renders q plus the given repeated group_by[]= parameters with
+// LITERAL brackets, so the wire key is exactly "group_by[]" (url.Values.Encode
+// would percent-encode the brackets, and a bare "group_by" is the wrong
+// parameter name for these endpoints). The group_by values are fixed
+// identifiers needing no escaping.
+func encodeQuery(q url.Values, groups []string) string {
 	encoded := q.Encode()
-	for _, g := range groupBy {
+	for _, g := range groups {
 		encoded += "&group_by[]=" + g
 	}
 	return encoded
 }
 
-// doGet issues one GET with the auth headers and bounded 429 retries. It
-// NEVER logs or echoes the api key, request headers, or the request URL
-// (which would carry the query string).
-func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month string) ([]byte, error) {
+// doGet issues one GET with the auth headers and bounded 429 retries. what
+// names the endpoint (e.g. "cost report", "usage report") for accurate error
+// messages. It NEVER logs or echoes the api key, request headers, or the
+// request URL (which would carry the query string).
+func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month, what string) ([]byte, error) {
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 		if err != nil {
@@ -275,7 +422,7 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 		resp, err := client.Do(req)
 		if err != nil {
 			// A transport error may embed the request URL — scrub the query.
-			return nil, fmt.Errorf("anthropic-cost %s: requesting the cost report failed: %s", month, scrubTransportErr(err))
+			return nil, fmt.Errorf("anthropic-cost %s: requesting the %s failed: %s", month, what, scrubTransportErr(err))
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 		_ = resp.Body.Close()
@@ -283,7 +430,7 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 		switch {
 		case resp.StatusCode == http.StatusOK:
 			if readErr != nil {
-				return nil, fmt.Errorf("anthropic-cost %s: reading the cost report body: %w", month, readErr)
+				return nil, fmt.Errorf("anthropic-cost %s: reading the %s body: %w", month, what, readErr)
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusTooManyRequests && attempt < max429Retries:
@@ -293,11 +440,11 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 			continue
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			return nil, fmt.Errorf("anthropic-cost %s: the Anthropic Admin API key was rejected (HTTP %d) — check the "+
-				"credential slot holds a valid Anthropic Admin API key with cost-report access: %s",
+				"credential slot holds a valid Anthropic Admin API key with cost/usage-report access: %s",
 				month, resp.StatusCode, truncateBody(body))
 		default:
-			return nil, fmt.Errorf("anthropic-cost %s: cost report request failed (HTTP %d): %s",
-				month, resp.StatusCode, truncateBody(body))
+			return nil, fmt.Errorf("anthropic-cost %s: %s request failed (HTTP %d): %s",
+				month, what, resp.StatusCode, truncateBody(body))
 		}
 	}
 }
@@ -331,9 +478,9 @@ func retryAfterDelay(header string) time.Duration {
 	return 2 * time.Second
 }
 
-// costReport is the response envelope; Data elements are kept raw so
-// ContentHash hashes the bytes exactly as received.
-type costReport struct {
+// pagedResponse is the shared cost/usage response envelope; Data elements are
+// kept raw so ContentHash hashes the bytes exactly as received.
+type pagedResponse struct {
 	Data     []json.RawMessage `json:"data"`
 	HasMore  bool              `json:"has_more"`
 	NextPage string            `json:"next_page"`
@@ -348,34 +495,52 @@ type bucket struct {
 
 // result is one cost line within a bucket. Only cost METADATA is read
 // (Cardinal Rule): amount, currency, model identity, cost-line description,
-// and workspace. Token-type/usage fields are intentionally ignored.
+// workspace, and the STRUCTURED enum fields Anthropic supplies (never parsed
+// out of the description string) — cost_type, and, when cost_type=="tokens",
+// the token_type/service_tier/context_window/inference_geo that name the usage
+// quantity this row's money paid for (ANT-13). No prompt/response content
+// exists on this surface.
 type result struct {
 	Amount      string `json:"amount"`   // decimal string in cents
 	Currency    string `json:"currency"` // e.g. "USD"
 	Description string `json:"description"`
 	Model       string `json:"model"`
 	WorkspaceID string `json:"workspace_id"`
+
+	CostType      string `json:"cost_type"`
+	TokenType     string `json:"token_type"`
+	ServiceTier   string `json:"service_tier"`
+	ContextWindow string `json:"context_window"`
+	InferenceGeo  string `json:"inference_geo"`
 }
 
-// contentHash is "sha256:<hex>" over the concatenated raw bytes of the data
-// elements in fetch order (see the package documentation).
-func contentHash(rawBuckets [][]byte) string {
+// contentHash is "sha256:<hex>" over the concatenated raw bytes of the cost
+// data elements THEN the usage data elements, in fetch order (see the package
+// documentation). Covering usage lets a quantity-only restatement supersede.
+func contentHash(rawCost, rawUsage [][]byte) string {
 	h := sha256.New()
-	for _, b := range rawBuckets {
+	for _, b := range rawCost {
+		_, _ = h.Write(b)
+	}
+	for _, b := range rawUsage {
 		_, _ = h.Write(b)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
-// Connector reads one billing month of the Anthropic cost report. Instances
-// are produced by Discover, one per month, holding that month's cached
-// buckets so Records and ContentHash never re-fetch.
+// Connector reads one billing month of the Anthropic cost report, enriched
+// with token quantities from the usage report (ANT-13). Instances are produced
+// by Discover, one per month, holding that month's cached cost buckets, the
+// precomputed per-row enrichment, and the per-period anomaly summary so Records
+// and ContentHash never re-fetch.
 type Connector struct {
 	slot        string
 	month       string
 	monthStart  time.Time
 	monthEnd    time.Time
 	buckets     []bucket
+	enrich      map[rowKey]enrichment
+	summary     anomalySummary
 	contentHash string
 }
 
@@ -390,6 +555,12 @@ func (c *Connector) FOCUSVersion() focus.Version { return focus.V1_4 }
 
 // Month returns the connector's billing month ("YYYY-MM").
 func (c *Connector) Month() string { return c.month }
+
+// AnomalySummary returns one line summarizing this month's usage⇔cost
+// reconciliation anomalies (collisions, cost-orphaned usage, priority/flex-tier
+// usage, web-search counts), or "" when there is nothing to report. These
+// surfaces are counted but never emitted as FOCUS rows (ANT-14, decision D33).
+func (c *Connector) AnomalySummary() string { return c.summary.String() }
 
 // SourceIdentity implements ingest.Connector (see the package documentation
 // for why the provider host is fixed).
@@ -424,9 +595,10 @@ func (r *recordReader) Next() (ingest.Row, error) {
 			continue
 		}
 		res := b.Results[r.ri]
+		rk := rowKey{r.bi, r.ri}
 		r.ri++
 		r.num++
-		rec, err := r.conn.synthesize(b, res)
+		rec, err := r.conn.synthesize(b, res, rk)
 		if err != nil {
 			return ingest.Row{}, err
 		}
@@ -439,8 +611,9 @@ func (r *recordReader) Next() (ingest.Row, error) {
 func (r *recordReader) Close() error { return nil }
 
 // synthesize maps one Anthropic cost line to a FOCUS-1.4 RawRecord per the
-// ANT rule table.
-func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
+// ANT rule table, applying the precomputed token-quantity enrichment (ANT-13)
+// when this row (identified by rk) uniquely matched a usage key.
+func (c *Connector) synthesize(b bucket, res result, rk rowKey) (focus.RawRecord, error) {
 	if res.Currency == "" {
 		return nil, fmt.Errorf("anthropic-cost %s: a cost bucket carries no currency — refusing to assume USD "+
 			"(decision D23); the Anthropic cost report must supply a currency", c.month)
@@ -482,11 +655,22 @@ func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
 	if res.Description != "" {
 		rec["ChargeDescription"] = res.Description
 	}
-	if res.Model != "" {
-		rec["SkuMeter"] = res.Model
-	}
 	if res.WorkspaceID != "" {
 		rec["SubAccountId"] = res.WorkspaceID
+	}
+	// Enrichment (ANT-13): only rows that uniquely matched a usage key gain the
+	// full quantity/SKU set, atomically. All other rows — unjoined token rows,
+	// web_search/session_usage/code_execution, credits — carry no SkuMeter,
+	// SkuId, SkuPriceId, ConsumedQuantity, or PricingQuantity (ANT-10, ANT-14),
+	// keeping the money-only rows FOCUS-conformant.
+	if enr, ok := c.enrich[rk]; ok {
+		rec["ConsumedQuantity"] = enr.quantity.String()
+		rec["ConsumedUnit"] = "Tokens"
+		rec["SkuId"] = enr.skuID
+		rec["SkuPriceId"] = enr.skuPriceID
+		rec["SkuMeter"] = enr.skuMeter
+		rec["PricingQuantity"] = enr.pricingQty.String()
+		rec["PricingUnit"] = "1000000 Tokens"
 	}
 	return rec, nil
 }

@@ -56,3 +56,32 @@ func TestWaitRetryAfterHonorsContext(t *testing.T) {
 		t.Error("waitRetryAfter with a cancelled context returned nil, want ctx.Err()")
 	}
 }
+
+// TestOpenAISkuMeterGolden pins the frozen unit derivation (OAI-11/OAI-12) over
+// representative opaque line_items: only the three documented trailing
+// direction suffixes map to a meter; everything else is left unpriced (a unit is
+// never guessed). ", cached input" must win over ", input".
+func TestOpenAISkuMeterGolden(t *testing.T) {
+	cases := []struct {
+		lineItem  string
+		wantMeter string
+		wantOK    bool
+	}{
+		{"gpt-4o, input", "Input Tokens", true},
+		{"ft-gpt-4o-2024-08-06, input", "Input Tokens", true},
+		{"gpt-4o, output", "Output Tokens", true},
+		{"gpt-4o, cached input", "Cache Read Tokens", true},
+		{"o3-mini, cached input", "Cache Read Tokens", true},
+		{"assistants api | file search", "", false},
+		{"web search tool call", "", false},
+		{"gpt-4o", "", false},
+		{"gpt-image-1, image input", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		meter, ok := openaiSkuMeter(c.lineItem)
+		if ok != c.wantOK || meter != c.wantMeter {
+			t.Errorf("openaiSkuMeter(%q) = (%q, %t), want (%q, %t)", c.lineItem, meter, ok, c.wantMeter, c.wantOK)
+		}
+	}
+}

@@ -309,6 +309,77 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 	return result, nil
 }
 
+// EnrichedAIRows returns the enrichment-relevant projection of one
+// tenant+connector's stored cost records (see AIRow), ordered
+// deterministically. Decimal columns are cast to text in SQL and rebuilt
+// exactly, so no precision is lost and NULLs stay NULL. This is a store-level
+// verification helper (decision D33), not a product query surface — it is on
+// the concrete store only, never the Store interface.
+func (s *DuckDB) EnrichedAIRows(ctx context.Context, tenant, connector string) ([]AIRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT charge_description, sku_id, sku_price_id, sku_meter,
+			CAST(consumed_quantity AS VARCHAR), consumed_unit,
+			CAST(pricing_quantity AS VARCHAR), pricing_unit,
+			CAST(billed_cost AS VARCHAR)
+		 FROM cost_records
+		 WHERE x_tenant_id = ? AND batch_connector = ?
+		 ORDER BY charge_period_start ASC, sku_id ASC, billed_cost ASC`, tenant, connector)
+	if err != nil {
+		return nil, fmt.Errorf("querying AI cost rows: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []AIRow
+	for rows.Next() {
+		var (
+			desc, skuID, skuPriceID, skuMeter sql.NullString
+			consumedQty, consumedUnit         sql.NullString
+			pricingQty, pricingUnit           sql.NullString
+			billed                            sql.NullString
+		)
+		if err := rows.Scan(&desc, &skuID, &skuPriceID, &skuMeter,
+			&consumedQty, &consumedUnit, &pricingQty, &pricingUnit, &billed); err != nil {
+			return nil, fmt.Errorf("scanning AI cost row: %w", err)
+		}
+		r := AIRow{
+			ChargeDescription: desc.String,
+			SkuID:             skuID.String,
+			SkuPriceID:        skuPriceID.String,
+			SkuMeter:          skuMeter.String,
+			ConsumedUnit:      consumedUnit.String,
+			PricingUnit:       pricingUnit.String,
+		}
+		if r.ConsumedQuantity, err = parseNullText(consumedQty); err != nil {
+			return nil, fmt.Errorf("parsing consumed_quantity: %w", err)
+		}
+		if r.PricingQuantity, err = parseNullText(pricingQty); err != nil {
+			return nil, fmt.Errorf("parsing pricing_quantity: %w", err)
+		}
+		if billed.Valid {
+			if r.BilledCost, err = decimal.NewFromString(billed.String); err != nil {
+				return nil, fmt.Errorf("parsing billed_cost: %w", err)
+			}
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying AI cost rows: %w", err)
+	}
+	return out, nil
+}
+
+// parseNullText rebuilds a nullable decimal from a nullable text column.
+func parseNullText(v sql.NullString) (decimal.NullDecimal, error) {
+	if !v.Valid {
+		return decimal.NullDecimal{}, nil
+	}
+	d, err := decimal.NewFromString(v.String)
+	if err != nil {
+		return decimal.NullDecimal{}, err
+	}
+	return decimal.NullDecimal{Decimal: d, Valid: true}, nil
+}
+
 // SyncStates implements Store. TenantID is joined from the source's
 // stored ingest batch (see SyncState.TenantID) — it is not a column of
 // the sync tuple itself.
