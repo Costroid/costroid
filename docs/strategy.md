@@ -119,7 +119,37 @@ Revisit this file when any of these fires:
 - StitcherAI announces self-hosted or open-source anything.
 - OpenCost ships FOCUS as its native model, or ships its AI usage costing.
 - FOCUS 1.5 is ratified → align the AI/token and Price Sheet schema (D4).
+  Leading indicator: the FOCUS_Spec v1.5 GitHub milestone closes development
+  ~2026-10-01; ratification has historically followed ~2 months later.
 - A Tokenomics/AI-cost standard is published.
+- **GCP's FOCUS export reaches GA** (or announces a GA date) → start the GCP
+  connector slice (D31 gates it on this).
+
+Status check 2026-07-05 (adversarially verified research pass):
+
+- **Fired (a status change, not the GA trigger):** GCP shipped a first-party
+  FOCUS billing export in **Preview** on 2026-06-08 — FOCUS 1.2, delivered only
+  as a Google-managed BigQuery linked dataset (the file-export path is
+  deprecated and closed to new customers); pre-GA terms, schema may change.
+  Backfill reaches at most the start of the previous month and the table has a
+  2-year TTL — docs should tell GCP users to enable it *now* even though our
+  connector waits (D31).
+- **Partially fired:** the Linux Foundation announced *intent* to launch the
+  **Tokenomics Foundation** (2026-06-03; backers incl. Google Cloud, Microsoft,
+  Oracle, IBM). No standard published — token/AI-cost schema work funnels into
+  FOCUS 1.5. Tailwind for the AI-vendor connectors.
+- **Not fired:** StitcherAI — SaaS GA only (2026-05-19), nothing self-hosted or
+  open-source. OpenCost — no FOCUS-native model, no AI costing shipped; both
+  still roadmap items → re-check around KubeCon NA 2026.
+- **New datapoints:** FOCUS 1.4 ratified 2026-06-04 (validates our internal
+  model; no hyperscaler ships >1.2 yet). AWS holds the inaugural FinOps
+  Certified FOCUS Generator badge — certified against **1.2**, the industry's
+  current ceiling and exactly what we ingest. Microsoft publicly committed to
+  FOCUS 1.4 "in 2026" → expect an Azure version-bump slice in H2 2026, likely
+  before GCP GA. Vercel ships FOCUS **1.3** (since 2026-02-19) — version churn
+  arrives via small SaaS vendors first; a datapoint for the generic-import
+  tier. The upstream focus_converters project remains abandoned (last push
+  2024-08-30).
 
 ## Candidate decisions
 
