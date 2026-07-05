@@ -83,6 +83,8 @@ After `make build`, run `./bin/costroid serve` and open <http://localhost:8080>.
 
 Run `./bin/costroid ingest -h` for the full flag reference. A synthetic sample lives at `testdata/aws-focus-1.2/sample-export.csv.gz`. Available environment variables are documented in `.env.example` (`.env` is git-ignored).
 
+> **On Google Cloud?** Enable Google's [FOCUS billing export](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-focus-setup) (Preview) **now**, even though Costroid's GCP connector is still upcoming: the export only backfills to the start of the previous month and its table keeps two years of history, so every month it stays off is billing history no tool can ever recover.
+
 ---
 
 ## Contributing
