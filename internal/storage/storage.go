@@ -83,6 +83,24 @@ type Store interface {
 	// replacing any stored one for the same (connector, manifest key).
 	UpsertManifestAttribution(ctx context.Context, attr ManifestAttribution) error
 
+	// PutCredential stores (or replaces) one encrypted credential slot by
+	// name (decision D32). It persists only the opaque nonce and ciphertext
+	// — never the encryption key or any plaintext. Replacing a slot keeps
+	// its original CreatedAt.
+	PutCredential(ctx context.Context, cred Credential) error
+
+	// GetCredential returns one credential slot's stored nonce and
+	// ciphertext by name; found is false when no such slot exists.
+	GetCredential(ctx context.Context, name string) (cred Credential, found bool, err error)
+
+	// ListCredentials returns every slot's name and timestamps (never any
+	// secret material), name-ascending.
+	ListCredentials(ctx context.Context) ([]CredentialInfo, error)
+
+	// DeleteCredential removes one credential slot by name; deleted is
+	// false when no such slot existed.
+	DeleteCredential(ctx context.Context, name string) (deleted bool, err error)
+
 	// Close releases the underlying database. The embedded store is
 	// single-writer (DuckDB): it must be closed before another process
 	// can open the same data directory.
@@ -160,6 +178,28 @@ type Batch struct {
 	SourceIdentity string
 	ContentHash    string
 	TenantID       string
+}
+
+// Credential is one encrypted credential slot at rest (decision D32,
+// migration 0005): the slot name, the AES-256-GCM nonce and ciphertext,
+// and its timestamps. The struct never holds plaintext or the encryption
+// key — decryption happens in the credentials package, which owns the key
+// file. The credential NAME is the GCM additional authenticated data, so a
+// ciphertext moved to a different name fails to decrypt.
+type Credential struct {
+	Name       string
+	Nonce      []byte
+	Ciphertext []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// CredentialInfo is the non-secret metadata of one credential slot, all
+// that `credentials list` may reveal (decision D32).
+type CredentialInfo struct {
+	Name      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ReplaceResult reports what ReplaceIngestBatch did.

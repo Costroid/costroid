@@ -412,6 +412,79 @@ func (s *DuckDB) UpsertManifestAttribution(ctx context.Context, attr ManifestAtt
 	return nil
 }
 
+// PutCredential implements Store. A replace keeps the slot's original
+// created_at; only nonce, ciphertext, and updated_at change.
+func (s *DuckDB) PutCredential(ctx context.Context, cred Credential) error {
+	now := time.Now().UTC()
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO credentials (name, nonce, ciphertext, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT (name) DO UPDATE SET
+			nonce = excluded.nonce,
+			ciphertext = excluded.ciphertext,
+			updated_at = excluded.updated_at`,
+		cred.Name, cred.Nonce, cred.Ciphertext, now, now); err != nil {
+		return fmt.Errorf("storing credential: %w", err)
+	}
+	return nil
+}
+
+// GetCredential implements Store.
+func (s *DuckDB) GetCredential(ctx context.Context, name string) (Credential, bool, error) {
+	cred := Credential{Name: name}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT nonce, ciphertext, created_at, updated_at FROM credentials WHERE name = ?`, name).
+		Scan(&cred.Nonce, &cred.Ciphertext, &cred.CreatedAt, &cred.UpdatedAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Credential{}, false, nil
+	case err != nil:
+		return Credential{}, false, fmt.Errorf("reading credential: %w", err)
+	}
+	cred.CreatedAt = cred.CreatedAt.UTC()
+	cred.UpdatedAt = cred.UpdatedAt.UTC()
+	return cred, true, nil
+}
+
+// ListCredentials implements Store. It returns names and timestamps only —
+// never nonce or ciphertext.
+func (s *DuckDB) ListCredentials(ctx context.Context) ([]CredentialInfo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name, created_at, updated_at FROM credentials ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("listing credentials: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []CredentialInfo
+	for rows.Next() {
+		var info CredentialInfo
+		if err := rows.Scan(&info.Name, &info.CreatedAt, &info.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning credential: %w", err)
+		}
+		info.CreatedAt = info.CreatedAt.UTC()
+		info.UpdatedAt = info.UpdatedAt.UTC()
+		out = append(out, info)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing credentials: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteCredential implements Store.
+func (s *DuckDB) DeleteCredential(ctx context.Context, name string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM credentials WHERE name = ?`, name)
+	if err != nil {
+		return false, fmt.Errorf("deleting credential: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("deleting credential: %w", err)
+	}
+	return n > 0, nil
+}
+
 // nullString maps the model's "" (null) convention to SQL NULL.
 func nullString(s string) any {
 	if s == "" {

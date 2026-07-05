@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/api"
+	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/awsfocus"
@@ -35,6 +37,11 @@ const usage = `usage: costroid <command> [flags]
 
 commands:
   serve   serve the HTTP API and dashboard  (costroid serve [--addr host:port])
+  credentials  manage the encrypted credential store (decision D32)
+          costroid credentials init [--key-file <path>]
+          costroid credentials set <name>     (reads the secret from stdin)
+          costroid credentials list
+          costroid credentials delete <name>
   ingest  ingest a cost export into the store
           local file:  costroid ingest --connector aws-focus --path <file> [--tenant default]
           live S3:     costroid ingest --connector aws-focus-s3 --bucket <b> --prefix <p>
@@ -77,11 +84,181 @@ func run(args []string) error {
 	switch args[0] {
 	case "serve":
 		return serve(args[1:])
+	case "credentials":
+		return credentialsCmd(args[1:])
 	case "ingest":
 		return ingestCmd(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q\n%s", args[0], usage)
 	}
+}
+
+const credentialsUsage = `usage: costroid credentials <subcommand>
+
+subcommands:
+  init [--key-file <path>]  generate the 256-bit key file (refuses to overwrite)
+  set <name>                store/replace a secret, read from stdin only
+  list                      list credential names and timestamps (no secrets)
+  delete <name>             remove a credential
+
+The key file defaults to ~/.config/costroid/credentials.key; override its
+path with --key-file or $COSTROID_CREDENTIALS_KEY_FILE (the env var carries
+the path, never key material). Secrets are AES-256-GCM encrypted at rest in
+the store and never printed, logged, or passed via argv or the environment`
+
+// credentialsCmd dispatches the credential-store subcommands (decision D32).
+func credentialsCmd(args []string) error {
+	if len(args) == 0 {
+		return errors.New("missing credentials subcommand\n" + credentialsUsage)
+	}
+	switch args[0] {
+	case "init":
+		return credentialsInit(args[1:])
+	case "set":
+		return credentialsSet(args[1:])
+	case "list":
+		return credentialsList(args[1:])
+	case "delete":
+		return credentialsDelete(args[1:])
+	default:
+		return fmt.Errorf("unknown credentials subcommand %q\n%s", args[0], credentialsUsage)
+	}
+}
+
+const keyFileFlagUsage = "key file path (overrides $COSTROID_CREDENTIALS_KEY_FILE; default ~/.config/costroid/credentials.key)"
+
+func credentialsInit(args []string) error {
+	flags := flag.NewFlagSet("credentials init", flag.ContinueOnError)
+	keyFileFlag := flags.String("key-file", "", keyFileFlagUsage)
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	path, err := credentials.ResolveKeyPath(*keyFileFlag)
+	if err != nil {
+		return err
+	}
+	if err := credentials.InitKeyFile(path); err != nil {
+		return err
+	}
+	fmt.Printf("wrote a new 256-bit credential key file to %s\n"+
+		"keep it safe and OUT of backups of the data directory — losing it makes every stored credential "+
+		"undecryptable, and leaking it defeats the encryption\n", path)
+	return nil
+}
+
+func credentialsSet(args []string) error {
+	flags := flag.NewFlagSet("credentials set", flag.ContinueOnError)
+	keyFileFlag := flags.String("key-file", "", keyFileFlagUsage)
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	name := flags.Arg(0)
+	if name == "" {
+		return errors.New("usage: costroid credentials set <name> (the secret is read from stdin)")
+	}
+	// Stdin ONLY — never argv, never env (decisions D17, D32).
+	secret, err := readSecretStdin()
+	if err != nil {
+		return err
+	}
+	path, err := credentials.ResolveKeyPath(*keyFileFlag)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	store, err := storage.Open(ctx, dataDir())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+
+	vault, err := credentials.Open(path, store)
+	if err != nil {
+		return err
+	}
+	if err := vault.Set(ctx, name, secret); err != nil {
+		return err
+	}
+	fmt.Printf("stored credential %q\n", name)
+	return nil
+}
+
+// readSecretStdin reads the secret from stdin, trims exactly one trailing
+// newline (bare LF or CRLF), and refuses an empty secret. It never echoes
+// what it read.
+func readSecretStdin() (string, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("reading the secret from stdin: %w", err)
+	}
+	s := string(data)
+	if strings.HasSuffix(s, "\n") {
+		s = strings.TrimSuffix(s, "\n")
+		s = strings.TrimSuffix(s, "\r")
+	}
+	if s == "" {
+		return "", errors.New("the secret read from stdin is empty — pipe the key in, " +
+			`e.g. printf %s "$KEY" | costroid credentials set <name>`)
+	}
+	return s, nil
+}
+
+func credentialsList(args []string) error {
+	flags := flag.NewFlagSet("credentials list", flag.ContinueOnError)
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	store, err := storage.Open(ctx, dataDir())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+
+	infos, err := store.ListCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	if len(infos) == 0 {
+		fmt.Println("no credentials stored (add one with `costroid credentials set <name>`)")
+		return nil
+	}
+	for _, info := range infos {
+		fmt.Printf("%s\tcreated %s\tupdated %s\n", info.Name,
+			info.CreatedAt.Format(time.RFC3339), info.UpdatedAt.Format(time.RFC3339))
+	}
+	return nil
+}
+
+func credentialsDelete(args []string) error {
+	flags := flag.NewFlagSet("credentials delete", flag.ContinueOnError)
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	name := flags.Arg(0)
+	if name == "" {
+		return errors.New("usage: costroid credentials delete <name>")
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	store, err := storage.Open(ctx, dataDir())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+
+	deleted, err := store.DeleteCredential(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return fmt.Errorf("no credential named %q is stored — nothing to delete", name)
+	}
+	fmt.Printf("deleted credential %q\n", name)
+	return nil
 }
 
 // parseFlags parses args, mapping -h/--help to (stop, nil) after the
