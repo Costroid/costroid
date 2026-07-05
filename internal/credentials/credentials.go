@@ -54,9 +54,11 @@ const KeyEnvVar = "COSTROID_CREDENTIALS_KEY_FILE"
 const keySize = 32
 
 // Secret is a credential plaintext that never reveals itself through fmt or
-// json. Its String, GoString, and MarshalJSON all render "[redacted]" (all
-// on the value receiver, so a Secret leaks nothing even nested in a struct
-// or slice); only Reveal returns the plaintext.
+// json. It implements fmt.Formatter on the value receiver, so EVERY fmt verb
+// — not just the Stringer-aware ones — renders "[redacted]"; String,
+// GoString, and MarshalJSON do too, for the non-fmt call sites (and direct
+// calls). Every method is on the value receiver, so a Secret leaks nothing
+// even nested in a struct or slice; only Reveal returns the plaintext.
 type Secret struct {
 	value string
 }
@@ -69,8 +71,18 @@ func NewSecret(value string) Secret { return Secret{value: value} }
 // exactly once, at the point the secret is used (e.g. header injection).
 func (s Secret) Reveal() string { return s.value }
 
-// String implements fmt.Stringer (value receiver): fmt's %v, %s, %q, %x,
-// and %X verbs all honor Stringer, so none of them leak the plaintext.
+// Format implements fmt.Formatter (value receiver). fmt calls it for EVERY
+// verb — including the numeric/character verbs (%d %f %g %c %U %b %o %e) that
+// bypass Stringer and would otherwise reflect over the unexported field and
+// print the plaintext bytes. It ignores the verb and flags and always writes
+// the redaction marker.
+func (s Secret) Format(f fmt.State, _ rune) {
+	_, _ = io.WriteString(f, "[redacted]")
+}
+
+// String implements fmt.Stringer (value receiver). With Format present, fmt
+// no longer calls String, but it stays for direct String() calls and any
+// non-fmt Stringer consumer.
 func (s Secret) String() string { return "[redacted]" }
 
 // GoString implements fmt.GoStringer (value receiver) so %#v does not leak.
@@ -240,6 +252,14 @@ func (v *Vault) Get(ctx context.Context, name string) (Secret, error) {
 	if !found {
 		return Secret{}, fmt.Errorf("no credential named %q is stored — add it with `costroid credentials set %s` "+
 			"(the secret is read from stdin)", name, name)
+	}
+	// Guard the stored row's shape before Open: gcm.Open PANICS on a nonce
+	// whose length is not gcm.NonceSize(), so a truncated/corrupt/tampered row
+	// must fail with an actionable error, not a panic. A ciphertext shorter
+	// than the GCM tag cannot be authentic either.
+	if len(cred.Nonce) != v.gcm.NonceSize() || len(cred.Ciphertext) < v.gcm.Overhead() {
+		return Secret{}, fmt.Errorf("credential %q is corrupt or was tampered with: its stored nonce/ciphertext have "+
+			"the wrong length — restore the store from a good backup or re-run `costroid credentials set %s`", name, name)
 	}
 	plaintext, err := v.gcm.Open(nil, cred.Nonce, cred.Ciphertext, []byte(name))
 	if err != nil {

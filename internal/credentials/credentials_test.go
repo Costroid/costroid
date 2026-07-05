@@ -67,22 +67,34 @@ func TestSecretNeverLeaks(t *testing.T) {
 	}
 
 	outputs := map[string]string{
-		"%v":            fmt.Sprintf("%v", s),
-		"%s":            fmt.Sprintf("%s", s), //nolint:staticcheck // deliberately exercises fmt's %s verb on the Secret to prove it does not leak
-		"%+v":           fmt.Sprintf("%+v", s),
-		"%#v":           fmt.Sprintf("%#v", s),
-		"%x":            fmt.Sprintf("%x", s),
-		"%q":            fmt.Sprintf("%q", s),
-		"struct %v":     fmt.Sprintf("%v", h),
-		"struct %+v":    fmt.Sprintf("%+v", h),
-		"struct %#v":    fmt.Sprintf("%#v", h),
-		"struct %x":     fmt.Sprintf("%x", h),
-		"slice %v":      fmt.Sprintf("%v", slice),
-		"slice %#v":     fmt.Sprintf("%#v", slice),
-		"json struct":   string(jsonH),
-		"json slice":    string(jsonSlice),
-		"pointer %v":    fmt.Sprintf("%v", &s),
+		"%v":          fmt.Sprintf("%v", s),
+		"%s":          fmt.Sprintf("%s", s), //nolint:staticcheck // deliberately exercises fmt's %s verb on the Secret to prove it does not leak
+		"%+v":         fmt.Sprintf("%+v", s),
+		"%#v":         fmt.Sprintf("%#v", s),
+		"%x":          fmt.Sprintf("%x", s),
+		"%q":          fmt.Sprintf("%q", s),
+		"struct %v":   fmt.Sprintf("%v", h),
+		"struct %+v":  fmt.Sprintf("%+v", h),
+		"struct %#v":  fmt.Sprintf("%#v", h),
+		"struct %x":   fmt.Sprintf("%x", h),
+		"slice %v":    fmt.Sprintf("%v", slice),
+		"slice %#v":   fmt.Sprintf("%#v", slice),
+		"json struct": string(jsonH),
+		"json slice":  string(jsonSlice),
+		"pointer %v":  fmt.Sprintf("%v", &s),
+		// stringer call exercises the String method directly (fmt uses Format).
 		"stringer call": s.String(),
+	}
+	// Non-Stringer verbs: without fmt.Formatter these reflect over the
+	// unexported field and print the plaintext bytes. Format must render the
+	// redaction marker for every one of them — bare, struct-, and
+	// slice-embedded. The verb is held in a variable so `go vet`'s printf
+	// check (correctly) leaves these intentionally-mismatched verbs alone.
+	targets := map[string]any{"bare": s, "struct": h, "slice": slice}
+	for _, verb := range []string{"%d", "%f", "%g", "%c", "%U", "%b", "%o", "%e"} {
+		for label, v := range targets {
+			outputs[label+" "+verb] = fmt.Sprintf(verb, v)
+		}
 	}
 	hexSecret := fmt.Sprintf("%x", secretValue)
 	// The hex verbs honor Stringer, so they render the hex of "[redacted]"
@@ -257,6 +269,48 @@ func TestVaultAADSwapFailsDecryption(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "could not be decrypted") {
 		t.Errorf("AAD-swap error = %v, want the decrypt-failure message", err)
+	}
+}
+
+// TestVaultTamperedNonceDoesNotPanic proves a stored row whose nonce is the
+// wrong length (a truncated/corrupt/tampered row) returns the mandated
+// actionable error instead of panicking inside gcm.Open — and never leaks the
+// plaintext.
+func TestVaultTamperedNonceDoesNotPanic(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	vault, err := credentials.Open(initKey(t), store)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := vault.Set(ctx, "anthropic-cost", secretValue); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	// Read the good row, then overwrite it with a truncated nonce — the shape
+	// a corrupt or tampered store could hold.
+	row, found, err := store.GetCredential(ctx, "anthropic-cost")
+	if err != nil || !found {
+		t.Fatalf("GetCredential: found=%v err=%v", found, err)
+	}
+	if err := store.PutCredential(ctx, storage.Credential{
+		Name:       "anthropic-cost",
+		Nonce:      row.Nonce[:4], // wrong length → gcm.Open would panic
+		Ciphertext: row.Ciphertext,
+	}); err != nil {
+		t.Fatalf("writing truncated-nonce row: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Get panicked on a truncated nonce instead of returning an error: %v", r)
+		}
+	}()
+	_, err = vault.Get(ctx, "anthropic-cost")
+	if err == nil || !strings.Contains(err.Error(), "wrong length") {
+		t.Errorf("Get(truncated nonce) = %v, want the corrupt/tampered-row error", err)
+	}
+	if err != nil && strings.Contains(err.Error(), secretValue) {
+		t.Errorf("tampered-row error leaked plaintext: %v", err)
 	}
 }
 

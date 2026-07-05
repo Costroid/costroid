@@ -69,6 +69,10 @@ commands:
                        credential store — set it first with 'costroid credentials set
                        <slot>' (slot defaults to the connector name); --force is a
                        documented no-op for these connectors — they keep no sync state)
+                       WARNING: an Anthropic Admin key is an UNSCOPEABLE full-org-admin
+                       credential (it cannot be restricted to cost/usage reads), so the
+                       encrypted credential store carries the whole least-privilege
+                       burden — guard the key file accordingly (decisions D32, D17)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
 store allows a single process at a time: stop 'costroid serve' before
@@ -346,7 +350,8 @@ func ingestCmd(args []string) error {
 	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus, anthropic-cost, openai-cost; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
 	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus; a documented no-op for anthropic-cost/openai-cost, which keep no sync state)")
-	credentialFlag := flags.String("credential", "", "credential slot name holding the Admin API key (anthropic-cost, openai-cost; default: the connector name)")
+	credentialFlag := flags.String("credential", "", "credential slot name holding the Admin API key (anthropic-cost, openai-cost; default: the connector name). "+
+		"WARNING: an Anthropic Admin key is an unscopeable full-org-admin credential — the encrypted credential store carries the whole least-privilege burden (D32)")
 	baseURLFlag := flags.String("base-url", "", "API base URL (anthropic-cost, openai-cost; default: the vendor's production endpoint)")
 	sinceFlag := flags.String("since", "", "ingest calendar months from this one forward, YYYY-MM (anthropic-cost, openai-cost; default: the last 12 months)")
 	keyFileFlag := flags.String("key-file", "", keyFileFlagUsage)

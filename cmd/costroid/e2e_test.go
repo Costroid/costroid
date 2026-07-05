@@ -21,6 +21,7 @@ import (
 	"github.com/Costroid/costroid/internal/api"
 	"github.com/Costroid/costroid/internal/devtools/fakeanthropic"
 	"github.com/Costroid/costroid/internal/devtools/fakeopenai"
+	"github.com/Costroid/costroid/internal/ingest/aiconn"
 	"github.com/Costroid/costroid/internal/storage"
 )
 
@@ -54,6 +55,22 @@ func TestOfflineE2EAICost(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "cfg", "credentials.key")
 	t.Setenv("COSTROID_DATA_DIR", dataDir)
 	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", keyPath)
+
+	// The AI connectors' --since window runs from the given month through the
+	// CURRENT month, so the set of ingested months grows as the wall clock
+	// advances (a fixed "3 months" assertion is a time bomb). Derive the
+	// expected months from the REAL shared window computation the connectors
+	// use, pinned to a single `now` captured before any ingest. Every ingest
+	// below runs at now >= now0, so its window is a superset of expectedMonths
+	// — asserting each expected month appears (never an exact count) is
+	// therefore race-free across a mid-test UTC month rollover. The fixtures
+	// carry data only for dataMonths; any later month in the window is empty.
+	now0 := time.Now().UTC()
+	expectedMonths, err := aiconn.Window("2026-05", "", now0)
+	if err != nil {
+		t.Fatalf("computing the expected window: %v", err)
+	}
+	dataMonths := map[string]bool{"2026-05": true, "2026-06": true}
 
 	// Serve copies of the fixtures so a month can be restated in place.
 	anthDir, oaiDir := t.TempDir(), t.TempDir()
@@ -106,13 +123,16 @@ func TestOfflineE2EAICost(t *testing.T) {
 	// --- ingest cloud sample data + both AI connectors ---
 	mustCLI("", "ingest", "--connector", "aws-focus", "--path", "../../testdata/aws-focus-1.2/sample-export.csv.gz")
 	anthOut := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--since", "2026-05")
-	for _, want := range []string{"2026-05", "2026-06", "2026-07"} {
-		if !strings.Contains(anthOut, "period "+want+":") {
-			t.Errorf("anthropic ingest missing period %s:\n%s", want, anthOut)
+	for _, m := range expectedMonths {
+		if !strings.Contains(anthOut, "period "+m+":") {
+			t.Errorf("anthropic ingest missing period %s:\n%s", m, anthOut)
 		}
-	}
-	if !strings.Contains(anthOut, "period 2026-07: ingested 0 record(s)") {
-		t.Errorf("empty month 2026-07 did not ingest an empty batch:\n%s", anthOut)
+		if !dataMonths[m] && !strings.Contains(anthOut, "period "+m+": ingested 0 record(s)") {
+			// A month past the fixtures is empty — it must still ingest an
+			// (empty) batch, the mechanism that lets a restated-to-zero month
+			// drop stale data.
+			t.Errorf("empty month %s did not ingest an empty batch:\n%s", m, anthOut)
+		}
 	}
 	mustCLI("", "ingest", "--connector", "openai-cost", oaiBase, "--since", "2026-05")
 
@@ -130,14 +150,18 @@ func TestOfflineE2EAICost(t *testing.T) {
 
 	// --- unchanged re-sync: every period unchanged, rewrite short-circuited ---
 	reOut := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--since", "2026-05")
-	if strings.Count(reOut, "source content unchanged") != 3 {
-		t.Errorf("re-sync did not report all three months unchanged:\n%s", reOut)
+	for _, m := range expectedMonths {
+		if !strings.Contains(reOut, "period "+m+": source content unchanged") {
+			t.Errorf("re-sync did not report month %s unchanged:\n%s", m, reOut)
+		}
 	}
 
 	// --- --force is accepted and byte-identical content still reports unchanged ---
 	forceOut := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--since", "2026-05", "--force")
-	if strings.Count(forceOut, "source content unchanged") != 3 {
-		t.Errorf("--force did not still short-circuit byte-identical content:\n%s", forceOut)
+	for _, m := range expectedMonths {
+		if !strings.Contains(forceOut, "period "+m+": source content unchanged") {
+			t.Errorf("--force did not still short-circuit byte-identical content for %s:\n%s", m, forceOut)
+		}
 	}
 
 	// --- --period targets one month ---
@@ -171,6 +195,18 @@ func TestOfflineE2EAICost(t *testing.T) {
 	}
 	if got := tenantDaysNonEmpty(t, "acme"); !got {
 		t.Error("tenant acme has no AI cost rows after the re-home")
+	}
+	// The default tenant LOST the re-homed Anthropic rows (the s3/azure twins
+	// assert the same lost-rows parity). Only anthropic-cost was re-homed, so
+	// default keeps its cloud (Compute) and OpenAI rows — but its Claude API
+	// rows must be gone, not duplicated across tenants.
+	defaultAfter := dailyView(t)
+	transcript.WriteString("\n# GET /api/v1/costs/daily (default tenant, after Anthropic re-home)\n" + defaultAfter + "\n")
+	if strings.Contains(defaultAfter, "Claude API") {
+		t.Errorf("default tenant still shows Claude API rows after re-homing them to acme:\n%s", defaultAfter)
+	}
+	if !strings.Contains(defaultAfter, "OpenAI API") {
+		t.Errorf("default tenant lost OpenAI rows it should keep (only Anthropic was re-homed):\n%s", defaultAfter)
 	}
 
 	// --- negatives ---

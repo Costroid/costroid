@@ -173,6 +173,89 @@ func TestWrongKeyRejected(t *testing.T) {
 	}
 }
 
+// TestNonDayBucketFailsPeriod proves a bucket whose span is not exactly one
+// day degrades its month to a per-period error naming the bucket, rather than
+// being mis-synthesized (the tolerate-unknown-bucket_width path). A two-day
+// bucket (start 2026-05-01, end 2026-05-03) is served for 2026-05.
+func TestNonDayBucketFailsPeriod(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "2026-05.json"), []byte(`[
+	  {"object":"bucket","start_time":1777593600,"end_time":1777766400,
+	   "results":[{"amount":{"value":1.0,"currency":"usd"},"line_item":"two-day bucket"}]}
+	]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, baseURL := startFake(t, dir)
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+
+	periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", "2026-05")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	reader, err := periods[0].Conn.Records(context.Background())
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+	_, err = reader.Next()
+	if err == nil || !strings.Contains(err.Error(), "one-day interval") {
+		t.Errorf("non-day bucket error = %v, want the one-day-interval refusal", err)
+	}
+	// The error names the offending bucket (its start/end).
+	if err != nil && (!strings.Contains(err.Error(), "1777593600") || !strings.Contains(err.Error(), "1777766400")) {
+		t.Errorf("non-day bucket error %v does not name the bucket's start/end", err)
+	}
+}
+
+// TestRateLimitedThenSucceeds proves the bounded 429 retry loop: the fake
+// answers the first two requests with 429 + a tiny Retry-After, then serves,
+// and the connector honors the header (parsed as delta-seconds) and
+// eventually succeeds. No real sleeping occurs (Retry-After is 0.01s).
+func TestRateLimitedThenSucceeds(t *testing.T) {
+	fake, baseURL := startFake(t, fixture)
+	fake.RateLimitN = 2
+	fake.RetryAfter = "0.01"
+	fake.PageSize = 100 // one page → one successful request after the 429s
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+
+	periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", "2026-05")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if periods[0].Err != nil || periods[0].Conn == nil {
+		t.Fatalf("period = %+v, want it to succeed after the retries", periods[0])
+	}
+	if got := len(fake.Requests()); got != 3 {
+		t.Errorf("served %d requests, want 3 (two 429s then one success)", got)
+	}
+	if rows := readAll(t, periods[0].Conn); len(rows) != 3 {
+		t.Errorf("got %d records after retrying, want 3", len(rows))
+	}
+}
+
+// TestRateLimitGivesUp proves the retry loop is BOUNDED: a fake that always
+// returns 429 makes the connector give up after max429Retries and degrade the
+// period, without hanging.
+func TestRateLimitGivesUp(t *testing.T) {
+	fake, baseURL := startFake(t, fixture)
+	fake.RateLimitN = 999 // never stop rate-limiting
+	fake.RetryAfter = "0.01"
+	fake.PageSize = 100
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+
+	periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", "2026-05")
+	if err != nil {
+		t.Fatalf("Discover aborted instead of degrading per period: %v", err)
+	}
+	if periods[0].Err == nil || !strings.Contains(periods[0].Err.Error(), "HTTP 429") {
+		t.Errorf("give-up error = %v, want a bounded-retry HTTP 429 failure", periods[0].Err)
+	}
+	// One initial attempt plus max429Retries retries.
+	if got := len(fake.Requests()); got != 6 {
+		t.Errorf("served %d requests, want 6 (1 + 5 bounded retries)", got)
+	}
+}
+
 // TestMissingCurrencyFailsPeriod proves a bucket amount with no currency
 // fails rather than assuming USD (decision D23).
 func TestMissingCurrencyFailsPeriod(t *testing.T) {

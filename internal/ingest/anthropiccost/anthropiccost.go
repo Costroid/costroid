@@ -109,7 +109,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -120,6 +119,7 @@ import (
 	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
+	"github.com/Costroid/costroid/internal/ingest/aiconn"
 )
 
 // Name is the connector's registry name; it is also the default credential
@@ -166,10 +166,10 @@ type Period struct {
 // credential store by the caller so a missing credential fails BEFORE any
 // network dial.
 func Discover(ctx context.Context, client *http.Client, baseURL, slot string, secret credentials.Secret, since, period string) ([]Period, error) {
-	if err := validateBaseURL(baseURL); err != nil {
+	if err := aiconn.ValidateBaseURL(baseURL, DefaultBaseURL); err != nil {
 		return nil, err
 	}
-	months, err := monthWindow(since, period, time.Now().UTC())
+	months, err := aiconn.Window(since, period, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func Discover(ctx context.Context, client *http.Client, baseURL, slot string, se
 // fetchMonth pages through one month's cost report, following
 // has_more/next_page, and returns a Connector caching the fetched buckets.
 func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, month string) (*Connector, error) {
-	start, end, err := monthBounds(month)
+	start, end, err := aiconn.MonthBounds(month)
 	if err != nil {
 		return nil, err
 	}
@@ -207,12 +207,11 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		q.Set("starting_at", start.Format(time.RFC3339))
 		q.Set("ending_at", end.Format(time.RFC3339))
 		q.Set("bucket_width", "1d")
-		q["group_by"] = []string{"description", "workspace_id"} // finest documented combination
 		q.Set("limit", "31")
 		if page != "" {
 			q.Set("page", page)
 		}
-		body, err := doGet(ctx, client, base+costReportPath+"?"+q.Encode(), apiKey, month)
+		body, err := doGet(ctx, client, base+costReportPath+"?"+encodeQuery(q), apiKey, month)
 		if err != nil {
 			return nil, err
 		}
@@ -241,6 +240,24 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		buckets:     buckets,
 		contentHash: contentHash(rawBuckets),
 	}, nil
+}
+
+// groupBy is the finest documented grouping combination. Anthropic documents
+// the parameter as the bracketed, repeated group_by[]= (not a bare
+// group_by=), so encodeQuery emits it with literal brackets.
+var groupBy = []string{"description", "workspace_id"}
+
+// encodeQuery renders q plus the repeated group_by[]= parameters with LITERAL
+// brackets, so the wire key is exactly "group_by[]" (url.Values.Encode would
+// percent-encode the brackets, and a bare "group_by" is the wrong parameter
+// name for this endpoint). The group_by values are fixed identifiers needing
+// no escaping.
+func encodeQuery(q url.Values) string {
+	encoded := q.Encode()
+	for _, g := range groupBy {
+		encoded += "&group_by[]=" + g
+	}
+	return encoded
 }
 
 // doGet issues one GET with the auth headers and bounded 429 retries. It
@@ -285,21 +302,33 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 	}
 }
 
-// waitRetryAfter honors a Retry-After header (delta-seconds) bounded to a
-// sane maximum, or a short default when absent.
+// waitRetryAfter honors a Retry-After header — either delta-seconds or an
+// RFC 1123 HTTP-date (both forms the spec permits) — bounded to a sane
+// maximum, or a short default when the header is absent or unparseable. A
+// date already in the past yields a zero wait (retry immediately).
 func waitRetryAfter(ctx context.Context, header string) error {
-	wait := 2 * time.Second
-	if header != "" {
-		if secs, err := time.ParseDuration(header + "s"); err == nil && secs > 0 {
-			wait = min(secs, 60*time.Second)
-		}
-	}
+	wait := retryAfterDelay(header)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(wait):
 		return nil
 	}
+}
+
+// retryAfterDelay parses a Retry-After header into a bounded wait duration.
+func retryAfterDelay(header string) time.Duration {
+	const maxWait = 60 * time.Second
+	if header == "" {
+		return 2 * time.Second
+	}
+	if secs, err := time.ParseDuration(header + "s"); err == nil && secs > 0 {
+		return min(secs, maxWait)
+	}
+	if t, err := http.ParseTime(header); err == nil {
+		return min(max(time.Until(t), 0), maxWait)
+	}
+	return 2 * time.Second
 }
 
 // costReport is the response envelope; Data elements are kept raw so
@@ -470,67 +499,6 @@ func normalizeDayBound(s string) (string, error) {
 		return "", fmt.Errorf("%q is not an RFC 3339 timestamp", s)
 	}
 	return t.UTC().Format(time.RFC3339), nil
-}
-
-// monthBounds returns [firstOfMonth, firstOfNextMonth) in UTC for "YYYY-MM".
-func monthBounds(month string) (start, end time.Time, err error) {
-	start, err = time.Parse("2006-01", month)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("invalid month %q, want YYYY-MM", month)
-	}
-	start = start.UTC()
-	return start, start.AddDate(0, 1, 0), nil
-}
-
-// monthWindow returns the "YYYY-MM" months to ingest, oldest first. --period
-// (one month) wins; otherwise the window runs from --since (or 11 months
-// before the current month, giving 12 months) through the current month.
-func monthWindow(since, period string, now time.Time) ([]string, error) {
-	if period != "" {
-		if _, err := time.Parse("2006-01", period); err != nil {
-			return nil, fmt.Errorf("invalid --period %q, want YYYY-MM", period)
-		}
-		return []string{period}, nil
-	}
-	current := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	start := current.AddDate(0, -11, 0)
-	if since != "" {
-		s, err := time.Parse("2006-01", since)
-		if err != nil {
-			return nil, fmt.Errorf("invalid --since %q, want YYYY-MM", since)
-		}
-		start = s.UTC()
-		if start.After(current) {
-			return nil, fmt.Errorf("--since %q is in the future (current month %s)", since, current.Format("2006-01"))
-		}
-	}
-	var months []string
-	for m := start; !m.After(current); m = m.AddDate(0, 1, 0) {
-		months = append(months, m.Format("2006-01"))
-	}
-	return months, nil
-}
-
-// validateBaseURL refuses a malformed base URL and refuses plain http://
-// unless the host is loopback (the offline fake).
-func validateBaseURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return errors.New("invalid --base-url: expected an https:// API endpoint, e.g. https://api.anthropic.com")
-	}
-	if u.Scheme == "http" && !isLoopback(u.Hostname()) {
-		return fmt.Errorf("--base-url %q uses http:// with a non-loopback host — use https:// for real endpoints "+
-			"(http is allowed only for a loopback test server)", u.Scheme+"://"+u.Host)
-	}
-	return nil
-}
-
-func isLoopback(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // truncateBody bounds an error-embedded response body and collapses

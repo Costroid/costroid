@@ -262,6 +262,66 @@ func TestIngestPoisonedPeriodDoesNotBlockOthers(t *testing.T) {
 	}
 }
 
+// TestCredentialsDeleteCLI proves `credentials delete` removes a slot (so
+// `list` no longer shows it) and that deleting a missing slot exits non-zero
+// with the actionable message.
+func TestCredentialsDeleteCLI(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(t.TempDir(), "credentials.key"))
+
+	if _, err := runCLI([]string{"credentials", "init"}, ""); err != nil {
+		t.Fatalf("credentials init: %v", err)
+	}
+	if _, err := runCLI([]string{"credentials", "set", "anthropic-cost"}, "test-secret-value"); err != nil {
+		t.Fatalf("credentials set: %v", err)
+	}
+
+	listed, err := runCLI([]string{"credentials", "list"}, "")
+	if err != nil {
+		t.Fatalf("credentials list: %v", err)
+	}
+	if !strings.Contains(listed, "anthropic-cost") {
+		t.Fatalf("list before delete = %q, want the slot present", listed)
+	}
+
+	deleted, err := runCLI([]string{"credentials", "delete", "anthropic-cost"}, "")
+	if err != nil {
+		t.Fatalf("credentials delete: %v", err)
+	}
+	if !strings.Contains(deleted, `deleted credential "anthropic-cost"`) {
+		t.Errorf("delete output = %q, want the deletion confirmation", deleted)
+	}
+
+	after, err := runCLI([]string{"credentials", "list"}, "")
+	if err != nil {
+		t.Fatalf("credentials list after delete: %v", err)
+	}
+	if strings.Contains(after, "anthropic-cost") {
+		t.Errorf("list after delete = %q, want the slot gone", after)
+	}
+
+	// Deleting a now-missing slot fails (exit 1) with the actionable message.
+	out, err := runCLI([]string{"credentials", "delete", "anthropic-cost"}, "")
+	if err == nil {
+		t.Fatalf("deleting a missing slot succeeded; out=%q", out)
+	}
+	if !strings.Contains(err.Error(), "nothing to delete") {
+		t.Errorf("missing-slot delete error = %v, want the actionable nothing-to-delete message", err)
+	}
+}
+
+// TestIngestHelpWarnsAdminKey proves the ingest --help surface carries the
+// Anthropic full-org-admin warning (it previously lived only in godoc).
+func TestIngestHelpWarnsAdminKey(t *testing.T) {
+	out, err := runCLI([]string{"ingest", "--help"}, "")
+	if err != nil {
+		t.Fatalf("ingest --help: %v", err)
+	}
+	if !strings.Contains(out, "full-org-admin") {
+		t.Errorf("ingest --help output does not warn about the unscopeable admin key:\n%s", out)
+	}
+}
+
 func TestResolveAddr(t *testing.T) {
 	tests := []struct {
 		name     string

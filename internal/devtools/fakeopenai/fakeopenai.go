@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,12 +45,22 @@ type Handler struct {
 	// PageSize caps buckets per page (0 → 1). Set it before serving.
 	PageSize int
 
+	// RateLimitN, when > 0, makes the first N (authenticated, well-shaped)
+	// costs requests answer 429 with the RetryAfter header before any real
+	// response, so the connector's bounded-retry and give-up paths can be
+	// exercised. Test-only. Set it before serving.
+	RateLimitN int
+	// RetryAfter is the Retry-After header value sent on those 429s. Keep it
+	// tiny (e.g. "0.01" seconds) so tests never sleep for real.
+	RetryAfter string
+
 	// LogWriter, when set, receives one line per request (method, path, and
 	// whether a cursor was presented) — never any header or key.
 	LogWriter io.Writer
 
 	mu       sync.Mutex
 	requests []Request
+	n429     int
 }
 
 // Request records one served request for test assertions.
@@ -96,6 +108,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+	// Assert the connector's request SHAPE per parameter (never a whole-query
+	// string compare). The rate-limit gate runs first so a well-shaped
+	// request can still be throttled.
+	if h.rateLimited(w) {
+		return
+	}
+	if !requireShape(w, q) {
+		return
+	}
 	month, err := monthFromUnix(q.Get("start_time"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "start_time must be Unix seconds")
@@ -138,6 +159,64 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		HasMore:  hasMore,
 		NextPage: nextPage,
 	})
+}
+
+// rateLimited answers the first RateLimitN requests with a 429 (plus the
+// configured Retry-After) and reports whether it did.
+func (h *Handler) rateLimited(w http.ResponseWriter) bool {
+	h.mu.Lock()
+	limited := h.n429 < h.RateLimitN
+	if limited {
+		h.n429++
+	}
+	h.mu.Unlock()
+	if !limited {
+		return false
+	}
+	if h.RetryAfter != "" {
+		w.Header().Set("Retry-After", h.RetryAfter)
+	}
+	writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "slow down")
+	return true
+}
+
+// requireShape verifies the connector's documented request parameters per
+// parameter and writes a 400 (returning false) on any mismatch. OpenAI
+// documents group_by as a bare, repeated group_by= (NOT bracketed), so a
+// bracketed group_by[]= is rejected outright.
+func requireShape(w http.ResponseWriter, q url.Values) bool {
+	if len(q["group_by[]"]) != 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request_error",
+			"group_by must be sent bare as group_by=, not bracketed group_by[]=")
+		return false
+	}
+	if !equalStringSet(q["group_by"], []string{"project_id", "line_item"}) {
+		writeError(w, http.StatusBadRequest, "invalid_request_error",
+			"group_by must be exactly {project_id, line_item}")
+		return false
+	}
+	if got := q.Get("bucket_width"); got != "1d" {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "bucket_width must be 1d, got "+got)
+		return false
+	}
+	if got := q.Get("limit"); got != "180" {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "limit must be 180, got "+got)
+		return false
+	}
+	return true
+}
+
+// equalStringSet reports whether got and want hold the same values,
+// order-independent (a multiset compare).
+func equalStringSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	g := slices.Clone(got)
+	w := slices.Clone(want)
+	slices.Sort(g)
+	slices.Sort(w)
+	return slices.Equal(g, w)
 }
 
 func (h *Handler) loadMonth(month string) ([]json.RawMessage, error) {

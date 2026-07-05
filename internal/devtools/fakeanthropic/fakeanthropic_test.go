@@ -31,12 +31,17 @@ func get(t *testing.T, url, key string) *http.Response {
 	return resp
 }
 
+// shape is the connector's documented request parameters the fake now
+// requires (bracketed group_by[]=, bucket_width, limit); the fake 400s a
+// request that omits or mis-shapes them.
+const shape = "&bucket_width=1d&limit=31&group_by[]=description&group_by[]=workspace_id"
+
 func TestFakeAnthropicAuthAndPagination(t *testing.T) {
 	h := fakeanthropic.New(fixture)
 	h.PageSize = 1 // 2026-05 has 2 buckets → forces a cursor
 	srv := httptest.NewServer(h)
 	defer srv.Close()
-	endpoint := srv.URL + "/v1/organizations/cost_report?starting_at=2026-05-01T00:00:00Z&ending_at=2026-06-01T00:00:00Z"
+	endpoint := srv.URL + "/v1/organizations/cost_report?starting_at=2026-05-01T00:00:00Z&ending_at=2026-06-01T00:00:00Z" + shape
 
 	// Missing/wrong key → 401.
 	if resp := get(t, endpoint, ""); resp.StatusCode != http.StatusUnauthorized {
@@ -73,7 +78,7 @@ func TestFakeAnthropicAuthAndPagination(t *testing.T) {
 	}
 
 	// A month with no fixture is an empty data array.
-	resp = get(t, srv.URL+"/v1/organizations/cost_report?starting_at=2026-09-01T00:00:00Z", fakeanthropic.AdminKey)
+	resp = get(t, srv.URL+"/v1/organizations/cost_report?starting_at=2026-09-01T00:00:00Z"+shape, fakeanthropic.AdminKey)
 	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
 		t.Fatal(err)
 	}
@@ -83,5 +88,31 @@ func TestFakeAnthropicAuthAndPagination(t *testing.T) {
 
 	if len(h.Requests()) == 0 {
 		t.Error("no requests recorded")
+	}
+}
+
+// TestFakeAnthropicRejectsRequestShape proves the fake asserts the request
+// SHAPE per parameter: a bare group_by= (instead of the bracketed group_by[]=
+// Anthropic documents), a wrong group_by[] value set, a wrong bucket_width,
+// and a wrong limit each get a 400, while the correct shape gets a 200.
+func TestFakeAnthropicRejectsRequestShape(t *testing.T) {
+	srv := httptest.NewServer(fakeanthropic.New(fixture))
+	defer srv.Close()
+	base := srv.URL + "/v1/organizations/cost_report?starting_at=2026-05-01T00:00:00Z&ending_at=2026-06-01T00:00:00Z"
+
+	bad := map[string]string{
+		"bare group_by":      "&bucket_width=1d&limit=31&group_by=description&group_by=workspace_id",
+		"wrong group_by set": "&bucket_width=1d&limit=31&group_by[]=description",
+		"wrong bucket_width": "&bucket_width=1w&limit=31&group_by[]=description&group_by[]=workspace_id",
+		"wrong limit":        "&bucket_width=1d&limit=7&group_by[]=description&group_by[]=workspace_id",
+		"missing shape":      "",
+	}
+	for name, suffix := range bad {
+		if resp := get(t, base+suffix, fakeanthropic.AdminKey); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: HTTP %d, want 400", name, resp.StatusCode)
+		}
+	}
+	if resp := get(t, base+shape, fakeanthropic.AdminKey); resp.StatusCode != http.StatusOK {
+		t.Errorf("well-shaped request: HTTP %d, want 200", resp.StatusCode)
 	}
 }

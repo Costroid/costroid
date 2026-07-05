@@ -277,6 +277,86 @@ func TestDiscoverSubmittedTimeTie(t *testing.T) {
 	})
 }
 
+// TestDiscoverCachedSubmittedTimeTie proves the tie-break's CACHED-sync
+// fallback (slice-5 review fix-up): when a tied period's manifests were
+// attributed from the persistent cache (so their bodies were not fetched
+// during discovery), resolveTie must fetch the bodies itself to compare their
+// change tokens. It covers BOTH sub-branches of that fallback: the fetch
+// succeeding (the tie is still detected and the period degrades) and the
+// fetch failing (the fetch error degrades the period). Both existing tie
+// tests run only first-sync, where the bodies are already in hand.
+func TestDiscoverCachedSubmittedTimeTie(t *testing.T) {
+	ctx := context.Background()
+
+	// twoRunTree writes two runs sharing a submittedTime but describing
+	// different data (different blobName → different change token) → a
+	// differing-content tie in billing period 2026-05.
+	twoRunTree := func(t *testing.T) string {
+		t.Helper()
+		tree := t.TempDir()
+		containerDir := filepath.Join(tree, account, containerName)
+		writeTiedRun(t, containerDir, "tie/run1", "demo",
+			"2026-05-01T00:00:00", "2026-06-01T08:00:00.0000000Z", "manifest.json")
+		writeTiedRun(t, containerDir, "tie/run2", "demo",
+			"2026-05-01T00:00:00", "2026-06-01T08:00:00.0000000Z", "manifest.json")
+		return tree
+	}
+
+	t.Run("cached bodies are re-fetched and the tie still degrades", func(t *testing.T) {
+		tree := twoRunTree(t)
+		_, accountURL := startFake(t, tree)
+		hermeticAzureEnv(t, true)
+		store := openStore(t)
+
+		// First sync warms the attribution cache for both manifests.
+		if _, err := azurefocus.Discover(ctx, accountURL, containerName, "tie", nil, store); err != nil {
+			t.Fatalf("first Discover: %v", err)
+		}
+		// Second sync: both manifests are attributed from the cache (bodies
+		// NOT in hand), so resolveTie fetches them itself and still detects
+		// the differing-content tie.
+		periods, err := azurefocus.Discover(ctx, accountURL, containerName, "tie", nil, store)
+		if err != nil {
+			t.Fatalf("second Discover aborted instead of degrading per period: %v", err)
+		}
+		if len(periods) != 1 || periods[0].Err == nil {
+			t.Fatalf("periods = %+v, want one poisoned 2026-05 period", periods)
+		}
+		for _, part := range []string{"same runInfo.submittedTime", "tie/run1/manifest.json", "tie/run2/manifest.json"} {
+			if !strings.Contains(periods[0].Err.Error(), part) {
+				t.Errorf("cached-tie error %q does not contain %q", periods[0].Err, part)
+			}
+		}
+	})
+
+	t.Run("a cached-tie body re-fetch failure degrades the period", func(t *testing.T) {
+		tree := twoRunTree(t)
+		fake, accountURL := startFake(t, tree)
+		hermeticAzureEnv(t, true)
+		store := openStore(t)
+
+		// Warm the cache while the manifests are still readable.
+		if _, err := azurefocus.Discover(ctx, accountURL, containerName, "tie", nil, store); err != nil {
+			t.Fatalf("first Discover: %v", err)
+		}
+		// One tied manifest becomes unreadable. Its listing tuple is
+		// unchanged, so it is still attributed from the cache; the failure
+		// therefore surfaces on resolveTie's body re-fetch.
+		fake.Forbid(account + "/" + containerName + "/tie/run1/manifest.json")
+
+		periods, err := azurefocus.Discover(ctx, accountURL, containerName, "tie", nil, store)
+		if err != nil {
+			t.Fatalf("second Discover aborted instead of degrading per period: %v", err)
+		}
+		if len(periods) != 1 || periods[0].Err == nil {
+			t.Fatalf("periods = %+v, want one poisoned 2026-05 period", periods)
+		}
+		if !strings.Contains(periods[0].Err.Error(), "access denied") {
+			t.Errorf("cached-tie fetch-failure error %q, want a per-period access-denied error", periods[0].Err)
+		}
+	})
+}
+
 // TestDiscoverRefusesEmptyExportName proves a manifest with an empty
 // exportConfig.exportName degrades its period (slice-4 review fix-up): an
 // empty name is unattributable and conflating distinct exports as {""}

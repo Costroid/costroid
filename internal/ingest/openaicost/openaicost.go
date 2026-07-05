@@ -93,7 +93,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -105,6 +104,7 @@ import (
 	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
+	"github.com/Costroid/costroid/internal/ingest/aiconn"
 )
 
 // Name is the connector's registry name and default credential slot name.
@@ -140,10 +140,10 @@ type Period struct {
 // fetch fails degrades to Period.Err. secret is the Admin API key, loaded
 // from the credential store by the caller before any network dial.
 func Discover(ctx context.Context, client *http.Client, baseURL, slot string, secret credentials.Secret, since, period string) ([]Period, error) {
-	if err := validateBaseURL(baseURL); err != nil {
+	if err := aiconn.ValidateBaseURL(baseURL, DefaultBaseURL); err != nil {
 		return nil, err
 	}
-	months, err := monthWindow(since, period, time.Now().UTC())
+	months, err := aiconn.Window(since, period, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func Discover(ctx context.Context, client *http.Client, baseURL, slot string, se
 }
 
 func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, month string) (*Connector, error) {
-	start, end, err := monthBounds(month)
+	start, end, err := aiconn.MonthBounds(month)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +179,9 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		q.Set("start_time", strconv.FormatInt(start.Unix(), 10))
 		q.Set("end_time", strconv.FormatInt(end.Unix(), 10))
 		q.Set("bucket_width", "1d")
+		// OpenAI's OpenAPI spec documents a bare, repeated group_by= (NOT the
+		// bracketed group_by[]= Anthropic uses); url.Values.Encode emits it
+		// bare, which is exactly what this endpoint wants.
 		q["group_by"] = []string{"project_id", "line_item"} // finest documented combination
 		q.Set("limit", strconv.Itoa(pageLimit))
 		if page != "" {
@@ -254,19 +257,33 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 	}
 }
 
+// waitRetryAfter honors a Retry-After header — either delta-seconds or an
+// RFC 1123 HTTP-date (both forms the spec permits) — bounded to a sane
+// maximum, or a short default when the header is absent or unparseable. A
+// date already in the past yields a zero wait (retry immediately).
 func waitRetryAfter(ctx context.Context, header string) error {
-	wait := 2 * time.Second
-	if header != "" {
-		if secs, err := time.ParseDuration(header + "s"); err == nil && secs > 0 {
-			wait = min(secs, 60*time.Second)
-		}
-	}
+	wait := retryAfterDelay(header)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(wait):
 		return nil
 	}
+}
+
+// retryAfterDelay parses a Retry-After header into a bounded wait duration.
+func retryAfterDelay(header string) time.Duration {
+	const maxWait = 60 * time.Second
+	if header == "" {
+		return 2 * time.Second
+	}
+	if secs, err := time.ParseDuration(header + "s"); err == nil && secs > 0 {
+		return min(secs, maxWait)
+	}
+	if t, err := http.ParseTime(header); err == nil {
+		return min(max(time.Until(t), 0), maxWait)
+	}
+	return 2 * time.Second
 }
 
 // costsPage is the response envelope (object="page"); Data elements are kept
@@ -364,10 +381,21 @@ func (r *recordReader) Next() (ingest.Row, error) {
 
 func (r *recordReader) Close() error { return nil }
 
+// daySeconds is the span of the one-day buckets this connector requests
+// (bucket_width=1d). A bucket whose span differs degrades its month rather
+// than being mis-synthesized onto a wrong ChargePeriod.
+const daySeconds = 24 * 60 * 60
+
 func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
-	if b.EndTime <= b.StartTime {
-		return nil, fmt.Errorf("openai-cost %s: a cost bucket is not a well-formed day interval "+
-			"(start_time %d, end_time %d) — the API may have changed bucket_width semantics", c.month, b.StartTime, b.EndTime)
+	// Tolerate an unknown bucket_width: the connector always requests 1d, so
+	// any bucket that is not exactly a one-day interval (the API changing
+	// bucket_width semantics, or returning a wider bucket) degrades this
+	// month to a per-period error naming the offending bucket — never a
+	// silent mis-mapping onto a wrong ChargePeriod.
+	if b.EndTime-b.StartTime != daySeconds {
+		return nil, fmt.Errorf("openai-cost %s: a cost bucket is not a well-formed one-day interval "+
+			"(start_time %d, end_time %d, span %ds; want %ds) — the API may have changed bucket_width semantics",
+			c.month, b.StartTime, b.EndTime, b.EndTime-b.StartTime, daySeconds)
 	}
 	if res.Amount.Currency == "" {
 		return nil, fmt.Errorf("openai-cost %s: a cost bucket carries no currency — refusing to assume USD "+
@@ -409,61 +437,6 @@ func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
 		rec["SubAccountId"] = res.ProjectID
 	}
 	return rec, nil
-}
-
-func monthBounds(month string) (start, end time.Time, err error) {
-	start, err = time.Parse("2006-01", month)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("invalid month %q, want YYYY-MM", month)
-	}
-	start = start.UTC()
-	return start, start.AddDate(0, 1, 0), nil
-}
-
-func monthWindow(since, period string, now time.Time) ([]string, error) {
-	if period != "" {
-		if _, err := time.Parse("2006-01", period); err != nil {
-			return nil, fmt.Errorf("invalid --period %q, want YYYY-MM", period)
-		}
-		return []string{period}, nil
-	}
-	current := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	start := current.AddDate(0, -11, 0)
-	if since != "" {
-		s, err := time.Parse("2006-01", since)
-		if err != nil {
-			return nil, fmt.Errorf("invalid --since %q, want YYYY-MM", since)
-		}
-		start = s.UTC()
-		if start.After(current) {
-			return nil, fmt.Errorf("--since %q is in the future (current month %s)", since, current.Format("2006-01"))
-		}
-	}
-	var months []string
-	for m := start; !m.After(current); m = m.AddDate(0, 1, 0) {
-		months = append(months, m.Format("2006-01"))
-	}
-	return months, nil
-}
-
-func validateBaseURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return errors.New("invalid --base-url: expected an https:// API endpoint, e.g. https://api.openai.com")
-	}
-	if u.Scheme == "http" && !isLoopback(u.Hostname()) {
-		return fmt.Errorf("--base-url %q uses http:// with a non-loopback host — use https:// for real endpoints "+
-			"(http is allowed only for a loopback test server)", u.Scheme+"://"+u.Host)
-	}
-	return nil
-}
-
-func isLoopback(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func truncateBody(body []byte) string {

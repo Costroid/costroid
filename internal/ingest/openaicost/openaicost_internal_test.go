@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
-package anthropiccost
+package openaicost
 
 import (
 	"context"
 	"net/http"
-	"net/url"
-	"strings"
 	"testing"
 	"time"
 )
@@ -56,38 +54,5 @@ func TestWaitRetryAfterHonorsContext(t *testing.T) {
 	cancel()
 	if err := waitRetryAfter(ctx, "600"); err == nil {
 		t.Error("waitRetryAfter with a cancelled context returned nil, want ctx.Err()")
-	}
-}
-
-// TestEncodeQueryUsesBracketedGroupBy proves the wire query carries the
-// bracketed group_by[]= parameters (Anthropic's documented form), never a
-// bare group_by=.
-func TestEncodeQueryUsesBracketedGroupBy(t *testing.T) {
-	q := url.Values{}
-	q.Set("bucket_width", "1d")
-	q.Set("limit", "31")
-	got := encodeQuery(q)
-	if want := "group_by[]=description&group_by[]=workspace_id"; !strings.Contains(got, want) {
-		t.Errorf("encodeQuery = %q, want it to contain %q", got, want)
-	}
-	if strings.Contains(got, "group_by=description") || strings.Contains(got, "group_by=workspace_id") {
-		t.Errorf("encodeQuery = %q, must not carry a bare group_by=", got)
-	}
-}
-
-// TestContentHashOrderSensitive proves the change token depends on the data
-// bytes and their fetch order but not the pagination envelope.
-func TestContentHashOrderSensitive(t *testing.T) {
-	a := []byte(`{"starting_at":"2026-05-01T00:00:00Z"}`)
-	b := []byte(`{"starting_at":"2026-05-02T00:00:00Z"}`)
-	base := contentHash([][]byte{a, b})
-	if contentHash([][]byte{a, b}) != base {
-		t.Error("content hash not stable for identical input")
-	}
-	if contentHash([][]byte{b, a}) == base {
-		t.Error("content hash ignored fetch order")
-	}
-	if contentHash(nil) != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
-		t.Error("empty content hash is not the empty-stream digest")
 	}
 }

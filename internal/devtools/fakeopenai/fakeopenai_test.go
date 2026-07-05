@@ -30,13 +30,18 @@ func get(t *testing.T, url, bearer string) *http.Response {
 	return resp
 }
 
+// shape is the connector's documented request parameters the fake now
+// requires (bare repeated group_by=, bucket_width, limit); the fake 400s a
+// request that omits or mis-shapes them.
+const shape = "&bucket_width=1d&limit=180&group_by=project_id&group_by=line_item"
+
 func TestFakeOpenAIAuthAndPagination(t *testing.T) {
 	h := fakeopenai.New(fixture)
 	h.PageSize = 1 // 2026-05 has 2 buckets → forces a cursor
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 	// start_time = 2026-05-01T00:00:00Z in Unix seconds.
-	endpoint := srv.URL + "/v1/organization/costs?start_time=1777593600&end_time=1780272000"
+	endpoint := srv.URL + "/v1/organization/costs?start_time=1777593600&end_time=1780272000" + shape
 
 	if resp := get(t, endpoint, ""); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("no key: HTTP %d, want 401", resp.StatusCode)
@@ -72,11 +77,37 @@ func TestFakeOpenAIAuthAndPagination(t *testing.T) {
 	}
 
 	// A month with no fixture is empty (start_time = 2026-09-01).
-	resp = get(t, srv.URL+"/v1/organization/costs?start_time=1788307200", fakeopenai.AdminKey)
+	resp = get(t, srv.URL+"/v1/organization/costs?start_time=1788307200"+shape, fakeopenai.AdminKey)
 	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
 		t.Fatal(err)
 	}
 	if len(page.Data) != 0 || page.HasMore {
 		t.Errorf("empty month = %d bucket(s), has_more=%t; want 0/false", len(page.Data), page.HasMore)
+	}
+}
+
+// TestFakeOpenAIRejectsRequestShape proves the fake asserts the request SHAPE
+// per parameter: a bracketed group_by[]= (instead of the bare group_by=
+// OpenAI documents), a wrong group_by value set, a wrong bucket_width, and a
+// wrong limit each get a 400, while the correct shape gets a 200.
+func TestFakeOpenAIRejectsRequestShape(t *testing.T) {
+	srv := httptest.NewServer(fakeopenai.New(fixture))
+	defer srv.Close()
+	base := srv.URL + "/v1/organization/costs?start_time=1777593600&end_time=1780272000"
+
+	bad := map[string]string{
+		"bracketed group_by": "&bucket_width=1d&limit=180&group_by[]=project_id&group_by[]=line_item",
+		"wrong group_by set": "&bucket_width=1d&limit=180&group_by=project_id",
+		"wrong bucket_width": "&bucket_width=1w&limit=180&group_by=project_id&group_by=line_item",
+		"wrong limit":        "&bucket_width=1d&limit=31&group_by=project_id&group_by=line_item",
+		"missing shape":      "",
+	}
+	for name, suffix := range bad {
+		if resp := get(t, base+suffix, fakeopenai.AdminKey); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: HTTP %d, want 400", name, resp.StatusCode)
+		}
+	}
+	if resp := get(t, base+shape, fakeopenai.AdminKey); resp.StatusCode != http.StatusOK {
+		t.Errorf("well-shaped request: HTTP %d, want 200", resp.StatusCode)
 	}
 }
