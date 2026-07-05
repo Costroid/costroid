@@ -191,6 +191,116 @@ func TestDiscoverRefusesMultipleExportsUnderOnePrefix(t *testing.T) {
 	}
 }
 
+// writeTiedRun writes one run folder with a gzipped data partition and one
+// or more (identical) manifest files, so tests can construct submittedTime
+// ties within one billing period.
+func writeTiedRun(t *testing.T, containerDir, runDir, exportName, startDate, submitted string, manifestNames ...string) {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write([]byte("BilledCost\n1\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(containerDir, filepath.FromSlash(runDir))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "part_0_0001.csv.gz"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := fmt.Sprintf(`{
+  "blobs": [{"blobName": %q, "byteCount": %d, "dataRowCount": 1}],
+  "exportConfig": {"exportName": %q, "dataVersion": "1.2-preview", "type": "FocusCost"},
+  "deliveryConfig": {"fileFormat": "Csv", "compressionMode": "gzip", "dataOverwriteBehavior": "CreateNewReport"},
+  "runInfo": {"executionType": "Scheduled", "submittedTime": %q, "runId": "run", "startDate": %q}
+}`, runDir+"/part_0_0001.csv.gz", buf.Len(), exportName, submitted, startDate)
+	for _, name := range manifestNames {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestDiscoverSubmittedTimeTie proves the submittedTime tie-break
+// (slice-4 review fix-up): tied manifests describing IDENTICAL data (a
+// manifest.json/_manifest.json pair for one run) keep the deterministic
+// lexical pick, while tied manifests with DIFFERING contents degrade the
+// period to an actionable error naming both instead of a silent lexical
+// tie-break.
+func TestDiscoverSubmittedTimeTie(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("identical contents keep the deterministic pick", func(t *testing.T) {
+		tree := t.TempDir()
+		writeTiedRun(t, filepath.Join(tree, account, containerName),
+			"tie/run1", "demo", "2026-05-01T00:00:00", "2026-06-01T08:00:00.0000000Z",
+			"manifest.json", "_manifest.json")
+		_, accountURL := startFake(t, tree)
+		hermeticAzureEnv(t, true)
+		store := openStore(t)
+
+		periods, err := azurefocus.Discover(ctx, accountURL, containerName, "tie", nil, store)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(periods) != 1 || periods[0].Err != nil || periods[0].Conn == nil {
+			t.Fatalf("periods = %+v, want one readable 2026-05 period (identical-token tie)", periods)
+		}
+	})
+
+	t.Run("differing contents degrade the period", func(t *testing.T) {
+		tree := t.TempDir()
+		containerDir := filepath.Join(tree, account, containerName)
+		writeTiedRun(t, containerDir, "tie/run1", "demo",
+			"2026-05-01T00:00:00", "2026-06-01T08:00:00.0000000Z", "manifest.json")
+		writeTiedRun(t, containerDir, "tie/run2", "demo",
+			"2026-05-01T00:00:00", "2026-06-01T08:00:00.0000000Z", "manifest.json")
+		_, accountURL := startFake(t, tree)
+		hermeticAzureEnv(t, true)
+		store := openStore(t)
+
+		periods, err := azurefocus.Discover(ctx, accountURL, containerName, "tie", nil, store)
+		if err != nil {
+			t.Fatalf("Discover aborted instead of degrading per period: %v", err)
+		}
+		if len(periods) != 1 || periods[0].Err == nil {
+			t.Fatalf("periods = %+v, want one poisoned 2026-05 period", periods)
+		}
+		for _, part := range []string{"same runInfo.submittedTime", "tie/run1/manifest.json", "tie/run2/manifest.json"} {
+			if !strings.Contains(periods[0].Err.Error(), part) {
+				t.Errorf("tie error %q does not contain %q", periods[0].Err, part)
+			}
+		}
+	})
+}
+
+// TestDiscoverRefusesEmptyExportName proves a manifest with an empty
+// exportConfig.exportName degrades its period (slice-4 review fix-up): an
+// empty name is unattributable and conflating distinct exports as {""}
+// would defeat the shared-prefix refusal.
+func TestDiscoverRefusesEmptyExportName(t *testing.T) {
+	tree := t.TempDir()
+	writeMiniExport(t, filepath.Join(tree, account, containerName),
+		"noname/run1", "", "2026-05-01T00:00:00", "2026-06-01T08:00:00.0000000Z")
+	_, accountURL := startFake(t, tree)
+	hermeticAzureEnv(t, true)
+	store := openStore(t)
+
+	periods, err := azurefocus.Discover(context.Background(), accountURL, containerName, "noname", nil, store)
+	if err != nil {
+		t.Fatalf("Discover aborted instead of degrading per period: %v", err)
+	}
+	if len(periods) != 1 || periods[0].Err == nil {
+		t.Fatalf("periods = %+v, want one poisoned 2026-05 period", periods)
+	}
+	if !strings.Contains(periods[0].Err.Error(), "no exportConfig.exportName") {
+		t.Errorf("empty-exportName error %q does not name the cause", periods[0].Err)
+	}
+}
+
 // TestDiscoverCachedManifestRefetchFailureIsPerPeriod proves a period
 // whose current manifest is attributed from the cache but whose body
 // re-fetch fails (here: 403) poisons that period only — the period is
@@ -391,9 +501,21 @@ func TestGapFillRules(t *testing.T) {
 		return rec
 	}
 
-	// AZF-1: EA Marketplace purchase.
-	if got := fill(focus.RawRecord{"ServiceName": "", "ChargeCategory": "Purchase", "PublisherName": "Contoso"})["ServiceName"]; got != "Contoso" {
-		t.Errorf("AZF-1 ServiceName = %q, want Contoso", got)
+	// AZF-1: EA Marketplace purchase — PublisherName fill applies only when
+	// the marketplace signal (x_PublisherType == "Marketplace") is present.
+	if got := fill(focus.RawRecord{"ServiceName": "", "ChargeCategory": "Purchase", "PublisherName": "Contoso", "x_PublisherType": "Marketplace"})["ServiceName"]; got != "Contoso" {
+		t.Errorf("AZF-1 gated ServiceName = %q, want Contoso", got)
+	}
+	// AZF-1/AZF-2 ordering (slice-4 review fix-up): a Purchase row carrying
+	// BOTH a PublisherName and an x_SkuMeterSubcategory but NO marketplace
+	// signal prefers x_SkuMeterSubcategory (AZF-2), not PublisherName — the
+	// PublisherName fill is documented for EA Marketplace rows only.
+	if got := fill(focus.RawRecord{"ServiceName": "", "ChargeCategory": "Purchase", "PublisherName": "Contoso", "x_SkuMeterSubcategory": "Reservation"})["ServiceName"]; got != "Reservation" {
+		t.Errorf("ungated Purchase ServiceName = %q, want the x_SkuMeterSubcategory fill (AZF-2)", got)
+	}
+	// With the marketplace signal, AZF-1 wins even beside a subcategory.
+	if got := fill(focus.RawRecord{"ServiceName": "", "ChargeCategory": "Purchase", "PublisherName": "Contoso", "x_SkuMeterSubcategory": "Reservation", "x_PublisherType": "Marketplace"})["ServiceName"]; got != "Contoso" {
+		t.Errorf("marketplace-signaled Purchase ServiceName = %q, want the PublisherName fill (AZF-1)", got)
 	}
 	// AZF-2: MCA cases use x_SkuMeterSubcategory — even when
 	// PublisherName is set, off the Purchase category.
@@ -893,6 +1015,49 @@ func TestDiscoverErrors(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "SECRETVALUE") {
 			t.Errorf("refusal echoes the SAS token: %v", err)
+		}
+	})
+
+	// Slice-4 review fix-up: credential-shaped --account-url inputs are
+	// refused WITHOUT echoing anything credential-shaped. A connection
+	// string parses as a scheme-less URL whose AccountKey survives scrubURL,
+	// so that path must echo nothing at all; userinfo and fragments are
+	// refused like query strings.
+	t.Run("connection-string account URL refused without echoing the key", func(t *testing.T) {
+		hermeticAzureEnv(t, true)
+		store := openStore(t)
+		_, err := azurefocus.Discover(ctx,
+			"DefaultEndpointsProtocol=https;AccountName=devacct;AccountKey=SECRETKEYVALUE==;EndpointSuffix=core.windows.net",
+			containerName, prefix, nil, store)
+		if err == nil || !strings.Contains(err.Error(), "invalid --account-url") {
+			t.Fatalf("connection string = %v, want the invalid-account-url refusal", err)
+		}
+		if strings.Contains(err.Error(), "SECRETKEYVALUE") {
+			t.Errorf("refusal echoes the account key: %v", err)
+		}
+	})
+
+	t.Run("userinfo-bearing account URL refused", func(t *testing.T) {
+		hermeticAzureEnv(t, true)
+		store := openStore(t)
+		_, err := azurefocus.Discover(ctx, "https://user:SECRETPASS@acct.blob.core.windows.net/", containerName, prefix, nil, store)
+		if err == nil || !strings.Contains(err.Error(), "userinfo") {
+			t.Fatalf("userinfo URL = %v, want the userinfo refusal", err)
+		}
+		if strings.Contains(err.Error(), "SECRETPASS") {
+			t.Errorf("refusal echoes the userinfo secret: %v", err)
+		}
+	})
+
+	t.Run("fragment-bearing account URL refused", func(t *testing.T) {
+		hermeticAzureEnv(t, true)
+		store := openStore(t)
+		_, err := azurefocus.Discover(ctx, "https://acct.blob.core.windows.net/#SECRETFRAGMENT", containerName, prefix, nil, store)
+		if err == nil || !strings.Contains(err.Error(), "fragment") {
+			t.Fatalf("fragment URL = %v, want the fragment refusal", err)
+		}
+		if strings.Contains(err.Error(), "SECRETFRAGMENT") {
+			t.Errorf("refusal echoes the fragment: %v", err)
 		}
 	})
 }

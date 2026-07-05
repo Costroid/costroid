@@ -12,11 +12,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/devtools/fakeblob"
 	"github.com/Costroid/costroid/internal/devtools/fakes3"
+	"github.com/Costroid/costroid/internal/ingest/azurefocus"
 	"github.com/Costroid/costroid/internal/storage"
 )
 
 const s3Fixture = "../../testdata/aws-focus-s3/fixture"
+
+const azureFixture = "../../testdata/azure-focus/fixture"
+
+// hermeticAzureEnv scrubs the ambient Azure credential chain and enables
+// the documented http-only test escape, so the azure-focus CLI ingest
+// talks to the fakeblob endpoint anonymously and identically on any machine.
+func hermeticAzureEnv(t *testing.T) {
+	t.Helper()
+	for _, v := range []string{
+		"AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET",
+		"AZURE_CLIENT_CERTIFICATE_PATH", "AZURE_USERNAME", "AZURE_PASSWORD",
+		"AZURE_FEDERATED_TOKEN_FILE", "AZURE_TOKEN_CREDENTIALS",
+	} {
+		t.Setenv(v, "")
+	}
+	t.Setenv(azurefocus.InsecureNoAuthEnv, "1")
+}
 
 // hermeticAWSEnv pins the ambient AWS credential chain to test-local
 // values (mirroring the awsfocuss3 tests) so CLI-level ingest tests pass
@@ -132,6 +151,80 @@ func TestIngestTenantSwitchRehomesInsteadOfSkipping(t *testing.T) {
 	}
 	if calls := fake.GetObjectKeys()[before:]; len(calls) != 0 {
 		t.Fatalf("same-new-tenant re-run performed %d GetObject call(s): %v", len(calls), calls)
+	}
+}
+
+// TestIngestAzureTenantSwitchRehomesInsteadOfSkipping is the azure-focus
+// twin of TestIngestTenantSwitchRehomesInsteadOfSkipping (slice-4 review
+// fix-up: the azure ingest wiring duplicates the aws-focus-s3 path but had
+// no azure-side e2e of the tenant filter). A same-tenant unchanged re-sync
+// costs ZERO Get Blob calls; a --tenant switch is NOT skipped — it falls
+// through to the hash path and re-homes the stored records.
+func TestIngestAzureTenantSwitchRehomesInsteadOfSkipping(t *testing.T) {
+	ctx := context.Background()
+	fake := fakeblob.New(azureFixture)
+	srv := httptest.NewServer(fake)
+	t.Cleanup(srv.Close)
+	hermeticAzureEnv(t)
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+
+	accountURL := srv.URL + "/devaccount"
+	args := []string{"ingest", "--connector", "azure-focus", "--account-url", accountURL,
+		"--container", "exports", "--prefix", "costroid-demo"}
+
+	// Fresh ingest under the default tenant.
+	if err := run(args); err != nil {
+		t.Fatalf("fresh ingest: %v", err)
+	}
+
+	// Same tenant, unchanged export: tuple-skipped, zero Get Blob calls.
+	before := len(fake.GetBlobKeys())
+	if err := run(args); err != nil {
+		t.Fatalf("same-tenant re-run: %v", err)
+	}
+	if calls := fake.GetBlobKeys()[before:]; len(calls) != 0 {
+		t.Fatalf("same-tenant re-run performed %d Get Blob call(s): %v", len(calls), calls)
+	}
+
+	// Different tenant, unchanged export: NOT skipped — the periods fall
+	// through to the hash path (Get Blob calls happen) and re-home.
+	before = len(fake.GetBlobKeys())
+	if err := run(append(args, "--tenant", "acme")); err != nil {
+		t.Fatalf("tenant-switch run: %v", err)
+	}
+	if calls := fake.GetBlobKeys()[before:]; len(calls) == 0 {
+		t.Fatal("tenant-switch run was tuple-skipped: zero Get Blob calls")
+	}
+
+	store, err := storage.Open(ctx, os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	rehomed, err := store.DailyCostsByService(ctx, "acme", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService(acme): %v", err)
+	}
+	if len(rehomed.Days) != 6 {
+		t.Fatalf("tenant acme sees %d day(s), want all 6 re-homed", len(rehomed.Days))
+	}
+	old, err := store.DailyCostsByService(ctx, "default", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService(default): %v", err)
+	}
+	if len(old.Days) != 0 {
+		t.Fatalf("tenant default still sees %d day(s), want none after re-homing", len(old.Days))
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("closing store: %v", err)
+	}
+
+	// Same new tenant again: the tuple skip applies once more.
+	before = len(fake.GetBlobKeys())
+	if err := run(append(args, "--tenant", "acme")); err != nil {
+		t.Fatalf("same-new-tenant re-run: %v", err)
+	}
+	if calls := fake.GetBlobKeys()[before:]; len(calls) != 0 {
+		t.Fatalf("same-new-tenant re-run performed %d Get Blob call(s): %v", len(calls), calls)
 	}
 }
 

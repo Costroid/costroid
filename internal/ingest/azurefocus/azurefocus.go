@@ -105,6 +105,24 @@
 //	                                 filled with PublisherName
 //	                                 (Microsoft's suggested fill,
 //	                                 conformance summary "ServiceName").
+//	                                 GATED: PublisherName fill is
+//	                                 documented for EA Marketplace rows
+//	                                 only, so it applies to a Purchase row
+//	                                 only when an affirmative marketplace
+//	                                 signal is present — x_PublisherType ==
+//	                                 "Marketplace" when Azure emits that
+//	                                 column. Without the signal a Purchase
+//	                                 row prefers AZF-2.
+//	AZF-1b ServiceName               Costroid extension — NOT documented
+//	                                 Azure behavior. Any still-empty
+//	                                 ServiceName carrying a PublisherName
+//	                                 (a non-purchase row, or a purchase
+//	                                 with neither a marketplace signal nor
+//	                                 an x_SkuMeterSubcategory) is filled
+//	                                 with PublisherName as a last resort.
+//	                                 It fills row shapes Microsoft does not
+//	                                 document; it never nulls or overwrites
+//	                                 a populated column.
 //	AZF-2  ServiceName               Empty on the documented MCA cases
 //	                                 (reservation/savings-plan purchases,
 //	                                 rounding adjustments, MACC
@@ -119,15 +137,31 @@
 //	                                 ListCost is also 0 (the documented
 //	                                 gap shape); a zero price next to a
 //	                                 non-zero cost is left as delivered.
-//	AZF-4  ContractedUnitPrice       Same as AZF-3, gated on
-//	                                 ContractedCost = 0 (EA Marketplace,
+//	                                 AMBIGUITY (honest): a genuinely free
+//	                                 row with a real 0 list price beside a
+//	                                 real 0 ListCost is indistinguishable
+//	                                 from Azure's "no price available"
+//	                                 placeholder, so this rule nulls it
+//	                                 too. Nulling an already-null-meaning
+//	                                 zero is harmless for reporting; a
+//	                                 price-sheet reconciliation slice that
+//	                                 needs the distinction will narrow the
+//	                                 gate by row type.
+//	AZF-4  ContractedUnitPrice       Same as AZF-3 (same ambiguity), gated
+//	                                 on ContractedCost = 0 (EA Marketplace,
 //	                                 EA reservation usage with cost
 //	                                 allocation, all MCA reservation
 //	                                 usage).
-//	AZF-5  *PeriodStart/*PeriodEnd   Timestamps with or without seconds
-//	                                 and with or without a timezone
-//	                                 suffix are normalized to RFC 3339
-//	                                 UTC here, in the pre-transform step;
+//	AZF-5  *PeriodStart/*PeriodEnd   Only MANIFEST timestamps are
+//	                                 documented timezone-less by Microsoft;
+//	                                 the data columns are not documented to
+//	                                 vary. This rule keeps DEFENSIVE
+//	                                 parsing anyway — timestamps with or
+//	                                 without seconds and with or without a
+//	                                 timezone suffix are normalized to
+//	                                 RFC 3339 UTC here, in the pre-transform
+//	                                 step — so a future export quirk cannot
+//	                                 fail an otherwise-conformant row;
 //	                                 focus.ParseTime and the shared
 //	                                 validation stay unchanged (no
 //	                                 cross-source loosening).
@@ -334,14 +368,20 @@ func Discover(ctx context.Context, accountURL, containerName, prefix string, pri
 func newContainerClient(accountURL, containerName string) (string, *container.Client, error) {
 	u, err := url.Parse(accountURL)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", nil, fmt.Errorf("invalid --account-url %q: expected the storage account's blob endpoint, e.g. https://<account>.blob.core.windows.net/", scrubURL(accountURL))
+		// The value is NEVER echoed here: an Azure connection string parses
+		// as a scheme-less URL whose whole body — AccountKey included — is
+		// one path segment, so no scrub can make echoing it safe (D17).
+		return "", nil, errors.New("invalid --account-url: expected the storage account's blob endpoint, " +
+			"e.g. https://<account>.blob.core.windows.net/ (the value is not echoed — a connection string's " +
+			"AccountKey would survive here)")
 	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		// Never echo the query itself: it is exactly where a SAS token
-		// would live.
-		return "", nil, fmt.Errorf("--account-url must not carry query parameters (%s): the azure-focus connector "+
-			"authenticates only via the ambient credential chain and accepts no SAS tokens or account keys (decisions D17, D24)",
-			scrubURL(accountURL))
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		// Never echo the value: userinfo (a user:key@ authority), a query
+		// string (where a SAS token lives), and a fragment are all
+		// credential-shaped, and this connector accepts none of them.
+		return "", nil, errors.New("--account-url must not carry userinfo, query parameters, or a fragment — the " +
+			"azure-focus connector authenticates only via the ambient credential chain and accepts no SAS tokens " +
+			"or account keys (decisions D17, D24)")
 	}
 	serviceURL := u.Scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/")
 	identityRoot := u.Host + strings.TrimSuffix(u.Path, "/")
@@ -465,26 +505,64 @@ func discover(ctx context.Context, cc *container.Client, root, containerName, pr
 		exportsByPeriod[a.BillingPeriod][a.ExportName] = true
 	}
 
-	// A period's current run = the attributed manifest with the greatest
-	// submittedTime (ties broken by key for determinism).
-	currentByPeriod := map[string]string{} // billing period → listing key
+	// Group listed manifests by billing period; manifestKeys is sorted, so
+	// each period's slice stays sorted for the deterministic lexical pick.
+	keysByPeriod := map[string][]string{}
 	for _, key := range manifestKeys {
-		a := attributions[key]
-		cur, ok := currentByPeriod[a.BillingPeriod]
-		if !ok || a.SubmittedTime.After(attributions[cur].SubmittedTime) ||
-			(a.SubmittedTime.Equal(attributions[cur].SubmittedTime) && key > cur) {
-			currentByPeriod[a.BillingPeriod] = key
-		}
+		keysByPeriod[attributions[key].BillingPeriod] = append(keysByPeriod[attributions[key].BillingPeriod], key)
 	}
-	periods := make([]string, 0, len(currentByPeriod))
-	for p := range currentByPeriod {
+
+	// A period's current run = the attributed manifest with the greatest
+	// submittedTime. A submittedTime TIE between distinct manifests is
+	// resolved by change token: identical tokens (e.g. a
+	// manifest.json/_manifest.json pair for one run) describe the same data,
+	// so the deterministic lexical pick is safe; DIFFERING tokens make
+	// "which run is current" genuinely ambiguous, so the period degrades to
+	// an actionable error naming the tied manifests rather than being
+	// silently tie-broken.
+	currentByPeriod := map[string]string{} // billing period → listing key
+	tieErrByPeriod := map[string]error{}   // billing period → unresolved-tie error
+	periods := make([]string, 0, len(keysByPeriod))
+	for p, keys := range keysByPeriod {
 		periods = append(periods, p)
+		current := keys[0]
+		for _, key := range keys[1:] {
+			if a, cur := attributions[key], attributions[current]; a.SubmittedTime.After(cur.SubmittedTime) ||
+				(a.SubmittedTime.Equal(cur.SubmittedTime) && key > current) {
+				current = key
+			}
+		}
+		currentByPeriod[p] = current
+		var tied []string
+		for _, key := range keys {
+			if attributions[key].SubmittedTime.Equal(attributions[current].SubmittedTime) {
+				tied = append(tied, key)
+			}
+		}
+		if len(tied) > 1 {
+			if err := resolveTie(ctx, cc, p, tied, listed, bodies, blobURI); err != nil {
+				tieErrByPeriod[p] = err
+			}
+		}
 	}
 	sort.Strings(periods)
 
 	out := make([]Period, 0, len(periods))
 	for _, p := range periods {
-		if names := exportsByPeriod[p]; len(names) > 1 {
+		names := exportsByPeriod[p]
+		if names[""] {
+			// An empty exportConfig.exportName is unattributable: it cannot be
+			// distinguished from a co-tenant export delivering under the same
+			// prefix, so the shared-prefix refusal below could not protect
+			// this period. Refuse it rather than conflate distinct exports as
+			// {""} (which would defeat the len(names) > 1 check).
+			out = append(out, Period{Billing: p, Err: fmt.Errorf(
+				"billing period %s has a manifest with no exportConfig.exportName under %s/ — Costroid cannot "+
+					"confirm a single export owns this prefix; point --prefix at ONE export's root (its storage "+
+					"directory plus the export name)", p, exportRoot)})
+			continue
+		}
+		if len(names) > 1 {
 			sorted := make([]string, 0, len(names))
 			for n := range names {
 				sorted = append(sorted, n)
@@ -495,6 +573,10 @@ func discover(ctx context.Context, cc *container.Client, root, containerName, pr
 					"a prefix would silently replace each other's data; point --prefix at ONE export's root "+
 					"(its storage directory plus the export name)",
 				p, len(sorted), strings.Join(sorted, ", "), exportRoot)})
+			continue
+		}
+		if err := tieErrByPeriod[p]; err != nil {
+			out = append(out, Period{Billing: p, Err: err})
 			continue
 		}
 		key := currentByPeriod[p]
@@ -531,6 +613,45 @@ func discover(ctx context.Context, cc *container.Client, root, containerName, pr
 		out = append(out, Period{Billing: p, Manifest: state, Conn: conn})
 	}
 	return out, nil
+}
+
+// resolveTie decides a submittedTime tie between the manifests in tied
+// (all sharing a period's winning submittedTime). It returns nil when they
+// describe identical data — same documented change token
+// (blobName/byteCount/dataRowCount + dataVersion), e.g. a
+// manifest.json/_manifest.json pair for one run — so the caller's
+// deterministic lexical pick is safe. Manifests with DIFFERING tokens are a
+// genuine ambiguity, so it returns an actionable per-period error naming
+// them. Bodies are fetched only for tied manifests not already fetched — an
+// anomaly path, so the extra Get Blob calls never touch the normal
+// zero-fetch flow; a fetch failure degrades the (known) period, never
+// aborting discovery.
+func resolveTie(ctx context.Context, cc *container.Client, period string, tied []string,
+	listed map[string]blobInfo, bodies map[string]*manifest, blobURI func(string) string) error {
+	tokens := map[string]bool{}
+	for _, key := range tied {
+		m, ok := bodies[key]
+		if !ok {
+			var err error
+			m, err = fetchManifest(ctx, cc, blobURI(key), key, listed[key].etag)
+			if err != nil {
+				return err
+			}
+			bodies[key] = m
+		}
+		tokens[contentHash(m)] = true
+	}
+	if len(tokens) == 1 {
+		return nil
+	}
+	uris := make([]string, 0, len(tied))
+	for _, key := range tied {
+		uris = append(uris, blobURI(key))
+	}
+	sort.Strings(uris)
+	return fmt.Errorf("billing period %s has %d manifests with the same runInfo.submittedTime but different "+
+		"contents (%s) — which export run is current is ambiguous; re-run ingest once the delivery settles, or "+
+		"remove the superseded manifest", period, len(uris), strings.Join(uris, ", "))
 }
 
 // sourceIdentity builds the replace-key identity of one billing period;
@@ -614,7 +735,13 @@ func parseManifestTime(s string) (time.Time, error) {
 		"2006-01-02T15:04:05.999999999", // timezone-less, optional fractional seconds
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC(), nil
+			// Truncate to microseconds at parse time: the attribution cache
+			// round-trips submittedTime through a DuckDB TIMESTAMP (µs
+			// precision), so a fresh parse keeping Azure's 100 ns digits
+			// would compare unequal to its own cached copy and could flip a
+			// period's current-run selection between syncs. Truncating here
+			// makes the fresh and cached values identical by construction.
+			return t.UTC().Truncate(time.Microsecond), nil
 		}
 	}
 	return time.Time{}, fmt.Errorf("%q is not a recognized manifest timestamp", s)
@@ -816,7 +943,10 @@ func scrubURLs(s string) string {
 func scrubURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
+		// Parse failed: cut at BOTH '?' and '#' so nothing query- or
+		// fragment-shaped (a SAS token, an account key) survives.
 		base, _, _ := strings.Cut(raw, "?")
+		base, _, _ = strings.Cut(base, "#")
 		return base
 	}
 	u.User = nil
@@ -981,13 +1111,23 @@ func GapFill(rec focus.RawRecord) {
 	// dropped and never nulled — an unfillable row still fails the
 	// shared ServiceName validation loudly.
 	if rec["ServiceName"] == "" {
+		// AZF-1 (PublisherName) is documented for EA Marketplace purchases
+		// ONLY, so it is gated on an affirmative marketplace signal —
+		// x_PublisherType == "Marketplace" when Azure emits that column.
+		// Absent the signal a Purchase row prefers AZF-2's MCA fill
+		// (x_SkuMeterSubcategory); only a still-empty ServiceName carrying a
+		// PublisherName falls back to it as AZF-1b, the Costroid extension
+		// (not documented Azure behavior). Rows are never dropped and never
+		// nulled — an unfillable row still fails the shared ServiceName
+		// validation loudly.
 		switch {
-		case rec["ChargeCategory"] == "Purchase" && rec["PublisherName"] != "":
+		case rec["ChargeCategory"] == "Purchase" && rec["PublisherName"] != "" &&
+			strings.EqualFold(rec["x_PublisherType"], "Marketplace"):
 			rec["ServiceName"] = rec["PublisherName"] // AZF-1
 		case rec["x_SkuMeterSubcategory"] != "":
 			rec["ServiceName"] = rec["x_SkuMeterSubcategory"] // AZF-2
 		case rec["PublisherName"] != "":
-			rec["ServiceName"] = rec["PublisherName"] // AZF-1 (fallback)
+			rec["ServiceName"] = rec["PublisherName"] // AZF-1b (Costroid extension, last resort)
 		}
 	}
 

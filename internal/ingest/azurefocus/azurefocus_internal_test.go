@@ -19,8 +19,10 @@ func TestParseManifestTimeLenient(t *testing.T) {
 	}{
 		// The tutorial sample's timezone-less startDate form.
 		{"2026-05-01T00:00:00", time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)},
-		// submittedTime: Z-suffixed with seven fractional digits.
-		{"2026-06-05T09:19:01.9013967Z", time.Date(2026, 6, 5, 9, 19, 1, 901_396_700, time.UTC)},
+		// submittedTime: Z-suffixed with seven fractional digits. Parsed
+		// values truncate to microseconds (see TestParseManifestTimeMicros),
+		// so the 700 ns tail is dropped: 901_396_700 → 901_396_000.
+		{"2026-06-05T09:19:01.9013967Z", time.Date(2026, 6, 5, 9, 19, 1, 901_396_000, time.UTC)},
 		// endDate appears both with and without the Z across samples.
 		{"2026-06-30T00:00:00Z", time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)},
 		{"2026-06-30T00:00:00", time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)},
@@ -44,6 +46,40 @@ func TestParseManifestTimeLenient(t *testing.T) {
 		if _, err := parseManifestTime(bad); err == nil {
 			t.Errorf("parseManifestTime(%q) succeeded, want an error", bad)
 		}
+	}
+}
+
+// TestParseManifestTimeMicros proves submittedTime is truncated to
+// microseconds at parse time (slice-4 review fix-up): Azure emits seven
+// fractional digits, but the attribution cache round-trips through a
+// DuckDB TIMESTAMP (µs), so a fresh parse must already equal its cached
+// copy or a sub-µs difference could flip a period's current-run selection
+// between syncs.
+func TestParseManifestTimeMicros(t *testing.T) {
+	// A DuckDB TIMESTAMP holds microseconds; this mimics the cache
+	// round-trip the attribution cache performs.
+	roundTrip := func(t time.Time) time.Time { return t.Truncate(time.Microsecond) }
+
+	got, err := parseManifestTime("2026-06-05T09:19:01.9013967Z")
+	if err != nil {
+		t.Fatalf("parseManifestTime: %v", err)
+	}
+	if got.Nanosecond()%1000 != 0 {
+		t.Errorf("parseManifestTime kept sub-µs precision: %d ns", got.Nanosecond())
+	}
+	if !got.Equal(roundTrip(got)) {
+		t.Errorf("parsed value %v is not stable across a µs cache round-trip (%v)", got, roundTrip(got))
+	}
+
+	// Two submittedTimes 100 ns apart within one microsecond parse equal —
+	// so the cache round-trip cannot flip which is "later".
+	a, err1 := parseManifestTime("2026-06-05T09:19:01.9013967Z") // .9013967 → .901396
+	b, err2 := parseManifestTime("2026-06-05T09:19:01.9013968Z") // .9013968 → .901396
+	if err1 != nil || err2 != nil {
+		t.Fatalf("parseManifestTime: %v / %v", err1, err2)
+	}
+	if !a.Equal(b) {
+		t.Errorf("100 ns-apart submittedTimes parsed unequal (%v vs %v); a cache round-trip could flip selection", a, b)
 	}
 }
 
