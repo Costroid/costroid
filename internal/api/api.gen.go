@@ -38,6 +38,21 @@ type DailyCosts struct {
 	Total string `json:"total"`
 }
 
+// DailyTokenUsage defines model for DailyTokenUsage.
+type DailyTokenUsage struct {
+	// ConsumedQuantity Total ConsumedQuantity for the day/service/unit, as an exact decimal string — never a float.
+	ConsumedQuantity string `json:"consumedQuantity"`
+
+	// ConsumedUnit FOCUS ConsumedUnit (always "Tokens" today).
+	ConsumedUnit string `json:"consumedUnit"`
+
+	// Date The UTC calendar day.
+	Date openapi_types.Date `json:"date"`
+
+	// ServiceName FOCUS ServiceName.
+	ServiceName string `json:"serviceName"`
+}
+
 // Meta defines model for Meta.
 type Meta struct {
 	// FocusVersion FOCUS specification version the internal model targets (decision D4).
@@ -68,6 +83,15 @@ type GetDailyCostsParams struct {
 	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
 }
 
+// GetDailyTokensParams defines parameters for GetDailyTokens.
+type GetDailyTokensParams struct {
+	// Start Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data.
+	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data.
+	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Daily cost by service
@@ -76,6 +100,9 @@ type ServerInterface interface {
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
+	// Daily token usage by service
+	// (GET /api/v1/usage/tokens/daily)
+	GetDailyTokens(w http.ResponseWriter, r *http.Request, params GetDailyTokensParams)
 	// Liveness check
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -141,6 +168,52 @@ func (siw *ServerInterfaceWrapper) GetMeta(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMeta(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDailyTokens operation middleware
+func (siw *ServerInterfaceWrapper) GetDailyTokens(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDailyTokensParams
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDailyTokens(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -286,6 +359,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/tokens/daily", wrapper.GetDailyTokens)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 
 	return m

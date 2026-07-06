@@ -245,6 +245,20 @@ type ServiceCost struct {
 	Cost        decimal.Decimal
 }
 
+// DailyTokenUsage is one row of DailyTokensByService: the total
+// ConsumedQuantity of one service's one unit on one UTC calendar day.
+// Quantity is an exact decimal (never float64, decisions D23/D25).
+type DailyTokenUsage struct {
+	// Date is the UTC midnight of the calendar day.
+	Date time.Time
+	// ServiceName is the FOCUS ServiceName.
+	ServiceName string
+	// ConsumedUnit is the FOCUS ConsumedUnit (e.g. "Tokens").
+	ConsumedUnit string
+	// Quantity is the summed ConsumedQuantity, exact.
+	Quantity decimal.Decimal
+}
+
 // AIRow is the enrichment-relevant projection of one stored cost record,
 // returned by DuckDB.EnrichedAIRows for verifying token-quantity enrichment
 // (decision D33) landed without disturbing money. It is not a query surface —

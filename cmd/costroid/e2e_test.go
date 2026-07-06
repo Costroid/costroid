@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -165,6 +166,50 @@ func TestOfflineE2EAICost(t *testing.T) {
 	}
 	if !strings.Contains(daily, "Compute") {
 		t.Errorf("daily view missing cloud sample data (Compute):\n%s", daily)
+	}
+
+	// --- token-usage API surfaces enriched token quantities end-to-end
+	// (decision D33) with decimal-string precision, deterministic ordering, and
+	// ONLY enriched "Tokens" rows (money-only rows absent). Pinned to the
+	// fixture data ingested above: later window months are empty, so this has no
+	// wall-clock dependence. ---
+	tokens := tokensView(t)
+	transcript.WriteString("\n# GET /api/v1/usage/tokens/daily (default tenant)\n" + tokens + "\n")
+	var tokenRows []tokenRow
+	if err := json.Unmarshal([]byte(tokens), &tokenRows); err != nil {
+		t.Fatalf("decoding token usage: %v (body: %s)", err, tokens)
+	}
+	// The OpenAI float-hazard count (1234567890123456789) sums with the day's
+	// other two OpenAI token rows (1500000 + 900000) into an exact 19-digit
+	// value no float64 can hold — proof the whole path stays decimal. Anthropic's
+	// minted quantities appear under "Claude API"/"Tokens". Ordering is day
+	// ascending, then serviceName (Claude API < OpenAI API), then consumedUnit.
+	wantTokens := []tokenRow{
+		{Date: "2026-05-01", ServiceName: "Claude API", ConsumedUnit: "Tokens", ConsumedQuantity: "4400000"},
+		{Date: "2026-05-01", ServiceName: "OpenAI API", ConsumedUnit: "Tokens", ConsumedQuantity: "1234567890125856789"},
+		{Date: "2026-06-01", ServiceName: "Claude API", ConsumedUnit: "Tokens", ConsumedQuantity: "3000000"},
+		{Date: "2026-06-01", ServiceName: "OpenAI API", ConsumedUnit: "Tokens", ConsumedQuantity: "3000000"},
+		{Date: "2026-06-02", ServiceName: "Claude API", ConsumedUnit: "Tokens", ConsumedQuantity: "4000000"},
+		{Date: "2026-06-02", ServiceName: "OpenAI API", ConsumedUnit: "Tokens", ConsumedQuantity: "500000"},
+	}
+	if len(tokenRows) != len(wantTokens) {
+		t.Fatalf("token usage rows = %+v, want %d rows (%+v)", tokenRows, len(wantTokens), wantTokens)
+	}
+	for i, w := range wantTokens {
+		if tokenRows[i] != w {
+			t.Errorf("token row %d = %+v, want %+v", i, tokenRows[i], w)
+		}
+	}
+	// Money-only rows never surface: 2026-05-02 (OpenAI promo credit + file-search
+	// call fee; Anthropic's collided output rows) yields NO enriched token row,
+	// and no row carries a non-"Tokens" unit.
+	for _, r := range tokenRows {
+		if r.Date == "2026-05-02" {
+			t.Errorf("money-only day 2026-05-02 surfaced in token usage: %+v", r)
+		}
+		if r.ConsumedUnit != "Tokens" {
+			t.Errorf("non-Tokens unit surfaced in token usage: %+v", r)
+		}
 	}
 
 	// --- unchanged re-sync: every period unchanged, rewrite short-circuited ---
@@ -443,6 +488,41 @@ func dailyView(t *testing.T) string {
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("daily costs HTTP %d: %s", resp.StatusCode, body)
+	}
+	return string(body)
+}
+
+// tokenRow mirrors one api.DailyTokenUsage item for decoding the token-usage
+// endpoint's JSON body in the e2e.
+type tokenRow struct {
+	Date             string `json:"date"`
+	ServiceName      string `json:"serviceName"`
+	ConsumedUnit     string `json:"consumedUnit"`
+	ConsumedQuantity string `json:"consumedQuantity"`
+}
+
+// tokensView opens the store and queries the token-usage API for the default
+// tenant, returning the JSON body.
+func tokensView(t *testing.T) string {
+	t.Helper()
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening store for token view: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/usage/tokens/daily")
+	if err != nil {
+		t.Fatalf("GET token usage: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("token usage HTTP %d: %s", resp.StatusCode, body)
 	}
 	return string(body)
 }

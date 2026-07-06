@@ -74,6 +74,54 @@ paths:
             text/plain:
               schema:
                 type: string
+  /api/v1/usage/tokens/daily:
+    get:
+      operationId: getDailyTokens
+      summary: Daily token usage by service
+      description: >-
+        Total daily token ConsumedQuantity per service, for the default
+        tenant. Scoped to token usage: only enriched rows whose ConsumedUnit
+        is "Tokens" appear. A row whose ConsumedQuantity is null (money-only
+        rows — credits, undifferentiated call fees, unmatched usage) is
+        skipped, never surfaced with a zero or fabricated quantity, and
+        non-token FOCUS usage quantities are excluded. Ordering is
+        deterministic: day ascending, then serviceName, then consumedUnit.
+        Quantities are exact decimal strings — never floats — so a large
+        token count loses no precision.
+      parameters:
+        - name: start
+          in: query
+          description: >-
+            Inclusive first calendar day (UTC) to include. Defaults to
+            the full range of stored data.
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          description: >-
+            Inclusive last calendar day (UTC) to include. Defaults to
+            the full range of stored data.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: >-
+            Daily token usage grouped by service and unit for the
+            requested period, day-ascending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyTokenUsage"
+        "400":
+          description: Invalid start or end date.
+          content:
+            text/plain:
+              schema:
+                type: string
 components:
   schemas:
     Meta:
@@ -152,3 +200,30 @@ components:
           type: string
           description: Cost total, as a decimal string.
           example: "2.4192"
+    DailyTokenUsage:
+      type: object
+      required:
+        - date
+        - serviceName
+        - consumedUnit
+        - consumedQuantity
+      properties:
+        date:
+          type: string
+          format: date
+          description: The UTC calendar day.
+          example: "2026-05-01"
+        serviceName:
+          type: string
+          description: FOCUS ServiceName.
+          example: OpenAI API
+        consumedUnit:
+          type: string
+          description: FOCUS ConsumedUnit (always "Tokens" today).
+          example: Tokens
+        consumedQuantity:
+          type: string
+          description: >-
+            Total ConsumedQuantity for the day/service/unit, as an exact
+            decimal string — never a float.
+          example: "1500000"

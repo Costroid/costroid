@@ -25,12 +25,25 @@ type fakeStore struct {
 	gotStart   time.Time
 	gotEnd     time.Time
 	queryCount int
+
+	// token-usage query recording, kept separate from the cost fields.
+	tokens          []storage.DailyTokenUsage
+	gotTokenTenant  string
+	gotTokenStart   time.Time
+	gotTokenEnd     time.Time
+	tokenQueryCount int
 }
 
 func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time) (storage.DailyCosts, error) {
 	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
 	f.queryCount++
 	return f.daily, nil
+}
+
+func (f *fakeStore) DailyTokensByService(_ context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error) {
+	f.gotTokenTenant, f.gotTokenStart, f.gotTokenEnd = tenant, start, end
+	f.tokenQueryCount++
+	return f.tokens, nil
 }
 
 func testStatic() fstest.MapFS {
@@ -256,5 +269,108 @@ func TestGetDailyCostsDateParams(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily", nil))
 	if body := strings.TrimSpace(rec.Body.String()); body != `{"currency":"","days":[],"total":"0"}` {
 		t.Errorf("empty store response = %s", body)
+	}
+}
+
+// TestGetDailyTokens covers the token-usage endpoint: default-tenant scoping,
+// exact decimal-string quantities (the float-hazard count survives), the store
+// ordering rendered verbatim, and every field mapped.
+func TestGetDailyTokens(t *testing.T) {
+	// A 19-digit token count that float64 cannot represent exactly (> 2^53):
+	// it must survive as its exact decimal string end to end (decisions D23/D25).
+	const floatHazard = "1234567890125856789"
+	store := &fakeStore{tokens: []storage.DailyTokenUsage{
+		{
+			Date:         time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			ServiceName:  "Claude API",
+			ConsumedUnit: "Tokens",
+			Quantity:     dec(t, "4400000"),
+		},
+		{
+			Date:         time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			ServiceName:  "OpenAI API",
+			ConsumedUnit: "Tokens",
+			Quantity:     dec(t, floatHazard),
+		},
+	}}
+	handler := NewHandler("0.1.0-test", testStatic(), store)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/tokens/daily", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	// Tenant-scoped to the default tenant, exactly like the costs endpoint —
+	// no tenant query param exists.
+	if store.gotTokenTenant != "default" {
+		t.Errorf("queried tenant %q, want default", store.gotTokenTenant)
+	}
+	if !store.gotTokenStart.IsZero() || !store.gotTokenEnd.IsZero() {
+		t.Errorf("default range = [%s, %s], want unbounded (zero times)", store.gotTokenStart, store.gotTokenEnd)
+	}
+
+	var got []DailyTokenUsage
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	want := []DailyTokenUsage{
+		{Date: got[0].Date, ServiceName: "Claude API", ConsumedUnit: "Tokens", ConsumedQuantity: "4400000"},
+		{Date: got[1].Date, ServiceName: "OpenAI API", ConsumedUnit: "Tokens", ConsumedQuantity: floatHazard},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %+v, want %d", got, len(want))
+	}
+	for i := range want {
+		if got[i].Date.Format(time.DateOnly) != "2026-05-01" {
+			t.Errorf("row %d date = %s, want 2026-05-01", i, got[i].Date)
+		}
+		if got[i].ServiceName != want[i].ServiceName || got[i].ConsumedUnit != want[i].ConsumedUnit ||
+			got[i].ConsumedQuantity != want[i].ConsumedQuantity {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	// The float-hazard quantity is rendered as its EXACT decimal string in the
+	// raw JSON (a float64 would have rounded it).
+	if !strings.Contains(rec.Body.String(), `"consumedQuantity":"`+floatHazard+`"`) {
+		t.Errorf("float-hazard quantity not exact in body: %s", rec.Body)
+	}
+}
+
+// TestGetDailyTokensDateParams covers the date query params, the 400 on a
+// malformed date (before the store is touched), and the empty-store response
+// being `[]` (not null).
+func TestGetDailyTokensDateParams(t *testing.T) {
+	store := &fakeStore{}
+	handler := NewHandler("0.1.0-test", testStatic(), store)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/tokens/daily?start=2026-05-02&end=2026-05-03", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if got := store.gotTokenStart.Format(time.DateOnly); got != "2026-05-02" {
+		t.Errorf("start = %s, want 2026-05-02", got)
+	}
+	if got := store.gotTokenEnd.Format(time.DateOnly); got != "2026-05-03" {
+		t.Errorf("end = %s, want 2026-05-03", got)
+	}
+
+	// The generated binding wrapper rejects invalid dates with 400 before the
+	// handler runs — the store is never queried.
+	before := store.tokenQueryCount
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/tokens/daily?end=bogus", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid date status = %d, want 400", rec.Code)
+	}
+	if store.tokenQueryCount != before {
+		t.Error("handler queried the store despite an invalid date param")
+	}
+
+	// Empty store: a JSON empty array, not null.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/tokens/daily", nil))
+	if body := strings.TrimSpace(rec.Body.String()); body != `[]` {
+		t.Errorf("empty store response = %s, want []", body)
 	}
 }

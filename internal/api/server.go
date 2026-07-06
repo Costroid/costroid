@@ -30,6 +30,7 @@ const focusVersion = "1.4"
 // CostStore is the slice of the storage interface the API reads from.
 type CostStore interface {
 	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time) (storage.DailyCosts, error)
+	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error)
 }
 
 // Server implements the generated ServerInterface.
@@ -102,6 +103,41 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		resp.Days = append(resp.Days, entry)
 	}
 	resp.Total = grandTotal.String()
+	writeJSON(w, resp)
+}
+
+// GetDailyTokens implements GET /api/v1/usage/tokens/daily. Invalid date
+// parameters never reach it: the generated binding wrapper rejects them
+// with a 400 before the handler runs. Quantities are rendered as exact
+// decimal strings (decisions D23, D25) — never floats. Only enriched token
+// rows are returned; the store excludes money-only (null-quantity) rows.
+func (s *Server) GetDailyTokens(w http.ResponseWriter, r *http.Request, params GetDailyTokensParams) {
+	var start, end time.Time // zero = unbounded
+	if params.Start != nil {
+		start = params.Start.Time
+	}
+	if params.End != nil {
+		end = params.End.Time
+	}
+
+	usage, err := s.store.DailyTokensByService(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily token usage: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]DailyTokenUsage, 0, len(usage))
+	for _, u := range usage {
+		entry := DailyTokenUsage{
+			ServiceName:      u.ServiceName,
+			ConsumedUnit:     u.ConsumedUnit,
+			ConsumedQuantity: u.Quantity.String(),
+		}
+		// openapi_types.Date embeds time.Time; set it via the embedded
+		// field so hand-written code needs no oapi-codegen import.
+		entry.Date.Time = u.Date
+		resp = append(resp, entry)
+	}
 	writeJSON(w, resp)
 }
 

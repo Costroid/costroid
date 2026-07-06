@@ -237,6 +237,134 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	}
 }
 
+// TestDailyTokensByService proves the token-usage query: money-only
+// (null-quantity) rows are skipped, non-token usage units are excluded (the
+// endpoint is token-scoped), ordering is deterministic (day, then service,
+// then unit), a float-hazard token count round-trips EXACTLY (no float64),
+// same day/service/unit rows sum, and results are tenant-scoped.
+func TestDailyTokensByService(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// withUsage decorates a base cost record with a consumed unit and quantity;
+	// an empty qty leaves ConsumedQuantity NULL (a money-only row).
+	withUsage := func(r focus.CostRecord, unit, qty string) focus.CostRecord {
+		r.ConsumedUnit = unit
+		if qty != "" {
+			d, err := decimal.NewFromString(qty)
+			if err != nil {
+				t.Fatalf("bad usage qty %q: %v", qty, err)
+			}
+			r.ConsumedQuantity = decimal.NullDecimal{Decimal: d, Valid: true}
+		}
+		return r
+	}
+
+	// A 19-digit token count float64 cannot represent exactly (> 2^53).
+	const floatHazard = "1234567890123456789"
+	records := []focus.CostRecord{
+		// day 1 — enriched OpenAI rows; same day/service/unit, so they SUM. The
+		// sum stays exact: floatHazard + 1500000 = 1234567890124956789.
+		withUsage(testRecord(t, "OpenAI API", day(1), "12.5"), "Tokens", floatHazard),
+		withUsage(testRecord(t, "OpenAI API", day(1), "0.5"), "Tokens", "1500000"),
+		// day 1 — an enriched Claude row (sorts before OpenAI).
+		withUsage(testRecord(t, "Claude API", day(1), "1"), "Tokens", "4400000"),
+		// day 1 — a Tokens-unit row with a NULL quantity (money-only): excluded
+		// by the consumed_quantity IS NOT NULL predicate specifically.
+		withUsage(testRecord(t, "Ghost Token API", day(1), "3.25"), "Tokens", ""),
+		// day 1 — a non-token FOCUS usage row (cloud Hrs): excluded by the token
+		// unit scope, proving the endpoint is not a general usage view.
+		withUsage(testRecord(t, "Amazon Elastic Compute Cloud", day(1), "7.0"), "Hrs", "36"),
+		// day 2 — an enriched Claude row.
+		withUsage(testRecord(t, "Claude API", day(2), "2"), "Tokens", "3000000"),
+	}
+	batch := Batch{Connector: "ai-mix", SourceIdentity: "src", ContentHash: "sha256:aaaa", TenantID: focus.DefaultTenant}
+	if _, err := store.ReplaceIngestBatch(ctx, batch, records); err != nil {
+		t.Fatalf("ReplaceIngestBatch: %v", err)
+	}
+
+	// A different tenant's enriched token row must be invisible to the default
+	// tenant (D15 tenant scoping).
+	acme := withUsage(testRecord(t, "Claude API", day(1), "9"), "Tokens", "999")
+	acme.XTenantID = "acme"
+	acmeBatch := Batch{Connector: "ai-mix", SourceIdentity: "src-acme", ContentHash: "sha256:bbbb", TenantID: "acme"}
+	if _, err := store.ReplaceIngestBatch(ctx, acmeBatch, []focus.CostRecord{acme}); err != nil {
+		t.Fatalf("ReplaceIngestBatch(acme): %v", err)
+	}
+
+	got, err := store.DailyTokensByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyTokensByService: %v", err)
+	}
+	want := []DailyTokenUsage{
+		{Date: day(1), ServiceName: "Claude API", ConsumedUnit: "Tokens", Quantity: dec(t, "4400000")},
+		{Date: day(1), ServiceName: "OpenAI API", ConsumedUnit: "Tokens", Quantity: dec(t, "1234567890124956789")},
+		{Date: day(2), ServiceName: "Claude API", ConsumedUnit: "Tokens", Quantity: dec(t, "3000000")},
+	}
+	assertDailyTokens(t, got, want)
+	// The null-quantity money-only row and the non-token (Hrs) usage row are
+	// both absent, and the summed float-hazard is EXACT to the digit (a float64
+	// sum would have rounded it) — assert on the string form.
+	for _, r := range got {
+		if r.ServiceName == "Ghost Token API" {
+			t.Errorf("null-quantity money-only row surfaced in token usage: %+v", r)
+		}
+		if r.ServiceName == "Amazon Elastic Compute Cloud" || r.ConsumedUnit != "Tokens" {
+			t.Errorf("non-token usage row surfaced in token usage: %+v", r)
+		}
+	}
+	if got[1].Quantity.String() != "1234567890124956789" {
+		t.Errorf("float-hazard sum = %s, want 1234567890124956789 (exact, no float64)", got[1].Quantity)
+	}
+
+	// Range bounds are inclusive calendar days.
+	ranged, err := store.DailyTokensByService(ctx, focus.DefaultTenant, day(2), day(2))
+	if err != nil {
+		t.Fatalf("DailyTokensByService(ranged): %v", err)
+	}
+	assertDailyTokens(t, ranged, []DailyTokenUsage{
+		{Date: day(2), ServiceName: "Claude API", ConsumedUnit: "Tokens", Quantity: dec(t, "3000000")},
+	})
+
+	// The acme tenant sees ONLY its own row; a nonexistent tenant sees nothing.
+	acmeGot, err := store.DailyTokensByService(ctx, "acme", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyTokensByService(acme): %v", err)
+	}
+	assertDailyTokens(t, acmeGot, []DailyTokenUsage{
+		{Date: day(1), ServiceName: "Claude API", ConsumedUnit: "Tokens", Quantity: dec(t, "999")},
+	})
+	none, err := store.DailyTokensByService(ctx, "nobody", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyTokensByService(nobody): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("nonexistent tenant sees %+v, want nothing", none)
+	}
+}
+
+func assertDailyTokens(t *testing.T, got, want []DailyTokenUsage) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("token usage rows = %+v, want %d rows", got, len(want))
+	}
+	for i, w := range want {
+		g := got[i]
+		if !g.Date.Equal(w.Date) || g.ServiceName != w.ServiceName || g.ConsumedUnit != w.ConsumedUnit {
+			t.Errorf("row %d = {%s %s %s}, want {%s %s %s}", i,
+				g.Date.Format(time.DateOnly), g.ServiceName, g.ConsumedUnit,
+				w.Date.Format(time.DateOnly), w.ServiceName, w.ConsumedUnit)
+		}
+		if !g.Quantity.Equal(w.Quantity) {
+			t.Errorf("row %d quantity = %s, want %s", i, g.Quantity, w.Quantity)
+		}
+	}
+}
+
 // TestSyncStateRoundTrip proves the sync-state tuple (migration 0003)
 // persists exactly — including the TIMESTAMP round-trip of LastModified —
 // and that upserting replaces rather than duplicates.

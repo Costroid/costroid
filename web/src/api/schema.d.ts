@@ -58,6 +58,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/usage/tokens/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daily token usage by service
+         * @description Total daily token ConsumedQuantity per service, for the default tenant. Scoped to token usage: only enriched rows whose ConsumedUnit is "Tokens" appear. A row whose ConsumedQuantity is null (money-only rows — credits, undifferentiated call fees, unmatched usage) is skipped, never surfaced with a zero or fabricated quantity, and non-token FOCUS usage quantities are excluded. Ordering is deterministic: day ascending, then serviceName, then consumedUnit. Quantities are exact decimal strings — never floats — so a large token count loses no precision.
+         */
+        get: operations["getDailyTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -119,6 +139,29 @@ export interface components {
              * @example 2.4192
              */
             cost: string;
+        };
+        DailyTokenUsage: {
+            /**
+             * Format: date
+             * @description The UTC calendar day.
+             * @example 2026-05-01
+             */
+            date: string;
+            /**
+             * @description FOCUS ServiceName.
+             * @example OpenAI API
+             */
+            serviceName: string;
+            /**
+             * @description FOCUS ConsumedUnit (always "Tokens" today).
+             * @example Tokens
+             */
+            consumedUnit: string;
+            /**
+             * @description Total ConsumedQuantity for the day/service/unit, as an exact decimal string — never a float.
+             * @example 1500000
+             */
+            consumedQuantity: string;
         };
     };
     responses: never;
@@ -190,6 +233,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DailyCosts"];
+                };
+            };
+            /** @description Invalid start or end date. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getDailyTokens: {
+        parameters: {
+            query?: {
+                /** @description Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data. */
+                start?: string;
+                /** @description Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data. */
+                end?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily token usage grouped by service and unit for the requested period, day-ascending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyTokenUsage"][];
                 };
             };
             /** @description Invalid start or end date. */

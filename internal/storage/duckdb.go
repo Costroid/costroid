@@ -309,6 +309,67 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 	return result, nil
 }
 
+// DailyTokensByService returns, for one tenant, the total ConsumedQuantity
+// per UTC calendar day (of ChargePeriodStart) per (ServiceName,
+// ConsumedUnit), ordered day-ascending then service-name-ascending then
+// consumed-unit-ascending. It is scoped to token usage: only rows whose
+// ConsumedUnit is "Tokens" (the FOCUS 1.4 UnitFormat token unit, decision
+// D33) and whose consumed_quantity is non-NULL contribute — so a money-only
+// row never surfaces with a fabricated or zero quantity, and non-token FOCUS
+// usage (cloud Hrs/GB-Mo/… quantities) is excluded from this token view. A
+// zero start or end means unbounded on that side; a non-zero bound is an
+// inclusive calendar-day bound. Aggregation is by ChargePeriod, like
+// DailyCostsByService (decision D26c).
+func (s *DuckDB) DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]DailyTokenUsage, error) {
+	where := "WHERE x_tenant_id = ? AND consumed_quantity IS NOT NULL AND consumed_unit = 'Tokens'"
+	args := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		args = append(args, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+
+	// Deterministic ordering: day ascending, then service name, then unit.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT CAST(charge_period_start AS DATE) AS day, service_name, consumed_unit,
+			SUM(consumed_quantity)
+		 FROM cost_records `+where+`
+		 GROUP BY day, service_name, consumed_unit
+		 ORDER BY day ASC, service_name ASC, consumed_unit ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying daily token usage: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []DailyTokenUsage
+	for rows.Next() {
+		var (
+			day     time.Time
+			service string
+			unit    string
+			sum     duckdb.Decimal
+		)
+		// DuckDB DECIMAL columns scan as duckdb.Decimal — scanning into
+		// float64 would silently lose precision (decisions D23, D25).
+		if err := rows.Scan(&day, &service, &unit, &sum); err != nil {
+			return nil, fmt.Errorf("scanning daily token usage row: %w", err)
+		}
+		out = append(out, DailyTokenUsage{
+			Date:         day.UTC(),
+			ServiceName:  service,
+			ConsumedUnit: unit,
+			Quantity:     decimal.NewFromBigInt(sum.Value, -int32(sum.Scale)), //nolint:gosec // DuckDB DECIMAL scale is at most 38.
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying daily token usage: %w", err)
+	}
+	return out, nil
+}
+
 // EnrichedAIRows returns the enrichment-relevant projection of one
 // tenant+connector's stored cost records (see AIRow), ordered
 // deterministically. Decimal columns are cast to text in SQL and rebuilt
