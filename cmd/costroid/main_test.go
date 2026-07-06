@@ -372,6 +372,21 @@ func TestFocusCSVMandatoryNullableWarningCLI(t *testing.T) {
 	}
 }
 
+// TestIngestHelpDocumentsLenient asserts the --lenient flag and its scope are
+// documented in `ingest --help` (the flag usage). Dropping the flag or rewording
+// its scope out of the description reddens this.
+func TestIngestHelpDocumentsLenient(t *testing.T) {
+	out, err := runCLI([]string{"ingest", "--help"}, "")
+	if err != nil {
+		t.Fatalf("ingest --help: %v", err)
+	}
+	for _, want := range []string{"-lenient", "tolerate UTC timestamp FORMAT variants", "still rejects zone-less"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ingest --help does not document %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestUsageDocumentsPartFileLimitation asserts the focus-csv part-file
 // limitation sentence is present in the top-level usage/help text (main.go's
 // `usage` const, surfaced here via the no-command error that appends it). The

@@ -489,6 +489,7 @@ const (
 	fcsvUnkHdr   = "../../testdata/focus-csv/negative/unknown-header.csv"
 	fcsvNull     = "../../testdata/focus-csv/negative/literal-null.csv"
 	fcsvBadTS    = "../../testdata/focus-csv/negative/nonrfc3339-1.0.csv"
+	fcsvLenient  = "../../testdata/focus-csv/lenient/lenient-1.4.csv"
 )
 
 // TestOfflineE2EFocusCSV is the hermetic, file-only end-to-end proof for the
@@ -576,6 +577,27 @@ func TestOfflineE2EFocusCSV(t *testing.T) {
 		}
 	}
 
+	// --- FOCUS 1.4 import WITH --lenient (zone-bearing UTC timestamp-format quirks) ---
+	// COUPLED to lenient-1.4.csv: May 1 row (BilledCost 1), June 2 rows (BilledCost
+	// 2 + 3) — the June count includes the boundary row whose BillingPeriodStart
+	// "2026-05-31T20:00-05:00" is 2026-06-01T01:00Z in UTC, so it buckets into June,
+	// not its local-wall-clock May. Both months' BillingPeriodStart values are
+	// zone-bearing FORMAT quirks (no-seconds Z, space+"UTC", offset), so this import
+	// is possible ONLY because --lenient normalizes both the Discover month-split and
+	// the streaming reader. The without-flag rejection is asserted in the negatives.
+	outLen := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsvLenient, "--focus-version", "1.4", "--source-label", "lenient-csv", "--lenient")
+	if !strings.Contains(outLen, "period 2026-05: ingested 1 record(s) as batch focus-csv/lenient-csv/2026-05") {
+		t.Errorf("lenient import missing/wrong May batch:\n%s", outLen)
+	}
+	if !strings.Contains(outLen, "period 2026-06: ingested 2 record(s) as batch focus-csv/lenient-csv/2026-06") {
+		t.Errorf("lenient import missing/wrong June batch (incl. the UTC-boundary row):\n%s", outLen)
+	}
+	// Money into the daily view via the fixture's two UNIQUE services (2 + 3 = 5),
+	// which no earlier import contributes to (unlike the shared "OCI Compute").
+	if got := dailyServiceCosts(t, "Boundary Crosser", "BigQuery Export"); !got.Equal(decimal.RequireFromString("5")) {
+		t.Errorf("lenient fixture BilledCost total via daily view = %s, want 5", got)
+	}
+
 	// --- unchanged re-import short-circuits both months ---
 	reOut := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-csv")
 	for _, m := range []string{"2026-05", "2026-06"} {
@@ -639,6 +661,19 @@ func TestOfflineE2EFocusCSV(t *testing.T) {
 		"ingest", "--connector", "focus-csv", "--path", fcsvBadTS, "--focus-version", "1.0")
 	negative("non-RFC3339 timestamp (1.0) is the strict ISO-8601 rejection", "is not a valid ISO 8601 date/time",
 		"ingest", "--connector", "focus-csv", "--path", fcsvBadTS, "--focus-version", "1.0")
+
+	// --lenient is opt-in: the SAME lenient fixture is REJECTED without the flag.
+	// Strict fails at Discover (analyze→monthOf on the May no-seconds
+	// BillingPeriodStart), so match the Discover-time ISO-8601 substring (per the
+	// reject-substring caveat, NOT a ChargePeriodStart-specific one).
+	negative("lenient fixture rejected without --lenient", "is not a valid ISO 8601 date/time",
+		"ingest", "--connector", "focus-csv", "--path", fcsvLenient, "--focus-version", "1.4")
+	// The money-safety boundary holds under --lenient too: a genuinely zone-less
+	// ChargePeriodStart (fcsvBadTS) is still rejected at the row level even WITH the
+	// flag (its BillingPeriodStart is canonical, so Discover passes and the failure
+	// is the row-level ChargePeriodStart ISO-8601 error).
+	negative("zone-less still rejected with --lenient", "ChargePeriodStart",
+		"ingest", "--connector", "focus-csv", "--path", fcsvBadTS, "--focus-version", "1.0", "--lenient")
 
 	// The rest assert only actionable substrings (offending column, suggested
 	// version, row number).

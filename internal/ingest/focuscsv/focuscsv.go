@@ -94,6 +94,27 @@
 // that part alone (multi-part manifest stitching is a vendor connector's job,
 // not this one's).
 //
+// # --lenient (opt-in timestamp-format tolerance)
+//
+// Strict RFC3339 is the DEFAULT. --lenient is an additive opt-in that tolerates
+// real-world UTC timestamp FORMAT variants which are unambiguously UTC but not
+// strict RFC3339, on the four Date/Time columns (BillingPeriodStart/End,
+// ChargePeriodStart/End) ONLY. What it tolerates: a missing seconds field
+// ("...T00:00Z"), a space date/time separator ("2024-01-01 00:00:00Z"), and a
+// trailing named " UTC" ("2024-09-18 22:00:00 UTC", BigQuery) — provided the
+// value carries an EXPLICIT zone (Z, ±hh:mm, or ±hhmm). Each such value is
+// canonicalized to RFC3339 in the focus-csv package BEFORE the shared strict
+// parser and validation see it, so record.go/validate.go stay byte-unchanged.
+//
+// What --lenient does NOT do (money-safety boundary, deliberate): it does NOT
+// accept a genuinely ZONE-LESS timestamp ("2024-01-01 00:00:00") — a real
+// emitter can write local wall-clock there (Alibaba Cloud's 1.0 Preview writes
+// UTC+8), so assuming UTC would misbucket a charge; those still REJECT with the
+// existing row-numbered ISO-8601 error. It does NOT coerce null tokens (a literal
+// "null" still fails, GEN-4 unchanged) and does NOT touch numbers or their
+// locale. It is format-only, zone-bearing-only, and per-connector: the AWS/Azure/
+// AI connectors and the shared parser are untouched.
+//
 // # --force
 //
 // --force is accepted for CLI uniformity but is a documented NO-OP beyond
@@ -180,7 +201,13 @@ type Period struct {
 // one Connector per UTC BillingPeriodStart month (oldest first), and returns
 // any non-fatal header warnings. It reads no credentials and touches no
 // network. When label is empty it defaults to the file's base name.
-func Discover(path string, version focus.Version, label string) (periods []Period, warnings []string, err error) {
+// When lenient is true, the connector tolerates UTC timestamp FORMAT variants
+// (missing seconds, a space date/time separator, a trailing " UTC") on the four
+// Date/Time columns, canonicalizing them to RFC 3339 before the shared strict
+// parser and validation ever see them. It still REJECTS zone-less timestamps,
+// literal null tokens, and non-RFC3339 numbers — leniency is a format-only,
+// zone-bearing-only relaxation, and strict (lenient=false) stays the default.
+func Discover(path string, version focus.Version, label string, lenient bool) (periods []Period, warnings []string, err error) {
 	// Canonicalize aliases (e.g. 1.0r2 → 1.0) FIRST so the rewritten value flows
 	// into every downstream consumer — ParseVersion, the header tables, and the
 	// Connector's FOCUSVersion — not just past this validation gate.
@@ -195,7 +222,7 @@ func Discover(path string, version focus.Version, label string) (periods []Perio
 	if label == "" {
 		label = filepath.Base(path)
 	}
-	months, hashes, warnings, err := analyze(content, version)
+	months, hashes, warnings, err := analyze(content, version, lenient)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -209,6 +236,7 @@ func Discover(path string, version focus.Version, label string) (periods []Perio
 				label:       label,
 				content:     content,
 				contentHash: hashes[m],
+				lenient:     lenient,
 			},
 		})
 	}
@@ -275,7 +303,7 @@ func looksBinary(content []byte) bool {
 // unparseable one), and folds the post-BOM header line plus each month's raw
 // record byte spans into that month's ContentHash. It stores no rows — the
 // per-month reader re-streams the same immutable content.
-func analyze(content []byte, version focus.Version) (months []string, hashes map[string]string, warnings []string, err error) {
+func analyze(content []byte, version focus.Version, lenient bool) (months []string, hashes map[string]string, warnings []string, err error) {
 	cr := csv.NewReader(bytes.NewReader(content))
 	// Default FieldsPerRecord (0): the header fixes the column count and every
 	// data row must match it — a ragged row is a real malformation and fails.
@@ -311,7 +339,7 @@ func analyze(content []byte, version focus.Version) (months []string, hashes map
 		span := content[prev:cur]
 		prev = cur
 
-		month, merr := monthOf(fieldByName(header, fields, "BillingPeriodStart"))
+		month, merr := monthOf(fieldByName(header, fields, "BillingPeriodStart"), lenient)
 		if merr != nil {
 			return nil, nil, nil, fmt.Errorf("focus-csv: row %d: %w", rowNum, merr)
 		}
@@ -338,12 +366,21 @@ func analyze(content []byte, version focus.Version) (months []string, hashes map
 }
 
 // monthOf returns the UTC "YYYY-MM" of a BillingPeriodStart value, using the
-// same time parser the pipeline uses.
-func monthOf(billingPeriodStart string) (string, error) {
+// same time parser the pipeline uses. When lenient, a zone-bearing FORMAT variant
+// is canonicalized to RFC 3339 first; the empty-null check and the error message
+// still reference the ORIGINAL value (so a zone-less value fails with the same
+// message and --lenient never falsely implies it rescued it). Because both the
+// analyze/Discover month-split and the streaming reader route BillingPeriodStart
+// through this one function, their bucketing agrees by construction.
+func monthOf(billingPeriodStart string, lenient bool) (string, error) {
 	if strings.TrimSpace(billingPeriodStart) == "" {
 		return "", errors.New("BillingPeriodStart is null; a row cannot be assigned to a billing month without it")
 	}
-	t, err := focus.ParseTime(billingPeriodStart)
+	parseInput := billingPeriodStart
+	if lenient {
+		parseInput = normalizeTimestamp(billingPeriodStart)
+	}
+	t, err := focus.ParseTime(parseInput)
 	if err != nil {
 		return "", fmt.Errorf("BillingPeriodStart %q is not a valid ISO 8601 date/time; "+
 			"a row cannot be assigned to a billing month", billingPeriodStart)
@@ -487,6 +524,7 @@ type Connector struct {
 	label       string
 	content     []byte // decompressed, BOM-stripped, shared read-only
 	contentHash string
+	lenient     bool // tolerate zone-bearing UTC timestamp format variants
 }
 
 var _ ingest.Connector = (*Connector)(nil)
@@ -526,7 +564,13 @@ func (r *reader) Next() (ingest.Row, error) {
 		if err != nil {
 			return ingest.Row{}, err // io.EOF or a read error
 		}
-		month, merr := monthOf(row.Record["BillingPeriodStart"])
+		if r.conn.lenient {
+			// Rewrite only the four Date/Time columns to canonical RFC 3339 so the
+			// pipeline's frozen Validate/ParseRecord see canonical strings; a
+			// zone-less value is left as-is and still fails validation.
+			normalizeRecordTimestamps(row.Record)
+		}
+		month, merr := monthOf(row.Record["BillingPeriodStart"], r.conn.lenient)
 		if merr != nil {
 			// analyze already validated every row's BillingPeriodStart before
 			// anything was stored; a failure here is purely defensive.

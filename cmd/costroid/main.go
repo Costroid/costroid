@@ -369,6 +369,8 @@ func ingestCmd(args []string) error {
 	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus; a documented no-op for anthropic-cost/openai-cost/focus-csv, which keep no sync state)")
 	focusVersionFlag := flags.String("focus-version", "", "declared FOCUS version of the export: 1.0, 1.0r2, 1.1, 1.2, 1.3, or 1.4 (focus-csv; REQUIRED, no sniffing; 1.0/1.1 accept spec-conformant exports only, 1.0r2 canonicalizes to 1.0)")
 	sourceLabelFlag := flags.String("source-label", "", "logical source label for the per-month batch identity (focus-csv; default: the file's base name)")
+	lenientFlag := flags.Bool("lenient", false, "focus-csv only, opt-in: tolerate UTC timestamp FORMAT variants "+
+		"(missing seconds, space separator, `UTC` suffix); still rejects zone-less timestamps, literal null tokens, and non-RFC3339 numbers")
 	credentialFlag := flags.String("credential", "", "credential slot name holding the Admin API key (anthropic-cost, openai-cost; default: the connector name). "+
 		"WARNING: an Anthropic Admin key is an unscopeable full-org-admin credential — the encrypted credential store carries the whole least-privilege burden (D32)")
 	baseURLFlag := flags.String("base-url", "", "API base URL (anthropic-cost, openai-cost; default: the vendor's production endpoint)")
@@ -547,7 +549,7 @@ func ingestCmd(args []string) error {
 		// content-hash short-circuit still makes an unchanged re-import a
 		// no-op). One import must carry the COMPLETE data for each month it
 		// touches under a --source-label (a part-file replaces the month).
-		periods, warnings, err := focuscsv.Discover(*pathFlag, focus.Version(*focusVersionFlag), *sourceLabelFlag)
+		periods, warnings, err := focuscsv.Discover(*pathFlag, focus.Version(*focusVersionFlag), *sourceLabelFlag, *lenientFlag)
 		if err != nil {
 			return err
 		}

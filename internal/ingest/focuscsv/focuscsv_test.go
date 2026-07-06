@@ -26,17 +26,18 @@ import (
 )
 
 const (
-	fx10     = "../../../testdata/focus-csv/focus-1.0.csv"
-	fx11     = "../../../testdata/focus-csv/focus-1.1.csv"
-	fx12     = "../../../testdata/focus-csv/focus-1.2.csv"
-	fx13     = "../../../testdata/focus-csv/focus-1.3.csv"
-	fx14     = "../../../testdata/focus-csv/focus-1.4.csv"
-	fxHazard = "../../../testdata/focus-csv/hazard.csv.gz"
-	fxBadTS  = "../../../testdata/focus-csv/negative/nonrfc3339-1.0.csv"
-	fxMinim  = "../../../testdata/focus-csv/negative/focus-1.4-minimal.csv"
-	fxNull   = "../../../testdata/focus-csv/negative/literal-null.csv"
-	fxDup    = "../../../testdata/focus-csv/negative/duplicate-header.csv"
-	fxUnk    = "../../../testdata/focus-csv/negative/unknown-header.csv"
+	fx10      = "../../../testdata/focus-csv/focus-1.0.csv"
+	fx11      = "../../../testdata/focus-csv/focus-1.1.csv"
+	fx12      = "../../../testdata/focus-csv/focus-1.2.csv"
+	fx13      = "../../../testdata/focus-csv/focus-1.3.csv"
+	fx14      = "../../../testdata/focus-csv/focus-1.4.csv"
+	fxHazard  = "../../../testdata/focus-csv/hazard.csv.gz"
+	fxBadTS   = "../../../testdata/focus-csv/negative/nonrfc3339-1.0.csv"
+	fxMinim   = "../../../testdata/focus-csv/negative/focus-1.4-minimal.csv"
+	fxNull    = "../../../testdata/focus-csv/negative/literal-null.csv"
+	fxDup     = "../../../testdata/focus-csv/negative/duplicate-header.csv"
+	fxUnk     = "../../../testdata/focus-csv/negative/unknown-header.csv"
+	fxLenient = "../../../testdata/focus-csv/lenient/lenient-1.4.csv"
 )
 
 func openStore(t *testing.T) *storage.DuckDB {
@@ -83,9 +84,21 @@ func minimalCSV() string {
 
 func discover(t *testing.T, path string, v focus.Version, label string) ([]focuscsv.Period, []string) {
 	t.Helper()
-	periods, warnings, err := focuscsv.Discover(path, v, label)
+	periods, warnings, err := focuscsv.Discover(path, v, label, false) // strict (the default)
 	if err != nil {
 		t.Fatalf("Discover(%s, %s): %v", path, v, err)
+	}
+	return periods, warnings
+}
+
+// discoverLenient is the --lenient sibling of discover: it opts into zone-bearing
+// UTC timestamp-format tolerance. Kept separate so discover's ~20 strict call
+// sites stay unchanged.
+func discoverLenient(t *testing.T, path string, v focus.Version, label string) ([]focuscsv.Period, []string) {
+	t.Helper()
+	periods, warnings, err := focuscsv.Discover(path, v, label, true)
+	if err != nil {
+		t.Fatalf("Discover(%s, %s, lenient): %v", path, v, err)
 	}
 	return periods, warnings
 }
@@ -462,28 +475,28 @@ func TestFormatDetection(t *testing.T) {
 
 	// plain content named .gz → no magic, name/content mismatch → error.
 	plainNamedGz := writeTemp(t, "looks-gz.gz", content)
-	if _, _, err := focuscsv.Discover(plainNamedGz, focus.V1_4, "g"); err == nil ||
+	if _, _, err := focuscsv.Discover(plainNamedGz, focus.V1_4, "g", false); err == nil ||
 		!strings.Contains(err.Error(), "named .gz") {
 		t.Errorf("plain-named-.gz err = %v, want a name/content mismatch error", err)
 	}
 
 	// empty file → error.
 	empty := writeTemp(t, "empty.csv", nil)
-	if _, _, err := focuscsv.Discover(empty, focus.V1_4, "g"); err == nil ||
+	if _, _, err := focuscsv.Discover(empty, focus.V1_4, "g", false); err == nil ||
 		!strings.Contains(err.Error(), "empty") {
 		t.Errorf("empty-file err = %v, want an empty-file error", err)
 	}
 
 	// binary container (NUL bytes) → error naming accepted formats.
 	binary := writeTemp(t, "data.csv", append([]byte("PAR1\x00\x00\x00"), content...))
-	if _, _, err := focuscsv.Discover(binary, focus.V1_4, "g"); err == nil ||
+	if _, _, err := focuscsv.Discover(binary, focus.V1_4, "g", false); err == nil ||
 		!strings.Contains(err.Error(), "gzip-compressed CSV") {
 		t.Errorf("binary-file err = %v, want an accepted-formats error", err)
 	}
 
 	// header-only file (no data rows) → error.
 	headerOnly := writeTemp(t, "header.csv", []byte(strings.SplitN(minimalCSV(), "\n", 2)[0]+"\n"))
-	if _, _, err := focuscsv.Discover(headerOnly, focus.V1_4, "g"); err == nil ||
+	if _, _, err := focuscsv.Discover(headerOnly, focus.V1_4, "g", false); err == nil ||
 		!strings.Contains(err.Error(), "no data rows") {
 		t.Errorf("header-only err = %v, want a no-data-rows error", err)
 	}
@@ -493,14 +506,14 @@ func TestFormatDetection(t *testing.T) {
 
 func TestUnknownHeaderRejectedWithHints(t *testing.T) {
 	// An unknown NON-x_ column fails naming it.
-	_, _, err := focuscsv.Discover(fxUnk, focus.V1_4, "u")
+	_, _, err := focuscsv.Discover(fxUnk, focus.V1_4, "u", false)
 	if err == nil || !strings.Contains(err.Error(), "MadeUpColumn") {
 		t.Errorf("unknown-header err = %v, want it to name MadeUpColumn", err)
 	}
 
 	// Hint 1: a 1.2-shaped file declared 1.4 → ProviderName/PublisherName are
 	// unknown in 1.4 → suggest 1.2 or 1.3.
-	_, _, err = focuscsv.Discover(fx12, focus.V1_4, "h")
+	_, _, err = focuscsv.Discover(fx12, focus.V1_4, "h", false)
 	if err == nil || !strings.Contains(err.Error(), "ProviderName") ||
 		!strings.Contains(err.Error(), "1.2 or 1.3") {
 		t.Errorf("1.2-as-1.4 err = %v, want the ProviderName/1.2-or-1.3 hint", err)
@@ -508,7 +521,7 @@ func TestUnknownHeaderRejectedWithHints(t *testing.T) {
 
 	// Hint 2: a 1.3-shaped file declared 1.2 → ServiceProviderName is unknown in
 	// 1.2 → suggest 1.3 (or 1.4).
-	_, _, err = focuscsv.Discover(fx13, focus.V1_2, "h")
+	_, _, err = focuscsv.Discover(fx13, focus.V1_2, "h", false)
 	if err == nil || !strings.Contains(err.Error(), "ServiceProviderName") ||
 		!strings.Contains(err.Error(), "1.3 (or 1.4)") {
 		t.Errorf("1.3-as-1.2 err = %v, want the ServiceProviderName/1.3-or-1.4 hint", err)
@@ -519,7 +532,7 @@ func TestMissingMandatoryHint13To12(t *testing.T) {
 	// Hint 3: a 1.2-shaped file declared 1.3 → its ProviderName/PublisherName are
 	// valid 1.3 headers (so unknown-header can't fire), but 1.3-mandatory
 	// ServiceProviderName is absent → missing-mandatory failure + the 1.2 hint.
-	_, _, err := focuscsv.Discover(fx12, focus.V1_3, "h")
+	_, _, err := focuscsv.Discover(fx12, focus.V1_3, "h", false)
 	if err == nil || !strings.Contains(err.Error(), "ServiceProviderName") ||
 		!strings.Contains(err.Error(), "re-run with --focus-version 1.2") {
 		t.Errorf("1.2-as-1.3 err = %v, want the missing-ServiceProviderName/1.2 hint", err)
@@ -527,7 +540,7 @@ func TestMissingMandatoryHint13To12(t *testing.T) {
 }
 
 func TestDuplicateHeaderRejected(t *testing.T) {
-	_, _, err := focuscsv.Discover(fxDup, focus.V1_4, "d")
+	_, _, err := focuscsv.Discover(fxDup, focus.V1_4, "d", false)
 	if err == nil || !strings.Contains(err.Error(), "duplicate") ||
 		!strings.Contains(err.Error(), "BilledCost") {
 		t.Errorf("duplicate-header err = %v, want a duplicate BilledCost error", err)
@@ -573,7 +586,7 @@ func TestMandatoryPresence(t *testing.T) {
 	// also drop the ServiceName field from each data row (14 fields now)
 	noSvc = dropField(t, noSvc, 13)
 	p14 := writeTemp(t, "no-servicename.csv", []byte(noSvc))
-	if _, _, err := focuscsv.Discover(p14, focus.V1_4, "x"); err == nil ||
+	if _, _, err := focuscsv.Discover(p14, focus.V1_4, "x", false); err == nil ||
 		!strings.Contains(err.Error(), "required non-null") || !strings.Contains(err.Error(), "ServiceName") {
 		t.Errorf("1.4 missing ServiceName err = %v, want a required-non-null ServiceName failure", err)
 	}
@@ -678,7 +691,7 @@ func TestContentHashPinning(t *testing.T) {
 func TestUnparseableBillingPeriodStartFailsImport(t *testing.T) {
 	bad := strings.Replace(minimalCSV(), "2026-05-01T00:00:00Z,Usage,2026-05-02", "not-a-date,Usage,2026-05-02", 1)
 	path := writeTemp(t, "bad-bps.csv", []byte(bad))
-	_, _, err := focuscsv.Discover(path, focus.V1_4, "b")
+	_, _, err := focuscsv.Discover(path, focus.V1_4, "b", false)
 	if err == nil || !strings.Contains(err.Error(), "row 1") ||
 		!strings.Contains(err.Error(), "BillingPeriodStart") {
 		t.Errorf("unparseable BillingPeriodStart err = %v, want a row-1 BillingPeriodStart failure", err)
@@ -696,7 +709,7 @@ func TestEmptyBillingPeriodStartFailsImport(t *testing.T) {
 	// (ChargePeriodStart is followed by ContractedCost, not by ",Usage,").
 	bad := strings.Replace(minimalCSV(), "2026-05-01T00:00:00Z,Usage,2026-05-02", ",Usage,2026-05-02", 1)
 	path := writeTemp(t, "empty-bps.csv", []byte(bad))
-	_, _, err := focuscsv.Discover(path, focus.V1_4, "b")
+	_, _, err := focuscsv.Discover(path, focus.V1_4, "b", false)
 	if err == nil || !strings.Contains(err.Error(), "row 1") ||
 		!strings.Contains(err.Error(), "BillingPeriodStart is null") {
 		t.Errorf("empty BillingPeriodStart err = %v, want a row-1 'BillingPeriodStart is null' failure", err)
@@ -710,7 +723,7 @@ func TestEmptyBillingPeriodStartFailsImport(t *testing.T) {
 // zero coverage.
 func TestHeaderlessFileRejected(t *testing.T) {
 	path := writeTemp(t, "blank.csv", []byte("\n"))
-	if _, _, err := focuscsv.Discover(path, focus.V1_4, "h"); err == nil ||
+	if _, _, err := focuscsv.Discover(path, focus.V1_4, "h", false); err == nil ||
 		!strings.Contains(err.Error(), "no header row") {
 		t.Errorf("headerless-file err = %v, want the 'no header row' error", err)
 	}
@@ -842,11 +855,11 @@ func TestColumnTablesPinned(t *testing.T) {
 		"ServiceCategory,ServiceName,ServiceProviderName," + added + "\n" +
 		"1.00,999,USD,2026-06-01T00:00:00Z,2026-05-01T00:00:00Z,Usage,2026-05-02T00:00:00Z,2026-05-01T00:00:00Z,1.00,1.00,Co,1.00,Compute,Svc,Co,det-1\n"
 	path := writeTemp(t, "added.csv", []byte(csv))
-	if _, _, err := focuscsv.Discover(path, focus.V1_4, "k"); err != nil {
+	if _, _, err := focuscsv.Discover(path, focus.V1_4, "k", false); err != nil {
 		t.Errorf("InvoiceDetailId rejected under 1.4: %v", err)
 	}
 	// Declared 1.3, the same 1.4-only column is unknown → rejected.
-	if _, _, err := focuscsv.Discover(path, focus.V1_3, "k"); err == nil ||
+	if _, _, err := focuscsv.Discover(path, focus.V1_3, "k", false); err == nil ||
 		!strings.Contains(err.Error(), "InvoiceDetailId") {
 		t.Errorf("InvoiceDetailId under 1.3 err = %v, want it rejected as unknown", err)
 	}
@@ -857,14 +870,14 @@ func TestColumnTablesPinned(t *testing.T) {
 func TestGzipDegenerateBodies(t *testing.T) {
 	// A VALID gzip of EMPTY content: magic present, decompresses to nothing.
 	emptyGz := writeTemp(t, "empty.csv", gzipBytes(t, nil))
-	if _, _, err := focuscsv.Discover(emptyGz, focus.V1_4, "g"); err == nil ||
+	if _, _, err := focuscsv.Discover(emptyGz, focus.V1_4, "g", false); err == nil ||
 		!strings.Contains(err.Error(), "decompressed to nothing") {
 		t.Errorf("empty-gzip err = %v, want a 'decompressed to nothing' error", err)
 	}
 
 	// Bytes that carry the gzip magic (1f 8b) but are NOT valid gzip.
 	badGz := writeTemp(t, "bad.csv", []byte{0x1f, 0x8b, 0xff, 0xff, 0x00, 0x01})
-	if _, _, err := focuscsv.Discover(badGz, focus.V1_4, "g"); err == nil ||
+	if _, _, err := focuscsv.Discover(badGz, focus.V1_4, "g", false); err == nil ||
 		!strings.Contains(err.Error(), "not valid gzip") {
 		t.Errorf("gzip-magic-but-invalid-body err = %v, want a 'not valid gzip' error", err)
 	}
@@ -910,7 +923,7 @@ func TestUnknownHeaderListedInFileOrder(t *testing.T) {
 	csv := "Zebra,Apple,BilledCost,BillingCurrency,ServiceName\n" +
 		"z,a,1.00,USD,Svc\n"
 	path := writeTemp(t, "nonalpha-unknown.csv", []byte(csv))
-	_, _, err := focuscsv.Discover(path, focus.V1_4, "o")
+	_, _, err := focuscsv.Discover(path, focus.V1_4, "o", false)
 	if err == nil {
 		t.Fatal("expected an unknown-header error")
 	}
@@ -936,7 +949,7 @@ func TestMissingMandatory12ListedSorted(t *testing.T) {
 	row := "999,Acct,USD,2026-06-01T00:00:00Z,2026-05-01T00:00:00Z,Usage,,desc,2026-05-02T00:00:00Z," +
 		"2026-05-01T00:00:00Z,1.00,1.00,Issuer,1.00,1,Hrs,AWS,AWS,Compute"
 	path := writeTemp(t, "missing2-12.csv", []byte(header+"\n"+row+"\n"))
-	_, _, err := focuscsv.Discover(path, focus.V1_2, "m")
+	_, _, err := focuscsv.Discover(path, focus.V1_2, "m", false)
 	if err == nil {
 		t.Fatal("expected a missing-mandatory error for the 1.2 file")
 	}
@@ -989,7 +1002,7 @@ func TestContentHashSpansMultiLineRecords(t *testing.T) {
 	}
 	hashOf := func(b []byte) string {
 		path := writeTemp(t, "ml.csv", b)
-		p, _, err := focuscsv.Discover(path, focus.V1_4, "ml")
+		p, _, err := focuscsv.Discover(path, focus.V1_4, "ml", false)
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
@@ -1001,5 +1014,155 @@ func TestContentHashSpansMultiLineRecords(t *testing.T) {
 	if hA == hB {
 		t.Errorf("a change on the second physical line of a multi-line record did not change the hash "+
 			"(%s) — spans must come from csv.Reader.InputOffset, not a '\\n' split", hA)
+	}
+}
+
+// --- --lenient: zone-bearing UTC timestamp-format tolerance (opt-in) ---
+
+// monthServices reads one connector's month of records (exercising the lenient
+// reader.Next path) and returns the set of ServiceName values in it.
+func monthServices(t *testing.T, conn *focuscsv.Connector) map[string]bool {
+	t.Helper()
+	r, err := conn.Records(context.Background())
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	out := map[string]bool{}
+	for {
+		row, err := r.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		out[row.Record["ServiceName"]] = true
+	}
+	return out
+}
+
+// TestLenientAcceptsZoneBearingQuirks is the primary end-to-end proof for
+// --lenient AND the "both paths lenient-aware" guard (test #6). It is COUPLED to
+// lenient-1.4.csv: May holds 1 row (OCI Compute, BilledCost 1) whose
+// BillingPeriodStart is the no-seconds "2026-05-01T00:00Z" form; June holds 2 rows
+// (Boundary Crosser, BilledCost 2, whose BillingPeriodStart "2026-05-31T20:00-05:00"
+// is June 01T01:00Z in UTC; BigQuery Export, BilledCost 3, whose BillingPeriodStart
+// is the space+"UTC" form). Grand total BilledCost = 6.
+//
+// The Discover/analyze month-split reaches focus.ParseTime ONLY via
+// monthOf(BillingPeriodStart), so a fixture with quirk BillingPeriodStart values
+// can be discovered at all only if the lenient thread reaches analyze; the full
+// ingest below re-streams every row through reader.Next, so the per-month record
+// counts also prove the reader path normalizes. (See TestStrictRejectsLenientFixture
+// for the inverse: the same file is REJECTED without --lenient.)
+func TestLenientAcceptsZoneBearingQuirks(t *testing.T) {
+	store := openStore(t)
+	periods, warnings := discoverLenient(t, fxLenient, focus.V1_4, "lenient")
+	if len(warnings) != 0 { // the fixture carries all 21 Mandatory columns → no warning
+		t.Errorf("unexpected warnings %v", warnings)
+	}
+	if len(periods) != 2 || periods[0].Month != "2026-05" || periods[1].Month != "2026-06" {
+		t.Fatalf("periods = %+v, want [2026-05 2026-06]", periods)
+	}
+
+	results := ingestPeriods(t, store, periods, focus.DefaultTenant)
+	// Per-month record counts (a cross-month misbucket of the boundary row would
+	// flip these to 2/1 — the grand total alone cannot catch that).
+	if results["2026-05"].Records != 1 {
+		t.Errorf("2026-05 records = %d, want 1", results["2026-05"].Records)
+	}
+	if results["2026-06"].Records != 2 {
+		t.Errorf("2026-06 records = %d, want 2 (incl. the UTC-boundary row)", results["2026-06"].Records)
+	}
+	// Per-month batch identities.
+	if got := results["2026-05"].Batch.SourceIdentity; got != "lenient/2026-05" {
+		t.Errorf("May batch identity = %q, want lenient/2026-05", got)
+	}
+	if got := results["2026-06"].Batch.SourceIdentity; got != "lenient/2026-06" {
+		t.Errorf("June batch identity = %q, want lenient/2026-06", got)
+	}
+
+	// Exact stored money total (COUPLED to the fixture: 1 + 2 + 3 = 6).
+	daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	total := decimal.Zero
+	for _, d := range daily.Days {
+		for _, s := range d.Services {
+			total = total.Add(s.Cost)
+		}
+	}
+	if !total.Equal(decimal.RequireFromString("6")) {
+		t.Errorf("lenient fixture BilledCost total = %s, want 6", total)
+	}
+
+	// The boundary row lands in JUNE (its UTC month), not its local-wall-clock May.
+	if svc := monthServices(t, periods[1].Conn); !svc["Boundary Crosser"] {
+		t.Errorf("June services = %v, want the UTC-boundary row (2026-05-31T20:00-05:00 == June UTC)", svc)
+	}
+	if svc := monthServices(t, periods[0].Conn); svc["Boundary Crosser"] {
+		t.Errorf("May services = %v, must NOT contain the boundary row (it is June in UTC)", svc)
+	}
+}
+
+// TestStrictRejectsLenientFixture is the inverse of the accept test: strict mode
+// (the default, lenient=false) does NOT accept the zone-bearing quirks. Discovering
+// the lenient fixture WITHOUT --lenient fails at analyze (monthOf→focus.ParseTime)
+// on the May row's no-seconds BillingPeriodStart — proving --lenient is load-bearing
+// (deleting the lenient thread into analyze would make this fixture undiscoverable,
+// so the accept test genuinely exercises it).
+func TestStrictRejectsLenientFixture(t *testing.T) {
+	_, _, err := focuscsv.Discover(fxLenient, focus.V1_4, "strict", false)
+	if err == nil || !strings.Contains(err.Error(), "is not a valid ISO 8601 date/time") ||
+		!strings.Contains(err.Error(), "BillingPeriodStart") {
+		t.Errorf("strict Discover of the lenient fixture err = %v, want a BillingPeriodStart ISO-8601 failure", err)
+	}
+}
+
+// TestLenientStillRejectsZoneLess is the money-safety boundary: even WITH --lenient,
+// a genuinely zone-less ChargePeriodStart (fxBadTS's "2026-05-01 00:00:00") is NOT
+// assumed UTC — it still fails at the row level with the ChargePeriodStart ISO-8601
+// error. fxBadTS's BillingPeriodStart is canonical, so Discover succeeds and the
+// failure surfaces in the pipeline, not in monthOf. This is the key proof that the
+// user's zone-bearing-only policy holds under --lenient.
+func TestLenientStillRejectsZoneLess(t *testing.T) {
+	store := openStore(t)
+	periods, _ := discoverLenient(t, fxBadTS, focus.V1_0, "bad-lenient")
+	if len(periods) != 1 {
+		t.Fatalf("periods = %d, want 1 (BillingPeriodStart is canonical)", len(periods))
+	}
+	_, err := ingest.Run(context.Background(), periods[0].Conn, store, focus.DefaultTenant)
+	if err == nil {
+		t.Fatal("zone-less ChargePeriodStart ingested under --lenient, want a row-level rejection")
+	}
+	var rowErrs *ingest.RowErrors
+	if !errors.As(err, &rowErrs) {
+		t.Fatalf("err = %v (%T), want *ingest.RowErrors", err, err)
+	}
+	msg := rowErrs.First[0].Errs[0].Error()
+	if !strings.Contains(msg, "ChargePeriodStart") || !strings.Contains(msg, "ISO 8601") {
+		t.Errorf("row error %q, want a ChargePeriodStart ISO-8601 violation (zone-less not coerced under --lenient)", msg)
+	}
+}
+
+// TestLenientDoesNotCoerceNullTokens proves --lenient is timestamp-format-only: a
+// literal "null" BilledCost (fxNull) still fails identically to strict mode — no
+// null-token coercion (GEN-4 / D34(d) unchanged).
+func TestLenientDoesNotCoerceNullTokens(t *testing.T) {
+	store := openStore(t)
+	periods, _ := discoverLenient(t, fxNull, focus.V1_4, "null-lenient")
+	_, err := ingest.Run(context.Background(), periods[0].Conn, store, focus.DefaultTenant)
+	if err == nil {
+		t.Fatal("literal-null BilledCost ingested under --lenient, want a row-level failure")
+	}
+	var rowErrs *ingest.RowErrors
+	if !errors.As(err, &rowErrs) {
+		t.Fatalf("err = %v (%T), want *ingest.RowErrors", err, err)
+	}
+	msg := rowErrs.First[0].Errs[0].Error()
+	if !strings.Contains(msg, "BilledCost") || !strings.Contains(msg, "valid decimal") {
+		t.Errorf("row error %q, want a BilledCost not-a-decimal violation (null token not coerced under --lenient)", msg)
 	}
 }

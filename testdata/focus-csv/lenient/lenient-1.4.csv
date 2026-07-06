@@ -1,0 +1,4 @@
+BilledCost,BillingAccountId,BillingCurrency,BillingPeriodEnd,BillingPeriodStart,ChargeCategory,ChargePeriodEnd,ChargePeriodStart,ContractedCost,EffectiveCost,InvoiceIssuerName,ListCost,ServiceCategory,ServiceName,ServiceProviderName,BillingAccountName,ChargeClass,ChargeDescription,HostProviderName,PricingQuantity,PricingUnit
+1.00,999,USD,2026-06-01T00:00Z,2026-05-01T00:00Z,Usage,2026-05-02T00:00:00Z,2026-05-01 00:00:00 UTC,1.00,1.00,Oracle,1.00,Compute,OCI Compute,OCI,Legacy Acct,,Compute VM,OCI,1,Hrs
+2.00,999,USD,2026-07-01T00:00:00Z,2026-05-31T20:00-05:00,Usage,2026-06-02T00:00:00Z,2026-06-01 01:00:00 UTC,2.00,2.00,Oracle,2.00,Compute,Boundary Crosser,OCI,Legacy Acct,,Boundary charge,OCI,1,Hrs
+3.00,999,USD,2026-07-01T00:00:00Z,2026-06-01 00:00:00 UTC,Usage,2026-06-03T00:00:00Z,2026-06-01T00:00:00+0000,3.00,3.00,Google,3.00,Storage,BigQuery Export,GCP,Legacy Acct,,BQ export,GCP,1,Hrs
