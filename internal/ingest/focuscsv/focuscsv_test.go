@@ -26,11 +26,13 @@ import (
 )
 
 const (
+	fx10     = "../../../testdata/focus-csv/focus-1.0.csv"
+	fx11     = "../../../testdata/focus-csv/focus-1.1.csv"
 	fx12     = "../../../testdata/focus-csv/focus-1.2.csv"
 	fx13     = "../../../testdata/focus-csv/focus-1.3.csv"
 	fx14     = "../../../testdata/focus-csv/focus-1.4.csv"
 	fxHazard = "../../../testdata/focus-csv/hazard.csv.gz"
-	fx10     = "../../../testdata/focus-csv/focus-1.0.csv"
+	fxBadTS  = "../../../testdata/focus-csv/negative/nonrfc3339-1.0.csv"
 	fxMinim  = "../../../testdata/focus-csv/negative/focus-1.4-minimal.csv"
 	fxNull   = "../../../testdata/focus-csv/negative/literal-null.csv"
 	fxDup    = "../../../testdata/focus-csv/negative/duplicate-header.csv"
@@ -103,47 +105,160 @@ func ingestPeriods(t *testing.T, store storage.Store, periods []focuscsv.Period,
 	return out
 }
 
-// --- version gating (message-as-contract) ---
+// --- version gating: 1.0/1.1/1.2/1.3/1.4 accepted; 1.0r2 canonicalizes to 1.0 ---
 
-func TestParseVersionMessages(t *testing.T) {
-	// The 1.0 / 1.1 sentences are asserted VERBATIM (they are the CLI contract).
-	want10 := "FOCUS 1.0 identifies entities via ProviderName/PublisherName " +
-		"(replaced by ServiceProviderName/HostProviderName in 1.3, removed in 1.4); " +
-		"no 1.0 → 1.4 transform is implemented — re-export as FOCUS 1.2 or later " +
-		"(AWS Data Exports and Microsoft Cost Management both offer 1.2)."
-	want11 := strings.ReplaceAll(want10, "1.0", "1.1")
-
-	if err := focuscsv.ParseVersion(focus.V1_0); err == nil || err.Error() != want10 {
-		t.Errorf("ParseVersion(1.0) = %v, want verbatim:\n%s", err, want10)
-	}
-	if err := focuscsv.ParseVersion(focus.V1_1); err == nil || err.Error() != want11 {
-		t.Errorf("ParseVersion(1.1) = %v, want verbatim:\n%s", err, want11)
-	}
-	if err := focuscsv.ParseVersion(""); err == nil || !strings.Contains(err.Error(), "required") {
-		t.Errorf("ParseVersion(empty) = %v, want a 'required' error", err)
-	}
-	if err := focuscsv.ParseVersion(focus.Version("2.0")); err == nil || !strings.Contains(err.Error(), "unsupported") {
-		t.Errorf("ParseVersion(2.0) = %v, want an 'unsupported' error", err)
-	}
-	for _, v := range []focus.Version{focus.V1_2, focus.V1_3, focus.V1_4} {
+func TestParseVersionAccepts(t *testing.T) {
+	// 1.0 and 1.1 are now accepted (they were rejected pre-slice).
+	for _, v := range []focus.Version{focus.V1_0, focus.V1_1, focus.V1_2, focus.V1_3, focus.V1_4} {
 		if err := focuscsv.ParseVersion(v); err != nil {
-			t.Errorf("ParseVersion(%s) = %v, want nil", v, err)
+			t.Errorf("ParseVersion(%s) = %v, want nil (accepted)", v, err)
+		}
+	}
+	// The required/unsupported messages advertise the full 1.0…1.4 range.
+	if err := focuscsv.ParseVersion(""); err == nil ||
+		!strings.Contains(err.Error(), "required") || !strings.Contains(err.Error(), "1.0, 1.1, 1.2, 1.3, 1.4") {
+		t.Errorf("ParseVersion(empty) = %v, want a 'required' error listing 1.0, 1.1, 1.2, 1.3, 1.4", err)
+	}
+	if err := focuscsv.ParseVersion(focus.Version("2.0")); err == nil ||
+		!strings.Contains(err.Error(), "unsupported") || !strings.Contains(err.Error(), "1.0, 1.1, 1.2, 1.3, 1.4") {
+		t.Errorf("ParseVersion(2.0) = %v, want an 'unsupported' error listing the range", err)
+	}
+	// 1.0r2 is NOT accepted by ParseVersion directly — Discover canonicalizes it to
+	// 1.0 FIRST (see TestVersion10r2CanonicalizesToV10). This pins that ordering: if
+	// canonicalization moved into ParseVersion, the raw "1.0r2" would flow into the
+	// downstream maps that have no 1.0r2 entry.
+	if err := focuscsv.ParseVersion(focus.Version("1.0r2")); err == nil {
+		t.Errorf("ParseVersion(1.0r2) = nil, want it unsupported pre-canonicalization (Discover canonicalizes it upstream)")
+	}
+}
+
+// TestVersion10And11Import proves 1.0 and 1.1 are accepted and imported (they were
+// rejected before this slice): fx10 is a two-month conformant 1.0 export, fx11 a
+// two-month conformant 1.1 export.
+func TestVersion10And11Import(t *testing.T) {
+	for _, tc := range []struct {
+		path    string
+		version focus.Version
+	}{
+		{fx10, focus.V1_0},
+		{fx11, focus.V1_1},
+	} {
+		periods, warnings := discover(t, tc.path, tc.version, "legacy")
+		if len(warnings) != 0 {
+			t.Errorf("%s: unexpected warnings %v", tc.path, warnings)
+		}
+		if len(periods) != 2 {
+			t.Fatalf("%s: periods = %d, want 2 (2026-05, 2026-06)", tc.path, len(periods))
+		}
+		if got := periods[0].Conn.FOCUSVersion(); got != tc.version {
+			t.Errorf("%s: FOCUSVersion = %q, want %q", tc.path, got, tc.version)
 		}
 	}
 }
 
-// A 1.0-shaped file is rejected on the version, WITHOUT the file being read
-// (the fixture content is never parsed).
-func TestVersion10RejectedBeforeFileRead(t *testing.T) {
-	_, _, err := focuscsv.Discover(fx10, focus.V1_0, "legacy")
-	if err == nil || !strings.Contains(err.Error(), "no 1.0 → 1.4 transform is implemented") {
-		t.Fatalf("Discover 1.0 = %v, want the not-implemented rejection", err)
+// TestVersion10r2CanonicalizesToV10 proves the 1.0r2 alias flows through
+// canonicalization: a "1.0r2" declaration yields a Connector whose FOCUSVersion is
+// V1_0 (so the 1.0 known/mandatory set + transform are what run), and the fixture
+// imports under it — not merely that ParseVersion returned nil.
+func TestVersion10r2CanonicalizesToV10(t *testing.T) {
+	periods, warnings := discover(t, fx10, focus.Version("1.0r2"), "oci-r2")
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings %v", warnings)
 	}
-	// A nonexistent path with a rejected version STILL fails on the version,
-	// proving the file is never opened.
-	_, _, err = focuscsv.Discover(filepath.Join(t.TempDir(), "nope.csv"), focus.V1_1, "x")
-	if err == nil || !strings.Contains(err.Error(), "1.1") {
-		t.Fatalf("Discover 1.1 (missing file) = %v, want the version rejection first", err)
+	if len(periods) != 2 {
+		t.Fatalf("periods = %d, want 2", len(periods))
+	}
+	if got := periods[0].Conn.FOCUSVersion(); got != focus.V1_0 {
+		t.Errorf("FOCUSVersion = %q, want 1.0 (1.0r2 must canonicalize to 1.0)", got)
+	}
+	// It imports under the 1.0 path (2 records/month) — proving the canonical
+	// version reaches the transform + tables, not just ParseVersion.
+	store := openStore(t)
+	res := ingestPeriods(t, store, periods, focus.DefaultTenant)
+	if res["2026-05"].Records != 2 || res["2026-06"].Records != 2 {
+		t.Errorf("1.0r2 import records = %+v, want 2 per month", res)
+	}
+}
+
+// TestFocus10MarketplaceServiceProviderSynthesized proves the 1.0 fixture's
+// marketplace row (PublisherName != ProviderName, no native ServiceProviderName)
+// synthesizes ServiceProviderName ← PublisherName / HostProviderName ← ProviderName
+// through the REGISTERED 1.0 transform — the connector-level analogue of the focus
+// package's unit completeness test (service_provider_name is INSERT-only in the
+// store, so this cannot be asserted through a read surface / the e2e).
+func TestFocus10MarketplaceServiceProviderSynthesized(t *testing.T) {
+	periods, _ := discover(t, fx10, focus.V1_0, "oci")
+	transform, err := focus.TransformTo14(focus.V1_0)
+	if err != nil {
+		t.Fatalf("TransformTo14(1.0): %v", err)
+	}
+	r, err := periods[0].Conn.Records(context.Background()) // 2026-05 holds the marketplace row
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	found := false
+	for {
+		row, err := r.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if row.Record["PublisherName"] == row.Record["ProviderName"] {
+			continue // native row; the marketplace row diverges
+		}
+		found = true
+		if _, ok := row.Record["ServiceProviderName"]; ok {
+			t.Errorf("fixture setup: the 1.0 row carries a native ServiceProviderName (1.0 has none)")
+		}
+		out, err := transform(row.Record)
+		if err != nil {
+			t.Fatalf("transform: %v", err)
+		}
+		if out["ServiceProviderName"] != row.Record["PublisherName"] {
+			t.Errorf("ServiceProviderName = %q, want the synthesized PublisherName %q",
+				out["ServiceProviderName"], row.Record["PublisherName"])
+		}
+		if out["HostProviderName"] != row.Record["ProviderName"] {
+			t.Errorf("HostProviderName = %q, want the synthesized ProviderName %q",
+				out["HostProviderName"], row.Record["ProviderName"])
+		}
+	}
+	if !found {
+		t.Fatal("no marketplace row (PublisherName != ProviderName) found in the 1.0 fixture")
+	}
+}
+
+// TestNonRFC3339TimestampRejected is the strict-parser boundary: a 1.0 file that is
+// spec-shaped EXCEPT for a space-separated (non-RFC3339) ChargePeriodStart passes
+// the version + header + month-bucketing gates but is REJECTED at the row level
+// with the actionable, row-numbered timestamp error — proving the shared strict
+// parser was NOT relaxed for 1.0.
+func TestNonRFC3339TimestampRejected(t *testing.T) {
+	store := openStore(t)
+	periods, warnings := discover(t, fxBadTS, focus.V1_0, "bad")
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings %v", warnings)
+	}
+	if len(periods) != 1 {
+		t.Fatalf("periods = %d, want 1 (BillingPeriodStart is valid, so the month gate passes)", len(periods))
+	}
+	_, err := ingest.Run(context.Background(), periods[0].Conn, store, focus.DefaultTenant)
+	if err == nil {
+		t.Fatal("non-RFC3339 ChargePeriodStart ingested, want a row-level rejection")
+	}
+	var rowErrs *ingest.RowErrors
+	if !errors.As(err, &rowErrs) {
+		t.Fatalf("err = %v (%T), want *ingest.RowErrors", err, err)
+	}
+	if rowErrs.First[0].Row != 1 {
+		t.Errorf("offending row = %d, want 1", rowErrs.First[0].Row)
+	}
+	msg := rowErrs.First[0].Errs[0].Error()
+	if !strings.Contains(msg, "ChargePeriodStart") || !strings.Contains(msg, "ISO 8601") {
+		t.Errorf("row error %q, want a ChargePeriodStart ISO-8601 violation (strict parser not relaxed)", msg)
 	}
 }
 
@@ -214,6 +329,8 @@ func TestIngestConformantFixtures(t *testing.T) {
 		label   string
 		service string
 	}{
+		{fx10, focus.V1_0, "oci-conf", "OCI Compute"},
+		{fx11, focus.V1_1, "cloudnine-conf", "CloudNine Object Storage"},
 		{fx12, focus.V1_2, "aws-may-june", "Amazon Elastic Compute Cloud"},
 		{fx13, focus.V1_3, "gcp-marketplace", "Datadog Pro"},
 		{fx14, focus.V1_4, "azure-export", "Azure Virtual Machines"},
@@ -247,7 +364,7 @@ func TestIngestConformantFixtures(t *testing.T) {
 			seen[s.ServiceName] = true
 		}
 	}
-	for _, svc := range []string{"Amazon Elastic Compute Cloud", "Datadog Pro", "Azure Virtual Machines"} {
+	for _, svc := range []string{"OCI Compute", "CloudNine Object Storage", "Amazon Elastic Compute Cloud", "Datadog Pro", "Azure Virtual Machines"} {
 		if !seen[svc] {
 			t.Errorf("daily view missing service %q", svc)
 		}
@@ -261,6 +378,40 @@ func TestIngestConformantFixtures(t *testing.T) {
 	}
 	if !res.Unchanged {
 		t.Errorf("identical re-import = %+v, want Unchanged", res)
+	}
+}
+
+// TestFocus10And11BilledTotals pins the conformant 1.0/1.1 fixtures' BilledCost
+// totals end-to-end through the store — the money invariant for the new transforms.
+// COUPLED to the fixtures: the 1.0 fixture's BilledCost column sums to 10 (1+2+3+4)
+// and the 1.1 fixture's to 20 (5+5+4+6). Each fixture ingests into its own store,
+// so summing every service across every day equals that fixture's total.
+func TestFocus10And11BilledTotals(t *testing.T) {
+	for _, tc := range []struct {
+		path    string
+		version focus.Version
+		label   string
+		want    string
+	}{
+		{fx10, focus.V1_0, "oci-total", "10"},
+		{fx11, focus.V1_1, "cloudnine-total", "20"},
+	} {
+		store := openStore(t)
+		periods, _ := discover(t, tc.path, tc.version, tc.label)
+		ingestPeriods(t, store, periods, focus.DefaultTenant)
+		daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{})
+		if err != nil {
+			t.Fatalf("%s: DailyCostsByService: %v", tc.path, err)
+		}
+		total := decimal.Zero
+		for _, d := range daily.Days {
+			for _, s := range d.Services {
+				total = total.Add(s.Cost)
+			}
+		}
+		if !total.Equal(decimal.RequireFromString(tc.want)) {
+			t.Errorf("%s BilledCost total = %s, want %s", tc.path, total, tc.want)
+		}
 	}
 }
 

@@ -12,8 +12,8 @@ func TestTransformTo14Registry(t *testing.T) {
 		version Version
 		wantErr bool
 	}{
-		{V1_0, true},           // registry slot, not implemented
-		{V1_1, true},           // registry slot, not implemented
+		{V1_0, false},          // implemented (1.0 → 1.4 via the 1.2 entity mapping)
+		{V1_1, false},          // implemented (1.1 → 1.4 via the 1.2 entity mapping)
 		{V1_2, false},          // implemented (1.2 → 1.4 entity mapping)
 		{V1_3, false},          // implemented (1.3 → 1.4 drop-only identity)
 		{V1_4, false},          // identity transform (synthesized 1.4 sources)
@@ -121,6 +121,160 @@ func TestTransform12To14(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTransform10To14CarriesAndSynthesizes is the mandated safety proof for the
+// 1.0 → 1.4 reuse: a FULLY-populated 1.0 record (all 43 v1.0 Column IDs, a
+// MARKETPLACE row where PublisherName diverges from ProviderName, and no native
+// ServiceProviderName) must (a) carry EVERY 1.4 column that has a 1.0 source
+// through byte-for-byte — the only automated guard against a silent dropped
+// rename — (b) synthesize ServiceProviderName ← PublisherName and
+// HostProviderName ← ProviderName, and (c) leave the 1.4 columns 1.0 lacks ABSENT
+// (key-absence form, never present-and-empty).
+func TestTransform10To14CarriesAndSynthesizes(t *testing.T) {
+	transform, err := TransformTo14(V1_0)
+	if err != nil {
+		t.Fatalf("TransformTo14(1.0): %v", err)
+	}
+
+	// Every FOCUS v1.0 Column ID set to a distinct, non-empty value. PublisherName
+	// (the marketplace seller) diverges from ProviderName (the host) so the
+	// synthesis is exercised on the harder marketplace case, not a native charge.
+	in := RawRecord{
+		"AvailabilityZone":           "eu-central-1a",
+		"BilledCost":                 "1.00",
+		"BillingAccountId":           "111111111111",
+		"BillingAccountName":         "Legacy Acct",
+		"BillingCurrency":            "USD",
+		"BillingPeriodEnd":           "2026-06-01T00:00:00Z",
+		"BillingPeriodStart":         "2026-05-01T00:00:00Z",
+		"ChargeCategory":             "Usage",
+		"ChargeClass":                "Correction",
+		"ChargeDescription":          "Legacy 1.0 marketplace charge",
+		"ChargeFrequency":            "Usage-Based",
+		"ChargePeriodEnd":            "2026-05-02T00:00:00Z",
+		"ChargePeriodStart":          "2026-05-01T00:00:00Z",
+		"CommitmentDiscountCategory": "Spend",
+		"CommitmentDiscountId":       "cd-1",
+		"CommitmentDiscountName":     "cd-name",
+		"CommitmentDiscountStatus":   "Used",
+		"CommitmentDiscountType":     "Committed",
+		"ConsumedQuantity":           "1",
+		"ConsumedUnit":               "Hrs",
+		"ContractedCost":             "1.00",
+		"ContractedUnitPrice":        "1.00",
+		"EffectiveCost":              "1.00",
+		"InvoiceIssuerName":          "Amazon Web Services, Inc.",
+		"ListCost":                   "1.00",
+		"ListUnitPrice":              "1.00",
+		"PricingCategory":            "Standard",
+		"PricingQuantity":            "1",
+		"PricingUnit":                "Hrs",
+		"ProviderName":               "AWS",     // host (→ HostProviderName; ServiceProviderName fallback)
+		"PublisherName":              "Datadog", // marketplace seller (→ ServiceProviderName)
+		"RegionId":                   "eu-central-1",
+		"RegionName":                 "EU (Frankfurt)",
+		"ResourceId":                 "i-legacy",
+		"ResourceName":               "legacy",
+		"ResourceType":               "Compute",
+		"ServiceCategory":            "Compute",
+		"ServiceName":                "Datadog Pro",
+		"SkuId":                      "sku-legacy",
+		"SkuPriceId":                 "price-legacy",
+		"SubAccountId":               "111111111111",
+		"SubAccountName":             "Legacy Sub",
+		"Tags":                       `{"env":"legacy"}`,
+	}
+	if len(in) != 43 {
+		t.Fatalf("test fixture has %d columns, want the full 43 v1.0 Column IDs", len(in))
+	}
+
+	got, err := transform(in)
+	if err != nil {
+		t.Fatalf("transform10To14: %v", err)
+	}
+
+	// (a) Every carried 1.4 column with a DIRECT 1.0 source survives byte-for-byte.
+	// ServiceProviderName/HostProviderName are synthesized, not direct-copied, so
+	// they are asserted separately below.
+	synthesized := map[string]bool{"ServiceProviderName": true, "HostProviderName": true}
+	for _, col := range columns14 {
+		if synthesized[col] {
+			continue
+		}
+		if src, ok := in[col]; ok {
+			if got[col] != src {
+				t.Errorf("carried column %s = %q, want %q (must survive from the 1.0 source)", col, got[col], src)
+			}
+		}
+	}
+
+	// (b) Synthesis: the marketplace seller becomes the service provider; the host
+	// becomes the host provider.
+	if got["ServiceProviderName"] != in["PublisherName"] {
+		t.Errorf("ServiceProviderName = %q, want the synthesized PublisherName %q (marketplace seller)",
+			got["ServiceProviderName"], in["PublisherName"])
+	}
+	if got["HostProviderName"] != in["ProviderName"] {
+		t.Errorf("HostProviderName = %q, want the synthesized ProviderName %q (host)",
+			got["HostProviderName"], in["ProviderName"])
+	}
+
+	// (c) The 1.4 columns 1.0 lacks stay ABSENT — no gap-fill, no present-and-empty.
+	for _, col := range []string{"SkuMeter", "InvoiceId", "ServiceSubcategory", "BillingAccountType", "SubAccountType"} {
+		if v, ok := got[col]; ok {
+			t.Errorf("column %s = %q, want it ABSENT (no 1.0 source; not gap-filled)", col, v)
+		}
+	}
+
+	// The deprecated 1.0 entity columns are removed in 1.4, and 1.0 source columns
+	// outside the carried set (CommitmentDiscount*) are dropped.
+	for _, col := range []string{"ProviderName", "PublisherName", "CommitmentDiscountId", "CommitmentDiscountCategory"} {
+		if v, ok := got[col]; ok {
+			t.Errorf("non-carried source column %s = %q survived, want dropped", col, v)
+		}
+	}
+}
+
+// TestTransform11To14CarriesSkuMeterAndServiceSubcategory pins the 1.1 delta: of
+// the 7 columns 1.1 adds over 1.0, ServiceSubcategory and SkuMeter are in the
+// carried 1.4 set — so a 1.1 record populating them must carry them through (they
+// were ABSENT in the 1.0 test above). The same Publisher/Provider synthesis holds,
+// and the 1.2-only columns 1.1 still lacks stay absent.
+func TestTransform11To14CarriesSkuMeterAndServiceSubcategory(t *testing.T) {
+	transform, err := TransformTo14(V1_1)
+	if err != nil {
+		t.Fatalf("TransformTo14(1.1): %v", err)
+	}
+	in := RawRecord{
+		"BilledCost":         "2.00",
+		"ServiceName":        "Datadog Pro",
+		"ServiceCategory":    "Observability",
+		"ServiceSubcategory": "Monitoring",  // 1.1-added, carried into 1.4
+		"SkuMeter":           "Ingested GB", // 1.1-added, carried into 1.4
+		"ProviderName":       "AWS",         // host
+		"PublisherName":      "Datadog",     // marketplace seller
+		"InvoiceIssuerName":  "Amazon Web Services, Inc.",
+	}
+	got, err := transform(in)
+	if err != nil {
+		t.Fatalf("transform11To14: %v", err)
+	}
+	for _, col := range []string{"ServiceSubcategory", "SkuMeter"} {
+		if got[col] != in[col] {
+			t.Errorf("1.1-added carried column %s = %q, want %q (must survive)", col, got[col], in[col])
+		}
+	}
+	if got["ServiceProviderName"] != "Datadog" {
+		t.Errorf("ServiceProviderName = %q, want Datadog (synthesized from PublisherName)", got["ServiceProviderName"])
+	}
+	if got["HostProviderName"] != "AWS" {
+		t.Errorf("HostProviderName = %q, want AWS (synthesized from ProviderName)", got["HostProviderName"])
+	}
+	// A 1.2-only carried column 1.1 still lacks stays absent (key-absence form).
+	if v, ok := got["InvoiceId"]; ok {
+		t.Errorf("InvoiceId = %q, want it ABSENT (not a 1.1 column)", v)
 	}
 }
 

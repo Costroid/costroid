@@ -75,13 +75,15 @@ commands:
                        encrypted credential store carries the whole least-privilege
                        burden — guard the key file accordingly (decisions D32, D17)
           FOCUS CSV:   costroid ingest --connector focus-csv --path <file>
-                       --focus-version 1.2|1.3|1.4 [--source-label <label>]
+                       --focus-version 1.0|1.0r2|1.1|1.2|1.3|1.4 [--source-label <label>]
                        [--period YYYY-MM] [--tenant default] [--force]
                        (the generic FOCUS import: a plain or gzip-compressed CSV export
                        whose FOCUS version you DECLARE — there is no sniffing; magic bytes
                        decide gzip vs plain. A strict importer: unknown non-x_ columns,
                        missing mandatory columns, and unparseable rows FAIL with an
-                       actionable message; no gap-fill or column repair. Rows split into
+                       actionable message; no gap-fill or column repair. 1.0/1.1 are
+                       accepted for spec-conformant exports (RFC3339 timestamps, empty-cell
+                       nulls); 1.0r2 canonicalizes to 1.0. Rows split into
                        one batch per BillingPeriodStart month, keyed <source-label>/<month>
                        (--source-label defaults to the file's base name); re-importing a
                        month under the same label REPLACES it. One import must carry the
@@ -365,7 +367,7 @@ func ingestCmd(args []string) error {
 	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus, anthropic-cost, openai-cost, focus-csv; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
 	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus; a documented no-op for anthropic-cost/openai-cost/focus-csv, which keep no sync state)")
-	focusVersionFlag := flags.String("focus-version", "", "declared FOCUS version of the export: 1.2, 1.3, or 1.4 (focus-csv; REQUIRED, no sniffing)")
+	focusVersionFlag := flags.String("focus-version", "", "declared FOCUS version of the export: 1.0, 1.0r2, 1.1, 1.2, 1.3, or 1.4 (focus-csv; REQUIRED, no sniffing; 1.0/1.1 accept spec-conformant exports only, 1.0r2 canonicalizes to 1.0)")
 	sourceLabelFlag := flags.String("source-label", "", "logical source label for the per-month batch identity (focus-csv; default: the file's base name)")
 	credentialFlag := flags.String("credential", "", "credential slot name holding the Admin API key (anthropic-cost, openai-cost; default: the connector name). "+
 		"WARNING: an Anthropic Admin key is an unscopeable full-org-admin credential — the encrypted credential store carries the whole least-privilege burden (D32)")

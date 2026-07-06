@@ -479,6 +479,8 @@ func TestOfflineE2EAICost(t *testing.T) {
 // June rows are byte-identical between the two files. Keep the fixtures and the
 // "15 → 13" expectation in sync.
 const (
+	fcsv10       = "../../testdata/focus-csv/focus-1.0.csv"
+	fcsv11       = "../../testdata/focus-csv/focus-1.1.csv"
 	fcsv12       = "../../testdata/focus-csv/focus-1.2.csv"
 	fcsv13       = "../../testdata/focus-csv/focus-1.3.csv"
 	fcsv14       = "../../testdata/focus-csv/focus-1.4.csv"
@@ -486,15 +488,16 @@ const (
 	fcsvDupHdr   = "../../testdata/focus-csv/negative/duplicate-header.csv"
 	fcsvUnkHdr   = "../../testdata/focus-csv/negative/unknown-header.csv"
 	fcsvNull     = "../../testdata/focus-csv/negative/literal-null.csv"
-	fcsv10       = "../../testdata/focus-csv/focus-1.0.csv"
+	fcsvBadTS    = "../../testdata/focus-csv/negative/nonrfc3339-1.0.csv"
 )
 
 // TestOfflineE2EFocusCSV is the hermetic, file-only end-to-end proof for the
-// generic focus-csv importer: it ingests conformant 1.2/1.3/1.4 exports under
-// distinct labels alongside AWS cloud sample data, shows them in the daily
-// view, re-imports unchanged, restates one month, exercises --period / --force
-// / --tenant, and runs every negative (the 1.0/1.1 rejections asserted VERBATIM,
-// the rest by actionable substrings).
+// generic focus-csv importer: it ingests conformant 1.0/1.1/1.2/1.3/1.4 exports
+// (plus the 1.0r2 alias) under distinct labels alongside AWS cloud sample data,
+// shows them in the daily view with their BilledCost totals, re-imports unchanged,
+// restates one month, exercises --period / --force / --tenant, and runs every
+// negative — including the strict-parser boundary (a non-RFC3339-timestamp 1.0 file
+// is still rejected, proving 1.0 acceptance did not relax the parser).
 func TestOfflineE2EFocusCSV(t *testing.T) {
 	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
 
@@ -527,12 +530,49 @@ func TestOfflineE2EFocusCSV(t *testing.T) {
 	mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv13, "--focus-version", "1.3", "--source-label", "gcp-csv")
 	mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-csv")
 
+	// --- FOCUS 1.0 import (conformant; OCI is the real 1.0-only audience) ---
+	// COUPLED to focus-1.0.csv: 2 records/month, BilledCost total 10 (May 1+2, June 3+4).
+	out10 := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv10, "--focus-version", "1.0", "--source-label", "oci-csv")
+	for _, m := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(out10, "period "+m+": ingested 2 record(s) as batch focus-csv/oci-csv/"+m) {
+			t.Errorf("1.0 import missing per-month batch for %s:\n%s", m, out10)
+		}
+	}
+
+	// --- FOCUS 1.1 import (conformant; the 50-column superset) ---
+	// COUPLED to focus-1.1.csv: 2 records/month, BilledCost total 20 (May 5+5, June 4+6).
+	out11 := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv11, "--focus-version", "1.1", "--source-label", "cloudnine-csv")
+	for _, m := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(out11, "period "+m+": ingested 2 record(s) as batch focus-csv/cloudnine-csv/"+m) {
+			t.Errorf("1.1 import missing per-month batch for %s:\n%s", m, out11)
+		}
+	}
+
 	// --- daily view shows the focus-csv services alongside the AWS sample ---
 	daily := dailyView(t)
 	transcript.WriteString("\n# GET /api/v1/costs/daily (default tenant)\n" + daily + "\n")
-	for _, svc := range []string{"AWS Lambda", "Datadog Pro", "Azure Virtual Machines", "Amazon Elastic Compute Cloud"} {
+	for _, svc := range []string{"AWS Lambda", "Datadog Pro", "Azure Virtual Machines", "Amazon Elastic Compute Cloud", "OCI Compute", "CloudNine Object Storage"} {
 		if !strings.Contains(daily, svc) {
 			t.Errorf("daily view missing service %q:\n%s", svc, daily)
+		}
+	}
+	// BilledCost totals from the daily-cost view (coupled to the fixtures above).
+	// Asserted BEFORE the 1.0r2 re-import below (which lands a second OCI batch under
+	// a distinct label and would double the OCI total).
+	if got := dailyServiceCosts(t, "OCI Compute", "OCI Marketplace App"); !got.Equal(decimal.RequireFromString("10")) {
+		t.Errorf("1.0 fixture BilledCost total via daily view = %s, want 10", got)
+	}
+	if got := dailyServiceCosts(t, "CloudNine Object Storage"); !got.Equal(decimal.RequireFromString("20")) {
+		t.Errorf("1.1 fixture BilledCost total via daily view = %s, want 20", got)
+	}
+
+	// --- FOCUS 1.0r2 import (Azure-declarable alias; canonicalizes to 1.0) ---
+	// A "1.0r2" declaration imports under the 1.0 path end-to-end: the batches land,
+	// proving canonicalVersion rewrote the value that flows into the Connector.
+	out10r2 := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv10, "--focus-version", "1.0r2", "--source-label", "oci-r2-csv")
+	for _, m := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(out10r2, "period "+m+": ingested 2 record(s) as batch focus-csv/oci-r2-csv/"+m) {
+			t.Errorf("1.0r2 import (canonicalized to 1.0) missing per-month batch for %s:\n%s", m, out10r2)
 		}
 	}
 
@@ -591,15 +631,14 @@ func TestOfflineE2EFocusCSV(t *testing.T) {
 		}
 	}
 
-	// The 1.0 / 1.1 rejections are asserted VERBATIM (message-as-contract).
-	want10 := "FOCUS 1.0 identifies entities via ProviderName/PublisherName " +
-		"(replaced by ServiceProviderName/HostProviderName in 1.3, removed in 1.4); " +
-		"no 1.0 → 1.4 transform is implemented — re-export as FOCUS 1.2 or later " +
-		"(AWS Data Exports and Microsoft Cost Management both offer 1.2)."
-	negative("focus-version 1.0", want10,
-		"ingest", "--connector", "focus-csv", "--path", fcsv10, "--focus-version", "1.0")
-	negative("focus-version 1.1", strings.ReplaceAll(want10, "1.0", "1.1"),
-		"ingest", "--connector", "focus-csv", "--path", fcsv12, "--focus-version", "1.1")
+	// Strict-parser boundary (the INVERSE of the pre-slice 1.0/1.1 rejections): a
+	// spec-shaped 1.0 file whose ChargePeriodStart is a non-RFC3339 (space-separated)
+	// timestamp passes the version + header + month gates but is REJECTED at the row
+	// level — proving accepting 1.0 did NOT relax the shared strict parser.
+	negative("non-RFC3339 timestamp (1.0) is row-numbered", "row 1",
+		"ingest", "--connector", "focus-csv", "--path", fcsvBadTS, "--focus-version", "1.0")
+	negative("non-RFC3339 timestamp (1.0) is the strict ISO-8601 rejection", "is not a valid ISO 8601 date/time",
+		"ingest", "--connector", "focus-csv", "--path", fcsvBadTS, "--focus-version", "1.0")
 
 	// The rest assert only actionable substrings (offending column, suggested
 	// version, row number).
@@ -973,6 +1012,37 @@ func dailyView(t *testing.T) string {
 		t.Fatalf("daily costs HTTP %d: %s", resp.StatusCode, body)
 	}
 	return string(body)
+}
+
+// dailyServiceCosts sums the given services' BilledCost across every day in the
+// default-tenant daily-cost view, decimal-exact (never float). Used to assert a
+// fixture's total from a daily-view-exposed fact.
+func dailyServiceCosts(t *testing.T, services ...string) decimal.Decimal {
+	t.Helper()
+	var resp struct {
+		Days []struct {
+			Services []struct {
+				ServiceName string `json:"serviceName"`
+				Cost        string `json:"cost"`
+			} `json:"services"`
+		} `json:"days"`
+	}
+	if err := json.Unmarshal([]byte(dailyView(t)), &resp); err != nil {
+		t.Fatalf("decoding daily costs: %v", err)
+	}
+	want := map[string]bool{}
+	for _, s := range services {
+		want[s] = true
+	}
+	sum := decimal.Zero
+	for _, d := range resp.Days {
+		for _, s := range d.Services {
+			if want[s.ServiceName] {
+				sum = sum.Add(decimal.RequireFromString(s.Cost))
+			}
+		}
+	}
+	return sum
 }
 
 // tokenRow mirrors one api.DailyTokenUsage item for decoding the token-usage

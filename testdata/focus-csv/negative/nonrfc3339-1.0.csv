@@ -1,0 +1,2 @@
+BilledCost,BillingAccountId,BillingAccountName,BillingCurrency,BillingPeriodEnd,BillingPeriodStart,ChargeCategory,ChargeClass,ChargeDescription,ChargePeriodEnd,ChargePeriodStart,ContractedCost,EffectiveCost,InvoiceIssuerName,ListCost,PricingQuantity,PricingUnit,ProviderName,PublisherName,ServiceCategory,ServiceName
+1.00,111111111111,Legacy Acct,USD,2026-06-01T00:00:00Z,2026-05-01T00:00:00Z,Usage,,OCI Compute VM.Standard,2026-05-02T00:00:00Z,2026-05-01 00:00:00,1.00,1.00,Oracle Corporation,1.00,1,Hrs,OCI,OCI,Compute,OCI Compute

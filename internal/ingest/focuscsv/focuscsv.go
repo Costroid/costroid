@@ -6,7 +6,24 @@
 // dedicated connector — a user's own FOCUS export (AWS Data Exports,
 // Microsoft Cost Management, a warehouse dump, ...) as a plain or
 // gzip-compressed CSV on a local path. The user DECLARES the export's FOCUS
-// version (--focus-version 1.2 | 1.3 | 1.4); there is no version sniffing.
+// version (--focus-version 1.0 | 1.0r2 | 1.1 | 1.2 | 1.3 | 1.4); there is no
+// version sniffing. 1.0r2 (an Azure-declarable alias, column-identical to 1.0)
+// is canonicalized to 1.0.
+//
+// # Conformant-import scope for 1.0/1.1
+//
+// 1.0 and 1.1 are accepted only for SPEC-CONFORMANT exports — RFC3339
+// timestamps and empty-cell nulls. The shared strict parser is unchanged: it
+// still requires strict RFC3339 date/times and still treats a literal "null"
+// as a value, not null (an empty cell is the only null). Real-world 1.0 emitters
+// (OCI is 1.0-only; Azure emits 1.0/1.0r2; the FinOps sample) commonly use
+// space-separated or seconds-less timestamps and literal NULL/NONE sentinels;
+// those rows are REJECTED with the existing actionable, row-numbered error rather
+// than silently coerced. Relaxing the parser for those quirks would touch every
+// connector and reverse the empty-only-null / strict-timestamp calibration, so it
+// is a deliberately separate, later piece of work — NOT this importer's job. The
+// 1.0/1.1 → 1.4 transform is the 1.2 entity mapping (ProviderName/PublisherName
+// are present and their 1.3+ successors are absent, so the mapping is add-only).
 //
 // # Strictness is the product (rules GEN-1…)
 //
@@ -37,9 +54,9 @@
 //	                            with a mislabel hint). Duplicate header names
 //	                            FAIL (by-name mapping is ambiguous — a Costroid
 //	                            strictness choice with no normative basis).
-//	GEN-3   mandatory presence  1.2/1.3-declared files must carry that tag's full
-//	                            Mandatory-presence set (21 for 1.2, 23 for 1.3)
-//	                            or FAIL, listing the missing columns sorted.
+//	GEN-3   mandatory presence  1.0/1.1/1.2/1.3-declared files must carry that tag's
+//	                            full Mandatory-presence set (21 for 1.0/1.1/1.2, 23
+//	                            for 1.3) or FAIL, listing the missing columns sorted.
 //	                            1.4-declared files must carry the 15 not-null
 //	                            columns or FAIL; other absent 1.4-Mandatory
 //	                            (nullable) columns are a one-line WARNING, not a
@@ -123,29 +140,33 @@ const Name = "focus-csv"
 // utf8BOM is the UTF-8 byte order mark some tools prepend to CSV files.
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
-// reject10or11Msg is the verbatim, message-as-contract rejection for a
-// declared FOCUS 1.0/1.1 export (%s is the version, twice). The trailing
-// period is intentional and part of the contract; the sentence says the
-// transform is NOT IMPLEMENTED, never that the data cannot be represented.
-const reject10or11Msg = "FOCUS %s identifies entities via ProviderName/PublisherName " +
-	"(replaced by ServiceProviderName/HostProviderName in 1.3, removed in 1.4); " +
-	"no %s → 1.4 transform is implemented — re-export as FOCUS 1.2 or later " +
-	"(AWS Data Exports and Microsoft Cost Management both offer 1.2)."
+// canonicalVersion rewrites declarable-but-aliased version strings to their
+// canonical Version BEFORE anything downstream (ParseVersion, the known/mandatory
+// tables, the transform registry, the Connector) consumes it. Azure can declare
+// "1.0r2", which is column-identical to 1.0 (it differs only in timestamp form,
+// irrelevant under the conformant-import scope), so it canonicalizes to V1_0.
+// Every other value passes through unchanged. This is why it must run in Discover
+// and not merely be accepted inside ParseVersion: ParseVersion returns an error
+// and cannot rewrite the value the downstream maps consume.
+func canonicalVersion(v focus.Version) focus.Version {
+	if v == focus.Version("1.0r2") {
+		return focus.V1_0
+	}
+	return v
+}
 
-// ParseVersion validates a user-declared --focus-version. It is
-// message-as-contract: the 1.0/1.1 rejections state that the transform is NOT
-// IMPLEMENTED (never that the data cannot be represented), so re-exporting at
-// a supported version is the fix.
+// ParseVersion validates a canonical --focus-version. 1.0 and 1.1 are accepted
+// under the conformant-import scope documented on the package (the strict parser
+// is unchanged); 1.0r2 is canonicalized to 1.0 by canonicalVersion upstream and
+// never reaches here.
 func ParseVersion(v focus.Version) error {
 	switch v {
-	case focus.V1_2, focus.V1_3, focus.V1_4:
+	case focus.V1_0, focus.V1_1, focus.V1_2, focus.V1_3, focus.V1_4:
 		return nil
-	case focus.V1_0, focus.V1_1:
-		return fmt.Errorf(reject10or11Msg, v, v) //nolint:staticcheck // ST1005: verbatim CLI message-as-contract; the trailing period is intentional
 	case "":
-		return errors.New("--focus-version is required for the focus-csv connector (supported values: 1.2, 1.3, 1.4)")
+		return errors.New("--focus-version is required for the focus-csv connector (supported values: 1.0, 1.1, 1.2, 1.3, 1.4)")
 	default:
-		return fmt.Errorf("unsupported --focus-version %q; supported values are 1.2, 1.3, 1.4", v)
+		return fmt.Errorf("unsupported --focus-version %q; supported values are 1.0, 1.1, 1.2, 1.3, 1.4", v)
 	}
 }
 
@@ -160,6 +181,10 @@ type Period struct {
 // any non-fatal header warnings. It reads no credentials and touches no
 // network. When label is empty it defaults to the file's base name.
 func Discover(path string, version focus.Version, label string) (periods []Period, warnings []string, err error) {
+	// Canonicalize aliases (e.g. 1.0r2 → 1.0) FIRST so the rewritten value flows
+	// into every downstream consumer — ParseVersion, the header tables, and the
+	// Connector's FOCUSVersion — not just past this validation gate.
+	version = canonicalVersion(version)
 	if err := ParseVersion(version); err != nil {
 		return nil, nil, err
 	}
@@ -417,9 +442,9 @@ func unknownHeaderError(version focus.Version, unknown []string) error {
 	case focus.V1_4:
 		if slices.Contains(unknown, "ProviderName") || slices.Contains(unknown, "PublisherName") {
 			b.WriteString(" — ProviderName/PublisherName were removed in FOCUS 1.4; this looks like a " +
-				"FOCUS 1.2 or 1.3 export — re-run with --focus-version 1.2 or 1.3")
+				"FOCUS 1.0, 1.1, 1.2, or 1.3 export — re-run with --focus-version 1.2 or 1.3 (or 1.0/1.1)")
 		}
-	case focus.V1_2:
+	case focus.V1_0, focus.V1_1, focus.V1_2:
 		if slices.Contains(unknown, "ServiceProviderName") || slices.Contains(unknown, "HostProviderName") {
 			b.WriteString(" — ServiceProviderName/HostProviderName were introduced in FOCUS 1.3; " +
 				"did you mean --focus-version 1.3 (or 1.4)?")

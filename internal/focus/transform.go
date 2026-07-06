@@ -29,8 +29,8 @@ type Transform func(RawRecord) (RawRecord, error)
 // internal 1.4 model. A nil slot is a recognized version whose transform
 // is not yet implemented.
 var transforms = map[Version]Transform{
-	V1_0: nil, // registry slot — not yet implemented
-	V1_1: nil, // registry slot — not yet implemented
+	V1_0: transform10To14,
+	V1_1: transform11To14,
 	V1_2: transform12To14,
 	V1_3: transform13To14,
 	V1_4: transform14To14,
@@ -195,4 +195,41 @@ func transform12To14(raw RawRecord) (RawRecord, error) {
 // https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/tree/v1.4/specification/datasets/cost_and_usage/columns
 func transform13To14(raw RawRecord) (RawRecord, error) {
 	return transform14To14(raw)
+}
+
+// transform10To14 normalizes a FOCUS 1.0 record into the internal 1.4 shape by
+// delegating to transform12To14, and transform11To14 does the same for 1.1.
+//
+// WHY reuse is SAFE — and CORRECT — for 1.0 and 1.1:
+//
+// The 1.0 Column ID set is a strict SUBSET of 1.2's (1.0 ⊂ 1.1 ⊂ 1.2) with ZERO
+// renames and ZERO removals: 1.1 adds seven columns to 1.0 and 1.2 adds more to
+// 1.1, and nothing carried by 1.0/1.1 changed name or meaning by 1.2. Crucially
+// for the entity mapping, ProviderName and PublisherName exist and are
+// Mandatory-non-null in 1.0 and 1.1 exactly as in 1.2, while their 1.3+
+// successors (ServiceProviderName, HostProviderName) do NOT exist yet. So
+// transform12To14's mapping — ServiceProviderName ← PublisherName (else
+// ProviderName), HostProviderName ← ProviderName — is purely ADD-ONLY on a
+// 1.0/1.1 record: there is no native successor column for it to clobber.
+//
+// CRITICAL CONTRAST TO 1.3 (the inverse landmine): routing 1.3 through
+// transform12To14 is a BUG because 1.3 rows carry native, Mandatory-non-null
+// ServiceProviderName/HostProviderName that the 1.2 mapping would OVERWRITE
+// (see transform13To14). Routing 1.0/1.1 through transform12To14 is the OPPOSITE
+// — it is exactly what synthesizes those successor columns, which the source
+// legitimately lacks. Same delegation target, opposite reason it is right.
+//
+// Column-ID lists were generated from the FOCUS spec column .md files at tags
+// v1.0 and v1.1 (both under the flat pre-1.3 specification/columns/ path):
+// https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/tree/v1.0/specification/columns
+// https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/tree/v1.1/specification/columns
+func transform10To14(raw RawRecord) (RawRecord, error) {
+	return transform12To14(raw)
+}
+
+// transform11To14 normalizes a FOCUS 1.1 record into the internal 1.4 shape.
+// 1.1 = 1.0 plus seven columns, still a strict subset of 1.2 with zero renames;
+// the reuse is safe for the same reason as transform10To14 (which see).
+func transform11To14(raw RawRecord) (RawRecord, error) {
+	return transform12To14(raw)
 }
