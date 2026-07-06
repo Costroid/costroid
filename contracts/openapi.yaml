@@ -122,6 +122,56 @@ paths:
             text/plain:
               schema:
                 type: string
+  /api/v1/usage/metrics/daily:
+    get:
+      operationId: getDailyUsageMetrics
+      summary: Daily cost-orphaned usage metrics
+      description: >-
+        Total daily quantity per service, tier, metric, and unit, for the
+        default tenant. These are the cost-orphaned usage metrics the AI-vendor
+        connectors fetch but that carry no money on the vendor's cost report
+        (Anthropic priority/flex-tier tokens and web-search request counts;
+        standard/batch usage keys no cost row referenced; OpenAI
+        recognized-but-unpriced line items). They live OUTSIDE the FOCUS cost
+        dataset, so they never appear in the daily-cost or daily-token views and
+        never contribute to any cost or token total. Ordering is deterministic:
+        day ascending, then serviceName, serviceTier, metricName, unit.
+        Quantities are exact decimal strings — never floats. serviceTier is ""
+        when the vendor has no tier concept.
+      parameters:
+        - name: start
+          in: query
+          description: >-
+            Inclusive first calendar day (UTC) to include. Defaults to
+            the full range of stored data.
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          description: >-
+            Inclusive last calendar day (UTC) to include. Defaults to
+            the full range of stored data.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: >-
+            Daily usage metrics grouped by service, tier, metric, and unit
+            for the requested period, day-ascending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyUsageMetric"
+        "400":
+          description: Invalid start or end date.
+          content:
+            text/plain:
+              schema:
+                type: string
 components:
   schemas:
     Meta:
@@ -227,3 +277,43 @@ components:
             Total ConsumedQuantity for the day/service/unit, as an exact
             decimal string — never a float.
           example: "1500000"
+    DailyUsageMetric:
+      type: object
+      required:
+        - date
+        - serviceName
+        - serviceTier
+        - metricName
+        - unit
+        - quantity
+      properties:
+        date:
+          type: string
+          format: date
+          description: The UTC calendar day.
+          example: "2026-05-01"
+        serviceName:
+          type: string
+          description: Service or model identity.
+          example: claude-opus-4-6
+        serviceTier:
+          type: string
+          description: >-
+            Vendor service tier, or "" when the vendor has no tier concept.
+          example: priority
+        metricName:
+          type: string
+          description: >-
+            Frozen metric identifier (a token_type, "web_search_requests",
+            or an opaque line item).
+          example: uncached_input_tokens
+        unit:
+          type: string
+          description: 'Frozen unit vocabulary: "Tokens", "Requests", or "Unknown".'
+          example: Tokens
+        quantity:
+          type: string
+          description: >-
+            Total quantity for the day/service/tier/metric/unit, as an exact
+            decimal string — never a float.
+          example: "999"

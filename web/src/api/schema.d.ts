@@ -78,6 +78,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/usage/metrics/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daily cost-orphaned usage metrics
+         * @description Total daily quantity per service, tier, metric, and unit, for the default tenant. These are the cost-orphaned usage metrics the AI-vendor connectors fetch but that carry no money on the vendor's cost report (Anthropic priority/flex-tier tokens and web-search request counts; standard/batch usage keys no cost row referenced; OpenAI recognized-but-unpriced line items). They live OUTSIDE the FOCUS cost dataset, so they never appear in the daily-cost or daily-token views and never contribute to any cost or token total. Ordering is deterministic: day ascending, then serviceName, serviceTier, metricName, unit. Quantities are exact decimal strings — never floats. serviceTier is "" when the vendor has no tier concept.
+         */
+        get: operations["getDailyUsageMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -162,6 +182,39 @@ export interface components {
              * @example 1500000
              */
             consumedQuantity: string;
+        };
+        DailyUsageMetric: {
+            /**
+             * Format: date
+             * @description The UTC calendar day.
+             * @example 2026-05-01
+             */
+            date: string;
+            /**
+             * @description Service or model identity.
+             * @example claude-opus-4-6
+             */
+            serviceName: string;
+            /**
+             * @description Vendor service tier, or "" when the vendor has no tier concept.
+             * @example priority
+             */
+            serviceTier: string;
+            /**
+             * @description Frozen metric identifier (a token_type, "web_search_requests", or an opaque line item).
+             * @example uncached_input_tokens
+             */
+            metricName: string;
+            /**
+             * @description Frozen unit vocabulary: "Tokens", "Requests", or "Unknown".
+             * @example Tokens
+             */
+            unit: string;
+            /**
+             * @description Total quantity for the day/service/tier/metric/unit, as an exact decimal string — never a float.
+             * @example 999
+             */
+            quantity: string;
         };
     };
     responses: never;
@@ -267,6 +320,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DailyTokenUsage"][];
+                };
+            };
+            /** @description Invalid start or end date. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getDailyUsageMetrics: {
+        parameters: {
+            query?: {
+                /** @description Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data. */
+                start?: string;
+                /** @description Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data. */
+                end?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily usage metrics grouped by service, tier, metric, and unit for the requested period, day-ascending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyUsageMetric"][];
                 };
             };
             /** @description Invalid start or end date. */

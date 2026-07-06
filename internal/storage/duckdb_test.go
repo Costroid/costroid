@@ -372,6 +372,197 @@ func assertDailyTokens(t *testing.T, got, want []DailyTokenUsage) {
 	}
 }
 
+// TestDailyUsageMetrics proves the usage_metrics query (migration 0006): the
+// two-dimension (metric_name, unit) GROUP-BY guard, a >2^53 float-hazard sum
+// staying exact, the service_tier="" round-trip, isolation from BOTH FOCUS
+// queries, tenant scoping, deterministic ordering, empty→nil, and
+// ReplaceUsageBatch idempotence + per-source_identity supersede. Dropping EITHER
+// metric_name OR unit from the GROUP BY must fail this test.
+func TestDailyUsageMetrics(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Route the whole test through a Store-typed value: dropping either new
+	// method from the interface makes this fail to COMPILE (interface-drift
+	// guard, like TestDailyTokensByService).
+	var s Store = store
+
+	metric := func(day int, service, tier, name, unit, qty string) Metric {
+		return Metric{
+			ChargePeriodStart: time.Date(2026, 5, day, 0, 0, 0, 0, time.UTC),
+			ServiceName:       service, ServiceTier: tier, MetricName: name, Unit: unit,
+			Quantity: dec(t, qty),
+		}
+	}
+
+	// A 19-digit quantity float64 cannot represent exactly (> 2^53); two rows
+	// identical in all five GROUP-BY dims must SUM to the exact 19-digit total.
+	const floatHazard = "1234567890123456789"
+	batch := UsageBatch{Connector: "anthropic-cost", SourceIdentity: "api.anthropic.com/anthropic-cost/2026-05", TenantID: focus.DefaultTenant}
+	metrics := []Metric{
+		// day 1 — same (day, service, tier, metric, unit): SUM to floatHazard+1500000.
+		metric(1, "claude-opus-4-6", "priority", "uncached_input_tokens", "Tokens", floatHazard),
+		metric(1, "claude-opus-4-6", "priority", "uncached_input_tokens", "Tokens", "1500000"),
+		// day 1 — same (day, service, tier, unit) but a DIFFERENT metric_name: must
+		// stay SEPARATE (collapses to 1122 if metric_name is dropped from GROUP BY).
+		metric(1, "claude-sonnet-4-5", "standard", "uncached_input_tokens", "Tokens", "999"),
+		metric(1, "claude-sonnet-4-5", "standard", "output_tokens", "Tokens", "123"),
+		// day 1 — same as an above row in every dim EXCEPT unit: must stay SEPARATE
+		// (Tokens vs Requests never merge).
+		metric(1, "claude-sonnet-4-5", "standard", "web_search_requests", "Requests", "5"),
+		// day 2 — an OpenAI-shaped row: service_tier="" round-trips to "".
+		metric(2, "OpenAI API", "", "assistants api | file search", "Unknown", "42"),
+	}
+	if err := s.ReplaceUsageBatch(ctx, batch, metrics); err != nil {
+		t.Fatalf("ReplaceUsageBatch: %v", err)
+	}
+
+	// A different tenant's metric is invisible to the default tenant (D15).
+	acmeBatch := UsageBatch{Connector: "anthropic-cost", SourceIdentity: "api.anthropic.com/anthropic-cost/2026-05", TenantID: "acme"}
+	acme := metric(1, "claude-opus-4-6", "priority", "uncached_input_tokens", "Tokens", "777")
+	if err := s.ReplaceUsageBatch(ctx, UsageBatch{Connector: "anthropic-cost", SourceIdentity: "acme-src", TenantID: "acme"}, []Metric{acme}); err != nil {
+		t.Fatalf("ReplaceUsageBatch(acme): %v", err)
+	}
+	_ = acmeBatch
+
+	// Seed a cost_records row with the SAME token unit/quantity so the isolation
+	// assertion below is real: a usage_metrics row must NOT appear in either FOCUS
+	// query, and this cost row must NOT appear in the usage-metrics query.
+	costWithTokens := testRecord(t, "OpenAI API", day(1), "12.5")
+	costWithTokens.ConsumedUnit = "Tokens"
+	costWithTokens.ConsumedQuantity = decimal.NullDecimal{Decimal: dec(t, "555"), Valid: true}
+	if _, err := store.ReplaceIngestBatch(ctx, Batch{Connector: "openai-cost", SourceIdentity: "cost-src", ContentHash: "sha256:c", TenantID: focus.DefaultTenant}, []focus.CostRecord{costWithTokens}); err != nil {
+		t.Fatalf("ReplaceIngestBatch(cost): %v", err)
+	}
+
+	got, err := s.DailyUsageMetrics(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics: %v", err)
+	}
+	want := []DailyUsageMetric{
+		// day 1, ordered by service, tier, metric, unit (byte order): "OpenAI"<"claude".
+		{Date: day(1), ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: dec(t, "1234567890124956789")},
+		{Date: day(1), ServiceName: "claude-sonnet-4-5", ServiceTier: "standard", MetricName: "output_tokens", Unit: "Tokens", Quantity: dec(t, "123")},
+		{Date: day(1), ServiceName: "claude-sonnet-4-5", ServiceTier: "standard", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: dec(t, "999")},
+		{Date: day(1), ServiceName: "claude-sonnet-4-5", ServiceTier: "standard", MetricName: "web_search_requests", Unit: "Requests", Quantity: dec(t, "5")},
+		{Date: day(2), ServiceName: "OpenAI API", ServiceTier: "", MetricName: "assistants api | file search", Unit: "Unknown", Quantity: dec(t, "42")},
+	}
+	assertDailyUsageMetrics(t, got, want)
+	// The float-hazard sum is EXACT to the digit (a float64 sum would round it).
+	if got[0].Quantity.String() != "1234567890124956789" {
+		t.Errorf("float-hazard sum = %s, want 1234567890124956789 (exact, no float64)", got[0].Quantity)
+	}
+
+	// ISOLATION: usage_metrics rows appear in NEITHER FOCUS query, and the cost
+	// row's token quantity appears ONLY in the token query — never in usage.
+	tokens, err := store.DailyTokensByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyTokensByService: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].Quantity.String() != "555" {
+		t.Errorf("token query = %+v, want only the one cost row (555); usage_metrics must not leak in", tokens)
+	}
+	costs, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	for _, d := range costs.Days {
+		for _, svc := range d.Services {
+			if svc.ServiceName == "claude-opus-4-6" || svc.ServiceName == "claude-sonnet-4-5" {
+				t.Errorf("usage-metric service %q leaked into the cost view", svc.ServiceName)
+			}
+		}
+	}
+
+	// Range bounds are inclusive calendar days.
+	ranged, err := s.DailyUsageMetrics(ctx, focus.DefaultTenant, day(2), day(2))
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics(ranged): %v", err)
+	}
+	assertDailyUsageMetrics(t, ranged, []DailyUsageMetric{
+		{Date: day(2), ServiceName: "OpenAI API", ServiceTier: "", MetricName: "assistants api | file search", Unit: "Unknown", Quantity: dec(t, "42")},
+	})
+
+	// Tenant scoping: acme sees ONLY its own row; a nonexistent tenant sees nothing.
+	acmeGot, err := s.DailyUsageMetrics(ctx, "acme", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics(acme): %v", err)
+	}
+	assertDailyUsageMetrics(t, acmeGot, []DailyUsageMetric{
+		{Date: day(1), ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: dec(t, "777")},
+	})
+	none, err := s.DailyUsageMetrics(ctx, "nobody", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics(nobody): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("nonexistent tenant sees %+v, want nothing", none)
+	}
+
+	// IDEMPOTENCE: re-writing the SAME batch yields identical rows (not doubled).
+	if err := s.ReplaceUsageBatch(ctx, batch, metrics); err != nil {
+		t.Fatalf("idempotent ReplaceUsageBatch: %v", err)
+	}
+	again, err := s.DailyUsageMetrics(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics after re-write: %v", err)
+	}
+	assertDailyUsageMetrics(t, again, want)
+
+	// SUPERSEDE: a CHANGED batch under the SAME (connector, source_identity)
+	// REPLACES — not accumulates. Bump the priority row 1500000→2500000 (new sum
+	// floatHazard+2500000) and drop the OpenAI day-2 row entirely.
+	changed := []Metric{
+		metric(1, "claude-opus-4-6", "priority", "uncached_input_tokens", "Tokens", floatHazard),
+		metric(1, "claude-opus-4-6", "priority", "uncached_input_tokens", "Tokens", "2500000"),
+	}
+	if err := s.ReplaceUsageBatch(ctx, batch, changed); err != nil {
+		t.Fatalf("supersede ReplaceUsageBatch: %v", err)
+	}
+	superseded, err := s.DailyUsageMetrics(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics after supersede: %v", err)
+	}
+	assertDailyUsageMetrics(t, superseded, []DailyUsageMetric{
+		{Date: day(1), ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: dec(t, "1234567890125956789")},
+	})
+
+	// EMPTY batch clears the source's rows (a month whose orphans vanished).
+	if err := s.ReplaceUsageBatch(ctx, batch, nil); err != nil {
+		t.Fatalf("empty ReplaceUsageBatch: %v", err)
+	}
+	cleared, err := s.DailyUsageMetrics(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics after empty: %v", err)
+	}
+	if len(cleared) != 0 {
+		t.Errorf("empty batch did not clear the source's rows: %+v", cleared)
+	}
+}
+
+func assertDailyUsageMetrics(t *testing.T, got, want []DailyUsageMetric) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("usage metric rows = %+v, want %d rows (%+v)", got, len(want), want)
+	}
+	for i, w := range want {
+		g := got[i]
+		if !g.Date.Equal(w.Date) || g.ServiceName != w.ServiceName || g.ServiceTier != w.ServiceTier ||
+			g.MetricName != w.MetricName || g.Unit != w.Unit {
+			t.Errorf("row %d = {%s %s %s %s %s}, want {%s %s %s %s %s}", i,
+				g.Date.Format(time.DateOnly), g.ServiceName, g.ServiceTier, g.MetricName, g.Unit,
+				w.Date.Format(time.DateOnly), w.ServiceName, w.ServiceTier, w.MetricName, w.Unit)
+		}
+		if !g.Quantity.Equal(w.Quantity) {
+			t.Errorf("row %d quantity = %s, want %s", i, g.Quantity, w.Quantity)
+		}
+	}
+}
+
 // TestSyncStateRoundTrip proves the sync-state tuple (migration 0003)
 // persists exactly — including the TIMESTAMP round-trip of LastModified —
 // and that upserting replaces rather than duplicates.

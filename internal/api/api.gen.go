@@ -53,6 +53,27 @@ type DailyTokenUsage struct {
 	ServiceName string `json:"serviceName"`
 }
 
+// DailyUsageMetric defines model for DailyUsageMetric.
+type DailyUsageMetric struct {
+	// Date The UTC calendar day.
+	Date openapi_types.Date `json:"date"`
+
+	// MetricName Frozen metric identifier (a token_type, "web_search_requests", or an opaque line item).
+	MetricName string `json:"metricName"`
+
+	// Quantity Total quantity for the day/service/tier/metric/unit, as an exact decimal string — never a float.
+	Quantity string `json:"quantity"`
+
+	// ServiceName Service or model identity.
+	ServiceName string `json:"serviceName"`
+
+	// ServiceTier Vendor service tier, or "" when the vendor has no tier concept.
+	ServiceTier string `json:"serviceTier"`
+
+	// Unit Frozen unit vocabulary: "Tokens", "Requests", or "Unknown".
+	Unit string `json:"unit"`
+}
+
 // Meta defines model for Meta.
 type Meta struct {
 	// FocusVersion FOCUS specification version the internal model targets (decision D4).
@@ -83,6 +104,15 @@ type GetDailyCostsParams struct {
 	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
 }
 
+// GetDailyUsageMetricsParams defines parameters for GetDailyUsageMetrics.
+type GetDailyUsageMetricsParams struct {
+	// Start Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data.
+	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data.
+	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+}
+
 // GetDailyTokensParams defines parameters for GetDailyTokens.
 type GetDailyTokensParams struct {
 	// Start Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data.
@@ -100,6 +130,9 @@ type ServerInterface interface {
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
+	// Daily cost-orphaned usage metrics
+	// (GET /api/v1/usage/metrics/daily)
+	GetDailyUsageMetrics(w http.ResponseWriter, r *http.Request, params GetDailyUsageMetricsParams)
 	// Daily token usage by service
 	// (GET /api/v1/usage/tokens/daily)
 	GetDailyTokens(w http.ResponseWriter, r *http.Request, params GetDailyTokensParams)
@@ -168,6 +201,52 @@ func (siw *ServerInterfaceWrapper) GetMeta(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMeta(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDailyUsageMetrics operation middleware
+func (siw *ServerInterfaceWrapper) GetDailyUsageMetrics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDailyUsageMetricsParams
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDailyUsageMetrics(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -359,6 +438,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/metrics/daily", wrapper.GetDailyUsageMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/tokens/daily", wrapper.GetDailyTokens)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
 

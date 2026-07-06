@@ -76,6 +76,33 @@ type Store interface {
 	// ChargePeriod (decision D26c), like DailyCostsByService.
 	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]DailyTokenUsage, error)
 
+	// ReplaceUsageBatch transactionally replaces the usage_metrics rows of
+	// the batch identified by (batch.Connector, batch.SourceIdentity): prior
+	// rows of that batch are deleted and the given metrics inserted in one
+	// transaction. So a re-delivered or corrected month WHOLLY SUPERSEDES its
+	// prior usage rows (decision D26a) and re-syncing unchanged content yields
+	// identical rows (idempotent). It is called only after that period's cost
+	// ingest succeeds and with the SAME identity as the cost batch, and it is
+	// called even when metrics is empty (so a month whose orphans vanished
+	// clears its stale rows). Quantities go through the same scale-bound CAST
+	// as the cost insert (decision D25) — never silently rounded. usage_metrics
+	// is a separate table from cost_records: this never touches any BilledCost
+	// or token total.
+	ReplaceUsageBatch(ctx context.Context, batch UsageBatch, metrics []Metric) error
+
+	// DailyUsageMetrics returns, for one tenant, the summed quantity per UTC
+	// calendar day (of ChargePeriodStart) per (ServiceName, ServiceTier,
+	// MetricName, Unit), ordered by a fully-deterministic key. Different units
+	// never merge (Tokens vs Requests vs Unknown) AND different metric names
+	// within one unit never merge — the GROUP BY is a two-dimension guard;
+	// grouping (not erroring) is correct because these are counts, not money. A
+	// zero start or end means unbounded on that side; a non-zero bound is an
+	// inclusive calendar-day bound. It reads FROM usage_metrics only, so it is
+	// isolated from DailyCostsByService/DailyTokensByService (which read
+	// cost_records). ServiceTier is the stored "" when the vendor has no tier —
+	// never null.
+	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]DailyUsageMetric, error)
+
 	// SyncStates returns one connector's stored sync tuples, keyed by
 	// source identity (see SyncState).
 	SyncStates(ctx context.Context, connector string) (map[string]SyncState, error)
@@ -269,6 +296,57 @@ type DailyTokenUsage struct {
 	ConsumedUnit string
 	// Quantity is the summed ConsumedQuantity, exact.
 	Quantity decimal.Decimal
+}
+
+// UsageBatch identifies the usage_metrics rows one AI-vendor month replaces:
+// the (Connector, SourceIdentity) pair is the per-month replace key and
+// TenantID homes the rows (decision D15). It is the SAME identity as that
+// month's cost batch, so a month's usage metrics and its cost records supersede
+// together. ContentHash is not needed here — the caller only writes after the
+// cost ingest already decided the month changed.
+type UsageBatch struct {
+	Connector      string
+	SourceIdentity string
+	TenantID       string
+}
+
+// Metric is one cost-orphaned usage-metric row an AI-vendor connector surfaces
+// for persistence — the neutral currency between connector and store, mirroring
+// how focus.CostRecord is shared. Cardinal Rule (decision D7): every field is
+// count or categorical metadata (the UTC usage day, service/model name, service
+// tier, a metric name, a unit, an exact quantity) — no content, no
+// content-derived field. Connector, SourceIdentity, and tenant are NOT on this
+// struct; ReplaceUsageBatch binds them from its UsageBatch descriptor.
+type Metric struct {
+	// ChargePeriodStart is the UTC midnight of the usage-bucket day.
+	ChargePeriodStart time.Time
+	// ServiceName is the FOCUS ServiceName / model identity.
+	ServiceName string
+	// ServiceTier is the vendor service tier, or "" when the vendor has no
+	// tier concept (OpenAI) — bound as "" (never SQL NULL) so the NOT NULL
+	// column and DailyUsageMetrics's string scan hold.
+	ServiceTier string
+	// MetricName is the frozen metric identifier (a token_type, the literal
+	// "web_search_requests", or an opaque OpenAI line_item).
+	MetricName string
+	// Unit is the frozen unit vocabulary: "Tokens", "Requests", or "Unknown".
+	Unit string
+	// Quantity is the exact metric quantity (never float64).
+	Quantity decimal.Decimal
+}
+
+// DailyUsageMetric is one row of DailyUsageMetrics: the summed quantity of one
+// (ServiceName, ServiceTier, MetricName, Unit) on one UTC calendar day.
+// Quantity is an exact decimal (never float64). ServiceTier is the stored ""
+// when the vendor has no tier, never null.
+type DailyUsageMetric struct {
+	// Date is the UTC midnight of the calendar day.
+	Date        time.Time
+	ServiceName string
+	ServiceTier string
+	MetricName  string
+	Unit        string
+	Quantity    decimal.Decimal
 }
 
 // AIRow is the enrichment-relevant projection of one stored cost record,

@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/Costroid/costroid/internal/storage"
 )
 
 // tokensCost builds one cost_type="tokens" result for the join tests.
@@ -65,7 +68,7 @@ func TestEnrichMonth(t *testing.T) {
 		},
 	}
 
-	enrich, summary := enrichMonth(costBuckets, usageBuckets)
+	enrich, summary, _ := enrichMonth(costBuckets, usageBuckets)
 
 	// Summed-geo unique match: the null-geo cost row draws 700000+800000.
 	got, ok := enrich[rowKey{0, 0}]
@@ -113,6 +116,70 @@ func TestEnrichMonth(t *testing.T) {
 	}
 }
 
+// TestEnrichMonthMetrics proves the THIRD return of enrichMonth: the
+// cost-orphaned usage metrics surfaced for the usage_metrics store. Every orphan
+// CLASS appears at its exact quantity/unit/tier — priority-tier tokens (unit
+// "Tokens"), the web-search count (unit "Requests", metric web_search_requests),
+// and a standard-tier usage key no cost row referenced (unit "Tokens") — while a
+// standard-tier key that DOES join to a cost row is ABSENT (over-capturing an
+// enriched/referenced key would surface it here, so this is the guard). The
+// slice order is nondeterministic (the agg map loop), so it is sorted first.
+func TestEnrichMonthMetrics(t *testing.T) {
+	costBuckets := []bucket{{
+		StartingAt: "2026-05-01T00:00:00Z",
+		Results: []result{
+			// References the alpha/standard/uncached key → that usage key is NOT
+			// an orphan and must not appear as a metric.
+			tokensCost("claude-opus-4-6", "wrkspc_alpha", "standard", ttUncachedInput),
+		},
+	}}
+	usageBuckets := []usageBucket{
+		{
+			StartingAt: "2026-05-01T00:00:00Z",
+			Results: []usageResult{
+				{Model: "claude-opus-4-6", WorkspaceID: "wrkspc_alpha", ContextWindow: "0-200k", InferenceGeo: "us", ServiceTier: "standard", Uncached: json.Number("700000")},                                         // referenced → absent
+				{Model: "claude-opus-4-6", WorkspaceID: "wrkspc_alpha", ContextWindow: "0-200k", InferenceGeo: "us", ServiceTier: "priority", Uncached: json.Number("999")},                                            // priority orphan
+				{Model: "claude-opus-4-6", WorkspaceID: "wrkspc_alpha", ContextWindow: "0-200k", InferenceGeo: "us", ServiceTier: "standard", ServerToolUse: &usageServerToolUse{WebSearchRequests: json.Number("5")}}, // web-search
+			},
+		},
+		{
+			StartingAt: "2026-05-02T00:00:00Z",
+			Results: []usageResult{
+				{Model: "claude-opus-4-6", WorkspaceID: "wrkspc_delta", ContextWindow: "0-200k", InferenceGeo: "us", ServiceTier: "standard", Uncached: json.Number("42")}, // standard orphan (no cost row)
+			},
+		},
+	}
+
+	_, _, metrics := enrichMonth(costBuckets, usageBuckets)
+	slices.SortFunc(metrics, func(a, b storage.Metric) int {
+		if c := a.ChargePeriodStart.Compare(b.ChargePeriodStart); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.ServiceTier, b.ServiceTier); c != 0 {
+			return c
+		}
+		return strings.Compare(a.MetricName, b.MetricName)
+	})
+
+	day := func(d int) time.Time { return time.Date(2026, 5, d, 0, 0, 0, 0, time.UTC) }
+	want := []storage.Metric{
+		{ChargePeriodStart: day(1), ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: decimal.RequireFromString("999")},
+		{ChargePeriodStart: day(1), ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "web_search_requests", Unit: "Requests", Quantity: decimal.RequireFromString("5")},
+		{ChargePeriodStart: day(2), ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: decimal.RequireFromString("42")},
+	}
+	if len(metrics) != len(want) {
+		t.Fatalf("metrics = %+v, want %d (the referenced standard key must be ABSENT)", metrics, len(want))
+	}
+	for i, w := range want {
+		g := metrics[i]
+		if !g.ChargePeriodStart.Equal(w.ChargePeriodStart) || g.ServiceName != w.ServiceName ||
+			g.ServiceTier != w.ServiceTier || g.MetricName != w.MetricName || g.Unit != w.Unit ||
+			!g.Quantity.Equal(w.Quantity) {
+			t.Errorf("metric %d = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
 // TestEnrichMonthAggregatesDuplicateBuckets proves duplicate usage buckets for
 // one key SUM (never last-wins), e.g. the same key split across pages.
 func TestEnrichMonthAggregatesDuplicateBuckets(t *testing.T) {
@@ -125,7 +192,7 @@ func TestEnrichMonthAggregatesDuplicateBuckets(t *testing.T) {
 		{StartingAt: "2026-05-01T00:00:00Z", Results: []usageResult{dup}},
 		{StartingAt: "2026-05-01T00:00:00Z", Results: []usageResult{dup}},
 	}
-	enrich, _ := enrichMonth(costBuckets, usageBuckets)
+	enrich, _, _ := enrichMonth(costBuckets, usageBuckets)
 	got, ok := enrich[rowKey{0, 0}]
 	if !ok || !got.quantity.Equal(decimal.RequireFromString("2000")) {
 		t.Errorf("duplicate buckets did not sum: got %v (ok=%t), want 2000", got.quantity, ok)
@@ -263,7 +330,7 @@ func TestUsageQuantityJSONSurvivesFloat64(t *testing.T) {
 		t.Fatalf("unmarshaling cost bucket: %v", err)
 	}
 
-	enrich, _ := enrichMonth(costBuckets, usageBuckets)
+	enrich, _, _ := enrichMonth(costBuckets, usageBuckets)
 	got, ok := enrich[rowKey{0, 0}]
 	if !ok {
 		t.Fatal("the matching cost tokens row was not enriched")
@@ -295,7 +362,7 @@ func TestUnmatchedTokensRowStaysMoneyOnly(t *testing.T) {
 		}},
 	}}
 
-	enrich, _ := enrichMonth(costBuckets, usageBuckets)
+	enrich, _, _ := enrichMonth(costBuckets, usageBuckets)
 	if _, ok := enrich[rowKey{0, 0}]; ok {
 		t.Fatal("an unmatched standard-tier tokens row must NOT be enriched (no zero-quantity FOCUS row, D33)")
 	}
@@ -369,7 +436,7 @@ func TestFrozenSkuMints(t *testing.T) {
 		t.Fatalf("unmarshaling cost bucket: %v", err)
 	}
 
-	enrich, _ := enrichMonth(costBuckets, usageBuckets)
+	enrich, _, _ := enrichMonth(costBuckets, usageBuckets)
 	c := &Connector{
 		month:      "2026-05",
 		monthStart: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
@@ -444,7 +511,7 @@ func TestEnrichMonthMixedGeoCollision(t *testing.T) {
 		t.Fatalf("unmarshaling usage bucket: %v", err)
 	}
 
-	enrich, summary := enrichMonth(costBuckets, usageBuckets)
+	enrich, summary, _ := enrichMonth(costBuckets, usageBuckets)
 	if _, ok := enrich[rowKey{0, 0}]; ok {
 		t.Error("null-geo cost row must NOT be enriched (ambiguous mixed-geo collision, D33)")
 	}
@@ -479,7 +546,7 @@ func TestEmptyWorkspaceJoinEnriches(t *testing.T) {
 		t.Fatalf("unmarshaling usage bucket: %v", err)
 	}
 
-	enrich, _ := enrichMonth(costBuckets, usageBuckets)
+	enrich, _, _ := enrichMonth(costBuckets, usageBuckets)
 	got, ok := enrich[rowKey{0, 0}]
 	if !ok {
 		t.Fatal("empty-workspace cost row was not enriched (default-workspace/Console join path)")
@@ -506,7 +573,7 @@ func TestUnknownTokenTypeToleratedNoJoin(t *testing.T) {
 	}]`), &costBuckets); err != nil {
 		t.Fatalf("unmarshaling cost bucket: %v", err)
 	}
-	enrich, summary := enrichMonth(costBuckets, nil)
+	enrich, summary, _ := enrichMonth(costBuckets, nil)
 	if len(enrich) != 0 {
 		t.Errorf("unknown-token_type rows must not be enriched, got %d", len(enrich))
 	}
@@ -533,7 +600,7 @@ func TestNonJoinableTierTokensRowTolerated(t *testing.T) {
 	}]`), &costBuckets); err != nil {
 		t.Fatalf("unmarshaling cost bucket: %v", err)
 	}
-	enrich, summary := enrichMonth(costBuckets, nil)
+	enrich, summary, _ := enrichMonth(costBuckets, nil)
 	if len(enrich) != 0 {
 		t.Errorf("priority-tier tokens rows must not be enriched, got %d", len(enrich))
 	}
@@ -561,7 +628,7 @@ func TestBadBucketTimestampCounted(t *testing.T) {
 		}},
 	}}
 
-	enrich, summary := enrichMonth(costBuckets, usageBuckets)
+	enrich, summary, _ := enrichMonth(costBuckets, usageBuckets)
 	if len(enrich) != 0 {
 		t.Errorf("rows in unparseable-timestamp buckets must not be enriched, got %d", len(enrich))
 	}
@@ -588,7 +655,7 @@ func TestInvalidTokenLiteralCounted(t *testing.T) {
 		}},
 	}}
 
-	_, summary := enrichMonth(nil, usageBuckets)
+	_, summary, _ := enrichMonth(nil, usageBuckets)
 	if summary.badTokenLiterals != 1 {
 		t.Errorf("badTokenLiterals = %d, want 1 (the malformed literal)", summary.badTokenLiterals)
 	}
@@ -625,7 +692,7 @@ func TestNonNullCostGeoJoinBranch(t *testing.T) {
 		t.Fatalf("unmarshaling usage bucket: %v", err)
 	}
 
-	enrich, _ := enrichMonth(costBuckets, usageBuckets)
+	enrich, _, _ := enrichMonth(costBuckets, usageBuckets)
 	got, ok := enrich[rowKey{0, 0}]
 	if !ok {
 		t.Fatal("the non-null-geo cost row was not enriched")

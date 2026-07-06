@@ -496,12 +496,18 @@ func ingestCmd(args []string) error {
 		}
 		jobs := make([]ingestJob, 0, len(periods))
 		for _, p := range periods {
+			job := aiJob(p.Month, p.Conn, p.Err)
 			if p.Conn != nil {
 				if s := p.Conn.AnomalySummary(); s != "" {
 					fmt.Printf("period %s: %s\n", p.Month, s)
 				}
+				// Stash the concrete connector's cost-orphaned usage metrics on
+				// the job (non-nil, empty if none); runIngest writes them only
+				// after this period's cost ingest succeeds. Mirrors how sync is
+				// captured here and consumed later.
+				job.usageMetrics = p.Conn.UsageMetrics()
 			}
-			jobs = append(jobs, aiJob(p.Month, p.Conn, p.Err))
+			jobs = append(jobs, job)
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
 	case openaicost.Name:
@@ -518,12 +524,14 @@ func ingestCmd(args []string) error {
 		}
 		jobs := make([]ingestJob, 0, len(periods))
 		for _, p := range periods {
+			job := aiJob(p.Month, p.Conn, p.Err)
 			if p.Conn != nil {
 				if s := p.Conn.AnomalySummary(); s != "" {
 					fmt.Printf("period %s: %s\n", p.Month, s)
 				}
+				job.usageMetrics = p.Conn.UsageMetrics()
 			}
-			jobs = append(jobs, aiJob(p.Month, p.Conn, p.Err))
+			jobs = append(jobs, job)
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
 	case focuscsv.Name:
@@ -630,6 +638,14 @@ type ingestJob struct {
 	// so a touched-but-identical delivery cannot permanently defeat the
 	// tuple skip (see storage.SyncState).
 	sync *storage.SyncState
+	// usageMetrics is the AI-vendor period's cost-orphaned usage metrics,
+	// read from the concrete connector in the discovery loop and written
+	// after ingest.Run succeeds (same identity as the cost batch). It is
+	// NON-NIL for every AI job (empty when the month has no orphans) and nil
+	// for non-AI connectors and discovery-error jobs — runIngest guards on
+	// the field being non-nil, never on len>0, so a month whose orphans
+	// vanished still clears its stale usage rows.
+	usageMetrics []storage.Metric
 }
 
 // s3Jobs maps discovered billing periods to jobs, filtered to one
@@ -755,6 +771,23 @@ func runIngest(ctx context.Context, store storage.Store, jobs []ingestJob, tenan
 			if err := store.UpsertSyncState(ctx, *job.sync); err != nil {
 				failed = append(failed, job.period)
 				fmt.Fprintf(os.Stderr, "costroid: %sfailed recording sync state: %v\n", label, err)
+				continue
+			}
+		}
+		// Write the AI period's cost-orphaned usage metrics only AFTER ingest.Run
+		// succeeded — the same identity as the cost batch, on every successful
+		// outcome including the unchanged short-circuit, and even when the slice
+		// is empty (so a month whose orphans vanished clears its stale rows). The
+		// guard is on the field being non-nil (AI jobs only), never on len>0.
+		if job.usageMetrics != nil {
+			batch := storage.UsageBatch{
+				Connector:      job.conn.Name(),
+				SourceIdentity: job.conn.SourceIdentity(),
+				TenantID:       tenant,
+			}
+			if err := store.ReplaceUsageBatch(ctx, batch, job.usageMetrics); err != nil {
+				failed = append(failed, job.period)
+				fmt.Fprintf(os.Stderr, "costroid: %sfailed recording usage metrics: %v\n", label, err)
 				continue
 			}
 		}

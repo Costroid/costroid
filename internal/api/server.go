@@ -31,6 +31,7 @@ const focusVersion = "1.4"
 type CostStore interface {
 	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time) (storage.DailyCosts, error)
 	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error)
+	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyUsageMetric, error)
 }
 
 // Server implements the generated ServerInterface.
@@ -136,6 +137,43 @@ func (s *Server) GetDailyTokens(w http.ResponseWriter, r *http.Request, params G
 		// openapi_types.Date embeds time.Time; set it via the embedded
 		// field so hand-written code needs no oapi-codegen import.
 		entry.Date.Time = u.Date
+		resp = append(resp, entry)
+	}
+	writeJSON(w, resp)
+}
+
+// GetDailyUsageMetrics implements GET /api/v1/usage/metrics/daily. Invalid date
+// parameters never reach it: the generated binding wrapper rejects them with a
+// 400 before the handler runs. Quantities are rendered as exact decimal strings
+// (decisions D23, D25) — never floats. These metrics live outside the FOCUS cost
+// dataset, so they never overlap the daily-cost or daily-token views.
+func (s *Server) GetDailyUsageMetrics(w http.ResponseWriter, r *http.Request, params GetDailyUsageMetricsParams) {
+	var start, end time.Time // zero = unbounded
+	if params.Start != nil {
+		start = params.Start.Time
+	}
+	if params.End != nil {
+		end = params.End.Time
+	}
+
+	metrics, err := s.store.DailyUsageMetrics(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily usage metrics: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]DailyUsageMetric, 0, len(metrics))
+	for _, m := range metrics {
+		entry := DailyUsageMetric{
+			ServiceName: m.ServiceName,
+			ServiceTier: m.ServiceTier,
+			MetricName:  m.MetricName,
+			Unit:        m.Unit,
+			Quantity:    m.Quantity.String(),
+		}
+		// openapi_types.Date embeds time.Time; set it via the embedded
+		// field so hand-written code needs no oapi-codegen import.
+		entry.Date.Time = m.Date
 		resp = append(resp, entry)
 	}
 	writeJSON(w, resp)

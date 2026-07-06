@@ -212,6 +212,59 @@ func TestOfflineE2EAICost(t *testing.T) {
 		}
 	}
 
+	// --- cost-orphaned usage metrics surface via the new endpoint (D18c) ---
+	// COMPLETE SET, right after both-vendor ingests and BEFORE any restatement:
+	// exactly the enumerated cost-orphaned classes and NOTHING else — the
+	// Anthropic priority (999) and flex_discount (123) tier tokens, the
+	// web_search_requests count (5, unit "Requests"), the standard-tier orphan
+	// key no cost row referenced (delta uncached 42), and the OpenAI
+	// recognized-but-unpriced line item (assistants api | file search 42, unit
+	// "Unknown"). Ordering is day, serviceName, serviceTier, metricName, unit.
+	metricsBody := usageMetricsView(t)
+	transcript.WriteString("\n# GET /api/v1/usage/metrics/daily (default tenant)\n" + metricsBody + "\n")
+	var metricRows []usageMetricRow
+	if err := json.Unmarshal([]byte(metricsBody), &metricRows); err != nil {
+		t.Fatalf("decoding usage metrics: %v (body: %s)", err, metricsBody)
+	}
+	wantMetrics := []usageMetricRow{
+		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: "999"},
+		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "web_search_requests", Unit: "Requests", Quantity: "5"},
+		{Date: "2026-05-02", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "assistants api | file search", Unit: "Unknown", Quantity: "42"},
+		{Date: "2026-05-02", ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: "42"},
+		{Date: "2026-05-02", ServiceName: "claude-sonnet-4-5", ServiceTier: "flex_discount", MetricName: "output_tokens", Unit: "Tokens", Quantity: "123"},
+	}
+	if len(metricRows) != len(wantMetrics) {
+		t.Fatalf("usage metrics = %+v, want %d rows (%+v)", metricRows, len(wantMetrics), wantMetrics)
+	}
+	for i, w := range wantMetrics {
+		if metricRows[i] != w {
+			t.Errorf("usage metric row %d = %+v, want %+v", i, metricRows[i], w)
+		}
+	}
+	// MUTATION INTENT: capturing any referenced/enriched standard|batch agg key
+	// as a usage metric MUST break this complete-set assertion — the fixtures'
+	// large enriched token quantities (700000/800000 standard uncached, etc.)
+	// that DO join to cost rows must be ABSENT here. June contributes ZERO
+	// usage-metric rows because every June usage key is cost-referenced; over-
+	// capture would surface most visibly in the otherwise-empty June. Because the
+	// leak would be in a different table, it is invisible to the money-invariance
+	// and FOCUS-isolation checks — this is the ONLY guard that catches it.
+	for _, r := range metricRows {
+		if strings.HasPrefix(r.Date, "2026-06") {
+			t.Errorf("June should contribute ZERO usage metrics (all cost-referenced) but got: %+v", r)
+		}
+	}
+	// ISOLATION: the usage-metric model-name services and units never appear in
+	// the daily-cost or daily-token views (a separate table, separate query).
+	for _, leaked := range []string{"claude-opus-4-6", "claude-sonnet-4-5", "web_search_requests", "assistants api | file search"} {
+		if strings.Contains(daily, leaked) {
+			t.Errorf("usage-metric-only token %q leaked into the daily-cost view", leaked)
+		}
+		if strings.Contains(tokens, leaked) {
+			t.Errorf("usage-metric-only token %q leaked into the daily-token view", leaked)
+		}
+	}
+
 	// --- unchanged re-sync: every period unchanged, rewrite short-circuited ---
 	// Snapshot the cumulative fake request log BEFORE the re-sync so the
 	// endpoint-coverage assertion below inspects only the entries THIS re-sync
@@ -284,6 +337,41 @@ func TestOfflineE2EAICost(t *testing.T) {
 		"anthropic/claude-opus-4-6/uncached_input_tokens/0-200k")
 	if !beforeQty.Equal(decimal.RequireFromString("1500000")) || !afterQty.Equal(decimal.RequireFromString("1400000")) {
 		t.Errorf("quantity-only restatement did not update the stored token count: before=%s after=%s (want 1500000 → 1400000)", beforeQty, afterQty)
+	}
+
+	// --- orphan-correction supersede + idempotence (DEDICATED fixture) ---
+	// restated-usage-orphan is restated-usage with ONLY the priority-tier uncached
+	// orphan bumped 999→888; every joined/enriched quantity and all cost are
+	// byte-identical, so this genuinely tests the orphan-supersede path (reusing
+	// restated-usage would be a 999→999 no-op). Orphan quantities never feed cost,
+	// so BilledCost stays 115.5→115.5, but the usage payload changed → `replaced`.
+	priorityBefore, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens")
+	if !ok || priorityBefore != "999" {
+		t.Fatalf("priority orphan metric before correction = %q (ok=%t), want 999", priorityBefore, ok)
+	}
+	copyTree(t, "../../testdata/anthropic-cost/restated-usage-orphan", anthDir)
+	orphanCorr := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--period", "2026-05")
+	if !strings.Contains(orphanCorr, "period 2026-05: replaced (10 records; BilledCost 115.5 → 115.5)") {
+		t.Errorf("orphan-only correction should replace with UNCHANGED money:\n%s", orphanCorr)
+	}
+	// (a) SUPERSEDE: the priority metric moved 999→888; the untouched flex orphan
+	// stays 123; cost is unchanged (asserted above via the 115.5→115.5 delta).
+	if q, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens"); !ok || q != "888" {
+		t.Errorf("SUPERSEDE: priority orphan metric = %q (ok=%t), want 888", q, ok)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-02", "claude-sonnet-4-5", "flex_discount", "output_tokens"); !ok || q != "123" {
+		t.Errorf("untouched flex orphan = %q (ok=%t), want 123 (supersede must not disturb other orphans)", q, ok)
+	}
+	// (b) IDEMPOTENCE: re-ingesting the SAME 888 fixture short-circuits
+	// (`unchanged`) yet the usage rows still read 888 — the post-success write
+	// fires even on the unchanged short-circuit, DELETE-then-INSERT replacing
+	// (never accumulating to 1776).
+	idem := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--period", "2026-05")
+	if !strings.Contains(idem, "period 2026-05: source content unchanged") {
+		t.Errorf("second re-ingest of the same orphan fixture should be unchanged:\n%s", idem)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens"); !ok || q != "888" {
+		t.Errorf("IDEMPOTENCE: priority orphan after re-sync = %q (ok=%t), want still 888 (not accumulated)", q, ok)
 	}
 
 	// --- tenant switch re-homes (azure/s3 parity) ---
@@ -544,6 +632,84 @@ func TestFocusCSVDefaultLabelCLI(t *testing.T) {
 	}
 }
 
+// TestUsageMetricsWriteGatedOnCostIngestSuccess proves usage metrics are
+// persisted ONLY after a period's cost ingest succeeds (write-gating): a month
+// whose cost ingest FAILS (a bad billing currency at synthesis) persists ZERO
+// usage_metrics rows even though its orphan usage was computed at discovery,
+// while a sibling month that succeeds DOES persist them. This fails if
+// ReplaceUsageBatch is called in the discovery/print loop instead of after
+// ingest.Run.
+func TestUsageMetricsWriteGatedOnCostIngestSuccess(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(t.TempDir(), "credentials.key"))
+
+	anthDir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(anthDir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	// 2026-05 cost carries an EMPTY currency → synthesize fails the whole month
+	// (D23), so ingest.Run errors AFTER discovery already computed the orphan.
+	write("2026-05.json", `[{"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+	  "results":[{"amount":"100","currency":"","description":"bad","model":"claude-opus-4-6","cost_type":"session_usage"}]}]`)
+	write("2026-05.usage.json", `[{"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+	  "results":[{"model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","context_window":"0-200k","inference_geo":"us","service_tier":"priority","uncached_input_tokens":777}]}]`)
+	// 2026-06 is a clean, succeeding month with its own priority orphan.
+	write("2026-06.json", `[{"starting_at":"2026-06-01T00:00:00Z","ending_at":"2026-06-02T00:00:00Z",
+	  "results":[{"amount":"100","currency":"USD","description":"ok","model":"claude-opus-4-6","cost_type":"session_usage"}]}]`)
+	write("2026-06.usage.json", `[{"starting_at":"2026-06-01T00:00:00Z","ending_at":"2026-06-02T00:00:00Z",
+	  "results":[{"model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","context_window":"0-200k","inference_geo":"us","service_tier":"priority","uncached_input_tokens":555}]}]`)
+
+	srv := httptest.NewServer(fakeanthropic.New(anthDir))
+	t.Cleanup(srv.Close)
+	base := "--base-url=" + srv.URL
+
+	if _, err := runCLI([]string{"credentials", "init"}, ""); err != nil {
+		t.Fatalf("credentials init: %v", err)
+	}
+	if _, err := runCLI([]string{"credentials", "set", "anthropic-cost"}, fakeanthropic.AdminKey); err != nil {
+		t.Fatalf("credentials set: %v", err)
+	}
+
+	// The failing month exits non-zero and reports the per-period failure.
+	failOut, failErr := runCLI([]string{"ingest", "--connector", "anthropic-cost", base, "--period", "2026-05"}, "")
+	if failErr == nil {
+		t.Fatalf("2026-05 ingest should FAIL on the empty currency:\n%s", failOut)
+	}
+	if !strings.Contains(failOut, "period 2026-05: failed") {
+		t.Errorf("2026-05 failure not reported:\n%s", failOut)
+	}
+	// The succeeding month ingests cleanly.
+	if okOut, err := runCLI([]string{"ingest", "--connector", "anthropic-cost", base, "--period", "2026-06"}, ""); err != nil {
+		t.Fatalf("2026-06 ingest should succeed: %v\n%s", err, okOut)
+	}
+
+	store, err := storage.Open(context.Background(), dataDir)
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	metrics, err := store.DailyUsageMetrics(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics: %v", err)
+	}
+	// Exactly the succeeded month's orphan (555); the failed month's 777 is ABSENT.
+	if len(metrics) != 1 {
+		t.Fatalf("usage metrics = %+v, want exactly the succeeded 2026-06 row (the failed month persists ZERO)", metrics)
+	}
+	m := metrics[0]
+	if m.Date.Format(time.DateOnly) != "2026-06-01" || m.ServiceTier != "priority" || m.Quantity.String() != "555" {
+		t.Errorf("usage metric = %+v, want the 2026-06 priority 555 row", m)
+	}
+	for _, r := range metrics {
+		if r.Quantity.String() == "777" {
+			t.Errorf("the failed cost period leaked usage metrics: %+v", r)
+		}
+	}
+}
+
 // runCLI invokes run(args) with the given stdin, capturing everything written
 // to stdout and stderr. It swaps the process streams, so it must not run in
 // parallel with other output-producing code.
@@ -691,6 +857,59 @@ func tokensView(t *testing.T) string {
 		t.Fatalf("token usage HTTP %d: %s", resp.StatusCode, body)
 	}
 	return string(body)
+}
+
+// usageMetricRow mirrors one api.DailyUsageMetric item for decoding the
+// usage-metrics endpoint's JSON body in the e2e.
+type usageMetricRow struct {
+	Date        string `json:"date"`
+	ServiceName string `json:"serviceName"`
+	ServiceTier string `json:"serviceTier"`
+	MetricName  string `json:"metricName"`
+	Unit        string `json:"unit"`
+	Quantity    string `json:"quantity"`
+}
+
+// usageMetricsView opens the store and queries the usage-metrics API for the
+// default tenant, returning the JSON body.
+func usageMetricsView(t *testing.T) string {
+	t.Helper()
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening store for usage-metrics view: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/usage/metrics/daily")
+	if err != nil {
+		t.Fatalf("GET usage metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("usage metrics HTTP %d: %s", resp.StatusCode, body)
+	}
+	return string(body)
+}
+
+// findUsageMetric returns the quantity of the row matching (date, service, tier,
+// metric) in the default-tenant usage-metrics view, or ("", false).
+func findUsageMetric(t *testing.T, date, service, tier, metric string) (string, bool) {
+	t.Helper()
+	var rows []usageMetricRow
+	if err := json.Unmarshal([]byte(usageMetricsView(t)), &rows); err != nil {
+		t.Fatalf("decoding usage metrics: %v", err)
+	}
+	for _, r := range rows {
+		if r.Date == date && r.ServiceName == service && r.ServiceTier == tier && r.MetricName == metric {
+			return r.Quantity, true
+		}
+	}
+	return "", false
 }
 
 // tenantDaysNonEmpty reports whether the given tenant has any stored cost

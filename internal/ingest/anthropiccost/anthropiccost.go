@@ -190,6 +190,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/aiconn"
+	"github.com/Costroid/costroid/internal/storage"
 )
 
 // Name is the connector's registry name; it is also the default credential
@@ -288,16 +289,17 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 	if err != nil {
 		return nil, err
 	}
-	enrich, summary := enrichMonth(buckets, usage)
+	enrich, summary, metrics := enrichMonth(buckets, usage)
 	return &Connector{
-		slot:        slot,
-		month:       month,
-		monthStart:  start,
-		monthEnd:    end,
-		buckets:     buckets,
-		enrich:      enrich,
-		summary:     summary,
-		contentHash: contentHash(rawCost, rawUsage),
+		slot:         slot,
+		month:        month,
+		monthStart:   start,
+		monthEnd:     end,
+		buckets:      buckets,
+		enrich:       enrich,
+		summary:      summary,
+		usageMetrics: metrics,
+		contentHash:  contentHash(rawCost, rawUsage),
 	}, nil
 }
 
@@ -534,14 +536,15 @@ func contentHash(rawCost, rawUsage [][]byte) string {
 // precomputed per-row enrichment, and the per-period anomaly summary so Records
 // and ContentHash never re-fetch.
 type Connector struct {
-	slot        string
-	month       string
-	monthStart  time.Time
-	monthEnd    time.Time
-	buckets     []bucket
-	enrich      map[rowKey]enrichment
-	summary     anomalySummary
-	contentHash string
+	slot         string
+	month        string
+	monthStart   time.Time
+	monthEnd     time.Time
+	buckets      []bucket
+	enrich       map[rowKey]enrichment
+	summary      anomalySummary
+	usageMetrics []storage.Metric
+	contentHash  string
 }
 
 var _ ingest.Connector = (*Connector)(nil)
@@ -561,6 +564,18 @@ func (c *Connector) Month() string { return c.month }
 // usage, web-search counts), or "" when there is nothing to report. These
 // surfaces are counted but never emitted as FOCUS rows (ANT-14, decision D33).
 func (c *Connector) AnomalySummary() string { return c.summary.String() }
+
+// UsageMetrics returns this month's cost-orphaned usage metrics (priority/flex-
+// tier tokens, web-search request counts, and standard/batch usage keys no cost
+// row referenced) — the quantities ANT-14 counts but never emits as FOCUS rows,
+// surfaced for the separate usage_metrics store. It is a concrete method on
+// *Connector (off the frozen ingest.Connector interface, decision D16),
+// mirroring AnomalySummary's accessor shape; the driver reads it in the AI
+// discovery loop and writes it only after this period's cost ingest succeeds.
+// The slice is always non-nil (empty when the month has no orphans); its order
+// is unspecified — the store's DailyUsageMetrics makes the surfaced view
+// deterministic. Never touches cost_records or any money/token total.
+func (c *Connector) UsageMetrics() []storage.Metric { return c.usageMetrics }
 
 // SourceIdentity implements ingest.Connector (see the package documentation
 // for why the provider host is fixed).

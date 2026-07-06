@@ -370,6 +370,109 @@ func (s *DuckDB) DailyTokensByService(ctx context.Context, tenant string, start,
 	return out, nil
 }
 
+// insertUsageMetricSQL binds the quantity as a string and casts it to the
+// column's DECIMAL scale inside DuckDB, exactly like insertRecordSQL, so a
+// value stays exact and is never silently rounded (decision D25). service_name
+// and service_tier bind as plain strings — "" is a valid non-null value, so the
+// tier-less OpenAI rows store "" and never SQL NULL.
+var insertUsageMetricSQL = fmt.Sprintf(`INSERT INTO usage_metrics (
+	x_tenant_id, connector, source_identity, charge_period_start,
+	service_name, service_tier, metric_name, unit, quantity
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS DECIMAL(38,%[1]d)))`, MaxDecimalScale)
+
+// ReplaceUsageBatch implements Store.
+func (s *DuckDB) ReplaceUsageBatch(ctx context.Context, batch UsageBatch, metrics []Metric) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning usage-metrics replace transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Delete-then-insert in one tx: a corrected month wholly supersedes its
+	// prior usage rows (decision D26a), and an empty batch clears them.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM usage_metrics WHERE connector = ? AND source_identity = ?`,
+		batch.Connector, batch.SourceIdentity); err != nil {
+		return fmt.Errorf("deleting prior usage metrics: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, insertUsageMetricSQL)
+	if err != nil {
+		return fmt.Errorf("preparing usage-metric insert: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+	for i := range metrics {
+		m := &metrics[i]
+		if _, err := stmt.ExecContext(ctx,
+			batch.TenantID, batch.Connector, batch.SourceIdentity, m.ChargePeriodStart.UTC(),
+			m.ServiceName, m.ServiceTier, m.MetricName, m.Unit, m.Quantity.String()); err != nil {
+			return fmt.Errorf("inserting usage metric %d: %w", i+1, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing usage-metrics replace transaction: %w", err)
+	}
+	return nil
+}
+
+// DailyUsageMetrics implements Store. It clones DailyTokensByService's query and
+// scan discipline: exact DECIMAL sums via duckdb.Decimal (never float64), plain
+// Go-string scans of the NOT NULL categorical columns (a stored NULL tier would
+// error at scan — the migration forbids it), inclusive date bounds bound only
+// when non-zero, and a fully-deterministic ORDER BY. The GROUP BY carries BOTH
+// metric_name AND unit so different units never merge and different metric names
+// within one unit never merge.
+func (s *DuckDB) DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]DailyUsageMetric, error) {
+	where := "WHERE x_tenant_id = ?"
+	args := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		args = append(args, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT CAST(charge_period_start AS DATE) AS day, service_name, service_tier,
+			metric_name, unit, SUM(quantity)
+		 FROM usage_metrics `+where+`
+		 GROUP BY day, service_name, service_tier, metric_name, unit
+		 ORDER BY day ASC, service_name ASC, service_tier ASC, metric_name ASC, unit ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying daily usage metrics: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []DailyUsageMetric
+	for rows.Next() {
+		var (
+			day                         time.Time
+			service, tier, metric, unit string
+			sum                         duckdb.Decimal
+		)
+		// DECIMAL scans as duckdb.Decimal — a float64 scan would silently lose
+		// precision (decisions D23, D25).
+		if err := rows.Scan(&day, &service, &tier, &metric, &unit, &sum); err != nil {
+			return nil, fmt.Errorf("scanning daily usage metric row: %w", err)
+		}
+		out = append(out, DailyUsageMetric{
+			Date:        day.UTC(),
+			ServiceName: service,
+			ServiceTier: tier,
+			MetricName:  metric,
+			Unit:        unit,
+			Quantity:    decimal.NewFromBigInt(sum.Value, -int32(sum.Scale)), //nolint:gosec // DuckDB DECIMAL scale is at most 38.
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying daily usage metrics: %w", err)
+	}
+	return out, nil
+}
+
 // EnrichedAIRows returns the enrichment-relevant projection of one
 // tenant+connector's stored cost records (see AIRow), ordered
 // deterministically. Decimal columns are cast to text in SQL and rebuilt

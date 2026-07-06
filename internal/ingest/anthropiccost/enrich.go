@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/Costroid/costroid/internal/storage"
 )
 
 // The five cost-side token_type enum values (decision D33). They map 1:1 onto
@@ -225,8 +227,17 @@ func tokenPairs(ur usageResult) (pairs []tokenPair, badLiterals int) {
 //     the full enrichment set.
 //  4. Standard/batch usage keys no cost tokens row referenced are cost-orphaned
 //     and counted.
-func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]enrichment, anomalySummary) {
+//
+// The third return is the per-period cost-orphaned usage metrics (priority/flex-
+// tier tokens, web-search request counts, and the standard/batch orphan keys) —
+// the SAME quantities the summary counts but never emits as FOCUS rows,
+// surfaced for the separate usage_metrics store (never touching cost_records or
+// any money/token total). It is always non-nil; its order is unspecified (the
+// agg map iteration is nondeterministic), which is fine because
+// DailyUsageMetrics makes the queried view deterministic.
+func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]enrichment, anomalySummary, []storage.Metric) {
 	var summary anomalySummary
+	metrics := []storage.Metric{}
 	agg := map[joinKey]decimal.Decimal{}
 	aggByGeo := map[geoKey]decimal.Decimal{}
 
@@ -239,10 +250,19 @@ func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]e
 			summary.badBucketDays++
 			continue
 		}
+		// UTC midnight of the join day; day was produced by bucketDay from a
+		// valid parse, so it always re-parses (the error cannot occur).
+		dayTime, _ := time.Parse("2006-01-02", day)
 		for _, ur := range ub.Results {
 			if ur.ServerToolUse != nil && ur.ServerToolUse.WebSearchRequests != "" {
 				if n, err := decimal.NewFromString(string(ur.ServerToolUse.WebSearchRequests)); err == nil {
 					summary.webSearchRequests = summary.webSearchRequests.Add(n)
+					// USG-2: web-search request count → unit "Requests" (never
+					// "Tokens"), dimensioned per (day, model, tier).
+					metrics = append(metrics, storage.Metric{
+						ChargePeriodStart: dayTime, ServiceName: ur.Model, ServiceTier: ur.ServiceTier,
+						MetricName: "web_search_requests", Unit: "Requests", Quantity: n,
+					})
 				}
 			}
 			pairs, bad := tokenPairs(ur)
@@ -252,8 +272,15 @@ func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]e
 			}
 			if !joinableTier(ur.ServiceTier) {
 				// Priority/flex/unknown-tier tokens are structurally cost-
-				// orphaned; count them and never aggregate or emit.
+				// orphaned; count them, never aggregate or enrich — but surface
+				// each pair as a usage metric (USG-1: unit "Tokens").
 				summary.tierOrphanRows++
+				for _, p := range pairs {
+					metrics = append(metrics, storage.Metric{
+						ChargePeriodStart: dayTime, ServiceName: ur.Model, ServiceTier: ur.ServiceTier,
+						MetricName: p.tokenType, Unit: "Tokens", Quantity: p.qty,
+					})
+				}
 				continue
 			}
 			for _, p := range pairs {
@@ -341,7 +368,14 @@ func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]e
 	for jk := range agg {
 		if !referenced[jk] {
 			summary.orphanUsageKeys++
+			// USG-1: a standard/batch usage key no cost row referenced — surface
+			// its summed (geoless) quantity as a "Tokens" usage metric.
+			dayTime, _ := time.Parse("2006-01-02", jk.day)
+			metrics = append(metrics, storage.Metric{
+				ChargePeriodStart: dayTime, ServiceName: jk.model, ServiceTier: jk.serviceTier,
+				MetricName: jk.tokenType, Unit: "Tokens", Quantity: agg[jk],
+			})
 		}
 	}
-	return enrich, summary
+	return enrich, summary, metrics
 }

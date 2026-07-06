@@ -10,6 +10,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shopspring/decimal"
+
+	"github.com/Costroid/costroid/internal/storage"
 )
 
 // TestRetryAfterDelay proves the Retry-After parser honors BOTH delta-seconds
@@ -130,6 +134,50 @@ func TestMalformedQuantityDegradesToMoneyOnly(t *testing.T) {
 		if v, ok := rec[col]; ok {
 			t.Errorf("degraded row must be money-only but carries %s=%q", col, v)
 		}
+	}
+}
+
+// TestOpenaiUsageMetrics proves openaiUsageMetrics surfaces exactly the
+// unknown-unit quantity-bearing rows (USG-3): unit "Unknown" (never guessed
+// "Tokens"), metric_name = the line_item VERBATIM, service_name = "OpenAI API",
+// service_tier = "". A recognized direction (enriched onto its cost row), a
+// null/absent quantity (normal money-only), and — the ADDENDUM (B) guard — an
+// unknown-unit row whose quantity literal is NOT a valid decimal are all
+// EXCLUDED (a non-decimal cannot be stored in the DECIMAL column; emit nothing).
+func TestOpenaiUsageMetrics(t *testing.T) {
+	buckets := []bucket{
+		{
+			StartTime: 1777593600, EndTime: 1777680000, // 2026-05-01
+			Results: []result{
+				// unknown unit, valid quantity → EMITTED.
+				{LineItem: "assistants api | file search", Quantity: json.RawMessage("42")},
+				// recognized direction → enriched onto its cost row, NOT orphaned.
+				{LineItem: "gpt-4o, input", Quantity: json.RawMessage("1500000")},
+				// null quantity → normal money-only, NOT an orphan.
+				{LineItem: "Promotional credit", Quantity: json.RawMessage("null")},
+				// unknown unit but MALFORMED quantity (JSON string) → NOT emitted
+				// (cannot store; stays money-only, ADDENDUM B).
+				{LineItem: "web search tool call", Quantity: json.RawMessage(`"7"`)},
+			},
+		},
+	}
+	metrics := openaiUsageMetrics(buckets)
+	want := []storage.Metric{{
+		ChargePeriodStart: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		ServiceName:       "OpenAI API",
+		ServiceTier:       "",
+		MetricName:        "assistants api | file search",
+		Unit:              "Unknown",
+		Quantity:          decimal.RequireFromString("42"),
+	}}
+	if len(metrics) != len(want) {
+		t.Fatalf("metrics = %+v, want exactly the one unknown-unit valid-quantity row (%+v)", metrics, want)
+	}
+	g := metrics[0]
+	if !g.ChargePeriodStart.Equal(want[0].ChargePeriodStart) || g.ServiceName != want[0].ServiceName ||
+		g.ServiceTier != want[0].ServiceTier || g.MetricName != want[0].MetricName ||
+		g.Unit != want[0].Unit || !g.Quantity.Equal(want[0].Quantity) {
+		t.Errorf("metric = %+v, want %+v", g, want[0])
 	}
 }
 

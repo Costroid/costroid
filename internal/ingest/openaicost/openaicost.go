@@ -149,6 +149,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/aiconn"
+	"github.com/Costroid/costroid/internal/storage"
 )
 
 // Name is the connector's registry name and default credential slot name.
@@ -253,14 +254,58 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		page = resp.NextPage
 	}
 	return &Connector{
-		slot:        slot,
-		month:       month,
-		monthStart:  start,
-		monthEnd:    end,
-		buckets:     buckets,
-		summary:     openaiAnomalies(buckets),
-		contentHash: contentHash(rawBuckets),
+		slot:         slot,
+		month:        month,
+		monthStart:   start,
+		monthEnd:     end,
+		buckets:      buckets,
+		summary:      openaiAnomalies(buckets),
+		usageMetrics: openaiUsageMetrics(buckets),
+		contentHash:  contentHash(rawBuckets),
 	}, nil
+}
+
+// openaiUsageMetrics surfaces the cost-orphaned usage metrics OAI-12 leaves
+// money-only: each recognized-but-unpriced (unknown-unit) quantity-bearing row —
+// the ones openaiAnomalies counts and synthesize value-drops. Each becomes a
+// metric with unit "Unknown" (USG-3: a deliberate NON-assertion — never guess
+// "Tokens", never fabricate a unit) and metric_name = the line_item VERBATIM (an
+// opaque billing descriptor, Cardinal-Rule safe — a model name is never parsed
+// out of it). service_name is the SAME "OpenAI API" the cost record carries and
+// service_tier is "" (OpenAI exposes no tier). A null/absent-quantity row is the
+// normal money-only case (not an orphan), and a recognized-direction row is
+// enriched onto its cost record, not orphaned. A quantity whose literal is NOT a
+// valid decimal cannot be stored in the DECIMAL column, so it stays money-only
+// (counted, never emitted) — the same posture as the recognized-direction
+// malformed case. Returns a non-nil slice (empty when the month has no orphans).
+func openaiUsageMetrics(buckets []bucket) []storage.Metric {
+	metrics := []storage.Metric{}
+	for _, b := range buckets {
+		t := time.Unix(b.StartTime, 0).UTC()
+		day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		for _, res := range b.Results {
+			qty := quantityLiteral(res)
+			if qty == "" {
+				continue // null/absent quantity: normal money-only, not an orphan.
+			}
+			if _, ok := openaiSkuMeter(res.LineItem); ok {
+				continue // a recognized direction is enriched onto its cost row.
+			}
+			d, err := decimal.NewFromString(qty)
+			if err != nil {
+				continue // malformed literal: money-only, cannot store — never emit garbage.
+			}
+			metrics = append(metrics, storage.Metric{
+				ChargePeriodStart: day,
+				ServiceName:       "OpenAI API",
+				ServiceTier:       "",
+				MetricName:        res.LineItem,
+				Unit:              "Unknown",
+				Quantity:          d,
+			})
+		}
+	}
+	return metrics
 }
 
 // doGet issues one GET with the Bearer auth header and bounded 429 retries.
@@ -459,13 +504,14 @@ func contentHash(rawBuckets [][]byte) string {
 // Connector reads one billing month of the OpenAI costs report, enriching each
 // row from its same-row quantity (OAI-11).
 type Connector struct {
-	slot        string
-	month       string
-	monthStart  time.Time
-	monthEnd    time.Time
-	buckets     []bucket
-	summary     anomalySummary
-	contentHash string
+	slot         string
+	month        string
+	monthStart   time.Time
+	monthEnd     time.Time
+	buckets      []bucket
+	summary      anomalySummary
+	usageMetrics []storage.Metric
+	contentHash  string
 }
 
 var _ ingest.Connector = (*Connector)(nil)
@@ -481,6 +527,15 @@ func (c *Connector) Month() string { return c.month }
 // (quantity-bearing rows whose unit could not be derived), or "" when there is
 // nothing to report.
 func (c *Connector) AnomalySummary() string { return c.summary.String() }
+
+// UsageMetrics returns this month's cost-orphaned usage metrics (the
+// unknown-unit quantity-bearing rows OAI-12 leaves money-only) for the separate
+// usage_metrics store. It is a concrete method on *Connector (off the frozen
+// ingest.Connector interface, decision D16), mirroring AnomalySummary's accessor
+// shape; the driver reads it in the AI discovery loop and writes it only after
+// this period's cost ingest succeeds. Always non-nil (empty when the month has
+// no orphans). Never touches cost_records or any money/token total.
+func (c *Connector) UsageMetrics() []storage.Metric { return c.usageMetrics }
 
 func (c *Connector) SourceIdentity() string {
 	return providerHost + "/" + c.slot + "/" + c.month
