@@ -710,6 +710,157 @@ func TestUsageMetricsWriteGatedOnCostIngestSuccess(t *testing.T) {
 	}
 }
 
+// TestUsageMetricsEmptyBatchClearsThroughDriver drives a month from HAVING a
+// usage-metrics orphan to having ZERO through runIngest and proves the empty
+// batch CLEARS the previously-written rows — the invariant behind the guard
+// being `job.usageMetrics != nil` (fires on an empty, non-nil slice) rather than
+// `len(job.usageMetrics) > 0` (which would leave the stale row). It reddens if
+// the driver skips the write for an empty slice (Mutation A).
+func TestUsageMetricsEmptyBatchClearsThroughDriver(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(t.TempDir(), "credentials.key"))
+
+	anthDir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(anthDir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	// 2026-05: a succeeding cost row plus one priority-tier usage orphan (999),
+	// which is structurally cost-orphaned (D33) and surfaced as a usage metric.
+	write("2026-05.json", `[{"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+	  "results":[{"amount":"100","currency":"USD","description":"ok","model":"claude-opus-4-6","cost_type":"session_usage"}]}]`)
+	write("2026-05.usage.json", `[{"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+	  "results":[{"model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","context_window":"0-200k","inference_geo":"us","service_tier":"priority","uncached_input_tokens":999}]}]`)
+
+	srv := httptest.NewServer(fakeanthropic.New(anthDir))
+	t.Cleanup(srv.Close)
+	base := "--base-url=" + srv.URL
+
+	if _, err := runCLI([]string{"credentials", "init"}, ""); err != nil {
+		t.Fatalf("credentials init: %v", err)
+	}
+	if _, err := runCLI([]string{"credentials", "set", "anthropic-cost"}, fakeanthropic.AdminKey); err != nil {
+		t.Fatalf("credentials set: %v", err)
+	}
+
+	// First ingest writes the priority orphan to usage_metrics.
+	if out, err := runCLI([]string{"ingest", "--connector", "anthropic-cost", base, "--period", "2026-05"}, ""); err != nil {
+		t.Fatalf("first 2026-05 ingest: %v\n%s", err, out)
+	}
+	if got := usageMetricCount(t); got != 1 {
+		t.Fatalf("after first ingest: %d usage_metrics rows, want exactly 1 (the priority 999 orphan)", got)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens"); !ok || q != "999" {
+		t.Fatalf("after first ingest: priority orphan = %q (ok=%v), want 999", q, ok)
+	}
+
+	// Overwrite ONLY the usage so the month now has ZERO orphans; the cost file is
+	// untouched. Changing the usage bytes changes the ContentHash, so the cost
+	// re-ingest is a `replaced` (not `unchanged`) and the connector's now-empty
+	// usageMetrics slice reaches runIngest, whose empty ReplaceUsageBatch clears
+	// the stale row.
+	write("2026-05.usage.json", `[{"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z","results":[]}]`)
+
+	out, err := runCLI([]string{"ingest", "--connector", "anthropic-cost", base, "--period", "2026-05"}, "")
+	if err != nil {
+		t.Fatalf("re-ingest 2026-05: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "replaced") {
+		t.Fatalf("re-ingest should be `replaced` (the changed usage bytes changed the ContentHash):\n%s", out)
+	}
+	// The empty batch cleared the previously-written rows for this source.
+	if got := usageMetricCount(t); got != 0 {
+		t.Fatalf("after the zero-orphan re-ingest: %d usage_metrics rows, want 0 (the empty batch must CLEAR the stale priority orphan)", got)
+	}
+}
+
+// TestUsageMetricsWriteFiresOnUnchangedShortCircuit proves the usage write runs
+// on the cost `unchanged` short-circuit (it sits BEFORE the outcome switch), so
+// a month whose cost + ContentHash are stored but whose usage_metrics rows are
+// missing self-heals on a no-op re-ingest. It reddens if the write is gated on
+// `!result.Unchanged` (Mutation B).
+func TestUsageMetricsWriteFiresOnUnchangedShortCircuit(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(t.TempDir(), "credentials.key"))
+
+	anthDir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(anthDir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	write("2026-05.json", `[{"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+	  "results":[{"amount":"100","currency":"USD","description":"ok","model":"claude-opus-4-6","cost_type":"session_usage"}]}]`)
+	write("2026-05.usage.json", `[{"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+	  "results":[{"model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","context_window":"0-200k","inference_geo":"us","service_tier":"priority","uncached_input_tokens":999}]}]`)
+
+	srv := httptest.NewServer(fakeanthropic.New(anthDir))
+	t.Cleanup(srv.Close)
+	base := "--base-url=" + srv.URL
+
+	if _, err := runCLI([]string{"credentials", "init"}, ""); err != nil {
+		t.Fatalf("credentials init: %v", err)
+	}
+	if _, err := runCLI([]string{"credentials", "set", "anthropic-cost"}, fakeanthropic.AdminKey); err != nil {
+		t.Fatalf("credentials set: %v", err)
+	}
+
+	// First ingest stores the cost batch, its ContentHash, and the priority 999
+	// usage orphan.
+	if out, err := runCLI([]string{"ingest", "--connector", "anthropic-cost", base, "--period", "2026-05"}, ""); err != nil {
+		t.Fatalf("first 2026-05 ingest: %v\n%s", err, out)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens"); !ok || q != "999" {
+		t.Fatalf("after first ingest: priority orphan = %q (ok=%v), want 999", q, ok)
+	}
+
+	// Simulate a prior ReplaceUsageBatch failure that left the cost committed and
+	// its ContentHash stored but the usage_metrics rows absent: clear this month's
+	// rows directly through the store (an empty batch on the same identity — the
+	// per-month SourceIdentity is api.anthropic.com/<slot>/<YYYY-MM>, slot defaults
+	// to the connector name). Open/close the store between CLI calls so only one
+	// writer ever holds the data dir.
+	{
+		store, err := storage.Open(context.Background(), dataDir)
+		if err != nil {
+			t.Fatalf("opening store to clear usage metrics: %v", err)
+		}
+		batch := storage.UsageBatch{
+			Connector:      "anthropic-cost",
+			SourceIdentity: "api.anthropic.com/anthropic-cost/2026-05",
+			TenantID:       focus.DefaultTenant,
+		}
+		if err := store.ReplaceUsageBatch(context.Background(), batch, nil); err != nil {
+			_ = store.Close()
+			t.Fatalf("clearing usage metrics: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("closing store after clear: %v", err)
+		}
+	}
+	if _, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens"); ok {
+		t.Fatalf("setup failed: the usage metric is still present after the direct clear (wrong SourceIdentity?)")
+	}
+
+	// Re-ingest the SAME month with IDENTICAL content: the cost short-circuits as
+	// `unchanged`, but the usage write runs before the outcome switch, so it
+	// re-writes the orphan even on the unchanged branch (self-heal).
+	out, err := runCLI([]string{"ingest", "--connector", "anthropic-cost", base, "--period", "2026-05"}, "")
+	if err != nil {
+		t.Fatalf("unchanged re-ingest: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "source content unchanged") {
+		t.Fatalf("re-ingest should short-circuit as `source content unchanged`:\n%s", out)
+	}
+	// The usage write fired on the Unchanged branch and restored the orphan.
+	if q, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens"); !ok || q != "999" {
+		t.Fatalf("usage metric = %q (ok=%v), want it RESTORED to 999 by the write firing on the Unchanged branch", q, ok)
+	}
+}
+
 // runCLI invokes run(args) with the given stdin, capturing everything written
 // to stdout and stderr. It swaps the process streams, so it must not run in
 // parallel with other output-producing code.
@@ -894,6 +1045,22 @@ func usageMetricsView(t *testing.T) string {
 		t.Fatalf("usage metrics HTTP %d: %s", resp.StatusCode, body)
 	}
 	return string(body)
+}
+
+// usageMetricCount opens the store and returns how many grouped default-tenant
+// usage-metric rows exist across all dates (0 when the table has been cleared).
+func usageMetricCount(t *testing.T) int {
+	t.Helper()
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening store for usage-metric count: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	metrics, err := store.DailyUsageMetrics(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics: %v", err)
+	}
+	return len(metrics)
 }
 
 // findUsageMetric returns the quantity of the row matching (date, service, tier,
