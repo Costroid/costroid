@@ -4,8 +4,71 @@
 package focus
 
 import (
+	"slices"
 	"testing"
 )
+
+// TestColumns14Pinned deep-equals columns14 to the explicit, ordered literal of
+// the 43 FOCUS 1.4 CostAndUsage columns the version transforms copy through
+// (transform.go). The carried-column-completeness loop in
+// TestTransform10To14CarriesAndSynthesizes iterates columns14 itself, so a silent
+// SHRINK or RENAME of columns14 would make that loop iterate fewer/renamed names
+// and still pass; a len(columns14)==43 check alone false-passes a rename or a
+// swap. This literal is the independent pin: any add, drop, rename, or reorder of
+// columns14 reddens it. COUPLED to transform.go's columns14 — update both together.
+func TestColumns14Pinned(t *testing.T) {
+	want := []string{
+		"AvailabilityZone",
+		"BilledCost",
+		"BillingAccountId",
+		"BillingAccountName",
+		"BillingAccountType",
+		"BillingCurrency",
+		"BillingPeriodEnd",
+		"BillingPeriodStart",
+		"ChargeCategory",
+		"ChargeClass",
+		"ChargeDescription",
+		"ChargeFrequency",
+		"ChargePeriodEnd",
+		"ChargePeriodStart",
+		"ConsumedQuantity",
+		"ConsumedUnit",
+		"ContractedCost",
+		"ContractedUnitPrice",
+		"EffectiveCost",
+		"HostProviderName",
+		"InvoiceId",
+		"InvoiceIssuerName",
+		"ListCost",
+		"ListUnitPrice",
+		"PricingCategory",
+		"PricingQuantity",
+		"PricingUnit",
+		"RegionId",
+		"RegionName",
+		"ResourceId",
+		"ResourceName",
+		"ResourceType",
+		"ServiceCategory",
+		"ServiceName",
+		"ServiceProviderName",
+		"ServiceSubcategory",
+		"SkuId",
+		"SkuMeter",
+		"SkuPriceId",
+		"SubAccountId",
+		"SubAccountName",
+		"SubAccountType",
+		"Tags",
+	}
+	if len(want) != 43 {
+		t.Fatalf("test literal has %d names, want the 43 carried 1.4 columns", len(want))
+	}
+	if !slices.Equal(columns14, want) {
+		t.Errorf("columns14 drifted from the pinned carried set:\n got=%v\nwant=%v", columns14, want)
+	}
+}
 
 func TestTransformTo14Registry(t *testing.T) {
 	tests := []struct {
