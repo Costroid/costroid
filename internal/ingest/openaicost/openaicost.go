@@ -102,12 +102,23 @@
 //	                                         PricingUnit = "1000000 Tokens". Money
 //	                                         columns stay byte-identical (money
 //	                                         invariance, decision D33).
-//	OAI-12  orphans & tolerance             Unknown units, call-fee line items
-//	                                         (e.g. web search), and null-quantity
-//	                                         rows stay money-only (no SKU columns,
-//	                                         quantity null) and are counted in the
-//	                                         per-period anomaly summary. A unit is
-//	                                         NEVER guessed; a non-"Tokens"
+//	OAI-12  orphans & tolerance             A null/absent-quantity row is the
+//	                                         NORMAL money-only case (credits,
+//	                                         refunds, non-token line items): no SKU
+//	                                         columns, and it is NOT an anomaly, so
+//	                                         it is NOT counted. Only a row that DOES
+//	                                         carry a quantity but cannot be priced is
+//	                                         counted in the per-period anomaly
+//	                                         summary: (a) an unknown/call-fee unit
+//	                                         (e.g. web search) whose line_item has no
+//	                                         documented direction suffix, and (b) a
+//	                                         recognized direction whose quantity
+//	                                         literal is malformed (e.g. a JSON
+//	                                         string) — it degrades to money-only and
+//	                                         is counted. That is the deliberate
+//	                                         ASYMMETRY with a malformed AMOUNT, which
+//	                                         fails the whole period (OAI-4/D23). A
+//	                                         unit is NEVER guessed; a non-"Tokens"
 //	                                         ConsumedUnit is never emitted.
 //
 // line_item is an opaque, undocumented display string; a model name is NEVER
@@ -373,33 +384,57 @@ func quantityLiteral(res result) string {
 	return s
 }
 
-// anomalySummary counts the per-period surfaces OAI-12 leaves money-only:
-// cost rows that carry a quantity whose line_item unit could not be safely
-// derived. String renders one summary line (empty when there is nothing to
-// report).
+// anomalySummary counts the per-period surfaces OAI-12 leaves money-only. Both
+// counters are over QUANTITY-BEARING rows only (a null/absent-quantity row is
+// the normal money-only case — credits, refunds, non-token line items — and is
+// NOT an anomaly): unknownUnitRows is a quantity whose line_item carries no
+// documented direction suffix; malformedQuantityRows is a recognized direction
+// whose quantity literal is not a valid decimal. String renders one summary
+// line (empty when there is nothing to report).
 type anomalySummary struct {
-	unknownUnitRows int
+	unknownUnitRows       int
+	malformedQuantityRows int
 }
 
 func (s anomalySummary) String() string {
-	if s.unknownUnitRows == 0 {
+	if s.unknownUnitRows == 0 && s.malformedQuantityRows == 0 {
 		return ""
 	}
-	return fmt.Sprintf("usage/cost reconciliation: %d cost row(s) carry a quantity whose line_item unit "+
-		"could not be safely derived; left unpriced (a unit is never guessed — decision D33)", s.unknownUnitRows)
+	var parts []string
+	if s.unknownUnitRows > 0 {
+		parts = append(parts, fmt.Sprintf("%d cost row(s) carry a quantity whose line_item unit "+
+			"could not be safely derived", s.unknownUnitRows))
+	}
+	if s.malformedQuantityRows > 0 {
+		parts = append(parts, fmt.Sprintf("%d cost row(s) carry a malformed quantity literal "+
+			"(enrichment stripped; money kept)", s.malformedQuantityRows))
+	}
+	return "usage/cost reconciliation: " + strings.Join(parts, ", ") +
+		"; left unpriced (a unit is never guessed, a quantity is never repaired — decision D33)"
 }
 
 // openaiAnomalies counts the OAI-12 orphans over a month's cost buckets so the
-// summary can be reported at Discover time (before any record is read).
+// summary can be reported at Discover time (before any record is read). Only a
+// row that DOES carry a quantity but cannot be priced is counted: a null/absent
+// quantity is the normal money-only case, never an anomaly (OAI-12).
 func openaiAnomalies(buckets []bucket) anomalySummary {
 	var s anomalySummary
 	for _, b := range buckets {
 		for _, res := range b.Results {
-			if quantityLiteral(res) == "" {
-				continue
+			qty := quantityLiteral(res)
+			if qty == "" {
+				continue // null/absent quantity: normal money-only, not an anomaly.
 			}
 			if _, ok := openaiSkuMeter(res.LineItem); !ok {
 				s.unknownUnitRows++
+				continue
+			}
+			// Recognized direction but a quantity that is not a valid decimal:
+			// synthesize degrades it to money-only (a malformed AMOUNT fails the
+			// whole period per D23; a malformed QUANTITY only strips enrichment —
+			// the deliberate asymmetry). Count it rather than swallow it silently.
+			if _, err := decimal.NewFromString(qty); err != nil {
+				s.malformedQuantityRows++
 			}
 		}
 	}
@@ -550,6 +585,10 @@ func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
 	if qty := quantityLiteral(res); qty != "" {
 		if meter, ok := openaiSkuMeter(res.LineItem); ok {
 			d, err := decimal.NewFromString(qty)
+			// A malformed quantity literal (err != nil) degrades this row to
+			// money-only rather than failing the period (the asymmetry with a
+			// malformed AMOUNT, which fails per D23); openaiAnomalies counts it
+			// in the per-period summary (OAI-12) so it is never swallowed.
 			if err == nil {
 				sku := "openai/" + res.LineItem
 				rec["ConsumedQuantity"] = d.String()

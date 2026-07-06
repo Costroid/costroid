@@ -413,6 +413,190 @@ func TestFrozenSkuMints(t *testing.T) {
 	_ = ws // documents the shared workspace dimension used in the fixtures above
 }
 
+// TestEnrichMonthMixedGeoCollision is the item-1 fix-up proof: a null-geo cost
+// row and a per-geo ("us") cost row that share the SAME remaining join key are
+// ambiguous. The OLD grouping (joinKey + cost-side geo) put them in separate
+// groups, so BOTH enriched — the null-geo row taking the all-geos sum
+// (1,500,000) and the us row its per-geo slice (700,000), storing 2,200,000
+// against 1,500,000 of actual usage with the collision counter at zero. Under
+// the joinKey-alone grouping they collide → enrich NONE, collision counted. This
+// FAILS if the grouping regresses to include the cost-side geo.
+func TestEnrichMonthMixedGeoCollision(t *testing.T) {
+	var costBuckets []bucket
+	if err := json.Unmarshal([]byte(`[{
+		"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+		"results":[
+		  {"amount":"100","currency":"USD","model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","cost_type":"tokens","context_window":"0-200k","service_tier":"standard","token_type":"output_tokens"},
+		  {"amount":"100","currency":"USD","model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","cost_type":"tokens","context_window":"0-200k","service_tier":"standard","token_type":"output_tokens","inference_geo":"us"}
+		]
+	}]`), &costBuckets); err != nil {
+		t.Fatalf("unmarshaling cost bucket: %v", err)
+	}
+	// Usage for the shared key in two geos: us=700000, eu=800000 (geoless=1,500,000).
+	var usageBuckets []usageBucket
+	if err := json.Unmarshal([]byte(`[{
+		"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+		"results":[
+		  {"model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","context_window":"0-200k","inference_geo":"us","service_tier":"standard","output_tokens":700000},
+		  {"model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","context_window":"0-200k","inference_geo":"eu","service_tier":"standard","output_tokens":800000}
+		]
+	}]`), &usageBuckets); err != nil {
+		t.Fatalf("unmarshaling usage bucket: %v", err)
+	}
+
+	enrich, summary := enrichMonth(costBuckets, usageBuckets)
+	if _, ok := enrich[rowKey{0, 0}]; ok {
+		t.Error("null-geo cost row must NOT be enriched (ambiguous mixed-geo collision, D33)")
+	}
+	if _, ok := enrich[rowKey{0, 1}]; ok {
+		t.Error("us-geo cost row must NOT be enriched (ambiguous mixed-geo collision, D33)")
+	}
+	if summary.collisions != 1 || summary.collidedRows != 2 {
+		t.Errorf("collisions=%d collidedRows=%d, want 1/2 (the mixed-geo pair)", summary.collisions, summary.collidedRows)
+	}
+}
+
+// TestEmptyWorkspaceJoinEnriches is the item-2 fix-up proof: the default-
+// workspace/Console join path — workspace_id empty on BOTH the cost and usage
+// side — enriches. Every committed fixture carries a non-empty workspace, so
+// this is the only coverage of the empty-on-both-sides tolerance. It FAILS if a
+// guard ever skips empty-workspace rows.
+func TestEmptyWorkspaceJoinEnriches(t *testing.T) {
+	var costBuckets []bucket
+	if err := json.Unmarshal([]byte(`[{
+		"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+		"results":[{"amount":"100","currency":"USD","model":"claude-opus-4-6","workspace_id":"",
+		            "cost_type":"tokens","context_window":"0-200k","service_tier":"standard","token_type":"uncached_input_tokens"}]
+	}]`), &costBuckets); err != nil {
+		t.Fatalf("unmarshaling cost bucket: %v", err)
+	}
+	var usageBuckets []usageBucket
+	if err := json.Unmarshal([]byte(`[{
+		"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+		"results":[{"model":"claude-opus-4-6","workspace_id":"","context_window":"0-200k",
+		            "inference_geo":"us","service_tier":"standard","uncached_input_tokens":123456}]
+	}]`), &usageBuckets); err != nil {
+		t.Fatalf("unmarshaling usage bucket: %v", err)
+	}
+
+	enrich, _ := enrichMonth(costBuckets, usageBuckets)
+	got, ok := enrich[rowKey{0, 0}]
+	if !ok {
+		t.Fatal("empty-workspace cost row was not enriched (default-workspace/Console join path)")
+	}
+	if !got.quantity.Equal(decimal.RequireFromString("123456")) {
+		t.Errorf("empty-workspace join quantity = %s, want 123456", got.quantity)
+	}
+}
+
+// TestUnknownTokenTypeToleratedNoJoin is the item-3 fix-up proof for the
+// skuMeterByTokenType tolerance guard (enrich.go: unknown token_type → tolerate,
+// leave money-only): two cost tokens rows carrying an unmintable token_type must
+// NOT be treated as join candidates, so they cannot register as an ambiguous
+// collision. Without the guard the two share a joinKey and would be counted as a
+// collision — so asserting collisions==0 makes the guard mutation-proven.
+func TestUnknownTokenTypeToleratedNoJoin(t *testing.T) {
+	var costBuckets []bucket
+	if err := json.Unmarshal([]byte(`[{
+		"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+		"results":[
+		  {"amount":"100","currency":"USD","model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","cost_type":"tokens","context_window":"0-200k","service_tier":"standard","token_type":"thinking_tokens"},
+		  {"amount":"100","currency":"USD","model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","cost_type":"tokens","context_window":"0-200k","service_tier":"standard","token_type":"thinking_tokens"}
+		]
+	}]`), &costBuckets); err != nil {
+		t.Fatalf("unmarshaling cost bucket: %v", err)
+	}
+	enrich, summary := enrichMonth(costBuckets, nil)
+	if len(enrich) != 0 {
+		t.Errorf("unknown-token_type rows must not be enriched, got %d", len(enrich))
+	}
+	if summary.collisions != 0 || summary.collidedRows != 0 {
+		t.Errorf("unmintable token_type rows must not count as a collision: collisions=%d collidedRows=%d, want 0/0",
+			summary.collisions, summary.collidedRows)
+	}
+}
+
+// TestNonJoinableTierTokensRowTolerated is the item-3 fix-up proof for the
+// non-joinable-tier guard (a tokens row on priority/flex stays money-only): two
+// priority-tier cost tokens rows (a KNOWN token_type, so they clear the
+// skuMeter guard) must not be join candidates. Without the tier guard they share
+// a joinKey and would be counted as a collision — so collisions==0 makes it
+// mutation-proven.
+func TestNonJoinableTierTokensRowTolerated(t *testing.T) {
+	var costBuckets []bucket
+	if err := json.Unmarshal([]byte(`[{
+		"starting_at":"2026-05-01T00:00:00Z","ending_at":"2026-05-02T00:00:00Z",
+		"results":[
+		  {"amount":"100","currency":"USD","model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","cost_type":"tokens","context_window":"0-200k","service_tier":"priority","token_type":"output_tokens"},
+		  {"amount":"100","currency":"USD","model":"claude-opus-4-6","workspace_id":"wrkspc_alpha","cost_type":"tokens","context_window":"0-200k","service_tier":"priority","token_type":"output_tokens"}
+		]
+	}]`), &costBuckets); err != nil {
+		t.Fatalf("unmarshaling cost bucket: %v", err)
+	}
+	enrich, summary := enrichMonth(costBuckets, nil)
+	if len(enrich) != 0 {
+		t.Errorf("priority-tier tokens rows must not be enriched, got %d", len(enrich))
+	}
+	if summary.collisions != 0 || summary.collidedRows != 0 {
+		t.Errorf("non-joinable-tier tokens rows must not count as a collision: collisions=%d collidedRows=%d, want 0/0",
+			summary.collisions, summary.collidedRows)
+	}
+}
+
+// TestBadBucketTimestampCounted is the item-8 fix-up proof for the unparseable-
+// timestamp silent degrade (enrich.go bucketDay → ""): a usage bucket AND a cost
+// bucket whose starting_at will not parse each have their whole day fail to
+// match. Both are now COUNTED in the per-period summary rather than silently
+// stripping quantities. It FAILS if either day-guard's counter is removed.
+func TestBadBucketTimestampCounted(t *testing.T) {
+	costBuckets := []bucket{{
+		StartingAt: "not-a-timestamp",
+		Results:    []result{tokensCost("claude-opus-4-6", "wrkspc_alpha", "standard", ttUncachedInput)},
+	}}
+	usageBuckets := []usageBucket{{
+		StartingAt: "also-not-a-timestamp",
+		Results: []usageResult{{
+			Model: "claude-opus-4-6", WorkspaceID: "wrkspc_alpha", ContextWindow: "0-200k",
+			InferenceGeo: "us", ServiceTier: "standard", Uncached: json.Number("700000"),
+		}},
+	}}
+
+	enrich, summary := enrichMonth(costBuckets, usageBuckets)
+	if len(enrich) != 0 {
+		t.Errorf("rows in unparseable-timestamp buckets must not be enriched, got %d", len(enrich))
+	}
+	if summary.badBucketDays != 2 {
+		t.Errorf("badBucketDays = %d, want 2 (one usage + one cost bucket)", summary.badBucketDays)
+	}
+	if !strings.Contains(summary.String(), "unparseable timestamp") {
+		t.Errorf("summary %q missing the unparseable-timestamp line", summary.String())
+	}
+}
+
+// TestInvalidTokenLiteralCounted is the item-8 fix-up proof for the malformed
+// token-literal silent degrade (tokenPairs' decimal parse failure): a usage
+// token count that is present but not a valid decimal was silently skipped;
+// it is now COUNTED. A json.Number is built directly (bypassing the JSON
+// unmarshal that would reject a non-number) so the literal reaches the parse.
+// It FAILS if the badLiterals counter is removed.
+func TestInvalidTokenLiteralCounted(t *testing.T) {
+	usageBuckets := []usageBucket{{
+		StartingAt: "2026-05-01T00:00:00Z",
+		Results: []usageResult{{
+			Model: "claude-opus-4-6", WorkspaceID: "wrkspc_alpha", ContextWindow: "0-200k",
+			InferenceGeo: "us", ServiceTier: "standard", Uncached: json.Number("not-a-number"),
+		}},
+	}}
+
+	_, summary := enrichMonth(nil, usageBuckets)
+	if summary.badTokenLiterals != 1 {
+		t.Errorf("badTokenLiterals = %d, want 1 (the malformed literal)", summary.badTokenLiterals)
+	}
+	if !strings.Contains(summary.String(), "malformed literal") {
+		t.Errorf("summary %q missing the malformed-literal line", summary.String())
+	}
+}
+
 // TestNonNullCostGeoJoinBranch exercises the per-geo join branch (a cost row
 // with a NON-NULL inference_geo matches only that geo's usage sum, not the
 // geoless sum across geos). Every committed fixture has an empty cost-side geo,

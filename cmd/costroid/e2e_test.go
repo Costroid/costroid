@@ -213,17 +213,24 @@ func TestOfflineE2EAICost(t *testing.T) {
 	}
 
 	// --- unchanged re-sync: every period unchanged, rewrite short-circuited ---
+	// Snapshot the cumulative fake request log BEFORE the re-sync so the
+	// endpoint-coverage assertion below inspects only the entries THIS re-sync
+	// appended: the cumulative log already holds both paths from the first sync,
+	// so asserting against it could never fail (the bug this fix-up closes).
+	logBefore := len(fakeLog.String())
 	reOut := mustCLI("", "ingest", "--connector", "anthropic-cost", anthBase, "--since", "2026-05")
 	for _, m := range expectedMonths {
 		if !strings.Contains(reOut, "period "+m+": source content unchanged") {
 			t.Errorf("re-sync did not report month %s unchanged:\n%s", m, reOut)
 		}
 	}
-	// The unchanged re-sync still fetched BOTH endpoints (the ContentHash covers
-	// cost AND usage payloads, so a quantity-only restatement cannot be missed).
+	// The unchanged re-sync must ITSELF fetch BOTH endpoints (the ContentHash
+	// covers cost AND usage payloads, so a quantity-only restatement cannot be
+	// missed). Assert the DELTA the re-sync appended — not the cumulative log.
+	reSyncLog := fakeLog.String()[logBefore:]
 	for _, path := range []string{"/v1/organizations/cost_report", "/v1/organizations/usage_report/messages"} {
-		if !strings.Contains(fakeLog.String(), path) {
-			t.Errorf("expected the fake to have served %s (both endpoints fetched)", path)
+		if !strings.Contains(reSyncLog, path) {
+			t.Errorf("the unchanged re-sync did not itself fetch %s (both endpoints fetched):\n%s", path, reSyncLog)
 		}
 	}
 

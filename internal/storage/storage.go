@@ -64,6 +64,18 @@ type Store interface {
 	// intended, documented, and tested behavior.
 	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time) (DailyCosts, error)
 
+	// DailyTokensByService returns, for one tenant, the total
+	// ConsumedQuantity per UTC calendar day (of ChargePeriodStart) per
+	// (ServiceName, ConsumedUnit), ordered day-ascending then
+	// service-name-ascending then consumed-unit-ascending. It is scoped to
+	// token usage: only rows whose ConsumedUnit is "Tokens" (the FOCUS 1.4
+	// UnitFormat token unit, decision D33) and whose ConsumedQuantity is
+	// non-null contribute, so a money-only row never surfaces with a
+	// fabricated or zero quantity. Its twin DailyCostsByService is on this
+	// interface; this token query belongs beside it. Aggregation is by
+	// ChargePeriod (decision D26c), like DailyCostsByService.
+	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]DailyTokenUsage, error)
+
 	// SyncStates returns one connector's stored sync tuples, keyed by
 	// source identity (see SyncState).
 	SyncStates(ctx context.Context, connector string) (map[string]SyncState, error)

@@ -5,7 +5,9 @@ package openaicost
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,6 +56,46 @@ func TestWaitRetryAfterHonorsContext(t *testing.T) {
 	cancel()
 	if err := waitRetryAfter(ctx, "600"); err == nil {
 		t.Error("waitRetryAfter with a cancelled context returned nil, want ctx.Err()")
+	}
+}
+
+// TestOpenaiAnomalies is the item-4 + item-5 fix-up proof for the per-period
+// anomaly counting (OAI-12):
+//   - a null/absent-quantity row is the normal money-only case and is NOT
+//     counted (item 5 — the disclosure table was corrected to match the code);
+//   - a quantity-bearing row whose line_item unit is not derivable IS counted;
+//   - a quantity-bearing row on a RECOGNIZED direction whose quantity literal is
+//     malformed (a JSON string) IS counted (item 4 — previously swallowed).
+//
+// The credit row is null-quantity AND unknown-unit: asserting unknownUnitRows==1
+// makes item 5 mutation-proven (counting null rows would push it to 2), and
+// asserting malformedQuantityRows==1 makes item 4 mutation-proven.
+func TestOpenaiAnomalies(t *testing.T) {
+	buckets := []bucket{{
+		Results: []result{
+			// null quantity, no direction suffix → normal money-only, NOT counted.
+			{LineItem: "Promotional credit", Quantity: json.RawMessage("null")},
+			// absent quantity → normal money-only, NOT counted.
+			{LineItem: "gpt-4o, input"},
+			// quantity present, unknown unit → counted as unknownUnitRows.
+			{LineItem: "assistants api | file search", Quantity: json.RawMessage("42")},
+			// quantity present but malformed (JSON string) on a recognized
+			// direction → counted as malformedQuantityRows (item 4).
+			{LineItem: "gpt-4o, output", Quantity: json.RawMessage(`"1500000"`)},
+		},
+	}}
+	s := openaiAnomalies(buckets)
+	if s.unknownUnitRows != 1 {
+		t.Errorf("unknownUnitRows = %d, want 1 (null-quantity rows must NOT be counted, item 5)", s.unknownUnitRows)
+	}
+	if s.malformedQuantityRows != 1 {
+		t.Errorf("malformedQuantityRows = %d, want 1 (malformed quantity must be counted, item 4)", s.malformedQuantityRows)
+	}
+	line := s.String()
+	if !strings.HasPrefix(line, "usage/cost reconciliation:") ||
+		!strings.Contains(line, "unit could not be safely derived") ||
+		!strings.Contains(line, "malformed quantity literal") {
+		t.Errorf("summary = %q, want both the unknown-unit and malformed-quantity phrases", line)
 	}
 }
 

@@ -129,17 +129,22 @@ func TestTransform14To14(t *testing.T) {
 		"ServiceName":         "Claude API",
 		"ServiceProviderName": "Anthropic",
 		"InvoiceIssuerName":   "Anthropic",
-		"SkuMeter":            "claude-opus-4-6",
-		"":                    "empty-key-dropped", // absent from columns14
-		"x_SomethingCustom":   "dropped",           // not a 1.4 column
-		"BillingAccountName":  "",                  // empty stays absent
+		// Post-ANT-10-re-point enriched shape: SkuMeter is a friendly meter
+		// name paired with a set SkuId (never the model id — that retired shape
+		// was a latent 1.4 conformance bug, since SkuMeter must be null when
+		// SkuId is null). Model identity lives in ChargeDescription.
+		"SkuMeter":           "Input Tokens",
+		"SkuId":              "anthropic/claude-opus-4-6/uncached_input_tokens/0-200k",
+		"":                   "empty-key-dropped", // absent from columns14
+		"x_SomethingCustom":  "dropped",           // not a 1.4 column
+		"BillingAccountName": "",                  // empty stays absent
 	}
 	out, err := transform(in)
 	if err != nil {
 		t.Fatalf("identity transform: %v", err)
 	}
 	// The 1.4 columns pass through unchanged.
-	for _, col := range []string{"BilledCost", "BillingCurrency", "ChargeCategory", "ServiceName", "ServiceProviderName", "InvoiceIssuerName", "SkuMeter"} {
+	for _, col := range []string{"BilledCost", "BillingCurrency", "ChargeCategory", "ServiceName", "ServiceProviderName", "InvoiceIssuerName", "SkuMeter", "SkuId"} {
 		if out[col] != in[col] {
 			t.Errorf("column %s = %q, want %q (identity)", col, out[col], in[col])
 		}

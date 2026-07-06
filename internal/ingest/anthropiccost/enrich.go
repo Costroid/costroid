@@ -105,20 +105,26 @@ type enrichment struct {
 
 // anomalySummary counts the per-period usage⇔cost reconciliation surfaces that
 // are counted but NEVER emitted as FOCUS rows (decision D33): ambiguous
-// collisions, cost-orphaned usage keys, priority/flex-tier usage, and
-// web-search request counts. String renders one summary line (empty when there
-// is nothing to report).
+// collisions, cost-orphaned usage keys, priority/flex-tier usage, web-search
+// request counts, and the two silent-degrade signals a quantity-stripping
+// summary exists to surface — buckets whose timestamp will not parse (the whole
+// day cannot be matched) and usage token counts whose literal is not a valid
+// decimal (silently unmatchable). String renders one summary line (empty when
+// there is nothing to report).
 type anomalySummary struct {
 	collisions        int
 	collidedRows      int
 	orphanUsageKeys   int
 	tierOrphanRows    int
 	webSearchRequests decimal.Decimal
+	badBucketDays     int // buckets whose starting_at would not parse (day unmatched)
+	badTokenLiterals  int // usage token counts whose literal was not a valid decimal
 }
 
 func (s anomalySummary) empty() bool {
 	return s.collisions == 0 && s.orphanUsageKeys == 0 &&
-		s.tierOrphanRows == 0 && s.webSearchRequests.IsZero()
+		s.tierOrphanRows == 0 && s.webSearchRequests.IsZero() &&
+		s.badBucketDays == 0 && s.badTokenLiterals == 0
 }
 
 func (s anomalySummary) String() string {
@@ -138,6 +144,12 @@ func (s anomalySummary) String() string {
 	}
 	if !s.webSearchRequests.IsZero() {
 		parts = append(parts, fmt.Sprintf("%s web-search request(s)", s.webSearchRequests.String()))
+	}
+	if s.badBucketDays > 0 {
+		parts = append(parts, fmt.Sprintf("%d bucket(s) with an unparseable timestamp (day unmatched)", s.badBucketDays))
+	}
+	if s.badTokenLiterals > 0 {
+		parts = append(parts, fmt.Sprintf("%d usage token count(s) with a malformed literal (unmatched)", s.badTokenLiterals))
 	}
 	return "usage/cost reconciliation: " + strings.Join(parts, ", ") +
 		" (usage-only surfaces are counted, never emitted as FOCUS rows — decision D33)"
@@ -167,9 +179,10 @@ type tokenPair struct {
 
 // tokenPairs unpivots one usage row's up-to-five token quantities, descending
 // into the nested cache_creation object and skipping absent/empty values. Each
-// quantity is built from its exact JSON literal (never float64).
-func tokenPairs(ur usageResult) []tokenPair {
-	var pairs []tokenPair
+// quantity is built from its exact JSON literal (never float64). badLiterals
+// counts values that were present but not a valid decimal — a silent degrade
+// the per-period summary surfaces rather than swallowing (item 8).
+func tokenPairs(ur usageResult) (pairs []tokenPair, badLiterals int) {
 	add := func(tt string, num json.Number) {
 		s := strings.TrimSpace(string(num))
 		if s == "" {
@@ -177,6 +190,7 @@ func tokenPairs(ur usageResult) []tokenPair {
 		}
 		q, err := decimal.NewFromString(s)
 		if err != nil {
+			badLiterals++
 			return
 		}
 		pairs = append(pairs, tokenPair{tt, q})
@@ -188,7 +202,7 @@ func tokenPairs(ur usageResult) []tokenPair {
 		add(ttCacheWrite5m, ur.CacheCreation.Ephemeral5m)
 		add(ttCacheWrite1h, ur.CacheCreation.Ephemeral1h)
 	}
-	return pairs
+	return pairs, badLiterals
 }
 
 // enrichMonth joins one month's usage quantities onto its cost tokens rows
@@ -202,9 +216,10 @@ func tokenPairs(ur usageResult) []tokenPair {
 //     kept. Priority/flex-tier token rows and web-search counts are counted as
 //     orphans and never aggregated. Only cost_type=="tokens" rows are join
 //     candidates.
-//  2. Group cost tokens rows by their match key. If MORE THAN ONE cost row
-//     shares a match key, the usage is ambiguous → enrich NONE of them and
-//     count the collision (never split/duplicate/guess).
+//  2. Group cost tokens rows by joinKey ALONE (NOT by joinKey + cost-side geo).
+//     If MORE THAN ONE cost row shares a joinKey — including a null-geo row and
+//     a per-geo row for the same remaining key — the usage is ambiguous →
+//     enrich NONE of them and count the collision (never split/duplicate/guess).
 //  3. A uniquely-matched cost row draws its quantity from the geoless sum (null
 //     cost geo) or the per-geo sum (non-null cost geo) and, atomically, gains
 //     the full enrichment set.
@@ -217,13 +232,21 @@ func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]e
 
 	for _, ub := range usageBuckets {
 		day := bucketDay(ub.StartingAt)
+		if day == "" {
+			// An unparseable usage-bucket timestamp cannot be attributed to a
+			// join day: its whole day of usage silently fails to match. Count
+			// it (item 8) and skip rather than key it under "".
+			summary.badBucketDays++
+			continue
+		}
 		for _, ur := range ub.Results {
 			if ur.ServerToolUse != nil && ur.ServerToolUse.WebSearchRequests != "" {
 				if n, err := decimal.NewFromString(string(ur.ServerToolUse.WebSearchRequests)); err == nil {
 					summary.webSearchRequests = summary.webSearchRequests.Add(n)
 				}
 			}
-			pairs := tokenPairs(ur)
+			pairs, bad := tokenPairs(ur)
+			summary.badTokenLiterals += bad
 			if len(pairs) == 0 {
 				continue
 			}
@@ -247,11 +270,25 @@ func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]e
 		jk  joinKey
 		geo string
 	}
-	groups := map[geoKey][]costRow{} // keyed by match key (joinKey + geo selector)
+	// Group cost tokens rows by joinKey ALONE — NOT by (joinKey + cost-side
+	// inference_geo). Grouping by geo too would let a null-geo row and a
+	// per-geo row that share the remaining key BOTH enrich (the null-geo row
+	// taking the all-geos sum, the geo row its per-geo slice), double-counting
+	// usage across two FOCUS rows with the collision counter at zero. Under the
+	// D33 ambiguity policy any joinKey carrying more than one cost row — however
+	// their geo differs — is ambiguous: enrich NONE and count the collision.
+	groups := map[joinKey][]costRow{}
 	referenced := map[joinKey]bool{}
 
 	for bi, b := range costBuckets {
 		day := bucketDay(b.StartingAt)
+		if day == "" {
+			// An unparseable cost-bucket timestamp: the whole day's tokens
+			// rows cannot be matched to usage. Count it (item 8) and leave the
+			// bucket's rows money-only.
+			summary.badBucketDays++
+			continue
+		}
 		for ri, res := range b.Results {
 			if res.CostType != "tokens" || res.TokenType == "" {
 				continue // only tokens rows with a token_type can mint a SKU.
@@ -264,17 +301,19 @@ func enrichMonth(costBuckets []bucket, usageBuckets []usageBucket) (map[rowKey]e
 			}
 			jk := joinKey{day, res.Model, res.ContextWindow, res.WorkspaceID, res.ServiceTier, res.TokenType}
 			referenced[jk] = true
-			mk := geoKey{jk, res.InferenceGeo}
-			groups[mk] = append(groups[mk], costRow{rowKey{bi, ri}, jk, res.InferenceGeo})
+			groups[jk] = append(groups[jk], costRow{rowKey{bi, ri}, jk, res.InferenceGeo})
 		}
 	}
 
 	enrich := map[rowKey]enrichment{}
 	for _, rows := range groups {
 		if len(rows) > 1 {
+			// Ambiguous join key (e.g. a null-geo and a per-geo cost row for the
+			// same key): splitting or summing would double-count usage, so
+			// enrich NONE and count the collision (decision D33).
 			summary.collisions++
 			summary.collidedRows += len(rows)
-			continue // ambiguous → enrich NONE.
+			continue
 		}
 		cr := rows[0]
 		var (

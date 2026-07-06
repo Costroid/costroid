@@ -250,6 +250,13 @@ func TestDailyTokensByService(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
+	// Item 9: DailyTokensByService lives on the Store INTERFACE (its twin
+	// DailyCostsByService does), so a Store consumer can query token usage
+	// without a concrete-type assertion. Routing the query below through a
+	// Store-typed value makes this test fail to COMPILE if the method is ever
+	// dropped from the interface.
+	var tokenStore Store = store
+
 	// withUsage decorates a base cost record with a consumed unit and quantity;
 	// an empty qty leaves ConsumedQuantity NULL (a money-only row).
 	withUsage := func(r focus.CostRecord, unit, qty string) focus.CostRecord {
@@ -296,7 +303,7 @@ func TestDailyTokensByService(t *testing.T) {
 		t.Fatalf("ReplaceIngestBatch(acme): %v", err)
 	}
 
-	got, err := store.DailyTokensByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	got, err := tokenStore.DailyTokensByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatalf("DailyTokensByService: %v", err)
 	}
