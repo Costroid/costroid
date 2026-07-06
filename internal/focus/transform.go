@@ -32,7 +32,7 @@ var transforms = map[Version]Transform{
 	V1_0: nil, // registry slot — not yet implemented
 	V1_1: nil, // registry slot — not yet implemented
 	V1_2: transform12To14,
-	V1_3: nil, // registry slot — not yet implemented
+	V1_3: transform13To14,
 	V1_4: transform14To14,
 }
 
@@ -160,4 +160,39 @@ func transform12To14(raw RawRecord) (RawRecord, error) {
 		out["HostProviderName"] = provider
 	}
 	return out, nil
+}
+
+// transform13To14 normalizes a FOCUS 1.3 record into the internal 1.4 shape.
+//
+// The 1.3 → 1.4 delta is DROP-ONLY for the columns this slice carries: no
+// column was renamed between the two versions (they share every carried
+// Column ID byte-for-byte). 1.4 only removed ProviderName and PublisherName
+// (deprecated in 1.3) and added CommitmentProgramEligibilityDetails and
+// InvoiceDetailId (both Conditional and nullable, so their absence in
+// up-converted 1.3 data is conformant — no gap-fill). Everything 1.3 added
+// over 1.2 that 1.4 keeps — the Allocated* split/shared-cost columns and
+// ContractApplied — is outside Costroid's carried set (columns14) too.
+//
+// So the transform is behaviorally the identity transform: copy the carried
+// 1.4 columns through and drop everything else. That naturally drops
+// ProviderName/PublisherName and the Allocated*/ContractApplied 1.3
+// additions, while letting the NATIVE 1.3 successor columns
+// (ServiceProviderName, HostProviderName, InvoiceIssuerName) pass through
+// unchanged.
+//
+// CRITICAL: 1.3 must NOT be routed through transform12To14. In 1.3,
+// ProviderName and PublisherName are Mandatory and non-null on EVERY row, so
+// transform12To14's entity mapping would OVERWRITE the native 1.3
+// ServiceProviderName ← PublisherName and HostProviderName ← ProviderName on
+// every row — corrupting marketplace rows where the deprecated and successor
+// columns legitimately diverge (e.g. a native ServiceProviderName that is not
+// the PublisherName). The identity path preserves the source's own successor
+// values, which is what a 1.3 export already carries correctly.
+//
+// Column-ID lists were generated from the FOCUS spec column .md files at tags
+// v1.3 and v1.4:
+// https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/tree/v1.3/specification/datasets/cost_and_usage/columns
+// https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/tree/v1.4/specification/datasets/cost_and_usage/columns
+func transform13To14(raw RawRecord) (RawRecord, error) {
+	return transform14To14(raw)
 }

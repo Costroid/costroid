@@ -385,6 +385,165 @@ func TestOfflineE2EAICost(t *testing.T) {
 	t.Logf("\n===== OFFLINE E2E TRANSCRIPT =====\n%s\n%s", transcript.String(), "# fake request logs\n"+fakeLog.String())
 }
 
+// focus-csv fixtures. The restated-month assertion below is COUPLED to these
+// two files: focus-1.4.csv's May rows total BilledCost 15 (10 + 5) and
+// focus-1.4-restated.csv changes only May's first row to 8, totalling 13; the
+// June rows are byte-identical between the two files. Keep the fixtures and the
+// "15 → 13" expectation in sync.
+const (
+	fcsv12       = "../../testdata/focus-csv/focus-1.2.csv"
+	fcsv13       = "../../testdata/focus-csv/focus-1.3.csv"
+	fcsv14       = "../../testdata/focus-csv/focus-1.4.csv"
+	fcsv14Restat = "../../testdata/focus-csv/focus-1.4-restated.csv"
+	fcsvDupHdr   = "../../testdata/focus-csv/negative/duplicate-header.csv"
+	fcsvUnkHdr   = "../../testdata/focus-csv/negative/unknown-header.csv"
+	fcsvNull     = "../../testdata/focus-csv/negative/literal-null.csv"
+	fcsv10       = "../../testdata/focus-csv/focus-1.0.csv"
+)
+
+// TestOfflineE2EFocusCSV is the hermetic, file-only end-to-end proof for the
+// generic focus-csv importer: it ingests conformant 1.2/1.3/1.4 exports under
+// distinct labels alongside AWS cloud sample data, shows them in the daily
+// view, re-imports unchanged, restates one month, exercises --period / --force
+// / --tenant, and runs every negative (the 1.0/1.1 rejections asserted VERBATIM,
+// the rest by actionable substrings).
+func TestOfflineE2EFocusCSV(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+
+	var transcript strings.Builder
+	cli := func(args ...string) (string, error) {
+		out, err := runCLI(args, "")
+		fmt.Fprintf(&transcript, "$ costroid %s\n%s", strings.Join(args, " "), out)
+		if err != nil {
+			fmt.Fprintf(&transcript, "  [exit: %v]\n", err)
+		}
+		return out, err
+	}
+	mustCLI := func(args ...string) string {
+		out, err := cli(args...)
+		if err != nil {
+			t.Fatalf("costroid %s: %v", strings.Join(args, " "), err)
+		}
+		return out
+	}
+
+	// --- existing cloud data + three FOCUS CSV exports under distinct labels ---
+	mustCLI("ingest", "--connector", "aws-focus", "--path", "../../testdata/aws-focus-1.2/sample-export.csv.gz")
+
+	out12 := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv12, "--focus-version", "1.2", "--source-label", "aws-csv")
+	for _, m := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(out12, "period "+m+": ingested 2 record(s) as batch focus-csv/aws-csv/"+m) {
+			t.Errorf("1.2 import missing per-month batch for %s:\n%s", m, out12)
+		}
+	}
+	mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv13, "--focus-version", "1.3", "--source-label", "gcp-csv")
+	mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-csv")
+
+	// --- daily view shows the focus-csv services alongside the AWS sample ---
+	daily := dailyView(t)
+	transcript.WriteString("\n# GET /api/v1/costs/daily (default tenant)\n" + daily + "\n")
+	for _, svc := range []string{"AWS Lambda", "Datadog Pro", "Azure Virtual Machines", "Amazon Elastic Compute Cloud"} {
+		if !strings.Contains(daily, svc) {
+			t.Errorf("daily view missing service %q:\n%s", svc, daily)
+		}
+	}
+
+	// --- unchanged re-import short-circuits both months ---
+	reOut := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-csv")
+	for _, m := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(reOut, "period "+m+": source content unchanged") {
+			t.Errorf("unchanged re-import did not short-circuit %s:\n%s", m, reOut)
+		}
+	}
+
+	// --- --force on byte-identical content still reports unchanged (no-op) ---
+	forceOut := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-csv", "--force")
+	if !strings.Contains(forceOut, "period 2026-05: source content unchanged") {
+		t.Errorf("--force on identical content did not stay unchanged:\n%s", forceOut)
+	}
+
+	// --- --period targets one month ---
+	periodOut := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-csv", "--period", "2026-06")
+	if strings.Contains(periodOut, "2026-05") || !strings.Contains(periodOut, "period 2026-06:") {
+		t.Errorf("--period 2026-06 touched the wrong months:\n%s", periodOut)
+	}
+
+	// --- period-absent error lists the discovered months ---
+	_, err := cli("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-csv", "--period", "2026-09")
+	if err == nil || !strings.Contains(err.Error(), "billing period 2026-09 not found in the export (discovered: 2026-05, 2026-06)") {
+		t.Errorf("period-absent error = %v, want the discovered-months message", err)
+	}
+
+	// --- restated month: same label, only May changed → May replaced, June unchanged ---
+	// COUPLED to the fixtures: May 15 → 13, June byte-identical (see the const block).
+	restated := mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14Restat, "--focus-version", "1.4", "--source-label", "azure-csv")
+	if !strings.Contains(restated, "period 2026-05: replaced (2 records; BilledCost 15 → 13)") {
+		t.Errorf("restated May delta missing/wrong:\n%s", restated)
+	}
+	if !strings.Contains(restated, "period 2026-06: source content unchanged") {
+		t.Errorf("unchanged June should still short-circuit after the May restatement:\n%s", restated)
+	}
+
+	// --- tenant switch homes rows under a distinct tenant ---
+	mustCLI("ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4", "--source-label", "azure-acme", "--tenant", "acme")
+	if !tenantDaysNonEmpty(t, "acme") {
+		t.Error("tenant acme has no focus-csv rows after the tenant-scoped import")
+	}
+
+	// --- negatives ---
+	negative := func(label, want string, args ...string) {
+		out, err := runCLI(args, "")
+		combined := out
+		if err != nil {
+			combined += err.Error() + "\n"
+		}
+		transcript.WriteString("\n# negative: " + label + "\n" + combined)
+		if err == nil || !strings.Contains(combined, want) {
+			t.Errorf("%s: err=%v out=%q, want %q", label, err, out, want)
+		}
+	}
+
+	// The 1.0 / 1.1 rejections are asserted VERBATIM (message-as-contract).
+	want10 := "FOCUS 1.0 identifies entities via ProviderName/PublisherName " +
+		"(replaced by ServiceProviderName/HostProviderName in 1.3, removed in 1.4); " +
+		"no 1.0 → 1.4 transform is implemented — re-export as FOCUS 1.2 or later " +
+		"(AWS Data Exports and Microsoft Cost Management both offer 1.2)."
+	negative("focus-version 1.0", want10,
+		"ingest", "--connector", "focus-csv", "--path", fcsv10, "--focus-version", "1.0")
+	negative("focus-version 1.1", strings.ReplaceAll(want10, "1.0", "1.1"),
+		"ingest", "--connector", "focus-csv", "--path", fcsv12, "--focus-version", "1.1")
+
+	// The rest assert only actionable substrings (offending column, suggested
+	// version, row number).
+	negative("unknown non-x_ column", "MadeUpColumn",
+		"ingest", "--connector", "focus-csv", "--path", fcsvUnkHdr, "--focus-version", "1.4")
+	negative("mislabel hint (1.2 as 1.4)", "1.2 or 1.3",
+		"ingest", "--connector", "focus-csv", "--path", fcsv12, "--focus-version", "1.4")
+	negative("mislabel hint (1.3 as 1.2)", "1.3 (or 1.4)",
+		"ingest", "--connector", "focus-csv", "--path", fcsv13, "--focus-version", "1.2")
+	negative("mislabel hint (1.2 as 1.3)", "re-run with --focus-version 1.2",
+		"ingest", "--connector", "focus-csv", "--path", fcsv12, "--focus-version", "1.3")
+	negative("duplicate header", "duplicate header column(s) \"BilledCost\"",
+		"ingest", "--connector", "focus-csv", "--path", fcsvDupHdr, "--focus-version", "1.4")
+	negative("literal null cell (row-numbered)", "row 1",
+		"ingest", "--connector", "focus-csv", "--path", fcsvNull, "--focus-version", "1.4")
+
+	t.Logf("\n===== OFFLINE E2E FOCUS-CSV TRANSCRIPT =====\n%s", transcript.String())
+}
+
+// TestFocusCSVDefaultLabelCLI covers the default --source-label (the file's
+// base name) end to end at the CLI.
+func TestFocusCSVDefaultLabelCLI(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	out, err := runCLI([]string{"ingest", "--connector", "focus-csv", "--path", fcsv14, "--focus-version", "1.4"}, "")
+	if err != nil {
+		t.Fatalf("default-label ingest: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "batch focus-csv/focus-1.4.csv/2026-05") {
+		t.Errorf("default label did not derive the base name:\n%s", out)
+	}
+}
+
 // runCLI invokes run(args) with the given stdin, capturing everything written
 // to stdout and stderr. It swaps the process streams, so it must not run in
 // parallel with other output-producing code.

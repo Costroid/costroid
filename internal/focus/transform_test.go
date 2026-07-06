@@ -14,8 +14,8 @@ func TestTransformTo14Registry(t *testing.T) {
 	}{
 		{V1_0, true},           // registry slot, not implemented
 		{V1_1, true},           // registry slot, not implemented
-		{V1_2, false},          // implemented in this slice
-		{V1_3, true},           // registry slot, not implemented
+		{V1_2, false},          // implemented (1.2 → 1.4 entity mapping)
+		{V1_3, false},          // implemented (1.3 → 1.4 drop-only identity)
 		{V1_4, false},          // identity transform (synthesized 1.4 sources)
 		{Version("2.0"), true}, // unknown version
 	}
@@ -111,6 +111,130 @@ func TestTransform12To14(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTransform13To14(t *testing.T) {
+	transform, err := TransformTo14(V1_3)
+	if err != nil {
+		t.Fatalf("TransformTo14(1.3): %v", err)
+	}
+	tests := []struct {
+		name string
+		in   RawRecord
+		want map[string]string // expected keys; "" means must be absent
+	}{
+		{
+			name: "carried 1.4 columns pass through; native successor columns kept",
+			in: RawRecord{
+				"BilledCost":          "2.4192",
+				"ServiceProviderName": "AWS",
+				"HostProviderName":    "AWS",
+				"InvoiceIssuerName":   "Amazon Web Services, Inc.",
+			},
+			want: map[string]string{
+				"BilledCost":          "2.4192",
+				"ServiceProviderName": "AWS",
+				"HostProviderName":    "AWS",
+				"InvoiceIssuerName":   "Amazon Web Services, Inc.",
+			},
+		},
+		{
+			name: "deprecated + 1.3-only + x_ columns are dropped",
+			in: RawRecord{
+				"ServiceName":       "AWS Lambda",
+				"ProviderName":      "AWS",     // removed in 1.4
+				"PublisherName":     "AWS",     // removed in 1.4
+				"AllocatedCost":     "1.00",    // 1.3 split/shared-cost, not carried
+				"AllocatedTags":     `{"a":1}`, // 1.3 addition, not carried
+				"ContractApplied":   "true",    // 1.3 addition, not carried
+				"x_ProviderService": "AWSLambda",
+			},
+			want: map[string]string{
+				"ServiceName":       "AWS Lambda",
+				"ProviderName":      "",
+				"PublisherName":     "",
+				"AllocatedCost":     "",
+				"AllocatedTags":     "",
+				"ContractApplied":   "",
+				"x_ProviderService": "",
+			},
+		},
+		{
+			name: "empty values are dropped (empty == null)",
+			in:   RawRecord{"ServiceName": "AWS Lambda", "HostProviderName": ""},
+			want: map[string]string{"ServiceName": "AWS Lambda", "HostProviderName": ""},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := transform(tt.in)
+			if err != nil {
+				t.Fatalf("transform13To14 error: %v", err)
+			}
+			for col, want := range tt.want {
+				if got[col] != want {
+					t.Errorf("column %s = %q, want %q", col, got[col], want)
+				}
+			}
+		})
+	}
+}
+
+// TestTransform13To14DoesNotOverwriteNativeServiceProvider is the load-bearing
+// pin: a 1.3 row whose native ServiceProviderName diverges from its deprecated
+// PublisherName (a marketplace charge) MUST keep the native value. Routing the
+// SAME input through transform12To14 would overwrite it (ServiceProviderName ←
+// PublisherName), so the two transforms MUST differ on this input — which
+// proves why 1.3 is pinned to its own transform and never to transform12To14.
+func TestTransform13To14DoesNotOverwriteNativeServiceProvider(t *testing.T) {
+	in := RawRecord{
+		"BilledCost":          "0",
+		"ServiceProviderName": "Datadog", // native 1.3 successor: the marketplace seller
+		"HostProviderName":    "AWS",     // native 1.3 successor: the host CSP
+		"ProviderName":        "AWS",     // deprecated (host)
+		"PublisherName":       "AWS",     // deprecated — diverges from the native ServiceProviderName
+		"InvoiceIssuerName":   "Amazon Web Services, Inc.",
+	}
+
+	got13, err := transform13To14(in)
+	if err != nil {
+		t.Fatalf("transform13To14: %v", err)
+	}
+	if got13["ServiceProviderName"] != "Datadog" {
+		t.Errorf("13→14 ServiceProviderName = %q, want the native Datadog (not overwritten from PublisherName)", got13["ServiceProviderName"])
+	}
+
+	// The REGISTRY must route V1_3 to this transform, not to transform12To14
+	// (which would corrupt the value): the pin is only worth anything if it is
+	// wired in.
+	regTransform, err := TransformTo14(V1_3)
+	if err != nil {
+		t.Fatalf("TransformTo14(1.3): %v", err)
+	}
+	gotReg, err := regTransform(in)
+	if err != nil {
+		t.Fatalf("registry V1_3 transform: %v", err)
+	}
+	if gotReg["ServiceProviderName"] != "Datadog" {
+		t.Errorf("registry V1_3 transform ServiceProviderName = %q, want native Datadog "+
+			"(is V1_3 mis-routed to transform12To14?)", gotReg["ServiceProviderName"])
+	}
+	if got13["HostProviderName"] != "AWS" {
+		t.Errorf("13→14 HostProviderName = %q, want the native AWS", got13["HostProviderName"])
+	}
+
+	got12, err := transform12To14(in)
+	if err != nil {
+		t.Fatalf("transform12To14: %v", err)
+	}
+	// The wrong routing would set ServiceProviderName ← PublisherName ("AWS").
+	if got12["ServiceProviderName"] != "AWS" {
+		t.Fatalf("test setup: transform12To14 ServiceProviderName = %q, want AWS (from PublisherName)", got12["ServiceProviderName"])
+	}
+	if got13["ServiceProviderName"] == got12["ServiceProviderName"] {
+		t.Errorf("the two transforms agree on ServiceProviderName (%q); the 1.3 pin would then not matter",
+			got13["ServiceProviderName"])
 	}
 }
 

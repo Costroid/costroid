@@ -27,6 +27,7 @@ import (
 	"github.com/Costroid/costroid/internal/ingest/awsfocus"
 	"github.com/Costroid/costroid/internal/ingest/awsfocuss3"
 	"github.com/Costroid/costroid/internal/ingest/azurefocus"
+	"github.com/Costroid/costroid/internal/ingest/focuscsv"
 	"github.com/Costroid/costroid/internal/ingest/openaicost"
 	"github.com/Costroid/costroid/internal/storage"
 	"github.com/Costroid/costroid/internal/webdist"
@@ -73,6 +74,20 @@ commands:
                        credential (it cannot be restricted to cost/usage reads), so the
                        encrypted credential store carries the whole least-privilege
                        burden — guard the key file accordingly (decisions D32, D17)
+          FOCUS CSV:   costroid ingest --connector focus-csv --path <file>
+                       --focus-version 1.2|1.3|1.4 [--source-label <label>]
+                       [--period YYYY-MM] [--tenant default] [--force]
+                       (the generic FOCUS import: a plain or gzip-compressed CSV export
+                       whose FOCUS version you DECLARE — there is no sniffing; magic bytes
+                       decide gzip vs plain. A strict importer: unknown non-x_ columns,
+                       missing mandatory columns, and unparseable rows FAIL with an
+                       actionable message; no gap-fill or column repair. Rows split into
+                       one batch per BillingPeriodStart month, keyed <source-label>/<month>
+                       (--source-label defaults to the file's base name); re-importing a
+                       month under the same label REPLACES it. One import must carry the
+                       COMPLETE data for each month it touches under that label — a
+                       part-file replaces the month with that part alone. Takes no
+                       credentials; --force is a documented no-op — it keeps no sync state)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
 store allows a single process at a time: stop 'costroid serve' before
@@ -341,15 +356,17 @@ func serve(args []string) error {
 
 func ingestCmd(args []string) error {
 	flags := flag.NewFlagSet("ingest", flag.ContinueOnError)
-	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost")`)
-	pathFlag := flags.String("path", "", "path to the export file to ingest (aws-focus)")
+	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost", "focus-csv")`)
+	pathFlag := flags.String("path", "", "path to the export file to ingest (aws-focus, focus-csv)")
 	bucketFlag := flags.String("bucket", "", "S3 bucket holding the AWS Data Export (aws-focus-s3)")
 	accountURLFlag := flags.String("account-url", "", "Azure storage account blob endpoint, e.g. https://<account>.blob.core.windows.net/ (azure-focus)")
 	containerFlag := flags.String("container", "", "Azure blob container holding the Cost Management export (azure-focus)")
 	prefixFlag := flags.String("prefix", "", "export root prefix: the export's configured directory/prefix plus its name (aws-focus-s3, azure-focus)")
-	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus, anthropic-cost, openai-cost; default: all discovered)")
+	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus, anthropic-cost, openai-cost, focus-csv; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
-	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus; a documented no-op for anthropic-cost/openai-cost, which keep no sync state)")
+	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus; a documented no-op for anthropic-cost/openai-cost/focus-csv, which keep no sync state)")
+	focusVersionFlag := flags.String("focus-version", "", "declared FOCUS version of the export: 1.2, 1.3, or 1.4 (focus-csv; REQUIRED, no sniffing)")
+	sourceLabelFlag := flags.String("source-label", "", "logical source label for the per-month batch identity (focus-csv; default: the file's base name)")
 	credentialFlag := flags.String("credential", "", "credential slot name holding the Admin API key (anthropic-cost, openai-cost; default: the connector name). "+
 		"WARNING: an Anthropic Admin key is an unscopeable full-org-admin credential — the encrypted credential store carries the whole least-privilege burden (D32)")
 	baseURLFlag := flags.String("base-url", "", "API base URL (anthropic-cost, openai-cost; default: the vendor's production endpoint)")
@@ -509,10 +526,38 @@ func ingestCmd(args []string) error {
 			jobs = append(jobs, aiJob(p.Month, p.Conn, p.Err))
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
+	case focuscsv.Name:
+		if *pathFlag == "" {
+			return errors.New("--path is required for the focus-csv connector")
+		}
+		// Discovery (version check, file read, header validation, per-month
+		// split) runs BEFORE the store opens: a bad --focus-version or file
+		// fails fast without taking the single-writer store lock. focus-csv
+		// keeps no sync state, so --force is a documented no-op here (the
+		// content-hash short-circuit still makes an unchanged re-import a
+		// no-op). One import must carry the COMPLETE data for each month it
+		// touches under a --source-label (a part-file replaces the month).
+		periods, warnings, err := focuscsv.Discover(*pathFlag, focus.Version(*focusVersionFlag), *sourceLabelFlag)
+		if err != nil {
+			return err
+		}
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, "costroid:", w)
+		}
+		store, err := storage.Open(ctx, dataDir())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		jobs, err := focusCSVJobs(periods, *periodFlag)
+		if err != nil {
+			return err
+		}
+		return runIngest(ctx, store, jobs, *tenantFlag)
 	case "":
-		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost")`)
+		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost", "focus-csv")`)
 	default:
-		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost")`, *connectorFlag)
+		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost", "focus-csv")`, *connectorFlag)
 	}
 }
 
@@ -652,6 +697,26 @@ func azureJobs(periods []azurefocus.Period, period string) ([]ingestJob, error) 
 			}
 		}
 		jobs = append(jobs, job)
+	}
+	if len(jobs) == 0 {
+		return nil, fmt.Errorf("billing period %s not found in the export (discovered: %s)",
+			period, strings.Join(available, ", "))
+	}
+	return jobs, nil
+}
+
+// focusCSVJobs maps the discovered focus-csv months to jobs, filtered to one
+// billing period when requested — the focus-csv twin of s3Jobs/azureJobs.
+// focus-csv keeps no sync state, so its jobs carry no SyncState upsert.
+func focusCSVJobs(periods []focuscsv.Period, period string) ([]ingestJob, error) {
+	var jobs []ingestJob
+	var available []string
+	for _, p := range periods {
+		available = append(available, p.Month)
+		if period != "" && p.Month != period {
+			continue
+		}
+		jobs = append(jobs, ingestJob{period: p.Month, conn: p.Conn})
 	}
 	if len(jobs) == 0 {
 		return nil, fmt.Errorf("billing period %s not found in the export (discovered: %s)",

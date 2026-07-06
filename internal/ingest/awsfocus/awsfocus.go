@@ -14,12 +14,9 @@
 package awsfocus
 
 import (
-	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/csv"
 	"fmt"
 	"io"
 	"os"
@@ -27,13 +24,11 @@ import (
 
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
+	"github.com/Costroid/costroid/internal/ingest/csvstream"
 )
 
 // Name is the connector's registry name.
 const Name = "aws-focus"
-
-// utf8BOM is the UTF-8 byte order mark some tools prepend to CSV files.
-var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // Connector reads one local AWS FOCUS 1.2 export file.
 type Connector struct {
@@ -106,16 +101,16 @@ func (r *reader) Close() error {
 	return gzErr
 }
 
-// GzipCSVStream parses one gzipped AWS FOCUS CSV stream: it strips a
-// UTF-8 BOM if present, keys each data row by the stream's own header
-// row, and numbers rows from rowOffset so multi-chunk exports (each
-// chunk a complete CSV with its own header) keep coherent numbering.
-// It is shared by the local-file connector and the S3 connector.
+// GzipCSVStream parses one gzipped AWS FOCUS CSV stream: it gunzips r, then
+// hands the decompressed bytes to the shared csvstream core (BOM strip,
+// header-keyed rows, row numbering from rowOffset so multi-chunk exports —
+// each chunk a complete CSV with its own header — keep coherent numbering).
+// It is the gzip-mandatory wrapper shared by the local-file connector, the
+// S3 connector, and the Azure connector; the plain-or-gzip focus-csv
+// connector layers gzip itself and calls the csvstream core directly.
 type GzipCSVStream struct {
 	gz     *gzip.Reader
-	csv    *csv.Reader
-	header []string
-	row    int
+	stream *csvstream.Stream
 }
 
 // NewGzipCSVStream opens a gzipped CSV stream over r and consumes its
@@ -126,42 +121,19 @@ func NewGzipCSVStream(r io.Reader, rowOffset int) (*GzipCSVStream, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading gzip: %w", err)
 	}
-	// A UTF-8 BOM would otherwise become part of the first header name,
-	// silently nulling the first column of every record.
-	br := bufio.NewReader(gz)
-	if bom, err := br.Peek(len(utf8BOM)); err == nil && bytes.Equal(bom, utf8BOM) {
-		_, _ = br.Discard(len(utf8BOM))
-	}
-	cr := csv.NewReader(br)
-	cr.ReuseRecord = true
-
-	header, err := cr.Read()
+	stream, err := csvstream.New(gz, rowOffset)
 	if err != nil {
 		_ = gz.Close()
-		return nil, fmt.Errorf("reading CSV header: %w", err)
+		return nil, err
 	}
-	return &GzipCSVStream{gz: gz, csv: cr, header: append([]string(nil), header...), row: rowOffset}, nil
+	return &GzipCSVStream{gz: gz, stream: stream}, nil
 }
 
 // Next returns the next data row, or io.EOF after the last one.
-func (s *GzipCSVStream) Next() (ingest.Row, error) {
-	fields, err := s.csv.Read()
-	if err == io.EOF {
-		return ingest.Row{}, io.EOF
-	}
-	s.row++
-	if err != nil {
-		return ingest.Row{}, fmt.Errorf("reading CSV row %d: %w", s.row, err)
-	}
-	rec := make(focus.RawRecord, len(s.header))
-	for i, name := range s.header {
-		rec[name] = fields[i]
-	}
-	return ingest.Row{Number: s.row, Record: rec}, nil
-}
+func (s *GzipCSVStream) Next() (ingest.Row, error) { return s.stream.Next() }
 
 // Rows returns the number of the last data row read.
-func (s *GzipCSVStream) Rows() int { return s.row }
+func (s *GzipCSVStream) Rows() int { return s.stream.Rows() }
 
 // Close releases the gzip reader; the caller owns the underlying reader.
 func (s *GzipCSVStream) Close() error { return s.gz.Close() }

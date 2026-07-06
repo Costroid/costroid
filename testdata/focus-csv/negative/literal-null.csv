@@ -1,0 +1,2 @@
+BilledCost,BillingAccountId,BillingCurrency,BillingPeriodEnd,BillingPeriodStart,ChargeCategory,ChargePeriodEnd,ChargePeriodStart,ContractedCost,EffectiveCost,InvoiceIssuerName,ListCost,ServiceCategory,ServiceName,ServiceProviderName
+null,999999999999,USD,2026-06-01T00:00:00Z,2026-05-01T00:00:00Z,Usage,2026-05-02T00:00:00Z,2026-05-01T00:00:00Z,1.00,1.00,MinimalCo,1.00,Compute,Minimal Service,MinimalCo

@@ -322,6 +322,33 @@ func TestIngestHelpWarnsAdminKey(t *testing.T) {
 	}
 }
 
+// TestIngestConnectorStringsIncludeFocusCSV proves focus-csv is enumerated in
+// the three connector-name surfaces: the --connector flag usage (ingest
+// --help), the empty-connector "required" error, and the unknown-connector
+// error. Dropping focus-csv from any of them fails the matching assertion.
+func TestIngestConnectorStringsIncludeFocusCSV(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+
+	help, err := runCLI([]string{"ingest", "--help"}, "")
+	if err != nil {
+		t.Fatalf("ingest --help: %v", err)
+	}
+	if !strings.Contains(help, "focus-csv") {
+		t.Errorf("ingest --help does not enumerate focus-csv:\n%s", help)
+	}
+
+	// Empty --connector → the "required" error must list focus-csv.
+	if _, err := runCLI([]string{"ingest"}, ""); err == nil || !strings.Contains(err.Error(), "focus-csv") {
+		t.Errorf("empty-connector error = %v, want it to enumerate focus-csv", err)
+	}
+
+	// Unknown --connector → the "unknown connector" error must list focus-csv.
+	if _, err := runCLI([]string{"ingest", "--connector", "not-a-connector"}, ""); err == nil ||
+		!strings.Contains(err.Error(), "focus-csv") {
+		t.Errorf("unknown-connector error = %v, want it to enumerate focus-csv", err)
+	}
+}
+
 func TestResolveAddr(t *testing.T) {
 	tests := []struct {
 		name     string
