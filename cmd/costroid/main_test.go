@@ -349,6 +349,42 @@ func TestIngestConnectorStringsIncludeFocusCSV(t *testing.T) {
 	}
 }
 
+// TestFocusCSVMandatoryNullableWarningCLI drives the 1.4 absent-Mandatory-
+// nullable WARNING through the CLI (main.go's `for _, w := range warnings`
+// print loop). The minimal 1.4 fixture carries only the 15 not-null columns, so
+// Discover returns one DatasetConfiguration warning; the ingest still succeeds
+// (warn, not fail). Only the Discover-level warning was proven before — the CLI
+// print loop had no failing-on-removal test. Deleting the print loop reddens
+// this.
+func TestFocusCSVMandatoryNullableWarningCLI(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	out, err := runCLI([]string{"ingest", "--connector", "focus-csv",
+		"--path", "../../testdata/focus-csv/negative/focus-1.4-minimal.csv", "--focus-version", "1.4"}, "")
+	if err != nil {
+		t.Fatalf("minimal-1.4 ingest should warn, not fail: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "DatasetConfiguration") {
+		t.Errorf("CLI did not print the Mandatory-but-nullable absence warning:\n%s", out)
+	}
+	// The warn arm still ingests both months (warn, do not fail).
+	if !strings.Contains(out, "period 2026-05:") || !strings.Contains(out, "period 2026-06:") {
+		t.Errorf("minimal-1.4 warn arm did not still ingest both months:\n%s", out)
+	}
+}
+
+// TestUsageDocumentsPartFileLimitation asserts the focus-csv part-file
+// limitation sentence is present in the top-level usage/help text (main.go's
+// `usage` const, surfaced here via the no-command error that appends it). The
+// connector-strings help test only checks the "focus-csv" substring; this pins
+// the documented-limitation wording so dropping it from the usage string is
+// caught.
+func TestUsageDocumentsPartFileLimitation(t *testing.T) {
+	_, err := runCLI([]string{}, "")
+	if err == nil || !strings.Contains(err.Error(), "part-file replaces the month with that part alone") {
+		t.Errorf("top-level usage does not document the focus-csv part-file limitation: %v", err)
+	}
+}
+
 func TestResolveAddr(t *testing.T) {
 	tests := []struct {
 		name     string

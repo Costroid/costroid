@@ -99,6 +99,40 @@ func TestOpenaiAnomalies(t *testing.T) {
 	}
 }
 
+// TestMalformedQuantityDegradesToMoneyOnly is the item-3 fix-up proof for the
+// degrade HALF of the malformed-quantity path (openaicost.go synthesize): a
+// recognized direction (", output") whose quantity literal is malformed (a JSON
+// string) must DEGRADE to money-only — synthesize keeps the row and does NOT
+// fail the period (the deliberate asymmetry with a malformed AMOUNT, which fails
+// per D23). Only the counting half was proven (TestOpenaiAnomalies); this pins
+// the degrade half. Removing the `if err == nil` guard (emitting garbage
+// enrichment from the failed parse) or failing the period breaks this test.
+func TestMalformedQuantityDegradesToMoneyOnly(t *testing.T) {
+	c := &Connector{
+		month:      "2026-05",
+		monthStart: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		monthEnd:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	}
+	b := bucket{StartTime: 1777593600, EndTime: 1777680000} // exactly one day
+	res := result{
+		Amount:   amount{Value: json.RawMessage("1.0"), Currency: "usd"},
+		LineItem: "gpt-4o, output",             // a recognized direction suffix
+		Quantity: json.RawMessage(`"1500000"`), // a JSON string → NOT a valid decimal
+	}
+	rec, err := c.synthesize(b, res)
+	if err != nil {
+		t.Fatalf("a malformed quantity must degrade to money-only, not fail the period: %v", err)
+	}
+	if rec["BilledCost"] != "1" {
+		t.Errorf("BilledCost = %q, want 1 (money kept on the degraded row)", rec["BilledCost"])
+	}
+	for _, col := range []string{"ConsumedQuantity", "ConsumedUnit", "SkuId", "SkuPriceId", "SkuMeter", "PricingQuantity", "PricingUnit"} {
+		if v, ok := rec[col]; ok {
+			t.Errorf("degraded row must be money-only but carries %s=%q", col, v)
+		}
+	}
+}
+
 // TestOpenAISkuMeterGolden pins the frozen unit derivation (OAI-11/OAI-12) over
 // representative opaque line_items: only the three documented trailing
 // direction suffixes map to a meter; everything else is left unpriced (a unit is

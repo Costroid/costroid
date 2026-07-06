@@ -43,11 +43,19 @@
 //	                            1.4-declared files must carry the 15 not-null
 //	                            columns or FAIL; other absent 1.4-Mandatory
 //	                            (nullable) columns are a one-line WARNING, not a
-//	                            failure; absent Conditional columns are fine.
-//	GEN-4   cells               An empty field is null. A literal "null"/"NULL"
-//	                            string is NOT null: it flows through and fails
-//	                            naturally as a type/enum violation, row-numbered
-//	                            — the importer never rewrites it.
+//	                            failure — FOCUS 1.4's DatasetConfiguration lets a
+//	                            conformant dataset expose a Mandatory column
+//	                            SUBSET, so a Mandatory-but-nullable column may be
+//	                            legitimately omitted (warn, do not reject); absent
+//	                            Conditional columns are fine.
+//	GEN-4   cells               An empty field is null — a Costroid calibration,
+//	                            not a spec rule: FOCUS defines no CSV
+//	                            serialization, so "empty cell == null" has no
+//	                            normative basis and is our documented choice
+//	                            (decision D34). A literal "null"/"NULL" string is
+//	                            NOT null: it flows through and fails naturally as
+//	                            a type/enum violation, row-numbered — the importer
+//	                            never rewrites it.
 //	GEN-5   batching (D26a)     Rows split by the UTC month of BillingPeriodStart;
 //	                            each month is one batch keyed
 //	                            <source-label>/<YYYY-MM>. Re-importing a month
@@ -68,6 +76,14 @@
 // given --source-label: importing a single part-file REPLACES that month with
 // that part alone (multi-part manifest stitching is a vendor connector's job,
 // not this one's).
+//
+// # --force
+//
+// --force is accepted for CLI uniformity but is a documented NO-OP beyond
+// re-reading the file: focus-csv keeps no incremental sync state (no
+// storage.SyncState tuple to bypass), so every import always runs, and the
+// store's unchanged short-circuit on a byte-identical re-import is
+// unconditional and untouched (matching the AI-connector --force precedent).
 //
 // # Credentials
 //

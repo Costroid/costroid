@@ -11,9 +11,12 @@
 // It reads a PLAIN (already-decompressed) byte stream — gzip is an optional
 // layer the caller adds (awsfocus wraps a gzip.Reader before handing the
 // stream here; focus-csv layers gzip only when the source's magic bytes say
-// so). The core lived inside the awsfocus package; extracting it lets the
-// aws-focus-s3, azure-focus, and focus-csv connectors share it without any
-// of them importing another connector's package.
+// so). The core lived inside the awsfocus package; extracting it here gives the
+// FOCUS/CSV connectors one shared implementation. focus-csv imports this
+// package directly; aws-focus-s3 and azure-focus still reach it through
+// awsfocus.NewGzipCSVStream (which wraps this core with a gzip layer), so they
+// import awsfocus rather than csvstream — a thin remaining coupling a later
+// slice can drop by pointing them here directly.
 package csvstream
 
 import (

@@ -173,6 +173,17 @@ func TestTransform13To14(t *testing.T) {
 				t.Fatalf("transform13To14 error: %v", err)
 			}
 			for col, want := range tt.want {
+				// Per the `want` comment, "" means the key must be ABSENT
+				// (dropped), not merely present-and-empty. Assert absence via the
+				// two-value read — got[col] alone cannot tell a dropped key from a
+				// present-but-empty one, so the empty-value-drop subtest could
+				// never fail before this.
+				if want == "" {
+					if v, ok := got[col]; ok {
+						t.Errorf("column %s = %q, want it ABSENT (dropped)", col, v)
+					}
+					continue
+				}
 				if got[col] != want {
 					t.Errorf("column %s = %q, want %q", col, got[col], want)
 				}

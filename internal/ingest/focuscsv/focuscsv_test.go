@@ -534,6 +534,37 @@ func TestUnparseableBillingPeriodStartFailsImport(t *testing.T) {
 	}
 }
 
+// TestEmptyBillingPeriodStartFailsImport covers the monthOf null branch
+// (focuscsv.go: "BillingPeriodStart is null"): an EMPTY BillingPeriodStart cell
+// (distinct from an unparseable one) cannot be assigned to a billing month, so
+// the whole import fails, row-numbered, before anything is stored. This branch
+// had zero coverage.
+func TestEmptyBillingPeriodStartFailsImport(t *testing.T) {
+	// Empty only field 5 (BillingPeriodStart), leaving ChargeCategory in place;
+	// "2026-05-01T00:00:00Z,Usage,2026-05-02" uniquely identifies that field pair
+	// (ChargePeriodStart is followed by ContractedCost, not by ",Usage,").
+	bad := strings.Replace(minimalCSV(), "2026-05-01T00:00:00Z,Usage,2026-05-02", ",Usage,2026-05-02", 1)
+	path := writeTemp(t, "empty-bps.csv", []byte(bad))
+	_, _, err := focuscsv.Discover(path, focus.V1_4, "b")
+	if err == nil || !strings.Contains(err.Error(), "row 1") ||
+		!strings.Contains(err.Error(), "BillingPeriodStart is null") {
+		t.Errorf("empty BillingPeriodStart err = %v, want a row-1 'BillingPeriodStart is null' failure", err)
+	}
+}
+
+// TestHeaderlessFileRejected covers the analyze() "no header row" branch: a
+// file that is non-empty and non-binary (so it passes the format gate) but
+// yields NO header row — a lone blank line, which encoding/csv skips to EOF —
+// fails distinctly from the header-only "no data rows" case. This branch had
+// zero coverage.
+func TestHeaderlessFileRejected(t *testing.T) {
+	path := writeTemp(t, "blank.csv", []byte("\n"))
+	if _, _, err := focuscsv.Discover(path, focus.V1_4, "h"); err == nil ||
+		!strings.Contains(err.Error(), "no header row") {
+		t.Errorf("headerless-file err = %v, want the 'no header row' error", err)
+	}
+}
+
 // --- default label is the file base name ---
 
 func TestDefaultLabelIsBaseName(t *testing.T) {
