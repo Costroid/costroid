@@ -164,6 +164,11 @@ const providerHost = "api.openai.com"
 // costsPath is the endpoint path (never echoed in error messages).
 const costsPath = "/v1/organization/costs"
 
+// serviceName is the FOCUS ServiceName every OpenAI cost row carries (OAI-7),
+// and the same value its cost-orphaned usage metrics carry. A single const both
+// paths reference so the two can never drift (slice-8 review).
+const serviceName = "OpenAI API"
+
 const (
 	maxBodyBytes  = 1 << 20
 	max429Retries = 5
@@ -297,7 +302,7 @@ func openaiUsageMetrics(buckets []bucket) []storage.Metric {
 			}
 			metrics = append(metrics, storage.Metric{
 				ChargePeriodStart: day,
-				ServiceName:       "OpenAI API",
+				ServiceName:       serviceName,
 				ServiceTier:       "",
 				MetricName:        res.LineItem,
 				Unit:              "Unknown",
@@ -622,7 +627,7 @@ func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
 		"BillingAccountId":    providerHost + "/" + c.slot,
 		"ServiceProviderName": "OpenAI",
 		"InvoiceIssuerName":   "OpenAI",
-		"ServiceName":         "OpenAI API",
+		"ServiceName":         serviceName,
 		"ServiceCategory":     "AI and Machine Learning",
 	}
 	if res.LineItem != "" {

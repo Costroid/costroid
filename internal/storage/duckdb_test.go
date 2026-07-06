@@ -411,8 +411,14 @@ func TestDailyUsageMetrics(t *testing.T) {
 		// stay SEPARATE (collapses to 1122 if metric_name is dropped from GROUP BY).
 		metric(1, "claude-sonnet-4-5", "standard", "uncached_input_tokens", "Tokens", "999"),
 		metric(1, "claude-sonnet-4-5", "standard", "output_tokens", "Tokens", "123"),
-		// day 1 — same as an above row in every dim EXCEPT unit: must stay SEPARATE
-		// (Tokens vs Requests never merge).
+		// day 1 — a Requests-unit row sharing ALL FOUR other dims (day, service, tier,
+		// metric_name) with the output_tokens Tokens row above: it must stay SEPARATE
+		// (Tokens vs Requests never merge). Because only `unit` differs, dropping `unit`
+		// from the GROUP BY would MERGE the two into 130 (123+7) — a wrong SUM, not just
+		// a binder error — so this is the semantic guard that `unit` is a GROUP-BY key.
+		metric(1, "claude-sonnet-4-5", "standard", "output_tokens", "Requests", "7"),
+		// day 1 — a further non-Tokens unit (web-search counts) round-tripping through
+		// the store, distinct in metric_name from every other row.
 		metric(1, "claude-sonnet-4-5", "standard", "web_search_requests", "Requests", "5"),
 		// day 2 — an OpenAI-shaped row: service_tier="" round-trips to "".
 		metric(2, "OpenAI API", "", "assistants api | file search", "Unknown", "42"),
@@ -421,13 +427,15 @@ func TestDailyUsageMetrics(t *testing.T) {
 		t.Fatalf("ReplaceUsageBatch: %v", err)
 	}
 
-	// A different tenant's metric is invisible to the default tenant (D15).
-	acmeBatch := UsageBatch{Connector: "anthropic-cost", SourceIdentity: "api.anthropic.com/anthropic-cost/2026-05", TenantID: "acme"}
+	// A different tenant's metric under a DIFFERENT source_identity is invisible to
+	// the default tenant (D15). (A same-(connector, source_identity) write from
+	// another tenant would re-home by design — ReplaceUsageBatch deletes without a
+	// tenant clause, D26a — so this uses a distinct source_identity, the scoping the
+	// store actually guarantees.)
 	acme := metric(1, "claude-opus-4-6", "priority", "uncached_input_tokens", "Tokens", "777")
 	if err := s.ReplaceUsageBatch(ctx, UsageBatch{Connector: "anthropic-cost", SourceIdentity: "acme-src", TenantID: "acme"}, []Metric{acme}); err != nil {
 		t.Fatalf("ReplaceUsageBatch(acme): %v", err)
 	}
-	_ = acmeBatch
 
 	// Seed a cost_records row with the SAME token unit/quantity so the isolation
 	// assertion below is real: a usage_metrics row must NOT appear in either FOCUS
@@ -444,8 +452,10 @@ func TestDailyUsageMetrics(t *testing.T) {
 		t.Fatalf("DailyUsageMetrics: %v", err)
 	}
 	want := []DailyUsageMetric{
-		// day 1, ordered by service, tier, metric, unit (byte order): "OpenAI"<"claude".
+		// day 1, ordered by service, tier, metric, unit (byte order): "OpenAI"<"claude";
+		// within a shared metric_name, "Requests"<"Tokens".
 		{Date: day(1), ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: dec(t, "1234567890124956789")},
+		{Date: day(1), ServiceName: "claude-sonnet-4-5", ServiceTier: "standard", MetricName: "output_tokens", Unit: "Requests", Quantity: dec(t, "7")},
 		{Date: day(1), ServiceName: "claude-sonnet-4-5", ServiceTier: "standard", MetricName: "output_tokens", Unit: "Tokens", Quantity: dec(t, "123")},
 		{Date: day(1), ServiceName: "claude-sonnet-4-5", ServiceTier: "standard", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: dec(t, "999")},
 		{Date: day(1), ServiceName: "claude-sonnet-4-5", ServiceTier: "standard", MetricName: "web_search_requests", Unit: "Requests", Quantity: dec(t, "5")},
