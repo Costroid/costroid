@@ -43,7 +43,7 @@ func startFake(t *testing.T, dir string) (*fakeopenai.Handler, string) {
 }
 
 // costRequests counts how many of the fake's served requests hit the costs
-// endpoint (Discover also fetches the seven usage endpoints; assertions about
+// endpoint (Discover also fetches the ten usage endpoints; assertions about
 // the cost fetch must not count those).
 func costRequests(h *fakeopenai.Handler) int {
 	n := 0
@@ -346,7 +346,7 @@ func TestRateLimitedThenSucceeds(t *testing.T) {
 		t.Fatalf("period = %+v, want it to succeed after the retries", periods[0])
 	}
 	// Count only the COSTS-path requests: the rate-limit gate applies to the cost
-	// endpoint (Discover also fetches the seven usage endpoints, which are not
+	// endpoint (Discover also fetches the ten usage endpoints, which are not
 	// throttled). Two 429s then one success on the costs endpoint.
 	if got := costRequests(fake); got != 3 {
 		t.Errorf("served %d costs requests, want 3 (two 429s then one success)", got)
@@ -406,7 +406,7 @@ func TestMissingCurrencyFailsPeriod(t *testing.T) {
 	}
 }
 
-// --- OpenAI Usage-API metrics (slice 11, D38) ---
+// --- OpenAI Usage-API metrics ---
 
 // day1 is 2026-05-01T00:00:00Z (UTC midnight of Unix start_time 1777593600, the
 // value the usage fixtures below use).
@@ -511,7 +511,7 @@ func TestUsageTokenDoubleCountImpossible(t *testing.T) {
 }
 
 // TestUsagePerEndpointCompleteSet (mandated test #2) asserts the EXACT complete
-// set of storage.Metric tuples each of the seven endpoints produces, values
+// set of storage.Metric tuples each of the ten endpoints produces, values
 // coupled to the fixture on both sides. Each case is ISOLATED (only that one
 // usage file, NO cost fixture) so the cost fetch returns empty buckets and USG-3
 // contributes zero rows — UsageMetrics() then equals exactly the endpoint's rows.
@@ -540,6 +540,12 @@ func TestUsagePerEndpointCompleteSet(t *testing.T) {
 			[]storage.Metric{req("whisper-1", "6"), special("whisper-1", "seconds", "Seconds", "720")}},
 		{"code_interpreter_sessions", `[{"start_time":1777593600,"results":[{"num_sessions":8}]}]`,
 			[]storage.Metric{sessions}},
+		{"vector_stores", `[{"start_time":1777593600,"results":[{"usage_bytes":1099511627776,"input_tokens":5}]}]`,
+			[]storage.Metric{special("OpenAI API", "usage_bytes", "Bytes", "1099511627776")}},
+		{"web_search_calls", `[{"start_time":1777593600,"results":[{"model":"gpt-4o-search-preview","num_requests":11,"num_model_requests":99,"input_tokens":5}]}]`,
+			[]storage.Metric{special("gpt-4o-search-preview", "web_search_num_requests", "Calls", "11")}},
+		{"file_search_calls", `[{"start_time":1777593600,"results":[{"num_requests":12,"input_tokens":5}]}]`,
+			[]storage.Metric{special("OpenAI API", "file_search_num_requests", "Calls", "12")}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.endpoint, func(t *testing.T) {
@@ -590,10 +596,29 @@ func TestUsageOrphansPreservedAndDistinct(t *testing.T) {
 
 	usg3 := storage.Metric{ChargePeriodStart: day1, ServiceName: "OpenAI API", ServiceTier: "", MetricName: "assistants api | file search", Unit: "Unknown", Quantity: decimal.RequireFromString("42")}
 	images := storage.Metric{ChargePeriodStart: day1, ServiceName: "gpt-image-1", ServiceTier: "", MetricName: "images", Unit: "Images", Quantity: decimal.RequireFromString("9")}
+	// Distinctness is covered by the complete-set assertion: the USG-3 and
+	// Images rows carry DIFFERENT (metric_name, unit) tuples, so DailyUsageMetrics
+	// can never silently merge them.
 	assertMetricSet(t, "orphans preserved", metrics, []storage.Metric{usg3, req("gpt-image-1", "2"), images})
+}
 
-	// Distinctness: the USG-3 and Images rows carry DIFFERENT (metric_name, unit)
-	// tuples, so DailyUsageMetrics can never silently merge them.
+// TestUsageSearchRequestsSourceQualified proves the two search-call endpoints'
+// upstream num_requests fields are stored as endpoint-qualified metric names.
+// With no endpoint dimension in usage_metrics, this prevents web and file search
+// calls from SUM-merging when their ServiceName falls back to the same value.
+func TestUsageSearchRequestsSourceQualified(t *testing.T) {
+	dir := t.TempDir()
+	writeUsage(t, dir, "2026-05", "web_search_calls", `[{"start_time":1777593600,"results":[{"num_requests":7,"num_model_requests":70}]}]`)
+	writeUsage(t, dir, "2026-05", "file_search_calls", `[{"start_time":1777593600,"results":[{"num_requests":8}]}]`)
+	h := fakeopenai.New(dir)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	got := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+
+	assertMetricSet(t, "search requests source-qualified", got, []storage.Metric{
+		{ChargePeriodStart: day1, ServiceName: "OpenAI API", ServiceTier: "", MetricName: "web_search_num_requests", Unit: "Calls", Quantity: decimal.RequireFromString("7")},
+		{ChargePeriodStart: day1, ServiceName: "OpenAI API", ServiceTier: "", MetricName: "file_search_num_requests", Unit: "Calls", Quantity: decimal.RequireFromString("8")},
+	})
 }
 
 // TestUsageFetchLeavesCostAndTokensInvariant (mandated test #5) proves adding the
@@ -681,13 +706,14 @@ func TestUsagePaginationFollowsCursor(t *testing.T) {
 }
 
 // TestUsageCardinalRulePathsOnly (mandated test #10) proves the connector issues
-// requests ONLY to /costs and the seven usage paths — never /projects, /users, or
+// requests ONLY to /costs and the ten usage paths — never /projects, /users, or
 // any ID→name resolution call (Cardinal Rule D7).
 func TestUsageCardinalRulePathsOnly(t *testing.T) {
 	allowed := map[string]bool{"/v1/organization/costs": true}
 	for _, name := range []string{
 		"completions", "embeddings", "moderations", "images",
 		"audio_speeches", "audio_transcriptions", "code_interpreter_sessions",
+		"vector_stores", "web_search_calls", "file_search_calls",
 	} {
 		allowed["/v1/organization/usage/"+name] = true
 	}
@@ -696,13 +722,13 @@ func TestUsageCardinalRulePathsOnly(t *testing.T) {
 	sawUsage := map[string]bool{}
 	for _, r := range h.Requests() {
 		if !allowed[r.Path] {
-			t.Errorf("connector hit a forbidden path %q (only /costs and the 7 usage paths are permitted)", r.Path)
+			t.Errorf("connector hit a forbidden path %q (only /costs and the 10 usage paths are permitted)", r.Path)
 		}
 		if strings.HasPrefix(r.Path, "/v1/organization/usage/") {
 			sawUsage[r.Path] = true
 		}
 	}
-	if len(sawUsage) != 7 {
-		t.Errorf("connector fetched %d distinct usage paths, want all 7: %v", len(sawUsage), sawUsage)
+	if len(sawUsage) != 10 {
+		t.Errorf("connector fetched %d distinct usage paths, want all 10: %v", len(sawUsage), sawUsage)
 	}
 }

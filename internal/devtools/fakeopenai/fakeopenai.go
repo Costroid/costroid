@@ -3,12 +3,13 @@
 
 // Package fakeopenai is a development/test-only fake of the read-only OpenAI
 // Admin endpoints the openai-cost connector uses — GET /v1/organization/costs
-// and the seven usage endpoints under GET /v1/organization/usage/<name>
+// and the ten usage endpoints under GET /v1/organization/usage/<name>
 // (completions, embeddings, moderations, images, audio_speeches,
-// audio_transcriptions, code_interpreter_sessions) — served over an http.Handler
-// backed by a local directory of canned per-month responses. It exists so the
-// connector and the CLI can be verified fully offline; it is NOT product surface
-// and must never ship in a release code path. Everything is stdlib-only.
+// audio_transcriptions, code_interpreter_sessions, vector_stores,
+// web_search_calls, file_search_calls) — served over an http.Handler backed by a
+// local directory of canned per-month responses. It exists so the connector and
+// the CLI can be verified fully offline; it is NOT product surface and must never
+// ship in a release code path. Everything is stdlib-only.
 //
 // The directory holds, per month, "<YYYY-MM>.json" (a JSON ARRAY of cost
 // buckets) and, per usage endpoint, "<YYYY-MM>.usage.<name>.json" (a JSON ARRAY
@@ -16,9 +17,10 @@
 // usage-fixture <name> is the request path's last segment VERBATIM. A month/
 // endpoint with no file serves an empty data array. The handler enforces the
 // Authorization: Bearer header (401 on mismatch), asserts each endpoint's request
-// SHAPE per parameter (the usage paths get their own check — bare group_by=model,
-// or NO group_by for code_interpreter_sessions; limit=31), and paginates with a
-// small page size so the connector genuinely follows has_more/next_page cursors.
+// SHAPE per parameter (the usage paths get their own check — bare group_by=model
+// for model endpoints, or NO group_by for model-less endpoints; limit=31), and
+// paginates with a small page size so the connector genuinely follows
+// has_more/next_page cursors.
 package fakeopenai
 
 import (
@@ -41,7 +43,7 @@ import (
 const AdminKey = "sk-admin-FAKEcanary000000000000000000000000000000000000T3BlbkFJ"
 
 // costsPath is the monetary endpoint path; usagePathPrefix is the shared prefix
-// of the seven usage endpoints (usage/<name>).
+// of the ten usage endpoints (usage/<name>).
 const (
 	costsPath       = "/v1/organization/costs"
 	usagePathPrefix = "/v1/organization/usage/"
@@ -264,19 +266,20 @@ func requireShape(w http.ResponseWriter, q url.Values) bool {
 }
 
 // requireUsageShape verifies a usage endpoint's documented request parameters
-// per parameter and writes a 400 (returning false) on any mismatch. The six
-// model endpoints require the bare, repeated group_by=model (never bracketed);
-// code_interpreter_sessions must send NO group_by at all (it has no model dim).
-// bucket_width must be 1d, limit must be 31 (NOT the costs endpoint's 180), and
-// start_time must be present. name is the path's last segment.
+// per parameter and writes a 400 (returning false) on any mismatch. Model
+// endpoints require the bare, repeated group_by=model (never bracketed);
+// model-less endpoints must send NO group_by at all. bucket_width must be 1d,
+// limit must be 31 (NOT the costs endpoint's 180), and start_time must be
+// present. name is the path's last segment.
 func requireUsageShape(w http.ResponseWriter, q url.Values, name string) bool {
-	if name == "code_interpreter_sessions" {
+	switch name {
+	case "code_interpreter_sessions", "vector_stores", "file_search_calls":
 		if len(q["group_by"]) != 0 || len(q["group_by[]"]) != 0 {
 			writeError(w, http.StatusBadRequest, "invalid_request_error",
-				"code_interpreter_sessions must send no group_by (it has no model dim)")
+				name+" must send no group_by (it has no model dim)")
 			return false
 		}
-	} else {
+	default:
 		if len(q["group_by[]"]) != 0 {
 			writeError(w, http.StatusBadRequest, "invalid_request_error",
 				"group_by must be sent bare as group_by=, not bracketed group_by[]=")
