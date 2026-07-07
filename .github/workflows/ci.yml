@@ -23,6 +23,15 @@ jobs:
         with:
           node-version: lts/*
       - run: pnpm install --frozen-lockfile
+      - name: Verify generated code is up to date
+        run: |
+          make generate
+          if ! git diff --exit-code || [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Generated code is out of date — run 'make generate' and commit the result."
+            git status --porcelain
+            git diff
+            exit 1
+          fi
       # Same targets as local development — no CI-only variants.
       - run: make lint
       - run: make test
