@@ -42,8 +42,9 @@ var lenientLayouts = []string{
 // normalizeTimestamp canonicalizes a real-world but unambiguously-UTC timestamp
 // FORMAT variant to RFC 3339 (UTC), or returns the input UNCHANGED when it does
 // not match a recognized ZONE-BEARING shape (so the strict focus.ParseTime then
-// produces the existing actionable rejection). It is pure and idempotent (a
-// canonical RFC 3339 input returns itself).
+// produces the existing actionable rejection). It is pure and idempotent: a UTC
+// (Z) RFC 3339 input returns itself, while any other explicit offset converts to
+// UTC (e.g. 2024-01-01T05:00:00+05:00 → 2024-01-01T00:00:00Z), never itself.
 //
 // Money safety is by construction: every accepted shape carries an explicit zone.
 // Zone-less values (e.g. "2024-01-01 00:00:00", "2024-01-01T00:00:00") match no

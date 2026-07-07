@@ -385,6 +385,15 @@ func TestIngestHelpDocumentsLenient(t *testing.T) {
 			t.Errorf("ingest --help does not document %q:\n%s", want, out)
 		}
 	}
+	// The flag is a bool (like -force), so its help line must NOT render an
+	// arg-name placeholder. A backtick-quoted word in the usage string makes
+	// flag.UnquoteUsage treat it as the flag's value name, so "-lenient" wrongly
+	// renders as "-lenient UTC". Assert that placeholder is ABSENT (the plain
+	// "-lenient" substring above cannot catch it — it is a prefix of "-lenient
+	// UTC"). A regression that re-quotes any word reddens here.
+	if strings.Contains(out, "-lenient UTC") {
+		t.Errorf("ingest --help renders a value placeholder for the bool -lenient flag (a backticked usage word leaked as UnquoteUsage's arg name):\n%s", out)
+	}
 }
 
 // TestUsageDocumentsPartFileLimitation asserts the focus-csv part-file

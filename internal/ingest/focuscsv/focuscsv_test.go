@@ -35,6 +35,7 @@ const (
 	fxBadTS   = "../../../testdata/focus-csv/negative/nonrfc3339-1.0.csv"
 	fxMinim   = "../../../testdata/focus-csv/negative/focus-1.4-minimal.csv"
 	fxNull    = "../../../testdata/focus-csv/negative/literal-null.csv"
+	fxNullTS  = "../../../testdata/focus-csv/negative/null-chargeperiodstart.csv"
 	fxDup     = "../../../testdata/focus-csv/negative/duplicate-header.csv"
 	fxUnk     = "../../../testdata/focus-csv/negative/unknown-header.csv"
 	fxLenient = "../../../testdata/focus-csv/lenient/lenient-1.4.csv"
@@ -1098,6 +1099,24 @@ func TestLenientAcceptsZoneBearingQuirks(t *testing.T) {
 		t.Errorf("lenient fixture BilledCost total = %s, want 6", total)
 	}
 
+	// Per-MONTH cost (step-0 finding 2b): a grand total alone cannot catch a
+	// cross-month misbucket that preserves the sum. COUPLED to the fixture: May
+	// holds the single 1.00 row; June holds 2.00 + 3.00 = 5.00 (incl. the
+	// UTC-boundary row whose local-wall-clock May ChargePeriodStart is June in UTC).
+	monthCost := map[string]decimal.Decimal{}
+	for _, d := range daily.Days {
+		m := d.Date.UTC().Format("2006-01")
+		for _, s := range d.Services {
+			monthCost[m] = monthCost[m].Add(s.Cost)
+		}
+	}
+	if got := monthCost["2026-05"]; !got.Equal(decimal.RequireFromString("1")) {
+		t.Errorf("May BilledCost = %s, want 1.00", got)
+	}
+	if got := monthCost["2026-06"]; !got.Equal(decimal.RequireFromString("5")) {
+		t.Errorf("June BilledCost = %s, want 5.00 (incl. the UTC-boundary row)", got)
+	}
+
 	// The boundary row lands in JUNE (its UTC month), not its local-wall-clock May.
 	if svc := monthServices(t, periods[1].Conn); !svc["Boundary Crosser"] {
 		t.Errorf("June services = %v, want the UTC-boundary row (2026-05-31T20:00-05:00 == June UTC)", svc)
@@ -1164,5 +1183,33 @@ func TestLenientDoesNotCoerceNullTokens(t *testing.T) {
 	msg := rowErrs.First[0].Errs[0].Error()
 	if !strings.Contains(msg, "BilledCost") || !strings.Contains(msg, "valid decimal") {
 		t.Errorf("row error %q, want a BilledCost not-a-decimal violation (null token not coerced under --lenient)", msg)
+	}
+}
+
+// TestLenientRejectsNullInRewrittenDateColumn proves --lenient does NOT coerce a
+// literal null even in a Date/Time column it DOES rewrite (step-0 finding 3): a
+// row with a literal "null" ChargePeriodStart (fxNullTS) still fails at the row
+// level under --lenient. normalizeTimestamp("null") matches no zone-bearing
+// layout, so it comes back verbatim and the strict parser rejects it — the
+// rewrite path is format-normalizing only, never a null-swallowing coercion.
+// (fxNullTS's BillingPeriodStart is canonical, so Discover succeeds and the
+// failure surfaces in the pipeline on ChargePeriodStart, not in monthOf.)
+func TestLenientRejectsNullInRewrittenDateColumn(t *testing.T) {
+	store := openStore(t)
+	periods, _ := discoverLenient(t, fxNullTS, focus.V1_4, "null-ts-lenient")
+	if len(periods) != 1 {
+		t.Fatalf("periods = %d, want 1 (BillingPeriodStart is canonical)", len(periods))
+	}
+	_, err := ingest.Run(context.Background(), periods[0].Conn, store, focus.DefaultTenant)
+	if err == nil {
+		t.Fatal("literal-null ChargePeriodStart ingested under --lenient, want a row-level rejection")
+	}
+	var rowErrs *ingest.RowErrors
+	if !errors.As(err, &rowErrs) {
+		t.Fatalf("err = %v (%T), want *ingest.RowErrors", err, err)
+	}
+	msg := rowErrs.First[0].Errs[0].Error()
+	if !strings.Contains(msg, "ChargePeriodStart") || !strings.Contains(msg, "ISO 8601") {
+		t.Errorf("row error %q, want a ChargePeriodStart ISO-8601 violation (null not coerced in a rewritten column)", msg)
 	}
 }

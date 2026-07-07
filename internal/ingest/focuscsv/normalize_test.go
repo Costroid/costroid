@@ -33,6 +33,7 @@ func TestNormalizeTimestampAcceptReject(t *testing.T) {
 		{"2024-01-01T00:00Z", jan1, "no-seconds + Z (OCI, Azure 1.0)"},
 		{"2024-01-01T00:00+00:00", jan1, "no-seconds + offset"},
 		{"2024-01-01T00:00:00+0000", jan1, "offset without colon (JVM)"},
+		{"2024-01-01T05:00:00+05:00", jan1, "non-zero offset → UTC arithmetic (05:00+05:00 == 00:00Z)"},
 		{"2024-01-01 00:00:00Z", jan1, "space + Z"},
 		{"2024-01-01 00:00:00+00:00", jan1, "space + offset, with colon"},
 		{"2024-09-18 22:00:00 UTC", sep18, "space + named UTC (BigQuery)"},
@@ -82,6 +83,35 @@ func TestNormalizeTimestampAcceptReject(t *testing.T) {
 		}
 		if strings.HasSuffix(got, "Z") || strings.Contains(got, "+00:00") || strings.HasSuffix(got, "+0000") {
 			t.Errorf("REJECT %q (%s): output %q carries a fabricated UTC zone", tc.in, tc.note, got)
+		}
+	}
+}
+
+// TestNormalizeRecordTimestampsLeavesNonDateColumns proves --lenient is
+// timestamp-FORMAT-only at the record level: normalizeRecordTimestamps rewrites
+// ONLY the four Date/Time columns and never a value column, so a locale-formatted
+// numeric (a thousands separator that the strict decimal parser will reject) is
+// left byte-verbatim for that same strict rejection — --lenient never coerces a
+// number (step-0 NIT). A regression that widened the rewrite set to a value
+// column would redden here.
+func TestNormalizeRecordTimestampsLeavesNonDateColumns(t *testing.T) {
+	rec := focus.RawRecord{
+		"ChargePeriodStart": "2024-01-01 00:00:00 UTC", // a genuine quirk → rewritten
+		"BilledCost":        "1,234.56",                // locale-formatted number → untouched
+		"PricingQuantity":   "1.000,50",                // European grouping → untouched
+		"ServiceName":       "Compute",                 // free text → untouched
+	}
+	normalizeRecordTimestamps(rec)
+	if rec["ChargePeriodStart"] != "2024-01-01T00:00:00Z" {
+		t.Errorf("ChargePeriodStart = %q, want the normalized 2024-01-01T00:00:00Z", rec["ChargePeriodStart"])
+	}
+	for col, want := range map[string]string{
+		"BilledCost":      "1,234.56",
+		"PricingQuantity": "1.000,50",
+		"ServiceName":     "Compute",
+	} {
+		if rec[col] != want {
+			t.Errorf("--lenient touched non-date column %s: got %q, want it unchanged %q", col, rec[col], want)
 		}
 	}
 }
