@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
-// Package fakeopenai is a development/test-only fake of the single read-only
-// OpenAI Admin endpoint the openai-cost connector uses — GET
-// /v1/organization/costs — served over an http.Handler backed by a local
-// directory of canned per-month responses. It exists so the connector and
-// the CLI can be verified fully offline; it is NOT product surface and must
-// never ship in a release code path. Everything is stdlib-only.
+// Package fakeopenai is a development/test-only fake of the read-only OpenAI
+// Admin endpoints the openai-cost connector uses — GET /v1/organization/costs
+// and the seven usage endpoints under GET /v1/organization/usage/<name>
+// (completions, embeddings, moderations, images, audio_speeches,
+// audio_transcriptions, code_interpreter_sessions) — served over an http.Handler
+// backed by a local directory of canned per-month responses. It exists so the
+// connector and the CLI can be verified fully offline; it is NOT product surface
+// and must never ship in a release code path. Everything is stdlib-only.
 //
-// The directory holds one file per month, "<YYYY-MM>.json", each a JSON
-// ARRAY of cost buckets (the elements of the real response's "data" array).
-// A month with no file serves an empty data array. The handler enforces the
-// Authorization: Bearer header (401 on mismatch), and paginates with a small
-// page size so the connector genuinely follows has_more/next_page cursors.
+// The directory holds, per month, "<YYYY-MM>.json" (a JSON ARRAY of cost
+// buckets) and, per usage endpoint, "<YYYY-MM>.usage.<name>.json" (a JSON ARRAY
+// of usage buckets) — each the elements of the real response's "data" array. The
+// usage-fixture <name> is the request path's last segment VERBATIM. A month/
+// endpoint with no file serves an empty data array. The handler enforces the
+// Authorization: Bearer header (401 on mismatch), asserts each endpoint's request
+// SHAPE per parameter (the usage paths get their own check — bare group_by=model,
+// or NO group_by for code_interpreter_sessions; limit=31), and paginates with a
+// small page size so the connector genuinely follows has_more/next_page cursors.
 package fakeopenai
 
 import (
@@ -34,8 +40,12 @@ import (
 // admin key so hygiene assertions have something to catch.
 const AdminKey = "sk-admin-FAKEcanary000000000000000000000000000000000000T3BlbkFJ"
 
-// costsPath is the only served path.
-const costsPath = "/v1/organization/costs"
+// costsPath is the monetary endpoint path; usagePathPrefix is the shared prefix
+// of the seven usage endpoints (usage/<name>).
+const (
+	costsPath       = "/v1/organization/costs"
+	usagePathPrefix = "/v1/organization/usage/"
+)
 
 // Handler serves canned costs responses from a directory.
 type Handler struct {
@@ -53,6 +63,15 @@ type Handler struct {
 	// RetryAfter is the Retry-After header value sent on those 429s. Keep it
 	// tiny (e.g. "0.01" seconds) so tests never sleep for real.
 	RetryAfter string
+
+	// UsageFailMonth, when non-empty, makes the usage endpoints answer 500 for
+	// that "YYYY-MM" (the month derived from start_time), so the connector's
+	// usage-fetch-failure degrade path can be exercised while cost still ingests.
+	// UsageFailEndpoint, when also set, narrows the 500 to that one endpoint
+	// (its path last segment, e.g. "completions"); empty → every usage endpoint
+	// for the month fails. Test-only. Set them before serving.
+	UsageFailMonth    string
+	UsageFailEndpoint string
 
 	// LogWriter, when set, receives one line per request (method, path, and
 	// whether a cursor was presented) — never any header or key.
@@ -97,8 +116,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is supported")
 		return
 	}
-	if r.URL.Path != costsPath {
-		writeError(w, http.StatusNotFound, "not_found", "only the costs endpoint is implemented")
+	isCost := r.URL.Path == costsPath
+	isUsage := strings.HasPrefix(r.URL.Path, usagePathPrefix)
+	if !isCost && !isUsage {
+		writeError(w, http.StatusNotFound, "not_found", "only the costs and usage endpoints are implemented")
 		return
 	}
 	// Auth: Authorization: Bearer <key>; never echo what was presented.
@@ -108,9 +129,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	// Assert the connector's request SHAPE per parameter (never a whole-query
-	// string compare). The rate-limit gate runs first so a well-shaped
-	// request can still be throttled.
+	if isUsage {
+		h.serveUsage(w, r, q)
+		return
+	}
+
+	// Cost path. Assert the connector's request SHAPE per parameter (never a
+	// whole-query string compare). The rate-limit gate runs first so a
+	// well-shaped request can still be throttled.
 	if h.rateLimited(w) {
 		return
 	}
@@ -122,13 +148,45 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "start_time must be Unix seconds")
 		return
 	}
-
 	buckets, err := h.loadMonth(month)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "api_error", err.Error())
 		return
 	}
+	h.paginate(w, q, buckets)
+}
 
+// serveUsage handles a GET under usagePathPrefix: it asserts the per-endpoint
+// usage shape, honors the optional per-endpoint fail mode, and paginates the
+// canned "<YYYY-MM>.usage.<name>.json" fixtures. name is the path's last segment
+// VERBATIM (never a hand-built lookup table).
+func (h *Handler) serveUsage(w http.ResponseWriter, r *http.Request, q url.Values) {
+	name := strings.TrimPrefix(r.URL.Path, usagePathPrefix)
+	if !requireUsageShape(w, q, name) {
+		return
+	}
+	month, err := monthFromUnix(q.Get("start_time"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "start_time must be Unix seconds")
+		return
+	}
+	if h.UsageFailMonth != "" && month == h.UsageFailMonth &&
+		(h.UsageFailEndpoint == "" || h.UsageFailEndpoint == name) {
+		writeError(w, http.StatusInternalServerError, "api_error", "usage endpoint temporarily unavailable")
+		return
+	}
+	buckets, err := h.loadUsage(month, name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "api_error", err.Error())
+		return
+	}
+	h.paginate(w, q, buckets)
+}
+
+// paginate serves one page of buckets honoring the page cursor and PageSize,
+// setting has_more/next_page — the shared pagination for the cost and usage
+// endpoints.
+func (h *Handler) paginate(w http.ResponseWriter, q url.Values, buckets []json.RawMessage) {
 	start := 0
 	if p := q.Get("page"); p != "" {
 		if n, err := strconv.Atoi(p); err == nil && n >= 0 {
@@ -152,7 +210,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s := strconv.Itoa(end)
 		nextPage = &s
 	}
-
 	writeJSON(w, http.StatusOK, response{
 		Object:   "page",
 		Data:     buckets[start:end],
@@ -206,6 +263,46 @@ func requireShape(w http.ResponseWriter, q url.Values) bool {
 	return true
 }
 
+// requireUsageShape verifies a usage endpoint's documented request parameters
+// per parameter and writes a 400 (returning false) on any mismatch. The six
+// model endpoints require the bare, repeated group_by=model (never bracketed);
+// code_interpreter_sessions must send NO group_by at all (it has no model dim).
+// bucket_width must be 1d, limit must be 31 (NOT the costs endpoint's 180), and
+// start_time must be present. name is the path's last segment.
+func requireUsageShape(w http.ResponseWriter, q url.Values, name string) bool {
+	if name == "code_interpreter_sessions" {
+		if len(q["group_by"]) != 0 || len(q["group_by[]"]) != 0 {
+			writeError(w, http.StatusBadRequest, "invalid_request_error",
+				"code_interpreter_sessions must send no group_by (it has no model dim)")
+			return false
+		}
+	} else {
+		if len(q["group_by[]"]) != 0 {
+			writeError(w, http.StatusBadRequest, "invalid_request_error",
+				"group_by must be sent bare as group_by=, not bracketed group_by[]=")
+			return false
+		}
+		if !equalStringSet(q["group_by"], []string{"model"}) {
+			writeError(w, http.StatusBadRequest, "invalid_request_error",
+				"group_by must be exactly {model}")
+			return false
+		}
+	}
+	if got := q.Get("bucket_width"); got != "1d" {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "bucket_width must be 1d, got "+got)
+		return false
+	}
+	if got := q.Get("limit"); got != "31" {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "usage limit must be 31, got "+got)
+		return false
+	}
+	if q.Get("start_time") == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "start_time is required")
+		return false
+	}
+	return true
+}
+
 // equalStringSet reports whether got and want hold the same values,
 // order-independent (a multiset compare).
 func equalStringSet(got, want []string) bool {
@@ -219,8 +316,23 @@ func equalStringSet(got, want []string) bool {
 	return slices.Equal(g, w)
 }
 
+// loadMonth reads <dir>/<month>.json as a JSON array of cost buckets; a missing
+// file is an empty month.
 func (h *Handler) loadMonth(month string) ([]json.RawMessage, error) {
-	body, err := os.ReadFile(filepath.Join(h.dir, month+".json"))
+	return loadBuckets(filepath.Join(h.dir, month+".json"), month+".json")
+}
+
+// loadUsage reads <dir>/<month>.usage.<name>.json as a JSON array of usage
+// buckets; a missing file is an empty endpoint-month.
+func (h *Handler) loadUsage(month, name string) ([]json.RawMessage, error) {
+	label := month + ".usage." + name + ".json"
+	return loadBuckets(filepath.Join(h.dir, label), label)
+}
+
+// loadBuckets reads a JSON array of raw bucket objects from path; a missing file
+// is an empty month.
+func loadBuckets(path, label string) ([]json.RawMessage, error) {
+	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []json.RawMessage{}, nil
@@ -229,7 +341,7 @@ func (h *Handler) loadMonth(month string) ([]json.RawMessage, error) {
 	}
 	var buckets []json.RawMessage
 	if err := json.Unmarshal(body, &buckets); err != nil {
-		return nil, fmt.Errorf("fixture %s.json is not a JSON array of buckets: %v", month, err)
+		return nil, fmt.Errorf("fixture %s is not a JSON array of buckets: %v", label, err)
 	}
 	return buckets, nil
 }

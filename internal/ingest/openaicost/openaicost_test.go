@@ -6,14 +6,17 @@ package openaicost_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -21,6 +24,7 @@ import (
 	"github.com/Costroid/costroid/internal/devtools/fakeopenai"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/openaicost"
+	"github.com/Costroid/costroid/internal/storage"
 )
 
 const fixture = "../../../testdata/openai-cost/fixture"
@@ -36,6 +40,19 @@ func startFake(t *testing.T, dir string) (*fakeopenai.Handler, string) {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return h, srv.URL
+}
+
+// costRequests counts how many of the fake's served requests hit the costs
+// endpoint (Discover also fetches the seven usage endpoints; assertions about
+// the cost fetch must not count those).
+func costRequests(h *fakeopenai.Handler) int {
+	n := 0
+	for _, r := range h.Requests() {
+		if r.Path == "/v1/organization/costs" {
+			n++
+		}
+	}
+	return n
 }
 
 func readAll(t *testing.T, conn ingest.Connector) []ingest.Row {
@@ -328,8 +345,11 @@ func TestRateLimitedThenSucceeds(t *testing.T) {
 	if periods[0].Err != nil || periods[0].Conn == nil {
 		t.Fatalf("period = %+v, want it to succeed after the retries", periods[0])
 	}
-	if got := len(fake.Requests()); got != 3 {
-		t.Errorf("served %d requests, want 3 (two 429s then one success)", got)
+	// Count only the COSTS-path requests: the rate-limit gate applies to the cost
+	// endpoint (Discover also fetches the seven usage endpoints, which are not
+	// throttled). Two 429s then one success on the costs endpoint.
+	if got := costRequests(fake); got != 3 {
+		t.Errorf("served %d costs requests, want 3 (two 429s then one success)", got)
 	}
 	if rows := readAll(t, periods[0].Conn); len(rows) != 5 {
 		t.Errorf("got %d records after retrying, want 5", len(rows))
@@ -383,5 +403,309 @@ func TestMissingCurrencyFailsPeriod(t *testing.T) {
 	defer func() { _ = reader.Close() }()
 	if _, err := reader.Next(); err == nil || !strings.Contains(err.Error(), "refusing to assume USD") {
 		t.Errorf("missing-currency error = %v, want the D23 refusal", err)
+	}
+}
+
+// --- OpenAI Usage-API metrics (slice 11, D38 candidate) ---
+
+// day1 is 2026-05-01T00:00:00Z (UTC midnight of Unix start_time 1777593600, the
+// value the usage fixtures below use).
+var day1 = time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+// writeUsage writes one canned usage fixture <month>.usage.<endpoint>.json.
+func writeUsage(t *testing.T, dir, month, endpoint, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, month+".usage."+endpoint+".json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("writing usage fixture %s.usage.%s.json: %v", month, endpoint, err)
+	}
+}
+
+// writeCost writes one canned cost fixture <month>.json.
+func writeCost(t *testing.T, dir, month, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, month+".json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("writing cost fixture %s.json: %v", month, err)
+	}
+}
+
+// discoverMonth discovers exactly one month from dir through the fake and returns
+// its connector (the real fetch → decode → usage-shape-assert path).
+func discoverMonth(t *testing.T, h *fakeopenai.Handler, baseURL, month string) *openaicost.Connector {
+	t.Helper()
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+	periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", month)
+	if err != nil {
+		t.Fatalf("Discover %s: %v", month, err)
+	}
+	if len(periods) != 1 || periods[0].Err != nil || periods[0].Conn == nil {
+		t.Fatalf("periods = %+v, want one readable %s period", periods, month)
+	}
+	return periods[0].Conn
+}
+
+// metricKeys renders a metric slice as a SORTED, comparable key list — order-
+// independent so a complete-set assertion couples both sides field-by-field.
+func metricKeys(ms []storage.Metric) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+			m.ChargePeriodStart.UTC().Format(time.RFC3339), m.ServiceName, m.ServiceTier, m.MetricName, m.Unit, m.Quantity.String()))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// assertMetricSet asserts got equals want as a COMPLETE set (not a subset), so a
+// spuriously-emitted field (including a token) reddens.
+func assertMetricSet(t *testing.T, label string, got, want []storage.Metric) {
+	t.Helper()
+	g, w := metricKeys(got), metricKeys(want)
+	if len(g) != len(w) {
+		t.Fatalf("%s: %d metric(s) %v, want %d %v", label, len(g), g, len(w), w)
+	}
+	for i := range g {
+		if g[i] != w[i] {
+			t.Errorf("%s: metric %d = %q, want %q", label, i, g[i], w[i])
+		}
+	}
+}
+
+func req(model, qty string) storage.Metric {
+	return storage.Metric{ChargePeriodStart: day1, ServiceName: model, ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: decimal.RequireFromString(qty)}
+}
+
+// TestUsageTokenDoubleCountImpossible (mandated test #1) proves a token count can
+// NEVER be surfaced into usage_metrics: a completions bucket carrying ALL FIVE
+// documented token fields plus num_model_requests emits only the Requests row and
+// ZERO Unit=="Tokens" rows. The embeddings and moderations fixtures also carry an
+// input_tokens field so their token-skip is not vacuously tested. This is
+// structural — the closed-whitelist usageResult has no token field, so the token
+// literals are un-decodable, not merely filtered.
+func TestUsageTokenDoubleCountImpossible(t *testing.T) {
+	dir := t.TempDir()
+	writeUsage(t, dir, "2026-05", "completions", `[
+	  {"start_time":1777593600,"results":[{"model":"gpt-4o",
+	    "num_model_requests":10,
+	    "input_tokens":111,"output_tokens":222,"input_cached_tokens":333,
+	    "input_audio_tokens":444,"output_audio_tokens":555}]}]`)
+	writeUsage(t, dir, "2026-05", "embeddings", `[
+	  {"start_time":1777593600,"results":[{"model":"text-embedding-3-large","num_model_requests":4,"input_tokens":999}]}]`)
+	writeUsage(t, dir, "2026-05", "moderations", `[
+	  {"start_time":1777593600,"results":[{"model":"omni-moderation-latest","num_model_requests":2,"input_tokens":888}]}]`)
+
+	h := fakeopenai.New(dir)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	metrics := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+
+	for _, m := range metrics {
+		if m.Unit == "Tokens" {
+			t.Errorf("a token count leaked into usage_metrics: %+v (token fields are structurally un-emittable)", m)
+		}
+	}
+	// No cost fixture → zero USG-3 orphans, so the set is EXACTLY the three
+	// Requests rows.
+	assertMetricSet(t, "token-double-count", metrics, []storage.Metric{
+		req("gpt-4o", "10"), req("text-embedding-3-large", "4"), req("omni-moderation-latest", "2"),
+	})
+}
+
+// TestUsagePerEndpointCompleteSet (mandated test #2) asserts the EXACT complete
+// set of storage.Metric tuples each of the seven endpoints produces, values
+// coupled to the fixture on both sides. Each case is ISOLATED (only that one
+// usage file, NO cost fixture) so the cost fetch returns empty buckets and USG-3
+// contributes zero rows — UsageMetrics() then equals exactly the endpoint's rows.
+// A stray token field on each fixture proves no token can slip into the set.
+func TestUsagePerEndpointCompleteSet(t *testing.T) {
+	sessions := storage.Metric{ChargePeriodStart: day1, ServiceName: "OpenAI API", ServiceTier: "", MetricName: "num_sessions", Unit: "Sessions", Quantity: decimal.RequireFromString("8")}
+	special := func(model, metric, unit, qty string) storage.Metric {
+		return storage.Metric{ChargePeriodStart: day1, ServiceName: model, ServiceTier: "", MetricName: metric, Unit: unit, Quantity: decimal.RequireFromString(qty)}
+	}
+	cases := []struct {
+		endpoint string
+		body     string
+		want     []storage.Metric
+	}{
+		{"completions", `[{"start_time":1777593600,"results":[{"model":"gpt-4o","num_model_requests":7,"input_tokens":5}]}]`,
+			[]storage.Metric{req("gpt-4o", "7")}},
+		{"embeddings", `[{"start_time":1777593600,"results":[{"model":"text-embedding-3-small","num_model_requests":3,"input_tokens":5}]}]`,
+			[]storage.Metric{req("text-embedding-3-small", "3")}},
+		{"moderations", `[{"start_time":1777593600,"results":[{"model":"omni-moderation-latest","num_model_requests":5}]}]`,
+			[]storage.Metric{req("omni-moderation-latest", "5")}},
+		{"images", `[{"start_time":1777593600,"results":[{"model":"gpt-image-1","num_model_requests":2,"images":9,"input_tokens":5}]}]`,
+			[]storage.Metric{req("gpt-image-1", "2"), special("gpt-image-1", "images", "Images", "9")}},
+		{"audio_speeches", `[{"start_time":1777593600,"results":[{"model":"tts-1","num_model_requests":4,"characters":2500}]}]`,
+			[]storage.Metric{req("tts-1", "4"), special("tts-1", "characters", "Characters", "2500")}},
+		{"audio_transcriptions", `[{"start_time":1777593600,"results":[{"model":"whisper-1","num_model_requests":6,"seconds":720}]}]`,
+			[]storage.Metric{req("whisper-1", "6"), special("whisper-1", "seconds", "Seconds", "720")}},
+		{"code_interpreter_sessions", `[{"start_time":1777593600,"results":[{"num_sessions":8}]}]`,
+			[]storage.Metric{sessions}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			dir := t.TempDir()
+			writeUsage(t, dir, "2026-05", tc.endpoint, tc.body)
+			h := fakeopenai.New(dir)
+			srv := httptest.NewServer(h)
+			t.Cleanup(srv.Close)
+			got := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+			assertMetricSet(t, tc.endpoint, got, tc.want)
+		})
+	}
+}
+
+// TestUsagePerModelSplit (mandated test #3) proves one metric row per (day, model)
+// on a multi-model completions bucket, with ServiceName carrying the model, and
+// the null/absent-model fallback to "OpenAI API".
+func TestUsagePerModelSplit(t *testing.T) {
+	dir := t.TempDir()
+	writeUsage(t, dir, "2026-05", "completions", `[{"start_time":1777593600,"results":[
+	  {"model":"gpt-4o","num_model_requests":10},
+	  {"model":"gpt-4.1","num_model_requests":20},
+	  {"num_model_requests":5}
+	]}]`)
+	h := fakeopenai.New(dir)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	got := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+	assertMetricSet(t, "per-model split", got, []storage.Metric{
+		req("gpt-4o", "10"), req("gpt-4.1", "20"), req("OpenAI API", "5"),
+	})
+}
+
+// TestUsageOrphansPreservedAndDistinct (mandated test #4) proves the existing
+// USG-3 "Unknown" cost-orphan rows STILL emit alongside the new usage-endpoint
+// metrics, and that a special-unit row (Images) is a DISTINCT (metric_name, unit)
+// tuple from the USG-3 row (no silent SUM-merge).
+func TestUsageOrphansPreservedAndDistinct(t *testing.T) {
+	dir := t.TempDir()
+	// A cost row with a quantity but no direction suffix → USG-3 "Unknown" orphan.
+	writeCost(t, dir, "2026-05", `[{"object":"bucket","start_time":1777593600,"end_time":1777680000,
+	  "results":[{"amount":{"value":5.0,"currency":"usd"},"line_item":"assistants api | file search","quantity":42}]}]`)
+	writeUsage(t, dir, "2026-05", "images", `[{"start_time":1777593600,"results":[{"model":"gpt-image-1","num_model_requests":2,"images":9}]}]`)
+	h := fakeopenai.New(dir)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	metrics := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+
+	usg3 := storage.Metric{ChargePeriodStart: day1, ServiceName: "OpenAI API", ServiceTier: "", MetricName: "assistants api | file search", Unit: "Unknown", Quantity: decimal.RequireFromString("42")}
+	images := storage.Metric{ChargePeriodStart: day1, ServiceName: "gpt-image-1", ServiceTier: "", MetricName: "images", Unit: "Images", Quantity: decimal.RequireFromString("9")}
+	assertMetricSet(t, "orphans preserved", metrics, []storage.Metric{usg3, req("gpt-image-1", "2"), images})
+
+	// Distinctness: the USG-3 and Images rows carry DIFFERENT (metric_name, unit)
+	// tuples, so DailyUsageMetrics can never silently merge them.
+	if usg3.MetricName == images.MetricName && usg3.Unit == images.Unit {
+		t.Fatal("USG-3 and Images share a (metric_name, unit) tuple — they would silently merge")
+	}
+}
+
+// TestUsageFetchLeavesCostAndTokensInvariant (mandated test #5) proves adding the
+// usage fetch is byte-invariant for cost_records: the same month's BilledCost
+// grand total and enriched token total are IDENTICAL to the pre-slice values (the
+// usage path never touches cost_records). The fixture dir carries usage files, so
+// the usage endpoints genuinely run alongside the cost fetch.
+func TestUsageFetchLeavesCostAndTokensInvariant(t *testing.T) {
+	_, baseURL := startFake(t, fixture)
+	secret := credentials.NewSecret(fakeopenai.AdminKey)
+	periods, err := openaicost.Discover(context.Background(), http.DefaultClient, baseURL, openaicost.Name, secret, "", "2026-05")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	billed := decimal.Zero
+	tokens := decimal.Zero
+	for _, row := range readAll(t, periods[0].Conn) {
+		billed = billed.Add(decimal.RequireFromString(row.Record["BilledCost"]))
+		if row.Record["ConsumedUnit"] == "Tokens" {
+			tokens = tokens.Add(decimal.RequireFromString(row.Record["ConsumedQuantity"]))
+		}
+	}
+	if !billed.Equal(decimal.RequireFromString("139.7067890123456789")) {
+		t.Errorf("BilledCost total = %s, want the pre-slice 139.7067890123456789 (usage fetch moved no money)", billed)
+	}
+	if !tokens.Equal(decimal.RequireFromString("1234567890125856789")) {
+		t.Errorf("enriched token total = %s, want the pre-slice 1234567890125856789 (usage fetch moved no token count)", tokens)
+	}
+}
+
+// TestUsagePerFieldDegrade (mandated test #7) proves the per-FIELD degrade inside
+// a SUCCESSFULLY-fetched bucket: a row whose `images` literal is malformed (a JSON
+// string) and another whose `images` field is absent both emit their valid
+// num_model_requests row but NO fabricated/zero Images row. Distinct from the
+// usage-endpoint-FAILURE degrade.
+func TestUsagePerFieldDegrade(t *testing.T) {
+	dir := t.TempDir()
+	writeUsage(t, dir, "2026-05", "images", `[{"start_time":1777593600,"results":[
+	  {"model":"gpt-image-1","num_model_requests":3,"images":"not-a-number"},
+	  {"model":"gpt-image-2","num_model_requests":4}
+	]}]`)
+	h := fakeopenai.New(dir)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	metrics := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+	for _, m := range metrics {
+		if m.Unit == "Images" {
+			t.Errorf("a malformed/absent images field fabricated a row: %+v", m)
+		}
+	}
+	// The valid num_model_requests siblings still emit.
+	assertMetricSet(t, "per-field degrade", metrics, []storage.Metric{
+		req("gpt-image-1", "3"), req("gpt-image-2", "4"),
+	})
+}
+
+// TestUsagePaginationFollowsCursor (part of mandated test #8) proves the connector
+// genuinely follows has_more/next_page on a usage endpoint: a three-bucket
+// completions fixture served one bucket per page (PageSize=1) yields ALL three
+// days' rows.
+func TestUsagePaginationFollowsCursor(t *testing.T) {
+	dir := t.TempDir()
+	writeUsage(t, dir, "2026-05", "completions", `[
+	  {"start_time":1777593600,"results":[{"model":"gpt-4o","num_model_requests":1}]},
+	  {"start_time":1777680000,"results":[{"model":"gpt-4o","num_model_requests":2}]},
+	  {"start_time":1777766400,"results":[{"model":"gpt-4o","num_model_requests":3}]}
+	]`)
+	h := fakeopenai.New(dir)
+	h.PageSize = 1 // force ≥3 pages on this endpoint
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	metrics := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+	total := decimal.Zero
+	for _, m := range metrics {
+		if m.MetricName == "num_model_requests" {
+			total = total.Add(m.Quantity)
+		}
+	}
+	if !total.Equal(decimal.RequireFromString("6")) {
+		t.Errorf("paginated num_model_requests total = %s, want 6 (1+2+3 across three pages)", total)
+	}
+	if len(metrics) != 3 {
+		t.Errorf("got %d metric rows, want 3 (one per paged bucket)", len(metrics))
+	}
+}
+
+// TestUsageCardinalRulePathsOnly (mandated test #10) proves the connector issues
+// requests ONLY to /costs and the seven usage paths — never /projects, /users, or
+// any ID→name resolution call (Cardinal Rule D7).
+func TestUsageCardinalRulePathsOnly(t *testing.T) {
+	allowed := map[string]bool{"/v1/organization/costs": true}
+	for _, name := range []string{
+		"completions", "embeddings", "moderations", "images",
+		"audio_speeches", "audio_transcriptions", "code_interpreter_sessions",
+	} {
+		allowed["/v1/organization/usage/"+name] = true
+	}
+	h, baseURL := startFake(t, fixture)
+	discoverMonth(t, h, baseURL, "2026-05")
+	sawUsage := map[string]bool{}
+	for _, r := range h.Requests() {
+		if !allowed[r.Path] {
+			t.Errorf("connector hit a forbidden path %q (only /costs and the 7 usage paths are permitted)", r.Path)
+		}
+		if strings.HasPrefix(r.Path, "/v1/organization/usage/") {
+			sawUsage[r.Path] = true
+		}
+	}
+	if len(sawUsage) != 7 {
+		t.Errorf("connector fetched %d distinct usage paths, want all 7: %v", len(sawUsage), sawUsage)
 	}
 }

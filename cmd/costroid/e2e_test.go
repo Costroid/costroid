@@ -214,12 +214,18 @@ func TestOfflineE2EAICost(t *testing.T) {
 
 	// --- cost-orphaned usage metrics surface via the new endpoint (D18c) ---
 	// COMPLETE SET, right after both-vendor ingests and BEFORE any restatement:
-	// exactly the enumerated cost-orphaned classes and NOTHING else — the
-	// Anthropic priority (999) and flex_discount (123) tier tokens, the
-	// web_search_requests count (5, unit "Requests"), the standard-tier orphan
-	// key no cost row referenced (delta uncached 42), and the OpenAI
-	// recognized-but-unpriced line item (assistants api | file search 42, unit
-	// "Unknown"). Ordering is day, serviceName, serviceTier, metricName, unit.
+	// exactly the enumerated classes and NOTHING else. Anthropic (unchanged):
+	// priority (999) and flex_discount (123) tier tokens, the web_search_requests
+	// count (5, "Requests"), the standard-tier orphan key no cost row referenced
+	// (delta uncached 42), and the OpenAI recognized-but-unpriced USG-3 line item
+	// (assistants api | file search 42, "Unknown"). OpenAI Usage-API metrics
+	// (slice 11, ALL on May 1 — see the testdata/openai-cost/fixture usage files):
+	// per-model num_model_requests ("Requests") for gpt-4o/gpt-image-1/tts-1/
+	// whisper-1, plus the special units images/characters/seconds ("Images"/
+	// "Characters"/"Seconds") and the model-less code_interpreter_sessions
+	// num_sessions ("Sessions", ServiceName "OpenAI API"). NEVER a token count.
+	// Ordering is day, serviceName, serviceTier, metricName, unit (binary ASC:
+	// "OpenAI API" < "claude-*" < "gpt-*" < "tts-*" < "whisper-*").
 	metricsBody := usageMetricsView(t)
 	transcript.WriteString("\n# GET /api/v1/usage/metrics/daily (default tenant)\n" + metricsBody + "\n")
 	var metricRows []usageMetricRow
@@ -227,8 +233,16 @@ func TestOfflineE2EAICost(t *testing.T) {
 		t.Fatalf("decoding usage metrics: %v (body: %s)", err, metricsBody)
 	}
 	wantMetrics := []usageMetricRow{
+		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "num_sessions", Unit: "Sessions", Quantity: "7"},
 		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: "999"},
 		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "web_search_requests", Unit: "Requests", Quantity: "5"},
+		{Date: "2026-05-01", ServiceName: "gpt-4o", ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: "10"},
+		{Date: "2026-05-01", ServiceName: "gpt-image-1", ServiceTier: "", MetricName: "images", Unit: "Images", Quantity: "12"},
+		{Date: "2026-05-01", ServiceName: "gpt-image-1", ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: "3"},
+		{Date: "2026-05-01", ServiceName: "tts-1", ServiceTier: "", MetricName: "characters", Unit: "Characters", Quantity: "5000"},
+		{Date: "2026-05-01", ServiceName: "tts-1", ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: "2"},
+		{Date: "2026-05-01", ServiceName: "whisper-1", ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: "4"},
+		{Date: "2026-05-01", ServiceName: "whisper-1", ServiceTier: "", MetricName: "seconds", Unit: "Seconds", Quantity: "600"},
 		{Date: "2026-05-02", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "assistants api | file search", Unit: "Unknown", Quantity: "42"},
 		{Date: "2026-05-02", ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: "42"},
 		{Date: "2026-05-02", ServiceName: "claude-sonnet-4-5", ServiceTier: "flex_discount", MetricName: "output_tokens", Unit: "Tokens", Quantity: "123"},
@@ -241,17 +255,20 @@ func TestOfflineE2EAICost(t *testing.T) {
 			t.Errorf("usage metric row %d = %+v, want %+v", i, metricRows[i], w)
 		}
 	}
-	// MUTATION INTENT: capturing any referenced/enriched standard|batch agg key
-	// as a usage metric MUST break this complete-set assertion — the fixtures'
-	// large enriched token quantities (700000/800000 standard uncached, etc.)
-	// that DO join to cost rows must be ABSENT here. June contributes ZERO
-	// usage-metric rows because every June usage key is cost-referenced; over-
-	// capture would surface most visibly in the otherwise-empty June. Because the
-	// leak would be in a different table, it is invisible to the money-invariance
-	// and FOCUS-isolation checks — this is the ONLY guard that catches it.
+	// MUTATION INTENT (Anthropic over-capture): capturing any referenced/enriched
+	// standard|batch agg key as a usage metric MUST break this complete-set
+	// assertion — the fixtures' large enriched token quantities (700000/800000
+	// standard uncached, etc.) that DO join to cost rows must be ABSENT here. June
+	// contributes ZERO usage-metric rows because every June Anthropic usage key is
+	// cost-referenced AND the OpenAI Usage-API fixtures are deliberately May-ONLY
+	// (so June stays usage-metric-empty and this Anthropic guard is preserved
+	// intact). Over-capture would surface most visibly in the otherwise-empty
+	// June; because the leak would be in a different table, it is invisible to the
+	// money-invariance and FOCUS-isolation checks — this is the guard that catches
+	// it. Scoped to Anthropic service_names so it stays a precise Anthropic guard.
 	for _, r := range metricRows {
-		if strings.HasPrefix(r.Date, "2026-06") {
-			t.Errorf("June should contribute ZERO usage metrics (all cost-referenced) but got: %+v", r)
+		if strings.HasPrefix(r.Date, "2026-06") && strings.HasPrefix(r.ServiceName, "claude-") {
+			t.Errorf("June should contribute ZERO Anthropic usage metrics (all cost-referenced) but got: %+v", r)
 		}
 	}
 	// ISOLATION: the usage-metric model-name services and units never appear in
@@ -932,6 +949,142 @@ func TestUsageMetricsWriteFiresOnUnchangedShortCircuit(t *testing.T) {
 	// The usage write fired on the Unchanged branch and restored the orphan.
 	if q, ok := findUsageMetric(t, "2026-05-01", "claude-opus-4-6", "priority", "uncached_input_tokens"); !ok || q != "999" {
 		t.Fatalf("usage metric = %q (ok=%v), want it RESTORED to 999 by the write firing on the Unchanged branch", q, ok)
+	}
+}
+
+// TestOpenAIUsageOnlyRestatementSelfApplies (slice-11 mandated test #6) proves
+// the deliberate COST-ONLY ContentHash design is correct for OpenAI usage: a
+// month re-ingested with IDENTICAL cost bytes but CHANGED usage counts reports
+// the cost batch `unchanged` (the usage payload is never hashed), yet the new
+// usage_metrics values land because the driver's usage write is unconditional
+// (fires even on the unchanged short-circuit). NOT a tautology — it asserts the
+// stored num_model_requests moved 10 → 25.
+func TestOpenAIUsageOnlyRestatementSelfApplies(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(t.TempDir(), "credentials.key"))
+
+	oaiDir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(oaiDir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	write("2026-05.json", `[{"object":"bucket","start_time":1777593600,"end_time":1777680000,
+	  "results":[{"amount":{"value":10.0,"currency":"usd"},"line_item":"gpt-4o, input","quantity":1500000}]}]`)
+	write("2026-05.usage.completions.json", `[{"start_time":1777593600,"results":[{"model":"gpt-4o","num_model_requests":10}]}]`)
+
+	srv := httptest.NewServer(fakeopenai.New(oaiDir))
+	t.Cleanup(srv.Close)
+	base := "--base-url=" + srv.URL
+
+	if _, err := runCLI([]string{"credentials", "init"}, ""); err != nil {
+		t.Fatalf("credentials init: %v", err)
+	}
+	if _, err := runCLI([]string{"credentials", "set", "openai-cost"}, fakeopenai.AdminKey); err != nil {
+		t.Fatalf("credentials set: %v", err)
+	}
+
+	if out, err := runCLI([]string{"ingest", "--connector", "openai-cost", base, "--period", "2026-05"}, ""); err != nil {
+		t.Fatalf("first ingest: %v\n%s", err, out)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "gpt-4o", "", "num_model_requests"); !ok || q != "10" {
+		t.Fatalf("after first ingest: num_model_requests = %q (ok=%v), want 10", q, ok)
+	}
+
+	// Change ONLY the usage count; the cost bytes are byte-identical.
+	write("2026-05.usage.completions.json", `[{"start_time":1777593600,"results":[{"model":"gpt-4o","num_model_requests":25}]}]`)
+
+	out, err := runCLI([]string{"ingest", "--connector", "openai-cost", base, "--period", "2026-05"}, "")
+	if err != nil {
+		t.Fatalf("usage-only re-ingest: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "source content unchanged") {
+		t.Fatalf("cost is byte-identical → the cost batch must short-circuit `unchanged` (usage is never hashed):\n%s", out)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "gpt-4o", "", "num_model_requests"); !ok || q != "25" {
+		t.Errorf("usage-only restatement did not self-apply: num_model_requests = %q (ok=%v), want 25 (the write fired on the Unchanged branch)", q, ok)
+	}
+}
+
+// TestOpenAIUsageFetchFailurePreservesPriorRows (slice-11 mandated test, the
+// usage-endpoint-FAILURE degrade — distinct from the per-FIELD degrade) proves a
+// usage-endpoint 500 is orthogonal to cost: the month's COST still ingests, the
+// prior usage_metrics rows SURVIVE (NOT overwritten to a USG-3-only slice), the
+// anomaly notice prints, and the OTHER month proceeds. The May cost carries both
+// an enriched token line AND an unknown-unit USG-3 orphan, so a WRONG USG-3-only
+// overwrite would drop the completions Requests row — asserting it survives at 10
+// proves the write was SKIPPED (UsageMetrics()==nil), not partially rewritten.
+func TestOpenAIUsageFetchFailurePreservesPriorRows(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(t.TempDir(), "credentials.key"))
+
+	oaiDir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(oaiDir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	// May cost: an enriched token line (no USG-3) PLUS an unknown-unit orphan (USG-3).
+	write("2026-05.json", `[{"object":"bucket","start_time":1777593600,"end_time":1777680000,
+	  "results":[
+	    {"amount":{"value":10.0,"currency":"usd"},"line_item":"gpt-4o, input","quantity":1500000},
+	    {"amount":{"value":5.0,"currency":"usd"},"line_item":"assistants api | file search","quantity":42}
+	  ]}]`)
+	write("2026-05.usage.completions.json", `[{"start_time":1777593600,"results":[{"model":"gpt-4o","num_model_requests":10}]}]`)
+	// June cost + usage, so failure isolation (the other month proceeds) is observable.
+	write("2026-06.json", `[{"object":"bucket","start_time":1780272000,"end_time":1780358400,
+	  "results":[{"amount":{"value":7.0,"currency":"usd"},"line_item":"gpt-4o, input","quantity":700000}]}]`)
+	write("2026-06.usage.completions.json", `[{"start_time":1780272000,"results":[{"model":"gpt-4o","num_model_requests":20}]}]`)
+
+	fake := fakeopenai.New(oaiDir)
+	srv := httptest.NewServer(fake)
+	t.Cleanup(srv.Close)
+	base := "--base-url=" + srv.URL
+
+	if _, err := runCLI([]string{"credentials", "init"}, ""); err != nil {
+		t.Fatalf("credentials init: %v", err)
+	}
+	if _, err := runCLI([]string{"credentials", "set", "openai-cost"}, fakeopenai.AdminKey); err != nil {
+		t.Fatalf("credentials set: %v", err)
+	}
+
+	// Clean first ingest of both months: May and June get their usage rows.
+	if out, err := runCLI([]string{"ingest", "--connector", "openai-cost", base, "--since", "2026-05"}, ""); err != nil {
+		t.Fatalf("first ingest: %v\n%s", err, out)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "gpt-4o", "", "num_model_requests"); !ok || q != "10" {
+		t.Fatalf("after first ingest: May num_model_requests = %q (ok=%v), want 10", q, ok)
+	}
+
+	// Now fail May's usage endpoints and re-ingest both months.
+	fake.UsageFailMonth = "2026-05"
+	out, err := runCLI([]string{"ingest", "--connector", "openai-cost", base, "--since", "2026-05"}, "")
+	fake.UsageFailMonth = ""
+	if err != nil {
+		t.Fatalf("re-ingest with a usage failure should NOT fail the run (usage is orthogonal to cost): %v\n%s", err, out)
+	}
+	// (a) May's cost still ingests (byte-identical → unchanged) and prints the notice.
+	if !strings.Contains(out, "period 2026-05: source content unchanged") {
+		t.Errorf("May cost should still ingest despite the usage failure:\n%s", out)
+	}
+	if !strings.Contains(out, "usage endpoint") || !strings.Contains(out, "not refreshed") {
+		t.Errorf("the usage-fetch-failure notice did not print (never silent):\n%s", out)
+	}
+	// (b) May's prior usage rows SURVIVE — NOT wiped, NOT overwritten to USG-3-only.
+	if q, ok := findUsageMetric(t, "2026-05-01", "gpt-4o", "", "num_model_requests"); !ok || q != "10" {
+		t.Errorf("May completions Requests row = %q (ok=%v), want it PRESERVED at 10 (write skipped, not overwritten to USG-3-only)", q, ok)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "OpenAI API", "", "assistants api | file search"); !ok || q != "42" {
+		t.Errorf("May USG-3 orphan = %q (ok=%v), want it preserved at 42", q, ok)
+	}
+	// (c) The OTHER month proceeded normally.
+	if !strings.Contains(out, "period 2026-06:") {
+		t.Errorf("June should still ingest while May's usage degraded (failure isolation):\n%s", out)
+	}
+	if q, ok := findUsageMetric(t, "2026-06-01", "gpt-4o", "", "num_model_requests"); !ok || q != "20" {
+		t.Errorf("June num_model_requests = %q (ok=%v), want 20 (its usage refreshed normally)", q, ok)
 	}
 }
 

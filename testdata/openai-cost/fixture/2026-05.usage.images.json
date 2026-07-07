@@ -1,0 +1,15 @@
+[
+  {
+    "object": "bucket",
+    "start_time": 1777593600,
+    "end_time": 1777680000,
+    "results": [
+      {
+        "object": "organization.usage.images.result",
+        "model": "gpt-image-1",
+        "num_model_requests": 3,
+        "images": 12
+      }
+    ]
+  }
+]

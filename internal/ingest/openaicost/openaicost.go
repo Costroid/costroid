@@ -8,17 +8,23 @@
 // data-elements-only ContentHash, credential slot, --base-url, hygiene) and
 // differs only where the OpenAI API differs.
 //
-// # Endpoint & auth
+// # Endpoints & auth
 //
-// GET https://api.openai.com/v1/organization/costs — the SOLE monetary
-// endpoint (usage endpoints are out of scope) — authenticated with an
-// OpenAI ADMIN API key sent as Authorization: Bearer. The OpenAI dashboard
-// supports RESTRICTED admin keys (per-resource None/Read/Write, enforced
-// server-side); a usage-specific read-only scope is NOT confirmed in the
-// official docs, so operators should create a Restricted key and verify at
-// creation the narrowest scope that still reads costs (first-real-account
-// check). Costroid's encrypted credential store (decision D32) still carries
-// the least-privilege burden.
+// GET https://api.openai.com/v1/organization/costs is the monetary endpoint;
+// the seven read-only usage endpoints under /v1/organization/usage/<name>
+// (completions, embeddings, moderations, images, audio_speeches,
+// audio_transcriptions, code_interpreter_sessions) surface non-token usage
+// COUNTS into the separate usage_metrics store (decision D38 candidate; see
+// usageEndpoints). All are authenticated with the SAME OpenAI ADMIN API key
+// sent as Authorization: Bearer and share the SAME "Usage" read permission —
+// costs is a method under the usage resource, so NO separate credential or
+// scope is needed. The OpenAI dashboard supports RESTRICTED admin keys
+// (per-resource None/Read/Write, enforced server-side); operators should create
+// a Restricted key and verify at creation the narrowest scope that still reads
+// the usage resource (first-real-account check). Costroid's encrypted credential
+// store (decision D32) still carries the least-privilege burden. The Bearer key
+// never appears in any log or error; request URLs (with query strings) and
+// request headers are never logged.
 //
 // # Cardinal Rule (decision D7)
 //
@@ -164,6 +170,18 @@ const providerHost = "api.openai.com"
 // costsPath is the endpoint path (never echoed in error messages).
 const costsPath = "/v1/organization/costs"
 
+// usagePathPrefix is the shared prefix of the seven read-only usage endpoints
+// (usage/<name>); the <name> segment is appended per endpoint. These share the
+// SAME Admin key and "Usage" read permission as costsPath — costs is a method
+// under the usage resource — so no separate credential or scope is needed.
+const usagePathPrefix = "/v1/organization/usage/"
+
+// usageLimit is the requested per-endpoint usage-page bucket size. A 1d month
+// has at most 31 buckets, and the usage endpoints CAP limit at 31 for 1d — the
+// costs endpoint's 180 (pageLimit) would 400 on a real usage account. The fake
+// paginates independently to exercise the cursor path.
+const usageLimit = "31"
+
 // serviceName is the FOCUS ServiceName every OpenAI cost row carries (OAI-7),
 // and the same value its cost-orphaned usage metrics carry. A single const both
 // paths reference so the two can never drift (slice-8 review).
@@ -214,11 +232,52 @@ func Discover(ctx context.Context, client *http.Client, baseURL, slot string, se
 	return out, nil
 }
 
+// fetchMonth fetches one month's costs (which degrade the whole month on
+// failure) AND — orthogonally — the seven read-only usage endpoints, whose
+// non-token counts are surfaced into usage_metrics alongside the OAI-12 USG-3
+// cost-orphans. A usage-endpoint failure never blocks cost ingest (decision
+// D38): it records the failing endpoint and returns usageMetrics=nil so the
+// driver SKIPS the usage write and the prior rows survive. ContentHash stays
+// COST-ONLY — usage is rewritten unconditionally, so no hash coverage is needed.
 func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, month string) (*Connector, error) {
 	start, end, err := aiconn.MonthBounds(month)
 	if err != nil {
 		return nil, err
 	}
+	rawBuckets, buckets, err := fetchCost(ctx, client, base, apiKey, month, start, end)
+	if err != nil {
+		return nil, err // a cost failure degrades the whole month (Period.Err).
+	}
+	summary := openaiAnomalies(buckets)
+	// The USG-3 cost-orphans are ALWAYS computed; the seven usage endpoints'
+	// metrics are APPENDED to the SAME slice — the USG-3 rows MUST remain.
+	usageMetrics := openaiUsageMetrics(buckets)
+	endpointMetrics, failedEndpoint := fetchUsage(ctx, client, base, apiKey, month, start, end)
+	if failedEndpoint != "" {
+		// Usage is orthogonal to cost: record the failure and skip the usage
+		// write entirely (usageMetrics=nil). A partial USG-3-only slice is
+		// FORBIDDEN — ReplaceUsageBatch is a whole-batch replace, so it would
+		// WIPE the prior 7-endpoint rows.
+		summary.usageFetchFailed = failedEndpoint
+		usageMetrics = nil
+	} else {
+		usageMetrics = append(usageMetrics, endpointMetrics...)
+	}
+	return &Connector{
+		slot:         slot,
+		month:        month,
+		monthStart:   start,
+		monthEnd:     end,
+		buckets:      buckets,
+		summary:      summary,
+		usageMetrics: usageMetrics,
+		contentHash:  contentHash(rawBuckets), // COST-ONLY — usage is never hashed.
+	}, nil
+}
+
+// fetchCost pages through one month's cost report, returning the raw data-
+// element bytes (for the cost-only ContentHash) and the parsed buckets.
+func fetchCost(ctx context.Context, client *http.Client, base, apiKey, month string, start, end time.Time) ([][]byte, []bucket, error) {
 	var (
 		rawBuckets [][]byte
 		buckets    []bucket
@@ -237,19 +296,19 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		if page != "" {
 			q.Set("page", page)
 		}
-		body, err := doGet(ctx, client, base+costsPath+"?"+q.Encode(), apiKey, month)
+		body, err := doGet(ctx, client, base+costsPath+"?"+q.Encode(), apiKey, month, "costs")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var resp costsPage
 		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("openai-cost %s: decoding costs response: %w", month, err)
+			return nil, nil, fmt.Errorf("openai-cost %s: decoding costs response: %w", month, err)
 		}
 		for _, raw := range resp.Data {
 			rawBuckets = append(rawBuckets, raw)
 			var b bucket
 			if err := json.Unmarshal(raw, &b); err != nil {
-				return nil, fmt.Errorf("openai-cost %s: decoding cost bucket: %w", month, err)
+				return nil, nil, fmt.Errorf("openai-cost %s: decoding cost bucket: %w", month, err)
 			}
 			buckets = append(buckets, b)
 		}
@@ -258,16 +317,113 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		}
 		page = resp.NextPage
 	}
-	return &Connector{
-		slot:         slot,
-		month:        month,
-		monthStart:   start,
-		monthEnd:     end,
-		buckets:      buckets,
-		summary:      openaiAnomalies(buckets),
-		usageMetrics: openaiUsageMetrics(buckets),
-		contentHash:  contentHash(rawBuckets),
-	}, nil
+	return rawBuckets, buckets, nil
+}
+
+// fetchUsage fetches the seven read-only usage endpoints for one month and
+// returns their surfaced usage metrics, appended in fetch order. Usage is
+// ORTHOGONAL to cost (decision D38): it flows only into usage_metrics and never
+// blocks cost ingest, so the FIRST endpoint failure aborts usage for the month
+// (all-or-nothing — ReplaceUsageBatch is a whole-batch replace keyed on the
+// month, so a partial slice would WIPE the prior rows) and returns the failing
+// endpoint name instead of an error. A clean run returns (metrics, "").
+func fetchUsage(ctx context.Context, client *http.Client, base, apiKey, month string, start, end time.Time) (metrics []storage.Metric, failedEndpoint string) {
+	for _, ep := range usageEndpoints {
+		epMetrics, err := fetchUsageEndpoint(ctx, client, base, apiKey, month, start, end, ep)
+		if err != nil {
+			return nil, ep.name
+		}
+		metrics = append(metrics, epMetrics...)
+	}
+	return metrics, ""
+}
+
+// fetchUsageEndpoint pages through one month of one usage endpoint, surfacing
+// each bucket's whitelisted counts (usageBucketMetrics). It follows
+// has_more/next_page exactly like the cost fetch.
+func fetchUsageEndpoint(ctx context.Context, client *http.Client, base, apiKey, month string, start, end time.Time, ep usageEndpoint) ([]storage.Metric, error) {
+	var (
+		metrics []storage.Metric
+		page    string
+	)
+	for {
+		q := url.Values{}
+		q.Set("start_time", strconv.FormatInt(start.Unix(), 10))
+		q.Set("end_time", strconv.FormatInt(end.Unix(), 10))
+		q.Set("bucket_width", "1d")
+		q.Set("limit", usageLimit)
+		if ep.groupByModel {
+			// A bare, repeated group_by= (never bracketed), exactly one dim: model.
+			// code_interpreter_sessions sends NO group_by (there is no model dim).
+			q["group_by"] = []string{"model"}
+		}
+		if page != "" {
+			q.Set("page", page)
+		}
+		body, err := doGet(ctx, client, base+usagePathPrefix+ep.name+"?"+q.Encode(), apiKey, month, "usage endpoint "+ep.name)
+		if err != nil {
+			return nil, err
+		}
+		var resp usagePage
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("openai-cost %s: decoding usage response: %w", month, err)
+		}
+		for _, raw := range resp.Data {
+			var b usageBucket
+			if err := json.Unmarshal(raw, &b); err != nil {
+				return nil, fmt.Errorf("openai-cost %s: decoding usage bucket: %w", month, err)
+			}
+			metrics = append(metrics, usageBucketMetrics(b, ep)...)
+		}
+		if !resp.HasMore || resp.NextPage == "" {
+			break
+		}
+		page = resp.NextPage
+	}
+	return metrics, nil
+}
+
+// usageBucketMetrics surfaces one usage bucket's whitelisted counts as
+// storage.Metric rows for endpoint ep. Each emitted count is built from its raw
+// JSON literal via decimal.NewFromString — never float64 (decisions D23/D25). A
+// field that is absent/null or whose literal is not a valid decimal is SKIPPED
+// for that field on that row (no zero-fabrication, no garbage) while the row's
+// other valid fields still emit — the per-field degrade. ServiceName is the
+// row's model, falling back to "OpenAI API" when the model is empty/absent (and
+// for the model-less code_interpreter_sessions). ServiceTier is always "" (this
+// slice does not group by service_tier — Cardinal-Rule minimal dims), bound as
+// "" and never SQL NULL. ChargePeriodStart is the UTC-midnight of the bucket day
+// (mirroring openaiUsageMetrics). A token count is NEVER emitted — the closed
+// whitelist usageResult has no token field.
+func usageBucketMetrics(b usageBucket, ep usageEndpoint) []storage.Metric {
+	t := time.Unix(b.StartTime, 0).UTC()
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	var metrics []storage.Metric
+	for _, res := range b.Results {
+		svc := res.Model
+		if svc == "" {
+			svc = serviceName // "OpenAI API" fallback (empty model / no model dim).
+		}
+		for _, e := range ep.emits {
+			lit := strings.TrimSpace(string(e.field(res)))
+			if lit == "" || lit == "null" {
+				continue // absent/null count: skip this field, never fabricate a zero.
+			}
+			d, err := decimal.NewFromString(lit)
+			if err != nil {
+				continue // malformed literal: cannot store; skip this field only.
+			}
+			metrics = append(metrics, storage.Metric{
+				ChargePeriodStart: day,
+				ServiceName:       svc,
+				ServiceTier:       "",
+				MetricName:        e.metricName,
+				Unit:              e.unit,
+				Quantity:          d,
+			})
+		}
+	}
+	return metrics
 }
 
 // openaiUsageMetrics surfaces the cost-orphaned usage metrics OAI-12 leaves
@@ -314,8 +470,10 @@ func openaiUsageMetrics(buckets []bucket) []storage.Metric {
 }
 
 // doGet issues one GET with the Bearer auth header and bounded 429 retries.
-// It NEVER logs or echoes the api key, request headers, or the request URL.
-func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month string) ([]byte, error) {
+// what names the endpoint (e.g. "costs", "usage endpoint completions") for
+// accurate error messages. It NEVER logs or echoes the api key, request headers,
+// or the request URL (which would carry the query string).
+func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month, what string) ([]byte, error) {
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 		if err != nil {
@@ -325,7 +483,7 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("openai-cost %s: requesting costs failed: %s", month, scrubTransportErr(err))
+			return nil, fmt.Errorf("openai-cost %s: requesting %s failed: %s", month, what, scrubTransportErr(err))
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 		_ = resp.Body.Close()
@@ -333,7 +491,7 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 		switch {
 		case resp.StatusCode == http.StatusOK:
 			if readErr != nil {
-				return nil, fmt.Errorf("openai-cost %s: reading the costs body: %w", month, readErr)
+				return nil, fmt.Errorf("openai-cost %s: reading the %s body: %w", month, what, readErr)
 			}
 			return body, nil
 		case resp.StatusCode == http.StatusTooManyRequests && attempt < max429Retries:
@@ -343,11 +501,12 @@ func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month s
 			continue
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			return nil, fmt.Errorf("openai-cost %s: the OpenAI Admin API key was rejected (HTTP %d) — check the "+
-				"credential slot holds a valid admin key whose Restricted scope can read costs: %s",
+				"credential slot holds a valid admin key whose Restricted scope can read the usage resource "+
+				"(costs and usage share one 'Usage' read permission): %s",
 				month, resp.StatusCode, truncateBody(body))
 		default:
-			return nil, fmt.Errorf("openai-cost %s: costs request failed (HTTP %d) — if the window predates the "+
-				"available history, ingest a more recent --since/--period: %s", month, resp.StatusCode, truncateBody(body))
+			return nil, fmt.Errorf("openai-cost %s: %s request failed (HTTP %d) — if the window predates the "+
+				"available history, ingest a more recent --since/--period: %s", month, what, resp.StatusCode, truncateBody(body))
 		}
 	}
 }
@@ -406,6 +565,112 @@ type result struct {
 	Quantity  json.RawMessage `json:"quantity"`
 }
 
+// usagePage is the usage endpoints' response envelope (object="page"). The
+// pagination cursor is followed but NEVER hashed: usage is orthogonal to cost
+// and flows only into usage_metrics (rewritten unconditionally), so ContentHash
+// stays cost-only (see the package doc).
+type usagePage struct {
+	Data     []json.RawMessage `json:"data"`
+	HasMore  bool              `json:"has_more"`
+	NextPage string            `json:"next_page"` // null → ""
+}
+
+// usageBucket is one day's usage bucket (object="bucket"); start_time is Unix
+// seconds (a UTC day), mirroring the cost bucket.
+type usageBucket struct {
+	StartTime int64         `json:"start_time"`
+	Results   []usageResult `json:"results"`
+}
+
+// usageResult holds ONLY the whitelisted, emittable count fields plus the model
+// dimension (Cardinal Rule D7). This is a CLOSED WHITELIST by construction
+// (mirroring anthropiccost/enrich.go's usageResult): token fields
+// (input/output/cached/audio tokens) are deliberately ABSENT from the struct, so
+// a token count is structurally UN-emittable — token double-count is impossible,
+// not merely blacklisted. Every count is a raw JSON literal (never json.Number):
+// a json.Number would fail the WHOLE bucket decode on one malformed count
+// literal, defeating the mandated per-field degrade; a json.RawMessage lets the
+// bucket decode succeed so a bad field skips per-field while its siblings emit.
+type usageResult struct {
+	Model            string          `json:"model"`
+	NumModelRequests json.RawMessage `json:"num_model_requests"`
+	Images           json.RawMessage `json:"images"`
+	Characters       json.RawMessage `json:"characters"`
+	Seconds          json.RawMessage `json:"seconds"`
+	NumSessions      json.RawMessage `json:"num_sessions"`
+}
+
+// usageEmit names one emittable count field: the metric_name it surfaces
+// VERBATIM, its frozen unit, and the extractor pulling the raw literal from a
+// result. Keeping the emit list per-endpoint (not a blanket struct walk) means
+// an endpoint surfaces ONLY its documented counts — e.g. completions can never
+// emit an `images` count even if a payload carried one.
+type usageEmit struct {
+	metricName string
+	unit       string
+	field      func(usageResult) json.RawMessage
+}
+
+var (
+	emitRequests   = usageEmit{"num_model_requests", "Requests", func(r usageResult) json.RawMessage { return r.NumModelRequests }}
+	emitImages     = usageEmit{"images", "Images", func(r usageResult) json.RawMessage { return r.Images }}
+	emitCharacters = usageEmit{"characters", "Characters", func(r usageResult) json.RawMessage { return r.Characters }}
+	emitSeconds    = usageEmit{"seconds", "Seconds", func(r usageResult) json.RawMessage { return r.Seconds }}
+	emitSessions   = usageEmit{"num_sessions", "Sessions", func(r usageResult) json.RawMessage { return r.NumSessions }}
+)
+
+// usageEndpoint describes one read-only usage endpoint. groupByModel sends the
+// SINGLE Cardinal-Rule-safe dim group_by=model (the six model endpoints);
+// code_interpreter_sessions sends NO group_by (there is no model dim). emits is
+// the closed set of counts the endpoint surfaces.
+type usageEndpoint struct {
+	name         string // the path's last segment, VERBATIM (also the fixture token)
+	groupByModel bool
+	emits        []usageEmit
+}
+
+// usageEndpoints is the frozen extract table for the seven read-only usage
+// endpoints (decision D38 candidate). It surfaces NON-TOKEN usage COUNTS into
+// usage_metrics; a token count is NEVER emitted (usageResult has no token field).
+// Frozen mapping (metric_name is the upstream field name VERBATIM; unit is the
+// frozen vocabulary):
+//
+//	endpoint                    group_by  metric_name → unit
+//	--------------------------  --------  --------------------------------------
+//	completions                 model     num_model_requests → Requests
+//	embeddings                  model     num_model_requests → Requests
+//	moderations                 model     num_model_requests → Requests
+//	images                      model     num_model_requests → Requests;
+//	                                      images → Images
+//	audio_speeches              model     num_model_requests → Requests;
+//	                                      characters → Characters
+//	audio_transcriptions        model     num_model_requests → Requests;
+//	                                      seconds → Seconds
+//	code_interpreter_sessions   (none)    num_sessions → Sessions
+//
+// ServiceName = the result row's model, falling back to "OpenAI API" when the
+// model is empty/absent and (fixed) for the model-less code_interpreter_sessions.
+// ServiceTier = "" — the completions endpoint exposes a service_tier group_by dim
+// but this slice deliberately does NOT group by it (Cardinal-Rule minimal dims),
+// so every row's tier is the empty string, never SQL NULL. group_by is ONLY
+// `model` (bare, repeated) or ABSENT — never user_id/api_key_id/project_id/
+// service_tier (Cardinal Rule D7); /projects and /users are never called and no
+// opaque ID is resolved to a name. num_model_requests is verbatim across the six
+// model endpoints, so a model appearing on two endpoints on one day SUM-merges
+// into one (day, model, num_model_requests, Requests) total in DailyUsageMetrics
+// (no endpoint dimension exists) — an INTENDED, accepted merge under the frozen
+// usage_metrics schema. vector_stores / web_search_calls / file_search_calls are
+// out of scope (a stock, not a daily flow; and call-fee overlaps).
+var usageEndpoints = []usageEndpoint{
+	{name: "completions", groupByModel: true, emits: []usageEmit{emitRequests}},
+	{name: "embeddings", groupByModel: true, emits: []usageEmit{emitRequests}},
+	{name: "moderations", groupByModel: true, emits: []usageEmit{emitRequests}},
+	{name: "images", groupByModel: true, emits: []usageEmit{emitRequests, emitImages}},
+	{name: "audio_speeches", groupByModel: true, emits: []usageEmit{emitRequests, emitCharacters}},
+	{name: "audio_transcriptions", groupByModel: true, emits: []usageEmit{emitRequests, emitSeconds}},
+	{name: "code_interpreter_sessions", groupByModel: false, emits: []usageEmit{emitSessions}},
+}
+
 // openaiSkuMeter maps a line_item's documented trailing direction suffix to a
 // SkuMeter, reporting ok=false when no direction suffix is recognized. The
 // ", cached input" case is checked before ", input" (the latter is not a suffix
@@ -444,23 +709,33 @@ func quantityLiteral(res result) string {
 type anomalySummary struct {
 	unknownUnitRows       int
 	malformedQuantityRows int
+	// usageFetchFailed, when non-empty, names the usage endpoint whose fetch
+	// failed this run. Usage is orthogonal to cost (decision D38): the cost still
+	// ingested and the prior usage_metrics rows were preserved (the write was
+	// skipped), so this is surfaced — never silent — but is not a cost anomaly.
+	usageFetchFailed string
 }
 
 func (s anomalySummary) String() string {
-	if s.unknownUnitRows == 0 && s.malformedQuantityRows == 0 {
-		return ""
+	var lines []string
+	if s.unknownUnitRows > 0 || s.malformedQuantityRows > 0 {
+		var parts []string
+		if s.unknownUnitRows > 0 {
+			parts = append(parts, fmt.Sprintf("%d cost row(s) carry a quantity whose line_item unit "+
+				"could not be safely derived", s.unknownUnitRows))
+		}
+		if s.malformedQuantityRows > 0 {
+			parts = append(parts, fmt.Sprintf("%d cost row(s) carry a malformed quantity literal "+
+				"(enrichment stripped; money kept)", s.malformedQuantityRows))
+		}
+		lines = append(lines, "usage/cost reconciliation: "+strings.Join(parts, ", ")+
+			"; left unpriced (a unit is never guessed, a quantity is never repaired — decision D33)")
 	}
-	var parts []string
-	if s.unknownUnitRows > 0 {
-		parts = append(parts, fmt.Sprintf("%d cost row(s) carry a quantity whose line_item unit "+
-			"could not be safely derived", s.unknownUnitRows))
+	if s.usageFetchFailed != "" {
+		lines = append(lines, fmt.Sprintf("usage endpoint %q fetch failed; usage_metrics not refreshed this run "+
+			"— prior rows preserved, cost ingested", s.usageFetchFailed))
 	}
-	if s.malformedQuantityRows > 0 {
-		parts = append(parts, fmt.Sprintf("%d cost row(s) carry a malformed quantity literal "+
-			"(enrichment stripped; money kept)", s.malformedQuantityRows))
-	}
-	return "usage/cost reconciliation: " + strings.Join(parts, ", ") +
-		"; left unpriced (a unit is never guessed, a quantity is never repaired — decision D33)"
+	return strings.Join(lines, "; ")
 }
 
 // openaiAnomalies counts the OAI-12 orphans over a month's cost buckets so the
@@ -533,13 +808,19 @@ func (c *Connector) Month() string { return c.month }
 // nothing to report.
 func (c *Connector) AnomalySummary() string { return c.summary.String() }
 
-// UsageMetrics returns this month's cost-orphaned usage metrics (the
-// unknown-unit quantity-bearing rows OAI-12 leaves money-only) for the separate
-// usage_metrics store. It is a concrete method on *Connector (off the frozen
-// ingest.Connector interface, decision D16), mirroring AnomalySummary's accessor
-// shape; the driver reads it in the AI discovery loop and writes it only after
-// this period's cost ingest succeeds. Always non-nil (empty when the month has
-// no orphans). Never touches cost_records or any money/token total.
+// UsageMetrics returns this month's usage metrics for the separate usage_metrics
+// store: the cost-orphaned USG-3 "Unknown" rows (the unknown-unit quantity-
+// bearing rows OAI-12 leaves money-only) APPENDED with the seven usage endpoints'
+// non-token counts (num_model_requests→Requests plus images/characters/seconds/
+// num_sessions; never a token count — see usageEndpoints). It is a concrete
+// method on *Connector (off the frozen ingest.Connector interface, decision D16),
+// mirroring AnomalySummary's accessor shape; the driver reads it in the AI
+// discovery loop and writes it (a whole-batch replace) only after this period's
+// cost ingest succeeds. Non-nil normally (empty when the month has no orphans and
+// no usage rows); nil ONLY on a usage-endpoint fetch failure — signalling the
+// driver to SKIP the write and PRESERVE the prior rows while cost still ingests
+// (usage is orthogonal to cost, decision D38). Never touches cost_records or any
+// money/token total.
 func (c *Connector) UsageMetrics() []storage.Metric { return c.usageMetrics }
 
 func (c *Connector) SourceIdentity() string {

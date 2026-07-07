@@ -111,3 +111,49 @@ func TestFakeOpenAIRejectsRequestShape(t *testing.T) {
 		t.Errorf("well-shaped request: HTTP %d, want 200", resp.StatusCode)
 	}
 }
+
+// usageShape is the connector's documented per-endpoint usage request shape (bare
+// group_by=model, bucket_width, limit=31) for the six MODEL endpoints.
+const usageShape = "&bucket_width=1d&limit=31&group_by=model"
+
+// TestFakeOpenAIUsageShape proves the fake asserts each usage endpoint's request
+// SHAPE per parameter: the six model endpoints require the bare group_by=model
+// (bracketed group_by[]=, a wrong dim, wrong bucket_width, and the costs
+// endpoint's limit=180 each 400); code_interpreter_sessions must send NO group_by
+// (any group_by 400s); a well-shaped request gets 200; and an unknown path 404s.
+func TestFakeOpenAIUsageShape(t *testing.T) {
+	srv := httptest.NewServer(fakeopenai.New(fixture))
+	defer srv.Close()
+	const times = "start_time=1777593600&end_time=1780272000"
+
+	modelBase := srv.URL + "/v1/organization/usage/completions?" + times
+	badModel := map[string]string{
+		"bracketed group_by": "&bucket_width=1d&limit=31&group_by[]=model",
+		"wrong group_by dim": "&bucket_width=1d&limit=31&group_by=service_tier",
+		"wrong bucket_width": "&bucket_width=1w&limit=31&group_by=model",
+		"costs limit 180":    "&bucket_width=1d&limit=180&group_by=model",
+		"missing shape":      "",
+	}
+	for name, suffix := range badModel {
+		if resp := get(t, modelBase+suffix, fakeopenai.AdminKey); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("completions %s: HTTP %d, want 400", name, resp.StatusCode)
+		}
+	}
+	if resp := get(t, modelBase+usageShape, fakeopenai.AdminKey); resp.StatusCode != http.StatusOK {
+		t.Errorf("well-shaped completions: HTTP %d, want 200", resp.StatusCode)
+	}
+
+	// code_interpreter_sessions: NO group_by allowed.
+	sessBase := srv.URL + "/v1/organization/usage/code_interpreter_sessions?" + times + "&bucket_width=1d&limit=31"
+	if resp := get(t, sessBase+"&group_by=model", fakeopenai.AdminKey); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("code_interpreter_sessions with group_by: HTTP %d, want 400", resp.StatusCode)
+	}
+	if resp := get(t, sessBase, fakeopenai.AdminKey); resp.StatusCode != http.StatusOK {
+		t.Errorf("well-shaped code_interpreter_sessions: HTTP %d, want 200", resp.StatusCode)
+	}
+
+	// An unknown (non-usage, non-costs) path still 404s.
+	if resp := get(t, srv.URL+"/v1/organization/projects", fakeopenai.AdminKey); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown path: HTTP %d, want 404", resp.StatusCode)
+	}
+}

@@ -326,10 +326,15 @@ type Metric struct {
 	// tier concept (OpenAI) — bound as "" (never SQL NULL) so the NOT NULL
 	// column and DailyUsageMetrics's string scan hold.
 	ServiceTier string
-	// MetricName is the frozen metric identifier (a token_type, the literal
-	// "web_search_requests", or an opaque OpenAI line_item).
+	// MetricName is the frozen metric identifier: a token_type, the literal
+	// "web_search_requests", an opaque OpenAI cost line_item (USG-3), or one of
+	// the OpenAI usage-endpoint field names "num_model_requests" / "images" /
+	// "characters" / "seconds" / "num_sessions" (each surfaced VERBATIM).
 	MetricName string
-	// Unit is the frozen unit vocabulary: "Tokens", "Requests", or "Unknown".
+	// Unit is the frozen unit vocabulary: "Tokens", "Requests", "Unknown",
+	// "Images", "Characters", "Seconds", or "Sessions". (unit is a plain string
+	// column — this vocabulary is the canonical source; migration 0006's own
+	// "USG-1..USG-3" comment is intentionally left stale, migrations being frozen.)
 	Unit string
 	// Quantity is the exact metric quantity (never float64).
 	Quantity decimal.Decimal
