@@ -15,8 +15,8 @@
 // (completions, embeddings, moderations, images, audio_speeches,
 // audio_transcriptions, code_interpreter_sessions, vector_stores,
 // web_search_calls, file_search_calls) surface non-token usage counts and byte
-// totals into the separate usage_metrics store (the usage fetch-more decision;
-// see usageEndpoints). All are authenticated with the SAME OpenAI ADMIN API key sent
+// totals into the separate usage_metrics store (decision D39; see
+// usageEndpoints). All are authenticated with the SAME OpenAI ADMIN API key sent
 // as Authorization: Bearer and share the SAME "Usage" read permission — costs is
 // a method under the usage resource, so NO separate credential or scope is
 // needed. The OpenAI dashboard supports RESTRICTED admin keys
