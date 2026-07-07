@@ -1,0 +1,13 @@
+[
+  {
+    "object": "bucket",
+    "start_time": 1777593600,
+    "end_time": 1777680000,
+    "results": [
+      {
+        "object": "organization.usage.vector_stores.result",
+        "usage_bytes": 1073741824
+      }
+    ]
+  }
+]

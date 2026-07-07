@@ -112,21 +112,21 @@ func TestFakeOpenAIRejectsRequestShape(t *testing.T) {
 	}
 }
 
-// usageShape is the connector's documented per-endpoint usage request shape (bare
-// group_by=model, bucket_width, limit=31) for the six MODEL endpoints.
+// usageShape is the connector's documented per-endpoint usage request shape
+// (bare group_by=model, bucket_width, limit=31) for model endpoints.
 const usageShape = "&bucket_width=1d&limit=31&group_by=model"
+const usageNoGroupShape = "&bucket_width=1d&limit=31"
 
 // TestFakeOpenAIUsageShape proves the fake asserts each usage endpoint's request
-// SHAPE per parameter: the six model endpoints require the bare group_by=model
+// SHAPE per parameter: model endpoints require the bare group_by=model
 // (bracketed group_by[]=, a wrong dim, wrong bucket_width, and the costs
-// endpoint's limit=180 each 400); code_interpreter_sessions must send NO group_by
+// endpoint's limit=180 each 400); model-less endpoints must send NO group_by
 // (any group_by 400s); a well-shaped request gets 200; and an unknown path 404s.
 func TestFakeOpenAIUsageShape(t *testing.T) {
 	srv := httptest.NewServer(fakeopenai.New(fixture))
 	defer srv.Close()
 	const times = "start_time=1777593600&end_time=1780272000"
 
-	modelBase := srv.URL + "/v1/organization/usage/completions?" + times
 	badModel := map[string]string{
 		"bracketed group_by": "&bucket_width=1d&limit=31&group_by[]=model",
 		"wrong group_by dim": "&bucket_width=1d&limit=31&group_by=service_tier",
@@ -134,22 +134,37 @@ func TestFakeOpenAIUsageShape(t *testing.T) {
 		"costs limit 180":    "&bucket_width=1d&limit=180&group_by=model",
 		"missing shape":      "",
 	}
-	for name, suffix := range badModel {
-		if resp := get(t, modelBase+suffix, fakeopenai.AdminKey); resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("completions %s: HTTP %d, want 400", name, resp.StatusCode)
+	for _, endpoint := range []string{
+		"completions", "embeddings", "moderations", "images",
+		"audio_speeches", "audio_transcriptions", "web_search_calls",
+	} {
+		base := srv.URL + "/v1/organization/usage/" + endpoint + "?" + times
+		for name, suffix := range badModel {
+			if resp := get(t, base+suffix, fakeopenai.AdminKey); resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("%s %s: HTTP %d, want 400", endpoint, name, resp.StatusCode)
+			}
+		}
+		if resp := get(t, base+usageShape, fakeopenai.AdminKey); resp.StatusCode != http.StatusOK {
+			t.Errorf("well-shaped %s: HTTP %d, want 200", endpoint, resp.StatusCode)
 		}
 	}
-	if resp := get(t, modelBase+usageShape, fakeopenai.AdminKey); resp.StatusCode != http.StatusOK {
-		t.Errorf("well-shaped completions: HTTP %d, want 200", resp.StatusCode)
-	}
 
-	// code_interpreter_sessions: NO group_by allowed.
-	sessBase := srv.URL + "/v1/organization/usage/code_interpreter_sessions?" + times + "&bucket_width=1d&limit=31"
-	if resp := get(t, sessBase+"&group_by=model", fakeopenai.AdminKey); resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("code_interpreter_sessions with group_by: HTTP %d, want 400", resp.StatusCode)
-	}
-	if resp := get(t, sessBase, fakeopenai.AdminKey); resp.StatusCode != http.StatusOK {
-		t.Errorf("well-shaped code_interpreter_sessions: HTTP %d, want 200", resp.StatusCode)
+	for _, endpoint := range []string{"code_interpreter_sessions", "vector_stores", "file_search_calls"} {
+		base := srv.URL + "/v1/organization/usage/" + endpoint + "?" + times
+		for name, suffix := range map[string]string{
+			"bare group_by":      usageNoGroupShape + "&group_by=model",
+			"bracketed group_by": usageNoGroupShape + "&group_by[]=model",
+			"wrong bucket_width": "&bucket_width=1w&limit=31",
+			"costs limit 180":    "&bucket_width=1d&limit=180",
+			"missing shape":      "",
+		} {
+			if resp := get(t, base+suffix, fakeopenai.AdminKey); resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("%s %s: HTTP %d, want 400", endpoint, name, resp.StatusCode)
+			}
+		}
+		if resp := get(t, base+usageNoGroupShape, fakeopenai.AdminKey); resp.StatusCode != http.StatusOK {
+			t.Errorf("well-shaped %s: HTTP %d, want 200", endpoint, resp.StatusCode)
+		}
 	}
 
 	// An unknown (non-usage, non-costs) path still 404s.

@@ -219,11 +219,13 @@ func TestOfflineE2EAICost(t *testing.T) {
 	// count (5, "Requests"), the standard-tier orphan key no cost row referenced
 	// (delta uncached 42), and the OpenAI recognized-but-unpriced USG-3 line item
 	// (assistants api | file search 42, "Unknown"). OpenAI Usage-API metrics
-	// (slice 11, ALL on May 1 — see the testdata/openai-cost/fixture usage files):
+	// (ALL on May 1 — see the testdata/openai-cost/fixture usage files):
 	// per-model num_model_requests ("Requests") for gpt-4o/gpt-image-1/tts-1/
 	// whisper-1, plus the special units images/characters/seconds ("Images"/
 	// "Characters"/"Seconds") and the model-less code_interpreter_sessions
-	// num_sessions ("Sessions", ServiceName "OpenAI API"). NEVER a token count.
+	// num_sessions ("Sessions", ServiceName "OpenAI API"), vector-store
+	// usage_bytes ("Bytes"), and source-qualified search-call counts ("Calls").
+	// NEVER a token count.
 	// Ordering is day, serviceName, serviceTier, metricName, unit (binary ASC:
 	// "OpenAI API" < "claude-*" < "gpt-*" < "tts-*" < "whisper-*").
 	metricsBody := usageMetricsView(t)
@@ -233,10 +235,13 @@ func TestOfflineE2EAICost(t *testing.T) {
 		t.Fatalf("decoding usage metrics: %v (body: %s)", err, metricsBody)
 	}
 	wantMetrics := []usageMetricRow{
+		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "file_search_num_requests", Unit: "Calls", Quantity: "6"},
 		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "num_sessions", Unit: "Sessions", Quantity: "7"},
+		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "usage_bytes", Unit: "Bytes", Quantity: "1073741824"},
 		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: "999"},
 		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "web_search_requests", Unit: "Requests", Quantity: "5"},
 		{Date: "2026-05-01", ServiceName: "gpt-4o", ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: "10"},
+		{Date: "2026-05-01", ServiceName: "gpt-4o", ServiceTier: "", MetricName: "web_search_num_requests", Unit: "Calls", Quantity: "15"},
 		{Date: "2026-05-01", ServiceName: "gpt-image-1", ServiceTier: "", MetricName: "images", Unit: "Images", Quantity: "12"},
 		{Date: "2026-05-01", ServiceName: "gpt-image-1", ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: "3"},
 		{Date: "2026-05-01", ServiceName: "tts-1", ServiceTier: "", MetricName: "characters", Unit: "Characters", Quantity: "5000"},

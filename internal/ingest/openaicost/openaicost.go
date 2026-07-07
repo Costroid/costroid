@@ -260,7 +260,7 @@ func fetchMonth(ctx context.Context, client *http.Client, base, apiKey, slot, mo
 		// Usage is orthogonal to cost: record the failure and skip the usage
 		// write entirely (usageMetrics=nil). A partial USG-3-only slice is
 		// FORBIDDEN — ReplaceUsageBatch is a whole-batch replace, so it would
-		// WIPE the prior 7-endpoint rows.
+		// WIPE the prior ten-endpoint rows.
 		summary.usageFetchFailed = failedEndpoint
 		usageMetrics = nil
 	} else {

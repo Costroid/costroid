@@ -22,6 +22,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/devtools/fakeopenai"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/openaicost"
 	"github.com/Costroid/costroid/internal/storage"
@@ -604,8 +605,6 @@ func TestUsageOrphansPreservedAndDistinct(t *testing.T) {
 
 // TestUsageSearchRequestsSourceQualified proves the two search-call endpoints'
 // upstream num_requests fields are stored as endpoint-qualified metric names.
-// With no endpoint dimension in usage_metrics, this prevents web and file search
-// calls from SUM-merging when their ServiceName falls back to the same value.
 func TestUsageSearchRequestsSourceQualified(t *testing.T) {
 	dir := t.TempDir()
 	writeUsage(t, dir, "2026-05", "web_search_calls", `[{"start_time":1777593600,"results":[{"num_requests":7,"num_model_requests":70}]}]`)
@@ -619,6 +618,52 @@ func TestUsageSearchRequestsSourceQualified(t *testing.T) {
 		{ChargePeriodStart: day1, ServiceName: "OpenAI API", ServiceTier: "", MetricName: "web_search_num_requests", Unit: "Calls", Quantity: decimal.RequireFromString("7")},
 		{ChargePeriodStart: day1, ServiceName: "OpenAI API", ServiceTier: "", MetricName: "file_search_num_requests", Unit: "Calls", Quantity: decimal.RequireFromString("8")},
 	})
+}
+
+// TestUsageSearchRequestsStoreCollisionAvoided proves the source-qualified names
+// are not just cosmetic: after a store round-trip, model-less web_search_calls
+// and file_search_calls rows with the same ServiceName remain two daily metric
+// rows instead of SUM-merging under a shared bare num_requests metric.
+func TestUsageSearchRequestsStoreCollisionAvoided(t *testing.T) {
+	dir := t.TempDir()
+	writeUsage(t, dir, "2026-05", "web_search_calls", `[{"start_time":1777593600,"results":[{"num_requests":7,"num_model_requests":70}]}]`)
+	writeUsage(t, dir, "2026-05", "file_search_calls", `[{"start_time":1777593600,"results":[{"num_requests":8}]}]`)
+	h := fakeopenai.New(dir)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	metrics := discoverMonth(t, h, srv.URL, "2026-05").UsageMetrics()
+	store, err := storage.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("Open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	batch := storage.UsageBatch{
+		Connector:      openaicost.Name,
+		SourceIdentity: "api.openai.com/openai-cost/2026-05",
+		TenantID:       focus.DefaultTenant,
+	}
+	if err := store.ReplaceUsageBatch(context.Background(), batch, metrics); err != nil {
+		t.Fatalf("ReplaceUsageBatch: %v", err)
+	}
+	rows, err := store.DailyUsageMetrics(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics: %v", err)
+	}
+	wantRows := []string{
+		"2026-05-01T00:00:00Z|OpenAI API||file_search_num_requests|Calls|8",
+		"2026-05-01T00:00:00Z|OpenAI API||web_search_num_requests|Calls|7",
+	}
+	if len(rows) != len(wantRows) {
+		t.Fatalf("stored search metrics = %+v, want %d distinct rows", rows, len(wantRows))
+	}
+	for i, w := range wantRows {
+		gotKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+			rows[i].Date.UTC().Format(time.RFC3339), rows[i].ServiceName, rows[i].ServiceTier,
+			rows[i].MetricName, rows[i].Unit, rows[i].Quantity.String())
+		if gotKey != w {
+			t.Errorf("stored search metric row %d = %q, want %q", i, gotKey, w)
+		}
+	}
 }
 
 // TestUsageFetchLeavesCostAndTokensInvariant (mandated test #5) proves adding the

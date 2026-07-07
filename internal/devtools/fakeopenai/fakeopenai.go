@@ -272,14 +272,13 @@ func requireShape(w http.ResponseWriter, q url.Values) bool {
 // limit must be 31 (NOT the costs endpoint's 180), and start_time must be
 // present. name is the path's last segment.
 func requireUsageShape(w http.ResponseWriter, q url.Values, name string) bool {
-	switch name {
-	case "code_interpreter_sessions", "vector_stores", "file_search_calls":
+	if _, ok := modelLessUsageEndpoints[name]; ok {
 		if len(q["group_by"]) != 0 || len(q["group_by[]"]) != 0 {
 			writeError(w, http.StatusBadRequest, "invalid_request_error",
 				name+" must send no group_by (it has no model dim)")
 			return false
 		}
-	default:
+	} else {
 		if len(q["group_by[]"]) != 0 {
 			writeError(w, http.StatusBadRequest, "invalid_request_error",
 				"group_by must be sent bare as group_by=, not bracketed group_by[]=")
@@ -304,6 +303,12 @@ func requireUsageShape(w http.ResponseWriter, q url.Values, name string) bool {
 		return false
 	}
 	return true
+}
+
+var modelLessUsageEndpoints = map[string]struct{}{
+	"code_interpreter_sessions": {},
+	"vector_stores":             {},
+	"file_search_calls":         {},
 }
 
 // equalStringSet reports whether got and want hold the same values,
