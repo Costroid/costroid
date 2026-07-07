@@ -1007,6 +1007,64 @@ func TestOpenAIUsageOnlyRestatementSelfApplies(t *testing.T) {
 	}
 }
 
+// TestOpenAIEmptyUsageSuccessClearsPriorRows proves the clean-empty-month
+// converse to TestOpenAIUsageFetchFailurePreservesPriorRows: when every usage
+// endpoint succeeds but returns zero rows, and the cost rows are fully enriched
+// (zero USG-3 orphans), UsageMetrics() is a non-nil empty slice. The driver must
+// therefore write an empty batch and CLEAR stale rows rather than preserving them
+// as it does for nil-on-usage-failure.
+func TestOpenAIEmptyUsageSuccessClearsPriorRows(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(t.TempDir(), "credentials.key"))
+
+	oaiDir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(oaiDir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	write("2026-05.json", `[{"object":"bucket","start_time":1777593600,"end_time":1777680000,
+	  "results":[{"amount":{"value":10.0,"currency":"usd"},"line_item":"gpt-4o, input","quantity":1500000}]}]`)
+	write("2026-05.usage.completions.json", `[{"start_time":1777593600,"results":[{"model":"gpt-4o","num_model_requests":10}]}]`)
+
+	srv := httptest.NewServer(fakeopenai.New(oaiDir))
+	t.Cleanup(srv.Close)
+	base := "--base-url=" + srv.URL
+
+	if _, err := runCLI([]string{"credentials", "init"}, ""); err != nil {
+		t.Fatalf("credentials init: %v", err)
+	}
+	if _, err := runCLI([]string{"credentials", "set", "openai-cost"}, fakeopenai.AdminKey); err != nil {
+		t.Fatalf("credentials set: %v", err)
+	}
+
+	if out, err := runCLI([]string{"ingest", "--connector", "openai-cost", base, "--period", "2026-05"}, ""); err != nil {
+		t.Fatalf("first ingest: %v\n%s", err, out)
+	}
+	if q, ok := findUsageMetric(t, "2026-05-01", "gpt-4o", "", "num_model_requests"); !ok || q != "10" {
+		t.Fatalf("after first ingest: num_model_requests = %q (ok=%v), want 10", q, ok)
+	}
+
+	if err := os.Remove(filepath.Join(oaiDir, "2026-05.usage.completions.json")); err != nil {
+		t.Fatalf("removing usage fixture: %v", err)
+	}
+
+	out, err := runCLI([]string{"ingest", "--connector", "openai-cost", base, "--period", "2026-05"}, "")
+	if err != nil {
+		t.Fatalf("empty-usage re-ingest: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "source content unchanged") {
+		t.Fatalf("cost bytes are unchanged, so the cost batch should short-circuit as unchanged:\n%s", out)
+	}
+	if _, ok := findUsageMetric(t, "2026-05-01", "gpt-4o", "", "num_model_requests"); ok {
+		t.Fatalf("stale num_model_requests row survived a successful empty usage fetch")
+	}
+	if got := usageMetricCount(t); got != 0 {
+		t.Fatalf("after successful empty usage fetch: %d usage_metrics rows, want 0", got)
+	}
+}
+
 // TestOpenAIUsageFetchFailurePreservesPriorRows (slice-11 mandated test, the
 // usage-endpoint-FAILURE degrade — distinct from the per-FIELD degrade) proves a
 // usage-endpoint 500 is orthogonal to cost: the month's COST still ingests, the

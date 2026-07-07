@@ -14,11 +14,11 @@
 // the seven read-only usage endpoints under /v1/organization/usage/<name>
 // (completions, embeddings, moderations, images, audio_speeches,
 // audio_transcriptions, code_interpreter_sessions) surface non-token usage
-// COUNTS into the separate usage_metrics store (decision D38 candidate; see
-// usageEndpoints). All are authenticated with the SAME OpenAI ADMIN API key
-// sent as Authorization: Bearer and share the SAME "Usage" read permission —
-// costs is a method under the usage resource, so NO separate credential or
-// scope is needed. The OpenAI dashboard supports RESTRICTED admin keys
+// COUNTS into the separate usage_metrics store (decision D38; see
+// usageEndpoints). All are authenticated with the SAME OpenAI ADMIN API key sent
+// as Authorization: Bearer and share the SAME "Usage" read permission — costs is
+// a method under the usage resource, so NO separate credential or scope is
+// needed. The OpenAI dashboard supports RESTRICTED admin keys
 // (per-resource None/Read/Write, enforced server-side); operators should create
 // a Restricted key and verify at creation the narrowest scope that still reads
 // the usage resource (first-real-account check). Costroid's encrypted credential
@@ -28,10 +28,11 @@
 //
 // # Cardinal Rule (decision D7)
 //
-// Only aggregated cost metadata is fetched — amounts, currency, day buckets,
-// line-item labels, and project id. No prompt/response content, ever. The
-// Bearer key never appears in any log or error; request URLs (with query
-// strings) and request headers are never logged.
+// Only aggregated cost and usage metadata is fetched — amounts, currency, day
+// buckets, line-item labels, project id, and the usage endpoints' non-token
+// counts with the minimal model grouping documented below. No prompt/response
+// content, ever. The Bearer key never appears in any log or error; request URLs
+// (with query strings) and request headers are never logged.
 //
 // # Periods, window, idempotency, ContentHash, --force
 //
@@ -630,7 +631,7 @@ type usageEndpoint struct {
 }
 
 // usageEndpoints is the frozen extract table for the seven read-only usage
-// endpoints (decision D38 candidate). It surfaces NON-TOKEN usage COUNTS into
+// endpoints (decision D38). It surfaces NON-TOKEN usage COUNTS into
 // usage_metrics; a token count is NEVER emitted (usageResult has no token field).
 // Frozen mapping (metric_name is the upstream field name VERBATIM; unit is the
 // frozen vocabulary):
@@ -781,8 +782,9 @@ func contentHash(rawBuckets [][]byte) string {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
-// Connector reads one billing month of the OpenAI costs report, enriching each
-// row from its same-row quantity (OAI-11).
+// Connector reads one billing month of the OpenAI costs report, enriches each
+// cost row from its same-row quantity (OAI-11), and exposes the month's separate
+// usage_metrics rows from OAI-12 cost orphans plus the read-only usage endpoints.
 type Connector struct {
 	slot         string
 	month        string

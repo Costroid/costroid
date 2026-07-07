@@ -406,7 +406,7 @@ func TestMissingCurrencyFailsPeriod(t *testing.T) {
 	}
 }
 
-// --- OpenAI Usage-API metrics (slice 11, D38 candidate) ---
+// --- OpenAI Usage-API metrics (slice 11, D38) ---
 
 // day1 is 2026-05-01T00:00:00Z (UTC midnight of Unix start_time 1777593600, the
 // value the usage fixtures below use).
