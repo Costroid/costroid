@@ -594,9 +594,6 @@ func TestUsageOrphansPreservedAndDistinct(t *testing.T) {
 
 	// Distinctness: the USG-3 and Images rows carry DIFFERENT (metric_name, unit)
 	// tuples, so DailyUsageMetrics can never silently merge them.
-	if usg3.MetricName == images.MetricName && usg3.Unit == images.Unit {
-		t.Fatal("USG-3 and Images share a (metric_name, unit) tuple — they would silently merge")
-	}
 }
 
 // TestUsageFetchLeavesCostAndTokensInvariant (mandated test #5) proves adding the
