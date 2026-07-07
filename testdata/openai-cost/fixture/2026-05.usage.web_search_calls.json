@@ -8,7 +8,7 @@
         "object": "organization.usage.web_searches.result",
         "model": "gpt-4o",
         "num_requests": 15,
-        "num_model_requests": 12
+        "num_model_requests": 99
       }
     ]
   }

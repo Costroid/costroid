@@ -554,6 +554,48 @@ func TestDailyUsageMetrics(t *testing.T) {
 	}
 }
 
+func TestDailyUsageMetricsSearchCallsSourceQualified(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	var s Store = store
+	batch := UsageBatch{Connector: "openai-cost", SourceIdentity: "api.openai.com/openai-cost/2026-05", TenantID: focus.DefaultTenant}
+	metrics := []Metric{
+		{
+			ChargePeriodStart: day(1),
+			ServiceName:       "OpenAI API",
+			ServiceTier:       "",
+			MetricName:        "web_search_num_requests",
+			Unit:              "Calls",
+			Quantity:          dec(t, "15"),
+		},
+		{
+			ChargePeriodStart: day(1),
+			ServiceName:       "OpenAI API",
+			ServiceTier:       "",
+			MetricName:        "file_search_num_requests",
+			Unit:              "Calls",
+			Quantity:          dec(t, "8"),
+		},
+	}
+	if err := s.ReplaceUsageBatch(ctx, batch, metrics); err != nil {
+		t.Fatalf("ReplaceUsageBatch: %v", err)
+	}
+
+	got, err := s.DailyUsageMetrics(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics: %v", err)
+	}
+	assertDailyUsageMetrics(t, got, []DailyUsageMetric{
+		{Date: day(1), ServiceName: "OpenAI API", ServiceTier: "", MetricName: "file_search_num_requests", Unit: "Calls", Quantity: dec(t, "8")},
+		{Date: day(1), ServiceName: "OpenAI API", ServiceTier: "", MetricName: "web_search_num_requests", Unit: "Calls", Quantity: dec(t, "15")},
+	})
+}
+
 func assertDailyUsageMetrics(t *testing.T, got, want []DailyUsageMetric) {
 	t.Helper()
 	if len(got) != len(want) {

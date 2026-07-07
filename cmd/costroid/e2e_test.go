@@ -235,9 +235,9 @@ func TestOfflineE2EAICost(t *testing.T) {
 		t.Fatalf("decoding usage metrics: %v (body: %s)", err, metricsBody)
 	}
 	wantMetrics := []usageMetricRow{
-		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "file_search_num_requests", Unit: "Calls", Quantity: "6"},
+		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "file_search_num_requests", Unit: "Calls", Quantity: "8"},
 		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "num_sessions", Unit: "Sessions", Quantity: "7"},
-		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "usage_bytes", Unit: "Bytes", Quantity: "1073741824"},
+		{Date: "2026-05-01", ServiceName: "OpenAI API", ServiceTier: "", MetricName: "usage_bytes", Unit: "Bytes", Quantity: "1099511627776"},
 		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "priority", MetricName: "uncached_input_tokens", Unit: "Tokens", Quantity: "999"},
 		{Date: "2026-05-01", ServiceName: "claude-opus-4-6", ServiceTier: "standard", MetricName: "web_search_requests", Unit: "Requests", Quantity: "5"},
 		{Date: "2026-05-01", ServiceName: "gpt-4o", ServiceTier: "", MetricName: "num_model_requests", Unit: "Requests", Quantity: "10"},
@@ -278,7 +278,11 @@ func TestOfflineE2EAICost(t *testing.T) {
 	}
 	// ISOLATION: the usage-metric model-name services and units never appear in
 	// the daily-cost or daily-token views (a separate table, separate query).
-	for _, leaked := range []string{"claude-opus-4-6", "claude-sonnet-4-5", "web_search_requests", "assistants api | file search"} {
+	for _, leaked := range []string{
+		"claude-opus-4-6", "claude-sonnet-4-5", "web_search_requests",
+		"assistants api | file search", "usage_bytes", "web_search_num_requests",
+		"file_search_num_requests",
+	} {
 		if strings.Contains(daily, leaked) {
 			t.Errorf("usage-metric-only token %q leaked into the daily-cost view", leaked)
 		}
