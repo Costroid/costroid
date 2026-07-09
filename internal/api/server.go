@@ -29,7 +29,7 @@ const focusVersion = "1.4"
 
 // CostStore is the slice of the storage interface the API reads from.
 type CostStore interface {
-	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time) (storage.DailyCosts, error)
+	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
 	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error)
 	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyUsageMetric, error)
 }
@@ -66,7 +66,8 @@ func (s *Server) GetMeta(w http.ResponseWriter, _ *http.Request) {
 
 // GetDailyCosts implements GET /api/v1/costs/daily. Invalid date
 // parameters never reach it: the generated binding wrapper rejects them
-// with a 400 before the handler runs.
+// with a 400 before the handler runs. Invalid groupBy values bind as
+// strings, so this handler validates that enum explicitly.
 func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams) {
 	var start, end time.Time // zero = unbounded
 	if params.Start != nil {
@@ -75,8 +76,23 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 	if params.End != nil {
 		end = params.End.Time
 	}
+	groupBy := storage.GroupByService
+	if params.GroupBy != nil {
+		if !params.GroupBy.Valid() {
+			http.Error(w, "invalid groupBy value", http.StatusBadRequest)
+			return
+		}
+		switch *params.GroupBy {
+		case Provider:
+			groupBy = storage.GroupByProvider
+		case Service:
+			groupBy = storage.GroupByService
+		default:
+			groupBy = storage.GroupByService
+		}
+	}
 
-	daily, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end)
+	daily, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, groupBy)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return

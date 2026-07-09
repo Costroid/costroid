@@ -46,8 +46,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Daily cost by service
-         * @description Total daily BilledCost per service, plus per-day and period totals. Ordering is deterministic: days ascending, services sorted by name. Costs are decimal strings — never floats — so no precision is lost.
+         * Daily cost by service or provider
+         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName. Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost.
          */
         get: operations["getDailyCosts"];
         put?: never;
@@ -145,12 +145,12 @@ export interface components {
              * @example 4.6809
              */
             total: string;
-            /** @description Per-service costs, sorted by service name. */
+            /** @description Per-group costs, sorted by grouping key. */
             services: components["schemas"]["ServiceCost"][];
         };
         ServiceCost: {
             /**
-             * @description FOCUS ServiceName.
+             * @description Grouping key: FOCUS ServiceName when groupBy=service, or FOCUS ServiceProviderName when groupBy=provider.
              * @example Amazon Elastic Compute Cloud
              */
             serviceName: string;
@@ -272,6 +272,8 @@ export interface operations {
                 start?: string;
                 /** @description Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data. */
                 end?: string;
+                /** @description Cost grouping dimension. */
+                groupBy?: "service" | "provider";
             };
             header?: never;
             path?: never;
@@ -279,7 +281,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Daily costs grouped by service for the requested period. */
+            /** @description Daily costs grouped by the requested dimension for the requested period. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -288,7 +290,7 @@ export interface operations {
                     "application/json": components["schemas"]["DailyCosts"];
                 };
             };
-            /** @description Invalid start or end date. */
+            /** @description Invalid start date, end date, or groupBy value. */
             400: {
                 headers: {
                     [name: string]: unknown;

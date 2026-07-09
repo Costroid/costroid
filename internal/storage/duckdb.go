@@ -236,7 +236,7 @@ func insertRecordArgs(batch Batch, r *focus.CostRecord) []any {
 }
 
 // DailyCostsByService implements Store.
-func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, end time.Time) (DailyCosts, error) {
+func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, groupBy ...CostGroupBy) (DailyCosts, error) {
 	where := "WHERE x_tenant_id = ?"
 	args := []any{tenant}
 	if !start.IsZero() {
@@ -272,12 +272,26 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 		return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
 	}
 
-	// Deterministic ordering: days ascending, then service name ascending.
+	selectedGroup := GroupByService
+	if len(groupBy) > 0 {
+		selectedGroup = groupBy[0]
+	}
+	var groupColumn string
+	switch selectedGroup {
+	case GroupByService:
+		groupColumn = "service_name"
+	case GroupByProvider:
+		groupColumn = "service_provider_name"
+	default:
+		groupColumn = "service_name"
+	}
+
+	// Deterministic ordering: days ascending, then grouping key ascending.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT CAST(charge_period_start AS DATE) AS day, service_name, SUM(billed_cost)
+		`SELECT CAST(charge_period_start AS DATE) AS day, `+groupColumn+` AS cost_group, SUM(billed_cost)
 		 FROM cost_records `+where+`
-		 GROUP BY day, service_name
-		 ORDER BY day ASC, service_name ASC`, args...)
+		 GROUP BY day, cost_group
+		 ORDER BY day ASC, cost_group ASC`, args...)
 	if err != nil {
 		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)
 	}

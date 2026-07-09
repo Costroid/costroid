@@ -2,7 +2,13 @@
 // Copyright 2026 The Costroid Authors
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import DailyCosts from "./DailyCosts";
 import type { components } from "./api/schema";
 
@@ -46,6 +52,10 @@ function renderChart(costs: DailyCostsResponse): ReturnType<typeof render> {
     vi.fn(() => Promise.resolve(fakeResponse(200, costs))),
   );
   return render(<DailyCosts />);
+}
+
+function fetchedURLs(): string[] {
+  return vi.mocked(fetch).mock.calls.map(([input]) => String(input));
 }
 
 describe("DailyCosts", () => {
@@ -122,6 +132,109 @@ describe("DailyCosts", () => {
     expect(fetch).toHaveBeenCalledWith(
       "/api/v1/costs/daily?start=2026-05-01&end=2026-05-31",
       expect.anything(),
+    );
+  });
+
+  it("refetches and renders daily costs grouped by provider", async () => {
+    const serviceCosts: DailyCostsResponse = {
+      currency: "USD",
+      total: "1.00",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "1.00",
+          services: [{ serviceName: "AWS Lambda", cost: "1.00" }],
+        },
+      ],
+    };
+    const providerCosts: DailyCostsResponse = {
+      currency: "USD",
+      total: "1.333333333333333334",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "1.333333333333333334",
+          services: [
+            {
+              serviceName: "Amazon Web Services",
+              cost: "1.000000000000000001",
+            },
+            { serviceName: "OpenAI", cost: "0.333333333333333333" },
+          ],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          fakeResponse(
+            200,
+            String(input).includes("groupBy=provider")
+              ? providerCosts
+              : serviceCosts,
+          ),
+        ),
+      ),
+    );
+
+    const { container } = render(<DailyCosts />);
+
+    expect((await screen.findAllByText("AWS Lambda")).length).toBeGreaterThan(
+      0,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Provider" }));
+
+    expect(
+      await screen.findByRole("img", {
+        name: "Stacked daily cost by provider",
+      }),
+    ).toBeTruthy();
+    expect(
+      (await screen.findAllByText("Amazon Web Services")).length,
+    ).toBeGreaterThan(0);
+    expect((await screen.findAllByText("OpenAI")).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText("0.333333333333333333")).length,
+    ).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".viz-legend li")).toHaveLength(2);
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain("/api/v1/costs/daily?groupBy=provider"),
+    );
+    expect(fetchedURLs()).toContain("/api/v1/costs/daily");
+  });
+
+  it("appends provider grouping after the range query", async () => {
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      total: "1.00",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "1.00",
+          services: [{ serviceName: "Amazon Web Services", cost: "1.00" }],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, costs))),
+    );
+
+    render(<DailyCosts range={{ start: "2026-05-01", end: "2026-05-31" }} />);
+
+    expect(
+      (await screen.findAllByText("Amazon Web Services")).length,
+    ).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Provider" }));
+
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/daily?start=2026-05-01&end=2026-05-31&groupBy=provider",
+      ),
+    );
+    expect(fetchedURLs()).toContain(
+      "/api/v1/costs/daily?start=2026-05-01&end=2026-05-31",
     );
   });
 

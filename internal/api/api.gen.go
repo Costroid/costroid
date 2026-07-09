@@ -14,12 +14,30 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for GetDailyCostsParamsGroupBy.
+const (
+	Provider GetDailyCostsParamsGroupBy = "provider"
+	Service  GetDailyCostsParamsGroupBy = "service"
+)
+
+// Valid indicates whether the value is a known member of the GetDailyCostsParamsGroupBy enum.
+func (e GetDailyCostsParamsGroupBy) Valid() bool {
+	switch e {
+	case Provider:
+		return true
+	case Service:
+		return true
+	default:
+		return false
+	}
+}
+
 // DailyCost defines model for DailyCost.
 type DailyCost struct {
 	// Date The UTC calendar day.
 	Date openapi_types.Date `json:"date"`
 
-	// Services Per-service costs, sorted by service name.
+	// Services Per-group costs, sorted by grouping key.
 	Services []ServiceCost `json:"services"`
 
 	// Total Total cost of the day, as a decimal string.
@@ -91,7 +109,7 @@ type ServiceCost struct {
 	// Cost Cost total, as a decimal string.
 	Cost string `json:"cost"`
 
-	// ServiceName FOCUS ServiceName.
+	// ServiceName Grouping key: FOCUS ServiceName when groupBy=service, or FOCUS ServiceProviderName when groupBy=provider.
 	ServiceName string `json:"serviceName"`
 }
 
@@ -102,7 +120,13 @@ type GetDailyCostsParams struct {
 
 	// End Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data.
 	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+
+	// GroupBy Cost grouping dimension.
+	GroupBy *GetDailyCostsParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
 }
+
+// GetDailyCostsParamsGroupBy defines parameters for GetDailyCosts.
+type GetDailyCostsParamsGroupBy string
 
 // GetDailyUsageMetricsParams defines parameters for GetDailyUsageMetrics.
 type GetDailyUsageMetricsParams struct {
@@ -124,7 +148,7 @@ type GetDailyTokensParams struct {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Daily cost by service
+	// Daily cost by service or provider
 	// (GET /api/v1/costs/daily)
 	GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams)
 	// Instance metadata
@@ -181,6 +205,19 @@ func (siw *ServerInterfaceWrapper) GetDailyCosts(w http.ResponseWriter, r *http.
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "groupBy" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "groupBy", r.URL.Query(), &params.GroupBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
 		}
 		return
 	}

@@ -169,6 +169,85 @@ func TestReplaceIngestBatchAndDailyCosts(t *testing.T) {
 	}
 }
 
+func TestDailyCostsByServiceGroupsByProviderExactly(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	withProvider := func(r focus.CostRecord, provider string) focus.CostRecord {
+		r.ServiceProviderName = provider
+		r.HostProviderName = provider
+		r.InvoiceIssuerName = provider
+		return r
+	}
+
+	batch := Batch{
+		Connector:      "multi-source",
+		SourceIdentity: "provider-exactness",
+		ContentHash:    "sha256:provider",
+		TenantID:       focus.DefaultTenant,
+	}
+	records := []focus.CostRecord{
+		withProvider(testRecord(t, "GPT-4o input tokens", day(1), "0.111111111111111111"), "OpenAI"),
+		withProvider(testRecord(t, "GPT-4o output tokens", day(1), "0.222222222222222222"), "OpenAI"),
+		withProvider(testRecord(t, "Amazon Elastic Compute Cloud", day(1), "1.000000000000000001"), "Amazon Web Services"),
+	}
+	if _, err := store.ReplaceIngestBatch(ctx, batch, records); err != nil {
+		t.Fatalf("ReplaceIngestBatch: %v", err)
+	}
+
+	noArg, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyCostsByService(no arg): %v", err)
+	}
+	wantService := DailyCosts{Currency: "USD", Days: []DayCosts{
+		{Date: day(1), Services: []ServiceCost{
+			{ServiceName: "Amazon Elastic Compute Cloud", Cost: dec(t, "1.000000000000000001")},
+			{ServiceName: "GPT-4o input tokens", Cost: dec(t, "0.111111111111111111")},
+			{ServiceName: "GPT-4o output tokens", Cost: dec(t, "0.222222222222222222")},
+		}},
+	}}
+	assertDailyCosts(t, noArg, wantService)
+
+	byService, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, GroupByService)
+	if err != nil {
+		t.Fatalf("DailyCostsByService(GroupByService): %v", err)
+	}
+	assertDailyCosts(t, byService, wantService)
+
+	byProvider, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, GroupByProvider)
+	if err != nil {
+		t.Fatalf("DailyCostsByService(GroupByProvider): %v", err)
+	}
+	wantProvider := DailyCosts{Currency: "USD", Days: []DayCosts{
+		{Date: day(1), Services: []ServiceCost{
+			{ServiceName: "Amazon Web Services", Cost: dec(t, "1.000000000000000001")},
+			{ServiceName: "OpenAI", Cost: dec(t, "0.333333333333333333")},
+		}},
+	}}
+	assertDailyCosts(t, byProvider, wantProvider)
+	if got := byProvider.Days[0].Services[1].Cost.String(); got != "0.333333333333333333" {
+		t.Fatalf("OpenAI provider sum = %s, want exact 0.333333333333333333", got)
+	}
+
+	eur := withProvider(testRecord(t, "Azure Functions", day(1), "0.50"), "Microsoft")
+	eur.BillingCurrency = "EUR"
+	if _, err := store.ReplaceIngestBatch(ctx, Batch{
+		Connector:      "azure-focus",
+		SourceIdentity: "provider-currency-mix",
+		ContentHash:    "sha256:eur",
+		TenantID:       focus.DefaultTenant,
+	}, []focus.CostRecord{eur}); err != nil {
+		t.Fatalf("ReplaceIngestBatch(EUR): %v", err)
+	}
+	if _, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, GroupByProvider); err == nil || !strings.Contains(err.Error(), "mix billing currencies") {
+		t.Fatalf("DailyCostsByService(GroupByProvider) currency mix error = %v, want mixed-currency guard", err)
+	}
+}
+
 func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, t.TempDir())

@@ -24,6 +24,7 @@ type fakeStore struct {
 	gotTenant  string
 	gotStart   time.Time
 	gotEnd     time.Time
+	gotGroupBy storage.CostGroupBy
 	queryCount int
 
 	// token-usage query recording, kept separate from the cost fields.
@@ -41,8 +42,12 @@ type fakeStore struct {
 	usageQueryCount int
 }
 
-func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time) (storage.DailyCosts, error) {
+func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error) {
 	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
+	f.gotGroupBy = storage.GroupByService
+	if len(groupBy) > 0 {
+		f.gotGroupBy = groupBy[0]
+	}
 	f.queryCount++
 	return f.daily, nil
 }
@@ -223,6 +228,9 @@ func TestGetDailyCosts(t *testing.T) {
 	if !store.gotStart.IsZero() || !store.gotEnd.IsZero() {
 		t.Errorf("default range = [%s, %s], want unbounded (zero times)", store.gotStart, store.gotEnd)
 	}
+	if store.gotGroupBy != storage.GroupByService {
+		t.Errorf("default groupBy = %v, want GroupByService", store.gotGroupBy)
+	}
 
 	var got DailyCosts
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -246,6 +254,66 @@ func TestGetDailyCosts(t *testing.T) {
 	}
 	if got.Days[1].Total != "0.1896" {
 		t.Errorf("day 1 total = %q, want 0.1896", got.Days[1].Total)
+	}
+}
+
+func TestGetDailyCostsGroupByParam(t *testing.T) {
+	tests := []struct {
+		name        string
+		query       string
+		wantStatus  int
+		wantGroupBy storage.CostGroupBy
+		wantQuery   bool
+	}{
+		{
+			name:        "absent defaults to service",
+			query:       "",
+			wantStatus:  http.StatusOK,
+			wantGroupBy: storage.GroupByService,
+			wantQuery:   true,
+		},
+		{
+			name:        "service propagates service",
+			query:       "?groupBy=service",
+			wantStatus:  http.StatusOK,
+			wantGroupBy: storage.GroupByService,
+			wantQuery:   true,
+		},
+		{
+			name:        "provider propagates provider",
+			query:       "?groupBy=provider",
+			wantStatus:  http.StatusOK,
+			wantGroupBy: storage.GroupByProvider,
+			wantQuery:   true,
+		},
+		{
+			name:       "bogus is rejected",
+			query:      "?groupBy=bogus",
+			wantStatus: http.StatusBadRequest,
+			wantQuery:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{}
+			handler := NewHandler("0.1.0-test", testStatic(), store)
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily"+tt.query, nil))
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body)
+			}
+			if tt.wantQuery {
+				if store.queryCount != 1 {
+					t.Fatalf("store query count = %d, want 1", store.queryCount)
+				}
+				if store.gotGroupBy != tt.wantGroupBy {
+					t.Errorf("groupBy = %v, want %v", store.gotGroupBy, tt.wantGroupBy)
+				}
+			} else if store.queryCount != 0 {
+				t.Fatalf("store query count = %d, want 0", store.queryCount)
+			}
+		})
 	}
 }
 

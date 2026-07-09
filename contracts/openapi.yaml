@@ -38,12 +38,13 @@ paths:
   /api/v1/costs/daily:
     get:
       operationId: getDailyCosts
-      summary: Daily cost by service
+      summary: Daily cost by service or provider
       description: >-
-        Total daily BilledCost per service, plus per-day and period
-        totals. Ordering is deterministic: days ascending, services
-        sorted by name. Costs are decimal strings — never floats — so no
-        precision is lost.
+        Total daily BilledCost per selected grouping key, plus per-day
+        and period totals. groupBy=service uses FOCUS ServiceName;
+        groupBy=provider uses FOCUS ServiceProviderName. Ordering is
+        deterministic: days ascending, keys sorted by name. Costs are
+        decimal strings — never floats — so no precision is lost.
       parameters:
         - name: start
           in: query
@@ -61,15 +62,24 @@ paths:
           schema:
             type: string
             format: date
+        - name: groupBy
+          in: query
+          description: Cost grouping dimension.
+          schema:
+            type: string
+            enum:
+              - service
+              - provider
+            default: service
       responses:
         "200":
-          description: Daily costs grouped by service for the requested period.
+          description: Daily costs grouped by the requested dimension for the requested period.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/DailyCosts"
         "400":
-          description: Invalid start or end date.
+          description: Invalid start date, end date, or groupBy value.
           content:
             text/plain:
               schema:
@@ -233,7 +243,7 @@ components:
           example: "4.6809"
         services:
           type: array
-          description: Per-service costs, sorted by service name.
+          description: Per-group costs, sorted by grouping key.
           items:
             $ref: "#/components/schemas/ServiceCost"
     ServiceCost:
@@ -244,7 +254,9 @@ components:
       properties:
         serviceName:
           type: string
-          description: FOCUS ServiceName.
+          description: >-
+            Grouping key: FOCUS ServiceName when groupBy=service, or
+            FOCUS ServiceProviderName when groupBy=provider.
           example: Amazon Elastic Compute Cloud
         cost:
           type: string

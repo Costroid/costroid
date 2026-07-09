@@ -36,6 +36,16 @@ import (
 // time — the store never rounds silently (exactness invariant).
 const MaxDecimalScale = 18
 
+// CostGroupBy selects the FOCUS dimension used by DailyCostsByService.
+type CostGroupBy int
+
+const (
+	// GroupByService groups daily costs by FOCUS ServiceName.
+	GroupByService CostGroupBy = iota
+	// GroupByProvider groups daily costs by FOCUS ServiceProviderName.
+	GroupByProvider
+)
+
 // Store is the storage interface (decision D5). It is deliberately sized
 // to the current slice and grows per-slice — new query and lifecycle
 // methods are added as features need them, never speculatively.
@@ -50,10 +60,11 @@ type Store interface {
 	ReplaceIngestBatch(ctx context.Context, batch Batch, records []focus.CostRecord) (ReplaceResult, error)
 
 	// DailyCostsByService returns, for one tenant, the total BilledCost
-	// per UTC calendar day (of ChargePeriodStart) per ServiceName,
-	// ordered days-ascending then service-name-ascending. A zero start
-	// or end means unbounded on that side; a non-zero bound is an
-	// inclusive calendar-day bound.
+	// per UTC calendar day (of ChargePeriodStart) per grouping key:
+	// ServiceName by default, or ServiceProviderName when GroupByProvider
+	// is passed. Results are ordered days-ascending then key-ascending. A
+	// zero start or end means unbounded on that side; a non-zero bound is
+	// an inclusive calendar-day bound.
 	//
 	// Time-series aggregation is by ChargePeriod, not BillingPeriod
 	// (decision D26c): FOCUS correction rows (ChargeClass="Correction")
@@ -62,7 +73,7 @@ type Store interface {
 	// correction retroactively adjusts the corrected days. Cost history
 	// legitimately changes when providers issue corrections — this is
 	// intended, documented, and tested behavior.
-	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time) (DailyCosts, error)
+	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, groupBy ...CostGroupBy) (DailyCosts, error)
 
 	// DailyTokensByService returns, for one tenant, the total
 	// ConsumedQuantity per UTC calendar day (of ChargePeriodStart) per
@@ -270,16 +281,18 @@ type DailyCosts struct {
 	Days []DayCosts
 }
 
-// DayCosts is one calendar day of per-service costs.
+// DayCosts is one calendar day of costs by grouping key.
 type DayCosts struct {
 	// Date is the UTC midnight of the calendar day.
 	Date time.Time
-	// Services holds per-service BilledCost totals, service-name-ascending.
+	// Services holds BilledCost totals by grouping key, key-ascending.
 	Services []ServiceCost
 }
 
-// ServiceCost is the cost total of one service on one day.
+// ServiceCost is the cost total of one grouping key on one day.
 type ServiceCost struct {
+	// ServiceName carries the grouping key: FOCUS ServiceName by default,
+	// or FOCUS ServiceProviderName when GroupByProvider is requested.
 	ServiceName string
 	Cost        decimal.Decimal
 }

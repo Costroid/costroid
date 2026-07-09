@@ -23,12 +23,20 @@ type CostsState =
   | { status: "error"; message: string }
   | { status: "ready"; costs: DailyCosts };
 
+type CostGroupBy = "service" | "provider";
+
+const GROUP_BY_OPTIONS: { id: CostGroupBy; label: string }[] = [
+  { id: "service", label: "Service" },
+  { id: "provider", label: "Provider" },
+];
+
 export default function DailyCosts({
   range = { start: "", end: "" },
 }: {
   range?: Range;
 }) {
   const [state, setState] = useState<CostsState>({ status: "loading" });
+  const [groupBy, setGroupBy] = useState<CostGroupBy>("service");
   const { start, end } = range;
 
   useEffect(() => {
@@ -36,7 +44,10 @@ export default function DailyCosts({
 
     async function load() {
       try {
-        const url = `/api/v1/costs/daily${rangeQuery(start, end)}`;
+        const q = rangeQuery(start, end);
+        const url =
+          `/api/v1/costs/daily${q}` +
+          (groupBy === "provider" ? `${q ? "&" : "?"}groupBy=provider` : "");
         const res = await fetch(url, {
           signal: controller.signal,
         });
@@ -61,11 +72,30 @@ export default function DailyCosts({
 
     void load();
     return () => controller.abort();
-  }, [start, end]);
+  }, [start, end, groupBy]);
+
+  const groupLabel = groupBy === "provider" ? "provider" : "service";
 
   return (
     <section>
-      <h2>Daily cost by service</h2>
+      <h2>Daily cost by {groupLabel}</h2>
+      <div
+        className="cost-group-control"
+        role="group"
+        aria-label="Group costs by"
+      >
+        <span>Group by:</span>
+        {GROUP_BY_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={groupBy === option.id}
+            onClick={() => setGroupBy(option.id)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       {state.status === "loading" && <p>Loading daily costs…</p>}
       {state.status === "error" && (
         <p role="alert">Failed to load daily costs: {state.message}</p>
@@ -74,7 +104,7 @@ export default function DailyCosts({
         (state.costs.days.length === 0 ? (
           <EmptyState />
         ) : (
-          <Chart costs={state.costs} />
+          <Chart costs={state.costs} groupBy={groupBy} />
         ))}
     </section>
   );
@@ -99,8 +129,15 @@ function EmptyState() {
   );
 }
 
-function Chart({ costs }: { costs: DailyCosts }) {
-  const services = [
+function Chart({
+  costs,
+  groupBy,
+}: {
+  costs: DailyCosts;
+  groupBy: CostGroupBy;
+}) {
+  const groupLabel = groupBy === "provider" ? "provider" : "service";
+  const groups = [
     ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.serviceName))),
   ].sort();
 
@@ -135,7 +172,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="img"
-        aria-label="Stacked daily cost by service"
+        aria-label={`Stacked daily cost by ${groupLabel}`}
         className="viz-chart"
       >
         {ticks.map((tick) => (
@@ -213,7 +250,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
         })}
       </svg>
       <ul className="viz-legend">
-        {services.map((name) => (
+        {groups.map((name) => (
           <li key={name}>
             <span
               className="viz-swatch"
@@ -229,7 +266,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
           <thead>
             <tr>
               <th scope="col">Date</th>
-              {services.map((name) => (
+              {groups.map((name) => (
                 <th scope="col" key={name}>
                   {name}
                 </th>
@@ -241,7 +278,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
             {costs.days.map((day) => (
               <tr key={day.date}>
                 <th scope="row">{day.date}</th>
-                {services.map((name) => (
+                {groups.map((name) => (
                   <td key={name}>
                     {day.services.find((s) => s.serviceName === name)?.cost ??
                       "—"}
