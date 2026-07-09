@@ -132,7 +132,6 @@ dd {
   padding: 0.35rem 0.75rem;
 }
 
-.view-nav button[aria-selected="true"],
 .view-nav button[aria-current="page"] {
   background: color-mix(in srgb, currentColor 10%, transparent);
   border-color: var(--viz-ink-secondary);

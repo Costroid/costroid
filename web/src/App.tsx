@@ -24,6 +24,19 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "usage", label: "Usage" },
 ];
 
+function rangeIndicator(range: Range): string {
+  if (range.start === "" && range.end === "") {
+    return "Showing all time";
+  }
+  if (range.start !== "" && range.end !== "") {
+    return `Showing ${range.start} → ${range.end}`;
+  }
+  if (range.start !== "") {
+    return `Showing from ${range.start}`;
+  }
+  return `Showing through ${range.end}`;
+}
+
 export default function App() {
   const [state, setState] = useState<MetaState>({ status: "loading" });
   const [view, setView] = useState<View>("costs");
@@ -74,10 +87,8 @@ export default function App() {
       )}
       <div className="range-bar">
         <DateRangeControl range={range} onChange={setRange} />
-        <p className="range-indicator">
-          {range.start === "" && range.end === ""
-            ? "Showing all time"
-            : `Showing ${range.start} → ${range.end}`}
+        <p className="range-indicator" aria-live="polite">
+          {rangeIndicator(range)}
         </p>
       </div>
       <nav aria-label="Dashboard views">

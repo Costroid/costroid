@@ -183,55 +183,56 @@ function MetricsTables({ rows }: { rows: DailyUsageMetric[] }) {
 
   return (
     <div>
-      {sections.map((section) => (
-        <div key={section.unit} className="usage-metrics-unit">
-          <h3>{section.unit}</h3>
-          <div className="viz-table">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Service</th>
-                  <th scope="col">Tier</th>
-                  <th scope="col">Metric</th>
-                  {section.dates.map((date) => (
-                    <th scope="col" key={date}>
-                      {date}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {section.series.map((s) => {
-                  const sk = seriesKey(s);
-                  const byDate = section.cells.get(sk);
-                  return (
-                    <tr key={sk}>
-                      <th scope="row">{s.serviceName}</th>
-                      <td>{s.serviceTier === "" ? "—" : s.serviceTier}</td>
-                      <td>{s.metricName}</td>
-                      {section.dates.map((date) => (
-                        <td key={date}>{byDate?.get(date) ?? "—"}</td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-              {sectionTotal(section) !== null && (
-                <tfoot>
+      {sections.map((section) => {
+        const total = sectionTotal(section);
+        return (
+          <div key={section.unit} className="usage-metrics-unit">
+            <h3>{section.unit}</h3>
+            <div className="viz-table">
+              <table>
+                <thead>
                   <tr>
-                    <th scope="row" colSpan={3}>
-                      Range total
-                    </th>
-                    <td colSpan={section.dates.length}>
-                      {sectionTotal(section)}
-                    </td>
+                    <th scope="col">Service</th>
+                    <th scope="col">Tier</th>
+                    <th scope="col">Metric</th>
+                    {section.dates.map((date) => (
+                      <th scope="col" key={date}>
+                        {date}
+                      </th>
+                    ))}
                   </tr>
-                </tfoot>
-              )}
-            </table>
+                </thead>
+                <tbody>
+                  {section.series.map((s) => {
+                    const sk = seriesKey(s);
+                    const byDate = section.cells.get(sk);
+                    return (
+                      <tr key={sk}>
+                        <th scope="row">{s.serviceName}</th>
+                        <td>{s.serviceTier === "" ? "—" : s.serviceTier}</td>
+                        <td>{s.metricName}</td>
+                        {section.dates.map((date) => (
+                          <td key={date}>{byDate?.get(date) ?? "—"}</td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {total !== null && (
+                  <tfoot>
+                    <tr>
+                      <th scope="row" colSpan={3}>
+                        Range total
+                      </th>
+                      <td colSpan={section.dates.length}>{total}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

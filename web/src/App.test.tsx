@@ -142,6 +142,11 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText(/start date/i), {
       target: { value: "2026-05-01" },
     });
+    expect(await screen.findByText("Showing from 2026-05-01")).toBeTruthy();
+    expect(
+      screen.getByText("Showing from 2026-05-01").getAttribute("aria-live"),
+    ).toBe("polite");
+
     fireEvent.change(screen.getByLabelText(/end date/i), {
       target: { value: "2026-05-31" },
     });
@@ -166,5 +171,20 @@ describe("App", () => {
         expect.anything(),
       ),
     );
+  });
+
+  it("renders an end-only range indicator without a dangling arrow", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Daily cost by service" });
+
+    fireEvent.change(screen.getByLabelText(/end date/i), {
+      target: { value: "2026-05-31" },
+    });
+
+    expect(await screen.findByText("Showing through 2026-05-31")).toBeTruthy();
+    expect(screen.queryByText("Showing  → 2026-05-31")).toBeNull();
   });
 });
