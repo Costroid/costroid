@@ -1243,6 +1243,163 @@ func storedConsumedQuantity(t *testing.T, tenant, connector, skuID string) decim
 	return decimal.Decimal{}
 }
 
+// TestOfflineE2EAllocation is the hermetic end-to-end proof for query-time cost
+// allocation: it ingests the AWS FOCUS sample, serves the API in-process (never
+// `costroid serve`, which blocks on signals), and asserts groupBy=allocation
+// returns exact per-label money incl. Unallocated summing to the fixture grand
+// total; that overwriting the rules file changes the grouping WITHOUT a restart
+// (per-request read); that a missing rules file returns the exact 400 body; and
+// that groupBy=service still works and is keyed by "key".
+func TestOfflineE2EAllocation(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	var transcript strings.Builder
+
+	// Seed the already-existing AWS FOCUS 1.2 sample (ingest opens and releases
+	// the single-writer store before we open it below).
+	if out, err := runCLI([]string{"ingest", "--connector", "aws-focus", "--path", "../../testdata/aws-focus-1.2/sample-export.csv.gz"}, ""); err != nil {
+		t.Fatalf("ingest: %v\n%s", err, out)
+	}
+
+	rulesPath := filepath.Join(t.TempDir(), "allocation.json")
+	writeRules := func(content string) {
+		if err := os.WriteFile(rulesPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("writing rules: %v", err)
+		}
+	}
+	// Rules v1: one rule AND-combines a service_provider_name condition with a
+	// service_name starts_with; AWS Lambda gets its own rule; S3 is left for
+	// Unallocated.
+	writeRules(`{"dimensions":[{"name":"team","rules":[
+		{"label":"compute","match":[
+			{"dimension":"service_provider_name","operator":"equals","value":"AWS"},
+			{"dimension":"service_name","operator":"starts_with","value":"Amazon Elastic Compute Cloud"}
+		]},
+		{"label":"serverless","match":[{"dimension":"service_name","operator":"equals","value":"AWS Lambda"}]}
+	]}]}`)
+
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store, rulesPath)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	get := func(query string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/api/v1/costs/daily" + query)
+		if err != nil {
+			t.Fatalf("GET %s: %v", query, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	sumByKey := func(body string) map[string]decimal.Decimal {
+		t.Helper()
+		var resp struct {
+			Days []struct {
+				Services []struct {
+					Key  string `json:"key"`
+					Cost string `json:"cost"`
+				} `json:"services"`
+			} `json:"days"`
+		}
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			t.Fatalf("decoding %q: %v", body, err)
+		}
+		m := map[string]decimal.Decimal{}
+		for _, d := range resp.Days {
+			for _, s := range d.Services {
+				m[s.Key] = m[s.Key].Add(decimal.RequireFromString(s.Cost))
+			}
+		}
+		return m
+	}
+	assertKeySums := func(got map[string]decimal.Decimal, want map[string]string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("label set = %v, want keys for %v", got, want)
+		}
+		total := decimal.Zero
+		for k, w := range want {
+			g, ok := got[k]
+			if !ok {
+				t.Errorf("missing label %q", k)
+				continue
+			}
+			if g.String() != w {
+				t.Errorf("label %q = %s, want %s", k, g.String(), w)
+			}
+			total = total.Add(g)
+		}
+		// The labels sum to the fixture grand total (COUPLED to
+		// testdata/aws-focus-1.2: EC2 25.4016 + Lambda 1.3272 + S3 6.0375).
+		if total.String() != "32.7663" {
+			t.Errorf("label sum = %s, want fixture grand total 32.7663", total.String())
+		}
+	}
+
+	// --- allocation v1: exact money per label incl. Unallocated ---
+	code, body := get("?groupBy=allocation")
+	transcript.WriteString("# GET /api/v1/costs/daily?groupBy=allocation (rules v1)\n" + body + "\n")
+	if code != http.StatusOK {
+		t.Fatalf("allocation v1 status %d: %s", code, body)
+	}
+	// COUPLED to testdata/aws-focus-1.2 and rules v1 above.
+	assertKeySums(sumByKey(body), map[string]string{
+		"compute":     "25.4016",
+		"serverless":  "1.3272",
+		"Unallocated": "6.0375",
+	})
+
+	// --- live reload: overwrite the rules, re-GET the SAME handler ---
+	writeRules(`{"dimensions":[{"name":"team","rules":[
+		{"label":"object-storage","match":[{"dimension":"service_name","operator":"equals","value":"Amazon Simple Storage Service"}]}
+	]}]}`)
+	code, body = get("?groupBy=allocation")
+	transcript.WriteString("\n# GET /api/v1/costs/daily?groupBy=allocation (rules v2, live-reloaded, no restart)\n" + body + "\n")
+	if code != http.StatusOK {
+		t.Fatalf("allocation v2 status %d: %s", code, body)
+	}
+	// COUPLED to rules v2: only S3 matches; EC2+Lambda fall to Unallocated.
+	assertKeySums(sumByKey(body), map[string]string{
+		"object-storage": "6.0375",
+		"Unallocated":    "26.7288",
+	})
+
+	// --- groupBy=service still works and is keyed by "key" ---
+	code, body = get("?groupBy=service")
+	if code != http.StatusOK {
+		t.Fatalf("service status %d: %s", code, body)
+	}
+	if !strings.Contains(body, `"key":"Amazon Elastic Compute Cloud"`) {
+		t.Errorf("service path not keyed by 'key': %s", body)
+	}
+
+	// --- missing rules file → exact 400 body (separate handler, same store) ---
+	missing := filepath.Join(t.TempDir(), "nope.json")
+	missSrv := httptest.NewServer(api.NewHandler("e2e", fstest.MapFS{}, store, missing))
+	defer missSrv.Close()
+	resp, err := http.Get(missSrv.URL + "/api/v1/costs/daily?groupBy=allocation")
+	if err != nil {
+		t.Fatalf("GET missing: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	mb, _ := io.ReadAll(resp.Body)
+	transcript.WriteString("\n# GET ?groupBy=allocation against a missing rules file\n" + string(mb) + "\n")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing-file status %d: %s", resp.StatusCode, mb)
+	}
+	wantMiss := "allocation rules file not found: " + missing + " (create it, or start serve with --allocation-rules or set $COSTROID_ALLOCATION_RULES)"
+	if got := strings.TrimSpace(string(mb)); got != wantMiss {
+		t.Errorf("missing-file 400 body = %q, want %q", got, wantMiss)
+	}
+
+	t.Logf("\n===== OFFLINE E2E ALLOCATION TRANSCRIPT =====\n%s", transcript.String())
+}
+
 // dailyView opens the store and queries the daily-cost API for the default
 // tenant, returning the JSON body.
 func dailyView(t *testing.T) string {
@@ -1253,7 +1410,7 @@ func dailyView(t *testing.T) string {
 	}
 	defer func() { _ = store.Close() }()
 
-	handler := api.NewHandler("e2e", fstest.MapFS{}, store)
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store, "")
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
@@ -1277,8 +1434,8 @@ func dailyServiceCosts(t *testing.T, services ...string) decimal.Decimal {
 	var resp struct {
 		Days []struct {
 			Services []struct {
-				ServiceName string `json:"serviceName"`
-				Cost        string `json:"cost"`
+				Key  string `json:"key"`
+				Cost string `json:"cost"`
 			} `json:"services"`
 		} `json:"days"`
 	}
@@ -1292,7 +1449,7 @@ func dailyServiceCosts(t *testing.T, services ...string) decimal.Decimal {
 	sum := decimal.Zero
 	for _, d := range resp.Days {
 		for _, s := range d.Services {
-			if want[s.ServiceName] {
+			if want[s.Key] {
 				sum = sum.Add(decimal.RequireFromString(s.Cost))
 			}
 		}
@@ -1319,7 +1476,7 @@ func tokensView(t *testing.T) string {
 	}
 	defer func() { _ = store.Close() }()
 
-	handler := api.NewHandler("e2e", fstest.MapFS{}, store)
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store, "")
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
@@ -1356,7 +1513,7 @@ func usageMetricsView(t *testing.T) string {
 	}
 	defer func() { _ = store.Close() }()
 
-	handler := api.NewHandler("e2e", fstest.MapFS{}, store)
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store, "")
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 

@@ -430,3 +430,93 @@ func TestResolveAddr(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveAllocationRulesPath pins the allocation-rules path precedence
+// (flag > env > <config-dir>/costroid/allocation.json). Every subtest pins the
+// ambient environment so none reads the developer's real config dir.
+func TestResolveAllocationRulesPath(t *testing.T) {
+	t.Run("flag wins over env", func(t *testing.T) {
+		t.Setenv(allocationRulesEnvVar, "/env/rules.json")
+		if got := resolveAllocationRulesPath("/flag/rules.json"); got != "/flag/rules.json" {
+			t.Errorf("got %q, want the flag value", got)
+		}
+	})
+	t.Run("env used when flag empty", func(t *testing.T) {
+		t.Setenv(allocationRulesEnvVar, "/env/rules.json")
+		if got := resolveAllocationRulesPath(""); got != "/env/rules.json" {
+			t.Errorf("got %q, want the env value", got)
+		}
+	})
+	t.Run("default is under the config dir", func(t *testing.T) {
+		cfg := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", cfg)    // pin os.UserConfigDir()
+		t.Setenv(allocationRulesEnvVar, "") // and the env override
+		want := filepath.Join(cfg, "costroid", "allocation.json")
+		if got := resolveAllocationRulesPath(""); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
+// TestAllocationValidateCLI covers `costroid allocation validate`: a valid file
+// prints a one-line summary naming the dimension and rule count; an invalid file
+// and a missing file each exit non-zero with an actionable message. Every case
+// passes --rules explicitly, so none reads the developer's config dir or ambient
+// env.
+func TestAllocationValidateCLI(t *testing.T) {
+	writeRules := func(t *testing.T, content string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "allocation.json")
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatalf("writing rules file: %v", err)
+		}
+		return p
+	}
+
+	t.Run("valid file prints a summary", func(t *testing.T) {
+		rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[
+			{"label":"platform","match":[{"dimension":"service_name","operator":"starts_with","value":"Amazon EC2"}]},
+			{"label":"data","match":[{"dimension":"tag:env","operator":"equals","value":"prod"}]}
+		]}]}`)
+		out, err := runCLI([]string{"allocation", "validate", "--rules", rules}, "")
+		if err != nil {
+			t.Fatalf("allocation validate (valid): %v\n%s", err, out)
+		}
+		if !strings.Contains(out, `dimension "team"`) || !strings.Contains(out, "2 rule(s)") {
+			t.Errorf("summary = %q, want the dimension name and rule count", out)
+		}
+	})
+
+	t.Run("invalid file exits non-zero with an actionable message", func(t *testing.T) {
+		rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[{"label":"Unallocated","match":[{"dimension":"service_name","operator":"exists"}]}]}]}`)
+		_, err := runCLI([]string{"allocation", "validate", "--rules", rules}, "")
+		if err == nil {
+			t.Fatal("allocation validate (invalid) = nil error, want non-zero exit")
+		}
+		if !strings.Contains(err.Error(), "Unallocated") || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("error = %v, want the reserved-label message", err)
+		}
+	})
+
+	t.Run("missing file exits non-zero", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "nope.json")
+		if _, err := runCLI([]string{"allocation", "validate", "--rules", missing}, ""); err == nil {
+			t.Fatal("allocation validate (missing) = nil error, want non-zero exit")
+		}
+	})
+}
+
+// TestUsageDocumentsAllocation pins that the top-level usage/help text documents
+// both the serve --allocation-rules flag and the allocation subcommand (surfaced
+// via the no-command error that appends the usage string).
+func TestUsageDocumentsAllocation(t *testing.T) {
+	_, err := runCLI([]string{}, "")
+	if err == nil {
+		t.Fatal("no-command invocation should error with the usage text")
+	}
+	for _, want := range []string{"--allocation-rules", "allocation validate"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("top-level usage does not document %q: %v", want, err)
+		}
+	}
+}

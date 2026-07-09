@@ -38,13 +38,16 @@ paths:
   /api/v1/costs/daily:
     get:
       operationId: getDailyCosts
-      summary: Daily cost by service or provider
+      summary: Daily cost by service, provider, or allocation
       description: >-
         Total daily BilledCost per selected grouping key, plus per-day
         and period totals. groupBy=service uses FOCUS ServiceName;
-        groupBy=provider uses FOCUS ServiceProviderName. Ordering is
-        deterministic: days ascending, keys sorted by name. Costs are
-        decimal strings — never floats — so no precision is lost.
+        groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation
+        applies the query-time cost-allocation rules (virtual tagging) and
+        keys each cost by its allocation label, with cost matching no rule
+        under "Unallocated". Ordering is deterministic: days ascending, keys
+        sorted by name. Costs are decimal strings — never floats — so no
+        precision is lost.
       parameters:
         - name: start
           in: query
@@ -70,6 +73,7 @@ paths:
             enum:
               - service
               - provider
+              - allocation
             default: service
       responses:
         "200":
@@ -79,7 +83,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/DailyCosts"
         "400":
-          description: Invalid start date, end date, or groupBy value.
+          description: >-
+            Invalid start date, end date, or groupBy value; or
+            groupBy=allocation was requested but no allocation rules are
+            configured or the rules file was not found.
           content:
             text/plain:
               schema:
@@ -249,14 +256,16 @@ components:
     ServiceCost:
       type: object
       required:
-        - serviceName
+        - key
         - cost
       properties:
-        serviceName:
+        key:
           type: string
           description: >-
-            Grouping key: FOCUS ServiceName when groupBy=service, or
-            FOCUS ServiceProviderName when groupBy=provider.
+            Grouping key: FOCUS ServiceName (groupBy=service), FOCUS
+            ServiceProviderName (groupBy=provider), or the allocation label
+            (groupBy=allocation; cost matching no rule appears under
+            "Unallocated").
           example: Amazon Elastic Compute Cloud
         cost:
           type: string

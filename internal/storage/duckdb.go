@@ -17,6 +17,7 @@ import (
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/shopspring/decimal"
 
+	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/focus"
 )
 
@@ -316,6 +317,218 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 		}
 		last := &result.Days[len(result.Days)-1]
 		last.Services = append(last.Services, ServiceCost{ServiceName: service, Cost: cost})
+	}
+	if err := rows.Err(); err != nil {
+		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)
+	}
+	return result, nil
+}
+
+// allocationColumns maps each validated column dimension to its HARDCODED
+// cost_records column literal — the injection boundary for column operands: no
+// caller-supplied string ever reaches SQL as a column name. Its key set is
+// asserted SET-EQUAL to allocation.ColumnDimensions() by a storage test, so the
+// two closed sets can never drift. Tag dimensions ("tag:<key>") are handled
+// separately (the bare key is bound into json_extract_string), not through this
+// map.
+var allocationColumns = map[string]string{
+	"billing_account_id":    "billing_account_id",
+	"sub_account_id":        "sub_account_id",
+	"sub_account_name":      "sub_account_name",
+	"service_provider_name": "service_provider_name",
+	"service_name":          "service_name",
+	"service_category":      "service_category",
+	"service_subcategory":   "service_subcategory",
+	"charge_category":       "charge_category",
+	"charge_description":    "charge_description",
+	"region_id":             "region_id",
+	"region_name":           "region_name",
+	"resource_id":           "resource_id",
+	"resource_name":         "resource_name",
+	"resource_type":         "resource_type",
+	"sku_id":                "sku_id",
+}
+
+// allocationOperand returns the SQL operand for a condition dimension and any
+// bound args it carries. A column dimension resolves through the hardcoded
+// allocationColumns map (an unknown name is an error, never a fallback column);
+// a tag dimension compiles to json_extract_string(tags, ?) with the bare key
+// bound (keys containing ':' or '.' extract literally — verified).
+func allocationOperand(dimension string) (sql string, args []any, err error) {
+	if key, ok := allocation.TagKey(dimension); ok {
+		return "json_extract_string(tags, ?)", []any{key}, nil
+	}
+	col, ok := allocationColumns[dimension]
+	if !ok {
+		return "", nil, fmt.Errorf("unknown allocation dimension %q", dimension)
+	}
+	return col, nil, nil
+}
+
+// allocationCondition compiles one validated condition into a boolean SQL
+// fragment plus its bound args. Every rule-supplied string (match value, tag
+// key) is a parameter — never interpolated. It stays memory-safe on a
+// value-less operator by binding "" rather than dereferencing a nil pointer.
+func allocationCondition(c allocation.Condition) (string, []any, error) {
+	operand, args, err := allocationOperand(c.Dimension)
+	if err != nil {
+		return "", nil, err
+	}
+	_, isTag := allocation.TagKey(c.Dimension)
+
+	val := ""
+	if c.Value != nil {
+		val = *c.Value
+	}
+
+	switch c.Operator {
+	case allocation.OpEquals:
+		return operand + " = ?", append(args, val), nil
+	case allocation.OpContains:
+		// contains() takes a literal needle — a bound '%' matches literally, so
+		// there is no escaping to get wrong (deliberately not LIKE).
+		return "contains(" + operand + ", ?)", append(args, val), nil
+	case allocation.OpStartsWith:
+		return "starts_with(" + operand + ", ?)", append(args, val), nil
+	case allocation.OpOneOf:
+		placeholders := make([]string, len(c.Values))
+		for i, v := range c.Values {
+			placeholders[i] = "?"
+			args = append(args, v)
+		}
+		return operand + " IN (" + strings.Join(placeholders, ", ") + ")", args, nil
+	case allocation.OpExists:
+		if isTag {
+			// Present with a non-null JSON value: a tag stored as JSON null
+			// extracts SQL NULL and does NOT satisfy exists.
+			return operand + " IS NOT NULL", args, nil
+		}
+		return "(" + operand + " IS NOT NULL AND " + operand + " <> '')", nil, nil
+	default:
+		return "", nil, fmt.Errorf("unknown allocation operator %q", c.Operator)
+	}
+}
+
+// compileAllocationCase builds the grouping-key expression: a CASE mapping each
+// rule (top-down, first-match-wins) to its bound label, with an ELSE binding
+// the reserved Unallocated label. With zero rules a bare CASE has no WHEN arms
+// (a DuckDB parser error), so the degenerate form is CAST(? AS VARCHAR) binding
+// Unallocated — everything then groups under Unallocated. Args are returned in
+// SQL-text order for positional binding.
+func compileAllocationCase(dim allocation.Dimension) (string, []any, error) {
+	if len(dim.Rules) == 0 {
+		return "CAST(? AS VARCHAR)", []any{allocation.UnallocatedLabel}, nil
+	}
+	var b strings.Builder
+	var args []any
+	b.WriteString("CASE")
+	for _, rule := range dim.Rules {
+		b.WriteString(" WHEN ")
+		for i, cond := range rule.Match {
+			if i > 0 {
+				b.WriteString(" AND ")
+			}
+			sql, condArgs, err := allocationCondition(cond)
+			if err != nil {
+				return "", nil, err
+			}
+			b.WriteString(sql)
+			args = append(args, condArgs...)
+		}
+		b.WriteString(" THEN ?")
+		args = append(args, rule.Label)
+	}
+	b.WriteString(" ELSE ? END")
+	args = append(args, allocation.UnallocatedLabel)
+	return b.String(), args, nil
+}
+
+// DailyCostsByAllocation implements Store. It is the query-time cost-allocation
+// sibling of DailyCostsByService (decision D18b): the grouping key is a per-row
+// allocation LABEL from dim's ordered, first-match-wins rules, with unmatched
+// cost landing in allocation.UnallocatedLabel. Every rule-supplied string is a
+// BOUND parameter (never interpolated); its aggregation, tenant scoping, single
+// -currency guard, decimal exactness, and ordering mirror DailyCostsByService.
+func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension) (DailyCosts, error) {
+	where := "WHERE x_tenant_id = ?"
+	whereArgs := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		whereArgs = append(whereArgs, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		whereArgs = append(whereArgs, end.UTC().Format(time.DateOnly))
+	}
+
+	var result DailyCosts
+
+	// Single-currency guard, duplicated inline (deliberately NOT shared with
+	// DailyCostsByService, whose body stays byte-identical): mixed currencies
+	// cannot be summed without conversion. The message is byte-identical to the
+	// sibling's.
+	currencies, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT billing_currency FROM cost_records `+where+` ORDER BY billing_currency`, whereArgs...)
+	if err != nil {
+		return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+	}
+	defer func() { _ = currencies.Close() }()
+	for currencies.Next() {
+		var c string
+		if err := currencies.Scan(&c); err != nil {
+			return DailyCosts{}, fmt.Errorf("scanning billing currency: %w", err)
+		}
+		if result.Currency != "" && result.Currency != c {
+			return DailyCosts{}, fmt.Errorf("stored records mix billing currencies (%s, %s); currency conversion is not supported yet", result.Currency, c)
+		}
+		result.Currency = c
+	}
+	if err := currencies.Err(); err != nil {
+		return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+	}
+
+	caseExpr, caseArgs, err := compileAllocationCase(dim)
+	if err != nil {
+		return DailyCosts{}, fmt.Errorf("compiling allocation rules: %w", err)
+	}
+
+	// Placeholders bind POSITIONALLY in SQL-text order: the CASE (in the SELECT)
+	// precedes the WHERE, so CASE args go first, then the where args. GROUP BY /
+	// ORDER BY reference the CASE's ALIAS — textually repeating the
+	// placeholder-bearing CASE there is a binder error.
+	args := make([]any, 0, len(caseArgs)+len(whereArgs))
+	args = append(args, caseArgs...)
+	args = append(args, whereArgs...)
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT CAST(charge_period_start AS DATE) AS day, `+caseExpr+` AS cost_group, SUM(billed_cost)
+		 FROM cost_records `+where+`
+		 GROUP BY day, cost_group
+		 ORDER BY day ASC, cost_group ASC`, args...)
+	if err != nil {
+		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			day   time.Time
+			label string
+			sum   duckdb.Decimal
+		)
+		// DuckDB DECIMAL columns scan as duckdb.Decimal — scanning into float64
+		// would silently lose precision (decisions D23, D25).
+		if err := rows.Scan(&day, &label, &sum); err != nil {
+			return DailyCosts{}, fmt.Errorf("scanning daily cost row: %w", err)
+		}
+		cost := decimal.NewFromBigInt(sum.Value, -int32(sum.Scale)) //nolint:gosec // DuckDB DECIMAL scale is at most 38.
+		day = day.UTC()
+
+		if n := len(result.Days); n == 0 || !result.Days[n-1].Date.Equal(day) {
+			result.Days = append(result.Days, DayCosts{Date: day})
+		}
+		last := &result.Days[len(result.Days)-1]
+		last.Services = append(last.Services, ServiceCost{ServiceName: label, Cost: cost})
 	}
 	if err := rows.Err(); err != nil {
 		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)

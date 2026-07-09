@@ -15,10 +15,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/api"
 	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/focus"
@@ -39,7 +41,12 @@ var version = "0.1.0-dev"
 const usage = `usage: costroid <command> [flags]
 
 commands:
-  serve   serve the HTTP API and dashboard  (costroid serve [--addr host:port])
+  serve   serve the HTTP API and dashboard  (costroid serve [--addr host:port] [--allocation-rules <path>])
+  allocation  validate the query-time cost-allocation (virtual tagging) rules file
+          costroid allocation validate [--rules <path>]
+          (the rules path resolves from --rules, then $COSTROID_ALLOCATION_RULES,
+          then <config-dir>/costroid/allocation.json; reads only the JSON file —
+          no store, so it is safe to run while 'costroid serve' is running)
   credentials  manage the encrypted credential store (decision D32)
           costroid credentials init [--key-file <path>]
           costroid credentials set <name>     (reads the secret from stdin)
@@ -115,6 +122,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "serve":
 		return serve(args[1:])
+	case "allocation":
+		return allocationCmd(args[1:])
 	case "credentials":
 		return credentialsCmd(args[1:])
 	case "ingest":
@@ -122,6 +131,79 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q\n%s", args[0], usage)
 	}
+}
+
+// allocationRulesEnvVar carries the PATH to the allocation rules file (never
+// rule content), mirroring the credential key-file env-var convention (D32).
+const allocationRulesEnvVar = "COSTROID_ALLOCATION_RULES"
+
+// resolveAllocationRulesPath applies the allocation-rules path precedence: the
+// flag wins over $COSTROID_ALLOCATION_RULES, which wins over
+// os.UserConfigDir()/costroid/allocation.json (the credentials.key precedent,
+// D32). On an os.UserConfigDir() error it resolves to "" so serve still starts
+// (allocation requests then 400 as unconfigured) — the file's presence and
+// validity are checked per request, never at startup, so the file may appear or
+// be fixed while serving.
+func resolveAllocationRulesPath(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if env := os.Getenv(allocationRulesEnvVar); env != "" {
+		return env
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "costroid", "allocation.json")
+}
+
+const allocationUsage = `usage: costroid allocation <subcommand>
+
+subcommands:
+  validate [--rules <path>]  parse and validate the allocation rules file
+
+The rules path resolves from --rules, then $COSTROID_ALLOCATION_RULES (which
+carries the path, never rule content), then <config-dir>/costroid/allocation.json.
+validate reads only the JSON file — no store — so it is safe to run alongside
+'costroid serve'`
+
+// allocationCmd dispatches the query-time cost-allocation subcommands.
+func allocationCmd(args []string) error {
+	if len(args) == 0 {
+		return errors.New("missing allocation subcommand\n" + allocationUsage)
+	}
+	switch args[0] {
+	case "validate":
+		return allocationValidate(args[1:])
+	default:
+		return fmt.Errorf("unknown allocation subcommand %q\n%s", args[0], allocationUsage)
+	}
+}
+
+const allocationRulesFlagUsage = "allocation rules JSON path (overrides $COSTROID_ALLOCATION_RULES; default <config-dir>/costroid/allocation.json)"
+
+func allocationValidate(args []string) error {
+	flags := flag.NewFlagSet("allocation validate", flag.ContinueOnError)
+	rulesFlag := flags.String("rules", "", allocationRulesFlagUsage)
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	path := resolveAllocationRulesPath(*rulesFlag)
+	if path == "" {
+		return errors.New("no allocation rules path (pass --rules or set $COSTROID_ALLOCATION_RULES)")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err // actionable os error naming the path (e.g. no such file)
+	}
+	defer func() { _ = f.Close() }()
+	dim, err := allocation.Parse(f)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("allocation rules valid: dimension %q with %d rule(s)\n", dim.Name, len(dim.Rules))
+	return nil
 }
 
 const credentialsUsage = `usage: costroid credentials <subcommand>
@@ -309,10 +391,14 @@ func parseFlags(flags *flag.FlagSet, args []string) (stop bool, err error) {
 func serve(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addrFlag := flags.String("addr", "", `listen address (overrides $COSTROID_ADDR; default ":8080")`)
+	allocationRulesFlag := flags.String("allocation-rules", "", allocationRulesFlagUsage)
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return err
 	}
 	addr := resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))
+	// Resolve the allocation-rules path once at startup; the file itself is read
+	// per request (live-reload), so serve never fails on its state.
+	allocationRulesPath := resolveAllocationRulesPath(*allocationRulesFlag)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -325,7 +411,7 @@ func serve(args []string) error {
 
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: api.NewHandler(version, webdist.FS(), store),
+		Handler: api.NewHandler(version, webdist.FS(), store, allocationRulesPath),
 		// No blanket ReadTimeout: large ingest request bodies must be
 		// able to stream longer than any fixed limit.
 		ReadHeaderTimeout: 5 * time.Second,

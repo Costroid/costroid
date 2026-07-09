@@ -23,12 +23,21 @@ type CostsState =
   | { status: "error"; message: string }
   | { status: "ready"; costs: DailyCosts };
 
-type CostGroupBy = "service" | "provider";
+type CostGroupBy = "service" | "provider" | "allocation";
 
 const GROUP_BY_OPTIONS: { id: CostGroupBy; label: string }[] = [
   { id: "service", label: "Service" },
   { id: "provider", label: "Provider" },
+  { id: "allocation", label: "Allocation" },
 ];
+
+// groupLabelOf maps a grouping id to the lowercase heading/aria noun.
+function groupLabelOf(groupBy: CostGroupBy): string {
+  return (
+    GROUP_BY_OPTIONS.find((o) => o.id === groupBy)?.label.toLowerCase() ??
+    groupBy
+  );
+}
 
 export default function DailyCosts({
   range = { start: "", end: "" },
@@ -47,12 +56,18 @@ export default function DailyCosts({
         const q = rangeQuery(start, end);
         const url =
           `/api/v1/costs/daily${q}` +
-          (groupBy === "provider" ? `${q ? "&" : "?"}groupBy=provider` : "");
+          (groupBy !== "service" ? `${q ? "&" : "?"}groupBy=${groupBy}` : "");
         const res = await fetch(url, {
           signal: controller.signal,
         });
         if (!res.ok) {
-          throw new Error(`GET /api/v1/costs/daily returned ${res.status}`);
+          // Surface the server's message (e.g. the unconfigured-allocation
+          // 400 body) so the error state is actionable.
+          const body = (await res.text()).trim();
+          throw new Error(
+            `GET /api/v1/costs/daily returned ${res.status}` +
+              (body ? `: ${body}` : ""),
+          );
         }
         const costs = (await res.json()) as DailyCosts;
         if (controller.signal.aborted) {
@@ -74,7 +89,7 @@ export default function DailyCosts({
     return () => controller.abort();
   }, [start, end, groupBy]);
 
-  const groupLabel = groupBy === "provider" ? "provider" : "service";
+  const groupLabel = groupLabelOf(groupBy);
 
   return (
     <section>
@@ -136,9 +151,9 @@ function Chart({
   costs: DailyCosts;
   groupBy: CostGroupBy;
 }) {
-  const groupLabel = groupBy === "provider" ? "provider" : "service";
+  const groupLabel = groupLabelOf(groupBy);
   const groups = [
-    ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.serviceName))),
+    ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.key))),
   ].sort();
 
   // The stacked bars render positive costs only: FOCUS Credit/Adjustment
@@ -212,7 +227,7 @@ function Chart({
                 }
                 return (
                   <path
-                    key={svc.serviceName}
+                    key={svc.key}
                     d={segmentPath(
                       x,
                       segmentBottom - height + gap,
@@ -220,9 +235,9 @@ function Chart({
                       drawnHeight,
                       isTop,
                     )}
-                    fill={serviceColor(svc.serviceName)}
+                    fill={serviceColor(svc.key)}
                   >
-                    <title>{`${svc.serviceName}: ${svc.cost} ${costs.currency} (${day.date})`}</title>
+                    <title>{`${svc.key}: ${svc.cost} ${costs.currency} (${day.date})`}</title>
                   </path>
                 );
               })}
@@ -280,8 +295,7 @@ function Chart({
                 <th scope="row">{day.date}</th>
                 {groups.map((name) => (
                   <td key={name}>
-                    {day.services.find((s) => s.serviceName === name)?.cost ??
-                      "—"}
+                    {day.services.find((s) => s.key === name)?.cost ?? "—"}
                   </td>
                 ))}
                 <td>{day.total}</td>

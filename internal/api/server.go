@@ -8,14 +8,18 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/storage"
 )
@@ -30,6 +34,7 @@ const focusVersion = "1.4"
 // CostStore is the slice of the storage interface the API reads from.
 type CostStore interface {
 	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
+	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension) (storage.DailyCosts, error)
 	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error)
 	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyUsageMetric, error)
 }
@@ -38,14 +43,20 @@ type CostStore interface {
 type Server struct {
 	version string
 	store   CostStore
+	// allocationRulesPath is the resolved path to the query-time allocation
+	// rules JSON, or "" when unconfigured. The handler reads it per request
+	// (the live-reload semantic); the file's presence and validity surface as
+	// per-request 400/500, never at startup.
+	allocationRulesPath string
 }
 
 var _ ServerInterface = (*Server)(nil)
 
-// NewServer returns a Server reporting the given binary version and
-// querying the given store.
-func NewServer(version string, store CostStore) *Server {
-	return &Server{version: version, store: store}
+// NewServer returns a Server reporting the given binary version, querying the
+// given store, and reading allocation rules from allocationRulesPath ("" =
+// unconfigured).
+func NewServer(version string, store CostStore, allocationRulesPath string) *Server {
+	return &Server{version: version, store: store, allocationRulesPath: allocationRulesPath}
 }
 
 // GetHealthz implements GET /healthz.
@@ -67,7 +78,8 @@ func (s *Server) GetMeta(w http.ResponseWriter, _ *http.Request) {
 // GetDailyCosts implements GET /api/v1/costs/daily. Invalid date
 // parameters never reach it: the generated binding wrapper rejects them
 // with a 400 before the handler runs. Invalid groupBy values bind as
-// strings, so this handler validates that enum explicitly.
+// strings, so this handler validates that enum explicitly. groupBy=allocation
+// reads and applies the configured query-time allocation rules per request.
 func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams) {
 	var start, end time.Time // zero = unbounded
 	if params.Start != nil {
@@ -76,21 +88,28 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 	if params.End != nil {
 		end = params.End.Time
 	}
-	groupBy := storage.GroupByService
-	if params.GroupBy != nil {
-		if !params.GroupBy.Valid() {
-			http.Error(w, "invalid groupBy value", http.StatusBadRequest)
-			return
-		}
-		switch *params.GroupBy {
-		case Provider:
-			groupBy = storage.GroupByProvider
-		case Service:
-			groupBy = storage.GroupByService
-		}
+	if params.GroupBy != nil && !params.GroupBy.Valid() {
+		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
+		return
 	}
 
-	daily, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, groupBy)
+	var (
+		daily storage.DailyCosts
+		err   error
+	)
+	if params.GroupBy != nil && *params.GroupBy == Allocation {
+		dim, ok := s.loadAllocationDimension(w)
+		if !ok {
+			return // loadAllocationDimension already wrote the error response
+		}
+		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, start, end, dim)
+	} else {
+		groupBy := storage.GroupByService
+		if params.GroupBy != nil && *params.GroupBy == Provider {
+			groupBy = storage.GroupByProvider
+		}
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, groupBy)
+	}
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -108,8 +127,8 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		dayTotal := decimal.Zero
 		for _, svc := range day.Services {
 			entry.Services = append(entry.Services, ServiceCost{
-				ServiceName: svc.ServiceName,
-				Cost:        svc.Cost.String(),
+				Key:  svc.ServiceName,
+				Cost: svc.Cost.String(),
 			})
 			dayTotal = dayTotal.Add(svc.Cost)
 		}
@@ -119,6 +138,40 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 	}
 	resp.Total = grandTotal.String()
 	writeJSON(w, resp)
+}
+
+// loadAllocationDimension reads, parses, and validates the configured
+// allocation rules file PER REQUEST (the live-reload semantic — the file is
+// tiny). It writes the appropriate error response itself and returns ok=false
+// on any failure:
+//   - no path configured           → 400, the unconfigured message (reached in
+//     production only when os.UserConfigDir() itself errors, since serve then
+//     starts with an empty path rather than failing startup);
+//   - path set but file missing    → 400, naming the path with a create-it hint
+//     (the message a never-configured user sees);
+//   - unreadable/malformed/invalid → 500, "loading allocation rules: <err>".
+func (s *Server) loadAllocationDimension(w http.ResponseWriter) (allocation.Dimension, bool) {
+	if s.allocationRulesPath == "" {
+		http.Error(w, "no allocation rules configured (start serve with --allocation-rules or set $COSTROID_ALLOCATION_RULES)", http.StatusBadRequest)
+		return allocation.Dimension{}, false
+	}
+	f, err := os.Open(s.allocationRulesPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			http.Error(w, fmt.Sprintf("allocation rules file not found: %s (create it, or start serve with --allocation-rules or set $COSTROID_ALLOCATION_RULES)", s.allocationRulesPath), http.StatusBadRequest)
+			return allocation.Dimension{}, false
+		}
+		http.Error(w, "loading allocation rules: "+err.Error(), http.StatusInternalServerError)
+		return allocation.Dimension{}, false
+	}
+	defer func() { _ = f.Close() }()
+
+	dim, err := allocation.Parse(f)
+	if err != nil {
+		http.Error(w, "loading allocation rules: "+err.Error(), http.StatusInternalServerError)
+		return allocation.Dimension{}, false
+	}
+	return dim, true
 }
 
 // GetDailyTokens implements GET /api/v1/usage/tokens/daily. Invalid date
@@ -201,10 +254,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // NewHandler returns the root HTTP handler: the API routes from the
 // generated scaffolding plus the built dashboard served from static at /.
-func NewHandler(version string, static fs.FS, store CostStore) http.Handler {
+// allocationRulesPath ("" = unconfigured) is the query-time allocation rules
+// file, read per request by the daily-cost handler.
+func NewHandler(version string, static fs.FS, store CostStore, allocationRulesPath string) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", staticHandler(static))
-	return HandlerFromMux(NewServer(version, store), mux)
+	return HandlerFromMux(NewServer(version, store, allocationRulesPath), mux)
 }
 
 // staticHandler serves the embedded dashboard: no directory listings, no

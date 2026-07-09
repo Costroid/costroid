@@ -19,6 +19,7 @@ function fakeResponse(status: number, body: unknown): Response {
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(body),
+    text: () => Promise.resolve(typeof body === "string" ? body : ""),
   } as Response;
 }
 
@@ -68,18 +69,18 @@ describe("DailyCosts", () => {
           date: "2026-05-01",
           total: "4.6809",
           services: [
-            { serviceName: "AWS Lambda", cost: "0.1896" },
-            { serviceName: "Amazon Elastic Compute Cloud", cost: "3.6288" },
-            { serviceName: "Amazon Simple Storage Service", cost: "0.8625" },
+            { key: "AWS Lambda", cost: "0.1896" },
+            { key: "Amazon Elastic Compute Cloud", cost: "3.6288" },
+            { key: "Amazon Simple Storage Service", cost: "0.8625" },
           ],
         },
         {
           date: "2026-05-02",
           total: "4.6809",
           services: [
-            { serviceName: "AWS Lambda", cost: "0.1896" },
-            { serviceName: "Amazon Elastic Compute Cloud", cost: "3.6288" },
-            { serviceName: "Amazon Simple Storage Service", cost: "0.8625" },
+            { key: "AWS Lambda", cost: "0.1896" },
+            { key: "Amazon Elastic Compute Cloud", cost: "3.6288" },
+            { key: "Amazon Simple Storage Service", cost: "0.8625" },
           ],
         },
       ],
@@ -117,7 +118,7 @@ describe("DailyCosts", () => {
         {
           date: "2026-05-01",
           total: "1.00",
-          services: [{ serviceName: "AWS Lambda", cost: "1.00" }],
+          services: [{ key: "AWS Lambda", cost: "1.00" }],
         },
       ],
     };
@@ -143,7 +144,7 @@ describe("DailyCosts", () => {
         {
           date: "2026-05-01",
           total: "1.00",
-          services: [{ serviceName: "AWS Lambda", cost: "1.00" }],
+          services: [{ key: "AWS Lambda", cost: "1.00" }],
         },
       ],
     };
@@ -156,10 +157,10 @@ describe("DailyCosts", () => {
           total: "1.333333333333333334",
           services: [
             {
-              serviceName: "Amazon Web Services",
+              key: "Amazon Web Services",
               cost: "1.000000000000000001",
             },
-            { serviceName: "OpenAI", cost: "0.333333333333333333" },
+            { key: "OpenAI", cost: "0.333333333333333333" },
           ],
         },
       ],
@@ -212,7 +213,7 @@ describe("DailyCosts", () => {
         {
           date: "2026-05-01",
           total: "1.00",
-          services: [{ serviceName: "Amazon Web Services", cost: "1.00" }],
+          services: [{ key: "Amazon Web Services", cost: "1.00" }],
         },
       ],
     };
@@ -246,7 +247,7 @@ describe("DailyCosts", () => {
         {
           date: "2026-05-01",
           total,
-          services: [{ serviceName: "AWS Lambda", cost: total }],
+          services: [{ key: "AWS Lambda", cost: total }],
         },
       ],
     });
@@ -282,17 +283,15 @@ describe("DailyCosts", () => {
           date: "2026-05-01",
           total: "1.00",
           services: [
-            { serviceName: "Amazon Elastic Compute Cloud", cost: "3.00" },
-            { serviceName: "Amazon Simple Storage Service", cost: "2.00" },
-            { serviceName: "Savings Plan Credit", cost: "-4.00" },
+            { key: "Amazon Elastic Compute Cloud", cost: "3.00" },
+            { key: "Amazon Simple Storage Service", cost: "2.00" },
+            { key: "Savings Plan Credit", cost: "-4.00" },
           ],
         },
         {
           date: "2026-05-02",
           total: "2.50",
-          services: [
-            { serviceName: "Amazon Elastic Compute Cloud", cost: "2.50" },
-          ],
+          services: [{ key: "Amazon Elastic Compute Cloud", cost: "2.50" }],
         },
       ],
     };
@@ -330,8 +329,8 @@ describe("DailyCosts", () => {
           date: "2026-05-01",
           total: "0.30",
           services: [
-            { serviceName: "AWS Lambda", cost: "0.15" },
-            { serviceName: "Amazon Simple Storage Service", cost: "0.15" },
+            { key: "AWS Lambda", cost: "0.15" },
+            { key: "Amazon Simple Storage Service", cost: "0.15" },
           ],
         },
       ],
@@ -346,7 +345,7 @@ describe("DailyCosts", () => {
   });
 
   it("keeps a service's color stable when the service set changes", async () => {
-    const day = (services: { serviceName: string; cost: string }[]) => ({
+    const day = (services: { key: string; cost: string }[]) => ({
       currency: "USD",
       total: "9",
       days: [{ date: "2026-05-01", total: "9", services }],
@@ -362,9 +361,9 @@ describe("DailyCosts", () => {
 
     const first = renderChart(
       day([
-        { serviceName: "AWS Lambda", cost: "3" },
-        { serviceName: "Amazon Elastic Compute Cloud", cost: "3" },
-        { serviceName: "Amazon Simple Storage Service", cost: "3" },
+        { key: "AWS Lambda", cost: "3" },
+        { key: "Amazon Elastic Compute Cloud", cost: "3" },
+        { key: "Amazon Simple Storage Service", cost: "3" },
       ]),
     );
     await screen.findByRole("img", { name: /Stacked daily cost/ });
@@ -374,8 +373,8 @@ describe("DailyCosts", () => {
 
     const second = renderChart(
       day([
-        { serviceName: "AWS Lambda", cost: "9" },
-        { serviceName: "Amazon S3 Glacier", cost: "0.5" },
+        { key: "AWS Lambda", cost: "9" },
+        { key: "Amazon S3 Glacier", cost: "0.5" },
       ]),
     );
     await screen.findByRole("img", { name: /Stacked daily cost/ });
@@ -392,7 +391,7 @@ describe("DailyCosts", () => {
       days: Array.from({ length: 30 }, (_, i) => ({
         date: `2026-05-${String(i + 1).padStart(2, "0")}`,
         total: "1",
-        services: [{ serviceName: "AWS Lambda", cost: "1" }],
+        services: [{ key: "AWS Lambda", cost: "1" }],
       })),
     };
     const { container } = renderChart(costs);
@@ -432,5 +431,91 @@ describe("DailyCosts", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("500");
+  });
+
+  it("refetches and renders daily costs grouped by allocation", async () => {
+    const serviceCosts: DailyCostsResponse = {
+      currency: "USD",
+      total: "1.00",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "1.00",
+          services: [{ key: "AWS Lambda", cost: "1.00" }],
+        },
+      ],
+    };
+    const allocationCosts: DailyCostsResponse = {
+      currency: "USD",
+      total: "32.7663",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "32.7663",
+          services: [
+            { key: "compute", cost: "25.4016" },
+            { key: "Unallocated", cost: "6.0375" },
+          ],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          fakeResponse(
+            200,
+            String(input).includes("groupBy=allocation")
+              ? allocationCosts
+              : serviceCosts,
+          ),
+        ),
+      ),
+    );
+
+    const { container } = render(<DailyCosts />);
+
+    expect((await screen.findAllByText("AWS Lambda")).length).toBeGreaterThan(
+      0,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Allocation" }));
+
+    expect(
+      await screen.findByRole("img", {
+        name: "Stacked daily cost by allocation",
+      }),
+    ).toBeTruthy();
+    // The allocation label and the reserved Unallocated bucket both render, with
+    // exact money.
+    expect((await screen.findAllByText("compute")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Unallocated")).length).toBeGreaterThan(
+      0,
+    );
+    expect((await screen.findAllByText("25.4016")).length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".viz-legend li")).toHaveLength(2);
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain("/api/v1/costs/daily?groupBy=allocation"),
+    );
+    expect(fetchedURLs()).toContain("/api/v1/costs/daily");
+  });
+
+  it("renders the server error body on an allocation 400", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          fakeResponse(
+            400,
+            "no allocation rules configured (start serve with --allocation-rules or set $COSTROID_ALLOCATION_RULES)",
+          ),
+        ),
+      ),
+    );
+
+    render(<DailyCosts />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("returned 400");
+    expect(alert.textContent).toContain("no allocation rules configured");
   });
 });

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/storage"
 )
 
@@ -46,6 +49,18 @@ type fakeStore struct {
 	gotUsageStart   time.Time
 	gotUsageEnd     time.Time
 	usageQueryCount int
+
+	// allocation query recording: the validated dimension the handler passed,
+	// asserted per-parameter (rule content), plus an invocation count.
+	gotDimension    allocation.Dimension
+	allocQueryCount int
+}
+
+func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, start, end time.Time, dim allocation.Dimension) (storage.DailyCosts, error) {
+	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
+	f.gotDimension = dim
+	f.allocQueryCount++
+	return f.daily, nil
 }
 
 func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error) {
@@ -91,7 +106,7 @@ func dec(t *testing.T, s string) decimal.Decimal {
 // no dotfiles, SPA fallback for unknown extensionless GET paths, and API
 // routes unaffected.
 func TestStaticHandler(t *testing.T) {
-	handler := NewHandler("0.1.0-test", testStatic(), &fakeStore{})
+	handler := NewHandler("0.1.0-test", testStatic(), &fakeStore{}, "")
 
 	tests := []struct {
 		name         string
@@ -186,7 +201,7 @@ func TestStaticHandler(t *testing.T) {
 }
 
 func TestGetMeta(t *testing.T) {
-	handler := NewHandler("1.2.3-test", testStatic(), &fakeStore{})
+	handler := NewHandler("1.2.3-test", testStatic(), &fakeStore{}, "")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil))
 	if rec.Code != http.StatusOK {
@@ -221,7 +236,7 @@ func TestGetDailyCosts(t *testing.T) {
 			},
 		},
 	}}
-	handler := NewHandler("0.1.0-test", testStatic(), store)
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily", nil))
@@ -255,7 +270,7 @@ func TestGetDailyCosts(t *testing.T) {
 	if day0.Date.Format(time.DateOnly) != "2026-05-01" || day0.Total != "3.8184" {
 		t.Errorf("day 0 = %s total %q, want 2026-05-01 total 3.8184", day0.Date, day0.Total)
 	}
-	if len(day0.Services) != 2 || day0.Services[0].ServiceName != "AWS Lambda" || day0.Services[0].Cost != "0.1896" {
+	if len(day0.Services) != 2 || day0.Services[0].Key != "AWS Lambda" || day0.Services[0].Cost != "0.1896" {
 		t.Errorf("day 0 services = %+v", day0.Services)
 	}
 	if got.Days[1].Total != "0.1896" {
@@ -302,7 +317,7 @@ func TestGetDailyCostsGroupByParam(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &fakeStore{}
-			handler := NewHandler("0.1.0-test", testStatic(), store)
+			handler := NewHandler("0.1.0-test", testStatic(), store, "")
 
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily"+tt.query, nil))
@@ -325,7 +340,7 @@ func TestGetDailyCostsGroupByParam(t *testing.T) {
 
 func TestGetDailyCostsDateParams(t *testing.T) {
 	store := &fakeStore{}
-	handler := NewHandler("0.1.0-test", testStatic(), store)
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?start=2026-05-02&end=2026-05-03", nil))
@@ -380,7 +395,7 @@ func TestGetDailyTokens(t *testing.T) {
 			Quantity:     dec(t, floatHazard),
 		},
 	}}
-	handler := NewHandler("0.1.0-test", testStatic(), store)
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/tokens/daily", nil))
@@ -428,7 +443,7 @@ func TestGetDailyTokens(t *testing.T) {
 // being `[]` (not null).
 func TestGetDailyTokensDateParams(t *testing.T) {
 	store := &fakeStore{}
-	handler := NewHandler("0.1.0-test", testStatic(), store)
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/tokens/daily?start=2026-05-02&end=2026-05-03", nil))
@@ -487,7 +502,7 @@ func TestGetDailyUsageMetrics(t *testing.T) {
 			Quantity:    dec(t, "42"),
 		},
 	}}
-	handler := NewHandler("0.1.0-test", testStatic(), store)
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/metrics/daily", nil))
@@ -532,7 +547,7 @@ func TestGetDailyUsageMetrics(t *testing.T) {
 // being `[]` (not null).
 func TestGetDailyUsageMetricsDateParams(t *testing.T) {
 	store := &fakeStore{}
-	handler := NewHandler("0.1.0-test", testStatic(), store)
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/usage/metrics/daily?start=2026-05-02&end=2026-05-03", nil))
@@ -564,4 +579,145 @@ func TestGetDailyUsageMetricsDateParams(t *testing.T) {
 	if body := strings.TrimSpace(rec.Body.String()); body != `[]` {
 		t.Errorf("empty store response = %s, want []", body)
 	}
+}
+
+// writeRules writes an allocation rules file into a temp dir and returns its
+// path (never the developer's real config dir).
+func writeRules(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "allocation.json")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing rules file: %v", err)
+	}
+	return p
+}
+
+// TestGetDailyCostsAllocation covers the happy path: the handler reads, parses,
+// and validates the rules file per request, propagates the rule CONTENT to the
+// store per-parameter (labels, operators, values — not merely "was called"),
+// and renders the response keyed by "key" (the D41(d) rename).
+func TestGetDailyCostsAllocation(t *testing.T) {
+	store := &fakeStore{daily: storage.DailyCosts{
+		Currency: "USD",
+		Days: []storage.DayCosts{{
+			Date: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			Services: []storage.ServiceCost{
+				{ServiceName: "platform", Cost: dec(t, "1.5")},
+				{ServiceName: "Unallocated", Cost: dec(t, "0.25")},
+			},
+		}},
+	}}
+	rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[
+		{"label":"platform","match":[
+			{"dimension":"service_name","operator":"starts_with","value":"Amazon EC2"},
+			{"dimension":"tag:env","operator":"equals","value":"prod"}
+		]},
+		{"label":"data","match":[{"dimension":"service_category","operator":"one_of","values":["Analytics","Databases"]}]}
+	]}]}`)
+	handler := NewHandler("0.1.0-test", testStatic(), store, rules)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?groupBy=allocation", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	// Per-parameter assertion that the parsed rule content propagated.
+	if store.allocQueryCount != 1 {
+		t.Fatalf("allocation query count = %d, want 1", store.allocQueryCount)
+	}
+	d := store.gotDimension
+	if d.Name != "team" || len(d.Rules) != 2 {
+		t.Fatalf("dimension = %+v, want team with 2 rules", d)
+	}
+	if d.Rules[0].Label != "platform" || len(d.Rules[0].Match) != 2 {
+		t.Fatalf("rule 0 = %+v, want platform with 2 conditions", d.Rules[0])
+	}
+	if c := d.Rules[0].Match[0]; c.Dimension != "service_name" || c.Operator != allocation.OpStartsWith || c.Value == nil || *c.Value != "Amazon EC2" {
+		t.Errorf("rule 0 cond 0 = %+v, want service_name starts_with Amazon EC2", c)
+	}
+	if c := d.Rules[0].Match[1]; c.Dimension != "tag:env" || c.Operator != allocation.OpEquals || c.Value == nil || *c.Value != "prod" {
+		t.Errorf("rule 0 cond 1 = %+v, want tag:env equals prod", c)
+	}
+	if c := d.Rules[1].Match[0]; c.Operator != allocation.OpOneOf || len(c.Values) != 2 || c.Values[0] != "Analytics" || c.Values[1] != "Databases" {
+		t.Errorf("rule 1 cond 0 = %+v, want one_of [Analytics Databases]", c)
+	}
+
+	// Response is keyed by "key" and carries the fake's data verbatim.
+	var got DailyCosts
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(got.Days) != 1 || len(got.Days[0].Services) != 2 {
+		t.Fatalf("days = %+v, want 1 day with 2 keys", got.Days)
+	}
+	if got.Days[0].Services[0].Key != "platform" || got.Days[0].Services[0].Cost != "1.5" {
+		t.Errorf("key 0 = %+v, want platform/1.5", got.Days[0].Services[0])
+	}
+	if got.Days[0].Services[1].Key != "Unallocated" || got.Days[0].Services[1].Cost != "0.25" {
+		t.Errorf("key 1 = %+v, want Unallocated/0.25", got.Days[0].Services[1])
+	}
+	if !strings.Contains(rec.Body.String(), `"key":"platform"`) || strings.Contains(rec.Body.String(), `"serviceName"`) {
+		t.Errorf("response body must be keyed by 'key', not 'serviceName': %s", rec.Body)
+	}
+}
+
+// TestGetDailyCostsAllocationErrors covers the three degrade branches: the two
+// 400s (exact bodies) and the 500 (prefix + offending-field substring). None
+// queries the store.
+func TestGetDailyCostsAllocationErrors(t *testing.T) {
+	get := func(t *testing.T, rulesPath string) (*fakeStore, *httptest.ResponseRecorder) {
+		t.Helper()
+		store := &fakeStore{}
+		handler := NewHandler("0.1.0-test", testStatic(), store, rulesPath)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?groupBy=allocation", nil))
+		return store, rec
+	}
+
+	t.Run("unconfigured is 400", func(t *testing.T) {
+		store, rec := get(t, "")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body)
+		}
+		if body := strings.TrimSpace(rec.Body.String()); body != "no allocation rules configured (start serve with --allocation-rules or set $COSTROID_ALLOCATION_RULES)" {
+			t.Errorf("body = %q", body)
+		}
+		if store.allocQueryCount != 0 {
+			t.Error("store queried despite the unconfigured 400")
+		}
+	})
+
+	t.Run("missing file is 400 naming the path", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "nope.json")
+		store, rec := get(t, missing)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body)
+		}
+		want := "allocation rules file not found: " + missing + " (create it, or start serve with --allocation-rules or set $COSTROID_ALLOCATION_RULES)"
+		if body := strings.TrimSpace(rec.Body.String()); body != want {
+			t.Errorf("body = %q, want %q", body, want)
+		}
+		if store.allocQueryCount != 0 {
+			t.Error("store queried despite the missing-file 400")
+		}
+	})
+
+	t.Run("invalid file is 500 with prefix and offending field", func(t *testing.T) {
+		rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[{"label":"x","match":[{"dimension":"service_name","operater":"equals","value":"y"}]}]}]}`)
+		store, rec := get(t, rules)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body)
+		}
+		body := rec.Body.String()
+		if !strings.HasPrefix(strings.TrimSpace(body), "loading allocation rules:") {
+			t.Errorf("body = %q, want the 'loading allocation rules:' prefix", body)
+		}
+		if !strings.Contains(body, "operater") {
+			t.Errorf("body = %q, want it to name the offending field 'operater'", body)
+		}
+		if store.allocQueryCount != 0 {
+			t.Error("store queried despite the invalid-file 500")
+		}
+	})
 }

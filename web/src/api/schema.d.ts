@@ -46,8 +46,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Daily cost by service or provider
-         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName. Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost.
+         * Daily cost by service, provider, or allocation
+         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation applies the query-time cost-allocation rules (virtual tagging) and keys each cost by its allocation label, with cost matching no rule under "Unallocated". Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost.
          */
         get: operations["getDailyCosts"];
         put?: never;
@@ -150,10 +150,10 @@ export interface components {
         };
         ServiceCost: {
             /**
-             * @description Grouping key: FOCUS ServiceName when groupBy=service, or FOCUS ServiceProviderName when groupBy=provider.
+             * @description Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
              * @example Amazon Elastic Compute Cloud
              */
-            serviceName: string;
+            key: string;
             /**
              * @description Cost total, as a decimal string.
              * @example 2.4192
@@ -273,7 +273,7 @@ export interface operations {
                 /** @description Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data. */
                 end?: string;
                 /** @description Cost grouping dimension. */
-                groupBy?: "service" | "provider";
+                groupBy?: "service" | "provider" | "allocation";
             };
             header?: never;
             path?: never;
@@ -290,7 +290,7 @@ export interface operations {
                     "application/json": components["schemas"]["DailyCosts"];
                 };
             };
-            /** @description Invalid start date, end date, or groupBy value. */
+            /** @description Invalid start date, end date, or groupBy value; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
             400: {
                 headers: {
                     [name: string]: unknown;

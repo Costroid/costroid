@@ -27,6 +27,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/focus"
 )
 
@@ -74,6 +75,21 @@ type Store interface {
 	// legitimately changes when providers issue corrections — this is
 	// intended, documented, and tested behavior.
 	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, groupBy ...CostGroupBy) (DailyCosts, error)
+
+	// DailyCostsByAllocation is the query-time cost-allocation sibling of
+	// DailyCostsByService (decision D18b, "virtual tagging"): it returns the
+	// same DailyCosts shape, but the grouping key of each ServiceCost is the
+	// allocation LABEL derived from dim's ordered, first-match-wins rules, with
+	// cost matching no rule appearing under allocation.UnallocatedLabel. dim
+	// MUST be a validated allocation.Dimension; the store binds every
+	// rule-supplied value, tag key, and label as a parameter (the injection
+	// boundary) and, while it may assume validity, stays memory-safe on garbage.
+	// Aggregation, tenant scoping (decision D15), the single-currency guard
+	// (decision D23c), decimal exactness (decisions D23/D25), and the
+	// day-ascending-then-key-ascending ordering are identical to
+	// DailyCostsByService, whose body is deliberately left byte-identical (the
+	// currency guard is duplicated inline rather than shared).
+	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension) (DailyCosts, error)
 
 	// DailyTokensByService returns, for one tenant, the total
 	// ConsumedQuantity per UTC calendar day (of ChargePeriodStart) per
@@ -292,7 +308,10 @@ type DayCosts struct {
 // ServiceCost is the cost total of one grouping key on one day.
 type ServiceCost struct {
 	// ServiceName carries the grouping key: FOCUS ServiceName by default,
-	// or FOCUS ServiceProviderName when GroupByProvider is requested.
+	// FOCUS ServiceProviderName when GroupByProvider is requested, or the
+	// allocation label (allocation.UnallocatedLabel for unmatched cost) under
+	// DailyCostsByAllocation. The internal Go field keeps its name across all
+	// three; only the generated API field is renamed to a neutral "key".
 	ServiceName string
 	Cost        decimal.Decimal
 }

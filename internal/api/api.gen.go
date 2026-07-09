@@ -16,13 +16,16 @@ import (
 
 // Defines values for GetDailyCostsParamsGroupBy.
 const (
-	Provider GetDailyCostsParamsGroupBy = "provider"
-	Service  GetDailyCostsParamsGroupBy = "service"
+	Allocation GetDailyCostsParamsGroupBy = "allocation"
+	Provider   GetDailyCostsParamsGroupBy = "provider"
+	Service    GetDailyCostsParamsGroupBy = "service"
 )
 
 // Valid indicates whether the value is a known member of the GetDailyCostsParamsGroupBy enum.
 func (e GetDailyCostsParamsGroupBy) Valid() bool {
 	switch e {
+	case Allocation:
+		return true
 	case Provider:
 		return true
 	case Service:
@@ -109,8 +112,8 @@ type ServiceCost struct {
 	// Cost Cost total, as a decimal string.
 	Cost string `json:"cost"`
 
-	// ServiceName Grouping key: FOCUS ServiceName when groupBy=service, or FOCUS ServiceProviderName when groupBy=provider.
-	ServiceName string `json:"serviceName"`
+	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
+	Key string `json:"key"`
 }
 
 // GetDailyCostsParams defines parameters for GetDailyCosts.
@@ -148,7 +151,7 @@ type GetDailyTokensParams struct {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Daily cost by service or provider
+	// Daily cost by service, provider, or allocation
 	// (GET /api/v1/costs/daily)
 	GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams)
 	// Instance metadata
