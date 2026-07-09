@@ -4,6 +4,8 @@
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import DailyCosts from "./DailyCosts";
+import DailyTokens from "./DailyTokens";
+import UsageMetrics from "./UsageMetrics";
 
 type Meta = components["schemas"]["Meta"];
 
@@ -12,8 +14,17 @@ type MetaState =
   | { status: "error"; message: string }
   | { status: "ready"; meta: Meta };
 
+type View = "costs" | "tokens" | "usage";
+
+const VIEWS: { id: View; label: string }[] = [
+  { id: "costs", label: "Costs" },
+  { id: "tokens", label: "Tokens" },
+  { id: "usage", label: "Usage" },
+];
+
 export default function App() {
   const [state, setState] = useState<MetaState>({ status: "loading" });
+  const [view, setView] = useState<View>("costs");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -58,7 +69,28 @@ export default function App() {
           <dd>{state.meta.focusVersion}</dd>
         </dl>
       )}
-      <DailyCosts />
+      <nav aria-label="Dashboard views">
+        <div className="view-nav" role="tablist" aria-label="Dashboard views">
+          {VIEWS.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={view === v.id}
+              aria-controls={`view-${v.id}`}
+              id={`tab-${v.id}`}
+              onClick={() => setView(v.id)}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+      <div id={`view-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`}>
+        {view === "costs" && <DailyCosts />}
+        {view === "tokens" && <DailyTokens />}
+        {view === "usage" && <UsageMetrics />}
+      </div>
     </main>
   );
 }
