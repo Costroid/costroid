@@ -16,15 +16,6 @@ describe("serviceColor", () => {
     expect(serviceColor("AWS Lambda")).toBe(serviceColor("AWS Lambda"));
   });
 
-  it("stays stable across different peer sets (name alone drives the slot)", () => {
-    // Same service name must hash to the same CSS var regardless of what
-    // else is in the legend — the function takes only the name.
-    const alone = serviceColor("AWS Lambda");
-    const withPeers = serviceColor("AWS Lambda");
-    expect(alone).toBe(withPeers);
-    expect(alone).toMatch(/^var\(--viz-series-[1-8]\)$/);
-  });
-
   it("maps every name onto a slot in 1..SERIES_SLOTS", () => {
     const names = [
       "AWS Lambda",
@@ -93,9 +84,14 @@ describe("segmentPath", () => {
 describe("compactAxisLabel", () => {
   it("formats large magnitudes with SI suffixes", () => {
     expect(compactAxisLabel(0)).toBe("0");
-    expect(compactAxisLabel(1.2e18)).toMatch(/P$/);
-    expect(compactAxisLabel(1_500_000)).toMatch(/M$/);
-    expect(compactAxisLabel(2500)).toMatch(/k$/);
+    expect(compactAxisLabel(5e17)).toBe("500P");
+    expect(compactAxisLabel(1e18)).toBe("1000P");
+    expect(compactAxisLabel(1.5e18)).toBe("1500P");
+    expect(compactAxisLabel(300e6)).toBe("300M");
+    expect(compactAxisLabel(500000)).toBe("500k");
+    expect(compactAxisLabel(1.2e18)).toBe("1200P");
+    expect(compactAxisLabel(1_500_000)).toBe("1.5M");
+    expect(compactAxisLabel(2500)).toBe("2.5k");
   });
 });
 

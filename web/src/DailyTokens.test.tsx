@@ -48,17 +48,14 @@ describe("DailyTokens", () => {
       vi.fn(() => Promise.resolve(fakeResponse(200, rows))),
     );
 
-    render(<DailyTokens />);
+    const { container } = render(<DailyTokens />);
 
     // Period total via BigInt: 1500000+2500000+1000000 = 5000000.
     expect(await screen.findByText("5000000")).toBeTruthy();
     // Day totals.
     expect(screen.getAllByText("4000000").length).toBeGreaterThanOrEqual(1);
-    // Legend lists every service once.
-    expect(screen.getAllByText("OpenAI API").length).toBeGreaterThanOrEqual(1);
-    expect(
-      screen.getAllByText("claude-opus-4-6").length,
-    ).toBeGreaterThanOrEqual(1);
+    // Legend structurally lists every service once.
+    expect(container.querySelectorAll(".viz-legend li")).toHaveLength(2);
     expect(
       screen.getByRole("img", {
         name: "Stacked daily token usage by service",
@@ -66,6 +63,20 @@ describe("DailyTokens", () => {
     ).toBeTruthy();
     // Table carries exact per-service values.
     expect(screen.getAllByText("1500000").length).toBeGreaterThanOrEqual(1);
+    const table = container.querySelector(".viz-table table");
+    expect(table).toBeTruthy();
+    const headers = [...table!.querySelectorAll("thead th")].map(
+      (th) => th.textContent ?? "",
+    );
+    const claudeIndex = headers.indexOf("claude-opus-4-6");
+    const totalIndex = headers.indexOf("Total");
+    const day2Row = [...table!.querySelectorAll("tbody tr")].find(
+      (row) => row.querySelector("th")?.textContent === "2026-05-02",
+    );
+    expect(day2Row).toBeTruthy();
+    const day2Cells = [...day2Row!.querySelectorAll("th, td")];
+    expect(day2Cells[claudeIndex]?.textContent).toBe("—");
+    expect(day2Cells[totalIndex]?.textContent).toBe("1000000");
     expect(fetch).toHaveBeenCalledWith(
       "/api/v1/usage/tokens/daily",
       expect.anything(),
@@ -135,6 +146,31 @@ describe("DailyTokens", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("500");
+  });
+
+  it("omits totals for non-integer quantities without crashing", async () => {
+    const rows: DailyTokenUsage[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: "1.5",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, rows))),
+    );
+
+    render(<DailyTokens />);
+
+    expect(
+      await screen.findByRole("img", {
+        name: "Stacked daily token usage by service",
+      }),
+    ).toBeTruthy();
+    expect(screen.getAllByText("1.5").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/Period total/)).toBeNull();
   });
 
   it("uses compact y-axis labels for large token magnitudes", async () => {

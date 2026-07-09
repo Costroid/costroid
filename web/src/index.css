@@ -141,6 +141,11 @@ dd {
   border-radius: 2px;
 }
 
+.viz-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .viz-table table {
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;

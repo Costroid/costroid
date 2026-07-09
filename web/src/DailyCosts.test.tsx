@@ -79,17 +79,14 @@ describe("DailyCosts", () => {
       vi.fn(() => Promise.resolve(fakeResponse(200, costs))),
     );
 
-    render(<DailyCosts />);
+    const { container } = render(<DailyCosts />);
 
     // Period total.
     expect(await screen.findByText("9.3618")).toBeTruthy();
     // Per-day totals on the column caps.
     expect(screen.getAllByText("4.6809").length).toBeGreaterThanOrEqual(2);
-    // Legend lists every service once.
-    expect(screen.getAllByText("AWS Lambda").length).toBeGreaterThanOrEqual(1);
-    expect(
-      screen.getAllByText("Amazon Elastic Compute Cloud").length,
-    ).toBeGreaterThanOrEqual(1);
+    // Legend structurally lists every service once.
+    expect(container.querySelectorAll(".viz-legend li")).toHaveLength(3);
     // The chart itself is rendered.
     expect(
       screen.getByRole("img", { name: "Stacked daily cost by service" }),

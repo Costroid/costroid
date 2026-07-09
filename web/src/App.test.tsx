@@ -77,8 +77,8 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "Daily cost by service" }),
     ).toBeTruthy();
-    const costsTab = screen.getByRole("tab", { name: "Costs" });
-    expect(costsTab.getAttribute("aria-selected")).toBe("true");
+    const costsButton = screen.getByRole("button", { name: "Costs" });
+    expect(costsButton.getAttribute("aria-current")).toBe("page");
   });
 
   it("switches to the Tokens view on click", async () => {
@@ -88,7 +88,7 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: "Daily cost by service" });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Tokens" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tokens" }));
 
     expect(
       await screen.findByRole("heading", {
@@ -96,8 +96,10 @@ describe("App", () => {
       }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("tab", { name: "Tokens" }).getAttribute("aria-selected"),
-    ).toBe("true");
+      screen
+        .getByRole("button", { name: "Tokens" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
     // Empty store → AI-connector ingest hint.
     expect(await screen.findByText(/No token usage yet/)).toBeTruthy();
   });
@@ -109,14 +111,16 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: "Daily cost by service" });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Usage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Usage" }));
 
     expect(
       await screen.findByRole("heading", { name: "Daily usage metrics" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("tab", { name: "Usage" }).getAttribute("aria-selected"),
-    ).toBe("true");
+      screen
+        .getByRole("button", { name: "Usage" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
     expect(await screen.findByText(/No usage metrics yet/)).toBeTruthy();
   });
 });

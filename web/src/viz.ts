@@ -84,8 +84,8 @@ export function compactAxisLabel(value: number): string {
     if (abs >= threshold) {
       const scaled = abs / threshold;
       const decimals = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
-      // Trim trailing zeros after toFixed.
-      const body = scaled.toFixed(decimals).replace(/\.?0+$/, "");
+      // Trim trailing zeros after a decimal point, preserving integer zeroes.
+      const body = scaled.toFixed(decimals).replace(/\.0+$|(\.\d*?)0+$/, "$1");
       return `${sign}${body}${suffix}`;
     }
   }

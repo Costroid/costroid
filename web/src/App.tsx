@@ -70,15 +70,12 @@ export default function App() {
         </dl>
       )}
       <nav aria-label="Dashboard views">
-        <div className="view-nav" role="tablist" aria-label="Dashboard views">
+        <div className="view-nav">
           {VIEWS.map((v) => (
             <button
               key={v.id}
               type="button"
-              role="tab"
-              aria-selected={view === v.id}
-              aria-controls={`view-${v.id}`}
-              id={`tab-${v.id}`}
+              aria-current={view === v.id ? "page" : undefined}
               onClick={() => setView(v.id)}
             >
               {v.label}
@@ -86,7 +83,7 @@ export default function App() {
           ))}
         </div>
       </nav>
-      <div id={`view-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`}>
+      <div>
         {view === "costs" && <DailyCosts />}
         {view === "tokens" && <DailyTokens />}
         {view === "usage" && <UsageMetrics />}

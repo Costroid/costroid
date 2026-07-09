@@ -98,7 +98,7 @@ export default function DailyTokens() {
   }, []);
 
   return (
-    <section className="daily-tokens">
+    <section>
       <h2>Daily token usage by service</h2>
       {state.status === "loading" && <p>Loading daily token usage…</p>}
       {state.status === "error" && (
@@ -165,7 +165,7 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
   return (
     <div>
       {periodTotal !== null && (
-        <p className="daily-tokens-total">
+        <p>
           Period total: <strong>{periodTotal}</strong> Tokens
         </p>
       )}

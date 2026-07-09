@@ -53,7 +53,7 @@ export default function DailyCosts() {
   }, []);
 
   return (
-    <section className="daily-costs">
+    <section>
       <h2>Daily cost by service</h2>
       {state.status === "loading" && <p>Loading daily costs…</p>}
       {state.status === "error" && (
@@ -118,7 +118,7 @@ function Chart({ costs }: { costs: DailyCosts }) {
 
   return (
     <div>
-      <p className="daily-costs-total">
+      <p>
         Period total (net): <strong>{costs.total}</strong> {costs.currency}
       </p>
       <svg
