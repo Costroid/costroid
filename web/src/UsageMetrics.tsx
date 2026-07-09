@@ -3,6 +3,9 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import type { Range } from "./range";
+import { rangeQuery } from "./range";
+import { sumIntegerStrings } from "./viz";
 
 type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
 
@@ -24,6 +27,16 @@ type UnitSection = {
   /** quantity by `${serviceName}\0${serviceTier}\0${metricName}` → date → quantity */
   cells: Map<string, Map<string, string>>;
 };
+
+const ADDITIVE_UNITS = new Set([
+  "Tokens",
+  "Requests",
+  "Calls",
+  "Images",
+  "Characters",
+  "Seconds",
+  "Sessions",
+]);
 
 function seriesKey(s: SeriesKey): string {
   return `${s.serviceName}\0${s.serviceTier}\0${s.metricName}`;
@@ -83,15 +96,21 @@ function groupByUnit(rows: DailyUsageMetric[]): UnitSection[] {
   });
 }
 
-export default function UsageMetrics() {
+export default function UsageMetrics({
+  range = { start: "", end: "" },
+}: {
+  range?: Range;
+}) {
   const [state, setState] = useState<MetricsState>({ status: "loading" });
+  const { start, end } = range;
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function load() {
       try {
-        const res = await fetch("/api/v1/usage/metrics/daily", {
+        const url = `/api/v1/usage/metrics/daily${rangeQuery(start, end)}`;
+        const res = await fetch(url, {
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -100,6 +119,9 @@ export default function UsageMetrics() {
           );
         }
         const rows = (await res.json()) as DailyUsageMetric[];
+        if (controller.signal.aborted) {
+          return;
+        }
         setState({ status: "ready", rows });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -114,7 +136,7 @@ export default function UsageMetrics() {
 
     void load();
     return () => controller.abort();
-  }, []);
+  }, [start, end]);
 
   return (
     <section className="usage-metrics">
@@ -194,10 +216,35 @@ function MetricsTables({ rows }: { rows: DailyUsageMetric[] }) {
                   );
                 })}
               </tbody>
+              {sectionTotal(section) !== null && (
+                <tfoot>
+                  <tr>
+                    <th scope="row" colSpan={3}>
+                      Range total
+                    </th>
+                    <td colSpan={section.dates.length}>
+                      {sectionTotal(section)}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
       ))}
     </div>
   );
+}
+
+function sectionTotal(section: UnitSection): string | null {
+  if (!ADDITIVE_UNITS.has(section.unit)) {
+    return null;
+  }
+  const quantities = section.series.flatMap((s) => {
+    const byDate = section.cells.get(seriesKey(s));
+    return section.dates
+      .map((date) => byDate?.get(date))
+      .filter((quantity): quantity is string => quantity !== undefined);
+  });
+  return sumIntegerStrings(quantities);
 }

@@ -3,6 +3,8 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import type { Range } from "./range";
+import { rangeQuery } from "./range";
 import {
   HEIGHT,
   MARGIN,
@@ -64,15 +66,21 @@ function groupByDate(rows: DailyTokenUsage[]): DayGroup[] {
   });
 }
 
-export default function DailyTokens() {
+export default function DailyTokens({
+  range = { start: "", end: "" },
+}: {
+  range?: Range;
+}) {
   const [state, setState] = useState<TokensState>({ status: "loading" });
+  const { start, end } = range;
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function load() {
       try {
-        const res = await fetch("/api/v1/usage/tokens/daily", {
+        const url = `/api/v1/usage/tokens/daily${rangeQuery(start, end)}`;
+        const res = await fetch(url, {
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -81,6 +89,9 @@ export default function DailyTokens() {
           );
         }
         const rows = (await res.json()) as DailyTokenUsage[];
+        if (controller.signal.aborted) {
+          return;
+        }
         setState({ status: "ready", rows });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -95,7 +106,7 @@ export default function DailyTokens() {
 
     void load();
     return () => controller.abort();
-  }, []);
+  }, [start, end]);
 
   return (
     <section>

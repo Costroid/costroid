@@ -3,8 +3,10 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import DateRangeControl from "./DateRangeControl";
 import DailyCosts from "./DailyCosts";
 import DailyTokens from "./DailyTokens";
+import type { Range } from "./range";
 import UsageMetrics from "./UsageMetrics";
 
 type Meta = components["schemas"]["Meta"];
@@ -25,6 +27,7 @@ const VIEWS: { id: View; label: string }[] = [
 export default function App() {
   const [state, setState] = useState<MetaState>({ status: "loading" });
   const [view, setView] = useState<View>("costs");
+  const [range, setRange] = useState<Range>({ start: "", end: "" });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -69,6 +72,14 @@ export default function App() {
           <dd>{state.meta.focusVersion}</dd>
         </dl>
       )}
+      <div className="range-bar">
+        <DateRangeControl range={range} onChange={setRange} />
+        <p className="range-indicator">
+          {range.start === "" && range.end === ""
+            ? "Showing all time"
+            : `Showing ${range.start} → ${range.end}`}
+        </p>
+      </div>
       <nav aria-label="Dashboard views">
         <div className="view-nav">
           {VIEWS.map((v) => (
@@ -84,9 +95,9 @@ export default function App() {
         </div>
       </nav>
       <div>
-        {view === "costs" && <DailyCosts />}
-        {view === "tokens" && <DailyTokens />}
-        {view === "usage" && <UsageMetrics />}
+        {view === "costs" && <DailyCosts range={range} />}
+        {view === "tokens" && <DailyTokens range={range} />}
+        {view === "usage" && <UsageMetrics range={range} />}
       </div>
     </main>
   );

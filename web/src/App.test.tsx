@@ -2,7 +2,13 @@
 // Copyright 2026 The Costroid Authors
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import App from "./App";
 
 function fakeResponse(status: number, body: unknown): Response {
@@ -18,7 +24,8 @@ const emptyCosts = { currency: "", total: "0", days: [] };
 function mockFetch() {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/v1/meta") {
+    const path = new URL(url, "http://x").pathname;
+    if (path === "/api/v1/meta") {
       return Promise.resolve(
         fakeResponse(200, {
           name: "costroid",
@@ -27,10 +34,10 @@ function mockFetch() {
         }),
       );
     }
-    if (url === "/api/v1/usage/tokens/daily") {
+    if (path === "/api/v1/usage/tokens/daily") {
       return Promise.resolve(fakeResponse(200, []));
     }
-    if (url === "/api/v1/usage/metrics/daily") {
+    if (path === "/api/v1/usage/metrics/daily") {
       return Promise.resolve(fakeResponse(200, []));
     }
     // costs/daily and any other path
@@ -122,5 +129,42 @@ describe("App", () => {
         .getAttribute("aria-current"),
     ).toBe("page");
     expect(await screen.findByText(/No usage metrics yet/)).toBeTruthy();
+  });
+
+  it("threads the selected date range to the active view", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+
+    render(<App />);
+
+    expect(await screen.findByText("Showing all time")).toBeTruthy();
+    await screen.findByRole("heading", { name: "Daily cost by service" });
+
+    fireEvent.change(screen.getByLabelText(/start date/i), {
+      target: { value: "2026-05-01" },
+    });
+    fireEvent.change(screen.getByLabelText(/end date/i), {
+      target: { value: "2026-05-31" },
+    });
+
+    expect(
+      await screen.findByText("Showing 2026-05-01 → 2026-05-31"),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/costs/daily?start=2026-05-01&end=2026-05-31",
+        expect.anything(),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Tokens" }));
+    await screen.findByRole("heading", {
+      name: "Daily token usage by service",
+    });
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/usage/tokens/daily?start=2026-05-01&end=2026-05-31",
+        expect.anything(),
+      ),
+    );
   });
 });

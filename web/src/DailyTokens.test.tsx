@@ -2,7 +2,7 @@
 // Copyright 2026 The Costroid Authors
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import DailyTokens from "./DailyTokens";
 import type { components } from "./api/schema";
 
@@ -79,6 +79,60 @@ describe("DailyTokens", () => {
     expect(day2Cells[totalIndex]?.textContent).toBe("1000000");
     expect(fetch).toHaveBeenCalledWith(
       "/api/v1/usage/tokens/daily",
+      expect.anything(),
+    );
+  });
+
+  it("fetches daily token usage for a provided range", async () => {
+    const rows: DailyTokenUsage[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: "1000",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, rows))),
+    );
+
+    render(<DailyTokens range={{ start: "2026-05-01", end: "2026-05-31" }} />);
+
+    expect((await screen.findAllByText("1000")).length).toBeGreaterThan(0);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/usage/tokens/daily?start=2026-05-01&end=2026-05-31",
+      expect.anything(),
+    );
+  });
+
+  it("refetches daily token usage when the range changes", async () => {
+    const rows: DailyTokenUsage[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: "1000",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, rows))),
+    );
+
+    const { rerender } = render(
+      <DailyTokens range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+
+    expect((await screen.findAllByText("1000")).length).toBeGreaterThan(0);
+    rerender(
+      <DailyTokens range={{ start: "2026-06-01", end: "2026-06-30" }} />,
+    );
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/usage/tokens/daily?start=2026-06-01&end=2026-06-30",
       expect.anything(),
     );
   });

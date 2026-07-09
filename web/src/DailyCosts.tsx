@@ -3,6 +3,8 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import type { Range } from "./range";
+import { rangeQuery } from "./range";
 import {
   HEIGHT,
   MARGIN,
@@ -21,21 +23,30 @@ type CostsState =
   | { status: "error"; message: string }
   | { status: "ready"; costs: DailyCosts };
 
-export default function DailyCosts() {
+export default function DailyCosts({
+  range = { start: "", end: "" },
+}: {
+  range?: Range;
+}) {
   const [state, setState] = useState<CostsState>({ status: "loading" });
+  const { start, end } = range;
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function load() {
       try {
-        const res = await fetch("/api/v1/costs/daily", {
+        const url = `/api/v1/costs/daily${rangeQuery(start, end)}`;
+        const res = await fetch(url, {
           signal: controller.signal,
         });
         if (!res.ok) {
           throw new Error(`GET /api/v1/costs/daily returned ${res.status}`);
         }
         const costs = (await res.json()) as DailyCosts;
+        if (controller.signal.aborted) {
+          return;
+        }
         setState({ status: "ready", costs });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -50,7 +61,7 @@ export default function DailyCosts() {
 
     void load();
     return () => controller.abort();
-  }, []);
+  }, [start, end]);
 
   return (
     <section>
