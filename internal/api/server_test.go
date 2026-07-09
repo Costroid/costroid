@@ -18,6 +18,12 @@ import (
 	"github.com/Costroid/costroid/internal/storage"
 )
 
+// groupByUnset is an impossible CostGroupBy sentinel (not GroupByService,
+// which is the iota zero value): the fake seeds it when the variadic groupBy
+// arrives empty, so a test asserting gotGroupBy == GroupByService genuinely
+// proves the handler passed "service" explicitly rather than merely defaulting.
+const groupByUnset = storage.CostGroupBy(-1)
+
 // fakeStore records the query it received and returns canned costs.
 type fakeStore struct {
 	daily      storage.DailyCosts
@@ -44,7 +50,7 @@ type fakeStore struct {
 
 func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error) {
 	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
-	f.gotGroupBy = storage.GroupByService
+	f.gotGroupBy = groupByUnset
 	if len(groupBy) > 0 {
 		f.gotGroupBy = groupBy[0]
 	}

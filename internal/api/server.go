@@ -87,8 +87,6 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 			groupBy = storage.GroupByProvider
 		case Service:
 			groupBy = storage.GroupByService
-		default:
-			groupBy = storage.GroupByService
 		}
 	}
 
