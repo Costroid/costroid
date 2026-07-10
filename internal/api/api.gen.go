@@ -14,25 +14,110 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for GetAnomaliesParamsGroupBy.
+const (
+	GetAnomaliesParamsGroupByAllocation GetAnomaliesParamsGroupBy = "allocation"
+	GetAnomaliesParamsGroupByProvider   GetAnomaliesParamsGroupBy = "provider"
+	GetAnomaliesParamsGroupByService    GetAnomaliesParamsGroupBy = "service"
+)
+
+// Valid indicates whether the value is a known member of the GetAnomaliesParamsGroupBy enum.
+func (e GetAnomaliesParamsGroupBy) Valid() bool {
+	switch e {
+	case GetAnomaliesParamsGroupByAllocation:
+		return true
+	case GetAnomaliesParamsGroupByProvider:
+		return true
+	case GetAnomaliesParamsGroupByService:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetDailyCostsParamsGroupBy.
 const (
-	Allocation GetDailyCostsParamsGroupBy = "allocation"
-	Provider   GetDailyCostsParamsGroupBy = "provider"
-	Service    GetDailyCostsParamsGroupBy = "service"
+	GetDailyCostsParamsGroupByAllocation GetDailyCostsParamsGroupBy = "allocation"
+	GetDailyCostsParamsGroupByProvider   GetDailyCostsParamsGroupBy = "provider"
+	GetDailyCostsParamsGroupByService    GetDailyCostsParamsGroupBy = "service"
 )
 
 // Valid indicates whether the value is a known member of the GetDailyCostsParamsGroupBy enum.
 func (e GetDailyCostsParamsGroupBy) Valid() bool {
 	switch e {
-	case Allocation:
+	case GetDailyCostsParamsGroupByAllocation:
 		return true
-	case Provider:
+	case GetDailyCostsParamsGroupByProvider:
 		return true
-	case Service:
+	case GetDailyCostsParamsGroupByService:
 		return true
 	default:
 		return false
 	}
+}
+
+// Anomalies defines model for Anomalies.
+type Anomalies struct {
+	// Anomalies Detected flags, ordered date-ascending, then total scope before key scope, then key-ascending. Never null; [] when nothing is flagged.
+	Anomalies []Anomaly `json:"anomalies"`
+
+	// Currency Billing currency of the scored costs (FOCUS BillingCurrency). Empty when no data matched.
+	Currency   string            `json:"currency"`
+	Parameters AnomalyParameters `json:"parameters"`
+}
+
+// Anomaly defines model for Anomaly.
+type Anomaly struct {
+	// Date The UTC calendar day flagged.
+	Date openapi_types.Date `json:"date"`
+
+	// Deviation The absolute difference of observed and median, as a decimal string.
+	Deviation string `json:"deviation"`
+
+	// Direction "increase" when observed is above the median, "decrease" when below.
+	Direction string `json:"direction"`
+
+	// Key The grouping key whose series flagged; present ONLY when scope is "key" (never for "total", so a real key literally named "total" is unambiguous).
+	Key *string `json:"key,omitempty"`
+
+	// Mad Baseline median absolute deviation, as an exact decimal string.
+	Mad string `json:"mad"`
+
+	// Median Baseline median, as an exact decimal string.
+	Median string `json:"median"`
+
+	// Observed The day's observed value, as an exact decimal string.
+	Observed string `json:"observed"`
+
+	// ScaledMad mad times consistencyConstant, as an exact decimal string.
+	ScaledMad string `json:"scaledMad"`
+
+	// Scope "total" (the summed daily series) or "key" (one grouping key's series).
+	Scope string `json:"scope"`
+
+	// Threshold k times scaledMad — the strict flag threshold, as an exact decimal string.
+	Threshold string `json:"threshold"`
+}
+
+// AnomalyParameters defines model for AnomalyParameters.
+type AnomalyParameters struct {
+	// ConsistencyConstant MAD-to-sigma consistency constant (R stats::mad), as a decimal string.
+	ConsistencyConstant string `json:"consistencyConstant"`
+
+	// GroupBy The grouping dimension echoed verbatim from the request.
+	GroupBy string `json:"groupBy"`
+
+	// K Strict-threshold multiple of the scaled MAD, as a decimal string.
+	K string `json:"k"`
+
+	// MinObservations Minimum baseline observations required to score a day.
+	MinObservations int `json:"minObservations"`
+
+	// RelativeFloor Fraction of the absolute median a deviation must also reach, as a decimal string.
+	RelativeFloor string `json:"relativeFloor"`
+
+	// WindowDays Maximum trailing observed days in the baseline window.
+	WindowDays int `json:"windowDays"`
 }
 
 // BusinessMetricInfo defines model for BusinessMetricInfo.
@@ -173,6 +258,21 @@ type UnitEconomicsPeriod struct {
 	UnitCost *string `json:"unitCost,omitempty"`
 }
 
+// GetAnomaliesParams defines parameters for GetAnomalies.
+type GetAnomaliesParams struct {
+	// Start Inclusive first calendar day (UTC) of the RETURNED flags; it does not affect the scoring baseline. Defaults to the full range of stored data.
+	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Inclusive last calendar day (UTC) to score and return. Defaults to the full range of stored data.
+	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+
+	// GroupBy Cost grouping dimension (the same set as /api/v1/costs/daily).
+	GroupBy *GetAnomaliesParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+}
+
+// GetAnomaliesParamsGroupBy defines parameters for GetAnomalies.
+type GetAnomaliesParamsGroupBy string
+
 // GetDailyCostsParams defines parameters for GetDailyCosts.
 type GetDailyCostsParams struct {
 	// Start Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data.
@@ -220,6 +320,9 @@ type GetDailyTokensParams struct {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Statistical cost anomalies (spikes and dips)
+	// (GET /api/v1/anomalies)
+	GetAnomalies(w http.ResponseWriter, r *http.Request, params GetAnomaliesParams)
 	// List imported business metrics
 	// (GET /api/v1/business-metrics)
 	GetBusinessMetrics(w http.ResponseWriter, r *http.Request)
@@ -251,6 +354,65 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetAnomalies operation middleware
+func (siw *ServerInterfaceWrapper) GetAnomalies(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAnomaliesParams
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "groupBy" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "groupBy", r.URL.Query(), &params.GroupBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAnomalies(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetBusinessMetrics operation middleware
 func (siw *ServerInterfaceWrapper) GetBusinessMetrics(w http.ResponseWriter, r *http.Request) {
@@ -624,6 +786,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/anomalies", wrapper.GetAnomalies)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/business-metrics", wrapper.GetBusinessMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)

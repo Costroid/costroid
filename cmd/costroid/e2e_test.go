@@ -1593,6 +1593,156 @@ func TestOfflineE2EBusinessMetrics(t *testing.T) {
 	}
 }
 
+// anomalyRow mirrors one api.Anomaly for decoding the anomalies endpoint.
+type anomalyRow struct {
+	Date      string  `json:"date"`
+	Scope     string  `json:"scope"`
+	Key       *string `json:"key"`
+	Direction string  `json:"direction"`
+	Observed  string  `json:"observed"`
+	Median    string  `json:"median"`
+	Mad       string  `json:"mad"`
+	ScaledMad string  `json:"scaledMad"`
+	Threshold string  `json:"threshold"`
+	Deviation string  `json:"deviation"`
+}
+
+func (a anomalyRow) equal(b anomalyRow) bool {
+	keyEqual := (a.Key == nil) == (b.Key == nil) && (a.Key == nil || *a.Key == *b.Key)
+	return keyEqual && a.Date == b.Date && a.Scope == b.Scope && a.Direction == b.Direction &&
+		a.Observed == b.Observed && a.Median == b.Median && a.Mad == b.Mad &&
+		a.ScaledMad == b.ScaledMad && a.Threshold == b.Threshold && a.Deviation == b.Deviation
+}
+
+func equalAnomalies(got, want []anomalyRow) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if !got[i].equal(want[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func strPtr(s string) *string { return &s }
+
+// anomaliesView opens the store and GETs /api/v1/anomalies with the given raw
+// query for the default tenant, returning the JSON body.
+func anomaliesView(t *testing.T, query string) string {
+	t.Helper()
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening store for anomalies view: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store, "")
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/anomalies" + query)
+	if err != nil {
+		t.Fatalf("GET anomalies: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("anomalies HTTP %d: %s", resp.StatusCode, body)
+	}
+	return string(body)
+}
+
+// TestOfflineE2EAnomalies is the hermetic end-to-end proof for query-time
+// anomaly detection: a real CLI ingest of the anomaly sample export, then
+// in-process GETs of /api/v1/anomalies asserting the EXACT flagged dates,
+// directions, and decimal-string statistics of the spike and dip (each flagging
+// both the total and the single key), that mundane days are absent, that flags
+// are range-independent, and that groupBy=provider composes.
+func TestOfflineE2EAnomalies(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	var transcript strings.Builder
+
+	if out, err := runCLI([]string{"ingest", "--connector", "aws-focus", "--path", "../../testdata/aws-focus-anomaly/sample-export.csv.gz"}, ""); err != nil {
+		t.Fatalf("ingest: %v\n%s", err, out)
+	}
+
+	const ec2 = "Amazon Elastic Compute Cloud"
+	// Hand-computed from the fixture (see testdata/aws-focus-anomaly/README.md).
+	spikeTotal := anomalyRow{Date: "2026-06-15", Scope: "total", Direction: "increase", Observed: "200", Median: "100", Mad: "2", ScaledMad: "2.9652", Threshold: "8.8956", Deviation: "100"}
+	dipTotal := anomalyRow{Date: "2026-06-17", Scope: "total", Direction: "decrease", Observed: "40", Median: "101", Mad: "2", ScaledMad: "2.9652", Threshold: "8.8956", Deviation: "61"}
+	keyOf := func(a anomalyRow, key string) anomalyRow { a.Scope, a.Key = "key", strPtr(key); return a }
+
+	full := anomaliesView(t, "")
+	transcript.WriteString("# GET /api/v1/anomalies\n" + full + "\n")
+	var resp struct {
+		Currency   string `json:"currency"`
+		Parameters struct {
+			K                   string `json:"k"`
+			ConsistencyConstant string `json:"consistencyConstant"`
+			RelativeFloor       string `json:"relativeFloor"`
+			GroupBy             string `json:"groupBy"`
+			WindowDays          int    `json:"windowDays"`
+			MinObservations     int    `json:"minObservations"`
+		} `json:"parameters"`
+		Anomalies []anomalyRow `json:"anomalies"`
+	}
+	if err := json.Unmarshal([]byte(full), &resp); err != nil {
+		t.Fatalf("decode anomalies: %v (body %s)", err, full)
+	}
+	if resp.Currency != "USD" || resp.Parameters.K != "3" || resp.Parameters.ConsistencyConstant != "1.4826" ||
+		resp.Parameters.WindowDays != 30 || resp.Parameters.MinObservations != 10 || resp.Parameters.RelativeFloor != "0.1" || resp.Parameters.GroupBy != "service" {
+		t.Fatalf("currency/parameters = %s / %+v", resp.Currency, resp.Parameters)
+	}
+	// The spike and dip each flag the total AND the single service's key, ordered
+	// date-asc then total-before-key (a live pin of the ordering rule).
+	want := []anomalyRow{spikeTotal, keyOf(spikeTotal, ec2), dipTotal, keyOf(dipTotal, ec2)}
+	if !equalAnomalies(resp.Anomalies, want) {
+		t.Fatalf("anomalies = %s\nwant %+v", full, want)
+	}
+	// Mundane days never appear (day 11 is scored but within noise; 16/18 return
+	// to normal after the spike/dip).
+	for _, a := range resp.Anomalies {
+		if a.Date == "2026-06-11" || a.Date == "2026-06-16" || a.Date == "2026-06-18" {
+			t.Errorf("mundane day flagged: %+v", a)
+		}
+	}
+
+	// Range independence: a one-day window around the spike reports the identical
+	// spike flags.
+	narrow := anomaliesView(t, "?start=2026-06-15&end=2026-06-15")
+	var nresp struct {
+		Anomalies []anomalyRow `json:"anomalies"`
+	}
+	if err := json.Unmarshal([]byte(narrow), &nresp); err != nil {
+		t.Fatalf("decode narrow: %v", err)
+	}
+	if !equalAnomalies(nresp.Anomalies, []anomalyRow{spikeTotal, keyOf(spikeTotal, ec2)}) {
+		t.Fatalf("narrow-window anomalies = %s, want the identical spike flags", narrow)
+	}
+
+	// groupBy=provider composes: PublisherName "AWS" keys everything under "AWS".
+	prov := anomaliesView(t, "?groupBy=provider")
+	var presp struct {
+		Parameters struct {
+			GroupBy string `json:"groupBy"`
+		} `json:"parameters"`
+		Anomalies []anomalyRow `json:"anomalies"`
+	}
+	if err := json.Unmarshal([]byte(prov), &presp); err != nil {
+		t.Fatalf("decode provider: %v", err)
+	}
+	if presp.Parameters.GroupBy != "provider" {
+		t.Errorf("provider groupBy echo = %q", presp.Parameters.GroupBy)
+	}
+	if !equalAnomalies(presp.Anomalies, []anomalyRow{spikeTotal, keyOf(spikeTotal, "AWS"), dipTotal, keyOf(dipTotal, "AWS")}) {
+		t.Fatalf("provider anomalies = %s", prov)
+	}
+
+	t.Logf("\n===== OFFLINE E2E ANOMALIES TRANSCRIPT =====\n%s", transcript.String())
+}
+
 // dailyView opens the store and queries the daily-cost API for the default
 // tenant, returning the JSON body.
 func dailyView(t *testing.T) string {

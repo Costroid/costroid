@@ -24,6 +24,11 @@
   --viz-baseline: #c3c2b7;
   --viz-muted: #898781;
   --viz-ink-secondary: #52514e;
+
+  /* Anomaly markers: a spike (increase) reads warm/attention, a dip (decrease)
+   * reads cool. Distinct from the categorical series palette. */
+  --viz-anomaly-increase: #d1462f;
+  --viz-anomaly-decrease: #2a6fb0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -39,6 +44,8 @@
     --viz-grid: #2c2c2a;
     --viz-baseline: #383835;
     --viz-ink-secondary: #c3c2b7;
+    --viz-anomaly-increase: #f2765f;
+    --viz-anomaly-decrease: #6ba6dd;
   }
 }
 
@@ -236,6 +243,44 @@ dd {
   border-radius: 4px;
   overflow-x: auto;
   padding: 0.75rem;
+}
+
+/* Anomaly overlay: chart markers, the non-blocking notice, and table badges. */
+.viz-chart .viz-anomaly {
+  stroke: none;
+}
+
+.viz-chart .viz-anomaly-increase {
+  fill: var(--viz-anomaly-increase);
+}
+
+.viz-chart .viz-anomaly-decrease {
+  fill: var(--viz-anomaly-decrease);
+}
+
+.viz-anomaly-notice {
+  color: var(--viz-ink-secondary);
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem;
+}
+
+.viz-anomaly-badge {
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  white-space: nowrap;
+}
+
+.viz-anomaly-badge.viz-anomaly-increase {
+  background: color-mix(in srgb, var(--viz-anomaly-increase) 18%, transparent);
+  color: var(--viz-anomaly-increase);
+}
+
+.viz-anomaly-badge.viz-anomaly-decrease {
+  background: color-mix(in srgb, var(--viz-anomaly-decrease) 18%, transparent);
+  color: var(--viz-anomaly-decrease);
 }
 
 /* Usage-metrics: one table section per unit. */

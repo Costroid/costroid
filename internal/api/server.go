@@ -99,7 +99,7 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		daily storage.DailyCosts
 		err   error
 	)
-	if params.GroupBy != nil && *params.GroupBy == Allocation {
+	if params.GroupBy != nil && *params.GroupBy == GetDailyCostsParamsGroupByAllocation {
 		dim, ok := s.loadAllocationDimension(w)
 		if !ok {
 			return // loadAllocationDimension already wrote the error response
@@ -107,7 +107,7 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, start, end, dim)
 	} else {
 		groupBy := storage.GroupByService
-		if params.GroupBy != nil && *params.GroupBy == Provider {
+		if params.GroupBy != nil && *params.GroupBy == GetDailyCostsParamsGroupByProvider {
 			groupBy = storage.GroupByProvider
 		}
 		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, groupBy)

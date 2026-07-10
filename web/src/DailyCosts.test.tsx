@@ -14,6 +14,8 @@ import { HEIGHT, MARGIN } from "./viz";
 import type { components } from "./api/schema";
 
 type DailyCostsResponse = components["schemas"]["DailyCosts"];
+type Anomaly = components["schemas"]["Anomaly"];
+type AnomaliesResponse = components["schemas"]["Anomalies"];
 
 function fakeResponse(status: number, body: unknown): Response {
   return {
@@ -22,6 +24,22 @@ function fakeResponse(status: number, body: unknown): Response {
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(typeof body === "string" ? body : ""),
   } as Response;
+}
+
+// anomaliesBody builds a valid /api/v1/anomalies response with the given flags.
+function anomaliesBody(flags: Anomaly[] = []): AnomaliesResponse {
+  return {
+    currency: "USD",
+    parameters: {
+      k: "3",
+      consistencyConstant: "1.4826",
+      windowDays: 30,
+      minObservations: 10,
+      relativeFloor: "0.1",
+      groupBy: "service",
+    },
+    anomalies: flags,
+  };
 }
 
 afterEach(() => {
@@ -264,11 +282,13 @@ describe("DailyCosts", () => {
     expect((await screen.findAllByText("1.00")).length).toBeGreaterThan(0);
     rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(fetch).toHaveBeenNthCalledWith(
-      2,
-      "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30",
-      expect.anything(),
+    // Each param set fetches both costs and anomalies, so assert the new-range
+    // costs URL was fetched rather than a brittle total call count.
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30",
+        expect.anything(),
+      ),
     );
   });
 
@@ -284,16 +304,22 @@ describe("DailyCosts", () => {
         },
       ],
     };
-    let resolveSecond!: (response: Response) => void;
-    const second = new Promise<Response>((resolve) => {
-      resolveSecond = resolve;
+    let resolveProviderCosts!: (response: Response) => void;
+    const providerCosts = new Promise<Response>((resolve) => {
+      resolveProviderCosts = resolve;
     });
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(fakeResponse(200, costs))
-        .mockReturnValueOnce(second),
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        if (url.includes("groupBy=provider")) {
+          return providerCosts; // the grouping refetch stays pending
+        }
+        return Promise.resolve(fakeResponse(200, costs));
+      }),
     );
     render(<DailyCosts />);
     await screen.findByRole("img", { name: "Stacked daily cost by service" });
@@ -302,7 +328,7 @@ describe("DailyCosts", () => {
     expect(screen.getByText("Loading daily costs…")).toBeTruthy();
     expect(screen.queryByRole("img")).toBeNull();
 
-    resolveSecond(fakeResponse(200, costs));
+    resolveProviderCosts(fakeResponse(200, costs));
     expect(
       await screen.findByRole("img", {
         name: "Stacked daily cost by provider",
@@ -664,5 +690,129 @@ describe("DailyCosts", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("returned 400");
     expect(alert.textContent).toContain("no allocation rules configured");
+  });
+
+  it("marks flagged days with a direction-aware overlay and a math tooltip", async () => {
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      total: "400",
+      days: [
+        {
+          date: "2026-06-01",
+          total: "100",
+          services: [{ key: "AWS Lambda", cost: "100" }],
+        },
+        {
+          date: "2026-06-02",
+          total: "100",
+          services: [{ key: "AWS Lambda", cost: "100" }],
+        },
+        {
+          date: "2026-06-03",
+          total: "200",
+          services: [{ key: "AWS Lambda", cost: "200" }],
+        },
+      ],
+    };
+    const flags: Anomaly[] = [
+      {
+        date: "2026-06-03",
+        scope: "total",
+        direction: "increase",
+        observed: "200",
+        median: "100",
+        mad: "2",
+        scaledMad: "2.9652",
+        threshold: "8.8956",
+        deviation: "100",
+      },
+      {
+        date: "2026-06-03",
+        scope: "key",
+        key: "AWS Lambda",
+        direction: "increase",
+        observed: "200",
+        median: "100",
+        mad: "2",
+        scaledMad: "2.9652",
+        threshold: "8.8956",
+        deviation: "100",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input).includes("/api/v1/anomalies")
+            ? fakeResponse(200, anomaliesBody(flags))
+            : fakeResponse(200, costs),
+        ),
+      ),
+    );
+
+    const { container } = render(<DailyCosts />);
+    await screen.findByRole("img", { name: /Stacked daily cost/ });
+
+    // A chart marker appears EXACTLY on the flagged day (one per day, keyed by
+    // data-date) — never on the mundane days.
+    await waitFor(() =>
+      expect(
+        [...container.querySelectorAll(".viz-chart .viz-anomaly")].map((m) =>
+          m.getAttribute("data-date"),
+        ),
+      ).toEqual(["2026-06-03"]),
+    );
+    const marker = container.querySelector(".viz-chart .viz-anomaly")!;
+    expect(marker.getAttribute("data-direction")).toBe("increase");
+    // The tooltip carries the API's decimal strings verbatim (no reformatting).
+    const tooltip = marker.querySelector("title")?.textContent ?? "";
+    expect(tooltip).toContain("observed 200");
+    expect(tooltip).toContain("median 100");
+    expect(tooltip).toContain("threshold 8.8956");
+
+    // The table row carries a badge per flag (total + key), listing scope/key and
+    // direction.
+    const badges = [...container.querySelectorAll(".viz-anomaly-badge")];
+    expect(badges.map((b) => b.textContent)).toEqual([
+      "total increase",
+      "AWS Lambda increase",
+    ]);
+  });
+
+  it("keeps the chart alive when the anomaly fetch fails", async () => {
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      total: "100",
+      days: [
+        {
+          date: "2026-06-01",
+          total: "100",
+          services: [{ key: "AWS Lambda", cost: "100" }],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input).includes("/api/v1/anomalies")
+            ? fakeResponse(500, null)
+            : fakeResponse(200, costs),
+        ),
+      ),
+    );
+
+    const { container } = render(<DailyCosts />);
+
+    // The chart still renders despite the anomaly fetch failing...
+    expect(
+      await screen.findByRole("img", { name: /Stacked daily cost/ }),
+    ).toBeTruthy();
+    // ...with a non-blocking notice and no markers, and NOT the cost error alert.
+    await screen.findByText(/Anomaly overlay unavailable/);
+    expect(container.querySelectorAll(".viz-chart .viz-anomaly")).toHaveLength(
+      0,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

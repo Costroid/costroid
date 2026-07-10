@@ -17,6 +17,8 @@ import {
 } from "./viz";
 
 type DailyCosts = components["schemas"]["DailyCosts"];
+type Anomaly = components["schemas"]["Anomaly"];
+type Anomalies = components["schemas"]["Anomalies"];
 
 // FetchParams identifies the request a held "ready" result was fetched FOR, so a
 // render can detect synchronously that the current props no longer match it.
@@ -26,6 +28,14 @@ type CostsState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; costs: DailyCosts; params: FetchParams };
+
+// AnomalyState is fetched independently of the chart: a failure never blocks the
+// chart, only suppresses the overlay (with a small non-blocking notice). Its
+// params let a render ignore flags fetched for a stale grouping/range.
+type AnomalyState =
+  | { status: "loading"; params: FetchParams }
+  | { status: "error"; message: string; params: FetchParams }
+  | { status: "ready"; flags: Anomaly[]; params: FetchParams };
 
 type CostGroupBy = "service" | "provider" | "allocation";
 
@@ -50,6 +60,10 @@ export default function DailyCosts({
 }) {
   const [state, setState] = useState<CostsState>({ status: "loading" });
   const [groupBy, setGroupBy] = useState<CostGroupBy>("service");
+  const [anomalyState, setAnomalyState] = useState<AnomalyState>({
+    status: "loading",
+    params: { start: range.start, end: range.end, groupBy: "service" },
+  });
   const { start, end } = range;
 
   useEffect(() => {
@@ -98,7 +112,62 @@ export default function DailyCosts({
     return () => controller.abort();
   }, [start, end, groupBy]);
 
+  // The anomaly overlay is fetched with the SAME range + groupBy as the chart,
+  // but independently: a failure here must never break the chart (it only drops
+  // the overlay and shows a small notice). No stale markers — the held flags
+  // carry the params they were fetched for.
+  useEffect(() => {
+    setAnomalyState({ status: "loading", params: { start, end, groupBy } });
+    const controller = new AbortController();
+
+    async function loadAnomalies() {
+      try {
+        const q = rangeQuery(start, end);
+        const url =
+          `/api/v1/anomalies${q}` +
+          (groupBy !== "service" ? `${q ? "&" : "?"}groupBy=${groupBy}` : "");
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) {
+          throw new Error(`GET /api/v1/anomalies returned ${res.status}`);
+        }
+        const body = (await res.json()) as Anomalies;
+        if (controller.signal.aborted) {
+          return;
+        }
+        setAnomalyState({
+          status: "ready",
+          flags: body.anomalies ?? [],
+          params: { start, end, groupBy },
+        });
+      } catch (err) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setAnomalyState({
+          status: "error",
+          message: err instanceof Error ? err.message : String(err),
+          params: { start, end, groupBy },
+        });
+      }
+    }
+
+    void loadAnomalies();
+    return () => controller.abort();
+  }, [start, end, groupBy]);
+
   const groupLabel = groupLabelOf(groupBy);
+
+  // Only use flags fetched for the CURRENT grouping/range (never a stale set).
+  const anomalyMatches =
+    anomalyState.params.start === start &&
+    anomalyState.params.end === end &&
+    anomalyState.params.groupBy === groupBy;
+  const anomalyFlags =
+    anomalyState.status === "ready" && anomalyMatches ? anomalyState.flags : [];
+  const anomalyNotice =
+    anomalyState.status === "error" && anomalyMatches
+      ? anomalyState.message
+      : null;
 
   // Derive staleness SYNCHRONOUSLY during render: when the held "ready" data was
   // fetched for different params than the current props (a grouping switch or a
@@ -143,7 +212,18 @@ export default function DailyCosts({
         (view.costs.days.length === 0 ? (
           <EmptyState />
         ) : (
-          <Chart costs={view.costs} groupBy={groupBy} />
+          <>
+            {anomalyNotice && (
+              <p className="viz-anomaly-notice" role="status">
+                Anomaly overlay unavailable: {anomalyNotice}
+              </p>
+            )}
+            <Chart
+              costs={view.costs}
+              groupBy={groupBy}
+              anomalies={anomalyFlags}
+            />
+          </>
         ))}
     </section>
   );
@@ -171,14 +251,23 @@ function EmptyState() {
 function Chart({
   costs,
   groupBy,
+  anomalies,
 }: {
   costs: DailyCosts;
   groupBy: CostGroupBy;
+  anomalies: Anomaly[];
 }) {
   const groupLabel = groupLabelOf(groupBy);
   const groups = [
     ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.key))),
   ].sort();
+
+  // Flags keyed by calendar day (a day can carry both a total flag and one or
+  // more key flags). The API dates match the day.date strings verbatim.
+  const flagsByDate = new Map<string, Anomaly[]>();
+  for (const flag of anomalies) {
+    flagsByDate.set(flag.date, [...(flagsByDate.get(flag.date) ?? []), flag]);
+  }
 
   // The stacked bars render positive costs only: FOCUS Credit/Adjustment
   // rows can be negative, and a diverging below-baseline geometry is a
@@ -276,6 +365,14 @@ function Chart({
                 <title>Net day total</title>
                 {day.total}
               </text>
+              {flagsByDate.has(day.date) && (
+                <AnomalyMarker
+                  cx={x + barWidth / 2}
+                  capTop={cursor}
+                  barWidth={barWidth}
+                  flags={flagsByDate.get(day.date)!}
+                />
+              )}
               {i % labelEvery === 0 && (
                 <text
                   x={x + barWidth / 2}
@@ -318,7 +415,18 @@ function Chart({
           <tbody>
             {costs.days.map((day) => (
               <tr key={day.date}>
-                <th scope="row">{day.date}</th>
+                <th scope="row">
+                  {day.date}
+                  {flagsByDate.get(day.date)?.map((flag) => (
+                    <span
+                      key={`${flag.scope}:${flag.key ?? ""}`}
+                      className={`viz-anomaly-badge viz-anomaly-${flag.direction}`}
+                      data-date={day.date}
+                    >
+                      {anomalyLabel(flag)} {flag.direction}
+                    </span>
+                  ))}
+                </th>
                 {groups.map((name) => (
                   <td key={name}>
                     {day.services.find((s) => s.key === name)?.cost ?? "—"}
@@ -331,5 +439,61 @@ function Chart({
         </table>
       </details>
     </div>
+  );
+}
+
+// anomalyLabel names the scope of one flag for the tooltip and the table badge:
+// "total" for the summed series, or the grouping key for a key flag.
+function anomalyLabel(flag: Anomaly): string {
+  return flag.scope === "total" ? "total" : (flag.key ?? "key");
+}
+
+// markerDirection is the day's overall direction — the total flag's if present,
+// otherwise the first flag's — used for the glyph orientation and coloring.
+function markerDirection(flags: Anomaly[]): "increase" | "decrease" {
+  const chosen = flags.find((f) => f.scope === "total") ?? flags[0];
+  return chosen.direction === "decrease" ? "decrease" : "increase";
+}
+
+// AnomalyMarker draws a small direction-aware glyph for one flagged day (an
+// up-triangle for a spike, a down-triangle for a dip), carrying a data-date and a
+// verbatim <title> of the API's decimal statistics. capTop is the top y of the
+// day's positive stack. Placement is deterministic and never collides with the
+// net-total cap label: above the cap when there is room, otherwise just to the
+// right of the cap for a near-full-height bar (both stay inside the viewport).
+function AnomalyMarker({
+  cx,
+  capTop,
+  barWidth,
+  flags,
+}: {
+  cx: number;
+  capTop: number;
+  barWidth: number;
+  flags: Anomaly[];
+}) {
+  const direction = markerDirection(flags);
+  const roomAbove = capTop >= 28; // enough headroom to clear the cap label above
+  const gx = roomAbove ? cx : cx + barWidth / 2 + 6;
+  const gy = roomAbove ? capTop - 22 : capTop - 9;
+  const glyph =
+    direction === "decrease"
+      ? `M${gx},${gy + 5} L${gx - 4},${gy - 3} L${gx + 4},${gy - 3} Z`
+      : `M${gx},${gy - 5} L${gx - 4},${gy + 3} L${gx + 4},${gy + 3} Z`;
+  const title = flags
+    .map(
+      (f) =>
+        `${anomalyLabel(f)} ${f.direction}: observed ${f.observed}, median ${f.median}, threshold ${f.threshold}`,
+    )
+    .join("\n");
+  return (
+    <path
+      className={`viz-anomaly viz-anomaly-${direction}`}
+      data-date={flags[0].date}
+      data-direction={direction}
+      d={glyph}
+    >
+      <title>{title}</title>
+    </path>
   );
 }

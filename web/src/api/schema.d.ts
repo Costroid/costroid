@@ -58,6 +58,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/anomalies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Statistical cost anomalies (spikes and dips)
+         * @description Flags spikes and dips in the daily cost series with a robust median/MAD detector computed at QUERY time — stateless, so retroactive FOCUS corrections are automatically re-scored. Uses the SAME groupBy dimensions as /api/v1/costs/daily and scores both the per-day TOTAL series (the sum over the day's keys) and each grouping key's own series. Flags are range-INDEPENDENT: the full stored history up to the requested end is scored, then only flags whose day falls inside [start, end] are returned, so a given day yields the identical flag regardless of the queried start. Because scoring reads full history, a mixed-currency HISTORY returns 500 on the single-currency guard even when the requested range alone is single-currency. Every statistic is an exact decimal string and the detector's fixed parameters are echoed, so each flag is hand-recomputable.
+         */
+        get: operations["getAnomalies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/usage/tokens/daily": {
         parameters: {
             query?: never;
@@ -199,6 +219,101 @@ export interface components {
              * @example 2.4192
              */
             cost: string;
+        };
+        Anomalies: {
+            /**
+             * @description Billing currency of the scored costs (FOCUS BillingCurrency). Empty when no data matched.
+             * @example USD
+             */
+            currency: string;
+            parameters: components["schemas"]["AnomalyParameters"];
+            /** @description Detected flags, ordered date-ascending, then total scope before key scope, then key-ascending. Never null; [] when nothing is flagged. */
+            anomalies: components["schemas"]["Anomaly"][];
+        };
+        AnomalyParameters: {
+            /**
+             * @description Strict-threshold multiple of the scaled MAD, as a decimal string.
+             * @example 3
+             */
+            k: string;
+            /**
+             * @description MAD-to-sigma consistency constant (R stats::mad), as a decimal string.
+             * @example 1.4826
+             */
+            consistencyConstant: string;
+            /**
+             * @description Maximum trailing observed days in the baseline window.
+             * @example 30
+             */
+            windowDays: number;
+            /**
+             * @description Minimum baseline observations required to score a day.
+             * @example 10
+             */
+            minObservations: number;
+            /**
+             * @description Fraction of the absolute median a deviation must also reach, as a decimal string.
+             * @example 0.1
+             */
+            relativeFloor: string;
+            /**
+             * @description The grouping dimension echoed verbatim from the request.
+             * @example service
+             */
+            groupBy: string;
+        };
+        Anomaly: {
+            /**
+             * Format: date
+             * @description The UTC calendar day flagged.
+             * @example 2026-06-18
+             */
+            date: string;
+            /**
+             * @description "total" (the summed daily series) or "key" (one grouping key's series).
+             * @example total
+             */
+            scope: string;
+            /**
+             * @description The grouping key whose series flagged; present ONLY when scope is "key" (never for "total", so a real key literally named "total" is unambiguous).
+             * @example Amazon Elastic Compute Cloud
+             */
+            key?: string;
+            /**
+             * @description "increase" when observed is above the median, "decrease" when below.
+             * @example increase
+             */
+            direction: string;
+            /**
+             * @description The day's observed value, as an exact decimal string.
+             * @example 31.2
+             */
+            observed: string;
+            /**
+             * @description Baseline median, as an exact decimal string.
+             * @example 4.6809
+             */
+            median: string;
+            /**
+             * @description Baseline median absolute deviation, as an exact decimal string.
+             * @example 0.0013
+             */
+            mad: string;
+            /**
+             * @description mad times consistencyConstant, as an exact decimal string.
+             * @example 0.00192738
+             */
+            scaledMad: string;
+            /**
+             * @description k times scaledMad — the strict flag threshold, as an exact decimal string.
+             * @example 0.00578214
+             */
+            threshold: string;
+            /**
+             * @description The absolute difference of observed and median, as a decimal string.
+             * @example 26.5191
+             */
+            deviation: string;
         };
         DailyTokenUsage: {
             /**
@@ -395,6 +510,51 @@ export interface operations {
                 };
             };
             /** @description The cost query failed, including an unreadable, malformed, or invalid allocation rules file (reported as "loading allocation rules: …"). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getAnomalies: {
+        parameters: {
+            query?: {
+                /** @description Inclusive first calendar day (UTC) of the RETURNED flags; it does not affect the scoring baseline. Defaults to the full range of stored data. */
+                start?: string;
+                /** @description Inclusive last calendar day (UTC) to score and return. Defaults to the full range of stored data. */
+                end?: string;
+                /** @description Cost grouping dimension (the same set as /api/v1/costs/daily). */
+                groupBy?: "service" | "provider" | "allocation";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detected anomalies for the requested period; [] when none. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Anomalies"];
+                };
+            };
+            /** @description Invalid start date, end date, or groupBy value; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description The cost query failed, including a mixed-currency history or an unreadable, malformed, or invalid allocation rules file. */
             500: {
                 headers: {
                     [name: string]: unknown;
