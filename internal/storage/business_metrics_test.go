@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 func TestBusinessMetricsReplaceAndExactQueries(t *testing.T) {
@@ -85,5 +87,56 @@ func TestBusinessMetricsReplaceAndExactQueries(t *testing.T) {
 	}
 	if rows, err := s.DailyBusinessMetricQuantities(ctx, "nobody", metric, time.Time{}, time.Time{}); err != nil || len(rows) != 0 {
 		t.Fatalf("isolated quantities = (%+v, %v)", rows, err)
+	}
+}
+
+// TestReplaceBusinessMetricsBatchAtomicOnMidBatchFailure proves the delete and
+// inserts are ONE transaction: when a later row fails mid-batch, the DELETE of
+// that (tenant, source_label)'s prior rows is rolled back too, so the earlier
+// data survives intact. Rewriting ReplaceBusinessMetricsBatch as two autocommit
+// statements (delete; then insert) would delete the prior rows and leave them
+// gone — this reddens on that mutation.
+func TestReplaceBusinessMetricsBatchAtomicOnMidBatchFailure(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Seed two good rows under (default, primary).
+	seed := []BusinessMetricRow{
+		{MetricDay: day(1), MetricName: "requests", Quantity: dec(t, "10")},
+		{MetricDay: day(2), MetricName: "requests", Quantity: dec(t, "20")},
+	}
+	if err := store.ReplaceBusinessMetricsBatch(ctx, "default", "primary", seed); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	// A replace whose FIRST row is fine but whose LATER row overflows the store's
+	// DECIMAL(38,18) integer capacity (21 integer digits > the 38-18 = 20 the
+	// column holds) raises a DuckDB Conversion Error at that row's CAST — after
+	// the DELETE, before COMMIT. This vector is reachable only at the store level
+	// (businessmetrics.Parse's range guard rejects it earlier), which is exactly
+	// why the store's own atomicity needs this test. Extra FRACTIONAL digits would
+	// NOT fail — DuckDB silently rounds them at the CAST — so an integer overflow
+	// is the deterministic mid-batch failure.
+	overflow := decimal.New(1, 20) // "100000000000000000000"
+	bad := []BusinessMetricRow{
+		{MetricDay: day(3), MetricName: "requests", Quantity: dec(t, "30")},
+		{MetricDay: day(4), MetricName: "requests", Quantity: overflow},
+	}
+	if err := store.ReplaceBusinessMetricsBatch(ctx, "default", "primary", bad); err == nil {
+		t.Fatal("over-capacity quantity did not fail the batch")
+	}
+
+	// The prior rows are intact: the failed batch's DELETE rolled back with the
+	// rest of the transaction.
+	got, err := store.DailyBusinessMetricQuantities(ctx, "default", "requests", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("querying after the failed batch: %v", err)
+	}
+	if len(got) != 2 || got[0].Date != day(1) || got[0].Quantity.String() != "10" || got[1].Date != day(2) || got[1].Quantity.String() != "20" {
+		t.Fatalf("after failed batch = %+v, want the two seed rows intact (10, 20)", got)
 	}
 }

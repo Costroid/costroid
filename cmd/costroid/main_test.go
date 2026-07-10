@@ -521,6 +521,64 @@ func TestServeConfig(t *testing.T) {
 			t.Fatalf("serveConfig(-h) = stop %v, err %v", stop, err)
 		}
 	})
+
+	t.Run("non-ENOENT stat error also warns (still non-fatal)", func(t *testing.T) {
+		// A resolvable path whose os.Stat fails with something OTHER than
+		// ErrNotExist (here ENOTDIR: the path's parent is a regular file) must
+		// still produce a startup warning and let serve start — the finding is
+		// that only ErrNotExist warned before.
+		regular := filepath.Join(t.TempDir(), "rules.json")
+		if err := os.WriteFile(regular, []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		notDir := filepath.Join(regular, "child.json") // stat → ENOTDIR (not ErrNotExist)
+		t.Setenv("COSTROID_ADDR", "")
+		t.Setenv(allocationRulesEnvVar, notDir)
+		cfg, warning, stop, err := serveConfig(nil)
+		if err != nil || stop || cfg.allocationRulesPath != notDir {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v)", cfg, warning, stop, err)
+		}
+		if !strings.Contains(warning, notDir) || !strings.Contains(warning, "not accessible") {
+			t.Errorf("warning = %q, want it to name the path and flag the non-ENOENT stat error", warning)
+		}
+	})
+}
+
+// TestMetricsImportTenantReachesStore proves the CLI `metrics import --tenant`
+// flag reaches the store's per-tenant keying end to end: rows imported under a
+// non-default tenant are visible only under that tenant, never the default one.
+// (The store-level tenant keying is proven in the storage package; this pins the
+// CLI flag pass-through so dropping --tenant from metricsImport reddens here.)
+func TestMetricsImportTenantReachesStore(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	path := filepath.Join(t.TempDir(), "metrics.csv")
+	if err := os.WriteFile(path, []byte("date,metric,quantity\n2026-05-01,requests,10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runCLI([]string{"metrics", "import", "--path", path, "--tenant", "acme"}, ""); err != nil {
+		t.Fatalf("metrics import --tenant acme: %v\n%s", err, out)
+	}
+
+	store, err := storage.Open(context.Background(), dataDir)
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	acme, err := store.DailyBusinessMetricQuantities(context.Background(), "acme", "requests", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyBusinessMetricQuantities(acme): %v", err)
+	}
+	if len(acme) != 1 || acme[0].Quantity.String() != "10" {
+		t.Fatalf("acme quantities = %+v, want the imported row (10)", acme)
+	}
+	def, err := store.DailyBusinessMetricQuantities(context.Background(), "default", "requests", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyBusinessMetricQuantities(default): %v", err)
+	}
+	if len(def) != 0 {
+		t.Fatalf("default tenant sees %+v, want none (the --tenant flag homed the rows under acme)", def)
+	}
 }
 
 // TestAllocationValidateCLI covers `costroid allocation validate`: a valid file

@@ -10,6 +10,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import DailyCosts from "./DailyCosts";
+import { HEIGHT, MARGIN } from "./viz";
 import type { components } from "./api/schema";
 
 type DailyCostsResponse = components["schemas"]["DailyCosts"];
@@ -309,6 +310,44 @@ describe("DailyCosts", () => {
     ).toBeTruthy();
   });
 
+  it("commits no [new heading + stale chart] frame on a grouping switch", async () => {
+    // The pre-effect committed frame is what this pins. A native button.click()
+    // OUTSIDE act commits React's synchronous re-render (groupBy already
+    // "provider") but does NOT flush the passive effect (which would setState to
+    // loading). After exactly ONE microtask the mismatch frame has committed;
+    // asserting there catches the buggy [provider heading + old service chart]
+    // frame. (An act-wrapped fireEvent flushes the effect first and makes this
+    // vacuous — hence the raw dispatch + single microtask.)
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      total: "1",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "1",
+          services: [{ key: "AWS Lambda", cost: "1" }],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, costs))),
+    );
+    render(<DailyCosts />);
+    await screen.findByRole("img", { name: "Stacked daily cost by service" });
+
+    screen.getByRole("button", { name: "Provider" }).click();
+    await Promise.resolve();
+
+    // The committed frame shows the NEW heading and the loading state — never the
+    // stale service chart.
+    expect(
+      screen.getByRole("heading", { name: "Daily cost by provider" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Loading daily costs…")).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
   it("keeps credit days inside the plot and reports net totals", async () => {
     // Day 1's positive segments sum to 5.00 while its net total is only
     // 1.00: with a net-derived y-scale the positive stack would overflow
@@ -405,6 +444,51 @@ describe("DailyCosts", () => {
         "Tiny lower segment: 0.000001 USD (2026-05-01)",
     );
     expect(tiny).toBeTruthy();
+  });
+
+  it("anchors a clamped sub-pixel bottom segment to its bin bottom", async () => {
+    // A 0.0001 service stacked UNDER a 2.4192 one: the tiny bottom segment's
+    // natural height-minus-gap is far below the 1px floor, so drawnHeight clamps
+    // up to 1. The clamped sliver's BOTTOM edge (y + drawnHeight) must land
+    // exactly at its bin bottom — which, for the bottom segment, is the zero
+    // baseline — never protruding below it. This asserts the drawn GEOMETRY, not
+    // mere existence.
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      total: "2.4193",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "2.4193",
+          services: [
+            { key: "Tiny lower segment", cost: "0.0001" },
+            { key: "Large top segment", cost: "2.4192" },
+          ],
+        },
+      ],
+    };
+    const { container } = renderChart(costs);
+    await screen.findByRole("img", { name: /Stacked daily cost/ });
+
+    const tiny = [...container.querySelectorAll("path")].find(
+      (path) =>
+        path.querySelector("title")?.textContent ===
+        "Tiny lower segment: 0.0001 USD (2026-05-01)",
+    );
+    expect(tiny).toBeTruthy();
+    // The bottom (non-top) segment path is `M{x},{y} h{w} v{h} h{-w} Z`.
+    const match = /^M[\d.-]+,([\d.-]+) h[\d.-]+ v([\d.-]+)/.exec(
+      tiny?.getAttribute("d") ?? "",
+    );
+    expect(match).toBeTruthy();
+    const y = Number(match![1]);
+    const drawnHeight = Number(match![2]);
+    // segmentBottom of the bottom segment is the plot baseline.
+    const baseline = HEIGHT - MARGIN.bottom;
+    expect(y + drawnHeight).toBe(baseline);
+    // The sliver stays inside its bin: above the baseline, below the top tick.
+    expect(y).toBeGreaterThanOrEqual(MARGIN.top);
+    expect(y).toBeLessThanOrEqual(baseline);
   });
 
   it("keeps a service's color stable when the service set changes", async () => {

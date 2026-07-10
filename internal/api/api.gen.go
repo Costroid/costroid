@@ -191,7 +191,7 @@ type GetDailyCostsParamsGroupBy string
 // GetDailyUnitEconomicsParams defines parameters for GetDailyUnitEconomics.
 type GetDailyUnitEconomicsParams struct {
 	// Metric Exact imported business metric name.
-	Metric *string `form:"metric,omitempty" json:"metric,omitempty"`
+	Metric string `form:"metric" json:"metric"`
 
 	// Start Inclusive first UTC calendar day; defaults to unbounded.
 	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
@@ -348,9 +348,9 @@ func (siw *ServerInterfaceWrapper) GetDailyUnitEconomics(w http.ResponseWriter, 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetDailyUnitEconomicsParams
 
-	// ------------- Optional query parameter "metric" -------------
+	// ------------- Required query parameter "metric" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {

@@ -72,10 +72,10 @@ export default function UnitEconomics({
     setEconomicsState({ status: "loading" });
     async function loadEconomics() {
       try {
-        const range = rangeQuery(start, end).replace("?", "&");
+        const rangeSuffix = rangeQuery(start, end).replace("?", "&");
         const url =
           `/api/v1/unit-economics/daily?metric=${encodeURIComponent(selectedMetric)}` +
-          range;
+          rangeSuffix;
         const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) {
           throw new Error(
@@ -114,6 +114,7 @@ export default function UnitEconomics({
             <label>
               Business metric
               <select
+                style={{ marginInlineStart: "0.5rem" }}
                 value={selectedMetric}
                 onChange={(event) => setSelectedMetric(event.target.value)}
               >

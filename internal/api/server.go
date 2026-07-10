@@ -269,11 +269,14 @@ func (s *Server) GetBusinessMetrics(w http.ResponseWriter, r *http.Request) {
 // quantity stay exact decimals; division happens only in Go at explicit scale
 // 18 and the result is transported as a string.
 func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, params GetDailyUnitEconomicsParams) {
-	if params.Metric == nil || *params.Metric == "" {
+	// metric is a required query parameter (the generated binding wrapper 400s a
+	// wholly-absent metric before the handler runs); a present-but-empty
+	// "?metric=" still binds "" and is rejected here.
+	if params.Metric == "" {
 		http.Error(w, "metric query parameter is required and must be non-empty", http.StatusBadRequest)
 		return
 	}
-	metric := *params.Metric
+	metric := params.Metric
 	start, end := time.Time{}, time.Time{}
 	if params.Start != nil {
 		start = params.Start.Time

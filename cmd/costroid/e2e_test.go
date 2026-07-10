@@ -1512,6 +1512,19 @@ func TestOfflineE2EBusinessMetrics(t *testing.T) {
 	if code != http.StatusOK || strings.TrimSpace(listBody) != `{"metrics":[{"firstDay":"2026-05-01","lastDay":"2026-05-08","name":"requests"}]}` {
 		t.Fatalf("list status=%d body=%s", code, listBody)
 	}
+	// D35 isolation, end to end: user-authored business metrics live in their own
+	// table and must NEVER leak into the AI-usage endpoints. Here only cloud cost
+	// and business metrics were imported (no AI usage), so both usage endpoints are
+	// empty arrays — and in particular the "requests" business metric never appears.
+	for _, path := range []string{"/api/v1/usage/tokens/daily", "/api/v1/usage/metrics/daily"} {
+		code, body := get(live, path)
+		if code != http.StatusOK || strings.TrimSpace(body) != `[]` {
+			t.Fatalf("%s after business-metrics import: status=%d body=%s, want []", path, code, body)
+		}
+		if strings.Contains(body, "requests") {
+			t.Errorf("business metric leaked into %s: %s", path, body)
+		}
+	}
 	code, body := get(live, "/api/v1/unit-economics/daily?metric=requests&start=2026-05-01&end=2026-05-08")
 	if code != http.StatusOK {
 		t.Fatalf("unit economics status=%d body=%s", code, body)

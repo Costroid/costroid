@@ -470,9 +470,9 @@ export interface operations {
     };
     getDailyUnitEconomics: {
         parameters: {
-            query?: {
+            query: {
                 /** @description Exact imported business metric name. */
-                metric?: string;
+                metric: string;
                 /** @description Inclusive first UTC calendar day; defaults to unbounded. */
                 start?: string;
                 /** @description Inclusive last UTC calendar day; defaults to unbounded. */

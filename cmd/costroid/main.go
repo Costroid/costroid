@@ -501,8 +501,16 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 		warning = "no allocation rules path could be resolved — groupBy=allocation will return 400 as unconfigured"
 		return cfg, warning, false, nil
 	}
-	if _, statErr := os.Stat(cfg.allocationRulesPath); errors.Is(statErr, fs.ErrNotExist) {
+	switch _, statErr := os.Stat(cfg.allocationRulesPath); {
+	case statErr == nil:
+		// The file is present and statable — no startup warning.
+	case errors.Is(statErr, fs.ErrNotExist):
 		warning = fmt.Sprintf("allocation rules file not found: %s — groupBy=allocation will return 400 until it exists", cfg.allocationRulesPath)
+	default:
+		// Other stat errors (EACCES, ENOTDIR, …) are still non-fatal — allocation
+		// is loaded per request — but surface them at startup too so the operator
+		// learns of the misconfiguration without waiting for the first request.
+		warning = fmt.Sprintf("allocation rules file %s is not accessible: %v — groupBy=allocation will fail until it is fixed", cfg.allocationRulesPath, statErr)
 	}
 	return cfg, warning, false, nil
 }

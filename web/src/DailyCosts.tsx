@@ -18,10 +18,14 @@ import {
 
 type DailyCosts = components["schemas"]["DailyCosts"];
 
+// FetchParams identifies the request a held "ready" result was fetched FOR, so a
+// render can detect synchronously that the current props no longer match it.
+type FetchParams = { start: string; end: string; groupBy: CostGroupBy };
+
 type CostsState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; costs: DailyCosts };
+  | { status: "ready"; costs: DailyCosts; params: FetchParams };
 
 type CostGroupBy = "service" | "provider" | "allocation";
 
@@ -74,7 +78,11 @@ export default function DailyCosts({
         if (controller.signal.aborted) {
           return;
         }
-        setState({ status: "ready", costs });
+        setState({
+          status: "ready",
+          costs,
+          params: { start, end, groupBy },
+        });
       } catch (err) {
         if (controller.signal.aborted) {
           return;
@@ -91,6 +99,21 @@ export default function DailyCosts({
   }, [start, end, groupBy]);
 
   const groupLabel = groupLabelOf(groupBy);
+
+  // Derive staleness SYNCHRONOUSLY during render: when the held "ready" data was
+  // fetched for different params than the current props (a grouping switch or a
+  // range change), show the loading state THIS frame instead of rendering the new
+  // heading beside the stale chart. The effect's own setState({status:"loading"})
+  // runs only AFTER this mismatch frame would otherwise commit, so deriving it
+  // here — not via effect timing — is what eliminates the [new heading + old
+  // chart] frame.
+  const view: CostsState =
+    state.status === "ready" &&
+    (state.params.start !== start ||
+      state.params.end !== end ||
+      state.params.groupBy !== groupBy)
+      ? { status: "loading" }
+      : state;
 
   return (
     <section>
@@ -112,15 +135,15 @@ export default function DailyCosts({
           </button>
         ))}
       </div>
-      {state.status === "loading" && <p>Loading daily costs…</p>}
-      {state.status === "error" && (
-        <p role="alert">Failed to load daily costs: {state.message}</p>
+      {view.status === "loading" && <p>Loading daily costs…</p>}
+      {view.status === "error" && (
+        <p role="alert">Failed to load daily costs: {view.message}</p>
       )}
-      {state.status === "ready" &&
-        (state.costs.days.length === 0 ? (
+      {view.status === "ready" &&
+        (view.costs.days.length === 0 ? (
           <EmptyState />
         ) : (
-          <Chart costs={state.costs} groupBy={groupBy} />
+          <Chart costs={view.costs} groupBy={groupBy} />
         ))}
     </section>
   );
@@ -223,16 +246,21 @@ function Chart({
                 cursor -= height;
                 const gap = isTop ? 0 : SEGMENT_GAP;
                 const drawnHeight = Math.max(height - gap, 1);
+                // When height - gap drops below the 1px floor, drawnHeight is
+                // clamped UP to 1; anchor that sliver to its bin bottom so its
+                // bottom edge stays at segmentBottom (never protruding below the
+                // zero baseline for the bottom segment). The unclamped branch
+                // keeps its exact prior expression, so its output — which can
+                // differ from segmentBottom - drawnHeight in the last float ulp —
+                // stays byte-identical.
+                const y =
+                  height - gap < 1
+                    ? segmentBottom - drawnHeight
+                    : segmentBottom - height + gap;
                 return (
                   <path
                     key={svc.key}
-                    d={segmentPath(
-                      x,
-                      segmentBottom - height + gap,
-                      barWidth,
-                      drawnHeight,
-                      isTop,
-                    )}
+                    d={segmentPath(x, y, barWidth, drawnHeight, isTop)}
                     fill={serviceColor(svc.key)}
                   >
                     <title>{`${svc.key}: ${svc.cost} ${costs.currency} (${day.date})`}</title>

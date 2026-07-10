@@ -92,6 +92,36 @@ func TestMergeUnitEconomicsCoveredBinsOnly(t *testing.T) {
 	}
 }
 
+// TestGetDailyUnitEconomicsEmptyCurrencyWhenNoCostRows pins that when a metric
+// has quantity rows but NO cost rows matched (empty DailyCosts.Currency), the
+// response currency is exactly "" — never a fabricated default. It guards the
+// costs.Currency passthrough in mergeUnitEconomics: a regression that defaulted
+// the currency to (say) "USD" reddens here.
+func TestGetDailyUnitEconomicsEmptyCurrencyWhenNoCostRows(t *testing.T) {
+	store := &fakeStore{
+		businessInfos:      []storage.BusinessMetricInfo{{Name: "requests"}},
+		daily:              storage.DailyCosts{Currency: "", Days: nil},
+		businessQuantities: []storage.DayQuantity{{Date: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), Quantity: decimal.RequireFromString("10")}},
+	}
+	handler := NewHandler("test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unit-economics/daily?metric=requests", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got UnitEconomics
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Currency != "" {
+		t.Errorf("currency = %q, want empty string (no cost rows matched)", got.Currency)
+	}
+	// The empty currency is carried verbatim in the JSON, never omitted or faked.
+	if !strings.Contains(rec.Body.String(), `"currency":""`) {
+		t.Errorf("body must carry an empty currency verbatim: %s", rec.Body)
+	}
+}
+
 func TestGetBusinessMetrics(t *testing.T) {
 	store := &fakeStore{businessInfos: []storage.BusinessMetricInfo{
 		{Name: "active users", FirstDay: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), LastDay: time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC)},
@@ -176,11 +206,21 @@ func TestGetDailyUnitEconomicsErrorsAndKnownOutsideRange(t *testing.T) {
 		return rec
 	}
 
-	for _, query := range []string{"", "?metric="} {
+	// metric is a required query param. A WHOLLY ABSENT metric is rejected by the
+	// generated binding wrapper (its own message) before the handler runs; a
+	// present-but-empty "?metric=" binds "" and is rejected by the handler's own
+	// non-empty guard. Both are 400 and neither touches the store.
+	for _, tc := range []struct {
+		query string
+		body  string
+	}{
+		{"", "Query argument metric is required, but not found"},
+		{"?metric=", "metric query parameter is required and must be non-empty"},
+	} {
 		store := &fakeStore{}
-		rec := get(store, query)
-		if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != "metric query parameter is required and must be non-empty" || store.businessNamesCount != 0 {
-			t.Errorf("missing metric %q: status=%d body=%q names=%d", query, rec.Code, rec.Body.String(), store.businessNamesCount)
+		rec := get(store, tc.query)
+		if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != tc.body || store.businessNamesCount != 0 {
+			t.Errorf("missing metric %q: status=%d body=%q names=%d", tc.query, rec.Code, rec.Body.String(), store.businessNamesCount)
 		}
 	}
 

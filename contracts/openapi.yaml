@@ -184,6 +184,7 @@ paths:
       parameters:
         - name: metric
           in: query
+          required: true
           description: Exact imported business metric name.
           schema:
             type: string

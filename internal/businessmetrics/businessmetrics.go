@@ -48,10 +48,10 @@ func Parse(r io.Reader) ([]storage.BusinessMetricRow, error) {
 			break
 		}
 		if err != nil {
+			// csv.Reader enforces the 3-field width itself (FieldsPerRecord is
+			// pinned to the header's field count), so a wrong-width row surfaces
+			// here as an ErrFieldCount, never as a short/long record below.
 			return nil, fmt.Errorf("record %d: reading CSV fields: %w", recordNumber, err)
-		}
-		if len(record) != 3 {
-			return nil, fmt.Errorf("record %d: expected exactly 3 fields (date,metric,quantity), got %d", recordNumber, len(record))
 		}
 
 		day, err := parseDay(record[0])
