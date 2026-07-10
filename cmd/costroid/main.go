@@ -542,7 +542,7 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	allocationRulesFlag := flags.String("allocation-rules", "", allocationRulesFlagUsage)
 	tokenFileFlag := flags.String("auth-token-file", "", "bearer auth: path to a file holding the API token (overrides $COSTROID_AUTH_TOKEN_FILE; preferred over the weaker $COSTROID_AUTH_TOKEN). There is no --auth-token value flag — argv is world-readable")
 	trustedHeaderFlag := flags.String("auth-trusted-header", "", "forward-auth: the identity header your reverse proxy sets (overrides $COSTROID_AUTH_TRUSTED_HEADER; empty disables forward-auth; recommended value X-WEBAUTH-USER)")
-	trustedProxiesFlag := flags.String("auth-trusted-proxies", "", "forward-auth: comma-separated trusted proxy CIDRs whose identity header is honored (overrides $COSTROID_AUTH_TRUSTED_PROXIES; default 127.0.0.0/8,::1/128; an all-addresses CIDR is refused)")
+	trustedProxiesFlag := flags.String("auth-trusted-proxies", "", "forward-auth: comma-separated trusted proxy CIDRs whose identity header is honored (overrides $COSTROID_AUTH_TRUSTED_PROXIES; default 127.0.0.0/8,::1/128; IPv4 prefixes broader than /8 and IPv6 broader than /16 are refused)")
 	noAuthFlag := flags.Bool("no-auth", false, "serve WITHOUT authentication — the ONLY way to run unauthenticated (not recommended on a network-exposed address)")
 	if stop, err = parseFlags(flags, args); stop || err != nil {
 		return serveSettings{}, "", stop, err
@@ -663,7 +663,7 @@ func resolveBearerToken(fileFlag string) (string, error) {
 // allowlist (flag > env, with the loopback default applied last). Forward-auth
 // is enabled iff the resolved header name is non-empty. The CIDR set is parsed
 // and validated whenever the mode is enabled OR the operator supplied any CIDRs
-// — a bad CIDR, or an all-addresses wildcard, is a hard config error.
+// — a bad or implausibly broad CIDR is a hard config error.
 func resolveForwardAuth(headerFlag, proxiesFlag string) (header string, proxies []netip.Prefix, err error) {
 	header = headerFlag
 	if header == "" {
@@ -687,10 +687,10 @@ func resolveForwardAuth(headerFlag, proxiesFlag string) (header string, proxies 
 }
 
 // parseTrustedProxies parses a comma-separated CIDR list into prefixes. A bad
-// CIDR is a config error (never silently dropped); an all-addresses CIDR
-// (0.0.0.0/0, ::/0, any /0) is a HARD error — serve refuses (fail closed),
-// because trusting every peer lets any client spoof the identity header (the
-// Gitea CVE-2026-20896 class, §P5).
+// CIDR is a config error (never silently dropped); an implausibly broad CIDR
+// (IPv4 shorter than /8 or IPv6 shorter than /16) is a HARD error — serve
+// refuses (fail closed), because trusting a vast address range lets clients
+// spoof the identity header (the Gitea CVE-2026-20896 class, §P5).
 func parseTrustedProxies(s string) ([]netip.Prefix, error) {
 	parts := strings.Split(s, ",")
 	prefixes := make([]netip.Prefix, 0, len(parts))
@@ -703,8 +703,12 @@ func parseTrustedProxies(s string) ([]netip.Prefix, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid --auth-trusted-proxies CIDR %q: %w", p, err)
 		}
-		if prefix.Bits() == 0 {
-			return nil, fmt.Errorf("--auth-trusted-proxies %q trusts all addresses — refusing: any client could then spoof the trusted identity header; list only your reverse proxy's real address(es)", p)
+		minimumBits := 16
+		if prefix.Addr().Is4() {
+			minimumBits = 8
+		}
+		if prefix.Bits() < minimumBits {
+			return nil, fmt.Errorf("--auth-trusted-proxies %q trusts an implausibly broad address range — refusing: any client in that range could spoof the trusted identity header; use IPv4 /8 or narrower, IPv6 /16 or narrower, and list only your reverse proxy's real address(es)", p)
 		}
 		prefixes = append(prefixes, prefix)
 	}

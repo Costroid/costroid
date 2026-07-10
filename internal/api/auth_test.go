@@ -17,6 +17,16 @@ import (
 // short-circuited before the protected handler.
 type reachHandler struct{ reached bool }
 
+type recordingMux struct {
+	patterns []string
+}
+
+func (m *recordingMux) HandleFunc(pattern string, _ func(http.ResponseWriter, *http.Request)) {
+	m.patterns = append(m.patterns, pattern)
+}
+
+func (m *recordingMux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+
 func (rh *reachHandler) next(status int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		rh.reached = true
@@ -233,24 +243,23 @@ func TestExemptPaths(t *testing.T) {
 }
 
 // TestRouteGateGuard is the denylist-awareness guard (required test 6). It
-// enumerates the routes the generated scaffolding registers (api.gen.go's
-// HandlerWithOptions) plus the static root, and asserts the INVARIANT that every
+// records the routes the generated scaffolding actually registers
+// (api.gen.go's HandlerWithOptions) plus the static root, and asserts the INVARIANT that every
 // data route is under /api/ (gated) while the only non-/api/ routes are the
 // exempt allowlist. A future data endpoint registered outside /api/ that is not
 // added to the gate (auth.go's gated) and this table reddens here rather than
 // silently shipping unauthenticated.
 func TestRouteGateGuard(t *testing.T) {
 	exempt := map[string]bool{"/healthz": true, "/": true}
-	routes := []string{
-		"/api/v1/anomalies",
-		"/api/v1/business-metrics",
-		"/api/v1/costs/daily",
-		"/api/v1/meta",
-		"/api/v1/unit-economics/daily",
-		"/api/v1/usage/metrics/daily",
-		"/api/v1/usage/tokens/daily",
-		"/healthz",
-		"/",
+	mux := &recordingMux{}
+	_ = HandlerWithOptions(NewServer("test", nil, ""), StdHTTPServerOptions{BaseRouter: mux})
+	routes := []string{"/"} // NewHandler's static route, outside generated scaffolding.
+	for _, pattern := range mux.patterns {
+		_, route, ok := strings.Cut(pattern, " ")
+		if !ok {
+			t.Fatalf("generated route pattern %q has no method prefix", pattern)
+		}
+		routes = append(routes, route)
 	}
 	for _, r := range routes {
 		isGated := gated(r)

@@ -75,7 +75,9 @@ func gated(urlPath string) bool {
 // data endpoints (gated); exempt paths pass straight through. On a gated
 // request it authenticates per mode and, on both the allow and deny paths,
 // records the outcome into the access-log holder seeded by the outer
-// middleware (nil-safe when the access log is not installed).
+// middleware (nil-safe when the access log is not installed). The trusted
+// identity header is stripped before a gated request reaches downstream code;
+// exempt paths do not interpret it as identity.
 func (c AuthConfig) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !gated(r.URL.Path) {

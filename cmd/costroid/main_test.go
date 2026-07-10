@@ -5,13 +5,16 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/api"
 	"github.com/Costroid/costroid/internal/devtools/fakeblob"
 	"github.com/Costroid/costroid/internal/devtools/fakes3"
 	"github.com/Costroid/costroid/internal/ingest/azurefocus"
@@ -653,7 +656,7 @@ func TestServeConfigFailClosed(t *testing.T) {
 	t.Run("all-addresses IPv4 trusted proxy is refused", func(t *testing.T) {
 		hermeticServeEnv(t)
 		_, _, _, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "0.0.0.0/0"})
-		if err == nil || !strings.Contains(err.Error(), "trusts all addresses") {
+		if err == nil || !strings.Contains(err.Error(), "implausibly broad") {
 			t.Fatalf("err = %v, want an all-addresses-refused error", err)
 		}
 	})
@@ -661,8 +664,19 @@ func TestServeConfigFailClosed(t *testing.T) {
 	t.Run("all-addresses IPv6 trusted proxy is refused", func(t *testing.T) {
 		hermeticServeEnv(t)
 		_, _, _, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "::/0"})
-		if err == nil || !strings.Contains(err.Error(), "trusts all addresses") {
+		if err == nil || !strings.Contains(err.Error(), "implausibly broad") {
 			t.Fatalf("err = %v, want an all-addresses-refused error", err)
+		}
+	})
+
+	t.Run("IPv4 broad-prefix boundary", func(t *testing.T) {
+		hermeticServeEnv(t)
+		if _, _, _, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "10.0.0.0/7"}); err == nil || !strings.Contains(err.Error(), "implausibly broad") {
+			t.Fatalf("/7 err = %v, want an implausibly-broad error", err)
+		}
+		cfg, _, stop, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "10.0.0.0/8"})
+		if err != nil || stop || len(cfg.trustedProxies) != 1 || cfg.trustedProxies[0].Bits() != 8 {
+			t.Fatalf("/8 serveConfig = (%+v, stop %v, err %v), want accepted boundary", cfg, stop, err)
 		}
 	})
 
@@ -736,6 +750,30 @@ func TestServeConfigBearerTokenResolution(t *testing.T) {
 		}
 	})
 
+	t.Run("trims one of two trailing newlines", func(t *testing.T) {
+		hermeticServeEnv(t)
+		p := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(p, []byte("tok\n\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, stop, err := serveConfig([]string{"--auth-token-file", p})
+		if err != nil || stop || cfg.bearerToken != "tok\n" {
+			t.Fatalf("bearerToken = %q (stop %v, err %v), want one trailing newline retained", cfg.bearerToken, stop, err)
+		}
+	})
+
+	t.Run("trims one trailing CRLF", func(t *testing.T) {
+		hermeticServeEnv(t)
+		p := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(p, []byte("tok\r\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, stop, err := serveConfig([]string{"--auth-token-file", p})
+		if err != nil || stop || cfg.bearerToken != "tok" {
+			t.Fatalf("bearerToken = %q (stop %v, err %v), want CRLF removed", cfg.bearerToken, stop, err)
+		}
+	})
+
 	t.Run("empty file is an error", func(t *testing.T) {
 		hermeticServeEnv(t)
 		p := filepath.Join(t.TempDir(), "token")
@@ -778,6 +816,75 @@ func TestServeConfigBearerTokenResolution(t *testing.T) {
 		cfg, _, _, err := serveConfig(nil)
 		if err != nil || cfg.bearerToken != "env-token" || cfg.authModeName != "bearer" {
 			t.Fatalf("bearerToken = %q mode %q err %v, want env-token bearer", cfg.bearerToken, cfg.authModeName, err)
+		}
+	})
+}
+
+// TestServeAuthOptionsWiring drives the production serveConfig -> authOptions
+// -> api.NewHandler seam. Each auth arm has an independent deny assertion, so
+// replacing either authOptions arm with nil makes its subtest fail.
+func TestServeAuthOptionsWiring(t *testing.T) {
+	newHandler := func(t *testing.T, args []string) (serveSettings, http.Handler) {
+		t.Helper()
+		hermeticServeEnv(t)
+		cfg, _, stop, err := serveConfig(args)
+		if err != nil || stop {
+			t.Fatalf("serveConfig(%v) = stop %v, err %v", args, stop, err)
+		}
+		return cfg, api.NewHandler("test", os.DirFS(t.TempDir()), nil, "", authOptions(cfg)...)
+	}
+
+	t.Run("bearer", func(t *testing.T) {
+		const token = "configured-token"
+		// Configure through the same environment source serve uses.
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, token)
+		cfg, _, stop, err := serveConfig(nil)
+		if err != nil || stop {
+			t.Fatalf("serveConfig(bearer) = stop %v, err %v", stop, err)
+		}
+		handler := api.NewHandler("test", os.DirFS(t.TempDir()), nil, "", authOptions(cfg)...)
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil))
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("request without bearer = %d, want 401", w.Code)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request with configured bearer = %d, want 200", w.Code)
+		}
+	})
+
+	t.Run("forward-auth", func(t *testing.T) {
+		cfg, handler := newHandler(t, []string{"--auth-trusted-header", "X-WEBAUTH-USER"})
+		if cfg.authModeName != "forward-auth" {
+			t.Fatalf("authModeName = %q, want forward-auth", cfg.authModeName)
+		}
+		want := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		if len(cfg.trustedProxies) != len(want) || cfg.trustedProxies[0] != want[0] || cfg.trustedProxies[1] != want[1] {
+			t.Fatalf("trustedProxies = %v, want loopback defaults %v", cfg.trustedProxies, want)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil)
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set("X-WEBAUTH-USER", "alice")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("trusted peer with identity = %d, want 200", w.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil)
+		req.RemoteAddr = "203.0.113.1:1234"
+		req.Header.Set("X-WEBAUTH-USER", "mallory")
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("untrusted peer with identity = %d, want 401", w.Code)
 		}
 	})
 }
