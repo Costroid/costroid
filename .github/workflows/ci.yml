@@ -34,5 +34,9 @@ jobs:
           fi
       # Same targets as local development — no CI-only variants.
       - run: make lint
+      - name: Check reachable Go vulnerabilities
+        env:
+          CGO_ENABLED: "1"
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       - run: make test
       - run: make build

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The Costroid Authors
+
+version: 2
+project_name: costroid
+
+before:
+  hooks:
+    - pnpm -C web build
+    - rm -rf internal/webdist/dist
+    - mkdir -p internal/webdist/dist
+    - cp -R web/dist/. internal/webdist/dist/
+    - touch internal/webdist/dist/.gitkeep
+
+builds:
+  - id: costroid
+    main: ./cmd/costroid
+    binary: costroid
+    env: [CGO_ENABLED=1]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64

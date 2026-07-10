@@ -12,7 +12,7 @@ VERSION ?= 0.1.0-dev
 GOLANGCI_LINT_VERSION := v2.12.2
 GOLANGCI_LINT := bin/golangci-lint
 
-.PHONY: dev dev-api dev-web build test lint fmt generate
+.PHONY: dev dev-api dev-web build test lint fmt generate release-snapshot sbom vulncheck
 
 ## dev: run the Go API and the Vite dev server together (Ctrl-C stops both)
 dev:
@@ -57,6 +57,19 @@ fmt: $(GOLANGCI_LINT)
 generate:
 	go tool oapi-codegen -config internal/api/oapi-codegen.yaml contracts/openapi.yaml
 	pnpm -C web generate
+
+## release-snapshot: build the current native target through the release config.
+release-snapshot:
+	goreleaser build --single-target --snapshot --clean
+
+## sbom: catalog Go and pnpm source dependencies as CycloneDX JSON.
+sbom:
+	mkdir -p release
+	SYFT_CHECK_FOR_APP_UPDATE=false syft dir:. --exclude './.git/**' --exclude './.agents/**' --exclude './.claude/**' --exclude './.codex/**' --exclude './bin/**' --exclude './dist/**' --exclude './release/**' --exclude './release-input/**' --exclude './archive-stage/**' --exclude './node_modules/**' --exclude './web/node_modules/**' --exclude './internal/webdist/dist/**' -o cyclonedx-json=release/costroid.cdx.json
+
+## vulncheck: fail when a known vulnerability is reachable from Costroid.
+vulncheck:
+	CGO_ENABLED=1 go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 $(GOLANGCI_LINT):
 	mkdir -p bin

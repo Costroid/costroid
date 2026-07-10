@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The Costroid Authors
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-amd64, runner: ubuntu-latest, experimental: false, output: costroid-linux-amd64 }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm, experimental: false, output: costroid-linux-arm64 }
+          - { target: darwin-amd64, runner: macos-15-intel, experimental: false, output: costroid-darwin-amd64 }
+          - { target: darwin-arm64, runner: macos-15, experimental: false, output: costroid-darwin-arm64 }
+          - { target: windows-amd64-experimental, runner: windows-latest, experimental: true, output: costroid-windows-amd64.exe }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: v2.12.5
+          args: build --single-target --clean
+      - name: Stage native binary
+        shell: bash
+        run: |
+          mkdir -p upload
+          binary="$(find dist -type f \( -name costroid -o -name costroid.exe \) -print -quit)"
+          test -n "$binary"
+          cp "$binary" "upload/${{ matrix.output }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: upload/${{ matrix.output }}
+          if-no-files-found: error
+
+  release:
+    name: Assemble, attest, and publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-*"
+          path: release-input
+          merge-multiple: true
+      - name: Assemble platform archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release archive-stage
+          for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            test -f "release-input/costroid-${target}"
+            rm -f archive-stage/costroid
+            cp "release-input/costroid-${target}" archive-stage/costroid
+            chmod +x archive-stage/costroid
+            tar -C archive-stage -czf "release/costroid_${version}_${target}.tar.gz" costroid
+          done
+          if test -f release-input/costroid-windows-amd64.exe; then
+            cp release-input/costroid-windows-amd64.exe archive-stage/costroid.exe
+            (cd archive-stage && zip -q "../release/costroid_${version}_windows-amd64-experimental.zip" costroid.exe)
+          else
+            echo "::notice::The experimental windows-amd64 CGO link did not produce an artifact."
+          fi
+      - uses: anchore/sbom-action/download-syft@v0.20.6
+      - name: Generate source SBOM
+        run: |
+          mkdir -p release
+          SYFT_CHECK_FOR_APP_UPDATE=false syft dir:. --exclude './.git/**' --exclude './.agents/**' --exclude './.claude/**' --exclude './.codex/**' --exclude './bin/**' --exclude './dist/**' --exclude './release/**' --exclude './release-input/**' --exclude './archive-stage/**' --exclude './node_modules/**' --exclude './web/node_modules/**' --exclude './internal/webdist/dist/**' -o cyclonedx-json=release/costroid.cdx.json
+      - name: Generate checksums
+        run: (cd release && sha256sum costroid_* costroid.cdx.json > checksums.txt)
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Keyless-sign checksums
+        run: cosign sign-blob --yes --bundle release/checksums.txt.sigstore.json release/checksums.txt
+      - name: Attest release provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/*
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"

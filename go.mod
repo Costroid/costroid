@@ -1,6 +1,6 @@
 module github.com/Costroid/costroid
 
-go 1.26.4
+go 1.26.5
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
