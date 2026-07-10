@@ -147,6 +147,83 @@ paths:
             text/plain:
               schema:
                 type: string
+  /api/v1/business-metrics:
+    get:
+      operationId: getBusinessMetrics
+      summary: List imported business metrics
+      description: >-
+        Lists the default tenant's user-authored business metrics and their
+        inclusive stored day spans, sorted by name. These business-value counts
+        are separate from vendor usage metrics and never appear in the AI Usage
+        endpoint.
+      responses:
+        "200":
+          description: Business metric names and available day spans.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessMetrics"
+        "500":
+          description: The business-metric list query failed.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/unit-economics/daily:
+    get:
+      operationId: getDailyUnitEconomics
+      summary: Daily and period unit economics for one business metric
+      description: >-
+        Merges exact daily BilledCost with one imported business metric. A day
+        is covered only when both a cost total (of any sign) and a positive
+        quantity exist. Period cost and quantity aggregate covered days only.
+        unitCost is derived in Go as cost / quantity rounded to scale 18,
+        round-half-away-from-zero, then rendered as a decimal string with
+        trailing zeros trimmed. A rendered "0" means the exact quotient rounds
+        to zero at scale 18. Ratios are derived on read and never stored.
+      parameters:
+        - name: metric
+          in: query
+          description: Exact imported business metric name.
+          schema:
+            type: string
+        - name: start
+          in: query
+          description: Inclusive first UTC calendar day; defaults to unbounded.
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          description: Inclusive last UTC calendar day; defaults to unbounded.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Daily gaps and covered-only period unit economics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitEconomics"
+        "400":
+          description: Missing or empty metric, or an invalid start/end date.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: The named business metric has never been imported.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: A cost or business-metric store query failed.
+          content:
+            text/plain:
+              schema:
+                type: string
   /api/v1/usage/metrics/daily:
     get:
       operationId: getDailyUsageMetrics
@@ -346,3 +423,98 @@ components:
             Total quantity for the day/service/tier/metric/unit, as an exact
             decimal string — never a float.
           example: "999"
+    BusinessMetrics:
+      type: object
+      required:
+        - metrics
+      properties:
+        metrics:
+          type: array
+          description: Imported business metrics, sorted by name; never null.
+          items:
+            $ref: "#/components/schemas/BusinessMetricInfo"
+    BusinessMetricInfo:
+      type: object
+      required:
+        - name
+        - firstDay
+        - lastDay
+      properties:
+        name:
+          type: string
+          description: Exact metric identity used by the unit-economics query.
+          example: requests served
+        firstDay:
+          type: string
+          format: date
+          description: First stored UTC calendar day.
+          example: "2026-05-01"
+        lastDay:
+          type: string
+          format: date
+          description: Last stored UTC calendar day.
+          example: "2026-05-31"
+    UnitEconomics:
+      type: object
+      required:
+        - metric
+        - currency
+        - days
+        - period
+      properties:
+        metric:
+          type: string
+          example: requests served
+        currency:
+          type: string
+          description: Cost-side BillingCurrency; empty when no cost matched.
+          example: USD
+        days:
+          type: array
+          description: Union of cost and metric days, day-ascending.
+          items:
+            $ref: "#/components/schemas/UnitEconomicsDay"
+        period:
+          $ref: "#/components/schemas/UnitEconomicsPeriod"
+    UnitEconomicsDay:
+      type: object
+      required:
+        - date
+      properties:
+        date:
+          type: string
+          format: date
+        cost:
+          type: string
+          description: Exact daily cost when a cost bin exists; any sign is retained.
+        quantity:
+          type: string
+          description: Exact daily business quantity when a metric bin exists.
+        unitCost:
+          type: string
+          description: >-
+            Present only for a covered day. cost / quantity rounded to scale 18
+            with round-half-away-from-zero, trailing zeros trimmed. "0" is a
+            meaningful rounded result and is not omitted.
+    UnitEconomicsPeriod:
+      type: object
+      required:
+        - coveredDays
+        - cost
+        - quantity
+      properties:
+        coveredDays:
+          type: integer
+          minimum: 0
+          description: Number of days carrying both cost and positive quantity.
+        cost:
+          type: string
+          description: Exact cost sum over covered days only.
+        quantity:
+          type: string
+          description: Exact quantity sum over covered days only.
+        unitCost:
+          type: string
+          description: >-
+            Covered-period cost / quantity at scale 18,
+            round-half-away-from-zero; absent when coveredDays is zero.

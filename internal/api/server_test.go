@@ -30,6 +30,7 @@ const groupByUnset = storage.CostGroupBy(-1)
 // fakeStore records the query it received and returns canned costs.
 type fakeStore struct {
 	daily      storage.DailyCosts
+	dailyErr   error
 	gotTenant  string
 	gotStart   time.Time
 	gotEnd     time.Time
@@ -50,6 +51,18 @@ type fakeStore struct {
 	gotUsageEnd     time.Time
 	usageQueryCount int
 
+	businessInfos          []storage.BusinessMetricInfo
+	businessNamesErr       error
+	gotBusinessNamesTenant string
+	businessNamesCount     int
+	businessQuantities     []storage.DayQuantity
+	businessQuantitiesErr  error
+	gotBusinessTenant      string
+	gotBusinessMetric      string
+	gotBusinessStart       time.Time
+	gotBusinessEnd         time.Time
+	businessQuantityCount  int
+
 	// allocation query recording: the validated dimension the handler passed,
 	// asserted per-parameter (rule content), plus an invocation count.
 	gotDimension    allocation.Dimension
@@ -60,7 +73,7 @@ func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, sta
 	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
 	f.gotDimension = dim
 	f.allocQueryCount++
-	return f.daily, nil
+	return f.daily, f.dailyErr
 }
 
 func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error) {
@@ -70,7 +83,7 @@ func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start,
 		f.gotGroupBy = groupBy[0]
 	}
 	f.queryCount++
-	return f.daily, nil
+	return f.daily, f.dailyErr
 }
 
 func (f *fakeStore) DailyTokensByService(_ context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error) {
@@ -83,6 +96,19 @@ func (f *fakeStore) DailyUsageMetrics(_ context.Context, tenant string, start, e
 	f.gotUsageTenant, f.gotUsageStart, f.gotUsageEnd = tenant, start, end
 	f.usageQueryCount++
 	return f.usage, nil
+}
+
+func (f *fakeStore) BusinessMetricNames(_ context.Context, tenant string) ([]storage.BusinessMetricInfo, error) {
+	f.gotBusinessNamesTenant = tenant
+	f.businessNamesCount++
+	return f.businessInfos, f.businessNamesErr
+}
+
+func (f *fakeStore) DailyBusinessMetricQuantities(_ context.Context, tenant, metric string, start, end time.Time) ([]storage.DayQuantity, error) {
+	f.gotBusinessTenant, f.gotBusinessMetric = tenant, metric
+	f.gotBusinessStart, f.gotBusinessEnd = start, end
+	f.businessQuantityCount++
+	return f.businessQuantities, f.businessQuantitiesErr
 }
 
 func testStatic() fstest.MapFS {

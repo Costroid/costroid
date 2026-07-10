@@ -700,6 +700,117 @@ func (s *DuckDB) DailyUsageMetrics(ctx context.Context, tenant string, start, en
 	return out, nil
 }
 
+var insertBusinessMetricSQL = fmt.Sprintf(`INSERT INTO business_metrics (
+	x_tenant_id, source_label, metric_day, metric_name, quantity
+) VALUES (?, ?, ?, ?, CAST(? AS DECIMAL(38,%[1]d)))`, MaxDecimalScale)
+
+// ReplaceBusinessMetricsBatch implements Store. The delete and all inserts are
+// atomic, and every value is bound data rather than SQL text.
+func (s *DuckDB) ReplaceBusinessMetricsBatch(ctx context.Context, tenant, sourceLabel string, rows []BusinessMetricRow) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning business-metrics replace transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM business_metrics WHERE x_tenant_id = ? AND source_label = ?`,
+		tenant, sourceLabel); err != nil {
+		return fmt.Errorf("deleting prior business metrics: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, insertBusinessMetricSQL)
+	if err != nil {
+		return fmt.Errorf("preparing business-metric insert: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+	for i := range rows {
+		row := &rows[i]
+		if _, err := stmt.ExecContext(ctx, tenant, sourceLabel, row.MetricDay.UTC(), row.MetricName, row.Quantity.String()); err != nil {
+			return fmt.Errorf("inserting business metric %d: %w", i+1, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing business-metrics replace transaction: %w", err)
+	}
+	return nil
+}
+
+// BusinessMetricNames implements Store.
+func (s *DuckDB) BusinessMetricNames(ctx context.Context, tenant string) ([]BusinessMetricInfo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT metric_name, MIN(CAST(metric_day AS DATE)), MAX(CAST(metric_day AS DATE))
+		 FROM business_metrics
+		 WHERE x_tenant_id = ?
+		 GROUP BY metric_name
+		 ORDER BY metric_name ASC`, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("querying business metric names: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []BusinessMetricInfo
+	for rows.Next() {
+		var info BusinessMetricInfo
+		if err := rows.Scan(&info.Name, &info.FirstDay, &info.LastDay); err != nil {
+			return nil, fmt.Errorf("scanning business metric name: %w", err)
+		}
+		info.FirstDay = info.FirstDay.UTC()
+		info.LastDay = info.LastDay.UTC()
+		out = append(out, info)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying business metric names: %w", err)
+	}
+	return out, nil
+}
+
+// DailyBusinessMetricQuantities implements Store. Same-day quantities from
+// different source labels deliberately sum: the labels are complementary
+// user-authored sources for the same named business measure.
+func (s *DuckDB) DailyBusinessMetricQuantities(ctx context.Context, tenant, metric string, start, end time.Time) ([]DayQuantity, error) {
+	where := "WHERE x_tenant_id = ? AND metric_name = ?"
+	args := []any{tenant, metric}
+	if !start.IsZero() {
+		where += " AND CAST(metric_day AS DATE) >= CAST(? AS DATE)"
+		args = append(args, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(metric_day AS DATE) <= CAST(? AS DATE)"
+		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT CAST(metric_day AS DATE), SUM(quantity)
+		 FROM business_metrics `+where+`
+		 GROUP BY CAST(metric_day AS DATE)
+		 ORDER BY CAST(metric_day AS DATE) ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying daily business metric quantities: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []DayQuantity
+	for rows.Next() {
+		var (
+			day time.Time
+			sum duckdb.Decimal
+		)
+		if err := rows.Scan(&day, &sum); err != nil {
+			return nil, fmt.Errorf("scanning daily business metric quantity: %w", err)
+		}
+		out = append(out, DayQuantity{
+			Date:     day.UTC(),
+			Quantity: decimal.NewFromBigInt(sum.Value, -int32(sum.Scale)), //nolint:gosec // DuckDB DECIMAL scale is at most 38.
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying daily business metric quantities: %w", err)
+	}
+	return out, nil
+}
+
 // EnrichedAIRows returns the enrichment-relevant projection of one
 // tenant+connector's stored cost records (see AIRow), ordered
 // deterministically. Decimal columns are cast to text in SQL and rebuilt

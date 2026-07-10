@@ -23,6 +23,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/api"
+	"github.com/Costroid/costroid/internal/businessmetrics"
 	"github.com/Costroid/costroid/internal/credentials"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
@@ -48,6 +49,13 @@ commands:
           (the rules path resolves from --rules, then $COSTROID_ALLOCATION_RULES,
           then <config-dir>/costroid/allocation.json; reads only the JSON file —
           no store, so it is safe to run while 'costroid serve' is running)
+  metrics  import user-authored business metrics for unit economics
+          costroid metrics import --path <file.csv> [--source-label <label>]
+                                  [--tenant default]
+          (strict CSV format: date,metric,quantity; dates are YYYY-MM-DD and
+          quantities are exact positive decimals. Re-importing under the same
+          tenant and source label REPLACES that label entirely; a header-only
+          file clears it. --source-label defaults to the file's base name.)
   credentials  manage the encrypted credential store (decision D32)
           costroid credentials init [--key-file <path>]
           costroid credentials set <name>     (reads the secret from stdin)
@@ -101,7 +109,7 @@ commands:
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
 store allows a single process at a time: stop 'costroid serve' before
-running 'costroid ingest'`
+running 'costroid ingest' or 'costroid metrics import'`
 
 // errReported signals that the failure was already printed (e.g. by the
 // FlagSet), so main must not print it a second time.
@@ -125,6 +133,8 @@ func run(args []string) error {
 		return serve(args[1:])
 	case "allocation":
 		return allocationCmd(args[1:])
+	case "metrics":
+		return metricsCmd(args[1:])
 	case "credentials":
 		return credentialsCmd(args[1:])
 	case "ingest":
@@ -132,6 +142,85 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q\n%s", args[0], usage)
 	}
+}
+
+const metricsUsage = `usage: costroid metrics <subcommand>
+
+subcommands:
+  import --path <file.csv> [--source-label <label>] [--tenant default]
+
+The CSV header is exactly date,metric,quantity. Re-importing under the same
+tenant and source label replaces that label entirely; a header-only file clears
+it. Stop 'costroid serve' before importing because the embedded store is
+single-writer.`
+
+func metricsCmd(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("missing metrics subcommand\n%s", metricsUsage)
+	}
+	if args[0] != "import" {
+		return fmt.Errorf("unknown metrics subcommand %q\n%s", args[0], metricsUsage)
+	}
+	return metricsImport(args[1:])
+}
+
+func metricsImport(args []string) error {
+	flags := flag.NewFlagSet("metrics import", flag.ContinueOnError)
+	pathFlag := flags.String("path", "", "path to the strict date,metric,quantity CSV")
+	sourceLabelFlag := flags.String("source-label", "", "logical replace label (default: the file's base name)")
+	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the imported metrics")
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	if *pathFlag == "" {
+		return errors.New("--path is required for metrics import")
+	}
+
+	f, err := os.Open(*pathFlag)
+	if err != nil {
+		return fmt.Errorf("opening business metrics CSV %s: %w", *pathFlag, err)
+	}
+	rows, parseErr := businessmetrics.Parse(f)
+	closeErr := f.Close()
+	if parseErr != nil {
+		return parseErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("closing business metrics CSV %s: %w", *pathFlag, closeErr)
+	}
+
+	label := *sourceLabelFlag
+	if label == "" {
+		label = filepath.Base(*pathFlag)
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	store, err := storage.Open(ctx, dataDir())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.ReplaceBusinessMetricsBatch(ctx, *tenantFlag, label, rows); err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		fmt.Printf("cleared business metrics for source label %q (header-only import)\n", label)
+		return nil
+	}
+	metrics := map[string]struct{}{}
+	first, last := rows[0].MetricDay, rows[0].MetricDay
+	for _, row := range rows {
+		metrics[row.MetricName] = struct{}{}
+		if row.MetricDay.Before(first) {
+			first = row.MetricDay
+		}
+		if row.MetricDay.After(last) {
+			last = row.MetricDay
+		}
+	}
+	fmt.Printf("imported %d business metric row(s) across %d metric(s), %s through %s, replacing source label %q\n",
+		len(rows), len(metrics), first.Format(time.DateOnly), last.Format(time.DateOnly), label)
+	return nil
 }
 
 // allocationRulesEnvVar carries the PATH to the allocation rules file (never

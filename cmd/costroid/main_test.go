@@ -587,3 +587,32 @@ func TestUsageDocumentsAllocation(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageDocumentsMetricsImport(t *testing.T) {
+	_, err := runCLI([]string{}, "")
+	if err == nil {
+		t.Fatal("no-command invocation should error with usage")
+	}
+	for _, want := range []string{"costroid metrics import", "date,metric,quantity", "REPLACES", "header-only"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("top-level usage does not document %q: %v", want, err)
+		}
+	}
+}
+
+func TestMetricsImportCLISummary(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	path := filepath.Join(t.TempDir(), "metrics.csv")
+	if err := os.WriteFile(path, []byte("date,metric,quantity\n2026-05-02,requests,10\n2026-05-01,customers,2\n2026-05-03,requests,12\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI([]string{"metrics", "import", "--path", path, "--source-label", "business"}, "")
+	if err != nil {
+		t.Fatalf("metrics import: %v\n%s", err, out)
+	}
+	for _, want := range []string{"3 business metric row(s)", "2 metric(s)", "2026-05-01 through 2026-05-03", `source label "business"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want %q", out, want)
+		}
+	}
+}

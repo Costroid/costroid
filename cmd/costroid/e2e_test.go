@@ -1430,6 +1430,156 @@ func TestOfflineE2EAllocation(t *testing.T) {
 	t.Logf("\n===== OFFLINE E2E ALLOCATION TRANSCRIPT =====\n%s", transcript.String())
 }
 
+// TestOfflineE2EBusinessMetrics proves the first user-authored data-import
+// path and its derived unit economics end to end. Every CLI import happens only
+// after the prior handler and store are closed (DuckDB single-writer rule).
+func TestOfflineE2EBusinessMetrics(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	if out, err := runCLI([]string{"ingest", "--connector", "aws-focus", "--path", "../../testdata/aws-focus-1.2/sample-export.csv.gz"}, ""); err != nil {
+		t.Fatalf("AWS ingest: %v\n%s", err, out)
+	}
+
+	metricsPath := filepath.Join(t.TempDir(), "metrics.csv")
+	writeCSV := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("writing metrics CSV: %v", err)
+		}
+	}
+	writeCSV(metricsPath, "date,metric,quantity\n2026-05-01,requests,10\n2026-05-02,requests,20\n2026-05-08,requests,30\n")
+	// No --source-label: the default basename is pinned by the output and by the
+	// same-path re-import below replacing (rather than appending to) this data.
+	out, err := runCLI([]string{"metrics", "import", "--path", metricsPath}, "")
+	if err != nil {
+		t.Fatalf("initial metrics import: %v\n%s", err, out)
+	}
+	for _, want := range []string{"3 business metric row(s)", "1 metric(s)", "2026-05-01 through 2026-05-08", `source label "metrics.csv"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("initial import output = %q, want %q", out, want)
+		}
+	}
+
+	type liveAPI struct {
+		store *storage.DuckDB
+		srv   *httptest.Server
+	}
+	openAPI := func() *liveAPI {
+		t.Helper()
+		store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+		if err != nil {
+			t.Fatalf("opening API store: %v", err)
+		}
+		return &liveAPI{store: store, srv: httptest.NewServer(api.NewHandler("e2e", fstest.MapFS{}, store, ""))}
+	}
+	closeAPI := func(live *liveAPI) {
+		t.Helper()
+		live.srv.Close()
+		if err := live.store.Close(); err != nil {
+			t.Fatalf("closing API store: %v", err)
+		}
+	}
+	get := func(live *liveAPI, path string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(live.srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	decodeEconomics := func(body string) api.UnitEconomics {
+		t.Helper()
+		var got api.UnitEconomics
+		if err := json.Unmarshal([]byte(body), &got); err != nil {
+			t.Fatalf("decoding unit economics %q: %v", body, err)
+		}
+		return got
+	}
+	findDay := func(got api.UnitEconomics, date string) api.UnitEconomicsDay {
+		t.Helper()
+		for _, day := range got.Days {
+			if day.Date.Format(time.DateOnly) == date {
+				return day
+			}
+		}
+		t.Fatalf("no day %s in %+v", date, got.Days)
+		return api.UnitEconomicsDay{}
+	}
+
+	live := openAPI()
+	code, listBody := get(live, "/api/v1/business-metrics")
+	if code != http.StatusOK || strings.TrimSpace(listBody) != `{"metrics":[{"firstDay":"2026-05-01","lastDay":"2026-05-08","name":"requests"}]}` {
+		t.Fatalf("list status=%d body=%s", code, listBody)
+	}
+	code, body := get(live, "/api/v1/unit-economics/daily?metric=requests&start=2026-05-01&end=2026-05-08")
+	if code != http.StatusOK {
+		t.Fatalf("unit economics status=%d body=%s", code, body)
+	}
+	got := decodeEconomics(body)
+	// COUPLED to testdata/aws-focus-1.2: every 2026-05-01..07 cost day is
+	// exactly 4.6809. COUPLED to the CSV above: days 1/2 carry quantities 10/20.
+	if got.Period.CoveredDays != 2 || got.Period.Cost != "9.3618" || got.Period.Quantity != "30" || got.Period.UnitCost == nil || *got.Period.UnitCost != "0.31206" {
+		t.Fatalf("initial period = %+v", got.Period)
+	}
+	day1, day2 := findDay(got, "2026-05-01"), findDay(got, "2026-05-02")
+	if day1.Cost == nil || *day1.Cost != "4.6809" || day1.Quantity == nil || *day1.Quantity != "10" || day1.UnitCost == nil || *day1.UnitCost != "0.46809" {
+		t.Errorf("day 1 = %+v", day1)
+	}
+	if day2.Cost == nil || *day2.Cost != "4.6809" || day2.Quantity == nil || *day2.Quantity != "20" || day2.UnitCost == nil || *day2.UnitCost != "0.234045" {
+		t.Errorf("day 2 = %+v", day2)
+	}
+	costOnly := findDay(got, "2026-05-03")
+	metricOnly := findDay(got, "2026-05-08")
+	if costOnly.Cost == nil || *costOnly.Cost != "4.6809" || costOnly.Quantity != nil || costOnly.UnitCost != nil {
+		t.Errorf("cost-only day = %+v", costOnly)
+	}
+	if metricOnly.Cost != nil || metricOnly.Quantity == nil || *metricOnly.Quantity != "30" || metricOnly.UnitCost != nil {
+		t.Errorf("metric-only day = %+v", metricOnly)
+	}
+	closeAPI(live)
+
+	// Same default label replaces the original three rows with this one row.
+	writeCSV(metricsPath, "date,metric,quantity\n2026-05-01,requests,5\n")
+	if out, err = runCLI([]string{"metrics", "import", "--path", metricsPath}, ""); err != nil {
+		t.Fatalf("replacement import: %v\n%s", err, out)
+	}
+	live = openAPI()
+	_, body = get(live, "/api/v1/unit-economics/daily?metric=requests&start=2026-05-01&end=2026-05-08")
+	got = decodeEconomics(body)
+	if got.Period.CoveredDays != 1 || got.Period.Cost != "4.6809" || got.Period.Quantity != "5" || got.Period.UnitCost == nil || *got.Period.UnitCost != "0.93618" || findDay(got, "2026-05-02").Quantity != nil {
+		t.Fatalf("after replacement = %+v", got)
+	}
+	closeAPI(live)
+
+	secondPath := filepath.Join(t.TempDir(), "second.csv")
+	writeCSV(secondPath, "date,metric,quantity\n2026-05-01,requests,5\n")
+	if out, err = runCLI([]string{"metrics", "import", "--path", secondPath, "--source-label", "secondary"}, ""); err != nil {
+		t.Fatalf("second-label import: %v\n%s", err, out)
+	}
+	live = openAPI()
+	_, body = get(live, "/api/v1/unit-economics/daily?metric=requests&start=2026-05-01&end=2026-05-01")
+	got = decodeEconomics(body)
+	// COUPLED to both CSV labels: 5 + 5 sums to 10 on the same day.
+	if got.Period.Quantity != "10" || got.Period.UnitCost == nil || *got.Period.UnitCost != "0.46809" {
+		t.Fatalf("cross-label sum = %+v", got.Period)
+	}
+	closeAPI(live)
+
+	writeCSV(secondPath, "date,metric,quantity\n")
+	out, err = runCLI([]string{"metrics", "import", "--path", secondPath, "--source-label", "secondary"}, "")
+	if err != nil || !strings.Contains(out, `cleared business metrics for source label "secondary" (header-only import)`) {
+		t.Fatalf("header-only clear = (%q, %v)", out, err)
+	}
+	live = openAPI()
+	defer closeAPI(live)
+	_, body = get(live, "/api/v1/unit-economics/daily?metric=requests&start=2026-05-01&end=2026-05-01")
+	got = decodeEconomics(body)
+	if got.Period.Quantity != "5" || got.Period.UnitCost == nil || *got.Period.UnitCost != "0.93618" {
+		t.Fatalf("after header-only clear = %+v", got.Period)
+	}
+}
+
 // dailyView opens the store and queries the daily-cost API for the default
 // tenant, returning the JSON body.
 func dailyView(t *testing.T) string {

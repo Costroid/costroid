@@ -8,6 +8,7 @@ import DailyCosts from "./DailyCosts";
 import DailyTokens from "./DailyTokens";
 import type { Range } from "./range";
 import UsageMetrics from "./UsageMetrics";
+import UnitEconomics from "./UnitEconomics";
 
 type Meta = components["schemas"]["Meta"];
 
@@ -16,12 +17,13 @@ type MetaState =
   | { status: "error"; message: string }
   | { status: "ready"; meta: Meta };
 
-type View = "costs" | "tokens" | "usage";
+type View = "costs" | "tokens" | "usage" | "unit-economics";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "costs", label: "Costs" },
   { id: "tokens", label: "Tokens" },
   { id: "usage", label: "Usage" },
+  { id: "unit-economics", label: "Unit economics" },
 ];
 
 function rangeIndicator(range: Range): string {
@@ -109,6 +111,7 @@ export default function App() {
         {view === "costs" && <DailyCosts range={range} />}
         {view === "tokens" && <DailyTokens range={range} />}
         {view === "usage" && <UsageMetrics range={range} />}
+        {view === "unit-economics" && <UnitEconomics range={range} />}
       </div>
     </main>
   );

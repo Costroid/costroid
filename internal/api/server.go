@@ -37,6 +37,8 @@ type CostStore interface {
 	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension) (storage.DailyCosts, error)
 	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error)
 	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyUsageMetric, error)
+	BusinessMetricNames(ctx context.Context, tenant string) ([]storage.BusinessMetricInfo, error)
+	DailyBusinessMetricQuantities(ctx context.Context, tenant, metric string, start, end time.Time) ([]storage.DayQuantity, error)
 }
 
 // Server implements the generated ServerInterface.
@@ -244,6 +246,70 @@ func (s *Server) GetDailyUsageMetrics(w http.ResponseWriter, r *http.Request, pa
 		resp = append(resp, entry)
 	}
 	writeJSON(w, resp)
+}
+
+// GetBusinessMetrics implements GET /api/v1/business-metrics.
+func (s *Server) GetBusinessMetrics(w http.ResponseWriter, r *http.Request) {
+	infos, err := s.store.BusinessMetricNames(r.Context(), focus.DefaultTenant)
+	if err != nil {
+		http.Error(w, "querying business metric names: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resp := BusinessMetrics{Metrics: make([]BusinessMetricInfo, 0, len(infos))}
+	for _, info := range infos {
+		entry := BusinessMetricInfo{Name: info.Name}
+		entry.FirstDay.Time = info.FirstDay
+		entry.LastDay.Time = info.LastDay
+		resp.Metrics = append(resp.Metrics, entry)
+	}
+	writeJSON(w, resp)
+}
+
+// GetDailyUnitEconomics implements GET /api/v1/unit-economics/daily. Cost and
+// quantity stay exact decimals; division happens only in Go at explicit scale
+// 18 and the result is transported as a string.
+func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, params GetDailyUnitEconomicsParams) {
+	if params.Metric == nil || *params.Metric == "" {
+		http.Error(w, "metric query parameter is required and must be non-empty", http.StatusBadRequest)
+		return
+	}
+	metric := *params.Metric
+	start, end := time.Time{}, time.Time{}
+	if params.Start != nil {
+		start = params.Start.Time
+	}
+	if params.End != nil {
+		end = params.End.Time
+	}
+
+	infos, err := s.store.BusinessMetricNames(r.Context(), focus.DefaultTenant)
+	if err != nil {
+		http.Error(w, "querying business metric names: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	known := false
+	for _, info := range infos {
+		if info.Name == metric {
+			known = true
+			break
+		}
+	}
+	if !known {
+		http.Error(w, fmt.Sprintf("unknown business metric %q; list available metrics at /api/v1/business-metrics", metric), http.StatusNotFound)
+		return
+	}
+
+	costs, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	quantities, err := s.store.DailyBusinessMetricQuantities(r.Context(), focus.DefaultTenant, metric, start, end)
+	if err != nil {
+		http.Error(w, "querying daily business metric quantities: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, mergeUnitEconomics(metric, costs, quantities))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -130,6 +130,21 @@ type Store interface {
 	// never null.
 	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]DailyUsageMetric, error)
 
+	// ReplaceBusinessMetricsBatch replaces all user-authored business metrics
+	// for one tenant and source label in a single transaction. An empty row set
+	// clears that label. Values are always bound parameters and quantities are
+	// string-bound through DECIMAL(38,18), never float64.
+	ReplaceBusinessMetricsBatch(ctx context.Context, tenant, sourceLabel string, rows []BusinessMetricRow) error
+
+	// BusinessMetricNames lists a tenant's distinct business metric names with
+	// their inclusive first and last stored UTC days, sorted by name.
+	BusinessMetricNames(ctx context.Context, tenant string) ([]BusinessMetricInfo, error)
+
+	// DailyBusinessMetricQuantities returns exact per-day quantities for one
+	// tenant and metric, summing same-day rows across complementary source
+	// labels. Bounds are inclusive UTC calendar days; zero means unbounded.
+	DailyBusinessMetricQuantities(ctx context.Context, tenant, metric string, start, end time.Time) ([]DayQuantity, error)
+
 	// SyncStates returns one connector's stored sync tuples, keyed by
 	// source identity (see SyncState).
 	SyncStates(ctx context.Context, connector string) (map[string]SyncState, error)
@@ -388,6 +403,27 @@ type DailyUsageMetric struct {
 	MetricName  string
 	Unit        string
 	Quantity    decimal.Decimal
+}
+
+// BusinessMetricRow is one validated user-authored business-value count ready
+// for storage. Tenant and source label belong to the replace batch, not the row.
+type BusinessMetricRow struct {
+	MetricDay  time.Time
+	MetricName string
+	Quantity   decimal.Decimal
+}
+
+// BusinessMetricInfo describes one stored business metric's available span.
+type BusinessMetricInfo struct {
+	Name     string
+	FirstDay time.Time
+	LastDay  time.Time
+}
+
+// DayQuantity is one exact business-metric daily sum.
+type DayQuantity struct {
+	Date     time.Time
+	Quantity decimal.Decimal
 }
 
 // AIRow is the enrichment-relevant projection of one stored cost record,

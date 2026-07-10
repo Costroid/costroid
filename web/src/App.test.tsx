@@ -40,6 +40,9 @@ function mockFetch() {
     if (path === "/api/v1/usage/metrics/daily") {
       return Promise.resolve(fakeResponse(200, []));
     }
+    if (path === "/api/v1/business-metrics") {
+      return Promise.resolve(fakeResponse(200, { metrics: [] }));
+    }
     // costs/daily and any other path
     return Promise.resolve(fakeResponse(200, emptyCosts));
   });
@@ -129,6 +132,24 @@ describe("App", () => {
         .getAttribute("aria-current"),
     ).toBe("page");
     expect(await screen.findByText(/No usage metrics yet/)).toBeTruthy();
+  });
+
+  it("switches to the Unit economics view on click", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    render(<App />);
+    await screen.findByRole("heading", { name: "Daily cost by service" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Unit economics" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Unit economics" }),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Unit economics" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    expect(await screen.findByText(/No business metrics yet/)).toBeTruthy();
   });
 
   it("threads the selected date range to the active view", async () => {

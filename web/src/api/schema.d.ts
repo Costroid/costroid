@@ -78,6 +78,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/business-metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List imported business metrics
+         * @description Lists the default tenant's user-authored business metrics and their inclusive stored day spans, sorted by name. These business-value counts are separate from vendor usage metrics and never appear in the AI Usage endpoint.
+         */
+        get: operations["getBusinessMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/unit-economics/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daily and period unit economics for one business metric
+         * @description Merges exact daily BilledCost with one imported business metric. A day is covered only when both a cost total (of any sign) and a positive quantity exist. Period cost and quantity aggregate covered days only. unitCost is derived in Go as cost / quantity rounded to scale 18, round-half-away-from-zero, then rendered as a decimal string with trailing zeros trimmed. A rendered "0" means the exact quotient rounds to zero at scale 18. Ratios are derived on read and never stored.
+         */
+        get: operations["getDailyUnitEconomics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/usage/metrics/daily": {
         parameters: {
             query?: never;
@@ -216,6 +256,61 @@ export interface components {
              */
             quantity: string;
         };
+        BusinessMetrics: {
+            /** @description Imported business metrics, sorted by name; never null. */
+            metrics: components["schemas"]["BusinessMetricInfo"][];
+        };
+        BusinessMetricInfo: {
+            /**
+             * @description Exact metric identity used by the unit-economics query.
+             * @example requests served
+             */
+            name: string;
+            /**
+             * Format: date
+             * @description First stored UTC calendar day.
+             * @example 2026-05-01
+             */
+            firstDay: string;
+            /**
+             * Format: date
+             * @description Last stored UTC calendar day.
+             * @example 2026-05-31
+             */
+            lastDay: string;
+        };
+        UnitEconomics: {
+            /** @example requests served */
+            metric: string;
+            /**
+             * @description Cost-side BillingCurrency; empty when no cost matched.
+             * @example USD
+             */
+            currency: string;
+            /** @description Union of cost and metric days, day-ascending. */
+            days: components["schemas"]["UnitEconomicsDay"][];
+            period: components["schemas"]["UnitEconomicsPeriod"];
+        };
+        UnitEconomicsDay: {
+            /** Format: date */
+            date: string;
+            /** @description Exact daily cost when a cost bin exists; any sign is retained. */
+            cost?: string;
+            /** @description Exact daily business quantity when a metric bin exists. */
+            quantity?: string;
+            /** @description Present only for a covered day. cost / quantity rounded to scale 18 with round-half-away-from-zero, trailing zeros trimmed. "0" is a meaningful rounded result and is not omitted. */
+            unitCost?: string;
+        };
+        UnitEconomicsPeriod: {
+            /** @description Number of days carrying both cost and positive quantity. */
+            coveredDays: number;
+            /** @description Exact cost sum over covered days only. */
+            cost: string;
+            /** @description Exact quantity sum over covered days only. */
+            quantity: string;
+            /** @description Covered-period cost / quantity at scale 18, round-half-away-from-zero; absent when coveredDays is zero. */
+            unitCost?: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -335,6 +430,89 @@ export interface operations {
             };
             /** @description Invalid start or end date. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getBusinessMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Business metric names and available day spans. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BusinessMetrics"];
+                };
+            };
+            /** @description The business-metric list query failed. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getDailyUnitEconomics: {
+        parameters: {
+            query?: {
+                /** @description Exact imported business metric name. */
+                metric?: string;
+                /** @description Inclusive first UTC calendar day; defaults to unbounded. */
+                start?: string;
+                /** @description Inclusive last UTC calendar day; defaults to unbounded. */
+                end?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily gaps and covered-only period unit economics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnitEconomics"];
+                };
+            };
+            /** @description Missing or empty metric, or an invalid start/end date. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description The named business metric has never been imported. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description A cost or business-metric store query failed. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

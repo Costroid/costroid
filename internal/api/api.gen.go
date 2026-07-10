@@ -35,6 +35,24 @@ func (e GetDailyCostsParamsGroupBy) Valid() bool {
 	}
 }
 
+// BusinessMetricInfo defines model for BusinessMetricInfo.
+type BusinessMetricInfo struct {
+	// FirstDay First stored UTC calendar day.
+	FirstDay openapi_types.Date `json:"firstDay"`
+
+	// LastDay Last stored UTC calendar day.
+	LastDay openapi_types.Date `json:"lastDay"`
+
+	// Name Exact metric identity used by the unit-economics query.
+	Name string `json:"name"`
+}
+
+// BusinessMetrics defines model for BusinessMetrics.
+type BusinessMetrics struct {
+	// Metrics Imported business metrics, sorted by name; never null.
+	Metrics []BusinessMetricInfo `json:"metrics"`
+}
+
 // DailyCost defines model for DailyCost.
 type DailyCost struct {
 	// Date The UTC calendar day.
@@ -116,6 +134,45 @@ type ServiceCost struct {
 	Key string `json:"key"`
 }
 
+// UnitEconomics defines model for UnitEconomics.
+type UnitEconomics struct {
+	// Currency Cost-side BillingCurrency; empty when no cost matched.
+	Currency string `json:"currency"`
+
+	// Days Union of cost and metric days, day-ascending.
+	Days   []UnitEconomicsDay  `json:"days"`
+	Metric string              `json:"metric"`
+	Period UnitEconomicsPeriod `json:"period"`
+}
+
+// UnitEconomicsDay defines model for UnitEconomicsDay.
+type UnitEconomicsDay struct {
+	// Cost Exact daily cost when a cost bin exists; any sign is retained.
+	Cost *string            `json:"cost,omitempty"`
+	Date openapi_types.Date `json:"date"`
+
+	// Quantity Exact daily business quantity when a metric bin exists.
+	Quantity *string `json:"quantity,omitempty"`
+
+	// UnitCost Present only for a covered day. cost / quantity rounded to scale 18 with round-half-away-from-zero, trailing zeros trimmed. "0" is a meaningful rounded result and is not omitted.
+	UnitCost *string `json:"unitCost,omitempty"`
+}
+
+// UnitEconomicsPeriod defines model for UnitEconomicsPeriod.
+type UnitEconomicsPeriod struct {
+	// Cost Exact cost sum over covered days only.
+	Cost string `json:"cost"`
+
+	// CoveredDays Number of days carrying both cost and positive quantity.
+	CoveredDays int `json:"coveredDays"`
+
+	// Quantity Exact quantity sum over covered days only.
+	Quantity string `json:"quantity"`
+
+	// UnitCost Covered-period cost / quantity at scale 18, round-half-away-from-zero; absent when coveredDays is zero.
+	UnitCost *string `json:"unitCost,omitempty"`
+}
+
 // GetDailyCostsParams defines parameters for GetDailyCosts.
 type GetDailyCostsParams struct {
 	// Start Inclusive first calendar day (UTC) to include. Defaults to the full range of stored data.
@@ -130,6 +187,18 @@ type GetDailyCostsParams struct {
 
 // GetDailyCostsParamsGroupBy defines parameters for GetDailyCosts.
 type GetDailyCostsParamsGroupBy string
+
+// GetDailyUnitEconomicsParams defines parameters for GetDailyUnitEconomics.
+type GetDailyUnitEconomicsParams struct {
+	// Metric Exact imported business metric name.
+	Metric *string `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Start Inclusive first UTC calendar day; defaults to unbounded.
+	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Inclusive last UTC calendar day; defaults to unbounded.
+	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+}
 
 // GetDailyUsageMetricsParams defines parameters for GetDailyUsageMetrics.
 type GetDailyUsageMetricsParams struct {
@@ -151,12 +220,18 @@ type GetDailyTokensParams struct {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// List imported business metrics
+	// (GET /api/v1/business-metrics)
+	GetBusinessMetrics(w http.ResponseWriter, r *http.Request)
 	// Daily cost by service, provider, or allocation
 	// (GET /api/v1/costs/daily)
 	GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams)
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
+	// Daily and period unit economics for one business metric
+	// (GET /api/v1/unit-economics/daily)
+	GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, params GetDailyUnitEconomicsParams)
 	// Daily cost-orphaned usage metrics
 	// (GET /api/v1/usage/metrics/daily)
 	GetDailyUsageMetrics(w http.ResponseWriter, r *http.Request, params GetDailyUsageMetricsParams)
@@ -176,6 +251,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetBusinessMetrics operation middleware
+func (siw *ServerInterfaceWrapper) GetBusinessMetrics(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBusinessMetrics(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetDailyCosts operation middleware
 func (siw *ServerInterfaceWrapper) GetDailyCosts(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +330,65 @@ func (siw *ServerInterfaceWrapper) GetMeta(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMeta(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDailyUnitEconomics operation middleware
+func (siw *ServerInterfaceWrapper) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDailyUnitEconomicsParams
+
+	// ------------- Optional query parameter "metric" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "metric"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metric", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDailyUnitEconomics(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -476,8 +624,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/business-metrics", wrapper.GetBusinessMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/unit-economics/daily", wrapper.GetDailyUnitEconomics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/metrics/daily", wrapper.GetDailyUsageMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/tokens/daily", wrapper.GetDailyTokens)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
