@@ -1938,3 +1938,54 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// TestServeAuthWiringE2E proves that a bearer-configured handler ACTUALLY
+// installs the auth middleware end to end (required test 11) — secure-by-default
+// lives in serve/WithAuth, not in the auth-free NewHandler default. A data
+// endpoint 401s without a token and 200s with the correct Authorization header;
+// /healthz stays reachable without a token. Uses the in-process
+// api.NewHandler(...) + httptest.NewServer pattern with an empty store.
+func TestServeAuthWiringE2E(t *testing.T) {
+	const token = "e2e-bearer-token"
+	store, err := storage.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store, "", api.WithAuth(api.NewBearerAuth(token)))
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	do := func(t *testing.T, path, authHeader string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if authHeader != "" {
+			req.Header.Set("Authorization", authHeader)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	if code, _ := do(t, "/api/v1/costs/daily", ""); code != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/costs/daily without a token = %d, want 401", code)
+	}
+	code, body := do(t, "/api/v1/costs/daily", "Bearer "+token)
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/v1/costs/daily with the token = %d, want 200\n%s", code, body)
+	}
+	if !strings.Contains(body, `"days"`) {
+		t.Errorf("authenticated body = %q, want a daily-costs payload with a days array", body)
+	}
+	if code, _ := do(t, "/healthz", ""); code == http.StatusUnauthorized {
+		t.Error("GET /healthz without a token = 401, want it reachable unauthenticated")
+	}
+}

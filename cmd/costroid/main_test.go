@@ -416,7 +416,7 @@ func TestResolveAddr(t *testing.T) {
 		envAddr  string
 		want     string
 	}{
-		{name: "default", flagAddr: "", envAddr: "", want: ":8080"},
+		{name: "default", flagAddr: "", envAddr: "", want: "127.0.0.1:8080"},
 		{name: "env only", flagAddr: "", envAddr: ":9090", want: ":9090"},
 		{name: "flag only", flagAddr: ":7070", envAddr: "", want: ":7070"},
 		{name: "flag wins over env", flagAddr: ":7070", envAddr: ":9090", want: ":7070"},
@@ -458,11 +458,30 @@ func TestResolveAllocationRulesPath(t *testing.T) {
 	})
 }
 
+// hermeticServeEnv pins every serve-related env var so ambient developer
+// configuration cannot leak into serveConfig. Auth is scrubbed to EMPTY; a
+// subtest that needs serve to reach a non-error result sets a silent bearer
+// token itself (COSTROID_AUTH_TOKEN) rather than --no-auth, which would emit the
+// loud warning and break the allocation-warning assertions.
+func hermeticServeEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("COSTROID_ADDR", "")
+	t.Setenv(allocationRulesEnvVar, "")
+	t.Setenv(envAuthToken, "")
+	t.Setenv(envAuthTokenFile, "")
+	t.Setenv(envAuthTrustedHeader, "")
+	t.Setenv(envAuthTrustedProxies, "")
+}
+
 // TestServeConfig exercises serve's real FlagSet without opening the store or
-// starting a listener. Every subtest pins both serve env vars so ambient
-// developer configuration cannot leak into the result.
+// starting a listener. Every subtest pins ALL serve env vars (via
+// hermeticServeEnv) so ambient developer configuration cannot leak, then
+// configures a silent bearer token to satisfy the fail-closed policy without
+// perturbing the allocation-warning assertions.
 func TestServeConfig(t *testing.T) {
 	t.Run("flag beats env", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
 		rules := filepath.Join(t.TempDir(), "rules.json")
 		if err := os.WriteFile(rules, []byte(`{}`), 0o600); err != nil {
 			t.Fatal(err)
@@ -476,6 +495,8 @@ func TestServeConfig(t *testing.T) {
 	})
 
 	t.Run("env when flag empty", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
 		rules := filepath.Join(t.TempDir(), "rules.json")
 		if err := os.WriteFile(rules, []byte(`{}`), 0o600); err != nil {
 			t.Fatal(err)
@@ -489,23 +510,23 @@ func TestServeConfig(t *testing.T) {
 	})
 
 	t.Run("default under config dir warns when missing", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
 		cfgDir := t.TempDir()
 		t.Setenv("XDG_CONFIG_HOME", cfgDir)
-		t.Setenv("COSTROID_ADDR", "")
-		t.Setenv(allocationRulesEnvVar, "")
 		cfg, warning, stop, err := serveConfig(nil)
 		wantPath := filepath.Join(cfgDir, "costroid", "allocation.json")
 		wantWarning := "allocation rules file not found: " + wantPath + " — groupBy=allocation will return 400 until it exists"
-		if err != nil || stop || cfg.addr != ":8080" || cfg.allocationRulesPath != wantPath || warning != wantWarning {
+		if err != nil || stop || cfg.addr != "127.0.0.1:8080" || cfg.allocationRulesPath != wantPath || warning != wantWarning {
 			t.Fatalf("serveConfig = (%+v, %q, %v, %v), want path %q warning %q", cfg, warning, stop, err, wantPath, wantWarning)
 		}
 	})
 
 	t.Run("unresolvable path warns as unconfigured", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
 		t.Setenv("HOME", "")
 		t.Setenv("XDG_CONFIG_HOME", "")
-		t.Setenv("COSTROID_ADDR", "")
-		t.Setenv(allocationRulesEnvVar, "")
 		cfg, warning, stop, err := serveConfig(nil)
 		want := "no allocation rules path could be resolved — groupBy=allocation will return 400 as unconfigured"
 		if err != nil || stop || cfg.allocationRulesPath != "" || warning != want {
@@ -514,8 +535,7 @@ func TestServeConfig(t *testing.T) {
 	})
 
 	t.Run("help stops without error", func(t *testing.T) {
-		t.Setenv("COSTROID_ADDR", "")
-		t.Setenv(allocationRulesEnvVar, "")
+		hermeticServeEnv(t)
 		_, _, stop, err := serveConfig([]string{"-h"})
 		if err != nil || !stop {
 			t.Fatalf("serveConfig(-h) = stop %v, err %v", stop, err)
@@ -527,12 +547,13 @@ func TestServeConfig(t *testing.T) {
 		// ErrNotExist (here ENOTDIR: the path's parent is a regular file) must
 		// still produce a startup warning and let serve start — the finding is
 		// that only ErrNotExist warned before.
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
 		regular := filepath.Join(t.TempDir(), "rules.json")
 		if err := os.WriteFile(regular, []byte(`{}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		notDir := filepath.Join(regular, "child.json") // stat → ENOTDIR (not ErrNotExist)
-		t.Setenv("COSTROID_ADDR", "")
 		t.Setenv(allocationRulesEnvVar, notDir)
 		cfg, warning, stop, err := serveConfig(nil)
 		if err != nil || stop || cfg.allocationRulesPath != notDir {
@@ -540,6 +561,223 @@ func TestServeConfig(t *testing.T) {
 		}
 		if !strings.Contains(warning, notDir) || !strings.Contains(warning, "not accessible") {
 			t.Errorf("warning = %q, want it to name the path and flag the non-ENOENT stat error", warning)
+		}
+	})
+}
+
+// TestIsLoopbackAddr covers the loopback/public bind classifier (required test
+// 5). isLoopbackAddr lives in package main (it gates the --no-auth escalation),
+// so its table test lives here rather than in internal/api.
+func TestIsLoopbackAddr(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:8080", true},
+		{"localhost:8080", true},
+		{"[::1]:8080", true},
+		{"127.0.0.5:8080", true}, // anywhere in 127.0.0.0/8
+		{":8080", false},         // empty host binds every interface
+		{"0.0.0.0:8080", false},  // unspecified → public
+		{"[::]:8080", false},     // IPv6 unspecified → public
+		{"203.0.113.7:8080", false},
+		{"example.com:8080", false}, // bare hostname → conservatively public
+	}
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			if got := isLoopbackAddr(tt.addr); got != tt.want {
+				t.Errorf("isLoopbackAddr(%q) = %v, want %v", tt.addr, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestServeConfigDefaultBind pins the loopback-by-default bind and the explicit
+// public opt-in via --addr (required test 7).
+func TestServeConfigDefaultBind(t *testing.T) {
+	t.Run("default is loopback", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
+		cfg, _, stop, err := serveConfig(nil)
+		if err != nil || stop || cfg.addr != "127.0.0.1:8080" {
+			t.Fatalf("serveConfig addr = %q (stop %v, err %v), want 127.0.0.1:8080", cfg.addr, stop, err)
+		}
+	})
+	t.Run("--addr overrides to a public bind", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
+		cfg, _, stop, err := serveConfig([]string{"--addr", "0.0.0.0:8080"})
+		if err != nil || stop || cfg.addr != "0.0.0.0:8080" {
+			t.Fatalf("serveConfig addr = %q (stop %v, err %v), want 0.0.0.0:8080", cfg.addr, stop, err)
+		}
+	})
+}
+
+// TestServeConfigFailClosed covers the fail-closed policy (required test 8): no
+// auth, both modes, --no-auth+mode, an all-addresses proxy CIDR, and the absent
+// --auth-token value flag.
+func TestServeConfigFailClosed(t *testing.T) {
+	tokenFile := func(t *testing.T) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(p, []byte("s3cret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("no auth and no --no-auth is an error", func(t *testing.T) {
+		hermeticServeEnv(t)
+		_, _, _, err := serveConfig(nil)
+		if err == nil || !strings.Contains(err.Error(), "no authentication configured") {
+			t.Fatalf("err = %v, want a no-authentication-configured error", err)
+		}
+	})
+
+	t.Run("both modes is an error", func(t *testing.T) {
+		hermeticServeEnv(t)
+		_, _, _, err := serveConfig([]string{"--auth-token-file", tokenFile(t), "--auth-trusted-header", "X-WEBAUTH-USER"})
+		if err == nil || !strings.Contains(err.Error(), "exactly one auth mode") {
+			t.Fatalf("err = %v, want an exactly-one-mode error", err)
+		}
+	})
+
+	t.Run("--no-auth with a mode is an error", func(t *testing.T) {
+		hermeticServeEnv(t)
+		_, _, _, err := serveConfig([]string{"--no-auth", "--auth-token-file", tokenFile(t)})
+		if err == nil || !strings.Contains(err.Error(), "--no-auth cannot be combined") {
+			t.Fatalf("err = %v, want a --no-auth-conflict error", err)
+		}
+	})
+
+	t.Run("all-addresses IPv4 trusted proxy is refused", func(t *testing.T) {
+		hermeticServeEnv(t)
+		_, _, _, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "0.0.0.0/0"})
+		if err == nil || !strings.Contains(err.Error(), "trusts all addresses") {
+			t.Fatalf("err = %v, want an all-addresses-refused error", err)
+		}
+	})
+
+	t.Run("all-addresses IPv6 trusted proxy is refused", func(t *testing.T) {
+		hermeticServeEnv(t)
+		_, _, _, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "::/0"})
+		if err == nil || !strings.Contains(err.Error(), "trusts all addresses") {
+			t.Fatalf("err = %v, want an all-addresses-refused error", err)
+		}
+	})
+
+	t.Run("no --auth-token value flag exists (parse error)", func(t *testing.T) {
+		hermeticServeEnv(t)
+		_, _, stop, err := serveConfig([]string{"--auth-token", "s3cret"})
+		if err == nil || !stop {
+			t.Fatalf("serveConfig(--auth-token) = stop %v, err %v; want a parse error proving the value flag does not exist", stop, err)
+		}
+	})
+}
+
+// TestServeConfigNoAuthWarning covers --no-auth (required test 9): stop=false,
+// no error, a loud warning, escalated for a non-loopback bind. A valid
+// --allocation-rules silences the allocation warning so only the auth warning
+// remains; assertions use Contains, not exact-match.
+func TestServeConfigNoAuthWarning(t *testing.T) {
+	validRules := func(t *testing.T) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "rules.json")
+		if err := os.WriteFile(p, []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("loopback bind warns without escalation", func(t *testing.T) {
+		hermeticServeEnv(t)
+		cfg, warning, stop, err := serveConfig([]string{"--no-auth", "--allocation-rules", validRules(t)})
+		if err != nil || stop || !cfg.noAuth {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v)", cfg, warning, stop, err)
+		}
+		if !strings.Contains(warning, "WITHOUT AUTHENTICATION") {
+			t.Errorf("warning = %q, want it to name WITHOUT AUTHENTICATION", warning)
+		}
+		if strings.Contains(warning, "network-exposed") {
+			t.Errorf("warning = %q, must not escalate for a loopback bind", warning)
+		}
+	})
+
+	t.Run("non-loopback bind escalates", func(t *testing.T) {
+		hermeticServeEnv(t)
+		cfg, warning, stop, err := serveConfig([]string{"--no-auth", "--addr", "0.0.0.0:8080", "--allocation-rules", validRules(t)})
+		if err != nil || stop || !cfg.noAuth {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v)", cfg, warning, stop, err)
+		}
+		if !strings.Contains(warning, "WITHOUT AUTHENTICATION") || !strings.Contains(warning, "network-exposed") {
+			t.Errorf("warning = %q, want the escalated network-exposed warning", warning)
+		}
+	})
+}
+
+// TestServeConfigBearerTokenResolution covers the bearer-token source precedence
+// and hygiene (required test 10): a file read with exactly one trailing newline
+// trimmed (interior/edge spaces survive), an empty file → error, an explicit
+// unreadable file → error naming the path with NO env fall-through, and
+// file-over-env precedence.
+func TestServeConfigBearerTokenResolution(t *testing.T) {
+	t.Run("--auth-token-file trims exactly one trailing newline", func(t *testing.T) {
+		hermeticServeEnv(t)
+		p := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(p, []byte(" tok en \n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, stop, err := serveConfig([]string{"--auth-token-file", p})
+		if err != nil || stop {
+			t.Fatalf("serveConfig = stop %v, err %v", stop, err)
+		}
+		if cfg.bearerToken != " tok en " || cfg.authModeName != "bearer" {
+			t.Fatalf("bearerToken = %q mode %q, want %q bearer (only one trailing newline trimmed)", cfg.bearerToken, cfg.authModeName, " tok en ")
+		}
+	})
+
+	t.Run("empty file is an error", func(t *testing.T) {
+		hermeticServeEnv(t)
+		p := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(p, []byte("\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, err := serveConfig([]string{"--auth-token-file", p})
+		if err == nil || !strings.Contains(err.Error(), "is empty") {
+			t.Fatalf("err = %v, want an empty-token-file error", err)
+		}
+	})
+
+	t.Run("explicit unreadable file errors naming the path, no env fall-through", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "env-token") // must NOT be used when a file source is selected
+		missing := filepath.Join(t.TempDir(), "does-not-exist")
+		_, _, _, err := serveConfig([]string{"--auth-token-file", missing})
+		if err == nil || !strings.Contains(err.Error(), missing) {
+			t.Fatalf("err = %v, want a read error naming %q with no env fall-through", err, missing)
+		}
+	})
+
+	t.Run("file source beats the env value", func(t *testing.T) {
+		hermeticServeEnv(t)
+		p := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(p, []byte("file-token\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(envAuthTokenFile, p)
+		t.Setenv(envAuthToken, "env-token")
+		cfg, _, _, err := serveConfig(nil)
+		if err != nil || cfg.bearerToken != "file-token" {
+			t.Fatalf("bearerToken = %q err %v, want file-token (file beats env)", cfg.bearerToken, err)
+		}
+	})
+
+	t.Run("env value is used when no file source is set", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "env-token")
+		cfg, _, _, err := serveConfig(nil)
+		if err != nil || cfg.bearerToken != "env-token" || cfg.authModeName != "bearer" {
+			t.Fatalf("bearerToken = %q mode %q err %v, want env-token bearer", cfg.bearerToken, cfg.authModeName, err)
 		}
 	})
 }

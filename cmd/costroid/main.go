@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -43,7 +45,15 @@ var version = "0.1.0-dev"
 const usage = `usage: costroid <command> [flags]
 
 commands:
-  serve   serve the HTTP API and dashboard  (costroid serve [--addr host:port] [--allocation-rules <path>])
+  serve   serve the HTTP API and dashboard
+          costroid serve [--addr host:port] [--allocation-rules <path>]
+                         (--auth-token-file <path> | --auth-trusted-header <name> | --no-auth)
+          (binds 127.0.0.1:8080 by default — loopback only; pass a non-loopback
+          --addr to expose it. serve refuses to start unless authentication is
+          configured: a bearer token via --auth-token-file/$COSTROID_AUTH_TOKEN(_FILE),
+          forward-auth via --auth-trusted-header (recommended header X-WEBAUTH-USER)
+          behind a trusted reverse proxy, or --no-auth to opt out explicitly. See
+          docs/security.md and 'costroid serve -h')
   allocation  validate the query-time cost-allocation (virtual tagging) rules file
           costroid allocation validate [--rules <path>]
           (the rules path resolves from --rules, then $COSTROID_ALLOCATION_RULES,
@@ -227,6 +237,21 @@ func metricsImport(args []string) error {
 // rule content), mirroring the credential key-file env-var convention (D32).
 const allocationRulesEnvVar = "COSTROID_ALLOCATION_RULES"
 
+// Authentication env vars for serve. The *_FILE variant carries a PATH (never
+// the token); the bare token variant is documented as weaker (it leaks to child
+// processes / `docker inspect` / core dumps, CWE-214) but is still never argv.
+const (
+	envAuthTokenFile      = "COSTROID_AUTH_TOKEN_FILE"
+	envAuthToken          = "COSTROID_AUTH_TOKEN"
+	envAuthTrustedHeader  = "COSTROID_AUTH_TRUSTED_HEADER"
+	envAuthTrustedProxies = "COSTROID_AUTH_TRUSTED_PROXIES"
+)
+
+// defaultTrustedProxies is the forward-auth trusted-peer default: loopback only.
+// It is applied LAST, inside the resolver (the resolveAddr empty-default
+// pattern), so "operator set it" stays distinguishable from "default applied".
+const defaultTrustedProxies = "127.0.0.0/8,::1/128"
+
 // resolveAllocationRulesPath applies the allocation-rules path precedence: the
 // flag wins over $COSTROID_ALLOCATION_RULES, which wins over
 // os.UserConfigDir()/costroid/allocation.json (the credentials.key precedent,
@@ -396,16 +421,24 @@ func readSecretStdin() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reading the secret from stdin: %w", err)
 	}
-	s := string(data)
-	if strings.HasSuffix(s, "\n") {
-		s = strings.TrimSuffix(s, "\n")
-		s = strings.TrimSuffix(s, "\r")
-	}
+	s := trimOneTrailingNewline(string(data))
 	if s == "" {
 		return "", errors.New("the secret read from stdin is empty — pipe the key in, " +
 			`e.g. printf %s "$KEY" | costroid credentials set <name>`)
 	}
 	return s, nil
+}
+
+// trimOneTrailingNewline strips exactly one trailing newline (bare LF or CRLF)
+// and nothing else — NOT TrimSpace, so a secret's own leading/trailing spaces
+// and interior newlines survive. This is the D32 stdin-secret hygiene rule,
+// reused for the bearer-token file/env sources.
+func trimOneTrailingNewline(s string) string {
+	if strings.HasSuffix(s, "\n") {
+		s = strings.TrimSuffix(s, "\n")
+		s = strings.TrimSuffix(s, "\r")
+	}
+	return s
 }
 
 func credentialsList(args []string) error {
@@ -481,6 +514,22 @@ func parseFlags(flags *flag.FlagSet, args []string) (stop bool, err error) {
 type serveSettings struct {
 	addr                string
 	allocationRulesPath string
+
+	// noAuth is true only when --no-auth was passed: the sole way to serve
+	// unauthenticated.
+	noAuth bool
+	// bearerToken is the resolved bearer token (from a file or env), non-empty
+	// iff bearer mode is configured. serve hashes it via api.NewBearerAuth; it
+	// is held here only long enough to build the AuthConfig.
+	bearerToken string
+	// trustedHeader is the resolved forward-auth identity header name, non-empty
+	// iff forward-auth is configured (its presence enables the mode).
+	trustedHeader string
+	// trustedProxies is the resolved forward-auth trusted-peer allowlist.
+	trustedProxies []netip.Prefix
+	// authModeName is the access-log auth_mode label: "bearer", "forward-auth",
+	// or "disabled" (--no-auth).
+	authModeName string
 }
 
 // serveConfig parses serve's flags and resolves its environment-backed
@@ -489,30 +538,203 @@ type serveSettings struct {
 // configuration problem visible without preventing serve from starting.
 func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, err error) {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	addrFlag := flags.String("addr", "", `listen address (overrides $COSTROID_ADDR; default ":8080")`)
+	addrFlag := flags.String("addr", "", `listen address (overrides $COSTROID_ADDR; default "127.0.0.1:8080" — loopback. Pass a non-loopback address, e.g. 0.0.0.0:8080, to expose it on the network)`)
 	allocationRulesFlag := flags.String("allocation-rules", "", allocationRulesFlagUsage)
+	tokenFileFlag := flags.String("auth-token-file", "", "bearer auth: path to a file holding the API token (overrides $COSTROID_AUTH_TOKEN_FILE; preferred over the weaker $COSTROID_AUTH_TOKEN). There is no --auth-token value flag — argv is world-readable")
+	trustedHeaderFlag := flags.String("auth-trusted-header", "", "forward-auth: the identity header your reverse proxy sets (overrides $COSTROID_AUTH_TRUSTED_HEADER; empty disables forward-auth; recommended value X-WEBAUTH-USER)")
+	trustedProxiesFlag := flags.String("auth-trusted-proxies", "", "forward-auth: comma-separated trusted proxy CIDRs whose identity header is honored (overrides $COSTROID_AUTH_TRUSTED_PROXIES; default 127.0.0.0/8,::1/128; an all-addresses CIDR is refused)")
+	noAuthFlag := flags.Bool("no-auth", false, "serve WITHOUT authentication — the ONLY way to run unauthenticated (not recommended on a network-exposed address)")
 	if stop, err = parseFlags(flags, args); stop || err != nil {
 		return serveSettings{}, "", stop, err
 	}
 
 	cfg.addr = resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))
-	cfg.allocationRulesPath = resolveAllocationRulesPath(*allocationRulesFlag)
-	if cfg.allocationRulesPath == "" {
-		warning = "no allocation rules path could be resolved — groupBy=allocation will return 400 as unconfigured"
-		return cfg, warning, false, nil
+
+	bearerToken, err := resolveBearerToken(*tokenFileFlag)
+	if err != nil {
+		return serveSettings{}, "", false, err
 	}
-	switch _, statErr := os.Stat(cfg.allocationRulesPath); {
-	case statErr == nil:
-		// The file is present and statable — no startup warning.
-	case errors.Is(statErr, fs.ErrNotExist):
-		warning = fmt.Sprintf("allocation rules file not found: %s — groupBy=allocation will return 400 until it exists", cfg.allocationRulesPath)
+	trustedHeader, trustedProxies, err := resolveForwardAuth(*trustedHeaderFlag, *trustedProxiesFlag)
+	if err != nil {
+		return serveSettings{}, "", false, err
+	}
+
+	// Fail-closed: resolve exactly one mode, or refuse to start.
+	bearerConfigured := bearerToken != ""
+	forwardConfigured := trustedHeader != ""
+	switch {
+	case *noAuthFlag && (bearerConfigured || forwardConfigured):
+		return serveSettings{}, "", false, errors.New("--no-auth cannot be combined with a configured auth mode: remove the bearer token (COSTROID_AUTH_TOKEN(_FILE)/--auth-token-file) or --auth-trusted-header, or drop --no-auth")
+	case bearerConfigured && forwardConfigured:
+		return serveSettings{}, "", false, errors.New("configure exactly one auth mode: bearer (COSTROID_AUTH_TOKEN(_FILE)/--auth-token-file) or forward-auth (--auth-trusted-header), not both")
+	case !*noAuthFlag && !bearerConfigured && !forwardConfigured:
+		return serveSettings{}, "", false, errors.New("no authentication configured: set COSTROID_AUTH_TOKEN(_FILE) for bearer auth, set --auth-trusted-header for forward-auth, or pass --no-auth to run without authentication (not recommended on a network-exposed address)")
+	}
+
+	cfg.noAuth = *noAuthFlag
+	switch {
+	case bearerConfigured:
+		cfg.bearerToken = bearerToken
+		cfg.authModeName = "bearer"
+	case forwardConfigured:
+		cfg.trustedHeader = trustedHeader
+		cfg.trustedProxies = trustedProxies
+		cfg.authModeName = "forward-auth"
 	default:
-		// Other stat errors (EACCES, ENOTDIR, …) are still non-fatal — allocation
-		// is loaded per request — but surface them at startup too so the operator
-		// learns of the misconfiguration without waiting for the first request.
-		warning = fmt.Sprintf("allocation rules file %s is not accessible: %v — groupBy=allocation will fail until it is fixed", cfg.allocationRulesPath, statErr)
+		cfg.authModeName = "disabled" // --no-auth
 	}
-	return cfg, warning, false, nil
+
+	cfg.allocationRulesPath = resolveAllocationRulesPath(*allocationRulesFlag)
+
+	// Warnings ACCUMULATE (never clobber): the allocation-rules warning and the
+	// --no-auth warning can co-occur, and the --no-auth warning must ALWAYS
+	// surface — an allocation warning must not swallow it.
+	var warnings []string
+	if w := allocationWarning(cfg.allocationRulesPath); w != "" {
+		warnings = append(warnings, w)
+	}
+	if cfg.noAuth {
+		warnings = append(warnings, noAuthWarning(cfg.addr))
+	}
+	return cfg, strings.Join(warnings, "\n"), false, nil
+}
+
+// allocationWarning returns the startup warning for the resolved allocation
+// rules path, or "" when the file is present and statable. Allocation rules are
+// live-loaded per request, so a missing/inaccessible file is non-fatal — the
+// warning only makes the misconfiguration visible at startup.
+func allocationWarning(path string) string {
+	if path == "" {
+		return "no allocation rules path could be resolved — groupBy=allocation will return 400 as unconfigured"
+	}
+	switch _, statErr := os.Stat(path); {
+	case statErr == nil:
+		return ""
+	case errors.Is(statErr, fs.ErrNotExist):
+		return fmt.Sprintf("allocation rules file not found: %s — groupBy=allocation will return 400 until it exists", path)
+	default:
+		// Other stat errors (EACCES, ENOTDIR, …) are still non-fatal.
+		return fmt.Sprintf("allocation rules file %s is not accessible: %v — groupBy=allocation will fail until it is fixed", path, statErr)
+	}
+}
+
+// noAuthWarning is the loud --no-auth warning, escalated for a non-loopback
+// bind. It always names WITHOUT AUTHENTICATION so operators cannot miss it.
+func noAuthWarning(addr string) string {
+	if !isLoopbackAddr(addr) {
+		return fmt.Sprintf("WARNING: serving WITHOUT AUTHENTICATION on a network-exposed address (%s) — anyone who can reach it can read all billing data", addr)
+	}
+	return "WARNING: serving WITHOUT AUTHENTICATION — anyone who can reach this address can read all billing data"
+}
+
+// resolveBearerToken resolves the bearer token from a file (--auth-token-file >
+// $COSTROID_AUTH_TOKEN_FILE, both preferred) or the weaker direct env value
+// ($COSTROID_AUTH_TOKEN); it returns "" when bearer auth is unconfigured. A
+// trailing newline is trimmed exactly once (the D32 stdin-secret rule, NOT
+// TrimSpace). When an explicit FILE source is selected, a read failure is a
+// config error naming the path — it never falls through to the env value.
+func resolveBearerToken(fileFlag string) (string, error) {
+	tokenFile := fileFlag
+	if tokenFile == "" {
+		tokenFile = os.Getenv(envAuthTokenFile)
+	}
+	if tokenFile != "" {
+		data, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("reading bearer auth token file %s: %w", tokenFile, err)
+		}
+		token := trimOneTrailingNewline(string(data))
+		if token == "" {
+			return "", fmt.Errorf("bearer auth token file %s is empty", tokenFile)
+		}
+		return token, nil
+	}
+	if env := os.Getenv(envAuthToken); env != "" {
+		token := trimOneTrailingNewline(env)
+		if token == "" {
+			return "", fmt.Errorf("%s is set but empty after trimming its trailing newline", envAuthToken)
+		}
+		return token, nil
+	}
+	return "", nil
+}
+
+// resolveForwardAuth resolves the forward-auth header name and trusted-proxy
+// allowlist (flag > env, with the loopback default applied last). Forward-auth
+// is enabled iff the resolved header name is non-empty. The CIDR set is parsed
+// and validated whenever the mode is enabled OR the operator supplied any CIDRs
+// — a bad CIDR, or an all-addresses wildcard, is a hard config error.
+func resolveForwardAuth(headerFlag, proxiesFlag string) (header string, proxies []netip.Prefix, err error) {
+	header = headerFlag
+	if header == "" {
+		header = os.Getenv(envAuthTrustedHeader)
+	}
+	proxiesRaw := proxiesFlag
+	if proxiesRaw == "" {
+		proxiesRaw = os.Getenv(envAuthTrustedProxies)
+	}
+	if header != "" || proxiesRaw != "" {
+		src := proxiesRaw
+		if src == "" {
+			src = defaultTrustedProxies
+		}
+		proxies, err = parseTrustedProxies(src)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	return header, proxies, nil
+}
+
+// parseTrustedProxies parses a comma-separated CIDR list into prefixes. A bad
+// CIDR is a config error (never silently dropped); an all-addresses CIDR
+// (0.0.0.0/0, ::/0, any /0) is a HARD error — serve refuses (fail closed),
+// because trusting every peer lets any client spoof the identity header (the
+// Gitea CVE-2026-20896 class, §P5).
+func parseTrustedProxies(s string) ([]netip.Prefix, error) {
+	parts := strings.Split(s, ",")
+	prefixes := make([]netip.Prefix, 0, len(parts))
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(p)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --auth-trusted-proxies CIDR %q: %w", p, err)
+		}
+		if prefix.Bits() == 0 {
+			return nil, fmt.Errorf("--auth-trusted-proxies %q trusts all addresses — refusing: any client could then spoof the trusted identity header; list only your reverse proxy's real address(es)", p)
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	if len(prefixes) == 0 {
+		return nil, fmt.Errorf("--auth-trusted-proxies %q lists no usable CIDR", s)
+	}
+	return prefixes, nil
+}
+
+// isLoopbackAddr reports whether a listen address binds only loopback (§P3). An
+// empty host (":8080") and the unspecified addresses (0.0.0.0/::) are PUBLIC;
+// 127.0.0.0/8 and ::1 and the literal "localhost" are loopback; a bare hostname
+// or a specific routable IP is treated conservatively as public. Used only to
+// escalate the --no-auth warning.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	switch host {
+	case "":
+		return false // ":8080" binds every interface → public
+	case "localhost":
+		return true // ParseAddr fails on the literal name; special-case it
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false // a bare hostname or unparseable host → treat as public
+	}
+	return ip.IsLoopback()
 }
 
 func serve(args []string) error {
@@ -533,9 +755,15 @@ func serve(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	// Wire the handler as accessLog( auth( static+API ) ): the access log is
+	// OUTERMOST and always on for serve; the auth middleware is installed only
+	// when a mode is configured (--no-auth installs none).
+	handler := api.NewHandler(version, webdist.FS(), store, cfg.allocationRulesPath, authOptions(cfg)...)
+	handler = api.AccessLog(os.Stderr, cfg.authModeName)(handler)
+
 	srv := &http.Server{
 		Addr:    cfg.addr,
-		Handler: api.NewHandler(version, webdist.FS(), store, cfg.allocationRulesPath),
+		Handler: handler,
 		// No blanket ReadTimeout: large ingest request bodies must be
 		// able to stream longer than any fixed limit.
 		ReadHeaderTimeout: 5 * time.Second,
@@ -564,6 +792,21 @@ func serve(args []string) error {
 		return fmt.Errorf("shutting down: %w", err)
 	}
 	return <-errc
+}
+
+// authOptions translates the resolved serveSettings into the NewHandler auth
+// option: a bearer or forward-auth AuthConfig, or nil for --no-auth (no auth
+// middleware installed). The raw bearer token is hashed inside NewBearerAuth
+// and never becomes a stored field.
+func authOptions(cfg serveSettings) []api.HandlerOption {
+	switch cfg.authModeName {
+	case "bearer":
+		return []api.HandlerOption{api.WithAuth(api.NewBearerAuth(cfg.bearerToken))}
+	case "forward-auth":
+		return []api.HandlerOption{api.WithAuth(api.NewForwardAuth(cfg.trustedHeader, cfg.trustedProxies))}
+	default:
+		return nil
+	}
 }
 
 func ingestCmd(args []string) error {
@@ -1036,7 +1279,11 @@ func dataDir() string {
 }
 
 // resolveAddr picks the listen address: the --addr flag wins over
-// $COSTROID_ADDR, which wins over the default.
+// $COSTROID_ADDR, which wins over the default. The default binds LOOPBACK ONLY
+// (127.0.0.1) — reaching a non-loopback interface requires the operator to set
+// --addr/$COSTROID_ADDR explicitly, and that explicit choice is the public
+// opt-in. The Go flag default is empty (see serveConfig) so "operator set it"
+// stays distinguishable from "default applied".
 func resolveAddr(flagAddr, envAddr string) string {
 	if flagAddr != "" {
 		return flagAddr
@@ -1044,5 +1291,5 @@ func resolveAddr(flagAddr, envAddr string) string {
 	if envAddr != "" {
 		return envAddr
 	}
-	return ":8080"
+	return "127.0.0.1:8080"
 }

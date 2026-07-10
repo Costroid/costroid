@@ -321,14 +321,40 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// HandlerOption configures optional middleware wrapped around the root handler
+// by NewHandler. Existing callers pass none and stay auth-free.
+type HandlerOption func(*handlerOptions)
+
+type handlerOptions struct {
+	auth *AuthConfig
+}
+
+// WithAuth installs the authentication middleware built from cfg, gating the
+// data endpoints (see auth.go). Without it, NewHandler serves unauthenticated —
+// so secure-by-default lives in serve (which fails closed unless a mode or
+// --no-auth is configured), not in this constructor's default.
+func WithAuth(cfg AuthConfig) HandlerOption {
+	return func(o *handlerOptions) { o.auth = &cfg }
+}
+
 // NewHandler returns the root HTTP handler: the API routes from the
 // generated scaffolding plus the built dashboard served from static at /.
 // allocationRulesPath ("" = unconfigured) is the query-time allocation rules
-// file, read per request by the daily-cost handler.
-func NewHandler(version string, static fs.FS, store CostStore, allocationRulesPath string) http.Handler {
+// file, read per request by the daily-cost handler. Options may wrap the
+// handler in middleware (e.g. WithAuth); the generated scaffolding in
+// api.gen.go is never touched.
+func NewHandler(version string, static fs.FS, store CostStore, allocationRulesPath string, opts ...HandlerOption) http.Handler {
+	var o handlerOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", staticHandler(static))
-	return HandlerFromMux(NewServer(version, store, allocationRulesPath), mux)
+	h := HandlerFromMux(NewServer(version, store, allocationRulesPath), mux)
+	if o.auth != nil {
+		h = o.auth.middleware(h)
+	}
+	return h
 }
 
 // staticHandler serves the embedded dashboard: no directory listings, no
