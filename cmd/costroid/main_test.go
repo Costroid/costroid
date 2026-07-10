@@ -458,6 +458,71 @@ func TestResolveAllocationRulesPath(t *testing.T) {
 	})
 }
 
+// TestServeConfig exercises serve's real FlagSet without opening the store or
+// starting a listener. Every subtest pins both serve env vars so ambient
+// developer configuration cannot leak into the result.
+func TestServeConfig(t *testing.T) {
+	t.Run("flag beats env", func(t *testing.T) {
+		rules := filepath.Join(t.TempDir(), "rules.json")
+		if err := os.WriteFile(rules, []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("COSTROID_ADDR", ":9090")
+		t.Setenv(allocationRulesEnvVar, filepath.Join(t.TempDir(), "env.json"))
+		cfg, warning, stop, err := serveConfig([]string{"--addr", ":7070", "--allocation-rules", rules})
+		if err != nil || stop || warning != "" || cfg.addr != ":7070" || cfg.allocationRulesPath != rules {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v)", cfg, warning, stop, err)
+		}
+	})
+
+	t.Run("env when flag empty", func(t *testing.T) {
+		rules := filepath.Join(t.TempDir(), "rules.json")
+		if err := os.WriteFile(rules, []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("COSTROID_ADDR", ":9090")
+		t.Setenv(allocationRulesEnvVar, rules)
+		cfg, warning, stop, err := serveConfig(nil)
+		if err != nil || stop || warning != "" || cfg.addr != ":9090" || cfg.allocationRulesPath != rules {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v)", cfg, warning, stop, err)
+		}
+	})
+
+	t.Run("default under config dir warns when missing", func(t *testing.T) {
+		cfgDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", cfgDir)
+		t.Setenv("COSTROID_ADDR", "")
+		t.Setenv(allocationRulesEnvVar, "")
+		cfg, warning, stop, err := serveConfig(nil)
+		wantPath := filepath.Join(cfgDir, "costroid", "allocation.json")
+		wantWarning := "allocation rules file not found: " + wantPath + " — groupBy=allocation will return 400 until it exists"
+		if err != nil || stop || cfg.addr != ":8080" || cfg.allocationRulesPath != wantPath || warning != wantWarning {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v), want path %q warning %q", cfg, warning, stop, err, wantPath, wantWarning)
+		}
+	})
+
+	t.Run("unresolvable path warns as unconfigured", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("COSTROID_ADDR", "")
+		t.Setenv(allocationRulesEnvVar, "")
+		cfg, warning, stop, err := serveConfig(nil)
+		want := "no allocation rules path could be resolved — groupBy=allocation will return 400 as unconfigured"
+		if err != nil || stop || cfg.allocationRulesPath != "" || warning != want {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v), want warning %q", cfg, warning, stop, err, want)
+		}
+	})
+
+	t.Run("help stops without error", func(t *testing.T) {
+		t.Setenv("COSTROID_ADDR", "")
+		t.Setenv(allocationRulesEnvVar, "")
+		_, _, stop, err := serveConfig([]string{"-h"})
+		if err != nil || !stop {
+			t.Fatalf("serveConfig(-h) = stop %v, err %v", stop, err)
+		}
+	})
+}
+
 // TestAllocationValidateCLI covers `costroid allocation validate`: a valid file
 // prints a one-line summary naming the dimension and rule count; an invalid file
 // and a missing file each exit non-zero with an actionable message. Every case
@@ -502,6 +567,8 @@ func TestAllocationValidateCLI(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "nope.json")
 		if _, err := runCLI([]string{"allocation", "validate", "--rules", missing}, ""); err == nil {
 			t.Fatal("allocation validate (missing) = nil error, want non-zero exit")
+		} else if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "no such file") {
+			t.Errorf("error = %v, want missing path and actionable OS message", err)
 		}
 	})
 }

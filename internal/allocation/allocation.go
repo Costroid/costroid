@@ -23,6 +23,7 @@
 package allocation
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -47,9 +48,9 @@ const (
 	// OpOneOf matches when the dimension value equals any of the condition
 	// values.
 	OpOneOf = "one_of"
-	// OpExists matches when the dimension is present with a non-null,
-	// non-empty value (for a tag: the key is present with a non-null JSON
-	// value; for a column: the column is non-NULL and non-empty-string).
+	// OpExists matches when the dimension is present (for a tag: the key is
+	// present with a non-null JSON value, including an empty string; for a
+	// column: the column is non-NULL and non-empty-string).
 	OpExists = "exists"
 )
 
@@ -185,7 +186,7 @@ func (d Dimension) validate() error {
 
 func (r Rule) validate() error {
 	if r.Label == "" {
-		return fmt.Errorf("rule label is empty; every rule needs a non-empty label")
+		return errors.New("rule label is empty; every rule needs a non-empty label")
 	}
 	if r.Label == UnallocatedLabel {
 		return fmt.Errorf("%q is reserved for unmatched cost; give the rule a different label", UnallocatedLabel)
@@ -232,7 +233,7 @@ func (c Condition) validate() error {
 			return fmt.Errorf("operator %q takes neither \"value\" nor \"values\"", OpExists)
 		}
 	case "":
-		return fmt.Errorf("condition operator is empty; allowed operators are equals, contains, starts_with, one_of, exists")
+		return errors.New("condition operator is empty; allowed operators are equals, contains, starts_with, one_of, exists")
 	default:
 		return fmt.Errorf("unknown operator %q; allowed operators are equals, contains, starts_with, one_of, exists", c.Operator)
 	}
@@ -268,7 +269,7 @@ func validateDimension(dimension string) error {
 func validateTagKey(key string) error {
 	switch {
 	case key == "":
-		return fmt.Errorf("tag dimension has an empty key; use tag:<key>")
+		return errors.New("tag dimension has an empty key; use tag:<key>")
 	case strings.HasPrefix(key, "$"):
 		return fmt.Errorf("tag key %q begins with '$', which DuckDB interprets as a JSONPath expression, not a literal key; drop the '$'", key)
 	case strings.HasPrefix(key, "/"):

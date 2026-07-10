@@ -91,6 +91,14 @@ paths:
             text/plain:
               schema:
                 type: string
+        "500":
+          description: >-
+            The cost query failed, including an unreadable, malformed, or invalid
+            allocation rules file (reported as "loading allocation rules: …").
+          content:
+            text/plain:
+              schema:
+                type: string
   /api/v1/usage/tokens/daily:
     get:
       operationId: getDailyTokens

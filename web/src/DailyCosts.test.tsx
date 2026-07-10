@@ -271,6 +271,44 @@ describe("DailyCosts", () => {
     );
   });
 
+  it("shows loading synchronously while a grouping refetch is pending", async () => {
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      total: "1",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "1",
+          services: [{ key: "AWS Lambda", cost: "1" }],
+        },
+      ],
+    };
+    let resolveSecond!: (response: Response) => void;
+    const second = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(fakeResponse(200, costs))
+        .mockReturnValueOnce(second),
+    );
+    render(<DailyCosts />);
+    await screen.findByRole("img", { name: "Stacked daily cost by service" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Provider" }));
+    expect(screen.getByText("Loading daily costs…")).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+
+    resolveSecond(fakeResponse(200, costs));
+    expect(
+      await screen.findByRole("img", {
+        name: "Stacked daily cost by provider",
+      }),
+    ).toBeTruthy();
+  });
+
   it("keeps credit days inside the plot and reports net totals", async () => {
     // Day 1's positive segments sum to 5.00 while its net total is only
     // 1.00: with a net-derived y-scale the positive stack would overflow
@@ -342,6 +380,31 @@ describe("DailyCosts", () => {
     expect(await screen.findByText("0.3")).toBeTruthy();
     expect(screen.getByText("0.1")).toBeTruthy();
     expect(screen.queryByText(/0\.30000/)).toBeNull();
+  });
+
+  it("renders a positive sub-gap segment below a larger segment", async () => {
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      total: "100.000001",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "100.000001",
+          services: [
+            { key: "Tiny lower segment", cost: "0.000001" },
+            { key: "Large top segment", cost: "100" },
+          ],
+        },
+      ],
+    };
+    const { container } = renderChart(costs);
+    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    const tiny = [...container.querySelectorAll("path")].find(
+      (path) =>
+        path.querySelector("title")?.textContent ===
+        "Tiny lower segment: 0.000001 USD (2026-05-01)",
+    );
+    expect(tiny).toBeTruthy();
   });
 
   it("keeps a service's color stable when the service set changes", async () => {

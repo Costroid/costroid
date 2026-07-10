@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -388,17 +389,43 @@ func parseFlags(flags *flag.FlagSet, args []string) (stop bool, err error) {
 	}
 }
 
-func serve(args []string) error {
+type serveSettings struct {
+	addr                string
+	allocationRulesPath string
+}
+
+// serveConfig parses serve's flags and resolves its environment-backed
+// settings without opening the store or starting a listener. Allocation rules
+// remain live-loaded per request; the warning only makes a known startup
+// configuration problem visible without preventing serve from starting.
+func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, err error) {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addrFlag := flags.String("addr", "", `listen address (overrides $COSTROID_ADDR; default ":8080")`)
 	allocationRulesFlag := flags.String("allocation-rules", "", allocationRulesFlagUsage)
-	if stop, err := parseFlags(flags, args); stop || err != nil {
+	if stop, err = parseFlags(flags, args); stop || err != nil {
+		return serveSettings{}, "", stop, err
+	}
+
+	cfg.addr = resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))
+	cfg.allocationRulesPath = resolveAllocationRulesPath(*allocationRulesFlag)
+	if cfg.allocationRulesPath == "" {
+		warning = "no allocation rules path could be resolved — groupBy=allocation will return 400 as unconfigured"
+		return cfg, warning, false, nil
+	}
+	if _, statErr := os.Stat(cfg.allocationRulesPath); errors.Is(statErr, fs.ErrNotExist) {
+		warning = fmt.Sprintf("allocation rules file not found: %s — groupBy=allocation will return 400 until it exists", cfg.allocationRulesPath)
+	}
+	return cfg, warning, false, nil
+}
+
+func serve(args []string) error {
+	cfg, warning, stop, err := serveConfig(args)
+	if stop || err != nil {
 		return err
 	}
-	addr := resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))
-	// Resolve the allocation-rules path once at startup; the file itself is read
-	// per request (live-reload), so serve never fails on its state.
-	allocationRulesPath := resolveAllocationRulesPath(*allocationRulesFlag)
+	if warning != "" {
+		fmt.Fprintln(os.Stderr, warning)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -410,8 +437,8 @@ func serve(args []string) error {
 	defer func() { _ = store.Close() }()
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: api.NewHandler(version, webdist.FS(), store, allocationRulesPath),
+		Addr:    cfg.addr,
+		Handler: api.NewHandler(version, webdist.FS(), store, cfg.allocationRulesPath),
 		// No blanket ReadTimeout: large ingest request bodies must be
 		// able to stream longer than any fixed limit.
 		ReadHeaderTimeout: 5 * time.Second,
@@ -420,9 +447,9 @@ func serve(args []string) error {
 
 	errc := make(chan error, 1)
 	go func() {
-		fmt.Printf("costroid %s listening on %s\n", version, addr)
+		fmt.Printf("costroid %s listening on %s\n", version, cfg.addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- fmt.Errorf("serving HTTP on %s: %w", addr, err)
+			errc <- fmt.Errorf("serving HTTP on %s: %w", cfg.addr, err)
 			return
 		}
 		errc <- nil

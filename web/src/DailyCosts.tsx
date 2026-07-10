@@ -49,6 +49,7 @@ export default function DailyCosts({
   const { start, end } = range;
 
   useEffect(() => {
+    setState({ status: "loading" });
     const controller = new AbortController();
 
     async function load() {
@@ -221,10 +222,7 @@ function Chart({
                 const segmentBottom = cursor;
                 cursor -= height;
                 const gap = isTop ? 0 : SEGMENT_GAP;
-                const drawnHeight = Math.max(height - gap, 0);
-                if (drawnHeight <= 0) {
-                  return null;
-                }
+                const drawnHeight = Math.max(height - gap, 1);
                 return (
                   <path
                     key={svc.key}

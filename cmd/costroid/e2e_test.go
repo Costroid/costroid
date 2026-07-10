@@ -1340,6 +1340,35 @@ func TestOfflineE2EAllocation(t *testing.T) {
 			t.Errorf("label sum = %s, want fixture grand total 32.7663", total.String())
 		}
 	}
+	assertResponseTotals := func(body string) {
+		t.Helper()
+		var resp struct {
+			Total string `json:"total"`
+			Days  []struct {
+				Total    string `json:"total"`
+				Services []struct {
+					Cost string `json:"cost"`
+				} `json:"services"`
+			} `json:"days"`
+		}
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			t.Fatalf("decoding totals from %q: %v", body, err)
+		}
+		grand := decimal.Zero
+		for i, day := range resp.Days {
+			wantDay := decimal.Zero
+			for _, svc := range day.Services {
+				wantDay = wantDay.Add(decimal.RequireFromString(svc.Cost))
+			}
+			if day.Total != wantDay.String() {
+				t.Errorf("day %d response total = %s, want service sum %s", i+1, day.Total, wantDay)
+			}
+			grand = grand.Add(wantDay)
+		}
+		if resp.Total != grand.String() || resp.Total != "32.7663" {
+			t.Errorf("response grand total = %s, want day sum and fixture total 32.7663", resp.Total)
+		}
+	}
 
 	// --- allocation v1: exact money per label incl. Unallocated ---
 	code, body := get("?groupBy=allocation")
@@ -1353,6 +1382,7 @@ func TestOfflineE2EAllocation(t *testing.T) {
 		"serverless":  "1.3272",
 		"Unallocated": "6.0375",
 	})
+	assertResponseTotals(body)
 
 	// --- live reload: overwrite the rules, re-GET the SAME handler ---
 	writeRules(`{"dimensions":[{"name":"team","rules":[

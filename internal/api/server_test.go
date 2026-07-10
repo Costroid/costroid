@@ -703,6 +703,22 @@ func TestGetDailyCostsAllocationErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("unreadable path is 500 from os.Open", func(t *testing.T) {
+		regular := writeRules(t, `{"dimensions":[{"name":"team","rules":[]}]}`)
+		unreadable := filepath.Join(regular, "child.json")
+		store, rec := get(t, unreadable)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body)
+		}
+		body := strings.TrimSpace(rec.Body.String())
+		if !strings.HasPrefix(body, "loading allocation rules:") || !strings.Contains(body, unreadable) || !strings.Contains(body, "not a directory") {
+			t.Errorf("body = %q, want load prefix, path, and ENOTDIR message", body)
+		}
+		if store.allocQueryCount != 0 {
+			t.Error("store queried despite the unreadable-path 500")
+		}
+	})
+
 	t.Run("invalid file is 500 with prefix and offending field", func(t *testing.T) {
 		rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[{"label":"x","match":[{"dimension":"service_name","operater":"equals","value":"y"}]}]}]}`)
 		store, rec := get(t, rules)

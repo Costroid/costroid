@@ -299,6 +299,15 @@ export interface operations {
                     "text/plain": string;
                 };
             };
+            /** @description The cost query failed, including an unreadable, malformed, or invalid allocation rules file (reported as "loading allocation rules: …"). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
         };
     };
     getDailyTokens: {
