@@ -63,6 +63,7 @@ describe("App", () => {
     expect(await screen.findByText("costroid")).toBeTruthy();
     expect(screen.getByText("0.1.0-test")).toBeTruthy();
     expect(screen.getByText("1.4")).toBeTruthy();
+    expect(screen.queryByText("DEMO — synthetic data")).toBeNull();
     expect(fetch).toHaveBeenCalledWith("/api/v1/meta", expect.anything());
   });
 

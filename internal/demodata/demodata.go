@@ -29,10 +29,10 @@ import (
 // their six-month window fresh.
 const DefaultSeed int64 = 24024
 
-// ExactAmount is deliberately wider than 15 fractional digits. It is stored as
-// a BilledCost on the first day and must survive the importer, DuckDB, and API
-// byte-identically.
-const ExactAmount = "3141.592653589793238"
+// ExactAmount deliberately uses the full 18-digit fractional scale. It is
+// stored as a BilledCost on the first day and must survive the importer,
+// DuckDB, and API byte-identically.
+const ExactAmount = "3141.592653589793238462"
 
 const businessMetricName = "requests served"
 

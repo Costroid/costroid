@@ -18,10 +18,11 @@ import (
 type authKind int
 
 const (
-	authBearer                authKind = iota + 1 // Authorization: Bearer <token>
-	authForward                                   // trusted-header / forward-auth
-	recommendedIdentityHeader = "X-WEBAUTH-USER"
+	authBearer  authKind = iota + 1 // Authorization: Bearer <token>
+	authForward                     // trusted-header / forward-auth
 )
+
+const recommendedIdentityHeader = "X-WEBAUTH-USER"
 
 // AuthConfig is the resolved authentication configuration for the HTTP handler.
 // Its fields are UNEXPORTED on purpose: a bearer token is only ever held as its

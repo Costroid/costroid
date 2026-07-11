@@ -92,6 +92,17 @@ func TestPrepareDemoIsolatedSyntheticOnly(t *testing.T) {
 	}
 }
 
+func TestPrepareDemoRefusesServeDataDirectory(t *testing.T) {
+	serveDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", serveDir)
+
+	alias := serveDir + string(os.PathSeparator) + "."
+	_, _, err := prepareDemo(context.Background(), []string{"--data-dir", alias}, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "refusing to seed the demo into the serve data directory") {
+		t.Fatalf("prepareDemo(--data-dir %s) error = %v, want serve-directory refusal", alias, err)
+	}
+}
+
 // hermeticAWSEnv pins the ambient AWS credential chain to test-local
 // values (mirroring the awsfocuss3 tests) so CLI-level ingest tests pass
 // identically on any machine.

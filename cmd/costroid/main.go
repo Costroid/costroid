@@ -829,13 +829,13 @@ func (p *preparedDemo) close() {
 }
 
 // prepareDemo owns the safety boundary before any listener starts: it resolves
-// only demo-specific flags, creates or validates an isolated empty directory,
-// writes synthetic allocation rules there, opens that store directly, and
-// seeds it without consulting normal data-dir, auth, credential, or connector
-// configuration.
+// only demo-specific flags, refuses the resolved normal data directory,
+// creates or validates an isolated empty directory, writes synthetic allocation
+// rules there, opens that store directly, and seeds it without consulting auth,
+// credential, or connector configuration.
 func prepareDemo(ctx context.Context, args []string, asOf time.Time) (*preparedDemo, bool, error) {
 	flags := flag.NewFlagSet("demo", flag.ContinueOnError)
-	addrFlag := flags.String("addr", "", "listen address (default 127.0.0.1:8080; loopback only)")
+	addrFlag := flags.String("addr", "", `listen address (overrides $COSTROID_ADDR; default "127.0.0.1:8080" — loopback. Pass a non-loopback address, e.g. 0.0.0.0:8080, to expose it on the network)`)
 	dataDirFlag := flags.String("data-dir", "", "empty directory for the isolated synthetic store (default: fresh temporary directory)")
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return nil, stop, err
@@ -851,6 +851,17 @@ func prepareDemo(ctx context.Context, args []string, asOf time.Time) (*preparedD
 		prepared.removeDataDir = true
 	} else {
 		prepared.dataDir = *dataDirFlag
+		demoDirAbs, err := filepath.Abs(prepared.dataDir)
+		if err != nil {
+			return nil, false, fmt.Errorf("resolving demo data directory %s: %w", prepared.dataDir, err)
+		}
+		serveDirAbs, err := filepath.Abs(dataDir())
+		if err != nil {
+			return nil, false, fmt.Errorf("resolving serve data directory %s: %w", dataDir(), err)
+		}
+		if demoDirAbs == serveDirAbs {
+			return nil, false, fmt.Errorf("refusing to seed the demo into the serve data directory %s", demoDirAbs)
+		}
 		entries, err := os.ReadDir(prepared.dataDir)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, false, fmt.Errorf("reading demo data directory %s: %w", prepared.dataDir, err)
