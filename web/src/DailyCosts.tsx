@@ -13,6 +13,7 @@ import {
   MAX_BAR_WIDTH,
   SEGMENT_GAP,
   WIDTH,
+  capLabelPositions,
   segmentPath,
   serviceColor,
   yTicks,
@@ -306,22 +307,8 @@ function Chart({
   // Long ranges: label every k-th day so at most ~12 date labels render.
   const labelEvery = Math.max(1, Math.ceil(costs.days.length / 12));
 
-  // Cap labels remain verbatim. Place only labels that fit within the plot and
-  // do not collide with the previously accepted label.
-  let previousCapRight = -Infinity;
-  const capPositions = costs.days.map((day, i) => {
-    const center = MARGIN.left + i * band + band / 2;
-    const width = Math.max(7, day.total.length * 6.2);
-    if (width > plotWidth) return null;
-    const x = Math.max(
-      MARGIN.left + width / 2,
-      Math.min(WIDTH - MARGIN.right - width / 2, center),
-    );
-    const left = x - width / 2;
-    if (left < previousCapRight + 4) return null;
-    previousCapRight = x + width / 2;
-    return x;
-  });
+  // Cap labels remain verbatim. Positions only — edge clamp + collision thin.
+  const capPositions = capLabelPositions(costs.days.map((d) => d.total));
 
   const tooltipDay = activeDay === null ? null : costs.days[activeDay];
   const tooltipLeft =

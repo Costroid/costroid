@@ -113,3 +113,34 @@ export function sumIntegerStrings(quantities: string[]): string | null {
   }
   return total.toString();
 }
+
+/**
+ * Cap-label x-positions for a per-day bar chart. Returns one entry per day:
+ * the clamped center-x at which to anchor (textAnchor="middle") that day's
+ * cap label, or null to omit it (no value, too wide for the plot, or it would
+ * collide with the previously placed label). Positions only — the caller
+ * still renders the verbatim value string. Uses the shared WIDTH/MARGIN so
+ * a cap never clips the viewBox edge. ~6.2px/char matches the 11px
+ * tabular-nums `.viz-cap` glyph advance.
+ */
+export function capLabelPositions(
+  totals: (string | null)[],
+): (number | null)[] {
+  const plotWidth = WIDTH - MARGIN.left - MARGIN.right;
+  const band = plotWidth / totals.length;
+  let previousCapRight = -Infinity;
+  return totals.map((total, i) => {
+    if (total === null) return null;
+    const width = Math.max(7, total.length * 6.2);
+    if (width > plotWidth) return null;
+    const center = MARGIN.left + i * band + band / 2;
+    const x = Math.max(
+      MARGIN.left + width / 2,
+      Math.min(WIDTH - MARGIN.right - width / 2, center),
+    );
+    const left = x - width / 2;
+    if (left < previousCapRight + 4) return null;
+    previousCapRight = x + width / 2;
+    return x;
+  });
+}

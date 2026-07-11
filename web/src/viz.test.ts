@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  MARGIN,
   SERIES_SLOTS,
+  WIDTH,
+  capLabelPositions,
   compactAxisLabel,
   segmentPath,
   serviceColor,
@@ -110,5 +113,71 @@ describe("sumIntegerStrings", () => {
 
   it("returns 0 for an empty list", () => {
     expect(sumIntegerStrings([])).toBe("0");
+  });
+});
+
+describe("capLabelPositions", () => {
+  const plotWidth = WIDTH - MARGIN.left - MARGIN.right;
+  const estWidth = (s: string) => Math.max(7, s.length * 6.2);
+
+  it("clamps a long last-day total so the label stays inside the plot", () => {
+    const long = "123456789012"; // 12 digits
+    const totals = Array.from({ length: 10 }, (_, i) => (i === 9 ? long : "1"));
+    const positions = capLabelPositions(totals);
+    const p = positions[9];
+    expect(p).not.toBeNull();
+    const width = estWidth(long);
+    expect(p! + width / 2).toBeLessThanOrEqual(WIDTH - MARGIN.right);
+  });
+
+  it("clamps a long first-day total so the label stays inside the plot", () => {
+    const long = "123456789012";
+    const totals = Array.from({ length: 10 }, (_, i) => (i === 0 ? long : "1"));
+    const positions = capLabelPositions(totals);
+    const p = positions[0];
+    expect(p).not.toBeNull();
+    const width = estWidth(long);
+    expect(p! - width / 2).toBeGreaterThanOrEqual(MARGIN.left);
+  });
+
+  it("thins colliding dense long labels and keeps kept labels non-overlapping", () => {
+    const long = "1234567890"; // 10 digits → width ≈ 62
+    const totals = Array.from({ length: 40 }, () => long);
+    const positions = capLabelPositions(totals);
+    const kept = positions
+      .map((p, i) => (p === null ? null : { p, i }))
+      .filter((x): x is { p: number; i: number } => x !== null);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(totals.length);
+    // At least one null between first and last if multiple kept.
+    expect(positions.some((p) => p === null)).toBe(true);
+
+    const width = estWidth(long);
+    for (let k = 1; k < kept.length; k++) {
+      const prevRight = kept[k - 1].p + width / 2;
+      const left = kept[k].p - width / 2;
+      expect(left).toBeGreaterThanOrEqual(prevRight + 4);
+    }
+  });
+
+  it("returns null for a null total", () => {
+    expect(capLabelPositions([null, "10"])[0]).toBeNull();
+  });
+
+  it("returns null when a single label is wider than the plot", () => {
+    // plotWidth ≈ 584; need length * 6.2 > 584 → length > 94.2
+    const huge = "9".repeat(100);
+    expect(estWidth(huge)).toBeGreaterThan(plotWidth);
+    expect(capLabelPositions([huge])).toEqual([null]);
+  });
+
+  it("returns the band center for a short mid-plot total (unclamped)", () => {
+    const n = 10;
+    const totals = Array.from({ length: n }, () => "1");
+    const positions = capLabelPositions(totals);
+    const mid = 4;
+    const band = plotWidth / n;
+    const expectedCenter = MARGIN.left + mid * band + band / 2;
+    expect(positions[mid]).toBeCloseTo(expectedCenter, 10);
   });
 });

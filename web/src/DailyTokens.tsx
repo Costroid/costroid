@@ -13,6 +13,7 @@ import {
   MAX_BAR_WIDTH,
   SEGMENT_GAP,
   WIDTH,
+  capLabelPositions,
   compactAxisLabel,
   segmentPath,
   serviceColor,
@@ -188,6 +189,8 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
   const yOf = (value: number) => baseline - (value / top) * plotHeight;
 
   const labelEvery = Math.max(1, Math.ceil(days.length / 12));
+  // Cap labels remain verbatim. Positions only — edge clamp + collision thin.
+  const capPositions = capLabelPositions(days.map((d) => d.total));
   const tooltipDay = activeDay === null ? null : days[activeDay];
   const tooltipLeft =
     activeDay === null
@@ -264,9 +267,9 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
                       </path>
                     );
                   })}
-                  {day.total !== null && (
+                  {capPositions[i] !== null && (
                     <text
-                      x={x + barWidth / 2}
+                      x={capPositions[i]!}
                       y={cursor - 6}
                       className="viz-cap"
                       textAnchor="middle"

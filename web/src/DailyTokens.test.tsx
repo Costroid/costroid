@@ -11,6 +11,7 @@ import {
 } from "@testing-library/react";
 import DailyTokens from "./DailyTokens";
 import type { components } from "./api/schema";
+import { MARGIN, WIDTH } from "./viz";
 
 type DailyTokenUsage = components["schemas"]["DailyTokenUsage"];
 
@@ -287,5 +288,41 @@ describe("DailyTokens", () => {
       (t) => t.textContent ?? "",
     );
     expect(texts.some((t) => /[kMGTP]$/.test(t))).toBe(true);
+  });
+
+  it("clamps the rightmost cap label so it does not clip the viewBox", async () => {
+    // Right-edge case: contiguous days with only the last carrying an integer
+    // total (prior days use non-integers so day totals are null and no prior
+    // caps compete). Without clamp the last band-center + half-width exceeds
+    // WIDTH - MARGIN.right for an 8-digit label.
+    const big = "12345678"; // 8 digits → est width ≈ 49.6
+    const rows: DailyTokenUsage[] = Array.from({ length: 14 }, (_, i) => {
+      const day = String(i + 1).padStart(2, "0");
+      return {
+        date: `2026-05-${day}`,
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: i === 13 ? big : "1.5",
+      };
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, rows))),
+    );
+
+    const { container } = render(<DailyTokens />);
+    await screen.findByRole("img", {
+      name: "Stacked daily token usage by service",
+    });
+
+    // textContent includes the nested <title>, so match on the data string.
+    const caps = [
+      ...container.querySelectorAll("text.viz-cap"),
+    ] as SVGTextElement[];
+    const bigCap = caps.find((t) => (t.textContent ?? "").includes(big));
+    expect(bigCap).toBeTruthy();
+    const x = Number(bigCap!.getAttribute("x"));
+    const estWidth = Math.max(7, big.length * 6.2);
+    expect(x + estWidth / 2).toBeLessThanOrEqual(WIDTH - MARGIN.right);
   });
 });
