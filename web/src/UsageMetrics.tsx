@@ -3,9 +3,9 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { getUsageMetricsDaily } from "./api";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
-import { rangeQuery } from "./range";
 import { sumIntegerStrings } from "./viz";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 
@@ -111,16 +111,10 @@ export default function UsageMetrics({
 
     async function load() {
       try {
-        const url = `/api/v1/usage/metrics/daily${rangeQuery(start, end)}`;
-        const res = await fetch(url, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          throw new Error(
-            `GET /api/v1/usage/metrics/daily returned ${res.status}`,
-          );
-        }
-        const rows = (await res.json()) as DailyUsageMetric[];
+        const rows = await getUsageMetricsDaily(
+          { start, end },
+          controller.signal,
+        );
         if (controller.signal.aborted) {
           return;
         }

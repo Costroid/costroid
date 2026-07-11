@@ -3,9 +3,9 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { getAnomalies, getCostsDaily, type CostGroupBy } from "./api";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
-import { rangeQuery } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 import {
   HEIGHT,
@@ -21,7 +21,6 @@ import {
 
 type DailyCosts = components["schemas"]["DailyCosts"];
 type Anomaly = components["schemas"]["Anomaly"];
-type Anomalies = components["schemas"]["Anomalies"];
 
 // FetchParams identifies the request a held "ready" result was fetched FOR, so a
 // render can detect synchronously that the current props no longer match it.
@@ -39,8 +38,6 @@ type AnomalyState =
   | { status: "loading"; params: FetchParams }
   | { status: "error"; message: string; params: FetchParams }
   | { status: "ready"; flags: Anomaly[]; params: FetchParams };
-
-type CostGroupBy = "service" | "provider" | "allocation";
 
 const GROUP_BY_OPTIONS: { id: CostGroupBy; label: string }[] = [
   { id: "service", label: "Service" },
@@ -75,23 +72,10 @@ export default function DailyCosts({
 
     async function load() {
       try {
-        const q = rangeQuery(start, end);
-        const url =
-          `/api/v1/costs/daily${q}` +
-          (groupBy !== "service" ? `${q ? "&" : "?"}groupBy=${groupBy}` : "");
-        const res = await fetch(url, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          // Surface the server's message (e.g. the unconfigured-allocation
-          // 400 body) so the error state is actionable.
-          const body = (await res.text()).trim();
-          throw new Error(
-            `GET /api/v1/costs/daily returned ${res.status}` +
-              (body ? `: ${body}` : ""),
-          );
-        }
-        const costs = (await res.json()) as DailyCosts;
+        const costs = await getCostsDaily(
+          { start, end, groupBy },
+          controller.signal,
+        );
         if (controller.signal.aborted) {
           return;
         }
@@ -125,15 +109,10 @@ export default function DailyCosts({
 
     async function loadAnomalies() {
       try {
-        const q = rangeQuery(start, end);
-        const url =
-          `/api/v1/anomalies${q}` +
-          (groupBy !== "service" ? `${q ? "&" : "?"}groupBy=${groupBy}` : "");
-        const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) {
-          throw new Error(`GET /api/v1/anomalies returned ${res.status}`);
-        }
-        const body = (await res.json()) as Anomalies;
+        const body = await getAnomalies(
+          { start, end, groupBy },
+          controller.signal,
+        );
         if (controller.signal.aborted) {
           return;
         }

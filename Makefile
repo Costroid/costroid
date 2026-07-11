@@ -12,7 +12,7 @@ VERSION ?= 0.1.0-dev
 GOLANGCI_LINT_VERSION := v2.12.2
 GOLANGCI_LINT := bin/golangci-lint
 
-.PHONY: dev dev-api dev-web build test lint fmt generate release-snapshot sbom vulncheck
+.PHONY: dev dev-api dev-web build demo-fixtures demo-build test lint fmt generate release-snapshot sbom vulncheck
 
 ## dev: run the Go API and the Vite dev server together (Ctrl-C stops both)
 dev:
@@ -34,6 +34,18 @@ build:
 	cp -R web/dist/. internal/webdist/dist/
 	touch internal/webdist/dist/.gitkeep
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/costroid ./cmd/costroid
+
+## demo-fixtures: capture the static demo's API fixtures + generate ranges.ts.
+## Seeds an isolated synthetic store exactly as `costroid demo` (pinned asOf),
+## then writes web/src/demo/fixtures/*.json + web/src/demo/ranges.ts verbatim.
+## Re-running reproduces both byte-identically.
+demo-fixtures:
+	go run ./internal/demofixtures
+
+## demo-build: build the backendless static demo dashboard into web/demo-dist
+## (fixture-backed api seam + Latin/Turkish subset font). Never writes web/dist.
+demo-build:
+	pnpm -C web build --mode demo
 
 ## test: Go tests + web tests
 test:

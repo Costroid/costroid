@@ -199,6 +199,13 @@ summary:focus-visible {
   color: var(--accent-hover);
 }
 
+.date-range-presets button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
 .date-range-hint,
 .range-indicator {
   margin: 0;

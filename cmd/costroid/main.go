@@ -809,8 +809,6 @@ func serve(args []string) error {
 	return <-errc
 }
 
-const demoAllocationRules = `{"dimensions":[{"name":"environment","rules":[{"label":"Production","match":[{"dimension":"tag:environment","operator":"exists"}]}]}]}`
-
 type preparedDemo struct {
 	store          *storage.DuckDB
 	dataDir        string
@@ -879,7 +877,7 @@ func prepareDemo(ctx context.Context, args []string, asOf time.Time) (*preparedD
 		return fail(fmt.Errorf("creating demo data directory %s: %w", prepared.dataDir, err))
 	}
 	prepared.allocationPath = filepath.Join(prepared.dataDir, "allocation.json")
-	if err := os.WriteFile(prepared.allocationPath, []byte(demoAllocationRules+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(prepared.allocationPath, []byte(demodata.AllocationRules+"\n"), 0o600); err != nil {
 		return fail(fmt.Errorf("writing synthetic allocation rules: %w", err))
 	}
 	store, err := storage.Open(ctx, prepared.dataDir)

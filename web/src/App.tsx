@@ -3,6 +3,8 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { getMeta } from "./api";
+import { DEMO_PRESETS } from "./demo/ranges";
 import DateRangeControl from "./DateRangeControl";
 import DailyCosts from "./DailyCosts";
 import DailyTokens from "./DailyTokens";
@@ -61,12 +63,20 @@ export default function App() {
 
     async function load() {
       try {
-        const res = await fetch("/api/v1/meta", { signal: controller.signal });
-        if (!res.ok) {
-          throw new Error(`GET /api/v1/meta returned ${res.status}`);
-        }
-        const meta = (await res.json()) as Meta;
+        const meta = await getMeta(controller.signal);
         setState({ status: "ready", meta });
+        if (meta.demo) {
+          // Demo mode serves only the captured preset ranges; open on the full
+          // window (which carries the anomaly story) instead of all-time.
+          const full = DEMO_PRESETS.find((preset) => preset.id === "full");
+          if (full) {
+            setRange((current) =>
+              current.start === "" && current.end === ""
+                ? { start: full.start, end: full.end }
+                : current,
+            );
+          }
+        }
       } catch (err) {
         if (controller.signal.aborted) {
           return;
@@ -134,7 +144,15 @@ export default function App() {
       </header>
       <div className="toolbar">
         <div className="range-bar">
-          <DateRangeControl range={range} onChange={setRange} />
+          <DateRangeControl
+            range={range}
+            onChange={setRange}
+            presets={
+              state.status === "ready" && state.meta.demo
+                ? DEMO_PRESETS
+                : undefined
+            }
+          />
           <p className="range-indicator" aria-live="polite">
             {rangeIndicator(range)}
           </p>

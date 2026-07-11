@@ -3,9 +3,9 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { getTokensDaily } from "./api";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
-import { rangeQuery } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 import {
   HEIGHT,
@@ -82,16 +82,7 @@ export default function DailyTokens({
 
     async function load() {
       try {
-        const url = `/api/v1/usage/tokens/daily${rangeQuery(start, end)}`;
-        const res = await fetch(url, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          throw new Error(
-            `GET /api/v1/usage/tokens/daily returned ${res.status}`,
-          );
-        }
-        const rows = (await res.json()) as DailyTokenUsage[];
+        const rows = await getTokensDaily({ start, end }, controller.signal);
         if (controller.signal.aborted) {
           return;
         }

@@ -1,6 +1,13 @@
 # Build output
 dist
+demo-dist
 
 # Generated from contracts/openapi.yaml — a fixed point of the generator,
 # not of Prettier. `make fmt` must never rewrite it.
 src/api/schema.d.ts
+
+# Captured verbatim off `costroid demo` by internal/demofixtures — a fixed
+# point of the capture, not of Prettier. Reformatting would break the
+# byte-for-byte reproducibility check.
+src/demo/fixtures
+src/demo/ranges.ts

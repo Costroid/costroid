@@ -36,6 +36,12 @@ const ExactAmount = "3141.592653589793238462"
 
 const businessMetricName = "requests served"
 
+// AllocationRules is the query-time allocation ruleset the demo writes into its
+// isolated store so a groupBy=allocation query returns the Production vs
+// Unallocated split instead of a 400. It is synthetic, demo-only, and matches
+// the "environment":"production" tag the tagged service specs carry.
+const AllocationRules = `{"dimensions":[{"name":"environment","rules":[{"label":"Production","match":[{"dimension":"tag:environment","operator":"exists"}]}]}]}`
+
 var focus10Header = []string{
 	"AvailabilityZone", "BilledCost", "BillingAccountId", "BillingAccountName", "BillingCurrency",
 	"BillingPeriodEnd", "BillingPeriodStart", "ChargeCategory", "ChargeClass", "ChargeDescription",

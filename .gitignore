@@ -1,6 +1,9 @@
 # Build output
 /bin/
 /web/dist/
+# Static demo dashboard build output (fixtures + ranges.ts under web/src ARE
+# committed; the built bundle here is not).
+/web/demo-dist/
 # Populated from web/dist by `make build`; only the embed placeholder is committed.
 /internal/webdist/dist/*
 !/internal/webdist/dist/.gitkeep

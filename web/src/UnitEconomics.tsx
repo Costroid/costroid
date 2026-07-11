@@ -3,9 +3,9 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { getBusinessMetrics, getUnitEconomicsDaily } from "./api";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
-import { rangeQuery } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 
 type BusinessMetricInfo = components["schemas"]["BusinessMetricInfo"];
@@ -40,16 +40,7 @@ export default function UnitEconomics({
     const controller = new AbortController();
     async function loadMetrics() {
       try {
-        const res = await fetch("/api/v1/business-metrics", {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          throw new Error(
-            `GET /api/v1/business-metrics returned ${res.status}`,
-          );
-        }
-        const body =
-          (await res.json()) as components["schemas"]["BusinessMetrics"];
+        const body = await getBusinessMetrics(controller.signal);
         if (controller.signal.aborted) return;
         setMetricsState({ status: "ready", metrics: body.metrics });
         setSelectedMetric((current) => current || body.metrics[0]?.name || "");
@@ -74,17 +65,10 @@ export default function UnitEconomics({
     setEconomicsState({ status: "loading" });
     async function loadEconomics() {
       try {
-        const rangeSuffix = rangeQuery(start, end).replace("?", "&");
-        const url =
-          `/api/v1/unit-economics/daily?metric=${encodeURIComponent(selectedMetric)}` +
-          rangeSuffix;
-        const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) {
-          throw new Error(
-            `GET /api/v1/unit-economics/daily returned ${res.status}`,
-          );
-        }
-        const body = (await res.json()) as UnitEconomicsResponse;
+        const body = await getUnitEconomicsDaily(
+          { metric: selectedMetric, start, end },
+          controller.signal,
+        );
         if (controller.signal.aborted) return;
         setEconomicsState({ status: "ready", economics: body });
       } catch (err) {
