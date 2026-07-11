@@ -2,7 +2,13 @@
 // Copyright 2026 The Costroid Authors
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import DailyTokens from "./DailyTokens";
 import type { components } from "./api/schema";
 
@@ -22,6 +28,32 @@ afterEach(() => {
 });
 
 describe("DailyTokens", () => {
+  it("shows verbatim day values when a chart day receives focus", async () => {
+    const quantity = "1234567890125856789";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          fakeResponse(200, [
+            {
+              date: "2026-05-01",
+              serviceName: "OpenAI API",
+              consumedUnit: "Tokens",
+              consumedQuantity: quantity,
+            },
+          ] satisfies DailyTokenUsage[]),
+        ),
+      ),
+    );
+
+    render(<DailyTokens />);
+    const hitTarget = await screen.findByLabelText("2026-05-01 token details");
+    fireEvent.focus(hitTarget);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toContain(`${quantity} Tokens`);
+    expect(tooltip.textContent).toContain("OpenAI API");
+  });
+
   it("renders totals, legend, and table from the API response", async () => {
     const rows: DailyTokenUsage[] = [
       {

@@ -79,6 +79,26 @@ function fetchedURLs(): string[] {
 }
 
 describe("DailyCosts", () => {
+  it("shows verbatim day values when a chart day receives focus", async () => {
+    renderChart({
+      currency: "USD",
+      total: "256.9833670123456789",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "256.9833670123456789",
+          services: [{ key: "OpenAI API", cost: "256.9833670123456789" }],
+        },
+      ],
+    });
+
+    const hitTarget = await screen.findByLabelText("2026-05-01 cost details");
+    fireEvent.focus(hitTarget);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.textContent).toContain("256.9833670123456789 USD");
+    expect(tooltip.textContent).toContain("OpenAI API");
+  });
+
   it("renders totals, legend, and table from the API response", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",

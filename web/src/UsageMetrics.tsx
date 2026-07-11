@@ -3,9 +3,11 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
 import { rangeQuery } from "./range";
 import { sumIntegerStrings } from "./viz";
+import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 
 type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
 
@@ -139,11 +141,20 @@ export default function UsageMetrics({
   }, [start, end]);
 
   return (
-    <section className="usage-metrics">
-      <h2>Daily usage metrics</h2>
-      {state.status === "loading" && <p>Loading daily usage metrics…</p>}
+    <section className="usage-metrics" aria-labelledby="usage-title">
+      <div className="view-heading">
+        <div>
+          <p className="view-kicker">Operational signals</p>
+          <h2 id="usage-title">Daily usage metrics</h2>
+        </div>
+      </div>
+      {state.status === "loading" && (
+        <LoadingSkeleton label="Loading daily usage metrics…" />
+      )}
       {state.status === "error" && (
-        <p role="alert">Failed to load daily usage metrics: {state.message}</p>
+        <ErrorState>
+          Failed to load daily usage metrics: {state.message}
+        </ErrorState>
       )}
       {state.status === "ready" &&
         (state.rows.length === 0 ? (
@@ -158,81 +169,102 @@ export default function UsageMetrics({
 function EmptyState() {
   return (
     <div className="viz-empty">
-      <p>
-        No usage metrics yet. Store a connector credential, ingest from an AI
-        connector, then reload this page:
-      </p>
-      <pre>
-        <code>
-          costroid credentials set &lt;slot&gt;
-          {"\n"}
-          costroid ingest --connector openai-cost|anthropic-cost --credential
-          &lt;slot&gt; [--since YYYY-MM]
-        </code>
-      </pre>
-      <p>
-        Stop <code>costroid serve</code> while ingesting — the embedded store
-        allows a single process at a time.
-      </p>
+      <div className="state-content">
+        <EmptyIcon className="state-icon" size={30} />
+        <p className="state-title">No usage metrics yet</p>
+        <p className="state-message">
+          Store a connector credential, ingest from an AI connector, then reload
+          this page:
+        </p>
+        <pre>
+          <code>
+            costroid credentials set &lt;slot&gt;
+            {"\n"}
+            costroid ingest --connector openai-cost|anthropic-cost --credential
+            &lt;slot&gt; [--since YYYY-MM]
+          </code>
+        </pre>
+        <p>
+          Stop <code>costroid serve</code> while ingesting — the embedded store
+          allows a single process at a time.
+        </p>
+      </div>
     </div>
   );
 }
 
 function MetricsTables({ rows }: { rows: DailyUsageMetric[] }) {
   const sections = groupByUnit(rows);
+  const sectionTotals = sections.map((section) => ({
+    section,
+    total: sectionTotal(section),
+  }));
 
   return (
     <div>
-      {sections.map((section) => {
-        const total = sectionTotal(section);
-        return (
-          <div key={section.unit} className="usage-metrics-unit">
-            <h3>{section.unit}</h3>
-            <div className="viz-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Service</th>
-                    <th scope="col">Tier</th>
-                    <th scope="col">Metric</th>
-                    {section.dates.map((date) => (
-                      <th scope="col" key={date}>
-                        {date}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {section.series.map((s) => {
-                    const sk = seriesKey(s);
-                    const byDate = section.cells.get(sk);
-                    return (
-                      <tr key={sk}>
-                        <th scope="row">{s.serviceName}</th>
-                        <td>{s.serviceTier === "" ? "—" : s.serviceTier}</td>
-                        <td>{s.metricName}</td>
-                        {section.dates.map((date) => (
-                          <td key={date}>{byDate?.get(date) ?? "—"}</td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                {total !== null && (
-                  <tfoot>
+      <div className="usage-card-grid">
+        {sectionTotals.map(({ section, total }) =>
+          total === null ? null : (
+            <StatCard
+              key={section.unit}
+              label={`${section.unit} range total`}
+              value={total}
+              subtitle={section.unit}
+            />
+          ),
+        )}
+      </div>
+      <div className="usage-metrics-list">
+        {sectionTotals.map(({ section, total }) => {
+          return (
+            <div key={section.unit} className="usage-metrics-unit">
+              <h3>{section.unit}</h3>
+              <div>
+                <table>
+                  <thead>
                     <tr>
-                      <th scope="row" colSpan={3}>
-                        Range total
-                      </th>
-                      <td colSpan={section.dates.length}>{total}</td>
+                      <th scope="col">Service</th>
+                      <th scope="col">Tier</th>
+                      <th scope="col">Metric</th>
+                      {section.dates.map((date) => (
+                        <th scope="col" key={date}>
+                          {date}
+                        </th>
+                      ))}
                     </tr>
-                  </tfoot>
-                )}
-              </table>
+                  </thead>
+                  <tbody>
+                    {section.series.map((s) => {
+                      const sk = seriesKey(s);
+                      const byDate = section.cells.get(sk);
+                      return (
+                        <tr key={sk}>
+                          <th scope="row">{s.serviceName}</th>
+                          <td>{s.serviceTier === "" ? "—" : s.serviceTier}</td>
+                          <td>{s.metricName}</td>
+                          {section.dates.map((date) => (
+                            <td key={date}>{byDate?.get(date) ?? "—"}</td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  {total !== null && (
+                    <tfoot>
+                      <tr>
+                        <th scope="row" colSpan={3}>
+                          Range total
+                        </th>
+                        <td colSpan={section.dates.length}>{total}</td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }

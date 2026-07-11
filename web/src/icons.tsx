@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The Costroid Authors
+
+import type { SVGProps } from "react";
+
+// Stroke paths are adapted from Lucide icons (ISC License).
+type IconProps = SVGProps<SVGSVGElement> & { size?: number };
+
+function Icon({ size = 18, children, ...props }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden={props["aria-label"] ? undefined : true}
+      {...props}
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function BrandIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 7.5 12 3l7 4.5v9L12 21l-7-4.5z" />
+      <path d="m8.5 10 3.5-2 3.5 2v4L12 16l-3.5-2z" />
+    </Icon>
+  );
+}
+
+export function CostsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 3v18h18" />
+      <path d="m7 15 4-4 3 2 5-6" />
+    </Icon>
+  );
+}
+
+export function TokensIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M9 9h6M12 9v6M9 15h6" />
+    </Icon>
+  );
+}
+
+export function UsageIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </Icon>
+  );
+}
+
+export function UnitEconomicsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="4" />
+      <circle cx="16" cy="16" r="4" />
+      <path d="m18.5 5.5-13 13" />
+    </Icon>
+  );
+}
+
+export function WarningIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10.3 3.7 2.2 18a2 2 0 0 0 1.8 3h16a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9v4M12 17h.01" />
+    </Icon>
+  );
+}
+
+export function EmptyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 5h16v14H4zM4 9h16" />
+      <path d="M9 14h6" />
+    </Icon>
+  );
+}

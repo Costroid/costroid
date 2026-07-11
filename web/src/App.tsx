@@ -6,6 +6,14 @@ import type { components } from "./api/schema";
 import DateRangeControl from "./DateRangeControl";
 import DailyCosts from "./DailyCosts";
 import DailyTokens from "./DailyTokens";
+import {
+  BrandIcon,
+  CostsIcon,
+  TokensIcon,
+  UnitEconomicsIcon,
+  UsageIcon,
+  WarningIcon,
+} from "./icons";
 import type { Range } from "./range";
 import UsageMetrics from "./UsageMetrics";
 import UnitEconomics from "./UnitEconomics";
@@ -19,12 +27,16 @@ type MetaState =
 
 type View = "costs" | "tokens" | "usage" | "unit-economics";
 
-const VIEWS: { id: View; label: string }[] = [
-  { id: "costs", label: "Costs" },
-  { id: "tokens", label: "Tokens" },
-  { id: "usage", label: "Usage" },
-  { id: "unit-economics", label: "Unit economics" },
-];
+const VIEWS = [
+  { id: "costs", label: "Costs", icon: CostsIcon },
+  { id: "tokens", label: "Tokens", icon: TokensIcon },
+  { id: "usage", label: "Usage", icon: UsageIcon },
+  {
+    id: "unit-economics",
+    label: "Unit economics",
+    icon: UnitEconomicsIcon,
+  },
+] satisfies { id: View; label: string; icon: typeof CostsIcon }[];
 
 function rangeIndicator(range: Range): string {
   if (range.start === "" && range.end === "") {
@@ -71,43 +83,77 @@ export default function App() {
   }, []);
 
   return (
-    <main>
-      <h1>Costroid</h1>
-      {state.status === "loading" && <p>Loading instance metadata…</p>}
-      {state.status === "error" && (
-        <p role="alert">Failed to load instance metadata: {state.message}</p>
-      )}
-      {state.status === "ready" && (
-        <dl>
-          <dt>Name</dt>
-          <dd>{state.meta.name}</dd>
-          <dt>Version</dt>
-          <dd>{state.meta.version}</dd>
-          <dt>FOCUS version</dt>
-          <dd>{state.meta.focusVersion}</dd>
-        </dl>
-      )}
-      <div className="range-bar">
-        <DateRangeControl range={range} onChange={setRange} />
-        <p className="range-indicator" aria-live="polite">
-          {rangeIndicator(range)}
-        </p>
-      </div>
-      <nav aria-label="Dashboard views">
-        <div className="view-nav">
-          {VIEWS.map((v) => (
-            <button
-              key={v.id}
-              type="button"
-              aria-current={view === v.id ? "page" : undefined}
-              onClick={() => setView(v.id)}
-            >
-              {v.label}
-            </button>
-          ))}
+    <main className="app-shell">
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-mark">
+            <BrandIcon size={22} />
+          </span>
+          <div>
+            <h1>Costroid</h1>
+            <p className="brand-subtitle">FOCUS-native cost intelligence</p>
+          </div>
         </div>
-      </nav>
-      <div>
+        {state.status === "loading" && (
+          <div className="instance-meta" aria-label="Loading instance metadata">
+            <div>
+              <span>Instance</span>
+              <strong>Loading…</strong>
+            </div>
+          </div>
+        )}
+        {state.status === "error" && (
+          <div className="instance-meta" role="alert">
+            <div>
+              <WarningIcon size={14} />
+              <span>Failed to load instance metadata: {state.message}</span>
+            </div>
+          </div>
+        )}
+        {state.status === "ready" && (
+          <dl className="instance-meta">
+            <div>
+              <dt>Name</dt>
+              <dd>{state.meta.name}</dd>
+            </div>
+            <div>
+              <dt>Version</dt>
+              <dd>{state.meta.version}</dd>
+            </div>
+            <div>
+              <dt>FOCUS</dt>
+              <dd>{state.meta.focusVersion}</dd>
+            </div>
+          </dl>
+        )}
+      </header>
+      <div className="toolbar">
+        <div className="range-bar">
+          <DateRangeControl range={range} onChange={setRange} />
+          <p className="range-indicator" aria-live="polite">
+            {rangeIndicator(range)}
+          </p>
+        </div>
+        <nav aria-label="Dashboard views">
+          <div className="view-nav">
+            {VIEWS.map((v) => {
+              const ViewIcon = v.icon;
+              return (
+                <button
+                  key={v.id}
+                  type="button"
+                  aria-current={view === v.id ? "page" : undefined}
+                  onClick={() => setView(v.id)}
+                >
+                  <ViewIcon size={17} />
+                  <span>{v.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      </div>
+      <div className="view-panel">
         {view === "costs" && <DailyCosts range={range} />}
         {view === "tokens" && <DailyTokens range={range} />}
         {view === "usage" && <UsageMetrics range={range} />}

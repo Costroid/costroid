@@ -3,8 +3,10 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
 import { rangeQuery } from "./range";
+import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 import {
   HEIGHT,
   MARGIN,
@@ -109,11 +111,20 @@ export default function DailyTokens({
   }, [start, end]);
 
   return (
-    <section>
-      <h2>Daily token usage by service</h2>
-      {state.status === "loading" && <p>Loading daily token usage…</p>}
+    <section aria-labelledby="tokens-title">
+      <div className="view-heading">
+        <div>
+          <p className="view-kicker">AI consumption</p>
+          <h2 id="tokens-title">Daily token usage by service</h2>
+        </div>
+      </div>
+      {state.status === "loading" && (
+        <LoadingSkeleton label="Loading daily token usage…" />
+      )}
       {state.status === "error" && (
-        <p role="alert">Failed to load daily token usage: {state.message}</p>
+        <ErrorState>
+          Failed to load daily token usage: {state.message}
+        </ErrorState>
       )}
       {state.status === "ready" &&
         (state.rows.length === 0 ? (
@@ -128,27 +139,32 @@ export default function DailyTokens({
 function EmptyState() {
   return (
     <div className="viz-empty">
-      <p>
-        No token usage yet. Store a connector credential, ingest from an AI
-        connector, then reload this page:
-      </p>
-      <pre>
-        <code>
-          costroid credentials set &lt;slot&gt;
-          {"\n"}
-          costroid ingest --connector openai-cost|anthropic-cost --credential
-          &lt;slot&gt; [--since YYYY-MM]
-        </code>
-      </pre>
-      <p>
-        Stop <code>costroid serve</code> while ingesting — the embedded store
-        allows a single process at a time.
-      </p>
+      <div className="state-content">
+        <EmptyIcon className="state-icon" size={30} />
+        <p className="state-title">No token usage yet</p>
+        <p className="state-message">
+          Store a connector credential, ingest from an AI connector, then reload
+          this page:
+        </p>
+        <pre>
+          <code>
+            costroid credentials set &lt;slot&gt;
+            {"\n"}
+            costroid ingest --connector openai-cost|anthropic-cost --credential
+            &lt;slot&gt; [--since YYYY-MM]
+          </code>
+        </pre>
+        <p>
+          Stop <code>costroid serve</code> while ingesting — the embedded store
+          allows a single process at a time.
+        </p>
+      </div>
     </div>
   );
 }
 
 function Chart({ rows }: { rows: DailyTokenUsage[] }) {
+  const [activeDay, setActiveDay] = useState<number | null>(null);
   const days = groupByDate(rows);
   const services = [
     ...new Set(days.flatMap((d) => d.services.map((s) => s.serviceName))),
@@ -172,106 +188,154 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
   const yOf = (value: number) => baseline - (value / top) * plotHeight;
 
   const labelEvery = Math.max(1, Math.ceil(days.length / 12));
+  const tooltipDay = activeDay === null ? null : days[activeDay];
+  const tooltipLeft =
+    activeDay === null
+      ? 50
+      : ((MARGIN.left + activeDay * band + band / 2) / WIDTH) * 100;
 
   return (
     <div>
       {periodTotal !== null && (
-        <p>
-          Period total: <strong>{periodTotal}</strong> Tokens
-        </p>
+        <div className="stat-grid">
+          <StatCard
+            label="Period total"
+            value={periodTotal}
+            subtitle="Tokens"
+          />
+        </div>
       )}
-      <svg
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        role="img"
-        aria-label="Stacked daily token usage by service"
-        className="viz-chart"
-      >
-        {ticks.map((tick) => (
-          <g key={tick.value}>
-            <line
-              x1={MARGIN.left}
-              x2={WIDTH - MARGIN.right}
-              y1={yOf(tick.value)}
-              y2={yOf(tick.value)}
-              className={tick.value === 0 ? "viz-baseline" : "viz-grid"}
-            />
-            <text
-              x={MARGIN.left - 8}
-              y={yOf(tick.value) + 3}
-              className="viz-tick"
-              textAnchor="end"
-            >
-              {compactAxisLabel(tick.value)}
-            </text>
-          </g>
-        ))}
-        {days.map((day, i) => {
-          const x = MARGIN.left + i * band + (band - barWidth) / 2;
-          let cursor = baseline;
-          return (
-            <g key={day.date}>
-              {day.services.map((svc, j) => {
-                const height = (Number(svc.quantity) / top) * plotHeight;
-                const isTop = j === day.services.length - 1;
-                const segmentBottom = cursor;
-                cursor -= height;
-                const gap = isTop ? 0 : SEGMENT_GAP;
-                const drawnHeight = Math.max(height - gap, 0);
-                if (drawnHeight <= 0) {
-                  return null;
-                }
-                return (
-                  <path
-                    key={svc.serviceName}
-                    d={segmentPath(
-                      x,
-                      segmentBottom - height + gap,
-                      barWidth,
-                      drawnHeight,
-                      isTop,
-                    )}
-                    fill={serviceColor(svc.serviceName)}
-                  >
-                    <title>{`${svc.serviceName}: ${svc.quantity} Tokens (${day.date})`}</title>
-                  </path>
-                );
-              })}
-              {day.total !== null && (
+      <div className="viz-panel">
+        <div className="chart-wrapper">
+          <svg
+            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+            role="img"
+            aria-label="Stacked daily token usage by service"
+            className="viz-chart"
+          >
+            {ticks.map((tick) => (
+              <g key={tick.value}>
+                <line
+                  x1={MARGIN.left}
+                  x2={WIDTH - MARGIN.right}
+                  y1={yOf(tick.value)}
+                  y2={yOf(tick.value)}
+                  className={tick.value === 0 ? "viz-baseline" : "viz-grid"}
+                />
                 <text
-                  x={x + barWidth / 2}
-                  y={cursor - 6}
-                  className="viz-cap"
-                  textAnchor="middle"
-                >
-                  <title>Day total</title>
-                  {day.total}
-                </text>
-              )}
-              {i % labelEvery === 0 && (
-                <text
-                  x={x + barWidth / 2}
-                  y={baseline + 16}
+                  x={MARGIN.left - 8}
+                  y={yOf(tick.value) + 3}
                   className="viz-tick"
-                  textAnchor="middle"
+                  textAnchor="end"
                 >
-                  {day.date.slice(5)}
+                  {compactAxisLabel(tick.value)}
                 </text>
+              </g>
+            ))}
+            {days.map((day, i) => {
+              const x = MARGIN.left + i * band + (band - barWidth) / 2;
+              let cursor = baseline;
+              return (
+                <g key={day.date} className="viz-day">
+                  {day.services.map((svc, j) => {
+                    const height = (Number(svc.quantity) / top) * plotHeight;
+                    const isTop = j === day.services.length - 1;
+                    const segmentBottom = cursor;
+                    cursor -= height;
+                    const gap = isTop ? 0 : SEGMENT_GAP;
+                    const drawnHeight = Math.max(height - gap, 0);
+                    if (drawnHeight <= 0) {
+                      return null;
+                    }
+                    return (
+                      <path
+                        key={svc.serviceName}
+                        className="viz-segment"
+                        d={segmentPath(
+                          x,
+                          segmentBottom - height + gap,
+                          barWidth,
+                          drawnHeight,
+                          isTop,
+                        )}
+                        fill={serviceColor(svc.serviceName)}
+                      >
+                        <title>{`${svc.serviceName}: ${svc.quantity} Tokens (${day.date})`}</title>
+                      </path>
+                    );
+                  })}
+                  {day.total !== null && (
+                    <text
+                      x={x + barWidth / 2}
+                      y={cursor - 6}
+                      className="viz-cap"
+                      textAnchor="middle"
+                    >
+                      <title>Day total</title>
+                      {day.total}
+                    </text>
+                  )}
+                  {i % labelEvery === 0 && (
+                    <text
+                      x={x + barWidth / 2}
+                      y={baseline + 16}
+                      className="viz-tick"
+                      textAnchor="middle"
+                    >
+                      {day.date.slice(5)}
+                    </text>
+                  )}
+                  <rect
+                    className="viz-hit-target"
+                    x={MARGIN.left + i * band}
+                    y={MARGIN.top}
+                    width={band}
+                    height={plotHeight}
+                    tabIndex={0}
+                    aria-label={`${day.date} token details`}
+                    onPointerEnter={() => setActiveDay(i)}
+                    onPointerLeave={() => setActiveDay(null)}
+                    onFocus={() => setActiveDay(i)}
+                    onBlur={() => setActiveDay(null)}
+                  />
+                </g>
+              );
+            })}
+          </svg>
+          {tooltipDay && (
+            <div
+              className="chart-tooltip"
+              role="tooltip"
+              style={{ left: `${tooltipLeft}%`, top: "52%" }}
+            >
+              <strong>{tooltipDay.date}</strong>
+              {tooltipDay.services.map((service) => (
+                <span className="chart-tooltip-row" key={service.serviceName}>
+                  <span>{service.serviceName}</span>
+                  <span>{service.quantity} Tokens</span>
+                </span>
+              ))}
+              {tooltipDay.total !== null && (
+                <span className="chart-tooltip-row">
+                  <span>Total</span>
+                  <span>{tooltipDay.total} Tokens</span>
+                </span>
               )}
-            </g>
-          );
-        })}
-      </svg>
-      <ul className="viz-legend">
-        {services.map((name) => (
-          <li key={name}>
-            <span
-              className="viz-swatch"
-              style={{ background: serviceColor(name) }}
-            />
-            {name}
-          </li>
-        ))}
-      </ul>
+            </div>
+          )}
+        </div>
+        <ul className="viz-legend">
+          {services.map((name) => (
+            <li key={name}>
+              <span
+                className="viz-swatch"
+                style={{ background: serviceColor(name) }}
+              />
+              {name}
+            </li>
+          ))}
+        </ul>
+      </div>
       <details className="viz-table">
         <summary>View as table</summary>
         <table>

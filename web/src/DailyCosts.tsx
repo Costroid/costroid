@@ -3,8 +3,10 @@
 
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
+import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
 import { rangeQuery } from "./range";
+import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 import {
   HEIGHT,
   MARGIN,
@@ -185,28 +187,35 @@ export default function DailyCosts({
       : state;
 
   return (
-    <section>
-      <h2>Daily cost by {groupLabel}</h2>
-      <div
-        className="cost-group-control"
-        role="group"
-        aria-label="Group costs by"
-      >
-        <span>Group by:</span>
-        {GROUP_BY_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            aria-pressed={groupBy === option.id}
-            onClick={() => setGroupBy(option.id)}
-          >
-            {option.label}
-          </button>
-        ))}
+    <section aria-labelledby="costs-title">
+      <div className="view-heading">
+        <div>
+          <p className="view-kicker">Cost overview</p>
+          <h2 id="costs-title">Daily cost by {groupLabel}</h2>
+        </div>
+        <div
+          className="cost-group-control"
+          role="group"
+          aria-label="Group costs by"
+        >
+          <span>Group by</span>
+          {GROUP_BY_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={groupBy === option.id}
+              onClick={() => setGroupBy(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
-      {view.status === "loading" && <p>Loading daily costs…</p>}
+      {view.status === "loading" && (
+        <LoadingSkeleton label="Loading daily costs…" />
+      )}
       {view.status === "error" && (
-        <p role="alert">Failed to load daily costs: {view.message}</p>
+        <ErrorState>Failed to load daily costs: {view.message}</ErrorState>
       )}
       {view.status === "ready" &&
         (view.costs.days.length === 0 ? (
@@ -232,18 +241,22 @@ export default function DailyCosts({
 function EmptyState() {
   return (
     <div className="viz-empty">
-      <p>
-        No cost data yet. Ingest an AWS FOCUS export, then reload this page:
-      </p>
-      <pre>
-        <code>
-          costroid ingest --connector aws-focus --path &lt;export.csv.gz&gt;
-        </code>
-      </pre>
-      <p>
-        Stop <code>costroid serve</code> while ingesting — the embedded store
-        allows a single process at a time.
-      </p>
+      <div className="state-content">
+        <EmptyIcon className="state-icon" size={30} />
+        <p className="state-title">No cost data yet</p>
+        <p className="state-message">
+          Ingest an AWS FOCUS export, then reload this page:
+        </p>
+        <pre>
+          <code>
+            costroid ingest --connector aws-focus --path &lt;export.csv.gz&gt;
+          </code>
+        </pre>
+        <p>
+          Stop <code>costroid serve</code> while ingesting — the embedded store
+          allows a single process at a time.
+        </p>
+      </div>
     </div>
   );
 }
@@ -257,6 +270,7 @@ function Chart({
   groupBy: CostGroupBy;
   anomalies: Anomaly[];
 }) {
+  const [activeDay, setActiveDay] = useState<number | null>(null);
   const groupLabel = groupLabelOf(groupBy);
   const groups = [
     ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.key))),
@@ -292,112 +306,182 @@ function Chart({
   // Long ranges: label every k-th day so at most ~12 date labels render.
   const labelEvery = Math.max(1, Math.ceil(costs.days.length / 12));
 
+  // Cap labels remain verbatim. Place only labels that fit within the plot and
+  // do not collide with the previously accepted label.
+  let previousCapRight = -Infinity;
+  const capPositions = costs.days.map((day, i) => {
+    const center = MARGIN.left + i * band + band / 2;
+    const width = Math.max(7, day.total.length * 6.2);
+    if (width > plotWidth) return null;
+    const x = Math.max(
+      MARGIN.left + width / 2,
+      Math.min(WIDTH - MARGIN.right - width / 2, center),
+    );
+    const left = x - width / 2;
+    if (left < previousCapRight + 4) return null;
+    previousCapRight = x + width / 2;
+    return x;
+  });
+
+  const tooltipDay = activeDay === null ? null : costs.days[activeDay];
+  const tooltipLeft =
+    activeDay === null
+      ? 50
+      : ((MARGIN.left + activeDay * band + band / 2) / WIDTH) * 100;
+
   return (
     <div>
-      <p>
-        Period total (net): <strong>{costs.total}</strong> {costs.currency}
-      </p>
-      <svg
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        role="img"
-        aria-label={`Stacked daily cost by ${groupLabel}`}
-        className="viz-chart"
-      >
-        {ticks.map((tick) => (
-          <g key={tick.label}>
-            <line
-              x1={MARGIN.left}
-              x2={WIDTH - MARGIN.right}
-              y1={yOf(tick.value)}
-              y2={yOf(tick.value)}
-              className={tick.value === 0 ? "viz-baseline" : "viz-grid"}
-            />
-            <text
-              x={MARGIN.left - 8}
-              y={yOf(tick.value) + 3}
-              className="viz-tick"
-              textAnchor="end"
-            >
-              {tick.label}
-            </text>
-          </g>
-        ))}
-        {costs.days.map((day, i) => {
-          const x = MARGIN.left + i * band + (band - barWidth) / 2;
-          const positive = positiveServices(day);
-          let cursor = baseline;
-          return (
-            <g key={day.date}>
-              {positive.map((svc, j) => {
-                const height = (Number(svc.cost) / top) * plotHeight;
-                const isTop = j === positive.length - 1;
-                const segmentBottom = cursor;
-                cursor -= height;
-                const gap = isTop ? 0 : SEGMENT_GAP;
-                const drawnHeight = Math.max(height - gap, 1);
-                // When height - gap drops below the 1px floor, drawnHeight is
-                // clamped UP to 1; anchor that sliver to its bin bottom so its
-                // bottom edge stays at segmentBottom (never protruding below the
-                // zero baseline for the bottom segment). The unclamped branch
-                // keeps its exact prior expression, so its output — which can
-                // differ from segmentBottom - drawnHeight in the last float ulp —
-                // stays byte-identical.
-                const y =
-                  height - gap < 1
-                    ? segmentBottom - drawnHeight
-                    : segmentBottom - height + gap;
-                return (
-                  <path
-                    key={svc.key}
-                    d={segmentPath(x, y, barWidth, drawnHeight, isTop)}
-                    fill={serviceColor(svc.key)}
-                  >
-                    <title>{`${svc.key}: ${svc.cost} ${costs.currency} (${day.date})`}</title>
-                  </path>
-                );
-              })}
-              <text
-                x={x + barWidth / 2}
-                y={cursor - 6}
-                className="viz-cap"
-                textAnchor="middle"
-              >
-                <title>Net day total</title>
-                {day.total}
-              </text>
-              {flagsByDate.has(day.date) && (
-                <AnomalyMarker
-                  cx={x + barWidth / 2}
-                  capTop={cursor}
-                  barWidth={barWidth}
-                  flags={flagsByDate.get(day.date)!}
+      <div className="stat-grid">
+        <StatCard
+          label="Period total (net)"
+          value={costs.total}
+          subtitle={costs.currency}
+        />
+      </div>
+      <div className="viz-panel">
+        <div className="chart-wrapper">
+          <svg
+            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+            role="img"
+            aria-label={`Stacked daily cost by ${groupLabel}`}
+            className="viz-chart"
+          >
+            {ticks.map((tick) => (
+              <g key={tick.label}>
+                <line
+                  x1={MARGIN.left}
+                  x2={WIDTH - MARGIN.right}
+                  y1={yOf(tick.value)}
+                  y2={yOf(tick.value)}
+                  className={tick.value === 0 ? "viz-baseline" : "viz-grid"}
                 />
-              )}
-              {i % labelEvery === 0 && (
                 <text
-                  x={x + barWidth / 2}
-                  y={baseline + 16}
+                  x={MARGIN.left - 8}
+                  y={yOf(tick.value) + 3}
                   className="viz-tick"
-                  textAnchor="middle"
+                  textAnchor="end"
                 >
-                  {day.date.slice(5)}
+                  {tick.label}
                 </text>
-              )}
-            </g>
-          );
-        })}
-      </svg>
-      <ul className="viz-legend">
-        {groups.map((name) => (
-          <li key={name}>
-            <span
-              className="viz-swatch"
-              style={{ background: serviceColor(name) }}
-            />
-            {name}
-          </li>
-        ))}
-      </ul>
+              </g>
+            ))}
+            {costs.days.map((day, i) => {
+              const x = MARGIN.left + i * band + (band - barWidth) / 2;
+              const positive = positiveServices(day);
+              let cursor = baseline;
+              return (
+                <g key={day.date} className="viz-day">
+                  {positive.map((svc, j) => {
+                    const height = (Number(svc.cost) / top) * plotHeight;
+                    const isTop = j === positive.length - 1;
+                    const segmentBottom = cursor;
+                    cursor -= height;
+                    const gap = isTop ? 0 : SEGMENT_GAP;
+                    const drawnHeight = Math.max(height - gap, 1);
+                    // When height - gap drops below the 1px floor, drawnHeight is
+                    // clamped UP to 1; anchor that sliver to its bin bottom so its
+                    // bottom edge stays at segmentBottom (never protruding below the
+                    // zero baseline for the bottom segment). The unclamped branch
+                    // keeps its exact prior expression, so its output — which can
+                    // differ from segmentBottom - drawnHeight in the last float ulp —
+                    // stays byte-identical.
+                    const y =
+                      height - gap < 1
+                        ? segmentBottom - drawnHeight
+                        : segmentBottom - height + gap;
+                    return (
+                      <path
+                        key={svc.key}
+                        className="viz-segment"
+                        d={segmentPath(x, y, barWidth, drawnHeight, isTop)}
+                        fill={serviceColor(svc.key)}
+                      >
+                        <title>{`${svc.key}: ${svc.cost} ${costs.currency} (${day.date})`}</title>
+                      </path>
+                    );
+                  })}
+                  {capPositions[i] !== null && (
+                    <text
+                      x={capPositions[i]!}
+                      y={cursor - 6}
+                      className="viz-cap"
+                      textAnchor="middle"
+                    >
+                      <title>Net day total</title>
+                      {day.total}
+                    </text>
+                  )}
+                  {flagsByDate.has(day.date) && (
+                    <AnomalyMarker
+                      cx={x + barWidth / 2}
+                      capTop={cursor}
+                      barWidth={barWidth}
+                      flags={flagsByDate.get(day.date)!}
+                    />
+                  )}
+                  {i % labelEvery === 0 && (
+                    <text
+                      x={x + barWidth / 2}
+                      y={baseline + 16}
+                      className="viz-tick"
+                      textAnchor="middle"
+                    >
+                      {day.date.slice(5)}
+                    </text>
+                  )}
+                  <rect
+                    className="viz-hit-target"
+                    x={MARGIN.left + i * band}
+                    y={MARGIN.top}
+                    width={band}
+                    height={plotHeight}
+                    tabIndex={0}
+                    aria-label={`${day.date} cost details`}
+                    onPointerEnter={() => setActiveDay(i)}
+                    onPointerLeave={() => setActiveDay(null)}
+                    onFocus={() => setActiveDay(i)}
+                    onBlur={() => setActiveDay(null)}
+                  />
+                </g>
+              );
+            })}
+          </svg>
+          {tooltipDay && (
+            <div
+              className="chart-tooltip"
+              role="tooltip"
+              style={{ left: `${tooltipLeft}%`, top: "52%" }}
+            >
+              <strong>{tooltipDay.date}</strong>
+              {tooltipDay.services.map((service) => (
+                <span className="chart-tooltip-row" key={service.key}>
+                  <span>{service.key}</span>
+                  <span>
+                    {service.cost} {costs.currency}
+                  </span>
+                </span>
+              ))}
+              <span className="chart-tooltip-row">
+                <span>Total (net)</span>
+                <span>
+                  {tooltipDay.total} {costs.currency}
+                </span>
+              </span>
+            </div>
+          )}
+        </div>
+        <ul className="viz-legend">
+          {groups.map((name) => (
+            <li key={name}>
+              <span
+                className="viz-swatch"
+                style={{ background: serviceColor(name) }}
+              />
+              {name}
+            </li>
+          ))}
+        </ul>
+      </div>
       <details className="viz-table">
         <summary>View as table</summary>
         <table>
@@ -473,9 +557,15 @@ function AnomalyMarker({
   flags: Anomaly[];
 }) {
   const direction = markerDirection(flags);
-  const roomAbove = capTop >= 28; // enough headroom to clear the cap label above
-  const gx = roomAbove ? cx : cx + barWidth / 2 + 6;
-  const gy = roomAbove ? capTop - 22 : capTop - 9;
+  const roomAbove = capTop >= 30;
+  const gx = roomAbove
+    ? cx
+    : Math.max(MARGIN.left + 5, Math.min(WIDTH - MARGIN.right - 5, cx));
+  // Near-full-height markers sit just inside the bar, away from the cap label;
+  // clamping x keeps the final day's triangle inside the viewBox.
+  const gy = roomAbove
+    ? capTop - 22
+    : capTop + Math.min(9, Math.max(5, barWidth / 2));
   const glyph =
     direction === "decrease"
       ? `M${gx},${gy + 5} L${gx - 4},${gy - 3} L${gx + 4},${gy - 3} Z`
