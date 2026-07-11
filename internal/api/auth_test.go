@@ -118,13 +118,23 @@ func TestBearerAuth(t *testing.T) {
 	t.Run("valid token reaches the inner handler", func(t *testing.T) {
 		inner := &reachHandler{}
 		r, rec := withRecord(req("Bearer " + token))
+		r.Header.Set(recommendedIdentityHeader, "client-supplied")
 		w := httptest.NewRecorder()
-		cfg.middleware(inner.next(http.StatusOK)).ServeHTTP(w, r)
+		var downstreamIdentity string
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			inner.reached = true
+			downstreamIdentity = r.Header.Get(recommendedIdentityHeader)
+			w.WriteHeader(http.StatusOK)
+		})
+		cfg.middleware(next).ServeHTTP(w, r)
 		if w.Code != http.StatusOK || !inner.reached {
 			t.Fatalf("status = %d reached = %v, want 200 and inner reached", w.Code, inner.reached)
 		}
 		if rec.result != authnOK {
 			t.Errorf("record.result = %q, want ok", rec.result)
+		}
+		if downstreamIdentity != "" {
+			t.Errorf("bearer-authenticated downstream saw client identity header %q", downstreamIdentity)
 		}
 	})
 }

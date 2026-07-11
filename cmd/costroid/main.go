@@ -707,6 +707,9 @@ func parseTrustedProxies(s string) ([]netip.Prefix, error) {
 		if prefix.Addr().Is4() {
 			minimumBits = 8
 		}
+		// WONTFIX: /16 is intentionally the broadest accepted IPv6 prefix. This
+		// is a typo/misconfiguration tripwire, not a substitute for listing only
+		// the reverse proxy's real address range as the error below requires.
 		if prefix.Bits() < minimumBits {
 			return nil, fmt.Errorf("--auth-trusted-proxies %q trusts an implausibly broad address range — refusing: any client in that range could spoof the trusted identity header; use IPv4 /8 or narrower, IPv6 /16 or narrower, and list only your reverse proxy's real address(es)", p)
 		}

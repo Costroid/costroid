@@ -99,7 +99,10 @@ jobs:
       - name: Attest release provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: release/*
+          subject-path: |
+            release/costroid_*
+            release/checksums.txt
+            release/costroid.cdx.json
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

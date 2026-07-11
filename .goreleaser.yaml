@@ -22,6 +22,7 @@ builds:
       - -s -w -X main.version={{.Version}}
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
+    # Windows stays experimental: the shared before hooks intentionally use Unix coreutils.
     ignore:
       - goos: windows
         goarch: arm64

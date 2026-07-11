@@ -18,8 +18,9 @@ import (
 type authKind int
 
 const (
-	authBearer  authKind = iota + 1 // Authorization: Bearer <token>
-	authForward                     // trusted-header / forward-auth
+	authBearer                authKind = iota + 1 // Authorization: Bearer <token>
+	authForward                                   // trusted-header / forward-auth
+	recommendedIdentityHeader = "X-WEBAUTH-USER"
 )
 
 // AuthConfig is the resolved authentication configuration for the HTTP handler.
@@ -87,6 +88,10 @@ func (c AuthConfig) middleware(next http.Handler) http.Handler {
 		rec := authnRecordFrom(r.Context())
 		switch c.kind {
 		case authBearer:
+			// Bearer auth does not consume the documented forward-auth
+			// identity header. Strip any client-supplied value so identity
+			// provenance stays unambiguous for future handlers.
+			r.Header.Del(recommendedIdentityHeader)
 			if !bearerOK(r, c.tokenSHA256) {
 				writeUnauthorized(w, rec, true)
 				return

@@ -49,6 +49,11 @@ sha256sum --check checksums.txt
 gh attestation verify <artifact> --repo Costroid/costroid
 ```
 
+`gh attestation verify` requires GitHub CLI 2.49.0 or newer. If that
+subcommand is unavailable, upgrade `gh`; meanwhile, the `cosign verify-blob`
+and `sha256sum --check` steps above still verify the signed checksums and each
+artifact's digest, but do not replace provenance verification.
+
 The SBOM catalogs the Go and pnpm source dependency graphs, including the
 frontend embedded in the binary. DuckDB C static libraries are outside Syft's
 Go cataloger and govulncheck's reach; this release process does not analyze that
