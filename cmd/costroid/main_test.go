@@ -680,6 +680,17 @@ func TestServeConfigFailClosed(t *testing.T) {
 		}
 	})
 
+	t.Run("IPv6 broad-prefix boundary", func(t *testing.T) {
+		hermeticServeEnv(t)
+		if _, _, _, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "2001:db8::/15"}); err == nil || !strings.Contains(err.Error(), "implausibly broad") {
+			t.Fatalf("/15 err = %v, want an implausibly-broad error", err)
+		}
+		cfg, _, stop, err := serveConfig([]string{"--auth-trusted-header", "X-WEBAUTH-USER", "--auth-trusted-proxies", "2001:db8::/16"})
+		if err != nil || stop || len(cfg.trustedProxies) != 1 || cfg.trustedProxies[0].Bits() != 16 {
+			t.Fatalf("/16 serveConfig = (%+v, stop %v, err %v), want accepted boundary", cfg, stop, err)
+		}
+	})
+
 	t.Run("no --auth-token value flag exists (parse error)", func(t *testing.T) {
 		hermeticServeEnv(t)
 		_, _, stop, err := serveConfig([]string{"--auth-token", "s3cret"})
