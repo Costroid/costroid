@@ -178,6 +178,11 @@ export interface components {
              * @example 1.4
              */
             focusVersion: string;
+            /**
+             * @description True only for the isolated, synthetic, read-only product demo.
+             * @example false
+             */
+            demo: boolean;
         };
         DailyCosts: {
             /**

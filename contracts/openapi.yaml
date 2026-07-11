@@ -351,6 +351,7 @@ components:
         - name
         - version
         - focusVersion
+        - demo
       properties:
         name:
           type: string
@@ -364,6 +365,10 @@ components:
           type: string
           description: FOCUS specification version the internal model targets (decision D4).
           example: "1.4"
+        demo:
+          type: boolean
+          description: True only for the isolated, synthetic, read-only product demo.
+          example: false
     DailyCosts:
       type: object
       required:

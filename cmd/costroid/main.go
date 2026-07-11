@@ -27,6 +27,7 @@ import (
 	"github.com/Costroid/costroid/internal/api"
 	"github.com/Costroid/costroid/internal/businessmetrics"
 	"github.com/Costroid/costroid/internal/credentials"
+	"github.com/Costroid/costroid/internal/demodata"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/anthropiccost"
@@ -45,6 +46,11 @@ var version = "0.1.0-dev"
 const usage = `usage: costroid <command> [flags]
 
 commands:
+  demo    seed an isolated synthetic store and serve the real dashboard read-only
+          costroid demo [--addr host:port] [--data-dir <empty-directory>]
+          (uses a fresh temporary directory by default; never reads the normal
+          data directory, credential store, or connectors. The synthetic API is
+          unauthenticated, read-only, and binds 127.0.0.1:8080 by default.)
   serve   serve the HTTP API and dashboard
           costroid serve [--addr host:port] [--allocation-rules <path>]
                          (--auth-token-file <path> | --auth-trusted-header <name> | --no-auth)
@@ -139,6 +145,8 @@ func run(args []string) error {
 		return errors.New("missing command\n" + usage)
 	}
 	switch args[0] {
+	case "demo":
+		return demo(args[1:])
 	case "serve":
 		return serve(args[1:])
 	case "allocation":
@@ -799,6 +807,122 @@ func serve(args []string) error {
 		return fmt.Errorf("shutting down: %w", err)
 	}
 	return <-errc
+}
+
+const demoAllocationRules = `{"dimensions":[{"name":"environment","rules":[{"label":"Production","match":[{"dimension":"tag:environment","operator":"exists"}]}]}]}`
+
+type preparedDemo struct {
+	store          *storage.DuckDB
+	dataDir        string
+	allocationPath string
+	addr           string
+	removeDataDir  bool
+}
+
+func (p *preparedDemo) close() {
+	if p.store != nil {
+		_ = p.store.Close()
+	}
+	if p.removeDataDir {
+		_ = os.RemoveAll(p.dataDir)
+	}
+}
+
+// prepareDemo owns the safety boundary before any listener starts: it resolves
+// only demo-specific flags, creates or validates an isolated empty directory,
+// writes synthetic allocation rules there, opens that store directly, and
+// seeds it without consulting normal data-dir, auth, credential, or connector
+// configuration.
+func prepareDemo(ctx context.Context, args []string, asOf time.Time) (*preparedDemo, bool, error) {
+	flags := flag.NewFlagSet("demo", flag.ContinueOnError)
+	addrFlag := flags.String("addr", "", "listen address (default 127.0.0.1:8080; loopback only)")
+	dataDirFlag := flags.String("data-dir", "", "empty directory for the isolated synthetic store (default: fresh temporary directory)")
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return nil, stop, err
+	}
+
+	prepared := &preparedDemo{addr: resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))}
+	if *dataDirFlag == "" {
+		dir, err := os.MkdirTemp("", "costroid-demo-")
+		if err != nil {
+			return nil, false, fmt.Errorf("creating isolated demo directory: %w", err)
+		}
+		prepared.dataDir = dir
+		prepared.removeDataDir = true
+	} else {
+		prepared.dataDir = *dataDirFlag
+		entries, err := os.ReadDir(prepared.dataDir)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, false, fmt.Errorf("reading demo data directory %s: %w", prepared.dataDir, err)
+		}
+		if err == nil && len(entries) != 0 {
+			return nil, false, fmt.Errorf("demo --data-dir %s is not empty; use an empty directory so the store stays synthetic-only", prepared.dataDir)
+		}
+	}
+
+	fail := func(err error) (*preparedDemo, bool, error) {
+		prepared.close()
+		return nil, false, err
+	}
+	if err := os.MkdirAll(prepared.dataDir, 0o700); err != nil {
+		return fail(fmt.Errorf("creating demo data directory %s: %w", prepared.dataDir, err))
+	}
+	prepared.allocationPath = filepath.Join(prepared.dataDir, "allocation.json")
+	if err := os.WriteFile(prepared.allocationPath, []byte(demoAllocationRules+"\n"), 0o600); err != nil {
+		return fail(fmt.Errorf("writing synthetic allocation rules: %w", err))
+	}
+	store, err := storage.Open(ctx, prepared.dataDir)
+	if err != nil {
+		return fail(err)
+	}
+	prepared.store = store
+	if err := demodata.Seed(ctx, store, asOf, demodata.DefaultSeed); err != nil {
+		return fail(fmt.Errorf("seeding demo data: %w", err))
+	}
+	return prepared, false, nil
+}
+
+func demo(args []string) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	prepared, stop, err := prepareDemo(ctx, args, time.Now())
+	if stop || err != nil {
+		return err
+	}
+	defer prepared.close()
+
+	handler := api.NewHandler(version, webdist.FS(), prepared.store, prepared.allocationPath, api.WithReadOnly(), api.WithDemo())
+	handler = api.AccessLog(os.Stderr, "demo")(handler)
+	srv := &http.Server{
+		Addr:              prepared.addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		fmt.Fprintln(os.Stderr, "DEMO MODE — synthetic data, read-only, not for production")
+		fmt.Printf("costroid %s demo listening on %s\n", version, prepared.addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("serving demo HTTP on %s: %w", prepared.addr, err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutting down demo: %w", err)
+	}
+	return <-errCh
 }
 
 // authOptions translates the resolved serveSettings into the NewHandler auth

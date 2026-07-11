@@ -200,6 +200,9 @@ type DailyUsageMetric struct {
 
 // Meta defines model for Meta.
 type Meta struct {
+	// Demo True only for the isolated, synthetic, read-only product demo.
+	Demo bool `json:"demo"`
+
 	// FocusVersion FOCUS specification version the internal model targets (decision D4).
 	FocusVersion string `json:"focusVersion"`
 

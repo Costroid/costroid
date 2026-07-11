@@ -45,6 +45,7 @@ type CostStore interface {
 type Server struct {
 	version string
 	store   CostStore
+	demo    bool
 	// allocationRulesPath is the resolved path to the query-time allocation
 	// rules JSON, or "" when unconfigured. The handler reads it per request
 	// (the live-reload semantic); the file's presence and validity surface as
@@ -74,6 +75,7 @@ func (s *Server) GetMeta(w http.ResponseWriter, _ *http.Request) {
 		Name:         serviceName,
 		Version:      s.version,
 		FocusVersion: focusVersion,
+		Demo:         s.demo,
 	})
 }
 
@@ -326,7 +328,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 type HandlerOption func(*handlerOptions)
 
 type handlerOptions struct {
-	auth *AuthConfig
+	auth     *AuthConfig
+	readOnly bool
+	demo     bool
 }
 
 // WithAuth installs the authentication middleware built from cfg, gating the
@@ -335,6 +339,29 @@ type handlerOptions struct {
 // --no-auth is configured), not in this constructor's default.
 func WithAuth(cfg AuthConfig) HandlerOption {
 	return func(o *handlerOptions) { o.auth = &cfg }
+}
+
+// WithReadOnly rejects every non-GET/HEAD request under /api/. The middleware
+// wraps outside the generated mux so future write routes are denied without
+// relying on today's route table. Static assets and /healthz remain exempt.
+func WithReadOnly() HandlerOption {
+	return func(o *handlerOptions) { o.readOnly = true }
+}
+
+// WithDemo marks /api/v1/meta as an isolated synthetic demo instance.
+func WithDemo() HandlerOption {
+	return func(o *handlerOptions) { o.demo = true }
+}
+
+func readOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if gated(r.URL.Path) && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // NewHandler returns the root HTTP handler: the API routes from the
@@ -350,9 +377,14 @@ func NewHandler(version string, static fs.FS, store CostStore, allocationRulesPa
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/", staticHandler(static))
-	h := HandlerFromMux(NewServer(version, store, allocationRulesPath), mux)
+	server := NewServer(version, store, allocationRulesPath)
+	server.demo = o.demo
+	h := HandlerFromMux(server, mux)
 	if o.auth != nil {
 		h = o.auth.middleware(h)
+	}
+	if o.readOnly {
+		h = readOnly(h)
 	}
 	return h
 }

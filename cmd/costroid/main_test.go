@@ -40,6 +40,58 @@ func hermeticAzureEnv(t *testing.T) {
 	t.Setenv(azurefocus.InsecureNoAuthEnv, "1")
 }
 
+func TestPrepareDemoIsolatedSyntheticOnly(t *testing.T) {
+	normalDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", normalDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(normalDir, "credentials.key"))
+	t.Setenv("COSTROID_ADDR", "")
+
+	prepared, stop, err := prepareDemo(context.Background(), nil, time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC))
+	if err != nil || stop {
+		t.Fatalf("prepareDemo = (stop %v, err %v)", stop, err)
+	}
+	defer prepared.close()
+	if prepared.dataDir == normalDir {
+		t.Fatalf("demo opened COSTROID_DATA_DIR %s", normalDir)
+	}
+	if prepared.addr != "127.0.0.1:8080" {
+		t.Errorf("default demo addr = %q, want loopback", prepared.addr)
+	}
+	if filepath.Dir(prepared.allocationPath) != prepared.dataDir {
+		t.Errorf("allocation path %s is outside isolated demo dir %s", prepared.allocationPath, prepared.dataDir)
+	}
+	entries, err := os.ReadDir(normalDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("normal data/credential directory was touched: %+v", entries)
+	}
+
+	handler := api.NewHandler("test", os.DirFS(t.TempDir()), prepared.store, prepared.allocationPath, api.WithReadOnly(), api.WithDemo())
+	for _, path := range []string{"/api/v1/meta", "/api/v1/costs/daily?groupBy=allocation"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, rec.Code, rec.Body.String())
+		}
+		if path == "/api/v1/meta" && !strings.Contains(rec.Body.String(), `"demo":true`) {
+			t.Errorf("demo meta = %s", rec.Body.String())
+		}
+		if strings.Contains(path, "allocation") && (!strings.Contains(rec.Body.String(), `"key":"Production"`) || !strings.Contains(rec.Body.String(), `"key":"Unallocated"`)) {
+			t.Errorf("allocation story buckets missing: %s", rec.Body.String())
+		}
+	}
+
+	nonempty := t.TempDir()
+	if err := os.WriteFile(filepath.Join(nonempty, "real-data"), []byte("do not touch"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := prepareDemo(context.Background(), []string{"--data-dir", nonempty}, time.Now()); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("prepareDemo(nonempty) error = %v, want synthetic-only refusal", err)
+	}
+}
+
 // hermeticAWSEnv pins the ambient AWS credential chain to test-local
 // values (mirroring the awsfocuss3 tests) so CLI-level ingest tests pass
 // identically on any machine.

@@ -21,7 +21,7 @@ function fakeResponse(status: number, body: unknown): Response {
 
 const emptyCosts = { currency: "", total: "0", days: [] };
 
-function mockFetch() {
+function mockFetch(demo = false) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     const path = new URL(url, "http://x").pathname;
@@ -31,6 +31,7 @@ function mockFetch() {
           name: "costroid",
           version: "0.1.0-test",
           focusVersion: "1.4",
+          demo,
         }),
       );
     }
@@ -63,6 +64,14 @@ describe("App", () => {
     expect(screen.getByText("0.1.0-test")).toBeTruthy();
     expect(screen.getByText("1.4")).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith("/api/v1/meta", expect.anything());
+  });
+
+  it("shows the persistent synthetic-data banner in demo mode", async () => {
+    vi.stubGlobal("fetch", mockFetch(true));
+
+    render(<App />);
+
+    expect(await screen.findByText("DEMO — synthetic data")).toBeTruthy();
   });
 
   it("shows an error state when the request fails", async () => {

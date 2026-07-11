@@ -84,6 +84,11 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      {state.status === "ready" && state.meta.demo && (
+        <div className="demo-banner" role="status">
+          DEMO — synthetic data
+        </div>
+      )}
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark">

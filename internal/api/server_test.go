@@ -237,9 +237,75 @@ func TestGetMeta(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
 		t.Fatalf("unmarshaling body %q: %v", rec.Body, err)
 	}
-	want := Meta{Name: "costroid", Version: "1.2.3-test", FocusVersion: "1.4"}
+	want := Meta{Name: "costroid", Version: "1.2.3-test", FocusVersion: "1.4", Demo: false}
 	if meta != want {
 		t.Errorf("meta = %+v, want %+v", meta, want)
+	}
+}
+
+func TestWithDemoMarksMetaOnlyWhenEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []HandlerOption
+		want bool
+	}{
+		{name: "normal", want: false},
+		{name: "demo", opts: []HandlerOption{WithDemo()}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			NewHandler("test", testStatic(), &fakeStore{}, "", tc.opts...).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil))
+			var got Meta
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Demo != tc.want {
+				t.Errorf("demo = %v, want %v", got.Demo, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadOnlyMiddleware is deliberately independent of generated routes: its
+// permissive inner handler accepts every method, proving the 405 comes only
+// from the outer read-only guard. Calling the inner handler without the guard
+// proves POST would otherwise succeed.
+func TestReadOnlyMiddleware(t *testing.T) {
+	permissive := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		rec := httptest.NewRecorder()
+		readOnly(permissive).ServeHTTP(rec, httptest.NewRequest(method, "/api/x", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s /api/x = %d, want 405", method, rec.Code)
+		}
+	}
+
+	for _, request := range []struct{ method, path string }{
+		{http.MethodGet, "/api/x"},
+		{http.MethodHead, "/api/x"},
+		{http.MethodPost, "/healthz"},
+		{http.MethodPost, "/"},
+	} {
+		rec := httptest.NewRecorder()
+		readOnly(permissive).ServeHTTP(rec, httptest.NewRequest(request.method, request.path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s %s = %d, want 200", request.method, request.path, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	permissive.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/x", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unguarded POST /api/x = %d, want 200", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	NewHandler("test", testStatic(), &fakeStore{}, "", WithReadOnly()).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/x", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("WithReadOnly POST /api/x = %d, want 405", rec.Code)
 	}
 }
 
