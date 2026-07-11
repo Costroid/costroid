@@ -54,6 +54,12 @@ type serviceSpec struct {
 	region   string
 	resource string
 	tagged   bool
+	// tokensPerDollar, when > 0, marks an AI/token service: its FOCUS cost rows
+	// also carry ConsumedUnit="Tokens" and a positive ConsumedQuantity derived
+	// deterministically from that day's cost, so the token-usage view is
+	// populated. It is a synthetic blended count-per-dollar rate, not a real
+	// price. Zero means the service reports cost only (no ConsumedQuantity).
+	tokensPerDollar int64
 }
 
 var services = []serviceSpec{
@@ -62,8 +68,8 @@ var services = []serviceSpec{
 	{provider: "Google", service: "Compute Engine", weightBP: 500, region: "us-central1", resource: "//compute.googleapis.com/projects/costroid-demo/zones/us-central1-a/instances/demo"},
 	{provider: "Google", service: "Cloud Storage", weightBP: 500, region: "europe-west1", resource: "//storage.googleapis.com/projects/_/buckets/costroid-demo"},
 	{provider: "Google", service: "BigQuery", weightBP: 500, region: "us-central1", resource: "//bigquery.googleapis.com/projects/costroid-demo/datasets/analytics"},
-	{provider: "OpenAI", service: "GPT-5", weightBP: 300, region: "global", resource: "openai://models/gpt-5"},
-	{provider: "Anthropic", service: "Claude", weightBP: 200, region: "global", resource: "anthropic://models/claude"},
+	{provider: "OpenAI", service: "GPT-5", weightBP: 300, region: "global", resource: "openai://models/gpt-5", tokensPerDollar: 250_000},
+	{provider: "Anthropic", service: "Claude", weightBP: 200, region: "global", resource: "anthropic://models/claude", tokensPerDollar: 200_000},
 }
 
 // Window returns the inclusive rolling demo window in UTC.
@@ -145,7 +151,17 @@ func writeCostCSV(path string, start, end, spike time.Time, rng *rand.Rand) erro
 				}
 				amount = value.Mul(decimal.NewFromInt(8)).String()
 			}
-			row := focusRow(day, spec, amount)
+			consumedQuantity := ""
+			if spec.tokensPerDollar > 0 {
+				value, err := decimal.NewFromString(amount)
+				if err != nil {
+					return fmt.Errorf("parsing synthetic AI amount: %w", err)
+				}
+				// Integer token COUNT (Cardinal-safe): floor(cost × rate). No
+				// prompt/response content — only a count derived from cost.
+				consumedQuantity = value.Mul(decimal.NewFromInt(spec.tokensPerDollar)).Floor().String()
+			}
+			row := focusRow(day, spec, amount, consumedQuantity)
 			values := make([]string, len(focus10Header))
 			for i, column := range focus10Header {
 				values[i] = row[column]
@@ -186,7 +202,7 @@ func centsString(cents int64) string {
 	return strconv.FormatInt(cents/100, 10) + "." + fmt.Sprintf("%02d", cents%100)
 }
 
-func focusRow(day time.Time, spec serviceSpec, amount string) map[string]string {
+func focusRow(day time.Time, spec serviceSpec, amount, consumedQuantity string) map[string]string {
 	billingStart := time.Date(day.Year(), day.Month(), 1, 0, 0, 0, 0, time.UTC)
 	billingEnd := billingStart.AddDate(0, 1, 0)
 	tags := ""
@@ -194,7 +210,7 @@ func focusRow(day time.Time, spec serviceSpec, amount string) map[string]string 
 		tags = `{"environment":"production"}`
 	}
 	providerID := strings.ToLower(strings.ReplaceAll(spec.provider, " ", "-"))
-	return map[string]string{
+	row := map[string]string{
 		"BilledCost":         amount,
 		"BillingAccountId":   "demo-" + providerID,
 		"BillingAccountName": "Synthetic demo account",
@@ -223,6 +239,13 @@ func focusRow(day time.Time, spec serviceSpec, amount string) map[string]string 
 		"SubAccountName":     "Production",
 		"Tags":               tags,
 	}
+	// AI services also report the token count consumed. FOCUS couples the pair:
+	// ConsumedUnit is non-null iff ConsumedQuantity is, and the unit is "Tokens".
+	if consumedQuantity != "" {
+		row["ConsumedQuantity"] = consumedQuantity
+		row["ConsumedUnit"] = "Tokens"
+	}
+	return row
 }
 
 func seedUsage(ctx context.Context, store *storage.DuckDB, start, end time.Time, seed int64) error {

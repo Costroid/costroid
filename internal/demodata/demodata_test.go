@@ -121,3 +121,60 @@ func TestSeedDeterministicClosedLoopAndExact(t *testing.T) {
 	t.Logf("daily rows=%d sha256=%s", len(costs.Days), hex.EncodeToString(firstHash[:]))
 	t.Logf("exact money=%s spike=%s anomaly flags=%d unique dates=%d", demodata.ExactAmount, wantSpike, len(anomalies.Anomalies), len(flaggedDates))
 }
+
+// TestSeedPopulatesTokenUsage pins the Step-0 fix: the AI services' FOCUS cost
+// rows carry ConsumedUnit="Tokens" and a positive ConsumedQuantity, so the
+// token-usage view (/api/v1/usage/tokens/daily) returns a non-empty series
+// keyed by service. The quantities are Cardinal-safe: integer counts and
+// categorical dimensions only, never prompt or response content.
+func TestSeedPopulatesTokenUsage(t *testing.T) {
+	asOf := time.Date(2026, 7, 11, 18, 30, 0, 0, time.FixedZone("test", 3*60*60))
+	_, handler := seeded(t, asOf, demodata.DefaultSeed)
+
+	var tokens []api.DailyTokenUsage
+	if err := json.Unmarshal(get(t, handler, "/api/v1/usage/tokens/daily"), &tokens); err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) == 0 {
+		t.Fatal("synthetic token usage is empty; the AI cost rows carry no ConsumedQuantity")
+	}
+
+	allDigits := func(s string) bool {
+		if s == "" {
+			return false
+		}
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		return true
+	}
+
+	services := map[string]struct{}{}
+	nonZero := false
+	for _, row := range tokens {
+		if row.ConsumedUnit != "Tokens" {
+			t.Fatalf("token row unit = %q, want Tokens: %+v", row.ConsumedUnit, row)
+		}
+		if row.ServiceName == "" {
+			t.Fatalf("token row missing ServiceName: %+v", row)
+		}
+		if !allDigits(row.ConsumedQuantity) {
+			t.Fatalf("token quantity is not a non-negative integer count: %+v", row)
+		}
+		if row.ConsumedQuantity != "0" {
+			nonZero = true
+		}
+		services[row.ServiceName] = struct{}{}
+	}
+	if !nonZero {
+		t.Fatal("every synthetic token quantity is zero")
+	}
+	for _, want := range []string{"GPT-5", "Claude"} {
+		if _, ok := services[want]; !ok {
+			t.Fatalf("token series missing AI service %q; have %v", want, services)
+		}
+	}
+	t.Logf("token rows=%d services=%v", len(tokens), services)
+}
