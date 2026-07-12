@@ -45,8 +45,14 @@ jobs:
         run: node scripts/demo-manifest.mjs
       - name: Capture first-frame screenshot (artifact — NON-gating)
         # A capture hiccup must NEVER block a web PR or the deploy; the budget
-        # gate above is the authoritative gate.
+        # gate above is the authoritative gate. `continue-on-error` tolerates a
+        # non-zero exit, and `timeout-minutes` bounds ANY hang in this step
+        # (browser install / chrome / server) — a step killed by the timeout
+        # counts as a step FAILURE, which `continue-on-error: true` then keeps
+        # from failing the job, so `build-gate` still succeeds and `deploy`
+        # proceeds. 5 min comfortably covers a slow cold-runner browser download.
         continue-on-error: true
+        timeout-minutes: 5
         run: node scripts/demo-screenshot.mjs
       - uses: actions/upload-artifact@v4
         with:

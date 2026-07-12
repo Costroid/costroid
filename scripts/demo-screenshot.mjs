@@ -65,7 +65,14 @@ function resolveBrowser() {
   const out = execFileSync(
     "npx",
     ["--yes", "@puppeteer/browsers", "install", "chrome-headless-shell@stable", "--path", cacheDir],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+    // 3 min: @puppeteer/browsers' downloader sets no request/response timeout
+    // and only listens for 'error' (which does NOT fire on a silent mid-transfer
+    // stall), so without this the install could block forever. On timeout
+    // execFileSync THROWS (ETIMEDOUT) -> the resolveBrowser() try/catch turns it
+    // into warnExit() -> ::warning:: + non-zero exit, which the workflow step's
+    // continue-on-error tolerates. 3 min is generous for a tens-of-MB download
+    // and sits under the 5-min step timeout, so the script self-fails first.
+    { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 180000 },
   ).trim();
   // Output form: "chrome-headless-shell@<version> <absolute-binary-path>"
   const bin = out.split(/\s+/).pop();
