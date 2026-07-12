@@ -138,4 +138,103 @@ func TestBigQueryRequestShapeSchemaProbePaginationAndPoll(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "missing selected column(s): BilledCost") {
 		t.Fatalf("missing-column error = %v", err)
 	}
+
+	// Empty x_Labels (June, BilledCost=="5") must leave the Tags key ABSENT —
+	// not present as "{}". Re-open discovery with a clean probe.
+	fake.MissingColumn = ""
+	periods, err = gcpfocusbq.Discover(context.Background(), client, coords, nil)
+	if err != nil {
+		t.Fatalf("rediscover: %v", err)
+	}
+	juneReader, err := periods[1].Conn.Records(context.Background())
+	if err != nil {
+		t.Fatalf("June Records: %v", err)
+	}
+	var emptyLabelsTagsAbsent bool
+	for {
+		row, err := juneReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("June row: %v", err)
+		}
+		if row.Record["BilledCost"] == "5" {
+			if _, ok := row.Record["Tags"]; ok {
+				t.Errorf("empty x_Labels row has Tags=%q; want key ABSENT", row.Record["Tags"])
+			} else {
+				emptyLabelsTagsAbsent = true
+			}
+		}
+	}
+	_ = juneReader.Close()
+	if !emptyLabelsTagsAbsent {
+		t.Fatal("did not observe June BilledCost==5 empty-x_Labels row")
+	}
+}
+
+// TestDiscoverSinceWindow covers --since filtering: Since="2026-06" returns
+// only the June period; Since="2026-07" (past the fixture window) returns the
+// empty-window error.
+func TestDiscoverSinceWindow(t *testing.T) {
+	fake := fakebigquery.New("../../../testdata/gcp-focus-bq/fixture")
+	credential, public := runtimeServiceAccount(t, "since@example.test")
+	fake.AllowServiceAccount("since@example.test", public)
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	client, err := gcpfocusbq.NewClient(http.DefaultClient, server.URL+"/bigquery/v2/", server.URL+"/token", credential)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	base := gcpfocusbq.Coordinates{
+		DatasetProject: "billing-host", Dataset: "gcp_billing_immutable_demo_EU",
+		Table: "gcp_billing_export_focus_demo", Location: "EU", JobProject: "query-project",
+	}
+
+	t.Run("since_june", func(t *testing.T) {
+		coords := base
+		coords.Since = "2026-06"
+		periods, err := gcpfocusbq.Discover(context.Background(), client, coords, nil)
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(periods) != 1 || periods[0].Billing != "2026-06" {
+			t.Fatalf("periods = %#v, want exactly June", periods)
+		}
+	})
+
+	t.Run("since_july_empty", func(t *testing.T) {
+		coords := base
+		coords.Since = "2026-07"
+		_, err := gcpfocusbq.Discover(context.Background(), client, coords, nil)
+		if err == nil || !strings.Contains(err.Error(), "contains no billing periods in the requested --since window") {
+			t.Fatalf("error = %v, want empty --since window message", err)
+		}
+	})
+}
+
+// TestDiscoverAggregateUnexpectedlyPaginated asserts the connector aborts
+// when the aggregate jobs.query response carries a pageToken (the
+// PaginateAggregate fake hook).
+func TestDiscoverAggregateUnexpectedlyPaginated(t *testing.T) {
+	fake := fakebigquery.New("../../../testdata/gcp-focus-bq/fixture")
+	fake.PaginateAggregate = true
+	credential, public := runtimeServiceAccount(t, "paginate@example.test")
+	fake.AllowServiceAccount("paginate@example.test", public)
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	client, err := gcpfocusbq.NewClient(http.DefaultClient, server.URL+"/bigquery/v2/", server.URL+"/token", credential)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	coords := gcpfocusbq.Coordinates{
+		DatasetProject: "billing-host", Dataset: "gcp_billing_immutable_demo_EU",
+		Table: "gcp_billing_export_focus_demo", Location: "EU", JobProject: "query-project",
+	}
+	_, err = gcpfocusbq.Discover(context.Background(), client, coords, nil)
+	if err == nil || !strings.Contains(err.Error(), "unexpectedly paginated") {
+		t.Fatalf("error = %v, want unexpectedly paginated abort", err)
+	}
 }

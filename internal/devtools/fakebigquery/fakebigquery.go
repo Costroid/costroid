@@ -49,6 +49,12 @@ type Handler struct {
 	FailMonth    string
 	LogWriter    io.Writer
 
+	// PaginateAggregate, when true, attaches a pageToken to the aggregate
+	// jobs.query response so the connector's single-page assumption aborts
+	// with "unexpectedly paginated". Mirrors DelayedMonth/FailMonth as a
+	// test-only degrade hook.
+	PaginateAggregate bool
+
 	// SchemaAdditions and MissingColumn are test hooks for the Preview drift
 	// probe. Normal metadata remains wholly derived from fixture rows + the
 	// connector's pinned schema.
@@ -243,13 +249,16 @@ func (h *Handler) months() (map[string][]fixtureRow, error) {
 		if err := json.Unmarshal(body, &response); err != nil {
 			return nil, fmt.Errorf("fixture %s is not a BigQuery rows envelope: %w", filepath.Base(p), err)
 		}
-		if !schemaNamesEqualPinned(response.Schema.Fields) {
-			return nil, fmt.Errorf("fixture %s schema does not set-equal the connector's pinned columns", filepath.Base(p))
+		if !schemaOrderExactPinned(response.Schema.Fields) {
+			return nil, fmt.Errorf("fixture %s schema is not order-exact vs the connector's PinnedFields", filepath.Base(p))
 		}
 		month := strings.TrimSuffix(filepath.Base(p), ".json")
 		for i, row := range response.Rows {
 			if len(row.F) != len(gcpfocusbq.PinnedFields) {
 				return nil, fmt.Errorf("fixture %s row %d has %d cells, want %d", filepath.Base(p), i+1, len(row.F), len(gcpfocusbq.PinnedFields))
+			}
+			if err := validateRowCells(row, filepath.Base(p), i+1); err != nil {
+				return nil, err
 			}
 		}
 		out[month] = response.Rows
@@ -271,21 +280,91 @@ func (h *Handler) schema() (fixtureSchema, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return fixtureSchema{}, err
 	}
-	if !schemaNamesEqualPinned(response.Schema.Fields) {
-		return fixtureSchema{}, errors.New("fixture schema does not set-equal the connector's pinned columns")
+	if !schemaOrderExactPinned(response.Schema.Fields) {
+		return fixtureSchema{}, errors.New("fixture schema is not order-exact vs the connector's PinnedFields")
 	}
 	return response.Schema, nil
 }
 
-func schemaNamesEqualPinned(fields []fixtureSchemaField) bool {
-	got := make([]string, len(fields))
-	for i, field := range fields {
-		got[i] = field.Name
+// schemaOrderExactPinned requires schema.fields names to match PinnedFields
+// position-for-position (no reordering, no set-equality).
+func schemaOrderExactPinned(fields []fixtureSchemaField) bool {
+	want := gcpfocusbq.PinnedFields
+	if len(fields) != len(want) {
+		return false
 	}
-	want := gcpfocusbq.PinnedColumnNames()
-	slices.Sort(got)
-	slices.Sort(want)
-	return slices.Equal(got, want)
+	for i := range fields {
+		if fields[i].Name != want[i].Name {
+			return false
+		}
+	}
+	return true
+}
+
+// validateRowCells enforces wire-shape kinds for scalar money and timestamp
+// columns: NUMERIC/FLOAT are null or a JSON string that parses as a decimal
+// number; TIMESTAMP is null or a JSON string of an int64 (microseconds).
+func validateRowCells(row fixtureRow, file string, rowNum int) error {
+	for i, field := range gcpfocusbq.PinnedFields {
+		raw := row.F[i].V
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		switch field.Kind {
+		case "NUMERIC", "FLOAT":
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil {
+				return fmt.Errorf("fixture %s row %d column %s: NUMERIC/FLOAT cell must be null or a numeric string", file, rowNum, field.Name)
+			}
+			if _, err := strconv.ParseFloat(s, 64); err != nil {
+				// Accept pure decimal forms the connector treats as strings;
+				// reject non-numeric garbage. ParseFloat is only a shape gate
+				// here — the product path never float-parses money.
+				if !numericStringShape(s) {
+					return fmt.Errorf("fixture %s row %d column %s: NUMERIC/FLOAT cell %q is not a numeric string", file, rowNum, field.Name, s)
+				}
+			}
+		case "TIMESTAMP":
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil {
+				return fmt.Errorf("fixture %s row %d column %s: TIMESTAMP cell must be null or an int64-microsecond string", file, rowNum, field.Name)
+			}
+			if _, err := strconv.ParseInt(s, 10, 64); err != nil {
+				return fmt.Errorf("fixture %s row %d column %s: TIMESTAMP cell %q is not an int64 string", file, rowNum, field.Name, s)
+			}
+		}
+	}
+	return nil
+}
+
+// numericStringShape accepts decimal money strings ParseFloat may reject at
+// extreme precision (e.g. 18 fractional digits beyond float mantissa).
+func numericStringShape(s string) bool {
+	if s == "" {
+		return false
+	}
+	i := 0
+	if s[0] == '+' || s[0] == '-' {
+		i = 1
+		if len(s) == 1 {
+			return false
+		}
+	}
+	dot := false
+	digit := false
+	for ; i < len(s); i++ {
+		c := s[i]
+		if c >= '0' && c <= '9' {
+			digit = true
+			continue
+		}
+		if c == '.' && !dot {
+			dot = true
+			continue
+		}
+		return false
+	}
+	return digit
 }
 
 func (h *Handler) table(w http.ResponseWriter) {
@@ -367,7 +446,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.Contains(request.Query, "MAX(x_ExportTime)") && strings.Contains(request.Query, "GROUP BY") {
 		h.log("jobs.query aggregate")
-		h.aggregate(w, request.Location)
+		h.aggregate(w, request.Location, h.PaginateAggregate)
 		return
 	}
 	if !exactSelectSet(request.Query) {
@@ -394,7 +473,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	h.page(w, month, 0, request.Location)
 }
 
-func (h *Handler) aggregate(w http.ResponseWriter, location string) {
+func (h *Handler) aggregate(w http.ResponseWriter, location string, paginate bool) {
 	months, err := h.months()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -411,10 +490,14 @@ func (h *Handler) aggregate(w http.ResponseWriter, location string) {
 		}
 		rows = append(rows, fixtureRow{F: []fixtureCell{stringCell(month), nullableStringCell(maxRaw), stringCell(strconv.Itoa(len(months[month])))}})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"jobComplete": true, "rows": rows,
 		"jobReference": map[string]any{"projectId": "job-project", "jobId": "aggregate", "location": location},
-	})
+	}
+	if paginate {
+		response["pageToken"] = "aggregate-page-2"
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func decimalIntegerLess(a, b string) bool {

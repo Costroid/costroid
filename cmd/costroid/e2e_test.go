@@ -167,9 +167,15 @@ func TestOfflineE2EGCPFocusBigQuery(t *testing.T) {
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", ambientPath)
 	before := len(fake.Calls())
 	unchanged := mustCLI("", args...)
-	for _, month := range []string{"2026-05", "2026-06"} {
-		if !strings.Contains(unchanged, "period "+month+": unchanged since ") || !strings.Contains(unchanged, "; skipped") {
-			t.Errorf("unchanged sync did not tuple-skip %s:\n%s", month, unchanged)
+	// Exact skip lines: LastModified is Format(time.RFC3339) — no fractional
+	// seconds — derived from MAX(x_ExportTime) micros (May 1778846400123456 →
+	// 2026-05-15T12:00:00Z; June 1781524800000003 → 2026-06-15T12:00:00Z).
+	for _, want := range []string{
+		"period 2026-05: unchanged since 2026-05-15T12:00:00Z; skipped",
+		"period 2026-06: unchanged since 2026-06-15T12:00:00Z; skipped",
+	} {
+		if !strings.Contains(unchanged, want) {
+			t.Errorf("unchanged sync missing exact skip line %q:\n%s", want, unchanged)
 		}
 	}
 	wantDelta := []string{"token iss=ambient-gcp@example.test", "tables.get", "jobs.query aggregate"}

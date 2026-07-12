@@ -87,6 +87,57 @@ func TestNonLoopbackHTTPRejectedBeforeCredentialParsing(t *testing.T) {
 	}
 }
 
+// TestNonLoopbackHTTPTokenURLRejectedBeforeCredentialParsing mirrors the
+// base-url non-loopback guard for --token-url: plain HTTP to a non-loopback
+// host is refused under "invalid --token-url" before credential bytes are
+// parsed or echoed. A token URL carrying a query string is also rejected.
+func TestNonLoopbackHTTPTokenURLRejectedBeforeCredentialParsing(t *testing.T) {
+	marker := []byte("credential-marker-that-must-not-be-parsed")
+	_, err := NewClient(&httpClientStub, DefaultBaseURL, "http://example.com/token", marker)
+	if err == nil || !strings.Contains(err.Error(), "invalid --token-url") ||
+		!strings.Contains(err.Error(), "non-loopback") || strings.Contains(err.Error(), string(marker)) {
+		t.Fatalf("error = %v, want invalid --token-url non-loopback without marker", err)
+	}
+
+	_, err = NewClient(&httpClientStub, DefaultBaseURL, "https://oauth2.googleapis.com/token?extra=1", marker)
+	if err == nil || !strings.Contains(err.Error(), "invalid --token-url") ||
+		!strings.Contains(err.Error(), "query parameters") || strings.Contains(err.Error(), string(marker)) {
+		t.Fatalf("error = %v, want invalid --token-url query-parameter refusal without marker", err)
+	}
+}
+
+// TestAggregateStateAllNullExportTimeFallsBackToTableModified pins the
+// change-token shape when every row's x_ExportTime is null: Token is
+// "null|<count>" and LastModified is the tables.get fallback (not zero).
+func TestAggregateStateAllNullExportTimeFallsBackToTableModified(t *testing.T) {
+	tableModified := time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC)
+	// Aggregate row cells: billing_month, max_export_time (JSON null), row_count.
+	nullCell := bqCell{V: json.RawMessage("null")}
+	monthCell := bqCell{V: mustJSONString(t, "2026-05")}
+	countCell := bqCell{V: mustJSONString(t, "2")}
+	state, err := aggregateState(bqRow{F: []bqCell{monthCell, nullCell, countCell}}, Coordinates{
+		DatasetProject: "p", Dataset: "d", Table: "t",
+	}, tableModified)
+	if err != nil {
+		t.Fatalf("aggregateState: %v", err)
+	}
+	if state.Token != "null|2" {
+		t.Fatalf("Token = %q, want null|2", state.Token)
+	}
+	if !state.LastModified.Equal(tableModified) {
+		t.Fatalf("LastModified = %s, want tables.get fallback %s", state.LastModified, tableModified)
+	}
+}
+
+func mustJSONString(t *testing.T, s string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 var httpClientStub = http.Client{}
 
 func TestLabelsToTagsRejectsDuplicateKeys(t *testing.T) {
