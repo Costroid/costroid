@@ -12,7 +12,7 @@ VERSION ?= 0.1.0-dev
 GOLANGCI_LINT_VERSION := v2.12.2
 GOLANGCI_LINT := bin/golangci-lint
 
-.PHONY: dev dev-api dev-web build demo-fixtures demo-build test lint fmt generate release-snapshot sbom vulncheck
+.PHONY: dev dev-api dev-web build demo-fixtures demo-build demo-budget demo-manifest demo-screenshot test lint fmt generate release-snapshot sbom vulncheck
 
 ## dev: run the Go API and the Vite dev server together (Ctrl-C stops both)
 dev:
@@ -46,6 +46,22 @@ demo-fixtures:
 ## (fixture-backed api seam + Latin/Turkish subset font). Never writes web/dist.
 demo-build:
 	pnpm -C web build --mode demo
+
+## demo-budget: authoritative size gate for web/demo-dist. App payload
+## (html+css+js) gz@9 <= 150 KB; subset font wire <= 80 KB. Writes
+## demo-artifacts/sizes.json; exits non-zero on breach. Run demo-build first.
+demo-budget:
+	node scripts/demo-budget.mjs
+
+## demo-manifest: write demo-artifacts/manifest.json (git sha, versions, sizes).
+## Requires demo-artifacts/sizes.json (run demo-budget first).
+demo-manifest:
+	node scripts/demo-manifest.mjs
+
+## demo-screenshot: capture a non-gating first-frame PNG of web/demo-dist into
+## demo-artifacts/. Uses $$CHROME_BIN if set, else fetches chrome-headless-shell.
+demo-screenshot:
+	node scripts/demo-screenshot.mjs
 
 ## test: Go tests + web tests
 test:

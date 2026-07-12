@@ -4,6 +4,9 @@
 # Static demo dashboard build output (fixtures + ranges.ts under web/src ARE
 # committed; the built bundle here is not).
 /web/demo-dist/
+# Demo CI artifacts: size report, version manifest (non-deterministic
+# builtAtUTC), and first-frame screenshot. Never committed.
+/demo-artifacts/
 # Populated from web/dist by `make build`; only the embed placeholder is committed.
 /internal/webdist/dist/*
 !/internal/webdist/dist/.gitkeep

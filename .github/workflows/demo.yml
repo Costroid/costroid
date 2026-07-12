@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The Costroid Authors
+
+name: Demo
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "Makefile", "scripts/**", ".github/workflows/demo.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["web/**", "Makefile", "scripts/**", ".github/workflows/demo.yml"]
+  # Manual runs exercise the build-gate only — the deploy job's `if:` requires a
+  # push to main, so workflow_dispatch never deploys. Redeploy by pushing main.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel a superseded in-flight run so two quick pushes can't land an older
+  # build last.
+  group: demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Reads the pnpm version from the packageManager field in package.json.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build backendless demo bundle
+        run: make demo-build
+      - name: Create artifacts dir
+        run: mkdir -p demo-artifacts
+      - name: Enforce size budget (AUTHORITATIVE gate)
+        run: node scripts/demo-budget.mjs
+      - name: Generate version manifest
+        run: node scripts/demo-manifest.mjs
+      - name: Capture first-frame screenshot (artifact — NON-gating)
+        # A capture hiccup must NEVER block a web PR or the deploy; the budget
+        # gate above is the authoritative gate.
+        continue-on-error: true
+        run: node scripts/demo-screenshot.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: costroid-demo
+          path: |
+            web/demo-dist
+            demo-artifacts
+          if-no-files-found: error
+
+  deploy:
+    needs: build-gate
+    # Deploy only on a push to main — never on PRs (or forks), never on manual
+    # dispatch. `secrets` is not usable in a job-level `if:`, so the deploy STEP
+    # maps the secrets to env and no-ops cleanly when they are absent.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: demo
+      url: https://demo.costroid.com
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: costroid-demo
+          path: .
+      # The deploy job needs its own Node; don't rely on the runner's ambient one.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Deploy to Cloudflare Pages (no-op if secrets absent)
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Self-host / no-phone-home invariant: wrangler sends usage metrics
+          # by DEFAULT — disable it.
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          set -euo pipefail
+          if [ -z "$CF_API_TOKEN" ] || [ -z "$CF_ACCOUNT_ID" ]; then
+            echo "::notice::Cloudflare secrets not configured yet — skipping deploy."
+            exit 0
+          fi
+          CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" \
+            npx --yes wrangler@4.110.0 \
+            pages deploy web/demo-dist --project-name=costroid-demo --branch=main
