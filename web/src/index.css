@@ -742,7 +742,7 @@ thead th {
   padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface-1);
+  background: var(--surface);
   min-width: 0;
 }
 

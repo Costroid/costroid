@@ -227,8 +227,8 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		if prevDefined {
 			prev, ok := prevTotals[kt.key]
 			if ok {
-				s := prev.String()
-				entry.PreviousTotal = &s
+				pt := prev.String()
+				entry.PreviousTotal = &pt
 			} else {
 				prev = decimal.Zero
 			}
@@ -239,8 +239,8 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 	}
 
 	if prevDefined {
-		s := prevGrand.String()
-		resp.PreviousTotal = &s
+		pg := prevGrand.String()
+		resp.PreviousTotal = &pg
 		ps := openapi_types.Date{Time: prevStart}
 		pe := openapi_types.Date{Time: prevEnd}
 		resp.PreviousStart = &ps

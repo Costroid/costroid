@@ -940,8 +940,15 @@ func TestGetCostsSummaryTotalEqualsDaily(t *testing.T) {
 	}
 	var sum CostsSummary
 	var daily DailyCosts
-	_ = json.Unmarshal(recSum.Body.Bytes(), &sum)
-	_ = json.Unmarshal(recDaily.Body.Bytes(), &daily)
+	if err := json.Unmarshal(recSum.Body.Bytes(), &sum); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if err := json.Unmarshal(recDaily.Body.Bytes(), &daily); err != nil {
+		t.Fatalf("decode daily: %v", err)
+	}
+	if sum.Total == "" {
+		t.Fatal("summary total decoded empty; equality would be vacuous")
+	}
 	if sum.Total != daily.Total {
 		t.Fatalf("summary total %q != daily total %q", sum.Total, daily.Total)
 	}
@@ -1055,6 +1062,29 @@ func TestGetCostsSummaryEmptyPrecedingWindowOmitsPrevious(t *testing.T) {
 	if body := rec.Body.String(); strings.Contains(body, `"previousTotal"`) {
 		t.Errorf("body still contains previousTotal: %s", body)
 	}
+	assertKeysWithoutPreviousFields(t, raw)
+}
+
+// assertKeysWithoutPreviousFields pins that per-key previousTotal AND delta are
+// absent, independently of the top-level fields — a regression that split the
+// shared prevDefined flag and kept emitting per-key deltas must fail here.
+func assertKeysWithoutPreviousFields(t *testing.T, raw map[string]any) {
+	t.Helper()
+	keys, ok := raw["keys"].([]any)
+	if !ok || len(keys) == 0 {
+		t.Fatalf("keys missing or empty in response: %v", raw)
+	}
+	for i, k := range keys {
+		entry, ok := k.(map[string]any)
+		if !ok {
+			t.Fatalf("keys[%d] is not an object: %v", i, k)
+		}
+		for _, field := range []string{"previousTotal", "delta"} {
+			if _, present := entry[field]; present {
+				t.Errorf("keys[%d] has %s; want ABSENT", i, field)
+			}
+		}
+	}
 }
 
 func TestGetCostsSummaryCrossWindowCurrencyOmitsPrevious(t *testing.T) {
@@ -1084,6 +1114,7 @@ func TestGetCostsSummaryCrossWindowCurrencyOmitsPrevious(t *testing.T) {
 			t.Errorf("cross-currency response has %s; want ABSENT", key)
 		}
 	}
+	assertKeysWithoutPreviousFields(t, raw)
 }
 
 func TestGetCostsSummaryMixedCurrencyWithinCurrentIs500(t *testing.T) {

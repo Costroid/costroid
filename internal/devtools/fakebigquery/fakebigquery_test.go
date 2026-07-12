@@ -344,3 +344,53 @@ func TestSchemaOrderExactAndCellKindsAcceptFixture(t *testing.T) {
 		t.Fatalf("reordered schema error = %v", err)
 	}
 }
+
+func TestCellKindRejection(t *testing.T) {
+	// The per-cell kind validation must REJECT malformed scalar cells, not just
+	// accept well-formed fixtures: a NUMERIC/FLOAT cell with a non-numeric
+	// string and a TIMESTAMP cell with a non-int64 string each fail the loader.
+	pinnedIndex := func(name string) int {
+		for i, f := range gcpfocusbq.PinnedFields {
+			if f.Name == name {
+				return i
+			}
+		}
+		t.Fatalf("column %s not in PinnedFields", name)
+		return -1
+	}
+	src, err := os.ReadFile(filepath.Join(fixtureDir, "2026-05.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		column  string
+		value   string
+		wantErr string
+	}{
+		{"numeric garbage", "BilledCost", "not-a-number", "not a numeric string"},
+		{"timestamp rfc3339", "x_ExportTime", "2026-05-15T12:00:00Z", "not an int64 string"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var env map[string]any
+			if err := json.Unmarshal(src, &env); err != nil {
+				t.Fatal(err)
+			}
+			cells := env["rows"].([]any)[0].(map[string]any)["f"].([]any)
+			cells[pinnedIndex(tc.column)].(map[string]any)["v"] = tc.value
+			raw, err := json.Marshal(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "2026-05.json"), raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			h := New(dir)
+			if _, err := h.months(); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("months() error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}

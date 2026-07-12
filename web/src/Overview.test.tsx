@@ -320,6 +320,49 @@ describe("Overview", () => {
     expect(names).toEqual(["B", "C", "A"]);
   });
 
+  it("ranks movers with the exact decimal comparator, not Number()", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: () =>
+          fakeResponse(
+            200,
+            summaryBody({
+              previousTotal: "100",
+              previousStart: "2026-03-14",
+              previousEnd: "2026-04-12",
+              keys: [
+                // Number() rounds both |delta|s to exactly 1; only the exact
+                // string comparator ranks Zed's |-1.000000000000000002| above
+                // Alpha's 1.000000000000000001. A float-based sort ties and
+                // falls back to the key tie-break, leaving Alpha first.
+                {
+                  key: "Alpha",
+                  total: "5.000000000000000001",
+                  previousTotal: "4",
+                  delta: "1.000000000000000001",
+                },
+                {
+                  key: "Zed",
+                  total: "3",
+                  previousTotal: "4.000000000000000002",
+                  delta: "-1.000000000000000002",
+                },
+              ],
+            }),
+          ),
+      }),
+    );
+    render(<Overview range={{ start: "2026-04-13", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText("Top movers")).toBeTruthy();
+    const list = screen.getByText("Top movers").closest("article");
+    const names = Array.from(list!.querySelectorAll(".overview-key-name")).map(
+      (el) => el.textContent,
+    );
+    expect(names).toEqual(["Zed", "Alpha"]);
+  });
+
   it("anomaly card count equals array length; 0-case is good news", async () => {
     vi.stubGlobal(
       "fetch",
@@ -410,9 +453,14 @@ describe("Overview", () => {
         u.includes("/api/v1/costs/summary?start=2026-06-12&end=2026-07-11"),
       ),
     ).toBe(true);
-    // groupBy=provider always present (non-default).
-    expect(fetchedURLs().some((u) => u.includes("groupBy=provider"))).toBe(
-      true,
+    // groupBy=provider present on EVERY summary request (non-default) — a
+    // regression dropping it on refetch must fail, so no cumulative .some().
+    const summaryURLs = fetchedURLs().filter((u) =>
+      u.includes("/api/v1/costs/summary"),
     );
+    expect(summaryURLs.length).toBeGreaterThan(1);
+    for (const u of summaryURLs) {
+      expect(u).toContain("groupBy=provider");
+    }
   });
 });
