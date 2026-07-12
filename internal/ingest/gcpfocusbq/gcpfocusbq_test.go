@@ -114,3 +114,13 @@ func TestGapFillOnlyKnownIdentities(t *testing.T) {
 		t.Fatalf("GapFill overwrote source identity or fabricated money: %#v", rec)
 	}
 }
+
+// TestBigQueryScopeLiteralPin completes the scope-guard chain: fakebigquery
+// validates the JWT scope claim against the shared BigQueryScope constant, so
+// only this literal pin makes a mutation of the constant itself (for example to
+// the nonexistent auth/bigquery.readonly) fail a test.
+func TestBigQueryScopeLiteralPin(t *testing.T) {
+	if BigQueryScope != "https://www.googleapis.com/auth/bigquery" {
+		t.Fatalf("BigQueryScope = %q, want the literal https://www.googleapis.com/auth/bigquery", BigQueryScope)
+	}
+}

@@ -14,9 +14,13 @@ Costroid ingests cost & usage data from cloud providers (AWS, Azure, Google Clou
 
 What ships in v0.1.0:
 
-- **Seven ingest connectors** — AWS FOCUS (local file, and live from S3 with incremental sync), Azure Cost Management FOCUS (live from Blob Storage, incremental), Google Cloud's FOCUS BigQuery export (Preview, incremental), OpenAI and Anthropic cost & usage, and a generic FOCUS/CSV importer.
+- **Six ingest connectors** — AWS FOCUS (local file, and live from S3 with incremental sync), Azure Cost Management FOCUS (live from Blob Storage, incremental), OpenAI and Anthropic cost & usage, and a generic FOCUS/CSV importer.
 - **A four-view dashboard** over the embedded store, with **cost allocation** (query-time rules), **unit economics** (cost per business metric), and **automatic anomaly detection**.
 - **Signed releases** — keyless-signed checksums, GitHub build-provenance attestations, and a CycloneDX 1.6 source SBOM (see [`SECURITY.md`](./SECURITY.md)).
+
+Newer on `main` (build from source; ships in the next release):
+
+- A seventh connector: **Google Cloud's FOCUS BigQuery export** (Preview, incremental sync) — see the [setup section](#google-cloud-focus-bigquery-setup-preview) below.
 
 ---
 
@@ -89,7 +93,8 @@ costroid ingest --connector aws-focus-s3 --bucket <bucket> --prefix <prefix>/<ex
 costroid ingest --connector azure-focus --account-url https://<account>.blob.core.windows.net/ \
   --container <container> --prefix <directory>/<export-name>
 
-# live from Google's FOCUS BigQuery linked export (Preview; incremental sync)
+# live from Google's FOCUS BigQuery linked export (Preview; incremental sync;
+# on `main` only — not in the v0.1.0 binaries)
 costroid ingest --connector gcp-focus-bq --dataset-project <host-project> \
   --dataset gcp_billing_immutable_<BILLING_ACCOUNT_ID>_<LOCATION> \
   --table gcp_billing_export_focus_<BILLING_ACCOUNT_ID> --location <LOCATION>
@@ -98,7 +103,7 @@ costroid ingest --connector gcp-focus-bq --dataset-project <host-project> \
 costroid ingest --connector focus-csv --path <export.csv> --focus-version 1.2
 ```
 
-The seven connectors are `aws-focus`, `aws-focus-s3`, `azure-focus`, `gcp-focus-bq`, `anthropic-cost`, `openai-cost`, and `focus-csv`; run `costroid ingest -h` for the full flag reference. For the AI vendors, first store the Admin API key in the encrypted credential store (`costroid credentials set <slot>`), then `costroid ingest --connector openai-cost` (or `anthropic-cost`). Manage stored provider credentials with the `costroid credentials` subcommands (`init`, `set`, `list`, `delete`).
+The connectors are `aws-focus`, `aws-focus-s3`, `azure-focus`, `gcp-focus-bq` (on `main` since v0.1.0), `anthropic-cost`, `openai-cost`, and `focus-csv`; run `costroid ingest -h` for the full flag reference. For the AI vendors, first store the Admin API key in the encrypted credential store (`costroid credentials set <slot>`), then `costroid ingest --connector openai-cost` (or `anthropic-cost`). Manage stored provider credentials with the `costroid credentials` subcommands (`init`, `set`, `list`, `delete`).
 
 **Cost allocation, unit economics, and anomaly detection** are available in the dashboard and the API — allocation rules are applied at query time (validate a rules file with `costroid allocation validate`), and business metrics for unit economics are loaded with `costroid metrics import`.
 
@@ -124,7 +129,7 @@ costroid credentials set gcp-focus-bq < /secure/path/costroid-gcp-reader.json
 
 An explicit `--credential <slot>` uses that encrypted slot even when the ambient path is set. Without an explicit slot, the ambient file wins; when it is absent, Costroid uses the default `gcp-focus-bq` vault slot. `authorized_user`, metadata-server, well-known-file, and other full-ADC credential types are not supported by this zero-new-dependency connector.
 
-`--location` is mandatory and must match the dataset location on every job call; omitting it commonly makes an EU dataset look missing from the default US location. `--job-project` defaults to the dataset project and is where query-job permission and query billing apply. The connector uses a fixed explicit column list, probes Preview schema additions on every sync, and runs one change-token aggregate plus changed-month queries; BigQuery on-demand billing minimums still apply (10 MB per query and referenced table), so metadata and query work should not be described as free.
+`--location` is mandatory and must match the dataset location on every job call; omitting it commonly makes an EU dataset look missing from the default US location. `--job-project` defaults to the dataset project and is where query-job permission and query billing apply. The connector uses a fixed explicit column list, probes Preview schema additions on every sync, and runs one change-token aggregate plus changed-month queries. BigQuery's on-demand billing minimums apply to those queries (10 MB per query and per referenced table), so expect a small — not zero — BigQuery cost per sync; a typical daily incremental pull costs well under a cent.
 
 Costroid maps `x_Labels` to FOCUS Tags. `x_SystemLabels`, `x_ProjectLabels`, and `x_Tags` are deferred. Credit/CUD detail remains in `x_Credits` and is not folded in by Costroid; stored totals reflect Google's own `BilledCost` and `EffectiveCost` columns verbatim, with no additional credit arithmetic.
 

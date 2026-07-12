@@ -73,7 +73,9 @@
 // in memory, exchanges an RS256 JWT for a BigQuery-scoped bearer token, and never
 // caches the token on disk. Errors never echo JSON, PEM, or credential-bearing
 // input. The CLI accepts either GOOGLE_APPLICATION_CREDENTIALS (the env-var file
-// leg only) or encrypted-vault JSON; an explicit --credential slot wins.
+// leg only) or encrypted-vault JSON, in this precedence: an explicit
+// --credential slot wins; otherwise the $GOOGLE_APPLICATION_CREDENTIALS file;
+// otherwise the default gcp-focus-bq vault slot.
 //
 // Runtime access should be limited to dataset-level roles/bigquery.dataViewer on
 // the linked dataset plus roles/bigquery.jobUser on the query-job project. That
