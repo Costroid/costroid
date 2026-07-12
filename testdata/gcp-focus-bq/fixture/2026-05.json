@@ -1,0 +1,793 @@
+{
+  "schema": {
+    "fields": [
+      {
+        "name": "AvailabilityZone",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BilledCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingAccountId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingCurrency",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingPeriodStart",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingPeriodEnd",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargeCategory",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargeClass",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargeDescription",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargePeriodStart",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargePeriodEnd",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ConsumedQuantity",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ConsumedUnit",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ContractedCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ContractedUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ListCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ListUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCategory",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingQuantity",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingUnit",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ProviderName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PublisherName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "RegionId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "RegionName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ResourceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ResourceName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ServiceName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SkuId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SkuPriceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SubAccountId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SubAccountName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "EffectiveCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrency",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrencyContractedUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrencyEffectiveCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrencyListUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingAccountType",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_CostType",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_Credits",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Id",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "FullName",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Type",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Name",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Amount",
+            "type": "NUMERIC",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_CurrencyConversionRate",
+        "type": "FLOAT",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_ExportTime",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_Labels",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_Location",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_Project",
+        "type": "RECORD",
+        "mode": "NULLABLE",
+        "fields": [
+          {
+            "name": "Id",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Number",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Name",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "AncestryNumbers",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Ancestors",
+            "type": "RECORD",
+            "mode": "REPEATED"
+          }
+        ]
+      },
+      {
+        "name": "x_ProjectLabels",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_ServiceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_SystemLabels",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_Tags",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "x_Inherited",
+            "type": "BOOLEAN",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "x_Namespace",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_SubscriptionInstanceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_PriceEffectivePriceDefault",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_PriceListPriceConsumptionModel",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_CostAtEffectivePriceDefault",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_CostAtListConsumptionModel",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_ConsumptionModelId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_ConsumptionModelDescription",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      }
+    ]
+  },
+  "rows": [
+    {
+      "f": [
+        {
+          "v": null
+        },
+        {
+          "v": "1.123456789012345678"
+        },
+        {
+          "v": "010101-F0FFF0-61C528"
+        },
+        {
+          "v": "USD"
+        },
+        {
+          "v": "1777593600000000"
+        },
+        {
+          "v": "1780272000000000"
+        },
+        {
+          "v": "Usage"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "Cross-month compute"
+        },
+        {
+          "v": "1777591800123456"
+        },
+        {
+          "v": "1777595400654321"
+        },
+        {
+          "v": "1.000000000000000001"
+        },
+        {
+          "v": "Hours"
+        },
+        {
+          "v": "2"
+        },
+        {
+          "v": "2"
+        },
+        {
+          "v": "3"
+        },
+        {
+          "v": "3"
+        },
+        {
+          "v": "Standard"
+        },
+        {
+          "v": "1"
+        },
+        {
+          "v": "Hours"
+        },
+        {
+          "v": "Google Cloud"
+        },
+        {
+          "v": "Google Cloud"
+        },
+        {
+          "v": "us-central1"
+        },
+        {
+          "v": "Iowa"
+        },
+        {
+          "v": "//compute.googleapis.com/projects/demo/zones/us-central1-a/instances/vm-1"
+        },
+        {
+          "v": "vm-1"
+        },
+        {
+          "v": "Compute Engine"
+        },
+        {
+          "v": "sku-compute"
+        },
+        {
+          "v": "price-compute"
+        },
+        {
+          "v": "demo"
+        },
+        {
+          "v": "Demo"
+        },
+        {
+          "v": "1.123456789012345678"
+        },
+        {
+          "v": "USD"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "regular"
+        },
+        {
+          "v": [
+            {
+              "v": {
+                "f": [
+                  {
+                    "v": "credit-1"
+                  },
+                  {
+                    "v": "Promotion"
+                  },
+                  {
+                    "v": "PROMOTION"
+                  },
+                  {
+                    "v": "Promo"
+                  },
+                  {
+                    "v": "-0.500000000000000000"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "1778846400123456"
+        },
+        {
+          "v": [
+            {
+              "v": {
+                "f": [
+                  {
+                    "v": "env"
+                  },
+                  {
+                    "v": "prod"
+                  }
+                ]
+              }
+            },
+            {
+              "v": {
+                "f": [
+                  {
+                    "v": "team"
+                  },
+                  {
+                    "v": "platform"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "v": "us-central1"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": []
+        },
+        {
+          "v": "6F81-5844-456A"
+        },
+        {
+          "v": []
+        },
+        {
+          "v": []
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        }
+      ]
+    },
+    {
+      "f": [
+        {
+          "v": null
+        },
+        {
+          "v": "2"
+        },
+        {
+          "v": "010101-F0FFF0-61C528"
+        },
+        {
+          "v": "USD"
+        },
+        {
+          "v": "1777593600000000"
+        },
+        {
+          "v": "1780272000000000"
+        },
+        {
+          "v": "Tax"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "Tax"
+        },
+        {
+          "v": "1777676400000000"
+        },
+        {
+          "v": "1777680000000000"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "2"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "2"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "Standard"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "Cloud Billing"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "2"
+        },
+        {
+          "v": "USD"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "regular"
+        },
+        {
+          "v": []
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": [
+            {
+              "v": {
+                "f": [
+                  {
+                    "v": "cost-center"
+                  },
+                  {
+                    "v": "finops"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": []
+        },
+        {
+          "v": null
+        },
+        {
+          "v": []
+        },
+        {
+          "v": []
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        }
+      ]
+    }
+  ]
+}

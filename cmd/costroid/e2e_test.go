@@ -6,13 +6,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,8 +26,10 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/api"
 	"github.com/Costroid/costroid/internal/devtools/fakeanthropic"
+	"github.com/Costroid/costroid/internal/devtools/fakebigquery"
 	"github.com/Costroid/costroid/internal/devtools/fakeopenai"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest/aiconn"
@@ -45,6 +52,267 @@ func (b *syncBuf) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+func runtimeGCPServiceAccount(t *testing.T, email string) (string, *rsa.PublicKey) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{
+		"type": "service_account", "client_email": email,
+		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body), &key.PublicKey
+}
+
+// TestOfflineE2EGCPFocusBigQuery is the ordered acceptance transcript for the
+// Preview GCP FOCUS linked-export connector. It covers runtime-generated vault
+// and ambient credentials, exact nested BigQuery row envelopes, delayed jobs,
+// enforced pagination, tenant-aware skip state, force bypass, correction
+// restatement scoping, --period, tag persistence, exact 18-digit money, and
+// per-period rejection/degradation.
+func TestOfflineE2EGCPFocusBigQuery(t *testing.T) {
+	dataDir := t.TempDir()
+	keyPath := filepath.Join(t.TempDir(), "cfg", "credentials.key")
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", keyPath)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+
+	fixtureDir := t.TempDir()
+	copyTree(t, "../../testdata/gcp-focus-bq/fixture", fixtureDir)
+	fakeLog := &syncBuf{}
+	fake := fakebigquery.New(fixtureDir)
+	fake.LogWriter = fakeLog
+	fake.SchemaAdditions = []string{"x_FuturePreviewColumn"}
+	vaultJSON, vaultPublic := runtimeGCPServiceAccount(t, "vault-gcp@example.test")
+	ambientJSON, ambientPublic := runtimeGCPServiceAccount(t, "ambient-gcp@example.test")
+	fake.AllowServiceAccount("vault-gcp@example.test", vaultPublic)
+	fake.AllowServiceAccount("ambient-gcp@example.test", ambientPublic)
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	var transcript strings.Builder
+	cli := func(stdin string, args ...string) (string, error) {
+		out, err := runCLI(args, stdin)
+		fmt.Fprintf(&transcript, "$ costroid %s\n%s", strings.Join(args, " "), out)
+		if err != nil {
+			fmt.Fprintf(&transcript, "  [exit: %v]\n", err)
+		}
+		return out, err
+	}
+	mustCLI := func(stdin string, args ...string) string {
+		out, err := cli(stdin, args...)
+		if err != nil {
+			t.Fatalf("costroid %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return out
+	}
+
+	mustCLI("", "credentials", "init")
+	mustCLI(vaultJSON, "credentials", "set", "gcp-focus-bq")
+	args := []string{
+		"ingest", "--connector", "gcp-focus-bq",
+		"--dataset-project", "billing-host", "--dataset", "gcp_billing_immutable_demo_EU",
+		"--table", "gcp_billing_export_focus_demo", "--location", "EU", "--job-project", "query-project",
+		"--base-url", server.URL + "/bigquery/v2/", "--token-url", server.URL + "/token", "--since", "2026-05",
+	}
+
+	// Vault leg, with no ambient path: fresh ingest. The fixture coupling is:
+	// May = 1.123456789012345678 + 2; June = 4 + 5 + 6.
+	fresh := mustCLI("", args...)
+	for _, want := range []string{
+		"gcp-focus-bq table probe: timePartitioning=absent",
+		"Preview schema added column(s) not selected by this connector: x_FuturePreviewColumn",
+		"period 2026-05: ingested 2 record(s)",
+		"period 2026-06: ingested 3 record(s)",
+	} {
+		if !strings.Contains(fresh, want) {
+			t.Errorf("fresh ingest missing %q:\n%s", want, fresh)
+		}
+	}
+	if issuers := fake.Issuers(); len(issuers) == 0 || issuers[len(issuers)-1] != "vault-gcp@example.test" {
+		t.Fatalf("vault-leg JWT issuers = %v", issuers)
+	}
+	if got := gcpServiceTotal(t, focus.DefaultTenant, "Compute Engine"); !got.Equal(decimal.RequireFromString("1.123456789012345678")) {
+		t.Errorf("18-fractional-digit Compute Engine BilledCost = %s", got)
+	}
+	if got := gcpServiceTotal(t, focus.DefaultTenant, "Cloud Billing"); !got.Equal(decimal.RequireFromString("8")) {
+		t.Errorf("null-heavy rows did not land exactly: Cloud Billing total = %s", got)
+	}
+	// Stored x_Labels -> Tags: env=prod selects the May compute row and June
+	// BigQuery row, totalling 1.123456789012345678 + 4 exactly.
+	dim, err := allocation.Parse(strings.NewReader(`{"dimensions":[{"name":"env","rules":[{"label":"Production","match":[{"dimension":"tag:env","operator":"equals","value":"prod"}]}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gcpAllocationTotal(t, focus.DefaultTenant, dim, "Production"); !got.Equal(decimal.RequireFromString("5.123456789012345678")) {
+		t.Errorf("stored x_Labels tag allocation total = %s", got)
+	}
+
+	// Ambient file leg wins when no explicit slot is named. This run is also
+	// the unchanged-sync proof: token + tables.get + one aggregate, no fetch.
+	ambientPath := filepath.Join(t.TempDir(), "ambient-service-account.json")
+	if err := os.WriteFile(ambientPath, []byte(ambientJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", ambientPath)
+	before := len(fake.Calls())
+	unchanged := mustCLI("", args...)
+	for _, month := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(unchanged, "period "+month+": unchanged since ") || !strings.Contains(unchanged, "; skipped") {
+			t.Errorf("unchanged sync did not tuple-skip %s:\n%s", month, unchanged)
+		}
+	}
+	wantDelta := []string{"token iss=ambient-gcp@example.test", "tables.get", "jobs.query aggregate"}
+	if delta := fake.Calls()[before:]; !slices.Equal(delta, wantDelta) {
+		t.Errorf("unchanged call delta = %v, want %v", delta, wantDelta)
+	}
+
+	// Explicit vault slot wins over the simultaneously present ambient path.
+	mustCLI("", append(args, "--credential", "gcp-focus-bq", "--period", "2026-05")...)
+	issuers := fake.Issuers()
+	if issuers[len(issuers)-1] != "vault-gcp@example.test" {
+		t.Fatalf("explicit vault precedence issuer = %q, want vault", issuers[len(issuers)-1])
+	}
+
+	// --force empties prior state, so both month queries run; the store hash
+	// still keeps both batches unchanged. June proves delayed poll + pagination.
+	before = len(fake.Calls())
+	forced := mustCLI("", append(args, "--force")...)
+	for _, month := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(forced, "period "+month+": source content unchanged") {
+			t.Errorf("forced sync missing content short-circuit for %s:\n%s", month, forced)
+		}
+	}
+	forceDelta := strings.Join(fake.Calls()[before:], "\n")
+	for _, want := range []string{"jobs.query period=2026-05", "jobs.query period=2026-06", "jobs.getQueryResults period=2026-06 offset=0", "jobs.getQueryResults period=2026-06 offset=2"} {
+		if !strings.Contains(forceDelta, want) {
+			t.Errorf("force call delta missing %q:\n%s", want, forceDelta)
+		}
+	}
+
+	// Restated overlay adds June correction rows -4 and +2. May's tuple stays
+	// identical and must not be fetched; June changes from 3 rows / 15 to 5 / 13.
+	copyTree(t, "../../testdata/gcp-focus-bq/restated", fixtureDir)
+	before = len(fake.Calls())
+	restated := mustCLI("", args...)
+	if !strings.Contains(restated, "period 2026-05: unchanged since ") {
+		t.Errorf("restatement did not skip unchanged May:\n%s", restated)
+	}
+	if !strings.Contains(restated, "period 2026-06: replaced (5 records; BilledCost 15 → 13)") {
+		t.Errorf("restatement delta missing/wrong:\n%s", restated)
+	}
+	restateDelta := strings.Join(fake.Calls()[before:], "\n")
+	if strings.Contains(restateDelta, "jobs.query period=2026-05") || !strings.Contains(restateDelta, "jobs.query period=2026-06") {
+		t.Errorf("restatement fetch scope wrong:\n%s", restateDelta)
+	}
+
+	// --period output contains only the requested month.
+	periodOut := mustCLI("", append(args, "--period", "2026-06")...)
+	if strings.Contains(periodOut, "period 2026-05:") || !strings.Contains(periodOut, "period 2026-06:") {
+		t.Errorf("--period output scope wrong:\n%s", periodOut)
+	}
+
+	// Tenant switch drops default-tenant tuples, fetches both months, and
+	// re-homes every batch. The default tenant loses all GCP rows.
+	tenantOut := mustCLI("", append(args, "--tenant", "acme")...)
+	for _, month := range []string{"2026-05", "2026-06"} {
+		if !strings.Contains(tenantOut, "period "+month+": replaced") || strings.Contains(tenantOut, "period "+month+": unchanged since") {
+			t.Errorf("tenant switch did not re-home %s:\n%s", month, tenantOut)
+		}
+	}
+	if got := gcpServiceTotal(t, focus.DefaultTenant, "Compute Engine"); !got.IsZero() {
+		t.Errorf("default tenant retained GCP rows after re-home: %s", got)
+	}
+	if got := gcpServiceTotal(t, "acme", "Compute Engine"); got.IsZero() {
+		t.Error("acme tenant has no GCP rows after re-home")
+	}
+
+	// One month can fail its fetch while the other succeeds unchanged.
+	fake.FailMonth = "2026-06"
+	degradeOut, degradeErr := cli("", append(args, "--tenant", "acme", "--force")...)
+	degradeCombined := degradeOut
+	if degradeErr != nil {
+		degradeCombined += degradeErr.Error()
+	}
+	if degradeErr == nil || !strings.Contains(degradeCombined, "period 2026-05: source content unchanged") ||
+		!strings.Contains(degradeCombined, "period 2026-06: failed") || !strings.Contains(degradeCombined, "1 of 2 period(s) failed") {
+		t.Errorf("per-period degradation = err %v\n%s", degradeErr, degradeCombined)
+	}
+	fake.FailMonth = ""
+
+	// A NULL required money value reaches the pipeline and aborts only June
+	// with a row-numbered error; unchanged May remains skipped.
+	copyTree(t, "../../testdata/gcp-focus-bq/reject", fixtureDir)
+	rejectOut, rejectErr := cli("", append(args, "--tenant", "acme")...)
+	rejectCombined := rejectOut
+	if rejectErr != nil {
+		rejectCombined += rejectErr.Error()
+	}
+	if rejectErr == nil || !strings.Contains(rejectCombined, "period 2026-05: unchanged since") ||
+		!strings.Contains(rejectCombined, "period 2026-06: failed") || !strings.Contains(rejectCombined, "row 1") ||
+		!strings.Contains(rejectCombined, "BilledCost is null") {
+		t.Errorf("not-null rejection = err %v\n%s", rejectErr, rejectCombined)
+	}
+
+	all := transcript.String() + "\n# fake request logs\n" + fakeLog.String()
+	if strings.Contains(all, "BEGIN"+" PRIVATE KEY") {
+		t.Fatal("private-key material leaked into transcript or fake logs")
+	}
+	t.Logf("\n===== OFFLINE E2E GCP FOCUS BIGQUERY TRANSCRIPT =====\n%s\n# fake request logs\n%s", transcript.String(), fakeLog.String())
+}
+
+func gcpServiceTotal(t *testing.T, tenant, service string) decimal.Decimal {
+	t.Helper()
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := decimal.Zero
+	for _, day := range daily.Days {
+		for _, item := range day.Services {
+			if item.ServiceName == service {
+				total = total.Add(item.Cost)
+			}
+		}
+	}
+	return total
+}
+
+func gcpAllocationTotal(t *testing.T, tenant string, dim allocation.Dimension, label string) decimal.Decimal {
+	t.Helper()
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	daily, err := store.DailyCostsByAllocation(context.Background(), tenant, time.Time{}, time.Time{}, dim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := decimal.Zero
+	for _, day := range daily.Days {
+		for _, item := range day.Services {
+			if item.ServiceName == label {
+				total = total.Add(item.Cost)
+			}
+		}
+	}
+	return total
 }
 
 // TestOfflineE2EAICost is the hermetic, loopback-only end-to-end proof for

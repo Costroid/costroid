@@ -1,0 +1,577 @@
+{
+  "schema": {
+    "fields": [
+      {
+        "name": "AvailabilityZone",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BilledCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingAccountId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingCurrency",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingPeriodStart",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingPeriodEnd",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargeCategory",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargeClass",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargeDescription",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargePeriodStart",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ChargePeriodEnd",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ConsumedQuantity",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ConsumedUnit",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ContractedCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ContractedUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ListCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ListUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCategory",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingQuantity",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingUnit",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ProviderName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PublisherName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "RegionId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "RegionName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ResourceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ResourceName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "ServiceName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SkuId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SkuPriceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SubAccountId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "SubAccountName",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "EffectiveCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrency",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrencyContractedUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrencyEffectiveCost",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "PricingCurrencyListUnitPrice",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "BillingAccountType",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_CostType",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_Credits",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Id",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "FullName",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Type",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Name",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Amount",
+            "type": "NUMERIC",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_CurrencyConversionRate",
+        "type": "FLOAT",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_ExportTime",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_Labels",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_Location",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_Project",
+        "type": "RECORD",
+        "mode": "NULLABLE",
+        "fields": [
+          {
+            "name": "Id",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Number",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Name",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "AncestryNumbers",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Ancestors",
+            "type": "RECORD",
+            "mode": "REPEATED"
+          }
+        ]
+      },
+      {
+        "name": "x_ProjectLabels",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_ServiceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_SystemLabels",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_Tags",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {
+            "name": "Key",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "Value",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "x_Inherited",
+            "type": "BOOLEAN",
+            "mode": "NULLABLE"
+          },
+          {
+            "name": "x_Namespace",
+            "type": "STRING",
+            "mode": "NULLABLE"
+          }
+        ]
+      },
+      {
+        "name": "x_SubscriptionInstanceId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_PriceEffectivePriceDefault",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_PriceListPriceConsumptionModel",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_CostAtEffectivePriceDefault",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_CostAtListConsumptionModel",
+        "type": "NUMERIC",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_ConsumptionModelId",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "x_ConsumptionModelDescription",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      }
+    ]
+  },
+  "rows": [
+    {
+      "f": [
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "010101-F0FFF0-61C528"
+        },
+        {
+          "v": "USD"
+        },
+        {
+          "v": "1780272000000000"
+        },
+        {
+          "v": "1782864000000000"
+        },
+        {
+          "v": "Usage"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "BigQuery analysis"
+        },
+        {
+          "v": "1780272000000000"
+        },
+        {
+          "v": "1780275600000000"
+        },
+        {
+          "v": "100"
+        },
+        {
+          "v": "GiB"
+        },
+        {
+          "v": "4"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "5"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "Standard"
+        },
+        {
+          "v": "100"
+        },
+        {
+          "v": "GiB"
+        },
+        {
+          "v": "Google Cloud"
+        },
+        {
+          "v": "Google Cloud"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "//bigquery.googleapis.com/projects/demo/datasets/warehouse"
+        },
+        {
+          "v": "warehouse"
+        },
+        {
+          "v": "BigQuery"
+        },
+        {
+          "v": "sku-bq-1"
+        },
+        {
+          "v": "price-bq-1"
+        },
+        {
+          "v": "demo"
+        },
+        {
+          "v": "Demo"
+        },
+        {
+          "v": "4"
+        },
+        {
+          "v": "USD"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "regular"
+        },
+        {
+          "v": []
+        },
+        {
+          "v": null
+        },
+        {
+          "v": "1781697600000000"
+        },
+        {
+          "v": [
+            {
+              "v": {
+                "f": [
+                  {
+                    "v": "env"
+                  },
+                  {
+                    "v": "prod"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "v": "us"
+        },
+        {
+          "v": null
+        },
+        {
+          "v": []
+        },
+        {
+          "v": "24E6-581D-38E5"
+        },
+        {
+          "v": []
+        },
+        {
+          "v": []
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        },
+        {
+          "v": null
+        }
+      ]
+    }
+  ]
+}

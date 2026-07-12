@@ -35,6 +35,7 @@ import (
 	"github.com/Costroid/costroid/internal/ingest/awsfocuss3"
 	"github.com/Costroid/costroid/internal/ingest/azurefocus"
 	"github.com/Costroid/costroid/internal/ingest/focuscsv"
+	"github.com/Costroid/costroid/internal/ingest/gcpfocusbq"
 	"github.com/Costroid/costroid/internal/ingest/openaicost"
 	"github.com/Costroid/costroid/internal/storage"
 	"github.com/Costroid/costroid/internal/webdist"
@@ -94,6 +95,15 @@ commands:
                        root: the export's storage directory plus the export name; auth
                        via the ambient Azure credential chain only — no SAS, no keys;
                        the same --period/--force/skip semantics as aws-focus-s3)
+	  live GCP:    costroid ingest --connector gcp-focus-bq --dataset-project <p>
+	               --dataset <d> --table <t> --location <loc>
+	               [--job-project <p>] [--credential <slot>] [--since YYYY-MM]
+	               [--period YYYY-MM] [--tenant default] [--force]
+	               (Google's FOCUS BigQuery linked export is Preview. The service
+	               account comes from an explicit encrypted-vault slot, otherwise
+	               $GOOGLE_APPLICATION_CREDENTIALS, otherwise the default
+	               gcp-focus-bq vault slot. Runtime access should use the inferred
+	               minimal dataViewer + jobUser pair and be verified on first use.)
           AI vendors:  costroid ingest --connector anthropic-cost|openai-cost
                        [--credential <slot>] [--base-url <url>] [--since YYYY-MM]
                        [--period YYYY-MM] [--tenant default] [--force]
@@ -951,23 +961,29 @@ func authOptions(cfg serveSettings) []api.HandlerOption {
 
 func ingestCmd(args []string) error {
 	flags := flag.NewFlagSet("ingest", flag.ContinueOnError)
-	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost", "focus-csv")`)
+	connectorFlag := flags.String("connector", "", `connector name (available: "aws-focus", "aws-focus-s3", "azure-focus", "gcp-focus-bq", "anthropic-cost", "openai-cost", "focus-csv")`)
 	pathFlag := flags.String("path", "", "path to the export file to ingest (aws-focus, focus-csv)")
 	bucketFlag := flags.String("bucket", "", "S3 bucket holding the AWS Data Export (aws-focus-s3)")
 	accountURLFlag := flags.String("account-url", "", "Azure storage account blob endpoint, e.g. https://<account>.blob.core.windows.net/ (azure-focus)")
 	containerFlag := flags.String("container", "", "Azure blob container holding the Cost Management export (azure-focus)")
 	prefixFlag := flags.String("prefix", "", "export root prefix: the export's configured directory/prefix plus its name (aws-focus-s3, azure-focus)")
-	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus, anthropic-cost, openai-cost, focus-csv; default: all discovered)")
+	datasetProjectFlag := flags.String("dataset-project", "", "project containing the Google-managed FOCUS linked dataset (gcp-focus-bq)")
+	datasetFlag := flags.String("dataset", "", "Google-managed FOCUS linked dataset name (gcp-focus-bq)")
+	tableFlag := flags.String("table", "", "FOCUS export table name (gcp-focus-bq)")
+	locationFlag := flags.String("location", "", "BigQuery dataset/job location; required on every query call (gcp-focus-bq)")
+	jobProjectFlag := flags.String("job-project", "", "project that runs and is billed for BigQuery query jobs (gcp-focus-bq; default: dataset project)")
+	periodFlag := flags.String("period", "", "ingest only this billing period, e.g. 2026-06 (aws-focus-s3, azure-focus, gcp-focus-bq, anthropic-cost, openai-cost, focus-csv; default: all discovered)")
 	tenantFlag := flags.String("tenant", focus.DefaultTenant, "tenant identifier recorded on the ingested records")
-	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus; a documented no-op for anthropic-cost/openai-cost/focus-csv, which keep no sync state)")
+	forceFlag := flags.Bool("force", false, "re-process every period even when unchanged (aws-focus-s3, azure-focus, gcp-focus-bq; a documented no-op for anthropic-cost/openai-cost/focus-csv, which keep no sync state)")
 	focusVersionFlag := flags.String("focus-version", "", "declared FOCUS version of the export: 1.0, 1.0r2, 1.1, 1.2, 1.3, or 1.4 (focus-csv; REQUIRED, no sniffing; 1.0/1.1 accept spec-conformant exports only, 1.0r2 canonicalizes to 1.0)")
 	sourceLabelFlag := flags.String("source-label", "", "logical source label for the per-month batch identity (focus-csv; default: the file's base name)")
 	lenientFlag := flags.Bool("lenient", false, "focus-csv only, opt-in: tolerate UTC timestamp FORMAT variants "+
 		"(missing seconds, space separator, 'UTC' suffix); still rejects zone-less timestamps, literal null tokens, and non-RFC3339 numbers")
-	credentialFlag := flags.String("credential", "", "credential slot name holding the Admin API key (anthropic-cost, openai-cost; default: the connector name). "+
+	credentialFlag := flags.String("credential", "", "credential slot name (AI Admin API key, or gcp-focus-bq service-account JSON; default: the connector name). "+
 		"WARNING: an Anthropic Admin key is an unscopeable full-org-admin credential — the encrypted credential store carries the whole least-privilege burden (D32)")
-	baseURLFlag := flags.String("base-url", "", "API base URL (anthropic-cost, openai-cost; default: the vendor's production endpoint)")
-	sinceFlag := flags.String("since", "", "ingest calendar months from this one forward, YYYY-MM (anthropic-cost, openai-cost; default: the last 12 months)")
+	baseURLFlag := flags.String("base-url", "", "API base URL (anthropic-cost, openai-cost, gcp-focus-bq; default: the vendor's production endpoint; plain HTTP is loopback-only)")
+	tokenURLFlag := flags.String("token-url", "", "OAuth token endpoint (gcp-focus-bq; default: Google's production endpoint; plain HTTP is loopback-only)")
+	sinceFlag := flags.String("since", "", "ingest calendar months from this one forward, YYYY-MM (gcp-focus-bq, anthropic-cost, openai-cost; AI default: the last 12 months)")
 	keyFileFlag := flags.String("key-file", "", keyFileFlagUsage)
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return err
@@ -1079,6 +1095,72 @@ func ingestCmd(args []string) error {
 			return err
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
+	case gcpfocusbq.Name:
+		if *datasetProjectFlag == "" || *datasetFlag == "" || *tableFlag == "" || *locationFlag == "" {
+			return errors.New("--dataset-project, --dataset, --table, and --location are required for the gcp-focus-bq connector")
+		}
+		// The store opens before credential loading and discovery: tenant-aware
+		// SyncState drives the month skip, and a vault credential lives here.
+		store, err := storage.Open(ctx, dataDir())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+
+		baseURL := firstNonEmpty(*baseURLFlag, gcpfocusbq.DefaultBaseURL)
+		tokenURL := firstNonEmpty(*tokenURLFlag, gcpfocusbq.DefaultTokenURL)
+		credentialJSON, err := gcpServiceAccountJSON(ctx, store, *keyFileFlag, *credentialFlag)
+		if err != nil {
+			return err
+		}
+		client, err := gcpfocusbq.NewClient(aiHTTPClient(), baseURL, tokenURL, credentialJSON)
+		if err != nil {
+			return err
+		}
+		coords := gcpfocusbq.Coordinates{
+			DatasetProject: *datasetProjectFlag,
+			Dataset:        *datasetFlag,
+			Table:          *tableFlag,
+			Location:       *locationFlag,
+			JobProject:     *jobProjectFlag,
+			Since:          *sinceFlag,
+		}
+		prior := map[string]gcpfocusbq.ChangeState{}
+		if !*forceFlag {
+			states, err := store.SyncStates(ctx, gcpfocusbq.Name)
+			if err != nil {
+				return err
+			}
+			for id, st := range states {
+				if st.TenantID != *tenantFlag {
+					continue
+				}
+				prior[id] = gcpfocusbq.ChangeState{
+					Key:          st.ManifestKey,
+					Token:        st.ManifestETag,
+					LastModified: st.ManifestLastModified,
+					Size:         st.ManifestSize,
+				}
+			}
+		}
+		periods, err := gcpfocusbq.Discover(ctx, client, coords, prior)
+		if err != nil {
+			return err
+		}
+		probe := client.ProbeResult()
+		partitioning := "absent"
+		if probe.TimePartitioning {
+			partitioning = "present"
+		}
+		fmt.Printf("gcp-focus-bq table probe: timePartitioning=%s\n", partitioning)
+		if len(probe.AdditiveColumns) > 0 {
+			fmt.Fprintf(os.Stderr, "costroid: gcp-focus-bq Preview schema added column(s) not selected by this connector: %s\n", strings.Join(probe.AdditiveColumns, ", "))
+		}
+		jobs, err := gcpJobs(periods, *periodFlag)
+		if err != nil {
+			return err
+		}
+		return runIngest(ctx, store, jobs, *tenantFlag)
 	case anthropiccost.Name:
 		slot := firstNonEmpty(*credentialFlag, anthropiccost.Name)
 		baseURL := firstNonEmpty(*baseURLFlag, anthropiccost.DefaultBaseURL)
@@ -1160,9 +1242,9 @@ func ingestCmd(args []string) error {
 		}
 		return runIngest(ctx, store, jobs, *tenantFlag)
 	case "":
-		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost", "focus-csv")`)
+		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus", "gcp-focus-bq", "anthropic-cost", "openai-cost", "focus-csv")`)
 	default:
-		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3", "azure-focus", "anthropic-cost", "openai-cost", "focus-csv")`, *connectorFlag)
+		return fmt.Errorf(`unknown connector %q (available: "aws-focus", "aws-focus-s3", "azure-focus", "gcp-focus-bq", "anthropic-cost", "openai-cost", "focus-csv")`, *connectorFlag)
 	}
 }
 
@@ -1214,6 +1296,45 @@ func openVaultSecret(ctx context.Context, keyFileFlag, slot string) (credentials
 		return credentials.Secret{}, nil, err
 	}
 	return secret, store, nil
+}
+
+// gcpServiceAccountJSON applies the GCP credential precedence without ever
+// printing JSON: an explicit --credential slot wins; otherwise the
+// GOOGLE_APPLICATION_CREDENTIALS file-path leg wins; otherwise the default
+// gcp-focus-bq vault slot is required. Full ADC (well-known file, metadata
+// server, authorized_user, external_account) is deliberately out of scope.
+func gcpServiceAccountJSON(ctx context.Context, store *storage.DuckDB, keyFileFlag, explicitSlot string) ([]byte, error) {
+	if explicitSlot != "" {
+		secret, err := vaultSecret(ctx, store, keyFileFlag, explicitSlot)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(secret.Reveal()), nil
+	}
+	if file := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); file != "" {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("reading $GOOGLE_APPLICATION_CREDENTIALS file %s: %w", file, err)
+		}
+		return body, nil
+	}
+	secret, err := vaultSecret(ctx, store, keyFileFlag, gcpfocusbq.Name)
+	if err != nil {
+		return nil, fmt.Errorf("no $GOOGLE_APPLICATION_CREDENTIALS path and default vault credential unavailable: %w", err)
+	}
+	return []byte(secret.Reveal()), nil
+}
+
+func vaultSecret(ctx context.Context, store *storage.DuckDB, keyFileFlag, slot string) (credentials.Secret, error) {
+	keyPath, err := credentials.ResolveKeyPath(keyFileFlag)
+	if err != nil {
+		return credentials.Secret{}, err
+	}
+	vault, err := credentials.Open(keyPath, store)
+	if err != nil {
+		return credentials.Secret{}, err
+	}
+	return vault.Get(ctx, slot)
 }
 
 // ingestJob is one connector run; period labels multi-period output. A
@@ -1314,6 +1435,41 @@ func azureJobs(periods []azurefocus.Period, period string) ([]ingestJob, error) 
 	if len(jobs) == 0 {
 		return nil, fmt.Errorf("billing period %s not found in the export (discovered: %s)",
 			period, strings.Join(available, ", "))
+	}
+	return jobs, nil
+}
+
+// gcpJobs maps discovered BigQuery invoice months to the existing ingest-job
+// and four-field SyncState surfaces.
+func gcpJobs(periods []gcpfocusbq.Period, period string) ([]ingestJob, error) {
+	var jobs []ingestJob
+	var available []string
+	for _, p := range periods {
+		available = append(available, p.Billing)
+		if period != "" && p.Billing != period {
+			continue
+		}
+		job := ingestJob{period: p.Billing}
+		switch {
+		case p.Err != nil:
+			job.discoveryErr = p.Err
+		case p.Skipped():
+			job.skippedSince = p.State.LastModified
+		default:
+			job.conn = p.Conn
+			job.sync = &storage.SyncState{
+				Connector:            p.Conn.Name(),
+				SourceIdentity:       p.Conn.SourceIdentity(),
+				ManifestKey:          p.State.Key,
+				ManifestETag:         p.State.Token,
+				ManifestLastModified: p.State.LastModified,
+				ManifestSize:         p.State.Size,
+			}
+		}
+		jobs = append(jobs, job)
+	}
+	if len(jobs) == 0 {
+		return nil, fmt.Errorf("billing period %s not found in the export (discovered: %s)", period, strings.Join(available, ", "))
 	}
 	return jobs, nil
 }
