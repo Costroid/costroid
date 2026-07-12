@@ -2,7 +2,7 @@
 
 **Open-source, self-hostable, [FOCUS](https://focus.finops.org/)-native cost platform (FinOps).**
 
-Costroid ingests cost & usage data from cloud providers, SaaS services, and AI/LLM sources, normalizes everything into a single **FOCUS-conformant** data model, and provides cost allocation, unit economics, invoice reconciliation, a dashboard, and an optional natural-language (agentic) query layer. It is designed to run **entirely on your own infrastructure** — no data leaves your environment.
+Costroid ingests cost & usage data from cloud providers (AWS, Azure), AI/LLM vendors (OpenAI, Anthropic), and any generic FOCUS or CSV export, normalizes everything into a single **FOCUS-conformant** data model, and gives you cost allocation, unit economics, anomaly detection, and a dashboard. It runs **entirely on your own infrastructure** — no data leaves your environment. (A natural-language / agentic query layer is planned, not yet shipped.)
 
 > **FOCUS** = FinOps Open Cost and Usage Specification, an open standard from the FinOps Foundation for representing cloud/SaaS/AI cost & usage in one schema.
 
@@ -10,15 +10,19 @@ Costroid ingests cost & usage data from cloud providers, SaaS services, and AI/L
 
 ## Status
 
-🚧 **Early / greenfield.** Actively being built from scratch in Go + TypeScript. Not yet usable. APIs, schema, and layout will change.
+**v0.1.0 is released and self-hostable today.** Download a prebuilt binary and run `costroid demo` for an instant dashboard, or point it at your own billing data. Costroid is still **pre-1.0**, so its APIs, schema, and dashboard layout may still change between releases.
 
-Current focus: the first vertical slice — **AWS FOCUS export → normalized store → one dashboard view.**
+What ships in v0.1.0:
+
+- **Six ingest connectors** — AWS FOCUS (local file, and live from S3 with incremental sync), Azure Cost Management FOCUS (live from Blob Storage, incremental), OpenAI and Anthropic cost & usage, and a generic FOCUS/CSV importer.
+- **A four-view dashboard** over the embedded store, with **cost allocation** (query-time rules), **unit economics** (cost per business metric), and **automatic anomaly detection**.
+- **Signed releases** — keyless-signed checksums, GitHub build-provenance attestations, and a CycloneDX 1.6 source SBOM (see [`SECURITY.md`](./SECURITY.md)).
 
 ---
 
 ## Why
 
-Cloud, SaaS, and especially AI/token spend are exploding and fragmented across providers, each with its own billing format. Existing platforms are mostly closed SaaS that require exporting sensitive billing data to a third party, and the open-source options are narrow (e.g. Kubernetes-only). Costroid's goals:
+Cloud, SaaS, and especially AI/token spend are exploding and fragmented across providers, each with its own billing format. Existing platforms are mostly closed SaaS that require exporting sensitive billing data to a third party, and the open-source options are each narrowly scoped — cloud-, MLOps-, or Kubernetes-focused — with none unifying cloud + SaaS + AI in one FOCUS schema. Costroid's goals:
 
 - **One schema for everything** — cloud + SaaS + AI/token spend, all normalized to FOCUS.
 - **Self-hostable / data-sovereign** — runs on your own infrastructure with no mandatory external calls.
@@ -28,19 +32,19 @@ Cloud, SaaS, and especially AI/token spend are exploding and fragmented across p
 
 ## Architecture (high level)
 
-Costroid is a **Go** backend (single static binary) plus a **TypeScript** dashboard and an optional agent service.
+Costroid is a **Go** backend (single static binary) with the **TypeScript** dashboard embedded in it.
 
 ```
 Sources ──▶ Ingestion ──▶ FOCUS engine ──▶ Storage ──▶ API ──▶ Dashboard (web)
-(cloud/     (per-source   (normalize +     (DuckDB       │        Agent / MCP (optional)
+(cloud/     (per-source   (normalize +     (DuckDB       │
  SaaS/AI)    connectors)   validate)        default)      │
-                                                          └──▶ allocation · pricing · reconciliation
+                                                          └──▶ allocation · unit economics · anomaly detection
 ```
 
-- **Backend (Go):** ingestion, FOCUS engine (schema + version-aware transforms + validation), storage, allocation, pricing/Price Sheet, invoice reconciliation, API.
-- **Frontend (TypeScript/React):** dashboard consuming the API.
-- **Agent (TypeScript, optional):** natural-language querying over the API via MCP.
-- **Storage:** DuckDB + Parquet embedded by default (zero-ops, local); ClickHouse optional for scale-out.
+- **Backend (Go):** ingestion, FOCUS engine (schema + version-aware transforms + validation), storage, allocation, unit economics, anomaly detection, and the API. Ships as a single self-contained binary.
+- **Frontend (TypeScript/React):** the four-view dashboard, embedded in the binary and consuming the API.
+- **Storage:** DuckDB + Parquet embedded by default (zero-ops, local). A ClickHouse scale-out backend behind the storage interface is planned.
+- **Agent (planned):** an optional natural-language / MCP query layer over the API — not yet shipped.
 
 For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./AGENTS.md)** — it is the source of truth for anyone (human or agent) working in this repo.
 
@@ -48,7 +52,54 @@ For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./
 
 ## Getting started
 
-> 🚧 **Early slices** — the repo builds and runs end to end: ingest an AWS FOCUS 1.2 export (local file, or live from S3 with incremental sync) or an Azure Cost Management FOCUS 1.2-preview export (live from Blob Storage) into the embedded DuckDB store and view daily cost by service in the dashboard. Everything else is still to come.
+### Fastest path — run the demo (about 5 minutes)
+
+1. **Download the binary** for your platform from [GitHub Releases](https://github.com/Costroid/costroid/releases), make it executable (`chmod +x costroid`), and put it on your `PATH` (or run it as `./costroid`). *Optional but recommended:* verify the release before running it — the checksums are keyless-signed and each artifact carries a GitHub build-provenance attestation; the steps are in [`SECURITY.md`](./SECURITY.md).
+
+2. **Run the demo** — an instant, synthetic, read-only dashboard with no data setup:
+
+   ```bash
+   costroid demo
+   ```
+
+   Then open <http://localhost:8080>. The demo seeds an isolated synthetic store and serves the real dashboard read-only; it never reads your data directory, credential store, or connectors.
+
+### Then: your own data
+
+Start the server for local single-user use, then ingest a billing export:
+
+```bash
+# Local, single-user: loopback bind with authentication explicitly disabled, so a
+# browser can reach the API (a browser can't send a bearer token). For a
+# network-exposed deployment, do NOT use --no-auth — set --auth-token-file or
+# --auth-trusted-header instead; see docs/security.md.
+costroid serve --no-auth
+```
+
+Open <http://localhost:8080>. `serve` binds `127.0.0.1:8080` by default and refuses to start until you choose an authentication mode (`--no-auth` is the explicit opt-out above). To load data, stop the server (the embedded store allows a single process at a time) and ingest a FOCUS export:
+
+```bash
+# a local AWS FOCUS export file
+costroid ingest --connector aws-focus --path <your-focus-export.csv.gz>
+
+# live from S3 (ambient AWS credential chain; incremental sync)
+costroid ingest --connector aws-focus-s3 --bucket <bucket> --prefix <prefix>/<export-name>
+
+# live from Azure Blob Storage (ambient Azure credential chain; incremental sync)
+costroid ingest --connector azure-focus --account-url https://<account>.blob.core.windows.net/ \
+  --container <container> --prefix <directory>/<export-name>
+
+# any generic FOCUS or CSV export (declare its FOCUS version — no sniffing)
+costroid ingest --connector focus-csv --path <export.csv> --focus-version 1.2
+```
+
+The six connectors are `aws-focus`, `aws-focus-s3`, `azure-focus`, `anthropic-cost`, `openai-cost`, and `focus-csv`; run `costroid ingest -h` for the full flag reference. For the AI vendors, first store the Admin API key in the encrypted credential store (`costroid credentials set <slot>`), then `costroid ingest --connector openai-cost` (or `anthropic-cost`). Manage stored provider credentials with the `costroid credentials` subcommands (`init`, `set`, `list`, `delete`).
+
+**Cost allocation, unit economics, and anomaly detection** are available in the dashboard and the API — allocation rules are applied at query time (validate a rules file with `costroid allocation validate`), and business metrics for unit economics are loaded with `costroid metrics import`.
+
+> **On Google Cloud?** Enable Google's [FOCUS billing export](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-focus-setup) (Preview) **now**, even though a native GCP connector is still on the roadmap: the export only backfills to the start of the previous month and its table keeps two years of history, so every month it stays off is billing history no tool can ever recover.
+
+### Build from source (developers)
 
 **Prerequisites:** Go (latest stable), Node (LTS) + pnpm, DuckDB. Developed on WSL2 Ubuntu.
 
@@ -56,34 +107,30 @@ For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./
 git clone https://github.com/Costroid/costroid.git
 cd costroid
 pnpm install
+make build          # builds the dashboard + single binary at bin/costroid
 ```
 
-Top-level commands (see [`AGENTS.md`](./AGENTS.md) → *Working here*):
+Other top-level commands (see [`AGENTS.md`](./AGENTS.md) → *Working here*):
 
 - `make dev` — run the Go API + Vite dev server together
 - `make test` — run all tests (Go + TS)
-- `make build` — build the dashboard + single binary at `bin/costroid`
 - `make lint` — linters + format checks (Go + TS)
 - `make fmt` — apply formatters
 - `make generate` — regenerate Go/TS code from `contracts/openapi.yaml`
 
-After `make build`, run `./bin/costroid serve` and open <http://localhost:8080>. To load data, stop the server (the embedded store allows a single process at a time) and ingest a FOCUS export:
+Then run `./bin/costroid demo` or `./bin/costroid serve --no-auth` as above. A synthetic sample export lives at `testdata/aws-focus-1.2/sample-export.csv.gz`. Available environment variables are documented in `.env.example` (`.env` is git-ignored).
 
-```bash
-# a local AWS FOCUS 1.2 export file
-./bin/costroid ingest --connector aws-focus --path <your-focus-export.csv.gz>
+---
 
-# live from S3 (ambient AWS credential chain; incremental sync)
-./bin/costroid ingest --connector aws-focus-s3 --bucket <bucket> --prefix <prefix>/<export-name>
+## Security & data sovereignty
 
-# live from Azure Blob Storage (ambient Azure credential chain; incremental sync)
-./bin/costroid ingest --connector azure-focus --account-url https://<account>.blob.core.windows.net/ \
-  --container <container> --prefix <directory>/<export-name>
-```
+Costroid is built to keep your billing data yours (see [`SECURITY.md`](./SECURITY.md) and [`docs/security.md`](docs/security.md)):
 
-Run `./bin/costroid ingest -h` for the full flag reference. A synthetic sample lives at `testdata/aws-focus-1.2/sample-export.csv.gz`. Available environment variables are documented in `.env.example` (`.env` is git-ignored).
-
-> **On Google Cloud?** Enable Google's [FOCUS billing export](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-focus-setup) (Preview) **now**, even though Costroid's GCP connector is still upcoming: the export only backfills to the start of the previous month and its table keeps two years of history, so every month it stays off is billing history no tool can ever recover.
+- **Self-hosted** — runs entirely on your infrastructure; `serve` binds loopback by default and refuses to start until you choose an authentication mode.
+- **Content-blind** — records cost & usage counts and categorical dimensions only, never your AI prompt or response content.
+- **Least-privilege credentials** — stored provider credentials are AES-256-GCM encrypted at rest, entered via stdin, and never logged.
+- **Signed releases** — keyless-signed checksums, GitHub build-provenance attestations, and a CycloneDX 1.6 source SBOM.
+- **Exact money** — costs are stored and computed as exact decimals, never floating point.
 
 ---
 
