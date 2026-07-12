@@ -11,11 +11,13 @@ import DailyTokens from "./DailyTokens";
 import {
   BrandIcon,
   CostsIcon,
+  OverviewIcon,
   TokensIcon,
   UnitEconomicsIcon,
   UsageIcon,
   WarningIcon,
 } from "./icons";
+import Overview from "./Overview";
 import type { Range } from "./range";
 import UsageMetrics from "./UsageMetrics";
 import UnitEconomics from "./UnitEconomics";
@@ -27,9 +29,10 @@ type MetaState =
   | { status: "error"; message: string }
   | { status: "ready"; meta: Meta };
 
-type View = "costs" | "tokens" | "usage" | "unit-economics";
+type View = "overview" | "costs" | "tokens" | "usage" | "unit-economics";
 
 const VIEWS = [
+  { id: "overview", label: "Overview", icon: OverviewIcon },
   { id: "costs", label: "Costs", icon: CostsIcon },
   { id: "tokens", label: "Tokens", icon: TokensIcon },
   { id: "usage", label: "Usage", icon: UsageIcon },
@@ -177,6 +180,7 @@ export default function App() {
         </nav>
       </div>
       <div className="view-panel">
+        {view === "overview" && <Overview range={range} />}
         {view === "costs" && <DailyCosts range={range} />}
         {view === "tokens" && <DailyTokens range={range} />}
         {view === "usage" && <UsageMetrics range={range} />}

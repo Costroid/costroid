@@ -131,6 +131,9 @@ func run(outDir string) error {
 			if err := capture(fmt.Sprintf("costs.%s.%s", p.id, gb), "/api/v1/costs/daily"+rq+gbq); err != nil {
 				return err
 			}
+			if err := capture(fmt.Sprintf("costs-summary.%s.%s", p.id, gb), "/api/v1/costs/summary"+rq+gbq); err != nil {
+				return err
+			}
 			if err := capture(fmt.Sprintf("anomalies.%s.%s", p.id, gb), "/api/v1/anomalies"+rq+gbq); err != nil {
 				return err
 			}

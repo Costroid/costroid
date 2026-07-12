@@ -219,7 +219,7 @@ summary:focus-visible {
 
 .view-nav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-1);
   padding: var(--space-1);
   border-radius: var(--radius-md);
@@ -687,7 +687,13 @@ thead th {
   }
 
   .view-nav {
+    /* Five views on a 2-column grid: the 5th (Unit economics) spans full
+       width so the odd cell is intentional and legible at 375px. */
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .view-nav button:last-child {
+    grid-column: 1 / -1;
   }
 
   .view-nav button {
@@ -715,6 +721,117 @@ thead th {
   .chart-tooltip {
     display: none;
   }
+}
+
+/* Overview executive landing */
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.overview-summary-block {
+  grid-column: 1 / -1;
+}
+
+.overview-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  min-width: 0;
+}
+
+.overview-card-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink-secondary);
+  letter-spacing: 0.01em;
+}
+
+.overview-muted {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.overview-split-bar {
+  display: flex;
+  width: 100%;
+  height: 0.75rem;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.overview-split-segment {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+
+.overview-key-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.overview-key-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.overview-key-name {
+  /* Keep the provider label readable even when an 18-digit total is long. */
+  flex: 1 1 7rem;
+  min-width: 7rem;
+  overflow-wrap: break-word;
+  color: var(--ink);
+}
+
+.overview-key-total,
+.overview-key-delta {
+  flex: 0 1 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+  /* Long exact decimals may wrap; never steal the name column to zero width. */
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.overview-key-delta {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.overview-sparkline {
+  width: 100%;
+  max-width: 14rem;
+  height: 2.5rem;
+}
+
+.overview-sparkline-path {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.stat-value {
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {

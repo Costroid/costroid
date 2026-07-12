@@ -123,6 +123,95 @@ export function sumIntegerStrings(quantities: string[]): string | null {
  * a cap never clips the viewBox edge. ~6.2px/char matches the 11px
  * tabular-nums `.viz-cap` glyph advance.
  */
+/**
+ * Sign-aware absolute magnitude compare for decimal STRINGS — positions /
+ * ordering only. Never computes a numeric value (D23 untouched). Strips an
+ * optional leading sign, compares integer-digit counts, then aligned
+ * lexicographic bodies so near-equal 18-digit magnitudes that Number() would
+ * misorder still rank correctly. Equal magnitudes return 0 (stable sort ok).
+ */
+export function compareDecimalMagnitude(a: string, b: string): number {
+  const body = (s: string): string => {
+    const t = s.trim();
+    if (t.startsWith("-") || t.startsWith("+")) {
+      return t.slice(1);
+    }
+    return t;
+  };
+  const ba = body(a);
+  const bb = body(b);
+  const intDigits = (s: string): number => {
+    const dot = s.indexOf(".");
+    return dot < 0 ? s.length : dot;
+  };
+  const ia = intDigits(ba);
+  const ib = intDigits(bb);
+  if (ia !== ib) {
+    return ia - ib;
+  }
+  // Align fractional lengths so lexicographic compare is magnitude-correct.
+  const fa = ba.includes(".") ? ba.length - ba.indexOf(".") - 1 : 0;
+  const fb = bb.includes(".") ? bb.length - bb.indexOf(".") - 1 : 0;
+  const pad = Math.max(fa, fb);
+  const norm = (s: string, frac: number): string => {
+    if (!s.includes(".")) {
+      return s + (pad > 0 ? "." + "0".repeat(pad) : "");
+    }
+    return s + "0".repeat(pad - frac);
+  };
+  const na = norm(ba, fa);
+  const nb = norm(bb, fb);
+  if (na < nb) return -1;
+  if (na > nb) return 1;
+  return 0;
+}
+
+/**
+ * Sparkline polyline points for a series of numeric y-values (positions only).
+ * Null entries are uncovered days: they open a gap (no interpolation across
+ * the null). Returns an array of contiguous path segments, each a list of
+ * {x,y} points in the given width×height box (y grows downward).
+ */
+export function sparklinePoints(
+  values: (number | null)[],
+  width: number,
+  height: number,
+): { x: number; y: number }[][] {
+  if (values.length === 0) {
+    return [];
+  }
+  const nums = values.filter(
+    (v): v is number => v !== null && Number.isFinite(v),
+  );
+  if (nums.length === 0) {
+    return [];
+  }
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  const span = max - min || 1;
+  const n = values.length;
+  const xOf = (i: number) => (n === 1 ? width / 2 : (i / (n - 1)) * width);
+  const yOf = (v: number) => height - ((v - min) / span) * height;
+
+  const segments: { x: number; y: number }[][] = [];
+  let current: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    if (v === null || !Number.isFinite(v)) {
+      if (current.length > 0) {
+        segments.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push({ x: xOf(i), y: yOf(v) });
+  }
+  if (current.length > 0) {
+    segments.push(current);
+  }
+  return segments;
+}
+
 export function capLabelPositions(
   totals: (string | null)[],
 ): (number | null)[] {

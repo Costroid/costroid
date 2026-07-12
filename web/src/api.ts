@@ -14,6 +14,7 @@ import { rangeQuery } from "./range";
 
 type Meta = components["schemas"]["Meta"];
 type DailyCosts = components["schemas"]["DailyCosts"];
+type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomalies = components["schemas"]["Anomalies"];
 type DailyTokenUsage = components["schemas"]["DailyTokenUsage"];
 type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
@@ -57,6 +58,23 @@ export async function getCostsDaily(
     );
   }
   return (await res.json()) as DailyCosts;
+}
+
+export async function getCostsSummary(
+  params: RangeParams & { groupBy: CostGroupBy },
+  signal?: AbortSignal,
+): Promise<CostsSummary> {
+  const q = rangeQuery(params.start, params.end);
+  const url =
+    `/api/v1/costs/summary${q}` +
+    (params.groupBy !== "service"
+      ? `${q ? "&" : "?"}groupBy=${params.groupBy}`
+      : "");
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    throw new Error(`GET /api/v1/costs/summary returned ${res.status}`);
+  }
+  return (await res.json()) as CostsSummary;
 }
 
 export async function getAnomalies(

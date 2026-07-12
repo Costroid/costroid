@@ -15,6 +15,7 @@ import { DEMO_PRESETS, type DemoPresetId } from "./demo/ranges";
 
 type Meta = components["schemas"]["Meta"];
 type DailyCosts = components["schemas"]["DailyCosts"];
+type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomalies = components["schemas"]["Anomalies"];
 type DailyTokenUsage = components["schemas"]["DailyTokenUsage"];
 type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
@@ -59,6 +60,16 @@ export function getCostsDaily(
   const preset = presetOf(params.start, params.end);
   return Promise.resolve(
     fixture<DailyCosts>(`costs.${preset}.${params.groupBy}`),
+  );
+}
+
+export function getCostsSummary(
+  params: RangeParams & { groupBy: CostGroupBy },
+  _signal?: AbortSignal,
+): Promise<CostsSummary> {
+  const preset = presetOf(params.start, params.end);
+  return Promise.resolve(
+    fixture<CostsSummary>(`costs-summary.${preset}.${params.groupBy}`),
   );
 }
 

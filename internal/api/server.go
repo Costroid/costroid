@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/shopspring/decimal"
 
 	"github.com/Costroid/costroid/internal/allocation"
@@ -142,6 +144,151 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 	}
 	resp.Total = grandTotal.String()
 	writeJSON(w, resp)
+}
+
+// GetCostsSummary implements GET /api/v1/costs/summary. Reuses the daily-cost
+// store methods (two window queries) and the grand-total decimal loop — no new
+// store method. Money is always shopspring/decimal strings; never float64.
+func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params GetCostsSummaryParams) {
+	var start, end time.Time // zero = unbounded
+	if params.Start != nil {
+		start = params.Start.Time
+	}
+	if params.End != nil {
+		end = params.End.Time
+	}
+	if params.GroupBy != nil && !params.GroupBy.Valid() {
+		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
+		return
+	}
+
+	current, err := s.queryDailyCosts(r.Context(), w, start, end, params.GroupBy)
+	if err != nil {
+		// queryDailyCosts already wrote the response on allocation errors;
+		// store errors still need a 500.
+		if !allocationErrorWritten(err) {
+			http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	curTotals, curGrand, curCurrency := periodKeyTotals(current)
+	resp := CostsSummary{
+		Currency: curCurrency,
+		Total:    curGrand.String(),
+		Keys:     make([]CostSummaryKey, 0, len(curTotals)),
+	}
+
+	// Preceding window is only defined for a fully bounded current range.
+	prevDefined := !start.IsZero() && !end.IsZero()
+	var prevTotals map[string]decimal.Decimal
+	var prevGrand decimal.Decimal
+	var prevCurrency string
+	var prevStart, prevEnd time.Time
+	if prevDefined {
+		// prevEnd = start − 1 day; prevStart = prevEnd − (end − start).
+		prevEnd = start.AddDate(0, 0, -1)
+		prevStart = prevEnd.Add(-end.Sub(start))
+		previous, err := s.queryDailyCosts(r.Context(), w, prevStart, prevEnd, params.GroupBy)
+		if err != nil {
+			if !allocationErrorWritten(err) {
+				http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		prevTotals, prevGrand, prevCurrency = periodKeyTotals(previous)
+		// Undefined when previous has zero rows OR currency differs across windows.
+		// (Empty previous: never emit previousTotal "0".)
+		hasPrevRows := len(previous.Days) > 0
+		currencyOK := hasPrevRows && prevCurrency == curCurrency
+		if !hasPrevRows || !currencyOK {
+			prevDefined = false
+		}
+	}
+
+	// Stable key order: total desc, key asc.
+	type keyTotal struct {
+		key   string
+		total decimal.Decimal
+	}
+	ordered := make([]keyTotal, 0, len(curTotals))
+	for k, t := range curTotals {
+		ordered = append(ordered, keyTotal{key: k, total: t})
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if !ordered[i].total.Equal(ordered[j].total) {
+			return ordered[i].total.GreaterThan(ordered[j].total)
+		}
+		return ordered[i].key < ordered[j].key
+	})
+
+	for _, kt := range ordered {
+		entry := CostSummaryKey{Key: kt.key, Total: kt.total.String()}
+		if prevDefined {
+			prev, ok := prevTotals[kt.key]
+			if ok {
+				s := prev.String()
+				entry.PreviousTotal = &s
+			} else {
+				prev = decimal.Zero
+			}
+			delta := kt.total.Sub(prev).String()
+			entry.Delta = &delta
+		}
+		resp.Keys = append(resp.Keys, entry)
+	}
+
+	if prevDefined {
+		s := prevGrand.String()
+		resp.PreviousTotal = &s
+		ps := openapi_types.Date{Time: prevStart}
+		pe := openapi_types.Date{Time: prevEnd}
+		resp.PreviousStart = &ps
+		resp.PreviousEnd = &pe
+	}
+
+	writeJSON(w, resp)
+}
+
+// errAllocationResponseWritten is a sentinel for queryDailyCosts when it already
+// wrote a 400/500 allocation error response (so the caller must not write again).
+var errAllocationResponseWritten = errors.New("allocation error response written")
+
+func allocationErrorWritten(err error) bool {
+	return errors.Is(err, errAllocationResponseWritten)
+}
+
+// queryDailyCosts runs the same store path as GetDailyCosts for one window.
+// On allocation load failure it writes the response and returns
+// errAllocationResponseWritten. On store failure it returns the store error
+// without writing (caller writes 500).
+func (s *Server) queryDailyCosts(ctx context.Context, w http.ResponseWriter, start, end time.Time, groupBy *GetCostsSummaryParamsGroupBy) (storage.DailyCosts, error) {
+	if groupBy != nil && *groupBy == Allocation {
+		dim, ok := s.loadAllocationDimension(w)
+		if !ok {
+			return storage.DailyCosts{}, errAllocationResponseWritten
+		}
+		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim)
+	}
+	gb := storage.GroupByService
+	if groupBy != nil && *groupBy == Provider {
+		gb = storage.GroupByProvider
+	}
+	return s.store.DailyCostsByService(ctx, focus.DefaultTenant, start, end, gb)
+}
+
+// periodKeyTotals sums per-key period totals and the grand total with exact
+// decimal arithmetic (same loop pattern as GetDailyCosts).
+func periodKeyTotals(daily storage.DailyCosts) (map[string]decimal.Decimal, decimal.Decimal, string) {
+	totals := make(map[string]decimal.Decimal)
+	grand := decimal.Zero
+	for _, day := range daily.Days {
+		for _, svc := range day.Services {
+			totals[svc.ServiceName] = totals[svc.ServiceName].Add(svc.Cost)
+			grand = grand.Add(svc.Cost)
+		}
+	}
+	return totals, grand, daily.Currency
 }
 
 // loadAllocationDimension reads, parses, and validates the configured

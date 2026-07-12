@@ -6,10 +6,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -36,6 +39,14 @@ type fakeStore struct {
 	gotEnd     time.Time
 	gotGroupBy storage.CostGroupBy
 	queryCount int
+
+	// dailyFn, when set, overrides daily/dailyErr for both service and
+	// allocation queries so multi-window handlers can return different data
+	// per [start,end].
+	dailyFn func(tenant string, start, end time.Time, groupBy storage.CostGroupBy) (storage.DailyCosts, error)
+
+	// queryLog records every DailyCostsByService/Allocation call (start/end).
+	queryLog []struct{ start, end time.Time }
 
 	// token-usage query recording, kept separate from the cost fields.
 	tokens          []storage.DailyTokenUsage
@@ -73,6 +84,10 @@ func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, sta
 	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
 	f.gotDimension = dim
 	f.allocQueryCount++
+	f.queryLog = append(f.queryLog, struct{ start, end time.Time }{start, end})
+	if f.dailyFn != nil {
+		return f.dailyFn(tenant, start, end, storage.GroupByService)
+	}
 	return f.daily, f.dailyErr
 }
 
@@ -83,6 +98,14 @@ func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start,
 		f.gotGroupBy = groupBy[0]
 	}
 	f.queryCount++
+	f.queryLog = append(f.queryLog, struct{ start, end time.Time }{start, end})
+	if f.dailyFn != nil {
+		gb := groupByUnset
+		if len(groupBy) > 0 {
+			gb = groupBy[0]
+		}
+		return f.dailyFn(tenant, start, end, gb)
+	}
 	return f.daily, f.dailyErr
 }
 
@@ -826,6 +849,380 @@ func TestGetDailyCostsAllocationErrors(t *testing.T) {
 		}
 		if store.allocQueryCount != 0 {
 			t.Error("store queried despite the invalid-file 500")
+		}
+	})
+}
+
+// dayCosts builds a single-day DailyCosts with the given key→cost map and currency.
+func dayCosts(t *testing.T, date string, currency string, keys map[string]string) storage.DailyCosts {
+	t.Helper()
+	d, err := time.Parse(time.DateOnly, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svcs := make([]storage.ServiceCost, 0, len(keys))
+	// Stable order for readability (handler re-aggregates anyway).
+	names := make([]string, 0, len(keys))
+	for k := range keys {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, k := range names {
+		svcs = append(svcs, storage.ServiceCost{ServiceName: k, Cost: dec(t, keys[k])})
+	}
+	return storage.DailyCosts{
+		Currency: currency,
+		Days:     []storage.DayCosts{{Date: d, Services: svcs}},
+	}
+}
+
+// mergeDays concatenates DailyCosts windows (same currency required by caller).
+func mergeDays(currency string, parts ...storage.DailyCosts) storage.DailyCosts {
+	out := storage.DailyCosts{Currency: currency}
+	for _, p := range parts {
+		out.Days = append(out.Days, p.Days...)
+	}
+	return out
+}
+
+func TestGetCostsSummaryKeyTotalsSumToTotal(t *testing.T) {
+	// 18-fractional-digit seed: keys must sum EXACTLY to total via decimal strings.
+	store := &fakeStore{daily: mergeDays("USD",
+		dayCosts(t, "2026-05-01", "USD", map[string]string{
+			"Compute": "1.123456789012345678",
+			"Storage": "2.876543210987654322",
+		}),
+		dayCosts(t, "2026-05-02", "USD", map[string]string{
+			"Compute": "0.000000000000000001",
+			"Network": "4",
+		}),
+	)}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary?start=2026-05-01&end=2026-05-02", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s", rec.Code, rec.Body)
+	}
+	var got CostsSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	sum := decimal.Zero
+	for _, k := range got.Keys {
+		sum = sum.Add(dec(t, k.Total))
+	}
+	if sum.String() != got.Total {
+		t.Fatalf("keys sum %s != total %s", sum.String(), got.Total)
+	}
+	// Exact expected grand total.
+	want := dec(t, "1.123456789012345678").
+		Add(dec(t, "2.876543210987654322")).
+		Add(dec(t, "0.000000000000000001")).
+		Add(dec(t, "4"))
+	if got.Total != want.String() {
+		t.Fatalf("total = %q, want %q", got.Total, want.String())
+	}
+}
+
+func TestGetCostsSummaryTotalEqualsDaily(t *testing.T) {
+	store := &fakeStore{daily: dayCosts(t, "2026-05-01", "USD", map[string]string{
+		"A": "10.123456789012345678",
+		"B": "0.000000000000000001",
+	})}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+
+	recSum := httptest.NewRecorder()
+	handler.ServeHTTP(recSum, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary?start=2026-05-01&end=2026-05-01", nil))
+	recDaily := httptest.NewRecorder()
+	handler.ServeHTTP(recDaily, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?start=2026-05-01&end=2026-05-01", nil))
+	if recSum.Code != 200 || recDaily.Code != 200 {
+		t.Fatalf("statuses summary=%d daily=%d", recSum.Code, recDaily.Code)
+	}
+	var sum CostsSummary
+	var daily DailyCosts
+	_ = json.Unmarshal(recSum.Body.Bytes(), &sum)
+	_ = json.Unmarshal(recDaily.Body.Bytes(), &daily)
+	if sum.Total != daily.Total {
+		t.Fatalf("summary total %q != daily total %q", sum.Total, daily.Total)
+	}
+}
+
+func TestGetCostsSummaryPrecedingWindowArithmetic(t *testing.T) {
+	// Pin month-boundary case: start=2026-03-01, end=2026-03-31
+	// duration = 30 days; prevEnd = 2026-02-28; prevStart = 2026-01-29.
+	curStart := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	curEnd := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
+	wantPrevEnd := time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+	wantPrevStart := time.Date(2026, 1, 29, 0, 0, 0, 0, time.UTC)
+
+	store := &fakeStore{
+		dailyFn: func(_ string, start, end time.Time, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if start.Equal(curStart) && end.Equal(curEnd) {
+				return dayCosts(t, "2026-03-15", "USD", map[string]string{"A": "100"}), nil
+			}
+			if start.Equal(wantPrevStart) && end.Equal(wantPrevEnd) {
+				return dayCosts(t, "2026-02-01", "USD", map[string]string{"A": "40"}), nil
+			}
+			return storage.DailyCosts{}, fmt.Errorf("unexpected range [%s,%s]", start, end)
+		},
+	}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary?start=2026-03-01&end=2026-03-31", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got CostsSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.PreviousTotal == nil || *got.PreviousTotal != "40" {
+		t.Fatalf("previousTotal = %v, want 40", got.PreviousTotal)
+	}
+	if got.PreviousStart == nil || got.PreviousStart.Format(time.DateOnly) != "2026-01-29" {
+		t.Fatalf("previousStart = %v, want 2026-01-29", got.PreviousStart)
+	}
+	if got.PreviousEnd == nil || got.PreviousEnd.Format(time.DateOnly) != "2026-02-28" {
+		t.Fatalf("previousEnd = %v, want 2026-02-28", got.PreviousEnd)
+	}
+	// Also pin the query log ranges.
+	if len(store.queryLog) != 2 {
+		t.Fatalf("query count = %d, want 2", len(store.queryLog))
+	}
+	if !store.queryLog[1].start.Equal(wantPrevStart) || !store.queryLog[1].end.Equal(wantPrevEnd) {
+		t.Fatalf("prev query = [%s,%s], want [%s,%s]",
+			store.queryLog[1].start, store.queryLog[1].end, wantPrevStart, wantPrevEnd)
+	}
+}
+
+func TestGetCostsSummaryUnboundedOmitsPrevious(t *testing.T) {
+	store := &fakeStore{daily: dayCosts(t, "2026-05-01", "USD", map[string]string{"A": "1"})}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	// Unbounded: no start/end → previous fields ABSENT.
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"previousTotal", "previousStart", "previousEnd"} {
+		if _, ok := raw[key]; ok {
+			t.Errorf("unbounded response has %s = %v; want field ABSENT", key, raw[key])
+		}
+	}
+	keys, _ := raw["keys"].([]any)
+	if len(keys) != 1 {
+		t.Fatalf("keys = %v", keys)
+	}
+	k0 := keys[0].(map[string]any)
+	if _, ok := k0["previousTotal"]; ok {
+		t.Error("keys[0].previousTotal present; want absent")
+	}
+	if _, ok := k0["delta"]; ok {
+		t.Error("keys[0].delta present; want absent")
+	}
+}
+
+func TestGetCostsSummaryEmptyPrecedingWindowOmitsPrevious(t *testing.T) {
+	// Bounded range whose preceding window returns zero rows (demo FULL shape).
+	store := &fakeStore{
+		dailyFn: func(_ string, start, end time.Time, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			// Current window has data; previous is empty.
+			if start.Format(time.DateOnly) == "2026-01-12" {
+				return dayCosts(t, "2026-01-12", "USD", map[string]string{"A": "10"}), nil
+			}
+			return storage.DailyCosts{Currency: "", Days: nil}, nil
+		},
+	}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/costs/summary?start=2026-01-12&end=2026-07-11", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var raw map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &raw)
+	for _, key := range []string{"previousTotal", "previousStart", "previousEnd"} {
+		if _, ok := raw[key]; ok {
+			t.Errorf("empty-prev response has %s; want ABSENT", key)
+		}
+	}
+	// Never previousTotal "0".
+	if body := rec.Body.String(); strings.Contains(body, `"previousTotal"`) {
+		t.Errorf("body still contains previousTotal: %s", body)
+	}
+}
+
+func TestGetCostsSummaryCrossWindowCurrencyOmitsPrevious(t *testing.T) {
+	store := &fakeStore{
+		dailyFn: func(_ string, start, end time.Time, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if start.Format(time.DateOnly) == "2026-06-01" {
+				return dayCosts(t, "2026-06-01", "USD", map[string]string{"A": "10"}), nil
+			}
+			// Preceding window is single-currency EUR — different from current USD.
+			return dayCosts(t, "2026-05-01", "EUR", map[string]string{"A": "5"}), nil
+		},
+	}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/costs/summary?start=2026-06-01&end=2026-06-30", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var raw map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &raw)
+	if raw["currency"] != "USD" {
+		t.Errorf("currency = %v, want USD (current window)", raw["currency"])
+	}
+	for _, key := range []string{"previousTotal", "previousStart", "previousEnd"} {
+		if _, ok := raw[key]; ok {
+			t.Errorf("cross-currency response has %s; want ABSENT", key)
+		}
+	}
+}
+
+func TestGetCostsSummaryMixedCurrencyWithinCurrentIs500(t *testing.T) {
+	store := &fakeStore{
+		dailyErr: errors.New("mixed billing currencies in range: EUR, USD"),
+	}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/costs/summary?start=2026-06-01&end=2026-06-30", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d, want 500; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "mixed billing currencies") {
+		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+func TestGetCostsSummaryNewKeyDeltaEqualsTotal(t *testing.T) {
+	store := &fakeStore{
+		dailyFn: func(_ string, start, end time.Time, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if start.Format(time.DateOnly) == "2026-06-01" {
+				// Current: A (continuing) + B (new)
+				return dayCosts(t, "2026-06-15", "USD", map[string]string{
+					"A": "10.5",
+					"B": "3.25",
+				}), nil
+			}
+			// Previous: only A
+			return dayCosts(t, "2026-05-01", "USD", map[string]string{"A": "4"}), nil
+		},
+	}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/costs/summary?start=2026-06-01&end=2026-06-30", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got CostsSummary
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	byKey := map[string]CostSummaryKey{}
+	for _, k := range got.Keys {
+		byKey[k.Key] = k
+	}
+	b := byKey["B"]
+	if b.PreviousTotal != nil {
+		t.Errorf("new key B has previousTotal=%v; want ABSENT", b.PreviousTotal)
+	}
+	if b.Delta == nil || *b.Delta != b.Total {
+		t.Errorf("new key B delta=%v total=%s; want delta==total", b.Delta, b.Total)
+	}
+	a := byKey["A"]
+	if a.PreviousTotal == nil || *a.PreviousTotal != "4" {
+		t.Errorf("sibling A previousTotal=%v, want 4", a.PreviousTotal)
+	}
+	if a.Delta == nil || *a.Delta != "6.5" {
+		t.Errorf("sibling A delta=%v, want 6.5", a.Delta)
+	}
+}
+
+func TestGetCostsSummaryDeltaExactness(t *testing.T) {
+	// 18-digit total − previousTotal asserted as exact string.
+	cur := "10.123456789012345678"
+	prev := "3.000000000000000001"
+	wantDelta := dec(t, cur).Sub(dec(t, prev)).String()
+	store := &fakeStore{
+		dailyFn: func(_ string, start, end time.Time, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if start.Format(time.DateOnly) == "2026-06-01" {
+				return dayCosts(t, "2026-06-01", "USD", map[string]string{"X": cur}), nil
+			}
+			return dayCosts(t, "2026-05-01", "USD", map[string]string{"X": prev}), nil
+		},
+	}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/costs/summary?start=2026-06-01&end=2026-06-30", nil))
+	var got CostsSummary
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if len(got.Keys) != 1 || got.Keys[0].Delta == nil || *got.Keys[0].Delta != wantDelta {
+		t.Fatalf("delta = %v, want %s (body %s)", got.Keys, wantDelta, rec.Body)
+	}
+}
+
+func TestGetCostsSummaryOrderingTotalDescKeyAsc(t *testing.T) {
+	// Tie on total between B and A → key asc (A before B); C highest first.
+	store := &fakeStore{daily: dayCosts(t, "2026-05-01", "USD", map[string]string{
+		"C": "30",
+		"B": "10",
+		"A": "10",
+	})}
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary", nil))
+	var got CostsSummary
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if len(got.Keys) != 3 {
+		t.Fatalf("keys = %+v", got.Keys)
+	}
+	if got.Keys[0].Key != "C" || got.Keys[1].Key != "A" || got.Keys[2].Key != "B" {
+		t.Fatalf("order = %s,%s,%s want C,A,B", got.Keys[0].Key, got.Keys[1].Key, got.Keys[2].Key)
+	}
+}
+
+func TestGetCostsSummaryEmptyCurrent(t *testing.T) {
+	store := &fakeStore{} // empty daily
+	handler := NewHandler("0.1.0-test", testStatic(), store, "")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary", nil))
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"currency":"","keys":[],"total":"0"}` {
+		t.Errorf("empty current = %s", body)
+	}
+}
+
+func TestGetCostsSummaryAllocationErrors(t *testing.T) {
+	t.Run("unconfigured is 400", func(t *testing.T) {
+		store := &fakeStore{}
+		handler := NewHandler("0.1.0-test", testStatic(), store, "")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary?groupBy=allocation", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+		}
+		if store.allocQueryCount != 0 {
+			t.Error("store queried despite unconfigured 400")
+		}
+	})
+	t.Run("malformed is 500", func(t *testing.T) {
+		rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[{"label":"x","match":[{"dimension":"service_name","operater":"equals","value":"y"}]}]}]}`)
+		store := &fakeStore{}
+		handler := NewHandler("0.1.0-test", testStatic(), store, rules)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary?groupBy=allocation", nil))
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(rec.Body.String()), "loading allocation rules:") {
+			t.Errorf("body = %s", rec.Body)
 		}
 	})
 }

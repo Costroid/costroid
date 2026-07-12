@@ -7,9 +7,11 @@ import {
   SERIES_SLOTS,
   WIDTH,
   capLabelPositions,
+  compareDecimalMagnitude,
   compactAxisLabel,
   segmentPath,
   serviceColor,
+  sparklinePoints,
   sumIntegerStrings,
   yTicks,
 } from "./viz";
@@ -179,5 +181,63 @@ describe("capLabelPositions", () => {
     const band = plotWidth / n;
     const expectedCenter = MARGIN.left + mid * band + band / 2;
     expect(positions[mid]).toBeCloseTo(expectedCenter, 10);
+  });
+});
+
+describe("compareDecimalMagnitude", () => {
+  it("orders 18-digit near-equal magnitudes that Number() misorders", () => {
+    // These are equal as IEEE doubles (beyond mantissa) but a > b as decimals.
+    const a = "9007199254740993"; // 2^53 + 1
+    const b = "9007199254740992"; // 2^53
+    expect(Number(a) === Number(b)).toBe(true); // proves the Number trap
+    expect(compareDecimalMagnitude(a, b)).toBeGreaterThan(0);
+    expect(compareDecimalMagnitude(b, a)).toBeLessThan(0);
+  });
+
+  it("treats signed values by absolute magnitude", () => {
+    expect(compareDecimalMagnitude("-100.5", "50")).toBeGreaterThan(0);
+    expect(compareDecimalMagnitude("-3", "3")).toBe(0);
+    expect(compareDecimalMagnitude("+12.0", "12")).toBe(0);
+  });
+
+  it("is stable for equal magnitudes", () => {
+    expect(compareDecimalMagnitude("1.2300", "1.23")).toBe(0);
+    expect(
+      compareDecimalMagnitude("0.000000000000000001", "0.000000000000000001"),
+    ).toBe(0);
+  });
+
+  it("orders by integer-digit count first", () => {
+    expect(compareDecimalMagnitude("99.999", "100")).toBeLessThan(0);
+    expect(compareDecimalMagnitude("1000", "999.999")).toBeGreaterThan(0);
+  });
+});
+
+describe("sparklinePoints", () => {
+  it("skips uncovered days with a gap (no interpolation)", () => {
+    // values: day0=1, day1=null (gap), day2=3
+    const segs = sparklinePoints([1, null, 3], 100, 20);
+    expect(segs.length).toBe(2);
+    expect(segs[0]).toHaveLength(1);
+    expect(segs[1]).toHaveLength(1);
+    // First point at x=0, second at x=100 (index 2 of 0..2).
+    expect(segs[0][0].x).toBe(0);
+    expect(segs[1][0].x).toBe(100);
+    // y: min=1 max=3 → v=1 at bottom (y=20), v=3 at top (y=0)
+    expect(segs[0][0].y).toBe(20);
+    expect(segs[1][0].y).toBe(0);
+  });
+
+  it("returns one contiguous segment when every day is covered", () => {
+    const segs = sparklinePoints([1, 2, 3], 100, 10);
+    expect(segs).toHaveLength(1);
+    expect(segs[0]).toHaveLength(3);
+    expect(segs[0][0].x).toBe(0);
+    expect(segs[0][1].x).toBe(50);
+    expect(segs[0][2].x).toBe(100);
+  });
+
+  it("returns empty when all values are null", () => {
+    expect(sparklinePoints([null, null], 100, 10)).toEqual([]);
   });
 });

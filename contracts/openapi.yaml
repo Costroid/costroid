@@ -99,6 +99,91 @@ paths:
             text/plain:
               schema:
                 type: string
+  /api/v1/costs/summary:
+    get:
+      operationId: getCostsSummary
+      summary: Period cost summary with optional preceding-window comparison
+      description: >-
+        Period totals by grouping key for the requested [start, end] window,
+        plus an optional preceding-window comparison computed server-side.
+        groupBy semantics and validation match /api/v1/costs/daily (service /
+        provider / allocation; allocation unconfigured → 400; malformed rules
+        → 500). All money values are exact decimal strings (never floats).
+        The response `total` equals /api/v1/costs/daily's period total for
+        identical params. Keys are ordered total-desc, then key-asc.
+
+        Preceding window: prevEnd = start − 1 day, prevStart = prevEnd −
+        (end − start). ALL previous-window fields (previousTotal, previousStart,
+        previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT
+        together — never null or "" — when the preceding window is UNDEFINED:
+        (i) start or end is unbounded/empty; (ii) the preceding-window query
+        returns zero cost rows (it predates all ingested data); (iii) the
+        preceding window's single currency differs from the current window's
+        (a cross-currency delta is never computed — the per-window single-currency
+        guard cannot catch a currency switch BETWEEN windows). Never emit
+        previousTotal "0" for a data-empty preceding window. A store error from
+        either window — including the mixed-currency guard tripping WITHIN the
+        preceding window — is a 500, mirroring /costs/daily.
+
+        When the preceding window is DEFINED, every key carries delta =
+        total − previousTotal (exact decimal.Sub); keys absent from the previous
+        window omit previousTotal while delta equals total (previousTotal-absence
+        alone marks newness). "Gone" keys (present only in the previous window)
+        are out of scope for this version. Empty CURRENT window: total "0",
+        keys [] (never null). No share field — client Number() geometry only.
+      parameters:
+        - name: start
+          in: query
+          description: >-
+            Inclusive first calendar day (UTC) of the CURRENT window. Defaults to
+            the full range of stored data. Unbounded start makes the preceding
+            window undefined.
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          description: >-
+            Inclusive last calendar day (UTC) of the CURRENT window. Defaults to
+            the full range of stored data. Unbounded end makes the preceding
+            window undefined.
+          schema:
+            type: string
+            format: date
+        - name: groupBy
+          in: query
+          description: Cost grouping dimension (same set as /api/v1/costs/daily).
+          schema:
+            type: string
+            enum:
+              - service
+              - provider
+              - allocation
+            default: service
+      responses:
+        "200":
+          description: Period cost summary for the requested window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostsSummary"
+        "400":
+          description: >-
+            Invalid start date, end date, or groupBy value; or
+            groupBy=allocation was requested but no allocation rules are
+            configured or the rules file was not found.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: >-
+            The cost query failed (including mixed currencies within a window
+            or an unreadable/malformed/invalid allocation rules file).
+          content:
+            text/plain:
+              schema:
+                type: string
   /api/v1/anomalies:
     get:
       operationId: getAnomalies
@@ -391,6 +476,84 @@ components:
           type: string
           description: Total cost of the whole period, as a decimal string.
           example: "32.7663"
+    CostsSummary:
+      type: object
+      required:
+        - currency
+        - total
+        - keys
+      properties:
+        currency:
+          type: string
+          description: >-
+            Billing currency of the CURRENT window (FOCUS BillingCurrency).
+            Empty when the current window has no cost rows.
+          example: USD
+        total:
+          type: string
+          description: >-
+            Period total for the current window as a decimal string. Equals
+            /api/v1/costs/daily's period total for identical params. "0" when
+            the current window is empty.
+          example: "964050.632653589793238462"
+        previousTotal:
+          type: string
+          description: >-
+            Period total of the preceding window as a decimal string. Present
+            only when the preceding window is defined (see path description);
+            omitted entirely otherwise — never null or "0" for an undefined window.
+          example: "120000.50"
+        previousStart:
+          type: string
+          format: date
+          description: >-
+            Inclusive first day of the preceding window. Present exactly when
+            previousTotal is present.
+          example: "2025-12-13"
+        previousEnd:
+          type: string
+          format: date
+          description: >-
+            Inclusive last day of the preceding window. Present exactly when
+            previousTotal is present.
+          example: "2026-01-11"
+        keys:
+          type: array
+          description: >-
+            Per-key period totals for the current window, ordered total-desc
+            then key-asc. Never null; [] when the current window is empty.
+            Gone keys (previous-only) are out of scope.
+          items:
+            $ref: "#/components/schemas/CostSummaryKey"
+    CostSummaryKey:
+      type: object
+      required:
+        - key
+        - total
+      properties:
+        key:
+          type: string
+          description: >-
+            Grouping key (ServiceName / ServiceProviderName / allocation label).
+          example: Amazon Web Services
+        total:
+          type: string
+          description: Period total for this key in the current window, as a decimal string.
+          example: "3141.592653589793238462"
+        previousTotal:
+          type: string
+          description: >-
+            Period total for this key in the preceding window. Present only when
+            the preceding window is defined AND the key had cost there; omitted
+            for new keys (delta then equals total) and when the window is undefined.
+          example: "2800.00"
+        delta:
+          type: string
+          description: >-
+            Exact total − previousTotal (decimal.Sub). Present on EVERY key when
+            the preceding window is defined; omitted on every key when undefined.
+            For a new key (no previousTotal), delta equals total.
+          example: "341.592653589793238462"
     DailyCost:
       type: object
       required:

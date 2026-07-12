@@ -21,6 +21,8 @@ function fakeResponse(status: number, body: unknown): Response {
 
 const emptyCosts = { currency: "", total: "0", days: [] };
 
+const emptySummary = { currency: "", total: "0", keys: [] };
+
 function mockFetch(demo = false) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
@@ -43,6 +45,25 @@ function mockFetch(demo = false) {
     }
     if (path === "/api/v1/business-metrics") {
       return Promise.resolve(fakeResponse(200, { metrics: [] }));
+    }
+    if (path === "/api/v1/costs/summary") {
+      return Promise.resolve(fakeResponse(200, emptySummary));
+    }
+    if (path === "/api/v1/anomalies") {
+      return Promise.resolve(
+        fakeResponse(200, {
+          currency: "",
+          parameters: {
+            k: "3",
+            consistencyConstant: "1.4826",
+            windowDays: 30,
+            minObservations: 10,
+            relativeFloor: "0.1",
+            groupBy: "service",
+          },
+          anomalies: [],
+        }),
+      );
     }
     // costs/daily and any other path
     return Promise.resolve(fakeResponse(200, emptyCosts));
@@ -99,6 +120,43 @@ describe("App", () => {
     ).toBeTruthy();
     const costsButton = screen.getByRole("button", { name: "Costs" });
     expect(costsButton.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("registers Overview first in the nav and still defaults to Costs", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    render(<App />);
+    await screen.findByRole("heading", { name: "Daily cost by service" });
+
+    const nav = screen.getByRole("navigation", { name: "Dashboard views" });
+    const buttons = nav.querySelectorAll("button");
+    expect(buttons[0]?.textContent).toContain("Overview");
+    expect(
+      screen
+        .getByRole("button", { name: "Costs" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    expect(
+      screen
+        .getByRole("button", { name: "Overview" })
+        .getAttribute("aria-current"),
+    ).toBeNull();
+  });
+
+  it("switches to the Overview view on click", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    render(<App />);
+    await screen.findByRole("heading", { name: "Daily cost by service" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Overview" }),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Overview" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
   });
 
   it("switches to the Tokens view on click", async () => {

@@ -56,6 +56,27 @@ func (e GetDailyCostsParamsGroupBy) Valid() bool {
 	}
 }
 
+// Defines values for GetCostsSummaryParamsGroupBy.
+const (
+	Allocation GetCostsSummaryParamsGroupBy = "allocation"
+	Provider   GetCostsSummaryParamsGroupBy = "provider"
+	Service    GetCostsSummaryParamsGroupBy = "service"
+)
+
+// Valid indicates whether the value is a known member of the GetCostsSummaryParamsGroupBy enum.
+func (e GetCostsSummaryParamsGroupBy) Valid() bool {
+	switch e {
+	case Allocation:
+		return true
+	case Provider:
+		return true
+	case Service:
+		return true
+	default:
+		return false
+	}
+}
+
 // Anomalies defines model for Anomalies.
 type Anomalies struct {
 	// Anomalies Detected flags, ordered date-ascending, then total scope before key scope, then key-ascending. Never null; [] when nothing is flagged.
@@ -136,6 +157,42 @@ type BusinessMetricInfo struct {
 type BusinessMetrics struct {
 	// Metrics Imported business metrics, sorted by name; never null.
 	Metrics []BusinessMetricInfo `json:"metrics"`
+}
+
+// CostSummaryKey defines model for CostSummaryKey.
+type CostSummaryKey struct {
+	// Delta Exact total − previousTotal (decimal.Sub). Present on EVERY key when the preceding window is defined; omitted on every key when undefined. For a new key (no previousTotal), delta equals total.
+	Delta *string `json:"delta,omitempty"`
+
+	// Key Grouping key (ServiceName / ServiceProviderName / allocation label).
+	Key string `json:"key"`
+
+	// PreviousTotal Period total for this key in the preceding window. Present only when the preceding window is defined AND the key had cost there; omitted for new keys (delta then equals total) and when the window is undefined.
+	PreviousTotal *string `json:"previousTotal,omitempty"`
+
+	// Total Period total for this key in the current window, as a decimal string.
+	Total string `json:"total"`
+}
+
+// CostsSummary defines model for CostsSummary.
+type CostsSummary struct {
+	// Currency Billing currency of the CURRENT window (FOCUS BillingCurrency). Empty when the current window has no cost rows.
+	Currency string `json:"currency"`
+
+	// Keys Per-key period totals for the current window, ordered total-desc then key-asc. Never null; [] when the current window is empty. Gone keys (previous-only) are out of scope.
+	Keys []CostSummaryKey `json:"keys"`
+
+	// PreviousEnd Inclusive last day of the preceding window. Present exactly when previousTotal is present.
+	PreviousEnd *openapi_types.Date `json:"previousEnd,omitempty"`
+
+	// PreviousStart Inclusive first day of the preceding window. Present exactly when previousTotal is present.
+	PreviousStart *openapi_types.Date `json:"previousStart,omitempty"`
+
+	// PreviousTotal Period total of the preceding window as a decimal string. Present only when the preceding window is defined (see path description); omitted entirely otherwise — never null or "0" for an undefined window.
+	PreviousTotal *string `json:"previousTotal,omitempty"`
+
+	// Total Period total for the current window as a decimal string. Equals /api/v1/costs/daily's period total for identical params. "0" when the current window is empty.
+	Total string `json:"total"`
 }
 
 // DailyCost defines model for DailyCost.
@@ -291,6 +348,21 @@ type GetDailyCostsParams struct {
 // GetDailyCostsParamsGroupBy defines parameters for GetDailyCosts.
 type GetDailyCostsParamsGroupBy string
 
+// GetCostsSummaryParams defines parameters for GetCostsSummary.
+type GetCostsSummaryParams struct {
+	// Start Inclusive first calendar day (UTC) of the CURRENT window. Defaults to the full range of stored data. Unbounded start makes the preceding window undefined.
+	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Inclusive last calendar day (UTC) of the CURRENT window. Defaults to the full range of stored data. Unbounded end makes the preceding window undefined.
+	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+
+	// GroupBy Cost grouping dimension (same set as /api/v1/costs/daily).
+	GroupBy *GetCostsSummaryParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+}
+
+// GetCostsSummaryParamsGroupBy defines parameters for GetCostsSummary.
+type GetCostsSummaryParamsGroupBy string
+
 // GetDailyUnitEconomicsParams defines parameters for GetDailyUnitEconomics.
 type GetDailyUnitEconomicsParams struct {
 	// Metric Exact imported business metric name.
@@ -332,6 +404,9 @@ type ServerInterface interface {
 	// Daily cost by service, provider, or allocation
 	// (GET /api/v1/costs/daily)
 	GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams)
+	// Period cost summary with optional preceding-window comparison
+	// (GET /api/v1/costs/summary)
+	GetCostsSummary(w http.ResponseWriter, r *http.Request, params GetCostsSummaryParams)
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
@@ -481,6 +556,65 @@ func (siw *ServerInterfaceWrapper) GetDailyCosts(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetDailyCosts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCostsSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetCostsSummary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCostsSummaryParams
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "groupBy" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "groupBy", r.URL.Query(), &params.GroupBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCostsSummary(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -792,6 +926,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/anomalies", wrapper.GetAnomalies)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/business-metrics", wrapper.GetBusinessMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/summary", wrapper.GetCostsSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/unit-economics/daily", wrapper.GetDailyUnitEconomics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/metrics/daily", wrapper.GetDailyUsageMetrics)

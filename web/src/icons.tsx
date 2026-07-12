@@ -34,6 +34,18 @@ export function BrandIcon(props: IconProps) {
   );
 }
 
+export function OverviewIcon(props: IconProps) {
+  // Lucide-derived "layout-dashboard" stroke paths (ISC).
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="7" height="9" rx="1" />
+      <rect x="14" y="3" width="7" height="5" rx="1" />
+      <rect x="14" y="12" width="7" height="9" rx="1" />
+      <rect x="3" y="16" width="7" height="5" rx="1" />
+    </Icon>
+  );
+}
+
 export function CostsIcon(props: IconProps) {
   return (
     <Icon {...props}>
