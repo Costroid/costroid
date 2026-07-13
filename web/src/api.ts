@@ -37,15 +37,18 @@ export async function getMeta(signal?: AbortSignal): Promise<Meta> {
 }
 
 export async function getCostsDaily(
-  params: RangeParams & { groupBy: CostGroupBy },
+  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
   signal?: AbortSignal,
 ): Promise<DailyCosts> {
   const q = rangeQuery(params.start, params.end);
-  const url =
+  let url =
     `/api/v1/costs/daily${q}` +
     (params.groupBy !== "service"
       ? `${q ? "&" : "?"}groupBy=${params.groupBy}`
       : "");
+  if (params.currency) {
+    url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
+  }
   const res = await fetch(url, { signal });
   if (!res.ok) {
     // Costs is the ONLY endpoint that reads the body: surface the server's

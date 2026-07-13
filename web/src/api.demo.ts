@@ -54,7 +54,7 @@ export function getMeta(_signal?: AbortSignal): Promise<Meta> {
 }
 
 export function getCostsDaily(
-  params: RangeParams & { groupBy: CostGroupBy },
+  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
   _signal?: AbortSignal,
 ): Promise<DailyCosts> {
   const preset = presetOf(params.start, params.end);

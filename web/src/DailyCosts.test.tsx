@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -39,6 +40,26 @@ function anomaliesBody(flags: Anomaly[] = []): AnomaliesResponse {
       groupBy: "service",
     },
     anomalies: flags,
+  };
+}
+
+function dailyBody(
+  currency: string,
+  currencies: string[],
+  total: string,
+  key = "AWS Lambda",
+): DailyCostsResponse {
+  return {
+    currency,
+    currencies,
+    total,
+    days: [
+      {
+        date: "2026-05-01",
+        total,
+        services: [{ key, cost: total }],
+      },
+    ],
   };
 }
 
@@ -149,6 +170,178 @@ describe("DailyCosts", () => {
       "/api/v1/costs/daily",
       expect.anything(),
     );
+    expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
+    expect(screen.queryByText("Currency")).toBeNull();
+  });
+
+  it("renders a currency selector only for mixed-currency responses", async () => {
+    const costs = dailyBody("EUR", ["EUR", "USD"], "3.123456789012345679");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input).includes("/api/v1/anomalies")
+            ? fakeResponse(200, anomaliesBody())
+            : fakeResponse(200, costs),
+        ),
+      ),
+    );
+
+    render(<DailyCosts />);
+
+    expect(await screen.findByRole("group", { name: "Currency" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "EUR" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("button", { name: "USD" }).getAttribute("aria-pressed"),
+    ).toBe("false");
+    expect(
+      fetchedURLs().filter((url) => url.startsWith("/api/v1/costs/daily")),
+    ).toEqual(["/api/v1/costs/daily"]);
+  });
+
+  it("refetches for the selected currency and renders response values verbatim", async () => {
+    const initial = dailyBody("EUR", ["EUR", "USD"], "3.123456789012345679");
+    const selected = dailyBody(
+      "CAD",
+      ["EUR", "USD"],
+      "30.987654321098765434",
+      "Selected service",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        return Promise.resolve(
+          fakeResponse(200, url.includes("currency=USD") ? selected : initial),
+        );
+      }),
+    );
+    render(<DailyCosts />);
+    await screen.findByRole("group", { name: "Currency" });
+
+    fireEvent.click(screen.getByRole("button", { name: "USD" }));
+
+    expect(
+      (await screen.findAllByText("30.987654321098765434")).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain("/api/v1/costs/daily?currency=USD"),
+    );
+    fireEvent.focus(screen.getByLabelText("2026-05-01 cost details"));
+    expect(screen.getByRole("tooltip").textContent).toContain(
+      "30.987654321098765434 CAD",
+    );
+    expect(
+      fetchedURLs().filter((url) => url.startsWith("/api/v1/anomalies")),
+    ).toHaveLength(1);
+  });
+
+  it("does not commit an aborted stale currency response", async () => {
+    const initial = dailyBody("EUR", ["EUR", "USD"], "1.000000000000000001");
+    const fresh = dailyBody("USD", ["EUR", "USD"], "2.000000000000000002");
+    const stale = dailyBody("EUR", ["EUR", "GBP"], "9.999999999999999999");
+    let resolveStale!: (response: Response) => void;
+    const staleResponse = new Promise<Response>((resolve) => {
+      resolveStale = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        if (url.includes("start=2026-05-01") && url.includes("currency=USD")) {
+          return staleResponse;
+        }
+        if (url.includes("start=2026-06-01")) {
+          return Promise.resolve(fakeResponse(200, fresh));
+        }
+        return Promise.resolve(fakeResponse(200, initial));
+      }),
+    );
+    const { rerender } = render(
+      <DailyCosts range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+    await screen.findByRole("group", { name: "Currency" });
+
+    fireEvent.click(screen.getByRole("button", { name: "USD" }));
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/daily?start=2026-05-01&end=2026-05-31&currency=USD",
+      ),
+    );
+    rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
+    expect(
+      (await screen.findAllByText("2.000000000000000002")).length,
+    ).toBeGreaterThan(0);
+
+    await act(async () => {
+      resolveStale(fakeResponse(200, stale));
+      await staleResponse;
+    });
+
+    expect(screen.getAllByText("2.000000000000000002").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByText("9.999999999999999999")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "USD" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("falls back to the response currency when fresh currencies drop the selection", async () => {
+    const initial = dailyBody("EUR", ["EUR", "USD"], "1.000000000000000001");
+    const selected = dailyBody("USD", ["EUR", "USD"], "2.000000000000000002");
+    const dropped = dailyBody("EUR", ["EUR", "GBP"], "3.000000000000000003");
+    const fallback = dailyBody("EUR", ["EUR", "GBP"], "4.000000000000000004");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        if (url.includes("start=2026-06-01") && url.includes("currency=EUR")) {
+          return Promise.resolve(fakeResponse(200, fallback));
+        }
+        if (url.includes("start=2026-06-01") && url.includes("currency=USD")) {
+          return Promise.resolve(fakeResponse(200, dropped));
+        }
+        if (url.includes("currency=USD")) {
+          return Promise.resolve(fakeResponse(200, selected));
+        }
+        return Promise.resolve(fakeResponse(200, initial));
+      }),
+    );
+    const { rerender } = render(
+      <DailyCosts range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+    await screen.findByRole("group", { name: "Currency" });
+    fireEvent.click(screen.getByRole("button", { name: "USD" }));
+    expect(
+      (await screen.findAllByText("2.000000000000000002")).length,
+    ).toBeGreaterThan(0);
+
+    rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
+
+    expect(
+      (await screen.findAllByText("4.000000000000000004")).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30&currency=EUR",
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "USD" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "EUR" }).getAttribute("aria-pressed"),
+    ).toBe("true");
   });
 
   it("fetches daily costs for a provided range", async () => {

@@ -25,11 +25,12 @@ type Anomaly = components["schemas"]["Anomaly"];
 // FetchParams identifies the request a held "ready" result was fetched FOR, so a
 // render can detect synchronously that the current props no longer match it.
 type FetchParams = { start: string; end: string; groupBy: CostGroupBy };
+type CostFetchParams = FetchParams & { currency: string };
 
 type CostsState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; costs: DailyCosts; params: FetchParams };
+  | { status: "ready"; costs: DailyCosts; params: CostFetchParams };
 
 // AnomalyState is fetched independently of the chart: a failure never blocks the
 // chart, only suppresses the overlay (with a small non-blocking notice). Its
@@ -60,6 +61,7 @@ export default function DailyCosts({
 }) {
   const [state, setState] = useState<CostsState>({ status: "loading" });
   const [groupBy, setGroupBy] = useState<CostGroupBy>("service");
+  const [currency, setCurrency] = useState<string>("");
   const [anomalyState, setAnomalyState] = useState<AnomalyState>({
     status: "loading",
     params: { start: range.start, end: range.end, groupBy: "service" },
@@ -73,16 +75,28 @@ export default function DailyCosts({
     async function load() {
       try {
         const costs = await getCostsDaily(
-          { start, end, groupBy },
+          {
+            start,
+            end,
+            groupBy,
+            ...(currency ? { currency } : {}),
+          },
           controller.signal,
         );
         if (controller.signal.aborted) {
           return;
         }
+        const nextCurrency =
+          currency !== "" && !costs.currencies.includes(currency)
+            ? costs.currency
+            : currency;
+        if (nextCurrency !== currency) {
+          setCurrency(nextCurrency);
+        }
         setState({
           status: "ready",
           costs,
-          params: { start, end, groupBy },
+          params: { start, end, groupBy, currency },
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -97,7 +111,7 @@ export default function DailyCosts({
 
     void load();
     return () => controller.abort();
-  }, [start, end, groupBy]);
+  }, [start, end, groupBy, currency]);
 
   // The anomaly overlay is fetched with the SAME range + groupBy as the chart,
   // but independently: a failure here must never break the chart (it only drops
@@ -162,7 +176,8 @@ export default function DailyCosts({
     state.status === "ready" &&
     (state.params.start !== start ||
       state.params.end !== end ||
-      state.params.groupBy !== groupBy)
+      state.params.groupBy !== groupBy ||
+      state.params.currency !== currency)
       ? { status: "loading" }
       : state;
 
@@ -190,6 +205,25 @@ export default function DailyCosts({
             </button>
           ))}
         </div>
+        {view.status === "ready" && view.costs.currencies.length > 1 && (
+          <div
+            className="cost-group-control"
+            role="group"
+            aria-label="Currency"
+          >
+            <span>Currency</span>
+            {view.costs.currencies.map((code) => (
+              <button
+                key={code}
+                type="button"
+                aria-pressed={(currency || view.costs.currency) === code}
+                onClick={() => setCurrency(code)}
+              >
+                {code}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {view.status === "loading" && (
         <LoadingSkeleton label="Loading daily costs…" />
