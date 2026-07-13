@@ -82,6 +82,7 @@ describe("DailyCosts", () => {
   it("shows verbatim day values when a chart day receives focus", async () => {
     renderChart({
       currency: "USD",
+      currencies: ["USD"],
       total: "256.9833670123456789",
       days: [
         {
@@ -102,6 +103,7 @@ describe("DailyCosts", () => {
   it("renders totals, legend, and table from the API response", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "9.3618",
       days: [
         {
@@ -152,6 +154,7 @@ describe("DailyCosts", () => {
   it("fetches daily costs for a provided range", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "1.00",
       days: [
         {
@@ -178,6 +181,7 @@ describe("DailyCosts", () => {
   it("refetches and renders daily costs grouped by provider", async () => {
     const serviceCosts: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "1.00",
       days: [
         {
@@ -189,6 +193,7 @@ describe("DailyCosts", () => {
     };
     const providerCosts: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "1.333333333333333334",
       days: [
         {
@@ -247,6 +252,7 @@ describe("DailyCosts", () => {
   it("appends provider grouping after the range query", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "1.00",
       days: [
         {
@@ -281,6 +287,7 @@ describe("DailyCosts", () => {
   it("refetches daily costs when the range changes", async () => {
     const response = (total: string): DailyCostsResponse => ({
       currency: "USD",
+      currencies: ["USD"],
       total,
       days: [
         {
@@ -315,6 +322,7 @@ describe("DailyCosts", () => {
   it("shows loading synchronously while a grouping refetch is pending", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "1",
       days: [
         {
@@ -366,6 +374,7 @@ describe("DailyCosts", () => {
     // vacuous — hence the raw dispatch + single microtask.)
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "1",
       days: [
         {
@@ -400,6 +409,7 @@ describe("DailyCosts", () => {
     // the top tick.
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "3.50",
       days: [
         {
@@ -446,6 +456,7 @@ describe("DailyCosts", () => {
   it("formats y-axis ticks without float noise on small ranges", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "0.30",
       days: [
         {
@@ -470,6 +481,7 @@ describe("DailyCosts", () => {
   it("renders a positive sub-gap segment below a larger segment", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "100.000001",
       days: [
         {
@@ -501,6 +513,7 @@ describe("DailyCosts", () => {
     // mere existence.
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "2.4193",
       days: [
         {
@@ -540,6 +553,7 @@ describe("DailyCosts", () => {
   it("keeps a service's color stable when the service set changes", async () => {
     const day = (services: { key: string; cost: string }[]) => ({
       currency: "USD",
+      currencies: ["USD"],
       total: "9",
       days: [{ date: "2026-05-01", total: "9", services }],
     });
@@ -580,6 +594,7 @@ describe("DailyCosts", () => {
   it("thins x-axis date labels to at most ~12 for long ranges", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "30",
       days: Array.from({ length: 30 }, (_, i) => ({
         date: `2026-05-${String(i + 1).padStart(2, "0")}`,
@@ -598,7 +613,12 @@ describe("DailyCosts", () => {
   });
 
   it("shows the ingest hint when the store is empty", async () => {
-    const empty: DailyCostsResponse = { currency: "", total: "0", days: [] };
+    const empty: DailyCostsResponse = {
+      currency: "",
+      currencies: [],
+      total: "0",
+      days: [],
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(fakeResponse(200, empty))),
@@ -629,6 +649,7 @@ describe("DailyCosts", () => {
   it("refetches and renders daily costs grouped by allocation", async () => {
     const serviceCosts: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "1.00",
       days: [
         {
@@ -640,6 +661,7 @@ describe("DailyCosts", () => {
     };
     const allocationCosts: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "32.7663",
       days: [
         {
@@ -715,6 +737,7 @@ describe("DailyCosts", () => {
   it("marks flagged days with a direction-aware overlay and a math tooltip", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "400",
       days: [
         {
@@ -802,6 +825,7 @@ describe("DailyCosts", () => {
   it("keeps the chart alive when the anomaly fetch fails", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
+      currencies: ["USD"],
       total: "100",
       days: [
         {

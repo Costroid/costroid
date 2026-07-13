@@ -192,14 +192,14 @@ func TestIngestTenantSwitchRehomesInsteadOfSkipping(t *testing.T) {
 		t.Fatalf("opening store: %v", err)
 	}
 	defer func() { _ = store.Close() }()
-	rehomed, err := store.DailyCostsByService(ctx, "acme", time.Time{}, time.Time{})
+	rehomed, err := store.DailyCostsByService(ctx, "acme", time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(acme): %v", err)
 	}
 	if len(rehomed.Days) != 14 {
 		t.Fatalf("tenant acme sees %d day(s), want all 14 re-homed", len(rehomed.Days))
 	}
-	old, err := store.DailyCostsByService(ctx, "default", time.Time{}, time.Time{})
+	old, err := store.DailyCostsByService(ctx, "default", time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(default): %v", err)
 	}
@@ -266,14 +266,14 @@ func TestIngestAzureTenantSwitchRehomesInsteadOfSkipping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening store: %v", err)
 	}
-	rehomed, err := store.DailyCostsByService(ctx, "acme", time.Time{}, time.Time{})
+	rehomed, err := store.DailyCostsByService(ctx, "acme", time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(acme): %v", err)
 	}
 	if len(rehomed.Days) != 6 {
 		t.Fatalf("tenant acme sees %d day(s), want all 6 re-homed", len(rehomed.Days))
 	}
-	old, err := store.DailyCostsByService(ctx, "default", time.Time{}, time.Time{})
+	old, err := store.DailyCostsByService(ctx, "default", time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(default): %v", err)
 	}

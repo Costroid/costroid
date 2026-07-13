@@ -131,7 +131,7 @@ func TestMigration0002WidensDecimalsPreservingData(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ingesting 18-digit value: %v", err)
 	}
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, day(1), day(1))
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, day(1), day(1), "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}

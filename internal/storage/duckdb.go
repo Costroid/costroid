@@ -236,8 +236,8 @@ func insertRecordArgs(batch Batch, r *focus.CostRecord) []any {
 	}
 }
 
-// DailyCostsByService implements Store.
-func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, groupBy ...CostGroupBy) (DailyCosts, error) {
+// BillingCurrencies implements Store.
+func (s *DuckDB) BillingCurrencies(ctx context.Context, tenant string, start, end time.Time) ([]string, error) {
 	where := "WHERE x_tenant_id = ?"
 	args := []any{tenant}
 	if !start.IsZero() {
@@ -249,28 +249,68 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 		args = append(args, end.UTC().Format(time.DateOnly))
 	}
 
-	var result DailyCosts
-
-	// Single-currency guard for this slice: mixed currencies cannot be
-	// summed without conversion, which is a later concern.
-	currencies, err := s.db.QueryContext(ctx,
+	result := []string{}
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT billing_currency FROM cost_records `+where+` ORDER BY billing_currency`, args...)
 	if err != nil {
-		return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+		return nil, fmt.Errorf("querying billing currencies: %w", err)
 	}
-	defer func() { _ = currencies.Close() }()
-	for currencies.Next() {
-		var c string
-		if err := currencies.Scan(&c); err != nil {
-			return DailyCosts{}, fmt.Errorf("scanning billing currency: %w", err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var currency string
+		if err := rows.Scan(&currency); err != nil {
+			return nil, fmt.Errorf("scanning billing currency: %w", err)
 		}
-		if result.Currency != "" && result.Currency != c {
-			return DailyCosts{}, fmt.Errorf("stored records mix billing currencies (%s, %s); currency conversion is not supported yet", result.Currency, c)
-		}
-		result.Currency = c
+		result = append(result, currency)
 	}
-	if err := currencies.Err(); err != nil {
-		return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying billing currencies: %w", err)
+	}
+	return result, nil
+}
+
+// DailyCostsByService implements Store.
+func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency string, groupBy ...CostGroupBy) (DailyCosts, error) {
+	where := "WHERE x_tenant_id = ?"
+	args := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		args = append(args, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+
+	result := DailyCosts{Currency: currency}
+
+	if currency == "" {
+		// Single-currency guard for this slice: mixed currencies cannot be
+		// summed without conversion, which is a later concern.
+		currencies, err := s.db.QueryContext(ctx,
+			`SELECT DISTINCT billing_currency FROM cost_records `+where+` ORDER BY billing_currency`, args...)
+		if err != nil {
+			return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+		}
+		defer func() { _ = currencies.Close() }()
+		for currencies.Next() {
+			var c string
+			if err := currencies.Scan(&c); err != nil {
+				return DailyCosts{}, fmt.Errorf("scanning billing currency: %w", err)
+			}
+			if result.Currency != "" && result.Currency != c {
+				return DailyCosts{}, fmt.Errorf("stored records mix billing currencies (%s, %s); currency conversion is not supported yet", result.Currency, c)
+			}
+			result.Currency = c
+		}
+		if err := currencies.Err(); err != nil {
+			return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+		}
+	}
+
+	if currency != "" {
+		where += " AND billing_currency = ?"
+		args = append(args, currency)
 	}
 
 	selectedGroup := GroupByService
@@ -449,7 +489,7 @@ func compileAllocationCase(dim allocation.Dimension) (string, []any, error) {
 // cost landing in allocation.UnallocatedLabel. Every rule-supplied string is a
 // BOUND parameter (never interpolated); its aggregation, tenant scoping, single
 // -currency guard, decimal exactness, and ordering mirror DailyCostsByService.
-func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension) (DailyCosts, error) {
+func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency string) (DailyCosts, error) {
 	where := "WHERE x_tenant_id = ?"
 	whereArgs := []any{tenant}
 	if !start.IsZero() {
@@ -461,30 +501,36 @@ func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, star
 		whereArgs = append(whereArgs, end.UTC().Format(time.DateOnly))
 	}
 
-	var result DailyCosts
+	result := DailyCosts{Currency: currency}
 
-	// Single-currency guard, duplicated inline (deliberately NOT shared with
-	// DailyCostsByService, whose body stays byte-identical): mixed currencies
-	// cannot be summed without conversion. The message is byte-identical to the
-	// sibling's.
-	currencies, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT billing_currency FROM cost_records `+where+` ORDER BY billing_currency`, whereArgs...)
-	if err != nil {
-		return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
-	}
-	defer func() { _ = currencies.Close() }()
-	for currencies.Next() {
-		var c string
-		if err := currencies.Scan(&c); err != nil {
-			return DailyCosts{}, fmt.Errorf("scanning billing currency: %w", err)
+	if currency == "" {
+		// Single-currency guard, duplicated inline (deliberately NOT shared with
+		// DailyCostsByService): mixed currencies cannot be summed without
+		// conversion. The message is byte-identical to the sibling's.
+		currencies, err := s.db.QueryContext(ctx,
+			`SELECT DISTINCT billing_currency FROM cost_records `+where+` ORDER BY billing_currency`, whereArgs...)
+		if err != nil {
+			return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
 		}
-		if result.Currency != "" && result.Currency != c {
-			return DailyCosts{}, fmt.Errorf("stored records mix billing currencies (%s, %s); currency conversion is not supported yet", result.Currency, c)
+		defer func() { _ = currencies.Close() }()
+		for currencies.Next() {
+			var c string
+			if err := currencies.Scan(&c); err != nil {
+				return DailyCosts{}, fmt.Errorf("scanning billing currency: %w", err)
+			}
+			if result.Currency != "" && result.Currency != c {
+				return DailyCosts{}, fmt.Errorf("stored records mix billing currencies (%s, %s); currency conversion is not supported yet", result.Currency, c)
+			}
+			result.Currency = c
 		}
-		result.Currency = c
+		if err := currencies.Err(); err != nil {
+			return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+		}
 	}
-	if err := currencies.Err(); err != nil {
-		return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+
+	if currency != "" {
+		where += " AND billing_currency = ?"
+		whereArgs = append(whereArgs, currency)
 	}
 
 	caseExpr, caseArgs, err := compileAllocationCase(dim)

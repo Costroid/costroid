@@ -209,7 +209,10 @@ type DailyCost struct {
 
 // DailyCosts defines model for DailyCosts.
 type DailyCosts struct {
-	// Currency Billing currency of all listed costs (FOCUS BillingCurrency). Empty when no data matched the requested period.
+	// Currencies All billing currencies with cost rows in the requested range, sorted ascending. This is the source for a currency selector and is [] (never null) when the range is empty.
+	Currencies []string `json:"currencies"`
+
+	// Currency Billing currency of this response's series (FOCUS BillingCurrency): the currency query parameter when provided, otherwise the alphabetically-first currency in range, or "" when the range is empty.
 	Currency string `json:"currency"`
 
 	// Days One entry per calendar day with data, days ascending.
@@ -343,6 +346,9 @@ type GetDailyCostsParams struct {
 
 	// GroupBy Cost grouping dimension.
 	GroupBy *GetDailyCostsParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+
+	// Currency Optional three-letter uppercase billing currency whose series to return. Omit to use the alphabetically-first currency in the range.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
 }
 
 // GetDailyCostsParamsGroupBy defines parameters for GetDailyCosts.
@@ -550,6 +556,19 @@ func (siw *ServerInterfaceWrapper) GetDailyCosts(w http.ResponseWriter, r *http.
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "currency" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "currency", r.URL.Query(), &params.Currency, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "currency"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "currency", Err: err})
 		}
 		return
 	}

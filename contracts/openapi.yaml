@@ -47,7 +47,14 @@ paths:
         keys each cost by its allocation label, with cost matching no rule
         under "Unallocated". Ordering is deterministic: days ascending, keys
         sorted by name. Costs are decimal strings — never floats — so no
-        precision is lost.
+        precision is lost. When currency is absent, a single-currency range
+        returns that series and currencies contains its one code; a mixed range
+        defaults to the alphabetically-first currency's series and currencies
+        lists every available code. When currency is present, only that
+        currency's series is returned. A valid code absent from currencies
+        returns 200 with total "0", days [], and currency echoing the requested
+        code. An empty range returns currencies [], currency "", total "0", and
+        days []. An invalid currency shape returns 400.
       parameters:
         - name: start
           in: query
@@ -75,6 +82,14 @@ paths:
               - provider
               - allocation
             default: service
+        - name: currency
+          in: query
+          description: >-
+            Optional three-letter uppercase billing currency whose series to
+            return. Omit to use the alphabetically-first currency in the range.
+          schema:
+            type: string
+            pattern: ^[A-Z]{3}$
       responses:
         "200":
           description: Daily costs grouped by the requested dimension for the requested period.
@@ -84,7 +99,7 @@ paths:
                 $ref: "#/components/schemas/DailyCosts"
         "400":
           description: >-
-            Invalid start date, end date, or groupBy value; or
+            Invalid start date, end date, groupBy value, or currency shape; or
             groupBy=allocation was requested but no allocation rules are
             configured or the rules file was not found.
           content:
@@ -123,7 +138,8 @@ paths:
         guard cannot catch a currency switch BETWEEN windows). Never emit
         previousTotal "0" for a data-empty preceding window. A store error from
         either window — including the mixed-currency guard tripping WITHIN the
-        preceding window — is a 500, mirroring /costs/daily.
+        preceding window — is a 500 (unlike /costs/daily, which reports
+        per-currency).
 
         When the preceding window is DEFINED, every key carries delta =
         total − previousTotal (exact decimal.Sub); keys absent from the previous
@@ -458,15 +474,29 @@ components:
       type: object
       required:
         - currency
+        - currencies
         - days
         - total
       properties:
         currency:
           type: string
           description: >-
-            Billing currency of all listed costs (FOCUS BillingCurrency).
-            Empty when no data matched the requested period.
+            Billing currency of this response's series (FOCUS BillingCurrency):
+            the currency query parameter when provided, otherwise the
+            alphabetically-first currency in range, or "" when the range is
+            empty.
           example: USD
+        currencies:
+          type: array
+          description: >-
+            All billing currencies with cost rows in the requested range,
+            sorted ascending. This is the source for a currency selector and is
+            [] (never null) when the range is empty.
+          items:
+            type: string
+          example:
+            - EUR
+            - USD
         days:
           type: array
           description: One entry per calendar day with data, days ascending.

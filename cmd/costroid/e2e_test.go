@@ -284,7 +284,7 @@ func gcpServiceTotal(t *testing.T, tenant, service string) decimal.Decimal {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{})
+	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func gcpAllocationTotal(t *testing.T, tenant string, dim allocation.Dimension, l
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	daily, err := store.DailyCostsByAllocation(context.Background(), tenant, time.Time{}, time.Time{}, dim)
+	daily, err := store.DailyCostsByAllocation(context.Background(), tenant, time.Time{}, time.Time{}, dim, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -785,6 +785,7 @@ const (
 	fcsv13       = "../../testdata/focus-csv/focus-1.3.csv"
 	fcsv14       = "../../testdata/focus-csv/focus-1.4.csv"
 	fcsv14Restat = "../../testdata/focus-csv/focus-1.4-restated.csv"
+	fcsvMulti    = "../../testdata/focus-csv-multicurrency/sample-export.csv"
 	fcsvDupHdr   = "../../testdata/focus-csv/negative/duplicate-header.csv"
 	fcsvUnkHdr   = "../../testdata/focus-csv/negative/unknown-header.csv"
 	fcsvNull     = "../../testdata/focus-csv/negative/literal-null.csv"
@@ -991,6 +992,116 @@ func TestOfflineE2EFocusCSV(t *testing.T) {
 		"ingest", "--connector", "focus-csv", "--path", fcsvNull, "--focus-version", "1.4")
 
 	t.Logf("\n===== OFFLINE E2E FOCUS-CSV TRANSCRIPT =====\n%s", transcript.String())
+}
+
+// TestOfflineE2EFocusCSVMulticurrency proves the generic FOCUS CSV importer and
+// daily-cost API preserve exact per-currency series end to end. The fixture has
+// EUR and USD rows on both days; an unfiltered request defaults to alphabetical
+// EUR, while an explicit USD request returns only USD without mixing money.
+func TestOfflineE2EFocusCSVMulticurrency(t *testing.T) {
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+
+	ingestOut, err := runCLI([]string{
+		"ingest", "--connector", "focus-csv", "--path", fcsvMulti,
+		"--focus-version", "1.2", "--source-label", "multicurrency",
+	}, "")
+	if err != nil {
+		t.Fatalf("multicurrency ingest: %v\n%s", err, ingestOut)
+	}
+	const wantIngest = "period 2026-05: ingested 4 record(s) as batch focus-csv/multicurrency/2026-05"
+	if !strings.Contains(ingestOut, wantIngest) {
+		t.Fatalf("multicurrency ingest output missing %q:\n%s", wantIngest, ingestOut)
+	}
+
+	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
+	if err != nil {
+		t.Fatalf("opening multicurrency store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	handler := api.NewHandler("e2e", fstest.MapFS{}, store, "")
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	type responseDay struct {
+		Date     string `json:"date"`
+		Services []struct {
+			Cost string `json:"cost"`
+			Key  string `json:"key"`
+		} `json:"services"`
+		Total string `json:"total"`
+	}
+	type dailyResponse struct {
+		Currencies []string      `json:"currencies"`
+		Currency   string        `json:"currency"`
+		Days       []responseDay `json:"days"`
+		Total      string        `json:"total"`
+	}
+	get := func(query string) (dailyResponse, string) {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/api/v1/costs/daily" + query)
+		if err != nil {
+			t.Fatalf("GET daily costs %q: %v", query, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading daily costs %q: %v", query, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("daily costs %q HTTP %d: %s", query, resp.StatusCode, body)
+		}
+		var got dailyResponse
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("decoding daily costs %q: %v\n%s", query, err, body)
+		}
+		return got, string(body)
+	}
+	type expectedDay struct {
+		date  string
+		cost  string
+		total string
+	}
+	assertSeries := func(got dailyResponse, wantCurrency, wantTotal string, wantDays []expectedDay) {
+		t.Helper()
+		if !slices.Equal(got.Currencies, []string{"EUR", "USD"}) {
+			t.Errorf("currencies = %v, want [EUR USD]", got.Currencies)
+		}
+		if got.Currency != wantCurrency {
+			t.Errorf("currency = %q, want %q", got.Currency, wantCurrency)
+		}
+		if got.Total != wantTotal {
+			t.Errorf("total = %q, want %q", got.Total, wantTotal)
+		}
+		if len(got.Days) != len(wantDays) {
+			t.Fatalf("days = %+v, want %d exact days", got.Days, len(wantDays))
+		}
+		for i, want := range wantDays {
+			day := got.Days[i]
+			if day.Date != want.date || day.Total != want.total {
+				t.Errorf("day %d = {date:%q total:%q}, want {date:%q total:%q}", i, day.Date, day.Total, want.date, want.total)
+			}
+			if len(day.Services) != 1 {
+				t.Errorf("day %s services = %+v, want exactly one", want.date, day.Services)
+				continue
+			}
+			if svc := day.Services[0]; svc.Key != "Shared Compute" || svc.Cost != want.cost {
+				t.Errorf("day %s service = %+v, want key Shared Compute cost %s", want.date, svc, want.cost)
+			}
+		}
+	}
+
+	defaultSeries, defaultBody := get("")
+	assertSeries(defaultSeries, "EUR", "3.123456789012345679", []expectedDay{
+		{date: "2026-05-01", cost: "1.123456789012345678", total: "1.123456789012345678"},
+		{date: "2026-05-02", cost: "2.000000000000000001", total: "2.000000000000000001"},
+	})
+	usdSeries, usdBody := get("?currency=USD")
+	assertSeries(usdSeries, "USD", "30.987654321098765434", []expectedDay{
+		{date: "2026-05-01", cost: "10.987654321098765432", total: "10.987654321098765432"},
+		{date: "2026-05-02", cost: "20.000000000000000002", total: "20.000000000000000002"},
+	})
+
+	t.Logf("\n===== OFFLINE E2E FOCUS-CSV MULTICURRENCY TRANSCRIPT =====\n$ costroid ingest ...\n%s\n# GET /api/v1/costs/daily\n%s\n# GET /api/v1/costs/daily?currency=USD\n%s", ingestOut, defaultBody, usdBody)
 }
 
 // TestFocusCSVDefaultLabelCLI covers the default --source-label (the file's
@@ -2187,7 +2298,7 @@ func tenantDaysNonEmpty(t *testing.T, tenant string) bool {
 		t.Fatalf("opening store: %v", err)
 	}
 	defer func() { _ = store.Close() }()
-	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{})
+	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(%s): %v", tenant, err)
 	}

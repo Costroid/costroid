@@ -57,7 +57,7 @@ func TestRunSampleExport(t *testing.T) {
 		t.Errorf("content hash = %q, want a sha256: digest", res.Batch.ContentHash)
 	}
 
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestRunSampleExport(t *testing.T) {
 	if !res2.Unchanged || res2.Records != 42 {
 		t.Fatalf("re-ingest Run = %+v, want unchanged with 42 records", res2)
 	}
-	again, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	again, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService after re-ingest: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestRunBOMExport(t *testing.T) {
 	if res.Records != 42 || res.Unchanged {
 		t.Fatalf("Run = %+v, want 42 fresh records", res)
 	}
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestRunInvalidExportAbortsWithRowNumbers(t *testing.T) {
 	}
 
 	// No partial load: the store holds nothing.
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}

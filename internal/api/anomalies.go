@@ -54,12 +54,12 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		if !ok {
 			return // loadAllocationDimension already wrote the error response
 		}
-		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, time.Time{}, end, dim)
+		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, time.Time{}, end, dim, "")
 	case params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupByProvider:
 		groupBy = "provider"
-		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, storage.GroupByProvider)
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, "", storage.GroupByProvider)
 	default:
-		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, storage.GroupByService)
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, "", storage.GroupByService)
 	}
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)

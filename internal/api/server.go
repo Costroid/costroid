@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -33,10 +34,13 @@ const serviceName = "costroid"
 // targets (decision D4).
 const focusVersion = "1.4"
 
+var billingCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
+
 // CostStore is the slice of the storage interface the API reads from.
 type CostStore interface {
-	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
-	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension) (storage.DailyCosts, error)
+	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
+	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency string, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
+	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency string) (storage.DailyCosts, error)
 	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error)
 	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyUsageMetric, error)
 	BusinessMetricNames(ctx context.Context, tenant string) ([]storage.BusinessMetricInfo, error)
@@ -98,30 +102,46 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
 		return
 	}
+	if params.Currency != nil && !billingCurrencyPattern.MatchString(*params.Currency) {
+		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
+		return
+	}
+
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	currency := ""
+	if params.Currency != nil {
+		currency = *params.Currency
+	} else if len(currencies) > 0 {
+		currency = currencies[0]
+	}
 
 	var (
-		daily storage.DailyCosts
-		err   error
+		daily    storage.DailyCosts
+		queryErr error
 	)
 	if params.GroupBy != nil && *params.GroupBy == GetDailyCostsParamsGroupByAllocation {
 		dim, ok := s.loadAllocationDimension(w)
 		if !ok {
 			return // loadAllocationDimension already wrote the error response
 		}
-		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, start, end, dim)
+		daily, queryErr = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, start, end, dim, currency)
 	} else {
 		groupBy := storage.GroupByService
 		if params.GroupBy != nil && *params.GroupBy == GetDailyCostsParamsGroupByProvider {
 			groupBy = storage.GroupByProvider
 		}
-		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, groupBy)
+		daily, queryErr = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, currency, groupBy)
 	}
-	if err != nil {
-		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+	if queryErr != nil {
+		http.Error(w, "querying daily costs: "+queryErr.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	resp := DailyCosts{Currency: daily.Currency, Days: []DailyCost{}}
+	resp := DailyCosts{Currency: daily.Currency, Currencies: currencies, Days: []DailyCost{}}
 	grandTotal := decimal.Zero
 	for _, day := range daily.Days {
 		entry := DailyCost{
@@ -162,7 +182,7 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		return
 	}
 
-	current, err := s.queryDailyCosts(r.Context(), w, start, end, params.GroupBy)
+	current, err := s.queryDailyCosts(r.Context(), w, start, end, "", params.GroupBy)
 	if err != nil {
 		// queryDailyCosts already wrote the response on allocation errors;
 		// store errors still need a 500.
@@ -189,7 +209,7 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		// prevEnd = start − 1 day; prevStart = prevEnd − (end − start).
 		prevEnd = start.AddDate(0, 0, -1)
 		prevStart = prevEnd.Add(-end.Sub(start))
-		previous, err := s.queryDailyCosts(r.Context(), w, prevStart, prevEnd, params.GroupBy)
+		previous, err := s.queryDailyCosts(r.Context(), w, prevStart, prevEnd, "", params.GroupBy)
 		if err != nil {
 			if !allocationErrorWritten(err) {
 				http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
@@ -262,19 +282,19 @@ func allocationErrorWritten(err error) bool {
 // On allocation load failure it writes the response and returns
 // errAllocationResponseWritten. On store failure it returns the store error
 // without writing (caller writes 500).
-func (s *Server) queryDailyCosts(ctx context.Context, w http.ResponseWriter, start, end time.Time, groupBy *GetCostsSummaryParamsGroupBy) (storage.DailyCosts, error) {
+func (s *Server) queryDailyCosts(ctx context.Context, w http.ResponseWriter, start, end time.Time, currency string, groupBy *GetCostsSummaryParamsGroupBy) (storage.DailyCosts, error) {
 	if groupBy != nil && *groupBy == Allocation {
 		dim, ok := s.loadAllocationDimension(w)
 		if !ok {
 			return storage.DailyCosts{}, errAllocationResponseWritten
 		}
-		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim)
+		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim, currency)
 	}
 	gb := storage.GroupByService
 	if groupBy != nil && *groupBy == Provider {
 		gb = storage.GroupByProvider
 	}
-	return s.store.DailyCostsByService(ctx, focus.DefaultTenant, start, end, gb)
+	return s.store.DailyCostsByService(ctx, focus.DefaultTenant, start, end, currency, gb)
 }
 
 // periodKeyTotals sums per-key period totals and the grand total with exact
@@ -451,7 +471,7 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	costs, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end)
+	costs, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, "")
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return

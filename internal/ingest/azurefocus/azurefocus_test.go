@@ -880,7 +880,7 @@ func TestSyncRestatedMonth(t *testing.T) {
 
 func assertDaily(t *testing.T, ctx context.Context, store storage.Store, want map[string]map[string]string) {
 	t.Helper()
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}

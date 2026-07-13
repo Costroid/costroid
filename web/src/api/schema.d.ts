@@ -47,7 +47,7 @@ export interface paths {
         };
         /**
          * Daily cost by service, provider, or allocation
-         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation applies the query-time cost-allocation rules (virtual tagging) and keys each cost by its allocation label, with cost matching no rule under "Unallocated". Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost.
+         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation applies the query-time cost-allocation rules (virtual tagging) and keys each cost by its allocation label, with cost matching no rule under "Unallocated". Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost. When currency is absent, a single-currency range returns that series and currencies contains its one code; a mixed range defaults to the alphabetically-first currency's series and currencies lists every available code. When currency is present, only that currency's series is returned. A valid code absent from currencies returns 200 with total "0", days [], and currency echoing the requested code. An empty range returns currencies [], currency "", total "0", and days []. An invalid currency shape returns 400.
          */
         get: operations["getDailyCosts"];
         put?: never;
@@ -68,7 +68,7 @@ export interface paths {
         /**
          * Period cost summary with optional preceding-window comparison
          * @description Period totals by grouping key for the requested [start, end] window, plus an optional preceding-window comparison computed server-side. groupBy semantics and validation match /api/v1/costs/daily (service / provider / allocation; allocation unconfigured → 400; malformed rules → 500). All money values are exact decimal strings (never floats). The response `total` equals /api/v1/costs/daily's period total for identical params. Keys are ordered total-desc, then key-asc.
-         *     Preceding window: prevEnd = start − 1 day, prevStart = prevEnd − (end − start). ALL previous-window fields (previousTotal, previousStart, previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT together — never null or "" — when the preceding window is UNDEFINED: (i) start or end is unbounded/empty; (ii) the preceding-window query returns zero cost rows (it predates all ingested data); (iii) the preceding window's single currency differs from the current window's (a cross-currency delta is never computed — the per-window single-currency guard cannot catch a currency switch BETWEEN windows). Never emit previousTotal "0" for a data-empty preceding window. A store error from either window — including the mixed-currency guard tripping WITHIN the preceding window — is a 500, mirroring /costs/daily.
+         *     Preceding window: prevEnd = start − 1 day, prevStart = prevEnd − (end − start). ALL previous-window fields (previousTotal, previousStart, previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT together — never null or "" — when the preceding window is UNDEFINED: (i) start or end is unbounded/empty; (ii) the preceding-window query returns zero cost rows (it predates all ingested data); (iii) the preceding window's single currency differs from the current window's (a cross-currency delta is never computed — the per-window single-currency guard cannot catch a currency switch BETWEEN windows). Never emit previousTotal "0" for a data-empty preceding window. A store error from either window — including the mixed-currency guard tripping WITHIN the preceding window — is a 500 (unlike /costs/daily, which reports per-currency).
          *     When the preceding window is DEFINED, every key carries delta = total − previousTotal (exact decimal.Sub); keys absent from the previous window omit previousTotal while delta equals total (previousTotal-absence alone marks newness). "Gone" keys (present only in the previous window) are out of scope for this version. Empty CURRENT window: total "0", keys [] (never null). No share field — client Number() geometry only.
          */
         get: operations["getCostsSummary"];
@@ -208,10 +208,18 @@ export interface components {
         };
         DailyCosts: {
             /**
-             * @description Billing currency of all listed costs (FOCUS BillingCurrency). Empty when no data matched the requested period.
+             * @description Billing currency of this response's series (FOCUS BillingCurrency): the currency query parameter when provided, otherwise the alphabetically-first currency in range, or "" when the range is empty.
              * @example USD
              */
             currency: string;
+            /**
+             * @description All billing currencies with cost rows in the requested range, sorted ascending. This is the source for a currency selector and is [] (never null) when the range is empty.
+             * @example [
+             *       "EUR",
+             *       "USD"
+             *     ]
+             */
+            currencies: string[];
             /** @description One entry per calendar day with data, days ascending. */
             days: components["schemas"]["DailyCost"][];
             /**
@@ -564,6 +572,8 @@ export interface operations {
                 end?: string;
                 /** @description Cost grouping dimension. */
                 groupBy?: "service" | "provider" | "allocation";
+                /** @description Optional three-letter uppercase billing currency whose series to return. Omit to use the alphabetically-first currency in the range. */
+                currency?: string;
             };
             header?: never;
             path?: never;
@@ -580,7 +590,7 @@ export interface operations {
                     "application/json": components["schemas"]["DailyCosts"];
                 };
             };
-            /** @description Invalid start date, end date, or groupBy value; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
+            /** @description Invalid start date, end date, groupBy value, or currency shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
             400: {
                 headers: {
                     [name: string]: unknown;

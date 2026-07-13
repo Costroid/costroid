@@ -6,7 +6,6 @@ package storage
 import (
 	"context"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -130,7 +129,7 @@ func TestDailyCostsByAllocationExactSumAndKeySet(t *testing.T) {
 		rule("serverless", allocation.Condition{Dimension: "service_name", Operator: allocation.OpEquals, Value: sp("AWS Lambda")}),
 	)
 
-	got, err := store.DailyCostsByAllocation(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, d)
+	got, err := store.DailyCostsByAllocation(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, d, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByAllocation: %v", err)
 	}
@@ -149,7 +148,7 @@ func TestDailyCostsByAllocationExactSumAndKeySet(t *testing.T) {
 		t.Errorf("allocation grand total = %s, want 144.206789012345678901", allocTotal.String())
 	}
 
-	byService, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	byService, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -165,6 +164,35 @@ func TestDailyCostsByAllocationExactSumAndKeySet(t *testing.T) {
 	}
 }
 
+func TestDailyCostsByAllocationCurrencyFilterExactExclusiveAndAbsentEcho(t *testing.T) {
+	eurOne := testRecord(t, "shared service", day(1), "0.111111111111111111")
+	eurOne.BillingCurrency = "EUR"
+	eurTwo := testRecord(t, "shared service", day(1), "0.222222222222222222")
+	eurTwo.BillingCurrency = "EUR"
+	usd := testRecord(t, "shared service", day(1), "9.999999999999999999")
+	store := allocStore(t, usd, eurTwo, eurOne)
+
+	got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, dim(), "EUR")
+	if err != nil {
+		t.Fatalf("DailyCostsByAllocation(EUR): %v", err)
+	}
+	if got.Currency != "EUR" || len(got.Days) != 1 || !got.Days[0].Date.Equal(day(1)) ||
+		len(got.Days[0].Services) != 1 || got.Days[0].Services[0].ServiceName != allocation.UnallocatedLabel {
+		t.Fatalf("DailyCostsByAllocation(EUR) shape = %+v, want one EUR day with only Unallocated", got)
+	}
+	if dayTotal := got.Days[0].Services[0].Cost.String(); dayTotal != "0.333333333333333333" {
+		t.Fatalf("EUR allocation day total = %s, want exact 0.333333333333333333 (USD leaked)", dayTotal)
+	}
+
+	absent, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, dim(), "GBP")
+	if err != nil {
+		t.Fatalf("DailyCostsByAllocation(GBP): %v", err)
+	}
+	if absent.Currency != "GBP" || len(absent.Days) != 0 {
+		t.Fatalf("DailyCostsByAllocation(GBP) = %+v, want Currency GBP and no days", absent)
+	}
+}
+
 // TestDailyCostsByAllocationZeroRules pins the degenerate form: with zero rules
 // every row lands under Unallocated (via the CAST(? AS VARCHAR) grouping) and
 // the sums stay exact.
@@ -173,7 +201,7 @@ func TestDailyCostsByAllocationZeroRules(t *testing.T) {
 		testRecord(t, "Amazon Elastic Compute Cloud", day(1), "1.25"),
 		testRecord(t, "AWS Lambda", day(2), "0.000000000000000003"),
 	)
-	got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, dim())
+	got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, dim(), "")
 	if err != nil {
 		t.Fatalf("DailyCostsByAllocation(zero rules): %v", err)
 	}
@@ -196,7 +224,7 @@ func TestDailyCostsByAllocationDayBucketingAndOrdering(t *testing.T) {
 		rule("Apex", allocation.Condition{Dimension: "service_name", Operator: allocation.OpEquals, Value: sp("SvcA")}),
 		rule("zeus", allocation.Condition{Dimension: "service_name", Operator: allocation.OpEquals, Value: sp("SvcZ")}),
 	)
-	got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, d)
+	got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, d, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByAllocation: %v", err)
 	}
@@ -227,7 +255,7 @@ func TestDailyCostsByAllocationFirstMatchWins(t *testing.T) {
 		rule("first", allocation.Condition{Dimension: "service_name", Operator: allocation.OpEquals, Value: sp("Shared")}),
 		rule("second", allocation.Condition{Dimension: "service_provider_name", Operator: allocation.OpEquals, Value: sp("AWS")}),
 	)
-	got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, d)
+	got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, d, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByAllocation: %v", err)
 	}
@@ -282,7 +310,7 @@ func TestDailyCostsByAllocationInjectionInert(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := allocStore(t, tt.records...)
 			before := rowCount(t, store)
-			got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, tt.dim)
+			got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, tt.dim, "")
 			if err != nil {
 				t.Fatalf("DailyCostsByAllocation: %v", err)
 			}
@@ -399,7 +427,7 @@ func TestDailyCostsByAllocationMatching(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := allocStore(t, tt.records...)
-			got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, tt.dim)
+			got, err := store.DailyCostsByAllocation(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, tt.dim, "")
 			if err != nil {
 				t.Fatalf("DailyCostsByAllocation: %v", err)
 			}
@@ -422,13 +450,13 @@ func TestDailyCostsByAllocationTenantCurrencyRange(t *testing.T) {
 		testRecord(t, "Amazon Elastic Compute Cloud", day(1), "1"),
 		acme,
 	)
-	got, err := store.DailyCostsByAllocation(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, d)
+	got, err := store.DailyCostsByAllocation(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, d, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByAllocation(default): %v", err)
 	}
 	assertLabels(t, got, map[string]string{"ec2": "1"}) // acme's 9 is invisible
 
-	other, err := store.DailyCostsByAllocation(ctx, "acme", time.Time{}, time.Time{}, d)
+	other, err := store.DailyCostsByAllocation(ctx, "acme", time.Time{}, time.Time{}, d, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByAllocation(acme): %v", err)
 	}
@@ -440,7 +468,7 @@ func TestDailyCostsByAllocationTenantCurrencyRange(t *testing.T) {
 		testRecord(t, "Amazon Elastic Compute Cloud", day(2), "2"),
 		testRecord(t, "Amazon Elastic Compute Cloud", day(3), "4"),
 	)
-	got, err = ranged.DailyCostsByAllocation(ctx, focus.DefaultTenant, day(2), day(2), d)
+	got, err = ranged.DailyCostsByAllocation(ctx, focus.DefaultTenant, day(2), day(2), d, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByAllocation(ranged): %v", err)
 	}
@@ -456,16 +484,16 @@ func TestDailyCostsByAllocationTenantCurrencyRange(t *testing.T) {
 		testRecord(t, "Amazon Elastic Compute Cloud", day(1), "1"), // USD
 		eur,
 	)
-	_, allocErr := mixed.DailyCostsByAllocation(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, d)
-	_, svcErr := mixed.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	_, allocErr := mixed.DailyCostsByAllocation(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, d, "")
+	_, svcErr := mixed.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if allocErr == nil || svcErr == nil {
 		t.Fatalf("mixed-currency errors = alloc:%v svc:%v, want both non-nil", allocErr, svcErr)
 	}
 	if allocErr.Error() != svcErr.Error() {
 		t.Errorf("currency-guard message differs:\n alloc: %q\n svc:   %q", allocErr.Error(), svcErr.Error())
 	}
-	if !strings.Contains(allocErr.Error(), "mix billing currencies") {
-		t.Errorf("currency-guard message = %q, want the mixed-currency guard", allocErr.Error())
+	if allocErr.Error() != mixedCurrencyGuardError {
+		t.Errorf("currency-guard message = %q, want %q", allocErr.Error(), mixedCurrencyGuardError)
 	}
 }
 

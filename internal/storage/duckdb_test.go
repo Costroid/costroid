@@ -49,6 +49,8 @@ func testRecord(t *testing.T, service string, day time.Time, cost string) focus.
 
 func day(d int) time.Time { return time.Date(2026, 5, d, 0, 0, 0, 0, time.UTC) }
 
+const mixedCurrencyGuardError = "stored records mix billing currencies (EUR, USD); currency conversion is not supported yet"
+
 func TestOpenAppliesMigrationsOnceAndReopenIsNoOp(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -76,7 +78,7 @@ func TestOpenAppliesMigrationsOnceAndReopenIsNoOp(t *testing.T) {
 	if len(reVersions) != len(versions) {
 		t.Fatalf("after reopen applied migrations = %v, want %v", reVersions, versions)
 	}
-	if _, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}); err != nil {
+	if _, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, ""); err != nil {
 		t.Fatalf("querying after reopen: %v", err)
 	}
 }
@@ -130,7 +132,7 @@ func TestReplaceIngestBatchAndDailyCosts(t *testing.T) {
 		t.Fatalf("ReplaceIngestBatch = %+v, want 4 records, not unchanged", res)
 	}
 
-	got, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	got, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -151,7 +153,7 @@ func TestReplaceIngestBatchAndDailyCosts(t *testing.T) {
 	assertDailyCosts(t, got, want)
 
 	// Range bounds are inclusive calendar days.
-	ranged, err := store.DailyCostsByService(ctx, focus.DefaultTenant, day(2), day(2))
+	ranged, err := store.DailyCostsByService(ctx, focus.DefaultTenant, day(2), day(2), "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(ranged): %v", err)
 	}
@@ -160,12 +162,84 @@ func TestReplaceIngestBatchAndDailyCosts(t *testing.T) {
 	}
 
 	// Records of another tenant are invisible (D15).
-	other, err := store.DailyCostsByService(ctx, "someone-else", time.Time{}, time.Time{})
+	other, err := store.DailyCostsByService(ctx, "someone-else", time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(other tenant): %v", err)
 	}
 	if len(other.Days) != 0 || other.Currency != "" {
 		t.Errorf("other tenant sees %+v, want nothing", other)
+	}
+}
+
+func TestBillingCurrenciesSortedSingleAndEmptyNonNil(t *testing.T) {
+	eur := testRecord(t, "EUR service", day(2), "2")
+	eur.BillingCurrency = "EUR"
+	jpy := testRecord(t, "JPY service", day(3), "3")
+	jpy.BillingCurrency = "JPY"
+	otherTenant := testRecord(t, "GBP service", day(2), "4")
+	otherTenant.BillingCurrency = "GBP"
+	otherTenant.XTenantID = "acme"
+	store := allocStore(t,
+		testRecord(t, "USD service", day(1), "1"),
+		eur,
+		jpy,
+		otherTenant,
+	)
+
+	got, err := store.BillingCurrencies(context.Background(), focus.DefaultTenant, day(1), day(2))
+	if err != nil {
+		t.Fatalf("BillingCurrencies(mixed range): %v", err)
+	}
+	if joined := strings.Join(got, ","); joined != "EUR,USD" {
+		t.Fatalf("BillingCurrencies(mixed range) = %q, want sorted EUR,USD", joined)
+	}
+
+	single, err := store.BillingCurrencies(context.Background(), focus.DefaultTenant, day(2), day(2))
+	if err != nil {
+		t.Fatalf("BillingCurrencies(single range): %v", err)
+	}
+	if len(single) != 1 || single[0] != "EUR" {
+		t.Fatalf("BillingCurrencies(single range) = %v, want [EUR]", single)
+	}
+
+	empty, err := store.BillingCurrencies(context.Background(), focus.DefaultTenant, day(4), day(4))
+	if err != nil {
+		t.Fatalf("BillingCurrencies(empty range): %v", err)
+	}
+	if empty == nil {
+		t.Fatal("BillingCurrencies(empty range) returned nil, want a non-nil empty slice")
+	}
+	if len(empty) != 0 {
+		t.Fatalf("BillingCurrencies(empty range) = %v, want []", empty)
+	}
+}
+
+func TestDailyCostsByServiceCurrencyFilterExactExclusiveAndAbsentEcho(t *testing.T) {
+	eurOne := testRecord(t, "shared service", day(1), "0.111111111111111111")
+	eurOne.BillingCurrency = "EUR"
+	eurTwo := testRecord(t, "shared service", day(1), "0.222222222222222222")
+	eurTwo.BillingCurrency = "EUR"
+	usd := testRecord(t, "shared service", day(1), "9.999999999999999999")
+	store := allocStore(t, usd, eurTwo, eurOne)
+
+	got, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "EUR")
+	if err != nil {
+		t.Fatalf("DailyCostsByService(EUR): %v", err)
+	}
+	if got.Currency != "EUR" || len(got.Days) != 1 || !got.Days[0].Date.Equal(day(1)) ||
+		len(got.Days[0].Services) != 1 || got.Days[0].Services[0].ServiceName != "shared service" {
+		t.Fatalf("DailyCostsByService(EUR) shape = %+v, want one EUR day with only shared service", got)
+	}
+	if dayTotal := got.Days[0].Services[0].Cost.String(); dayTotal != "0.333333333333333333" {
+		t.Fatalf("EUR day total = %s, want exact 0.333333333333333333 (USD leaked)", dayTotal)
+	}
+
+	absent, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "GBP")
+	if err != nil {
+		t.Fatalf("DailyCostsByService(GBP): %v", err)
+	}
+	if absent.Currency != "GBP" || len(absent.Days) != 0 {
+		t.Fatalf("DailyCostsByService(GBP) = %+v, want Currency GBP and no days", absent)
 	}
 }
 
@@ -199,7 +273,7 @@ func TestDailyCostsByServiceGroupsByProviderExactly(t *testing.T) {
 		t.Fatalf("ReplaceIngestBatch: %v", err)
 	}
 
-	noArg, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	noArg, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(no arg): %v", err)
 	}
@@ -212,13 +286,13 @@ func TestDailyCostsByServiceGroupsByProviderExactly(t *testing.T) {
 	}}
 	assertDailyCosts(t, noArg, wantService)
 
-	byService, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, GroupByService)
+	byService, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", GroupByService)
 	if err != nil {
 		t.Fatalf("DailyCostsByService(GroupByService): %v", err)
 	}
 	assertDailyCosts(t, byService, wantService)
 
-	byProvider, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, GroupByProvider)
+	byProvider, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", GroupByProvider)
 	if err != nil {
 		t.Fatalf("DailyCostsByService(GroupByProvider): %v", err)
 	}
@@ -243,8 +317,8 @@ func TestDailyCostsByServiceGroupsByProviderExactly(t *testing.T) {
 	}, []focus.CostRecord{eur}); err != nil {
 		t.Fatalf("ReplaceIngestBatch(EUR): %v", err)
 	}
-	if _, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, GroupByProvider); err == nil || !strings.Contains(err.Error(), "mix billing currencies") {
-		t.Fatalf("DailyCostsByService(GroupByProvider) currency mix error = %v, want mixed-currency guard", err)
+	if _, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", GroupByProvider); err == nil || err.Error() != mixedCurrencyGuardError {
+		t.Fatalf("DailyCostsByService(GroupByProvider) currency mix error = %v, want %q", err, mixedCurrencyGuardError)
 	}
 }
 
@@ -292,7 +366,7 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	if !res.Replaced || res.PreviousBilledCost.String() != "0.1896" || res.NewBilledCost.String() != "0.1264" {
 		t.Fatalf("changed ReplaceIngestBatch = %+v, want replaced with BilledCost 0.1896 → 0.1264", res)
 	}
-	got, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	got, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -307,7 +381,7 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	if _, err := store.ReplaceIngestBatch(ctx, batch2, records[1:]); err != nil {
 		t.Fatalf("second batch ReplaceIngestBatch: %v", err)
 	}
-	got, err = store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	got, err = store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -555,7 +629,7 @@ func TestDailyUsageMetrics(t *testing.T) {
 	if len(tokens) != 1 || tokens[0].Quantity.String() != "555" {
 		t.Errorf("token query = %+v, want only the one cost row (555); usage_metrics must not leak in", tokens)
 	}
-	costs, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	costs, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
