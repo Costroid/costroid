@@ -31,11 +31,12 @@ func storedDayCost(day storage.DayCosts) decimal.Decimal {
 // mergeUnitEconomics unions two day-ascending streams. A bin is covered only
 // when both streams have that day and quantity is positive; cost sign is
 // deliberately irrelevant, so negative and exact-zero cost bins remain real.
-func mergeUnitEconomics(metric string, costs storage.DailyCosts, quantities []storage.DayQuantity) UnitEconomics {
+func mergeUnitEconomics(metric string, costs storage.DailyCosts, quantities []storage.DayQuantity, currencies []string) UnitEconomics {
 	resp := UnitEconomics{
-		Metric:   metric,
-		Currency: costs.Currency,
-		Days:     make([]UnitEconomicsDay, 0, len(costs.Days)+len(quantities)),
+		Metric:     metric,
+		Currency:   costs.Currency,
+		Currencies: append([]string{}, currencies...),
+		Days:       make([]UnitEconomicsDay, 0, len(costs.Days)+len(quantities)),
 		Period: UnitEconomicsPeriod{
 			CoveredDays: 0,
 			Cost:        "0",

@@ -128,18 +128,14 @@ paths:
         identical params. Keys are ordered total-desc, then key-asc.
 
         Preceding window: prevEnd = start − 1 day, prevStart = prevEnd −
-        (end − start). ALL previous-window fields (previousTotal, previousStart,
-        previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT
-        together — never null or "" — when the preceding window is UNDEFINED:
-        (i) start or end is unbounded/empty; (ii) the preceding-window query
-        returns zero cost rows (it predates all ingested data); (iii) the
-        preceding window's single currency differs from the current window's
-        (a cross-currency delta is never computed — the per-window single-currency
-        guard cannot catch a currency switch BETWEEN windows). Never emit
-        previousTotal "0" for a data-empty preceding window. A store error from
-        either window — including the mixed-currency guard tripping WITHIN the
-        preceding window — is a 500 (unlike /costs/daily, which reports
-        per-currency).
+        (end − start). The selected currency is pinned to BOTH windows. ALL
+        previous-window fields (previousTotal, previousStart, previousEnd, and
+        every keys[].previousTotal / keys[].delta) are ABSENT together — never
+        null or "" — when the preceding window is UNDEFINED: (i) start or end
+        is unbounded/empty; (ii) the current window is empty (there are no keys
+        to compare); or (iii) the preceding-window query returns zero cost rows
+        in the selected currency. Never emit previousTotal "0" for a data-empty
+        preceding window. A store error from either window is a 500.
 
         When the preceding window is DEFINED, every key carries delta =
         total − previousTotal (exact decimal.Sub); keys absent from the previous
@@ -176,6 +172,15 @@ paths:
               - provider
               - allocation
             default: service
+        - name: currency
+          in: query
+          description: >-
+            Optional three-letter uppercase billing currency whose summary to
+            return. Omit to use the alphabetically-first currency in the
+            current window.
+          schema:
+            type: string
+            pattern: ^[A-Z]{3}$
       responses:
         "200":
           description: Period cost summary for the requested window.
@@ -185,7 +190,7 @@ paths:
                 $ref: "#/components/schemas/CostsSummary"
         "400":
           description: >-
-            Invalid start date, end date, or groupBy value; or
+            Invalid start date, end date, groupBy value, or currency shape; or
             groupBy=allocation was requested but no allocation rules are
             configured or the rules file was not found.
           content:
@@ -194,8 +199,8 @@ paths:
                 type: string
         "500":
           description: >-
-            The cost query failed (including mixed currencies within a window
-            or an unreadable/malformed/invalid allocation rules file).
+            The cost query failed, including an unreadable, malformed, or
+            invalid allocation rules file.
           content:
             text/plain:
               schema:
@@ -213,9 +218,9 @@ paths:
         range-INDEPENDENT: the full stored history up to the requested end is
         scored, then only flags whose day falls inside [start, end] are returned,
         so a given day yields the identical flag regardless of the queried start.
-        Because scoring reads full history, a mixed-currency HISTORY returns 500 on
-        the single-currency guard even when the requested range alone is
-        single-currency. Every statistic is an exact decimal string and the
+        Passing currency scopes scoring to that billing currency. When currency
+        is omitted, scoring defaults to the alphabetically-first billing
+        currency in history. Every statistic is an exact decimal string and the
         detector's fixed parameters are echoed, so each flag is hand-recomputable.
       parameters:
         - name: start
@@ -244,6 +249,14 @@ paths:
               - provider
               - allocation
             default: service
+        - name: currency
+          in: query
+          description: >-
+            Optional three-letter uppercase billing currency whose history to
+            score. Omit to use the alphabetically-first currency in history.
+          schema:
+            type: string
+            pattern: ^[A-Z]{3}$
       responses:
         "200":
           description: Detected anomalies for the requested period; [] when none.
@@ -253,17 +266,17 @@ paths:
                 $ref: "#/components/schemas/Anomalies"
         "400":
           description: >-
-            Invalid start date, end date, or groupBy value; or groupBy=allocation
-            was requested but no allocation rules are configured or the rules file
-            was not found.
+            Invalid start date, end date, groupBy value, or currency shape; or
+            groupBy=allocation was requested but no allocation rules are
+            configured or the rules file was not found.
           content:
             text/plain:
               schema:
                 type: string
         "500":
           description: >-
-            The cost query failed, including a mixed-currency history or an
-            unreadable, malformed, or invalid allocation rules file.
+            The cost query failed, including an unreadable, malformed, or
+            invalid allocation rules file.
           content:
             text/plain:
               schema:
@@ -369,6 +382,15 @@ paths:
           schema:
             type: string
             format: date
+        - name: currency
+          in: query
+          description: >-
+            Optional three-letter uppercase billing currency whose costs to
+            merge with the business metric. Omit to use the
+            alphabetically-first currency in the range.
+          schema:
+            type: string
+            pattern: ^[A-Z]{3}$
       responses:
         "200":
           description: Daily gaps and covered-only period unit economics.
@@ -377,7 +399,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/UnitEconomics"
         "400":
-          description: Missing or empty metric, or an invalid start/end date.
+          description: >-
+            Missing or empty metric, an invalid start/end date, or an invalid
+            currency shape.
           content:
             text/plain:
               schema:
@@ -510,15 +534,29 @@ components:
       type: object
       required:
         - currency
+        - currencies
         - total
         - keys
       properties:
         currency:
           type: string
           description: >-
-            Billing currency of the CURRENT window (FOCUS BillingCurrency).
-            Empty when the current window has no cost rows.
+            Billing currency of this response's summary (FOCUS BillingCurrency):
+            the currency query parameter when provided, otherwise the
+            alphabetically-first currency in the current window, or "" when
+            the window is empty.
           example: USD
+        currencies:
+          type: array
+          description: >-
+            All billing currencies with cost rows in the current window,
+            sorted ascending. This is the source for a currency selector and is
+            [] (never null) when the window is empty.
+          items:
+            type: string
+          example:
+            - EUR
+            - USD
         total:
           type: string
           description: >-
@@ -846,6 +884,7 @@ components:
       required:
         - metric
         - currency
+        - currencies
         - days
         - period
       properties:
@@ -854,8 +893,22 @@ components:
           example: requests served
         currency:
           type: string
-          description: Cost-side BillingCurrency; empty when no cost matched.
+          description: >-
+            Cost-side BillingCurrency: the currency query parameter when
+            provided, otherwise the alphabetically-first currency in the
+            range, or "" when the range is empty.
           example: USD
+        currencies:
+          type: array
+          description: >-
+            All billing currencies with cost rows in the requested range,
+            sorted ascending. This is the source for a currency selector and is
+            [] (never null) when the range is empty.
+          items:
+            type: string
+          example:
+            - EUR
+            - USD
         days:
           type: array
           description: Union of cost and metric days, day-ascending.

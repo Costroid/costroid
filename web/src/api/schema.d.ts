@@ -68,7 +68,7 @@ export interface paths {
         /**
          * Period cost summary with optional preceding-window comparison
          * @description Period totals by grouping key for the requested [start, end] window, plus an optional preceding-window comparison computed server-side. groupBy semantics and validation match /api/v1/costs/daily (service / provider / allocation; allocation unconfigured → 400; malformed rules → 500). All money values are exact decimal strings (never floats). The response `total` equals /api/v1/costs/daily's period total for identical params. Keys are ordered total-desc, then key-asc.
-         *     Preceding window: prevEnd = start − 1 day, prevStart = prevEnd − (end − start). ALL previous-window fields (previousTotal, previousStart, previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT together — never null or "" — when the preceding window is UNDEFINED: (i) start or end is unbounded/empty; (ii) the preceding-window query returns zero cost rows (it predates all ingested data); (iii) the preceding window's single currency differs from the current window's (a cross-currency delta is never computed — the per-window single-currency guard cannot catch a currency switch BETWEEN windows). Never emit previousTotal "0" for a data-empty preceding window. A store error from either window — including the mixed-currency guard tripping WITHIN the preceding window — is a 500 (unlike /costs/daily, which reports per-currency).
+         *     Preceding window: prevEnd = start − 1 day, prevStart = prevEnd − (end − start). The selected currency is pinned to BOTH windows. ALL previous-window fields (previousTotal, previousStart, previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT together — never null or "" — when the preceding window is UNDEFINED: (i) start or end is unbounded/empty; (ii) the current window is empty (there are no keys to compare); or (iii) the preceding-window query returns zero cost rows in the selected currency. Never emit previousTotal "0" for a data-empty preceding window. A store error from either window is a 500.
          *     When the preceding window is DEFINED, every key carries delta = total − previousTotal (exact decimal.Sub); keys absent from the previous window omit previousTotal while delta equals total (previousTotal-absence alone marks newness). "Gone" keys (present only in the previous window) are out of scope for this version. Empty CURRENT window: total "0", keys [] (never null). No share field — client Number() geometry only.
          */
         get: operations["getCostsSummary"];
@@ -89,7 +89,7 @@ export interface paths {
         };
         /**
          * Statistical cost anomalies (spikes and dips)
-         * @description Flags spikes and dips in the daily cost series with a robust median/MAD detector computed at QUERY time — stateless, so retroactive FOCUS corrections are automatically re-scored. Uses the SAME groupBy dimensions as /api/v1/costs/daily and scores both the per-day TOTAL series (the sum over the day's keys) and each grouping key's own series. Flags are range-INDEPENDENT: the full stored history up to the requested end is scored, then only flags whose day falls inside [start, end] are returned, so a given day yields the identical flag regardless of the queried start. Because scoring reads full history, a mixed-currency HISTORY returns 500 on the single-currency guard even when the requested range alone is single-currency. Every statistic is an exact decimal string and the detector's fixed parameters are echoed, so each flag is hand-recomputable.
+         * @description Flags spikes and dips in the daily cost series with a robust median/MAD detector computed at QUERY time — stateless, so retroactive FOCUS corrections are automatically re-scored. Uses the SAME groupBy dimensions as /api/v1/costs/daily and scores both the per-day TOTAL series (the sum over the day's keys) and each grouping key's own series. Flags are range-INDEPENDENT: the full stored history up to the requested end is scored, then only flags whose day falls inside [start, end] are returned, so a given day yields the identical flag regardless of the queried start. Passing currency scopes scoring to that billing currency. When currency is omitted, scoring defaults to the alphabetically-first billing currency in history. Every statistic is an exact decimal string and the detector's fixed parameters are echoed, so each flag is hand-recomputable.
          */
         get: operations["getAnomalies"];
         put?: never;
@@ -230,10 +230,18 @@ export interface components {
         };
         CostsSummary: {
             /**
-             * @description Billing currency of the CURRENT window (FOCUS BillingCurrency). Empty when the current window has no cost rows.
+             * @description Billing currency of this response's summary (FOCUS BillingCurrency): the currency query parameter when provided, otherwise the alphabetically-first currency in the current window, or "" when the window is empty.
              * @example USD
              */
             currency: string;
+            /**
+             * @description All billing currencies with cost rows in the current window, sorted ascending. This is the source for a currency selector and is [] (never null) when the window is empty.
+             * @example [
+             *       "EUR",
+             *       "USD"
+             *     ]
+             */
+            currencies: string[];
             /**
              * @description Period total for the current window as a decimal string. Equals /api/v1/costs/daily's period total for identical params. "0" when the current window is empty.
              * @example 964050.632653589793238462
@@ -486,10 +494,18 @@ export interface components {
             /** @example requests served */
             metric: string;
             /**
-             * @description Cost-side BillingCurrency; empty when no cost matched.
+             * @description Cost-side BillingCurrency: the currency query parameter when provided, otherwise the alphabetically-first currency in the range, or "" when the range is empty.
              * @example USD
              */
             currency: string;
+            /**
+             * @description All billing currencies with cost rows in the requested range, sorted ascending. This is the source for a currency selector and is [] (never null) when the range is empty.
+             * @example [
+             *       "EUR",
+             *       "USD"
+             *     ]
+             */
+            currencies: string[];
             /** @description Union of cost and metric days, day-ascending. */
             days: components["schemas"]["UnitEconomicsDay"][];
             period: components["schemas"]["UnitEconomicsPeriod"];
@@ -619,6 +635,8 @@ export interface operations {
                 end?: string;
                 /** @description Cost grouping dimension (same set as /api/v1/costs/daily). */
                 groupBy?: "service" | "provider" | "allocation";
+                /** @description Optional three-letter uppercase billing currency whose summary to return. Omit to use the alphabetically-first currency in the current window. */
+                currency?: string;
             };
             header?: never;
             path?: never;
@@ -635,7 +653,7 @@ export interface operations {
                     "application/json": components["schemas"]["CostsSummary"];
                 };
             };
-            /** @description Invalid start date, end date, or groupBy value; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
+            /** @description Invalid start date, end date, groupBy value, or currency shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -644,7 +662,7 @@ export interface operations {
                     "text/plain": string;
                 };
             };
-            /** @description The cost query failed (including mixed currencies within a window or an unreadable/malformed/invalid allocation rules file). */
+            /** @description The cost query failed, including an unreadable, malformed, or invalid allocation rules file. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -664,6 +682,8 @@ export interface operations {
                 end?: string;
                 /** @description Cost grouping dimension (the same set as /api/v1/costs/daily). */
                 groupBy?: "service" | "provider" | "allocation";
+                /** @description Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in history. */
+                currency?: string;
             };
             header?: never;
             path?: never;
@@ -680,7 +700,7 @@ export interface operations {
                     "application/json": components["schemas"]["Anomalies"];
                 };
             };
-            /** @description Invalid start date, end date, or groupBy value; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
+            /** @description Invalid start date, end date, groupBy value, or currency shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -689,7 +709,7 @@ export interface operations {
                     "text/plain": string;
                 };
             };
-            /** @description The cost query failed, including a mixed-currency history or an unreadable, malformed, or invalid allocation rules file. */
+            /** @description The cost query failed, including an unreadable, malformed, or invalid allocation rules file. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -772,6 +792,8 @@ export interface operations {
                 start?: string;
                 /** @description Inclusive last UTC calendar day; defaults to unbounded. */
                 end?: string;
+                /** @description Optional three-letter uppercase billing currency whose costs to merge with the business metric. Omit to use the alphabetically-first currency in the range. */
+                currency?: string;
             };
             header?: never;
             path?: never;
@@ -788,7 +810,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnitEconomics"];
                 };
             };
-            /** @description Missing or empty metric, or an invalid start/end date. */
+            /** @description Missing or empty metric, an invalid start/end date, or an invalid currency shape. */
             400: {
                 headers: {
                     [name: string]: unknown;

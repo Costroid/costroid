@@ -47,6 +47,7 @@ describe("UnitEconomics", () => {
           fakeResponse(200, {
             metric: "a b&c",
             currency: "USD",
+            currencies: ["USD"],
             days: [
               { date: "2026-05-01", cost: "1.000000000000000001" },
               {
@@ -118,6 +119,7 @@ describe("UnitEconomics", () => {
           fakeResponse(200, {
             metric,
             currency: "USD",
+            currencies: ["USD"],
             days: [],
             period: { coveredDays: 0, cost: "0", quantity: "0" },
           }),

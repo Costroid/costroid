@@ -995,11 +995,12 @@ func TestOfflineE2EFocusCSV(t *testing.T) {
 }
 
 // TestOfflineE2EFocusCSVMulticurrency proves the generic FOCUS CSV importer and
-// daily-cost API preserve exact per-currency series end to end. The fixture has
-// EUR and USD rows on both days; an unfiltered request defaults to alphabetical
-// EUR, while an explicit USD request returns only USD without mixing money.
+// every currency-selectable cost API preserve exact per-currency series end to
+// end. The fixture has EUR and USD rows on both days; an unfiltered request
+// defaults to alphabetical EUR, while explicit EUR/USD requests never mix money.
 func TestOfflineE2EFocusCSVMulticurrency(t *testing.T) {
 	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+	var transcript strings.Builder
 
 	ingestOut, err := runCLI([]string{
 		"ingest", "--connector", "focus-csv", "--path", fcsvMulti,
@@ -1011,6 +1012,21 @@ func TestOfflineE2EFocusCSVMulticurrency(t *testing.T) {
 	const wantIngest = "period 2026-05: ingested 4 record(s) as batch focus-csv/multicurrency/2026-05"
 	if !strings.Contains(ingestOut, wantIngest) {
 		t.Fatalf("multicurrency ingest output missing %q:\n%s", wantIngest, ingestOut)
+	}
+
+	// Unit economics rejects an unknown metric before it queries costs. Import the
+	// aligned business quantities BEFORE opening the API store: DuckDB is
+	// single-writer, so no CLI import may overlap the store/handler below.
+	metricsPath := filepath.Join(t.TempDir(), "metrics.csv")
+	if err := os.WriteFile(metricsPath, []byte("date,metric,quantity\n2026-05-01,requests,10\n2026-05-02,requests,20\n"), 0o600); err != nil {
+		t.Fatalf("writing multicurrency metrics CSV: %v", err)
+	}
+	metricsOut, err := runCLI([]string{"metrics", "import", "--path", metricsPath}, "")
+	if err != nil {
+		t.Fatalf("multicurrency metrics import: %v\n%s", err, metricsOut)
+	}
+	if !strings.Contains(metricsOut, "imported 2 business metric row(s) across 1 metric(s)") {
+		t.Fatalf("multicurrency metrics output missing row/metric counts:\n%s", metricsOut)
 	}
 
 	store, err := storage.Open(context.Background(), os.Getenv("COSTROID_DATA_DIR"))
@@ -1036,25 +1052,31 @@ func TestOfflineE2EFocusCSVMulticurrency(t *testing.T) {
 		Days       []responseDay `json:"days"`
 		Total      string        `json:"total"`
 	}
-	get := func(query string) (dailyResponse, string) {
+	getJSON := func(path string, target any) string {
 		t.Helper()
-		resp, err := http.Get(srv.URL + "/api/v1/costs/daily" + query)
+		resp, err := http.Get(srv.URL + path)
 		if err != nil {
-			t.Fatalf("GET daily costs %q: %v", query, err)
+			t.Fatalf("GET %s: %v", path, err)
 		}
 		defer func() { _ = resp.Body.Close() }()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			t.Fatalf("reading daily costs %q: %v", query, err)
+			t.Fatalf("reading %s: %v", path, err)
 		}
+		fmt.Fprintf(&transcript, "\n# GET %s\n%s", path, body)
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("daily costs %q HTTP %d: %s", query, resp.StatusCode, body)
+			t.Fatalf("GET %s HTTP %d: %s", path, resp.StatusCode, body)
 		}
+		if err := json.Unmarshal(body, target); err != nil {
+			t.Fatalf("decoding %s: %v\n%s", path, err, body)
+		}
+		return string(body)
+	}
+	getDaily := func(query string) dailyResponse {
+		t.Helper()
 		var got dailyResponse
-		if err := json.Unmarshal(body, &got); err != nil {
-			t.Fatalf("decoding daily costs %q: %v\n%s", query, err, body)
-		}
-		return got, string(body)
+		getJSON("/api/v1/costs/daily"+query, &got)
+		return got
 	}
 	type expectedDay struct {
 		date  string
@@ -1090,18 +1112,147 @@ func TestOfflineE2EFocusCSVMulticurrency(t *testing.T) {
 		}
 	}
 
-	defaultSeries, defaultBody := get("")
+	defaultSeries := getDaily("")
 	assertSeries(defaultSeries, "EUR", "3.123456789012345679", []expectedDay{
 		{date: "2026-05-01", cost: "1.123456789012345678", total: "1.123456789012345678"},
 		{date: "2026-05-02", cost: "2.000000000000000001", total: "2.000000000000000001"},
 	})
-	usdSeries, usdBody := get("?currency=USD")
+	usdSeries := getDaily("?currency=USD")
 	assertSeries(usdSeries, "USD", "30.987654321098765434", []expectedDay{
 		{date: "2026-05-01", cost: "10.987654321098765432", total: "10.987654321098765432"},
 		{date: "2026-05-02", cost: "20.000000000000000002", total: "20.000000000000000002"},
 	})
 
-	t.Logf("\n===== OFFLINE E2E FOCUS-CSV MULTICURRENCY TRANSCRIPT =====\n$ costroid ingest ...\n%s\n# GET /api/v1/costs/daily\n%s\n# GET /api/v1/costs/daily?currency=USD\n%s", ingestOut, defaultBody, usdBody)
+	type summaryKey struct {
+		Key   string `json:"key"`
+		Total string `json:"total"`
+	}
+	type summaryResponse struct {
+		Currencies []string     `json:"currencies"`
+		Currency   string       `json:"currency"`
+		Keys       []summaryKey `json:"keys"`
+		Total      string       `json:"total"`
+	}
+	assertSummary := func(query, wantCurrency, wantTotal string) {
+		t.Helper()
+		var got summaryResponse
+		getJSON("/api/v1/costs/summary"+query, &got)
+		if !slices.Equal(got.Currencies, []string{"EUR", "USD"}) {
+			t.Errorf("summary %q currencies = %v, want [EUR USD]", query, got.Currencies)
+		}
+		if got.Currency != wantCurrency || got.Total != wantTotal {
+			t.Errorf("summary %q = {currency:%q total:%q}, want {%q %q}", query, got.Currency, got.Total, wantCurrency, wantTotal)
+		}
+		if len(got.Keys) != 1 {
+			t.Fatalf("summary %q keys = %+v, want one non-vacuous key", query, got.Keys)
+		}
+		if key := got.Keys[0]; key.Key != "Shared Compute" || key.Total != wantTotal {
+			t.Errorf("summary %q key = %+v, want Shared Compute total %s", query, key, wantTotal)
+		}
+	}
+
+	// Hand-recomputed directly from testdata/focus-csv-multicurrency:
+	// EUR = 1.123456789012345678 + 2.000000000000000001 = 3.123456789012345679.
+	// USD = 10.987654321098765432 + 20.000000000000000002 = 30.987654321098765434.
+	const dateRange = "?start=2026-05-01&end=2026-05-02"
+	assertSummary(dateRange, "EUR", "3.123456789012345679")
+	assertSummary(dateRange+"&currency=EUR", "EUR", "3.123456789012345679")
+	assertSummary(dateRange+"&currency=USD", "USD", "30.987654321098765434")
+
+	type anomalyResponse struct {
+		Anomalies  []json.RawMessage `json:"anomalies"`
+		Currency   string            `json:"currency"`
+		Parameters struct {
+			GroupBy         string `json:"groupBy"`
+			MinObservations int    `json:"minObservations"`
+		} `json:"parameters"`
+	}
+	assertAnomalies := func(query, wantCurrency string) {
+		t.Helper()
+		var got anomalyResponse
+		getJSON("/api/v1/anomalies"+query, &got)
+		if got.Currency != wantCurrency {
+			t.Errorf("anomalies %q currency = %q, want %q", query, got.Currency, wantCurrency)
+		}
+		if got.Anomalies == nil {
+			t.Fatalf("anomalies %q decoded a null anomalies list", query)
+		}
+		if len(got.Anomalies) != 0 {
+			t.Errorf("anomalies %q = %+v, want none with only two observed days", query, got.Anomalies)
+		}
+		if got.Parameters.GroupBy != "service" || got.Parameters.MinObservations <= 0 {
+			t.Fatalf("anomalies %q parameters = %+v, want a non-vacuous service detector response", query, got.Parameters)
+		}
+	}
+	assertAnomalies(dateRange, "EUR")
+	assertAnomalies(dateRange+"&currency=EUR", "EUR")
+	assertAnomalies(dateRange+"&currency=USD", "USD")
+
+	type economicsDay struct {
+		Cost     *string `json:"cost"`
+		Date     string  `json:"date"`
+		Quantity *string `json:"quantity"`
+		UnitCost *string `json:"unitCost"`
+	}
+	type economicsResponse struct {
+		Currencies []string       `json:"currencies"`
+		Currency   string         `json:"currency"`
+		Days       []economicsDay `json:"days"`
+		Metric     string         `json:"metric"`
+		Period     struct {
+			Cost        string  `json:"cost"`
+			CoveredDays int     `json:"coveredDays"`
+			Quantity    string  `json:"quantity"`
+			UnitCost    *string `json:"unitCost"`
+		} `json:"period"`
+	}
+	type expectedEconomicsDay struct {
+		date     string
+		cost     string
+		quantity string
+		unitCost string
+	}
+	assertEconomics := func(query, wantCurrency, wantPeriodCost, wantPeriodUnitCost string, wantDays []expectedEconomicsDay) {
+		t.Helper()
+		var got economicsResponse
+		getJSON("/api/v1/unit-economics/daily"+query, &got)
+		if !slices.Equal(got.Currencies, []string{"EUR", "USD"}) {
+			t.Errorf("unit economics %q currencies = %v, want [EUR USD]", query, got.Currencies)
+		}
+		if got.Currency != wantCurrency || got.Metric != "requests" {
+			t.Errorf("unit economics %q = {currency:%q metric:%q}, want {%q requests}", query, got.Currency, got.Metric, wantCurrency)
+		}
+		if len(got.Days) != len(wantDays) {
+			t.Fatalf("unit economics %q days = %+v, want %d exact non-vacuous days", query, got.Days, len(wantDays))
+		}
+		for i, want := range wantDays {
+			day := got.Days[i]
+			if day.Date != want.date || day.Cost == nil || *day.Cost != want.cost ||
+				day.Quantity == nil || *day.Quantity != want.quantity || day.UnitCost == nil || *day.UnitCost != want.unitCost {
+				t.Errorf("unit economics %q day %d = %+v, want {date:%s cost:%s quantity:%s unitCost:%s}",
+					query, i, day, want.date, want.cost, want.quantity, want.unitCost)
+			}
+		}
+		if got.Period.Cost != wantPeriodCost || got.Period.CoveredDays != 2 || got.Period.Quantity != "30" ||
+			got.Period.UnitCost == nil || *got.Period.UnitCost != wantPeriodUnitCost {
+			t.Errorf("unit economics %q period = %+v, want {cost:%s coveredDays:2 quantity:30 unitCost:%s}",
+				query, got.Period, wantPeriodCost, wantPeriodUnitCost)
+		}
+	}
+	eurDays := []expectedEconomicsDay{
+		{date: "2026-05-01", cost: "1.123456789012345678", quantity: "10", unitCost: "0.112345678901234568"},
+		{date: "2026-05-02", cost: "2.000000000000000001", quantity: "20", unitCost: "0.1"},
+	}
+	usdDays := []expectedEconomicsDay{
+		{date: "2026-05-01", cost: "10.987654321098765432", quantity: "10", unitCost: "1.098765432109876543"},
+		{date: "2026-05-02", cost: "20.000000000000000002", quantity: "20", unitCost: "1"},
+	}
+	const economicsRange = "?metric=requests&start=2026-05-01&end=2026-05-02"
+	assertEconomics(economicsRange, "EUR", "3.123456789012345679", "0.104115226300411523", eurDays)
+	assertEconomics(economicsRange+"&currency=EUR", "EUR", "3.123456789012345679", "0.104115226300411523", eurDays)
+	assertEconomics(economicsRange+"&currency=USD", "USD", "30.987654321098765434", "1.032921810703292181", usdDays)
+
+	t.Logf("\n===== OFFLINE E2E FOCUS-CSV MULTICURRENCY TRANSCRIPT =====\n$ costroid ingest ...\n%s\n$ costroid metrics import ...\n%s%s", ingestOut, metricsOut, transcript.String())
 }
 
 // TestFocusCSVDefaultLabelCLI covers the default --source-label (the file's

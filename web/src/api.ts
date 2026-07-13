@@ -64,15 +64,18 @@ export async function getCostsDaily(
 }
 
 export async function getCostsSummary(
-  params: RangeParams & { groupBy: CostGroupBy },
+  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
   signal?: AbortSignal,
 ): Promise<CostsSummary> {
   const q = rangeQuery(params.start, params.end);
-  const url =
+  let url =
     `/api/v1/costs/summary${q}` +
     (params.groupBy !== "service"
       ? `${q ? "&" : "?"}groupBy=${params.groupBy}`
       : "");
+  if (params.currency) {
+    url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
+  }
   const res = await fetch(url, { signal });
   if (!res.ok) {
     throw new Error(`GET /api/v1/costs/summary returned ${res.status}`);
@@ -81,15 +84,18 @@ export async function getCostsSummary(
 }
 
 export async function getAnomalies(
-  params: RangeParams & { groupBy: CostGroupBy },
+  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
   signal?: AbortSignal,
 ): Promise<Anomalies> {
   const q = rangeQuery(params.start, params.end);
-  const url =
+  let url =
     `/api/v1/anomalies${q}` +
     (params.groupBy !== "service"
       ? `${q ? "&" : "?"}groupBy=${params.groupBy}`
       : "");
+  if (params.currency) {
+    url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
+  }
   const res = await fetch(url, { signal });
   if (!res.ok) {
     throw new Error(`GET /api/v1/anomalies returned ${res.status}`);
@@ -132,13 +138,16 @@ export async function getBusinessMetrics(
 }
 
 export async function getUnitEconomicsDaily(
-  params: RangeParams & { metric: string },
+  params: RangeParams & { metric: string; currency?: string },
   signal?: AbortSignal,
 ): Promise<UnitEconomics> {
   const rangeSuffix = rangeQuery(params.start, params.end).replace("?", "&");
-  const url =
+  let url =
     `/api/v1/unit-economics/daily?metric=${encodeURIComponent(params.metric)}` +
     rangeSuffix;
+  if (params.currency) {
+    url += `&currency=${encodeURIComponent(params.currency)}`;
+  }
   const res = await fetch(url, { signal });
   if (!res.ok) {
     throw new Error(`GET /api/v1/unit-economics/daily returned ${res.status}`);

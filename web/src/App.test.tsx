@@ -21,7 +21,7 @@ function fakeResponse(status: number, body: unknown): Response {
 
 const emptyCosts = { currency: "", currencies: [], total: "0", days: [] };
 
-const emptySummary = { currency: "", total: "0", keys: [] };
+const emptySummary = { currency: "", currencies: [], total: "0", keys: [] };
 
 function mockFetch(demo = false) {
   return vi.fn((input: RequestInfo | URL) => {

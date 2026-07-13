@@ -24,6 +24,7 @@ const PERIOD_TOTAL = "964050.632653589793238462";
 function summaryBody(overrides: Partial<CostsSummary> = {}): CostsSummary {
   return {
     currency: "USD",
+    currencies: ["USD"],
     total: PERIOD_TOTAL,
     keys: [
       { key: "Amazon Web Services", total: "500000.000000000000000000" },
@@ -52,6 +53,7 @@ function anomaliesBody(flags: Anomalies["anomalies"] = []): Anomalies {
 function unitBody(): UnitEconomics {
   return {
     currency: "USD",
+    currencies: ["USD"],
     metric: "requests served",
     period: {
       coveredDays: 3,

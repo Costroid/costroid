@@ -176,7 +176,10 @@ type CostSummaryKey struct {
 
 // CostsSummary defines model for CostsSummary.
 type CostsSummary struct {
-	// Currency Billing currency of the CURRENT window (FOCUS BillingCurrency). Empty when the current window has no cost rows.
+	// Currencies All billing currencies with cost rows in the current window, sorted ascending. This is the source for a currency selector and is [] (never null) when the window is empty.
+	Currencies []string `json:"currencies"`
+
+	// Currency Billing currency of this response's summary (FOCUS BillingCurrency): the currency query parameter when provided, otherwise the alphabetically-first currency in the current window, or "" when the window is empty.
 	Currency string `json:"currency"`
 
 	// Keys Per-key period totals for the current window, ordered total-desc then key-asc. Never null; [] when the current window is empty. Gone keys (previous-only) are out of scope.
@@ -284,7 +287,10 @@ type ServiceCost struct {
 
 // UnitEconomics defines model for UnitEconomics.
 type UnitEconomics struct {
-	// Currency Cost-side BillingCurrency; empty when no cost matched.
+	// Currencies All billing currencies with cost rows in the requested range, sorted ascending. This is the source for a currency selector and is [] (never null) when the range is empty.
+	Currencies []string `json:"currencies"`
+
+	// Currency Cost-side BillingCurrency: the currency query parameter when provided, otherwise the alphabetically-first currency in the range, or "" when the range is empty.
 	Currency string `json:"currency"`
 
 	// Days Union of cost and metric days, day-ascending.
@@ -331,6 +337,9 @@ type GetAnomaliesParams struct {
 
 	// GroupBy Cost grouping dimension (the same set as /api/v1/costs/daily).
 	GroupBy *GetAnomaliesParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+
+	// Currency Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in history.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
 }
 
 // GetAnomaliesParamsGroupBy defines parameters for GetAnomalies.
@@ -364,6 +373,9 @@ type GetCostsSummaryParams struct {
 
 	// GroupBy Cost grouping dimension (same set as /api/v1/costs/daily).
 	GroupBy *GetCostsSummaryParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+
+	// Currency Optional three-letter uppercase billing currency whose summary to return. Omit to use the alphabetically-first currency in the current window.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
 }
 
 // GetCostsSummaryParamsGroupBy defines parameters for GetCostsSummary.
@@ -379,6 +391,9 @@ type GetDailyUnitEconomicsParams struct {
 
 	// End Inclusive last UTC calendar day; defaults to unbounded.
 	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+
+	// Currency Optional three-letter uppercase billing currency whose costs to merge with the business metric. Omit to use the alphabetically-first currency in the range.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
 }
 
 // GetDailyUsageMetricsParams defines parameters for GetDailyUsageMetrics.
@@ -483,6 +498,19 @@ func (siw *ServerInterfaceWrapper) GetAnomalies(w http.ResponseWriter, r *http.R
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "currency" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "currency", r.URL.Query(), &params.Currency, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "currency"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "currency", Err: err})
 		}
 		return
 	}
@@ -632,6 +660,19 @@ func (siw *ServerInterfaceWrapper) GetCostsSummary(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// ------------- Optional query parameter "currency" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "currency", r.URL.Query(), &params.Currency, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "currency"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "currency", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCostsSummary(w, r, params)
 	}))
@@ -701,6 +742,19 @@ func (siw *ServerInterfaceWrapper) GetDailyUnitEconomics(w http.ResponseWriter, 
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "currency" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "currency", r.URL.Query(), &params.Currency, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "currency"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "currency", Err: err})
 		}
 		return
 	}

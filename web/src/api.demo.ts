@@ -64,7 +64,7 @@ export function getCostsDaily(
 }
 
 export function getCostsSummary(
-  params: RangeParams & { groupBy: CostGroupBy },
+  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
   _signal?: AbortSignal,
 ): Promise<CostsSummary> {
   const preset = presetOf(params.start, params.end);
@@ -74,7 +74,7 @@ export function getCostsSummary(
 }
 
 export function getAnomalies(
-  params: RangeParams & { groupBy: CostGroupBy },
+  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
   _signal?: AbortSignal,
 ): Promise<Anomalies> {
   const preset = presetOf(params.start, params.end);
@@ -110,7 +110,7 @@ export function getBusinessMetrics(
 }
 
 export function getUnitEconomicsDaily(
-  params: RangeParams & { metric: string },
+  params: RangeParams & { metric: string; currency?: string },
   _signal?: AbortSignal,
 ): Promise<UnitEconomics> {
   // Only one business metric is captured; the range selects the fixture.

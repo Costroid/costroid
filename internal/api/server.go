@@ -181,47 +181,67 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
 		return
 	}
+	if params.Currency != nil && !billingCurrencyPattern.MatchString(*params.Currency) {
+		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
+		return
+	}
 
-	current, err := s.queryDailyCosts(r.Context(), w, start, end, "", params.GroupBy)
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end)
 	if err != nil {
-		// queryDailyCosts already wrote the response on allocation errors;
-		// store errors still need a 500.
-		if !allocationErrorWritten(err) {
-			http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	currency := ""
+	if params.Currency != nil {
+		currency = *params.Currency
+	} else if len(currencies) > 0 {
+		currency = currencies[0]
+	}
+
+	isAllocation := params.GroupBy != nil && *params.GroupBy == Allocation
+	var dim allocation.Dimension
+	if isAllocation {
+		var ok bool
+		dim, ok = s.loadAllocationDimension(w)
+		if !ok {
+			return
 		}
+	}
+
+	current, err := s.queryDailyCosts(r.Context(), start, end, currency, params.GroupBy, dim, isAllocation)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	curTotals, curGrand, curCurrency := periodKeyTotals(current)
 	resp := CostsSummary{
-		Currency: curCurrency,
-		Total:    curGrand.String(),
-		Keys:     make([]CostSummaryKey, 0, len(curTotals)),
+		Currency:   curCurrency,
+		Currencies: currencies,
+		Total:      curGrand.String(),
+		Keys:       make([]CostSummaryKey, 0, len(curTotals)),
 	}
 
 	// Preceding window is only defined for a fully bounded current range.
 	prevDefined := !start.IsZero() && !end.IsZero()
+	if currency == "" || len(current.Days) == 0 {
+		prevDefined = false
+	}
 	var prevTotals map[string]decimal.Decimal
 	var prevGrand decimal.Decimal
-	var prevCurrency string
 	var prevStart, prevEnd time.Time
 	if prevDefined {
 		// prevEnd = start − 1 day; prevStart = prevEnd − (end − start).
 		prevEnd = start.AddDate(0, 0, -1)
 		prevStart = prevEnd.Add(-end.Sub(start))
-		previous, err := s.queryDailyCosts(r.Context(), w, prevStart, prevEnd, "", params.GroupBy)
+		previous, err := s.queryDailyCosts(r.Context(), prevStart, prevEnd, currency, params.GroupBy, dim, isAllocation)
 		if err != nil {
-			if !allocationErrorWritten(err) {
-				http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
-			}
+			http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		prevTotals, prevGrand, prevCurrency = periodKeyTotals(previous)
-		// Undefined when previous has zero rows OR currency differs across windows.
-		// (Empty previous: never emit previousTotal "0".)
-		hasPrevRows := len(previous.Days) > 0
-		currencyOK := hasPrevRows && prevCurrency == curCurrency
-		if !hasPrevRows || !currencyOK {
+		prevTotals, prevGrand, _ = periodKeyTotals(previous)
+		// Empty previous: never emit previousTotal "0".
+		if len(previous.Days) == 0 {
 			prevDefined = false
 		}
 	}
@@ -270,24 +290,11 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 	writeJSON(w, resp)
 }
 
-// errAllocationResponseWritten is a sentinel for queryDailyCosts when it already
-// wrote a 400/500 allocation error response (so the caller must not write again).
-var errAllocationResponseWritten = errors.New("allocation error response written")
-
-func allocationErrorWritten(err error) bool {
-	return errors.Is(err, errAllocationResponseWritten)
-}
-
 // queryDailyCosts runs the same store path as GetDailyCosts for one window.
-// On allocation load failure it writes the response and returns
-// errAllocationResponseWritten. On store failure it returns the store error
-// without writing (caller writes 500).
-func (s *Server) queryDailyCosts(ctx context.Context, w http.ResponseWriter, start, end time.Time, currency string, groupBy *GetCostsSummaryParamsGroupBy) (storage.DailyCosts, error) {
-	if groupBy != nil && *groupBy == Allocation {
-		dim, ok := s.loadAllocationDimension(w)
-		if !ok {
-			return storage.DailyCosts{}, errAllocationResponseWritten
-		}
+// Allocation rules are pre-resolved once by the caller and shared across both
+// windows. On store failure this returns the error without writing a response.
+func (s *Server) queryDailyCosts(ctx context.Context, start, end time.Time, currency string, groupBy *GetCostsSummaryParamsGroupBy, dim allocation.Dimension, isAllocation bool) (storage.DailyCosts, error) {
+	if isAllocation {
 		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim, currency)
 	}
 	gb := storage.GroupByService
@@ -445,6 +452,10 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "metric query parameter is required and must be non-empty", http.StatusBadRequest)
 		return
 	}
+	if params.Currency != nil && !billingCurrencyPattern.MatchString(*params.Currency) {
+		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
+		return
+	}
 	metric := params.Metric
 	start, end := time.Time{}, time.Time{}
 	if params.Start != nil {
@@ -471,7 +482,19 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	costs, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, "")
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	currency := ""
+	if params.Currency != nil {
+		currency = *params.Currency
+	} else if len(currencies) > 0 {
+		currency = currencies[0]
+	}
+
+	costs, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, currency)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -481,7 +504,7 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "querying daily business metric quantities: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, mergeUnitEconomics(metric, costs, quantities))
+	writeJSON(w, mergeUnitEconomics(metric, costs, quantities, currencies))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

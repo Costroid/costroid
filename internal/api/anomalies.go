@@ -22,11 +22,10 @@ import (
 // requested [start, end]. That makes flags range-INDEPENDENT: a given day yields
 // the identical flag regardless of the queried start.
 //
-// Because scoring reads full history, a mixed-currency HISTORY trips the store's
-// single-currency guard (a 500) even when the requested range alone is
-// single-currency — an intended divergence from /costs/daily, documented in the
-// contract. Detection is stateless (no storage of its own), so a retroactive
-// FOCUS correction rewriting a past day is automatically re-scored.
+// When no currency is selected, mixed-currency history defaults to the
+// alphabetically-first billing currency. Detection is stateless (no storage of
+// its own), so a retroactive FOCUS correction rewriting a past day is
+// automatically re-scored.
 func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params GetAnomaliesParams) {
 	var start, end time.Time // requested filter window; zero = unbounded on that side
 	if params.Start != nil {
@@ -39,12 +38,27 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
 		return
 	}
+	if params.Currency != nil && !billingCurrencyPattern.MatchString(*params.Currency) {
+		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
+		return
+	}
 
 	var (
 		daily   storage.DailyCosts
 		err     error
 		groupBy = "service"
 	)
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, time.Time{}, end)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	currency := ""
+	if params.Currency != nil {
+		currency = *params.Currency
+	} else if len(currencies) > 0 {
+		currency = currencies[0]
+	}
 	// The store fetch uses a ZERO start (full history) so scoring is
 	// range-independent; end still bounds it (later days cannot change past flags).
 	switch {
@@ -54,12 +68,12 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		if !ok {
 			return // loadAllocationDimension already wrote the error response
 		}
-		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, time.Time{}, end, dim, "")
+		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, time.Time{}, end, dim, currency)
 	case params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupByProvider:
 		groupBy = "provider"
-		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, "", storage.GroupByProvider)
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, storage.GroupByProvider)
 	default:
-		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, "", storage.GroupByService)
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, storage.GroupByService)
 	}
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)

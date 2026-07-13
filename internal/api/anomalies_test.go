@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +58,10 @@ func TestGetAnomaliesContractPins(t *testing.T) {
 	}
 	if store.gotGroupBy != storage.GroupByService {
 		t.Errorf("default groupBy = %v, want GroupByService", store.gotGroupBy)
+	}
+	if store.currenciesQueryCount != 1 || !store.gotCurrenciesStart.IsZero() || !store.gotCurrenciesEnd.IsZero() || store.gotCurrency != "USD" {
+		t.Errorf("currency selection = count %d range [%s,%s] selected %q, want one unbounded lookup and USD",
+			store.currenciesQueryCount, store.gotCurrenciesStart, store.gotCurrenciesEnd, store.gotCurrency)
 	}
 
 	var got Anomalies
@@ -141,6 +146,97 @@ func TestGetAnomaliesContractPins(t *testing.T) {
 	}
 }
 
+func TestGetAnomaliesCurrencySelectionThreadsMixedHistory(t *testing.T) {
+	const guard = "stored records mix billing currencies (EUR, USD); currency conversion is not supported yet"
+	store := &fakeStore{
+		currencies: []string{"EUR", "USD"},
+		dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if currency == "" {
+				return storage.DailyCosts{}, errors.New(guard)
+			}
+			return storage.DailyCosts{Currency: currency, Days: []storage.DayCosts{}}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?end=2026-06-30&currency=USD", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got Anomalies
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode anomalies: %v", err)
+	}
+	if got.Currency != "USD" || got.Anomalies == nil || len(got.Anomalies) != 0 {
+		t.Fatalf("anomalies = %+v, want non-nil empty USD result", got)
+	}
+	if store.currenciesQueryCount != 1 || !store.gotCurrenciesStart.IsZero() || store.gotCurrenciesEnd.Format(time.DateOnly) != "2026-06-30" ||
+		store.gotCurrency != "USD" || len(store.queryLog) != 1 || store.queryLog[0].currency != "USD" {
+		t.Fatalf("currency lookup/query = count %d range [%s,%s] selected %q log %+v",
+			store.currenciesQueryCount, store.gotCurrenciesStart, store.gotCurrenciesEnd, store.gotCurrency, store.queryLog)
+	}
+}
+
+func TestGetAnomaliesMixedHistoryDefaultsToFirstCurrency(t *testing.T) {
+	const guard = "stored records mix billing currencies (EUR, USD); currency conversion is not supported yet"
+	store := &fakeStore{
+		currencies: []string{"EUR", "USD"},
+		dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if currency == "" {
+				return storage.DailyCosts{}, errors.New(guard)
+			}
+			return storage.DailyCosts{Currency: currency, Days: []storage.DayCosts{}}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got Anomalies
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode anomalies: %v", err)
+	}
+	if got.Currency != "EUR" || got.Anomalies == nil {
+		t.Fatalf("defaulted anomalies = %+v, want EUR and non-nil anomalies", got)
+	}
+	if store.currenciesQueryCount != 1 || store.gotCurrency != "EUR" {
+		t.Fatalf("currency lookup/query = %d/%q, want 1/EUR", store.currenciesQueryCount, store.gotCurrency)
+	}
+}
+
+func TestGetAnomaliesInvalidCurrencyIs400(t *testing.T) {
+	store := anomalyFakeStore(t)
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?currency=eur", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400; body=%s", rec.Code, rec.Body)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "currency must be a three-letter uppercase code (for example, USD)" {
+		t.Fatalf("body=%q", body)
+	}
+	if store.currenciesQueryCount != 0 || store.queryCount != 0 || store.allocQueryCount != 0 {
+		t.Fatalf("invalid currency reached store: currencies=%d service=%d allocation=%d",
+			store.currenciesQueryCount, store.queryCount, store.allocQueryCount)
+	}
+}
+
+func TestGetAnomaliesBillingCurrenciesErrorIs500(t *testing.T) {
+	store := &fakeStore{currenciesErr: errors.New("currency scan failed")}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies", nil))
+	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "querying daily costs: currency scan failed" {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if store.currenciesQueryCount != 1 || store.queryCount != 0 || store.allocQueryCount != 0 {
+		t.Fatalf("currency failure query counts = %d/%d/%d, want 1/0/0",
+			store.currenciesQueryCount, store.queryCount, store.allocQueryCount)
+	}
+}
+
 // TestGetAnomaliesGroupByComposition pins that groupBy composes exactly like
 // /costs/daily: provider and allocation route to the matching store method, an
 // invalid value 400s without touching the store, and the allocation 400 (missing
@@ -166,8 +262,8 @@ func TestGetAnomaliesGroupByComposition(t *testing.T) {
 		store := anomalyFakeStore(t)
 		rec := httptest.NewRecorder()
 		NewHandler("test", testStatic(), store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?groupBy=bogus", nil))
-		if rec.Code != http.StatusBadRequest || store.queryCount != 0 || store.allocQueryCount != 0 {
-			t.Fatalf("status=%d queryCount=%d allocCount=%d", rec.Code, store.queryCount, store.allocQueryCount)
+		if rec.Code != http.StatusBadRequest || store.currenciesQueryCount != 0 || store.queryCount != 0 || store.allocQueryCount != 0 {
+			t.Fatalf("status=%d currencyCount=%d queryCount=%d allocCount=%d", rec.Code, store.currenciesQueryCount, store.queryCount, store.allocQueryCount)
 		}
 	})
 

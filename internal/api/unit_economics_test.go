@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -68,8 +69,8 @@ func TestMergeUnitEconomicsCoveredBinsOnly(t *testing.T) {
 		{Date: day(5), Quantity: decimal.RequireFromString("7")},
 	}
 
-	got := mergeUnitEconomics("requests", costs, quantities)
-	if got.Currency != "USD" || got.Metric != "requests" || len(got.Days) != 5 {
+	got := mergeUnitEconomics("requests", costs, quantities, []string{"EUR", "USD"})
+	if got.Currency != "USD" || !reflect.DeepEqual(got.Currencies, []string{"EUR", "USD"}) || got.Metric != "requests" || len(got.Days) != 5 {
 		t.Fatalf("response = %+v", got)
 	}
 	if got.Days[0].Cost == nil || *got.Days[0].Cost != "10" || got.Days[0].Quantity != nil || got.Days[0].UnitCost != nil {
@@ -113,12 +114,12 @@ func TestGetDailyUnitEconomicsEmptyCurrencyWhenNoCostRows(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Currency != "" {
-		t.Errorf("currency = %q, want empty string (no cost rows matched)", got.Currency)
+	if got.Currency != "" || got.Currencies == nil || len(got.Currencies) != 0 {
+		t.Errorf("currency/list = %q/%v, want empty string and non-nil [] (no cost rows matched)", got.Currency, got.Currencies)
 	}
 	// The empty currency is carried verbatim in the JSON, never omitted or faked.
-	if !strings.Contains(rec.Body.String(), `"currency":""`) {
-		t.Errorf("body must carry an empty currency verbatim: %s", rec.Body)
+	if !strings.Contains(rec.Body.String(), `"currency":""`) || !strings.Contains(rec.Body.String(), `"currencies":[]`) {
+		t.Errorf("body must carry empty currency and currencies [] verbatim: %s", rec.Body)
 	}
 }
 
@@ -178,6 +179,9 @@ func TestGetDailyUnitEconomicsHappyAndRequestShape(t *testing.T) {
 	if store.gotGroupBy != groupByUnset {
 		t.Errorf("cost query groupBy = %v, want bare call", store.gotGroupBy)
 	}
+	if store.currenciesQueryCount != 1 || store.gotCurrency != "USD" {
+		t.Errorf("currency lookup/query = %d/%q, want 1/USD", store.currenciesQueryCount, store.gotCurrency)
+	}
 	for name, got := range map[string]time.Time{"cost start": store.gotStart, "cost end": store.gotEnd, "metric start": store.gotBusinessStart, "metric end": store.gotBusinessEnd} {
 		want := "2026-05-02"
 		if strings.Contains(name, "end") {
@@ -196,6 +200,94 @@ func TestGetDailyUnitEconomicsHappyAndRequestShape(t *testing.T) {
 	}
 	if got.Period.CoveredDays != 1 || got.Period.Cost != "3.000000000000000001" || got.Period.Quantity != "3" || got.Period.UnitCost == nil || *got.Period.UnitCost != "1" {
 		t.Fatalf("period = %+v", got.Period)
+	}
+	if !reflect.DeepEqual(got.Currencies, []string{"USD"}) {
+		t.Fatalf("currencies = %v, want [USD]", got.Currencies)
+	}
+}
+
+func TestGetDailyUnitEconomicsCurrencyFiltersAndListsCurrencies(t *testing.T) {
+	day := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		currencies:    []string{"EUR", "USD"},
+		businessInfos: []storage.BusinessMetricInfo{{Name: "requests"}},
+		businessQuantities: []storage.DayQuantity{{
+			Date: day, Quantity: decimal.RequireFromString("3"),
+		}},
+		dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, groupBy storage.CostGroupBy) (storage.DailyCosts, error) {
+			if groupBy != groupByUnset {
+				return storage.DailyCosts{}, errors.New("unit economics must keep the bare no-groupBy call")
+			}
+			return storage.DailyCosts{Currency: currency, Days: []storage.DayCosts{{
+				Date: day,
+				Services: []storage.ServiceCost{{
+					ServiceName: "cost", Cost: decimal.RequireFromString("6"),
+				}},
+			}}}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/unit-economics/daily?metric=requests&start=2026-05-02&end=2026-05-03&currency=USD", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got UnitEconomics
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode unit economics: %v", err)
+	}
+	if got.Currency != "USD" || !reflect.DeepEqual(got.Currencies, []string{"EUR", "USD"}) || len(got.Days) != 1 || got.Days[0].UnitCost == nil || *got.Days[0].UnitCost != "2" {
+		t.Fatalf("unit economics = %+v, want non-vacuous USD result with [EUR USD]", got)
+	}
+	if store.currenciesQueryCount != 1 || store.gotCurrenciesStart.Format(time.DateOnly) != "2026-05-02" ||
+		store.gotCurrenciesEnd.Format(time.DateOnly) != "2026-05-03" || store.gotCurrency != "USD" || store.gotGroupBy != groupByUnset {
+		t.Fatalf("currency lookup/query = count %d range [%s,%s] selected %q groupBy %v",
+			store.currenciesQueryCount, store.gotCurrenciesStart, store.gotCurrenciesEnd, store.gotCurrency, store.gotGroupBy)
+	}
+}
+
+func TestGetDailyUnitEconomicsInvalidCurrencyIs400(t *testing.T) {
+	store := &fakeStore{businessInfos: []storage.BusinessMetricInfo{{Name: "requests"}}}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/unit-economics/daily?metric=requests&currency=usd", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400; body=%s", rec.Code, rec.Body)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "currency must be a three-letter uppercase code (for example, USD)" {
+		t.Fatalf("body=%q", body)
+	}
+	if store.businessNamesCount != 0 || store.currenciesQueryCount != 0 || store.queryCount != 0 || store.businessQuantityCount != 0 {
+		t.Fatalf("invalid currency reached store: names=%d currencies=%d costs=%d quantities=%d",
+			store.businessNamesCount, store.currenciesQueryCount, store.queryCount, store.businessQuantityCount)
+	}
+}
+
+func TestGetDailyUnitEconomicsValidAbsentCurrencyEchoes(t *testing.T) {
+	store := &fakeStore{
+		currencies:    []string{"EUR", "USD"},
+		businessInfos: []storage.BusinessMetricInfo{{Name: "requests"}},
+		dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			return storage.DailyCosts{Currency: currency, Days: []storage.DayCosts{}}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/unit-economics/daily?metric=requests&currency=JPY", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got UnitEconomics
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode unit economics: %v", err)
+	}
+	if got.Currency != "JPY" || !reflect.DeepEqual(got.Currencies, []string{"EUR", "USD"}) || got.Days == nil || len(got.Days) != 0 ||
+		got.Period.CoveredDays != 0 || got.Period.Cost != "0" || got.Period.Quantity != "0" || got.Period.UnitCost != nil {
+		t.Fatalf("valid-absent unit economics = %+v", got)
+	}
+	if store.currenciesQueryCount != 1 || store.gotCurrency != "JPY" || store.gotGroupBy != groupByUnset {
+		t.Fatalf("currency lookup/query = %d/%q groupBy=%v, want 1/JPY/unset",
+			store.currenciesQueryCount, store.gotCurrency, store.gotGroupBy)
 	}
 }
 
@@ -226,7 +318,8 @@ func TestGetDailyUnitEconomicsErrorsAndKnownOutsideRange(t *testing.T) {
 
 	unknown := &fakeStore{businessInfos: []storage.BusinessMetricInfo{{Name: "known"}}}
 	rec := get(unknown, "?metric=missing")
-	if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != `unknown business metric "missing"; list available metrics at /api/v1/business-metrics` || unknown.queryCount != 0 || unknown.businessQuantityCount != 0 {
+	if rec.Code != http.StatusNotFound || strings.TrimSpace(rec.Body.String()) != `unknown business metric "missing"; list available metrics at /api/v1/business-metrics` ||
+		unknown.currenciesQueryCount != 0 || unknown.queryCount != 0 || unknown.businessQuantityCount != 0 {
 		t.Errorf("unknown: status=%d body=%q", rec.Code, rec.Body.String())
 	}
 
@@ -243,9 +336,17 @@ func TestGetDailyUnitEconomicsErrorsAndKnownOutsideRange(t *testing.T) {
 		t.Errorf("names error: status=%d body=%q", rec.Code, rec.Body.String())
 	}
 
-	costFail := &fakeStore{businessInfos: []storage.BusinessMetricInfo{{Name: "known"}}, dailyErr: errors.New("stored records mix billing currencies (EUR, USD); currency conversion is not supported yet")}
+	currencyFail := &fakeStore{businessInfos: []storage.BusinessMetricInfo{{Name: "known"}}, currenciesErr: errors.New("currency scan failed")}
+	rec = get(currencyFail, "?metric=known")
+	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "querying daily costs: currency scan failed" ||
+		currencyFail.currenciesQueryCount != 1 || currencyFail.queryCount != 0 || currencyFail.businessQuantityCount != 0 {
+		t.Errorf("currency error: status=%d body=%q counts=%d/%d/%d", rec.Code, rec.Body.String(),
+			currencyFail.currenciesQueryCount, currencyFail.queryCount, currencyFail.businessQuantityCount)
+	}
+
+	costFail := &fakeStore{businessInfos: []storage.BusinessMetricInfo{{Name: "known"}}, currencies: []string{"USD"}, dailyErr: errors.New("costs failed")}
 	rec = get(costFail, "?metric=known")
-	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "querying daily costs: stored records mix billing currencies (EUR, USD); currency conversion is not supported yet" {
+	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "querying daily costs: costs failed" {
 		t.Errorf("cost error: status=%d body=%q", rec.Code, rec.Body.String())
 	}
 
