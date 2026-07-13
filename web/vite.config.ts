@@ -2,7 +2,7 @@
 // Copyright 2026 The Costroid Authors
 
 /// <reference types="vitest/config" />
-import { defineConfig, type AliasOptions } from "vite";
+import { defineConfig, type AliasOptions, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 // Demo build (`vite build --mode demo`): swap the transport seam for the
@@ -16,10 +16,32 @@ const demoAlias: AliasOptions = [
   { find: /^\.\/tokens\.css$/, replacement: "./tokens.demo.css" },
 ];
 
+// Demo-only: emit a Cloudflare Pages `_headers` file that restricts who may
+// frame the public demo to the marketing site (defense-in-depth). The demo is
+// public/backendless/read-only, so this is brand-posture hardening, not risk
+// removal. frame-ancestors MUST be an HTTP header (a <meta> CSP frame-ancestors
+// is ignored by browsers); X-Frame-Options is deliberately OMITTED because it
+// cannot express a cross-host allowlist (ALLOW-FROM is dead in Chrome), so it
+// would only block the legitimate marketing-site embed.
+function demoFrameAncestors(): Plugin {
+  return {
+    name: "demo-frame-ancestors",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "_headers",
+        source:
+          "/*\n  Content-Security-Policy: frame-ancestors https://costroid.com https://www.costroid.com\n",
+      });
+    },
+  };
+}
+
 // The dev server proxies API paths to the Go server (default :8080) so
 // `make dev` works without CORS.
 export default defineConfig(({ mode }) => ({
-  plugins: [react()],
+  plugins: mode === "demo" ? [react(), demoFrameAncestors()] : [react()],
   base: mode === "demo" ? "./" : "/",
   resolve: { alias: mode === "demo" ? demoAlias : ({} as AliasOptions) },
   build: { outDir: mode === "demo" ? "demo-dist" : "dist" },
