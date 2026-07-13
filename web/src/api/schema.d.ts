@@ -89,7 +89,7 @@ export interface paths {
         };
         /**
          * Statistical cost anomalies (spikes and dips)
-         * @description Flags spikes and dips in the daily cost series with a robust median/MAD detector computed at QUERY time — stateless, so retroactive FOCUS corrections are automatically re-scored. Uses the SAME groupBy dimensions as /api/v1/costs/daily and scores both the per-day TOTAL series (the sum over the day's keys) and each grouping key's own series. Flags are range-INDEPENDENT: the full stored history up to the requested end is scored, then only flags whose day falls inside [start, end] are returned, so a given day yields the identical flag regardless of the queried start. Passing currency scopes scoring to that billing currency. When currency is omitted, scoring defaults to the alphabetically-first billing currency in history. Every statistic is an exact decimal string and the detector's fixed parameters are echoed, so each flag is hand-recomputable.
+         * @description Flags spikes and dips in the daily cost series with a robust median/MAD detector computed at QUERY time — stateless, so retroactive FOCUS corrections are automatically re-scored. Uses the SAME groupBy dimensions as /api/v1/costs/daily and scores both the per-day TOTAL series (the sum over the day's keys) and each grouping key's own series. Flags are range-INDEPENDENT: the full stored history up to the requested end is scored, then only flags whose day falls inside [start, end] are returned, so a given day yields the identical flag regardless of the queried start. Passing currency scopes scoring to that billing currency. When currency is omitted, scoring defaults to the alphabetically-first billing currency in the requested window [start, end], falling back to full history when the window is empty. Every statistic is an exact decimal string and the detector's fixed parameters are echoed, so each flag is hand-recomputable.
          */
         get: operations["getAnomalies"];
         put?: never;
@@ -682,7 +682,7 @@ export interface operations {
                 end?: string;
                 /** @description Cost grouping dimension (the same set as /api/v1/costs/daily). */
                 groupBy?: "service" | "provider" | "allocation";
-                /** @description Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in history. */
+                /** @description Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window is empty. */
                 currency?: string;
             };
             header?: never;

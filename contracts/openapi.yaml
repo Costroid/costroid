@@ -220,8 +220,10 @@ paths:
         so a given day yields the identical flag regardless of the queried start.
         Passing currency scopes scoring to that billing currency. When currency
         is omitted, scoring defaults to the alphabetically-first billing
-        currency in history. Every statistic is an exact decimal string and the
-        detector's fixed parameters are echoed, so each flag is hand-recomputable.
+        currency in the requested window [start, end], falling back to full
+        history when the window is empty. Every statistic is an exact decimal
+        string and the detector's fixed parameters are echoed, so each flag is
+        hand-recomputable.
       parameters:
         - name: start
           in: query
@@ -253,7 +255,9 @@ paths:
           in: query
           description: >-
             Optional three-letter uppercase billing currency whose history to
-            score. Omit to use the alphabetically-first currency in history.
+            score. Omit to use the alphabetically-first currency in the requested
+            window [start, end], falling back to full history when the window is
+            empty.
           schema:
             type: string
             pattern: ^[A-Z]{3}$

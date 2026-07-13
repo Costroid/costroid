@@ -55,6 +55,10 @@ type fakeStore struct {
 	// dailyCurrencyFn additionally receives the selected currency and takes
 	// precedence over dailyFn when set.
 	dailyCurrencyFn func(tenant string, start, end time.Time, currency string, groupBy storage.CostGroupBy) (storage.DailyCosts, error)
+	// currenciesFn, when set, overrides currencies/currenciesErr and receives the
+	// [start,end] window so a test can return DIFFERENT billing currencies for the
+	// window vs full history (the slice-34 window-vs-full-history divergence).
+	currenciesFn func(tenant string, start, end time.Time) ([]string, error)
 
 	// queryLog records every DailyCostsByService/Allocation call.
 	queryLog []struct {
@@ -100,6 +104,9 @@ func (f *fakeStore) BillingCurrencies(_ context.Context, tenant string, start, e
 	f.gotCurrenciesStart = start
 	f.gotCurrenciesEnd = end
 	f.currenciesQueryCount++
+	if f.currenciesFn != nil {
+		return f.currenciesFn(tenant, start, end)
+	}
 	if f.currenciesErr != nil {
 		return nil, f.currenciesErr
 	}

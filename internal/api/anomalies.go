@@ -22,10 +22,14 @@ import (
 // requested [start, end]. That makes flags range-INDEPENDENT: a given day yields
 // the identical flag regardless of the queried start.
 //
-// When no currency is selected, mixed-currency history defaults to the
-// alphabetically-first billing currency. Detection is stateless (no storage of
-// its own), so a retroactive FOCUS correction rewriting a past day is
-// automatically re-scored.
+// When no currency is selected, the default is the alphabetically-first billing
+// currency IN THE REQUESTED WINDOW [start, end] (aligning with the summary and
+// the selector, which default from the same window), falling back to full
+// history only when the window is empty — detection always fetches full history,
+// so an empty-window empty currency would otherwise trip the D23(c)
+// mixed-currency guard and 500. Detection is stateless (no storage of its own),
+// so a retroactive FOCUS correction rewriting a past day is automatically
+// re-scored.
 func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params GetAnomaliesParams) {
 	var start, end time.Time // requested filter window; zero = unbounded on that side
 	if params.Start != nil {
@@ -48,10 +52,23 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		err     error
 		groupBy = "service"
 	)
-	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, time.Time{}, end)
+	// Default the currency from the REQUESTED WINDOW [start,end] so the anomaly
+	// card aligns with the summary/selector (which default from the same window).
+	// Detection below still fetches full history; but on an EMPTY window fall back
+	// to full history for the default so currency is never "" — an empty currency
+	// on the full-history detection fetch would trip the D23(c) mixed-currency
+	// guard and 500.
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if len(currencies) == 0 {
+		currencies, err = s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, time.Time{}, end)
+		if err != nil {
+			http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	currency := ""
 	if params.Currency != nil {

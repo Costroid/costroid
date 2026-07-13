@@ -206,6 +206,124 @@ func TestGetAnomaliesMixedHistoryDefaultsToFirstCurrency(t *testing.T) {
 	}
 }
 
+func TestGetAnomaliesDefaultsToWindowFirstCurrency(t *testing.T) {
+	const guard = "stored records mix billing currencies (AUD, USD); currency conversion is not supported yet"
+	days := make([]storage.DayCosts, 0, 11)
+	for n := 1; n <= 11; n++ {
+		cost := "10"
+		if n == 11 {
+			cost = "100"
+		}
+		days = append(days, storage.DayCosts{
+			Date: time.Date(2026, 6, n, 0, 0, 0, 0, time.UTC),
+			Services: []storage.ServiceCost{
+				{ServiceName: "Compute", Cost: dec(t, cost)},
+			},
+		})
+	}
+	store := &fakeStore{
+		currenciesFn: func(_ string, start, _ time.Time) ([]string, error) {
+			if start.IsZero() {
+				return []string{"AUD", "USD"}, nil
+			}
+			return []string{"USD"}, nil
+		},
+		dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if currency == "" {
+				return storage.DailyCosts{}, errors.New(guard)
+			}
+			if currency == "USD" {
+				return storage.DailyCosts{Currency: currency, Days: days}, nil
+			}
+			return storage.DailyCosts{Currency: currency}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?start=2026-06-01&end=2026-06-30", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got Anomalies
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode anomalies: %v", err)
+	}
+	if got.Currency != "USD" {
+		t.Errorf("currency = %q, want window-first USD", got.Currency)
+	}
+	if len(got.Anomalies) == 0 {
+		t.Errorf("anomalies = %+v, want the June USD spike", got.Anomalies)
+	} else if date := got.Anomalies[0].Date.Format(time.DateOnly); !strings.HasPrefix(date, "2026-06-") {
+		t.Errorf("first anomaly date = %s, want a June 2026 date", date)
+	}
+	if store.gotCurrency != "USD" {
+		t.Errorf("detection currency = %q, want USD", store.gotCurrency)
+	}
+	if store.currenciesQueryCount != 1 {
+		t.Errorf("currency lookups = %d, want 1 for a non-empty window", store.currenciesQueryCount)
+	}
+}
+
+func TestGetAnomaliesEmptyWindowFallsBackToFullHistoryCurrency(t *testing.T) {
+	const guard = "stored records mix billing currencies (EUR, USD); currency conversion is not supported yet"
+	store := &fakeStore{
+		currenciesFn: func(_ string, start, _ time.Time) ([]string, error) {
+			if start.IsZero() {
+				return []string{"EUR", "USD"}, nil
+			}
+			return []string{}, nil
+		},
+		dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			if currency == "" {
+				return storage.DailyCosts{}, errors.New(guard)
+			}
+			return storage.DailyCosts{Currency: currency}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?start=2026-09-01&end=2026-09-30", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var got Anomalies
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode anomalies: %v", err)
+	}
+	if got.Currency != "EUR" {
+		t.Errorf("currency = %q, want full-history-first EUR", got.Currency)
+	}
+	if store.gotCurrency != "EUR" {
+		t.Errorf("detection currency = %q, want EUR", store.gotCurrency)
+	}
+	if store.currenciesQueryCount != 2 {
+		t.Errorf("currency lookups = %d, want 2 (window then full-history fallback)", store.currenciesQueryCount)
+	}
+	if !store.gotCurrenciesStart.IsZero() {
+		t.Errorf("last currency lookup start = %s, want zero for full-history fallback", store.gotCurrenciesStart)
+	}
+}
+
+func TestGetAnomaliesEmptyWindowFallbackErrorIs500(t *testing.T) {
+	store := &fakeStore{
+		currenciesFn: func(_ string, start, _ time.Time) ([]string, error) {
+			if start.IsZero() {
+				return nil, errors.New("fallback scan failed")
+			}
+			return []string{}, nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?start=2026-09-01&end=2026-09-30", nil))
+	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "querying daily costs: fallback scan failed" {
+		t.Errorf("status=%d body=%q, want 500 fallback error", rec.Code, rec.Body.String())
+	}
+	if store.currenciesQueryCount != 2 {
+		t.Errorf("currency lookups = %d, want 2 (window then failed fallback)", store.currenciesQueryCount)
+	}
+}
+
 func TestGetAnomaliesInvalidCurrencyIs400(t *testing.T) {
 	store := anomalyFakeStore(t)
 	rec := httptest.NewRecorder()

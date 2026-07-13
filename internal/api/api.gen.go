@@ -338,7 +338,7 @@ type GetAnomaliesParams struct {
 	// GroupBy Cost grouping dimension (the same set as /api/v1/costs/daily).
 	GroupBy *GetAnomaliesParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
 
-	// Currency Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in history.
+	// Currency Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window is empty.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
 }
 
