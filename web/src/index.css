@@ -735,6 +735,24 @@ thead th {
   grid-column: 1 / -1;
 }
 
+.overview-card-slot {
+  min-width: 0;
+}
+
+@media (min-width: 64rem) {
+  .overview-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .overview-grid > .overview-card {
+    grid-column: span 2;
+  }
+
+  .overview-card-slot {
+    grid-column: span 3;
+  }
+}
+
 .overview-card {
   display: flex;
   flex-direction: column;
@@ -794,6 +812,29 @@ thead th {
   font-size: var(--text-sm);
 }
 
+.overview-movers-header,
+.overview-movers-list li {
+  display: grid;
+  grid-template-columns: minmax(5rem, 1.25fr) repeat(2, minmax(0, 1fr));
+  column-gap: var(--space-3);
+}
+
+.overview-movers-header {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.overview-movers-header span:not(:first-child) {
+  text-align: right;
+}
+
+.overview-movers-list .overview-key-name {
+  min-width: 0;
+}
+
 .overview-key-name {
   /* Keep the provider label readable even when an 18-digit total is long. */
   flex: 1 1 7rem;
@@ -821,6 +862,7 @@ thead th {
   width: 100%;
   max-width: 14rem;
   height: 2.5rem;
+  overflow: visible;
 }
 
 .overview-sparkline-path {
@@ -828,6 +870,10 @@ thead th {
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.overview-sparkline-dot {
+  fill: var(--accent);
 }
 
 .stat-value {

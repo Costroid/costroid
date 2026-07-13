@@ -203,6 +203,39 @@ export function sparklinePoints(
   return segments;
 }
 
+export type SparklineGeometry = {
+  paths: string[];
+  dots: { x: number; y: number }[];
+};
+
+/**
+ * Converts sparkline points into visible SVG geometry. Multi-point segments
+ * become paths; singleton segments become dots because a bare SVG move-to
+ * command paints no pixels.
+ */
+export function sparklineGeometry(
+  values: (number | null)[],
+  width: number,
+  height: number,
+): SparklineGeometry {
+  const geometry: SparklineGeometry = { paths: [], dots: [] };
+  for (const segment of sparklinePoints(values, width, height)) {
+    if (segment.length === 1) {
+      geometry.dots.push(segment[0]);
+      continue;
+    }
+    geometry.paths.push(
+      segment
+        .map(
+          (point, index) =>
+            `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+        )
+        .join(" "),
+    );
+  }
+  return geometry;
+}
+
 /**
  * Cap-label x-positions for a per-day bar chart. Returns one entry per day:
  * the clamped center-x at which to anchor (textAnchor="middle") that day's

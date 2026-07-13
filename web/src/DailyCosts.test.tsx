@@ -28,9 +28,12 @@ function fakeResponse(status: number, body: unknown): Response {
 }
 
 // anomaliesBody builds a valid /api/v1/anomalies response with the given flags.
-function anomaliesBody(flags: Anomaly[] = []): AnomaliesResponse {
+function anomaliesBody(
+  flags: Anomaly[] = [],
+  currency = "USD",
+): AnomaliesResponse {
   return {
-    currency: "USD",
+    currency,
     parameters: {
       k: "3",
       consistencyConstant: "1.4826",
@@ -181,7 +184,7 @@ describe("DailyCosts", () => {
       vi.fn((input: RequestInfo | URL) =>
         Promise.resolve(
           String(input).includes("/api/v1/anomalies")
-            ? fakeResponse(200, anomaliesBody())
+            ? fakeResponse(200, anomaliesBody([], "EUR"))
             : fakeResponse(200, costs),
         ),
       ),
@@ -204,7 +207,7 @@ describe("DailyCosts", () => {
   it("refetches for the selected currency and renders response values verbatim", async () => {
     const initial = dailyBody("EUR", ["EUR", "USD"], "3.123456789012345679");
     const selected = dailyBody(
-      "CAD",
+      "USD",
       ["EUR", "USD"],
       "30.987654321098765434",
       "Selected service",
@@ -214,7 +217,12 @@ describe("DailyCosts", () => {
       vi.fn((input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes("/api/v1/anomalies")) {
-          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+          return Promise.resolve(
+            fakeResponse(
+              200,
+              anomaliesBody([], url.includes("currency=USD") ? "USD" : "EUR"),
+            ),
+          );
         }
         return Promise.resolve(
           fakeResponse(200, url.includes("currency=USD") ? selected : initial),
@@ -234,11 +242,16 @@ describe("DailyCosts", () => {
     );
     fireEvent.focus(screen.getByLabelText("2026-05-01 cost details"));
     expect(screen.getByRole("tooltip").textContent).toContain(
-      "30.987654321098765434 CAD",
+      "30.987654321098765434 USD",
     );
-    expect(
-      fetchedURLs().filter((url) => url.startsWith("/api/v1/anomalies")),
-    ).toHaveLength(1);
+    await waitFor(() =>
+      expect(
+        fetchedURLs().filter((url) => url.startsWith("/api/v1/anomalies")),
+      ).toEqual([
+        "/api/v1/anomalies?currency=EUR",
+        "/api/v1/anomalies?currency=USD",
+      ]),
+    );
   });
 
   it("does not commit an aborted stale currency response", async () => {
@@ -939,6 +952,203 @@ describe("DailyCosts", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("returned 400");
     expect(alert.textContent).toContain("no allocation rules configured");
+  });
+
+  it("scores a mixed-currency anomaly overlay in the displayed currency", async () => {
+    const costs: DailyCostsResponse = {
+      currency: "EUR",
+      currencies: ["EUR", "USD"],
+      total: "3.123456789012345679",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "3.123456789012345679",
+          services: [{ key: "Shared Compute", cost: "3.123456789012345679" }],
+        },
+      ],
+    };
+    const flags: Anomaly[] = [
+      {
+        date: "2026-05-01",
+        scope: "total",
+        direction: "increase",
+        observed: "3.123456789012345679",
+        median: "1",
+        mad: "0.1",
+        scaledMad: "0.14826",
+        threshold: "0.44478",
+        deviation: "2.123456789012345679",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/costs/daily")) {
+          return Promise.resolve(fakeResponse(200, costs));
+        }
+        if (url === "/api/v1/anomalies?currency=EUR") {
+          return Promise.resolve(
+            fakeResponse(200, anomaliesBody(flags, "EUR")),
+          );
+        }
+        return Promise.resolve(fakeResponse(500, null));
+      }),
+    );
+
+    const { container } = render(<DailyCosts />);
+    await screen.findByRole("img", { name: /Stacked daily cost/ });
+
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll(".viz-chart .viz-anomaly"),
+      ).toHaveLength(1),
+    );
+    const marker = container.querySelector(".viz-chart .viz-anomaly");
+    expect(marker?.getAttribute("data-date")).toBe("2026-05-01");
+    expect(marker?.getAttribute("data-direction")).toBe("increase");
+    expect(
+      fetchedURLs().filter((url) => url.startsWith("/api/v1/anomalies")),
+    ).toEqual(["/api/v1/anomalies?currency=EUR"]);
+    expect(screen.queryByText(/Anomaly overlay unavailable/)).toBeNull();
+  });
+
+  it("removes stale currency markers before the switched overlay resolves", async () => {
+    const eurCosts: DailyCostsResponse = {
+      currency: "EUR",
+      currencies: ["EUR", "USD"],
+      total: "3.123456789012345679",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "3.123456789012345679",
+          services: [{ key: "Shared Compute", cost: "3.123456789012345679" }],
+        },
+      ],
+    };
+    const usdCosts: DailyCostsResponse = {
+      currency: "USD",
+      currencies: ["EUR", "USD"],
+      total: "30.987654321098765434",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "30.987654321098765434",
+          services: [{ key: "Shared Compute", cost: "30.987654321098765434" }],
+        },
+      ],
+    };
+    const eurFlags: Anomaly[] = [
+      {
+        date: "2026-05-01",
+        scope: "total",
+        direction: "increase",
+        observed: "3.123456789012345679",
+        median: "1",
+        mad: "0.1",
+        scaledMad: "0.14826",
+        threshold: "0.44478",
+        deviation: "2.123456789012345679",
+      },
+    ];
+    const usdFlags: Anomaly[] = [
+      {
+        date: "2026-05-01",
+        scope: "total",
+        direction: "decrease",
+        observed: "30.987654321098765434",
+        median: "40",
+        mad: "1",
+        scaledMad: "1.4826",
+        threshold: "4.4478",
+        deviation: "-9.012345678901234566",
+      },
+    ];
+    let resolveUSDAnomalies!: (response: Response) => void;
+    const heldUSDAnomalies = new Promise<Response>((resolve) => {
+      resolveUSDAnomalies = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/costs/daily") {
+          return Promise.resolve(fakeResponse(200, eurCosts));
+        }
+        if (url === "/api/v1/costs/daily?currency=USD") {
+          return Promise.resolve(fakeResponse(200, usdCosts));
+        }
+        if (url === "/api/v1/anomalies?currency=EUR") {
+          return Promise.resolve(
+            fakeResponse(200, anomaliesBody(eurFlags, "EUR")),
+          );
+        }
+        if (url === "/api/v1/anomalies?currency=USD") {
+          return heldUSDAnomalies;
+        }
+        return Promise.resolve(fakeResponse(500, null));
+      }),
+    );
+
+    const { container } = render(<DailyCosts />);
+    await waitFor(() =>
+      expect(
+        container.querySelector(
+          '.viz-chart .viz-anomaly[data-direction="increase"]',
+        ),
+      ).toBeTruthy(),
+    );
+
+    // Mutation-pin the synchronous mismatch frame: after USD costs commit but
+    // before the USD overlay effect enters loading, the held EUR flags must not
+    // be added to the new chart even for one transient render.
+    let sawStaleEURMarker = false;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (
+            node instanceof Element &&
+            (node.matches('.viz-anomaly[data-direction="increase"]') ||
+              node.querySelector('.viz-anomaly[data-direction="increase"]') !==
+                null)
+          ) {
+            sawStaleEURMarker = true;
+          }
+        }
+      }
+    });
+    observer.observe(container, { childList: true, subtree: true });
+
+    fireEvent.click(screen.getByRole("button", { name: "USD" }));
+    expect(
+      (await screen.findAllByText("30.987654321098765434")).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain("/api/v1/anomalies?currency=USD"),
+    );
+    await Promise.resolve();
+
+    expect(
+      container.querySelector(
+        '.viz-chart .viz-anomaly[data-direction="increase"]',
+      ),
+    ).toBeNull();
+    expect(sawStaleEURMarker).toBe(false);
+    expect(container.querySelector(".viz-chart .viz-anomaly")).toBeNull();
+    observer.disconnect();
+
+    resolveUSDAnomalies(fakeResponse(200, anomaliesBody(usdFlags, "USD")));
+    await waitFor(() =>
+      expect(
+        container.querySelector(
+          '.viz-chart .viz-anomaly[data-direction="decrease"]',
+        ),
+      ).toBeTruthy(),
+    );
+    const usdMarker = container.querySelector(
+      '.viz-chart .viz-anomaly[data-direction="decrease"]',
+    );
+    expect(usdMarker?.getAttribute("data-date")).toBe("2026-05-01");
   });
 
   it("marks flagged days with a direction-aware overlay and a math tooltip", async () => {

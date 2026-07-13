@@ -16,11 +16,22 @@ type MetricsState =
   | { status: "error"; message: string }
   | { status: "ready"; metrics: BusinessMetricInfo[] };
 
+type EconomicsFetchParams = {
+  metric: string;
+  start: string;
+  end: string;
+  currency: string;
+};
+
 type EconomicsState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; economics: UnitEconomicsResponse };
+  | { status: "error"; message: string; params: EconomicsFetchParams }
+  | {
+      status: "ready";
+      economics: UnitEconomicsResponse;
+      params: EconomicsFetchParams;
+    };
 
 export default function UnitEconomics({
   range = { start: "", end: "" },
@@ -31,6 +42,7 @@ export default function UnitEconomics({
     status: "loading",
   });
   const [selectedMetric, setSelectedMetric] = useState("");
+  const [currency, setCurrency] = useState<string>("");
   const [economicsState, setEconomicsState] = useState<EconomicsState>({
     status: "idle",
   });
@@ -62,26 +74,56 @@ export default function UnitEconomics({
       return;
     }
     const controller = new AbortController();
+    const params = { metric: selectedMetric, start, end, currency };
     setEconomicsState({ status: "loading" });
     async function loadEconomics() {
       try {
         const body = await getUnitEconomicsDaily(
-          { metric: selectedMetric, start, end },
+          {
+            metric: selectedMetric,
+            start,
+            end,
+            ...(currency ? { currency } : {}),
+          },
           controller.signal,
         );
         if (controller.signal.aborted) return;
-        setEconomicsState({ status: "ready", economics: body });
+        // A valid requested currency is echoed even when it has no rows. Reconcile
+        // against the available-currency LIST so a range/metric change cannot
+        // strand the view on an empty, no-longer-selectable series.
+        const nextCurrency =
+          currency !== "" && !body.currencies.includes(currency)
+            ? (body.currencies[0] ?? "")
+            : currency;
+        if (nextCurrency !== currency) {
+          setCurrency(nextCurrency);
+          return;
+        }
+        setEconomicsState({ status: "ready", economics: body, params });
       } catch (err) {
         if (controller.signal.aborted) return;
         setEconomicsState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
+          params,
         });
       }
     }
     void loadEconomics();
     return () => controller.abort();
-  }, [selectedMetric, start, end]);
+  }, [selectedMetric, start, end, currency]);
+
+  // A metric/range/currency change commits before its passive effect can replace
+  // the old response with an explicit loading state. Hide that stale terminal
+  // response synchronously so the controls and table never disagree for a frame.
+  const economics: EconomicsState =
+    (economicsState.status === "ready" || economicsState.status === "error") &&
+    (economicsState.params.metric !== selectedMetric ||
+      economicsState.params.start !== start ||
+      economicsState.params.end !== end ||
+      economicsState.params.currency !== currency)
+      ? { status: "loading" }
+      : economicsState;
 
   return (
     <section className="unit-economics" aria-labelledby="economics-title">
@@ -90,6 +132,43 @@ export default function UnitEconomics({
           <p className="view-kicker">Business efficiency</p>
           <h2 id="economics-title">Unit economics</h2>
         </div>
+        {metricsState.status === "ready" && metricsState.metrics.length > 0 && (
+          <label className="metric-control">
+            Business metric
+            <select
+              value={selectedMetric}
+              onChange={(event) => setSelectedMetric(event.target.value)}
+            >
+              {metricsState.metrics.map((metric) => (
+                <option key={metric.name} value={metric.name}>
+                  {metric.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {economics.status === "ready" &&
+          economics.economics.currencies.length > 1 && (
+            <div
+              className="cost-group-control"
+              role="group"
+              aria-label="Currency"
+            >
+              <span>Currency</span>
+              {economics.economics.currencies.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  aria-pressed={
+                    (currency || economics.economics.currency) === code
+                  }
+                  onClick={() => setCurrency(code)}
+                >
+                  {code}
+                </button>
+              ))}
+            </div>
+          )}
       </div>
       {metricsState.status === "loading" && (
         <LoadingSkeleton label="Loading business metrics…" />
@@ -104,29 +183,16 @@ export default function UnitEconomics({
           <EmptyState />
         ) : (
           <>
-            <label className="metric-control">
-              Business metric
-              <select
-                value={selectedMetric}
-                onChange={(event) => setSelectedMetric(event.target.value)}
-              >
-                {metricsState.metrics.map((metric) => (
-                  <option key={metric.name} value={metric.name}>
-                    {metric.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {economicsState.status === "loading" && (
+            {economics.status === "loading" && (
               <LoadingSkeleton label="Loading unit economics…" />
             )}
-            {economicsState.status === "error" && (
+            {economics.status === "error" && (
               <ErrorState>
-                Failed to load unit economics: {economicsState.message}
+                Failed to load unit economics: {economics.message}
               </ErrorState>
             )}
-            {economicsState.status === "ready" && (
-              <EconomicsTable economics={economicsState.economics} />
+            {economics.status === "ready" && (
+              <EconomicsTable economics={economics.economics} />
             )}
           </>
         ))}

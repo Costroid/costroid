@@ -2,7 +2,14 @@
 // Copyright 2026 The Costroid Authors
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import Overview from "./Overview";
 import type { components } from "./api/schema";
 
@@ -50,7 +57,7 @@ function anomaliesBody(flags: Anomalies["anomalies"] = []): Anomalies {
   };
 }
 
-function unitBody(): UnitEconomics {
+function unitBody(overrides: Partial<UnitEconomics> = {}): UnitEconomics {
   return {
     currency: "USD",
     currencies: ["USD"],
@@ -87,6 +94,7 @@ function unitBody(): UnitEconomics {
         unitCost: "0.3",
       },
     ],
+    ...overrides,
   };
 }
 
@@ -102,11 +110,13 @@ function metricsBody(
   return { metrics };
 }
 
+type RouteHandler = (url: string) => Promise<Response> | Response;
+
 type RouteHandlers = {
-  summary?: () => Promise<Response> | Response;
-  anomalies?: () => Promise<Response> | Response;
-  metrics?: () => Promise<Response> | Response;
-  unit?: () => Promise<Response> | Response;
+  summary?: RouteHandler;
+  anomalies?: RouteHandler;
+  metrics?: RouteHandler;
+  unit?: RouteHandler;
 };
 
 function mockRoutes(handlers: RouteHandlers = {}) {
@@ -116,27 +126,27 @@ function mockRoutes(handlers: RouteHandlers = {}) {
     if (path === "/api/v1/costs/summary") {
       return Promise.resolve(
         handlers.summary
-          ? handlers.summary()
+          ? handlers.summary(url)
           : fakeResponse(200, summaryBody()),
       );
     }
     if (path === "/api/v1/anomalies") {
       return Promise.resolve(
         handlers.anomalies
-          ? handlers.anomalies()
+          ? handlers.anomalies(url)
           : fakeResponse(200, anomaliesBody()),
       );
     }
     if (path === "/api/v1/business-metrics") {
       return Promise.resolve(
         handlers.metrics
-          ? handlers.metrics()
+          ? handlers.metrics(url)
           : fakeResponse(200, metricsBody()),
       );
     }
     if (path === "/api/v1/unit-economics/daily") {
       return Promise.resolve(
-        handlers.unit ? handlers.unit() : fakeResponse(200, unitBody()),
+        handlers.unit ? handlers.unit(url) : fakeResponse(200, unitBody()),
       );
     }
     return Promise.resolve(fakeResponse(404, null));
@@ -161,6 +171,167 @@ describe("Overview", () => {
     // Currency appears as StatCard subtitle for the period total.
     const currencyHits = screen.getAllByText("USD");
     expect(currencyHits.length).toBeGreaterThan(0);
+  });
+
+  it("renders the currency selector only when the summary lists more than one currency", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: (url) => {
+          const mixed = url.includes("start=2026-06-01");
+          return fakeResponse(
+            200,
+            summaryBody({
+              currency: mixed ? "EUR" : "USD",
+              currencies: mixed ? ["EUR", "USD"] : ["USD"],
+            }),
+          );
+        },
+      }),
+    );
+    const { rerender } = render(
+      <Overview range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+
+    await screen.findByText(PERIOD_TOTAL);
+    expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
+
+    rerender(<Overview range={{ start: "2026-06-01", end: "2026-06-30" }} />);
+    expect(await screen.findByRole("group", { name: "Currency" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "EUR" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("refetches summary, anomalies, and unit economics for the selected currency", async () => {
+    const requestedCurrency = (url: string) =>
+      new URL(url, "http://x").searchParams.get("currency") ?? "EUR";
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: (url) =>
+          fakeResponse(
+            200,
+            summaryBody({
+              currency: requestedCurrency(url),
+              currencies: ["EUR", "USD"],
+            }),
+          ),
+        anomalies: (url) =>
+          fakeResponse(200, {
+            ...anomaliesBody(),
+            currency: requestedCurrency(url),
+          }),
+        unit: (url) =>
+          fakeResponse(
+            200,
+            unitBody({
+              currency: requestedCurrency(url),
+              currencies: ["EUR", "USD"],
+            }),
+          ),
+      }),
+    );
+    render(<Overview />);
+    await screen.findByRole("group", { name: "Currency" });
+
+    fireEvent.click(screen.getByRole("button", { name: "USD" }));
+
+    await waitFor(() => {
+      const urls = fetchedURLs();
+      expect(urls).toContain(
+        "/api/v1/costs/summary?groupBy=provider&currency=USD",
+      );
+      expect(urls).toContain("/api/v1/anomalies?currency=USD");
+      expect(urls).toContain(
+        "/api/v1/unit-economics/daily?metric=requests%20served&currency=USD",
+      );
+    });
+    expect(
+      screen.getByRole("button", { name: "USD" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("reconciles a dropped selection against currencies, not the echoed currency", async () => {
+    const requestedCurrency = (url: string) =>
+      new URL(url, "http://x").searchParams.get("currency");
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: (url) => {
+          const requested = requestedCurrency(url);
+          if (requested === "USD") {
+            // Contract-faithful valid-absent response: echo USD even though the
+            // fresh in-range list has dropped it.
+            return fakeResponse(
+              200,
+              summaryBody({
+                currency: "USD",
+                currencies: ["EUR"],
+                total: "0",
+                keys: [],
+              }),
+            );
+          }
+          if (requested === "EUR") {
+            return fakeResponse(
+              200,
+              summaryBody({
+                currency: "EUR",
+                currencies: ["EUR"],
+                total: "7",
+                keys: [{ key: "A", total: "7" }],
+              }),
+            );
+          }
+          return fakeResponse(
+            200,
+            summaryBody({ currency: "EUR", currencies: ["EUR", "USD"] }),
+          );
+        },
+        anomalies: (url) =>
+          fakeResponse(200, {
+            ...anomaliesBody(),
+            currency: requestedCurrency(url) ?? "EUR",
+          }),
+        unit: (url) => {
+          const requested = requestedCurrency(url);
+          return fakeResponse(
+            200,
+            unitBody({
+              currency: requested ?? "EUR",
+              currencies: ["EUR"],
+              ...(requested === "USD"
+                ? {
+                    days: [],
+                    period: { coveredDays: 0, cost: "0", quantity: "0" },
+                  }
+                : {}),
+            }),
+          );
+        },
+      }),
+    );
+    render(<Overview />);
+    await screen.findByRole("group", { name: "Currency" });
+
+    fireEvent.click(screen.getByRole("button", { name: "USD" }));
+
+    await waitFor(() => {
+      const urls = fetchedURLs();
+      expect(urls).toContain(
+        "/api/v1/costs/summary?groupBy=provider&currency=USD",
+      );
+      expect(urls).toContain(
+        "/api/v1/costs/summary?groupBy=provider&currency=EUR",
+      );
+      expect(urls).toContain("/api/v1/anomalies?currency=EUR");
+      expect(urls).toContain(
+        "/api/v1/unit-economics/daily?metric=requests%20served&currency=EUR",
+      );
+    });
+    expect(screen.getAllByText("7").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
   });
 
   it("isolates summary 500: cards 1–3 ErrorState while 4–5 render data", async () => {
@@ -270,7 +441,7 @@ describe("Overview", () => {
     expect(movers!.querySelector(".overview-key-delta")).toBeNull();
   });
 
-  it("renders Top movers ranked by |delta| with mixed-sign verbatim deltas", async () => {
+  it("labels Change and Total while ranking movers by |delta| with verbatim values", async () => {
     vi.stubGlobal(
       "fetch",
       mockRoutes({
@@ -313,6 +484,8 @@ describe("Overview", () => {
     expect(screen.getByText("-50")).toBeTruthy();
     expect(screen.getByText("30")).toBeTruthy();
     expect(screen.getByText("10")).toBeTruthy();
+    expect(screen.getByText("Change")).toBeTruthy();
+    expect(screen.getByText("Total")).toBeTruthy();
 
     // DOM order of mover rows follows |delta| desc: B, C, A.
     const list = screen.getByText("Top movers").closest("article");
@@ -392,6 +565,39 @@ describe("Overview", () => {
     expect(await screen.findByText("No business metrics yet")).toBeTruthy();
   });
 
+  it("renders a singleton unit-cost sparkline segment as a visible dot", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        unit: () =>
+          fakeResponse(
+            200,
+            unitBody({
+              days: [
+                {
+                  date: "2026-05-01",
+                  cost: "1",
+                  quantity: "2",
+                  unitCost: "0.5",
+                },
+              ],
+            }),
+          ),
+      }),
+    );
+    const { container } = render(<Overview />);
+
+    await screen.findByRole("img", {
+      name: "Daily unit cost sparkline for requests served",
+    });
+    const dot = container.querySelector(".overview-sparkline-dot");
+    expect(dot).toBeTruthy();
+    expect(dot?.getAttribute("cx")).toBe("100");
+    expect(dot?.getAttribute("cy")).toBe("40");
+    expect(dot?.getAttribute("r")).toBe("1.5");
+    expect(container.querySelector(".overview-sparkline-path")).toBeNull();
+  });
+
   it("refetches on range change with rangeQuery form and ignores stale", async () => {
     let resolveSlow: ((r: Response) => void) | undefined;
     const slowSummary = new Promise<Response>((resolve) => {
@@ -464,5 +670,107 @@ describe("Overview", () => {
     for (const u of summaryURLs) {
       expect(u).toContain("groupBy=provider");
     }
+  });
+
+  it("downgrades stale error states synchronously when fetch params change", async () => {
+    let holdRequests = false;
+    const pending = new Promise<Response>(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        holdRequests ? pending : Promise.resolve(fakeResponse(500, null)),
+      ),
+    );
+
+    function RangeHarness() {
+      const [range, setRange] = useState({
+        start: "2026-05-01",
+        end: "2026-05-31",
+      });
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => setRange({ start: "2026-06-01", end: "2026-06-30" })}
+          >
+            Change range
+          </button>
+          <Overview range={range} />
+        </>
+      );
+    }
+
+    render(<RangeHarness />);
+    expect(await screen.findAllByRole("alert")).toHaveLength(3);
+    expect(screen.getByText(/Failed to load cost summary/)).toBeTruthy();
+    expect(screen.getByText(/Failed to load anomalies/)).toBeTruthy();
+    expect(screen.getByText(/Failed to load unit cost/)).toBeTruthy();
+
+    holdRequests = true;
+    // A native click outside testing-library act commits the synchronous render
+    // without first flushing Overview's passive effects. This pins the exact
+    // mismatch frame where stale errors used to flash.
+    screen.getByRole("button", { name: "Change range" }).click();
+    await Promise.resolve();
+
+    expect(screen.queryByText(/Failed to load cost summary/)).toBeNull();
+    expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
+    expect(screen.queryByText(/Failed to load unit cost/)).toBeNull();
+    expect(screen.getByLabelText("Loading cost summary…")).toBeTruthy();
+    expect(screen.getByLabelText("Loading anomalies…")).toBeTruthy();
+    expect(screen.getByLabelText("Loading unit economics…")).toBeTruthy();
+  });
+
+  it("downgrades stale terminal states synchronously when currency changes", async () => {
+    let holdRequests = false;
+    const pending = new Promise<Response>(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (holdRequests) return pending;
+
+        const path = new URL(String(input), "http://localhost").pathname;
+        if (path === "/api/v1/costs/summary") {
+          return Promise.resolve(
+            fakeResponse(
+              200,
+              summaryBody({
+                currency: "EUR",
+                currencies: ["EUR", "USD"],
+              }),
+            ),
+          );
+        }
+        if (path === "/api/v1/anomalies") {
+          return Promise.resolve(fakeResponse(500, null));
+        }
+        if (path === "/api/v1/business-metrics") {
+          return Promise.resolve(fakeResponse(200, metricsBody()));
+        }
+        if (path === "/api/v1/unit-economics/daily") {
+          return Promise.resolve(fakeResponse(500, null));
+        }
+        return Promise.resolve(fakeResponse(404, null));
+      }),
+    );
+
+    render(<Overview />);
+    await screen.findByRole("group", { name: "Currency" });
+    expect(await screen.findAllByRole("alert")).toHaveLength(2);
+    expect(screen.getByText(/Failed to load anomalies/)).toBeTruthy();
+    expect(screen.getByText(/Failed to load unit cost/)).toBeTruthy();
+
+    holdRequests = true;
+    // As in the range regression above, leave the click outside testing-library
+    // act so this observes the committed currency-mismatch frame before passive
+    // effects replace each state with an explicit loading state.
+    screen.getByRole("button", { name: "USD" }).click();
+    await Promise.resolve();
+
+    expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
+    expect(screen.queryByText(/Failed to load unit cost/)).toBeNull();
+    expect(screen.getByLabelText("Loading cost summary…")).toBeTruthy();
+    expect(screen.getByLabelText("Loading anomalies…")).toBeTruthy();
+    expect(screen.getByLabelText("Loading unit economics…")).toBeTruthy();
   });
 });

@@ -12,27 +12,31 @@ import {
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
-import { compareDecimalMagnitude, serviceColor, sparklinePoints } from "./viz";
+import {
+  compareDecimalMagnitude,
+  serviceColor,
+  sparklineGeometry,
+} from "./viz";
 
 type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomaly = components["schemas"]["Anomaly"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
 
-type FetchParams = { start: string; end: string };
+type FetchParams = { start: string; end: string; currency: string };
 
 type SummaryState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; params: FetchParams }
   | { status: "ready"; summary: CostsSummary; params: FetchParams };
 
 type AnomalyState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; params: FetchParams }
   | { status: "ready"; anomalies: Anomaly[]; params: FetchParams };
 
 type UnitState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; params: FetchParams }
   | { status: "empty"; params: FetchParams }
   | {
       status: "ready";
@@ -46,6 +50,7 @@ export default function Overview({
   range?: Range;
 }) {
   const { start, end } = range;
+  const [currency, setCurrency] = useState<string>("");
   const [summaryState, setSummaryState] = useState<SummaryState>({
     status: "loading",
   });
@@ -61,26 +66,41 @@ export default function Overview({
     async function load() {
       try {
         const summary = await getCostsSummary(
-          { start, end, groupBy: "provider" },
+          {
+            start,
+            end,
+            groupBy: "provider",
+            ...(currency ? { currency } : {}),
+          },
           controller.signal,
         );
         if (controller.signal.aborted) return;
+        // The server echoes an explicitly requested but absent currency. Recover
+        // from a range change by checking the in-range LIST, never that echo.
+        const nextCurrency =
+          currency !== "" && !summary.currencies.includes(currency)
+            ? (summary.currencies[0] ?? "")
+            : currency;
+        if (nextCurrency !== currency) {
+          setCurrency(nextCurrency);
+        }
         setSummaryState({
           status: "ready",
           summary,
-          params: { start, end },
+          params: { start, end, currency },
         });
       } catch (err) {
         if (controller.signal.aborted) return;
         setSummaryState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
+          params: { start, end, currency },
         });
       }
     }
     void load();
     return () => controller.abort();
-  }, [start, end]);
+  }, [start, end, currency]);
 
   // Effect 2: anomalies by service → card 4.
   useEffect(() => {
@@ -89,26 +109,32 @@ export default function Overview({
     async function load() {
       try {
         const body = await getAnomalies(
-          { start, end, groupBy: "service" },
+          {
+            start,
+            end,
+            groupBy: "service",
+            ...(currency ? { currency } : {}),
+          },
           controller.signal,
         );
         if (controller.signal.aborted) return;
         setAnomalyState({
           status: "ready",
           anomalies: body.anomalies ?? [],
-          params: { start, end },
+          params: { start, end, currency },
         });
       } catch (err) {
         if (controller.signal.aborted) return;
         setAnomalyState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
+          params: { start, end, currency },
         });
       }
     }
     void load();
     return () => controller.abort();
-  }, [start, end]);
+  }, [start, end, currency]);
 
   // Effect 3: business metrics → unit economics (chained) → card 5.
   useEffect(() => {
@@ -121,45 +147,64 @@ export default function Overview({
         // Server orders metric names ASC — metrics[0] is deterministic.
         const first = metrics.metrics[0];
         if (!first) {
-          setUnitState({ status: "empty", params: { start, end } });
+          setUnitState({
+            status: "empty",
+            params: { start, end, currency },
+          });
           return;
         }
         const economics = await getUnitEconomicsDaily(
-          { metric: first.name, start, end },
+          {
+            metric: first.name,
+            start,
+            end,
+            ...(currency ? { currency } : {}),
+          },
           controller.signal,
         );
         if (controller.signal.aborted) return;
         setUnitState({
           status: "ready",
           economics,
-          params: { start, end },
+          params: { start, end, currency },
         });
       } catch (err) {
         if (controller.signal.aborted) return;
         setUnitState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
+          params: { start, end, currency },
         });
       }
     }
     void load();
     return () => controller.abort();
-  }, [start, end]);
+  }, [start, end, currency]);
 
-  // Synchronous staleness: held ready data for different params → loading.
+  // Synchronous staleness: held terminal data for different params → loading.
+  // This includes errors so a range/currency change never flashes an old error
+  // for one frame before the passive effects set their loading states.
   const summary: SummaryState =
-    summaryState.status === "ready" &&
-    (summaryState.params.start !== start || summaryState.params.end !== end)
+    (summaryState.status === "ready" || summaryState.status === "error") &&
+    (summaryState.params.start !== start ||
+      summaryState.params.end !== end ||
+      summaryState.params.currency !== currency)
       ? { status: "loading" }
       : summaryState;
   const anomalies: AnomalyState =
-    anomalyState.status === "ready" &&
-    (anomalyState.params.start !== start || anomalyState.params.end !== end)
+    (anomalyState.status === "ready" || anomalyState.status === "error") &&
+    (anomalyState.params.start !== start ||
+      anomalyState.params.end !== end ||
+      anomalyState.params.currency !== currency)
       ? { status: "loading" }
       : anomalyState;
   const unit: UnitState =
-    (unitState.status === "ready" || unitState.status === "empty") &&
-    (unitState.params.start !== start || unitState.params.end !== end)
+    (unitState.status === "ready" ||
+      unitState.status === "empty" ||
+      unitState.status === "error") &&
+    (unitState.params.start !== start ||
+      unitState.params.end !== end ||
+      unitState.params.currency !== currency)
       ? { status: "loading" }
       : unitState;
 
@@ -170,6 +215,26 @@ export default function Overview({
           <p className="view-kicker">Executive landing</p>
           <h2 id="overview-title">Overview</h2>
         </div>
+        {summary.status === "ready" &&
+          summary.summary.currencies.length > 1 && (
+            <div
+              className="cost-group-control"
+              role="group"
+              aria-label="Currency"
+            >
+              <span>Currency</span>
+              {summary.summary.currencies.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  aria-pressed={(currency || summary.summary.currency) === code}
+                  onClick={() => setCurrency(code)}
+                >
+                  {code}
+                </button>
+              ))}
+            </div>
+          )}
       </div>
 
       <div className="overview-grid">
@@ -194,26 +259,34 @@ export default function Overview({
           </>
         )}
 
-        {/* Card 4: anomalies */}
-        {anomalies.status === "loading" && (
-          <LoadingSkeleton label="Loading anomalies…" />
-        )}
-        {anomalies.status === "error" && (
-          <ErrorState>Failed to load anomalies: {anomalies.message}</ErrorState>
-        )}
-        {anomalies.status === "ready" && (
-          <AnomalyCountCard anomalies={anomalies.anomalies} />
-        )}
+        <div className="overview-card-slot overview-anomaly-slot">
+          {/* Card 4: anomalies */}
+          {anomalies.status === "loading" && (
+            <LoadingSkeleton label="Loading anomalies…" />
+          )}
+          {anomalies.status === "error" && (
+            <ErrorState>
+              Failed to load anomalies: {anomalies.message}
+            </ErrorState>
+          )}
+          {anomalies.status === "ready" && (
+            <AnomalyCountCard anomalies={anomalies.anomalies} />
+          )}
+        </div>
 
-        {/* Card 5: unit cost */}
-        {unit.status === "loading" && (
-          <LoadingSkeleton label="Loading unit economics…" />
-        )}
-        {unit.status === "error" && (
-          <ErrorState>Failed to load unit cost: {unit.message}</ErrorState>
-        )}
-        {unit.status === "empty" && <UnitEmptyState />}
-        {unit.status === "ready" && <UnitCostCard economics={unit.economics} />}
+        <div className="overview-card-slot overview-unit-slot">
+          {/* Card 5: unit cost */}
+          {unit.status === "loading" && (
+            <LoadingSkeleton label="Loading unit economics…" />
+          )}
+          {unit.status === "error" && (
+            <ErrorState>Failed to load unit cost: {unit.message}</ErrorState>
+          )}
+          {unit.status === "empty" && <UnitEmptyState />}
+          {unit.status === "ready" && (
+            <UnitCostCard economics={unit.economics} />
+          )}
+        </div>
       </div>
     </section>
   );
@@ -325,7 +398,12 @@ function MoversCard({ summary }: { summary: CostsSummary }) {
         Top movers
       </h3>
       {windowLabel && <p className="overview-muted">vs {windowLabel}</p>}
-      <ul className="overview-key-list">
+      <div className="overview-movers-header">
+        <span>Provider</span>
+        <span>Change</span>
+        <span>Total</span>
+      </div>
+      <ul className="overview-key-list overview-movers-list">
         {ranked.map((k) => (
           <li key={k.key}>
             <span className="overview-key-name">{k.key}</span>
@@ -366,16 +444,8 @@ function UnitCostCard({ economics }: { economics: UnitEconomics }) {
   const values = economics.days.map((d) =>
     d.unitCost === undefined || d.unitCost === null ? null : Number(d.unitCost),
   );
-  const segments = sparklinePoints(values, 200, 40);
-  const pathD = segments
-    .map((seg) =>
-      seg
-        .map(
-          (p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(2)},${p.y.toFixed(2)}`,
-        )
-        .join(" "),
-    )
-    .join(" ");
+  const geometry = sparklineGeometry(values, 200, 40);
+  const hasGeometry = geometry.paths.length > 0 || geometry.dots.length > 0;
 
   return (
     <article className="overview-card" aria-labelledby="overview-unit">
@@ -387,14 +457,30 @@ function UnitCostCard({ economics }: { economics: UnitEconomics }) {
         value={economics.period.unitCost ?? "—"}
         subtitle={`${economics.currency} / ${economics.metric}`}
       />
-      {pathD && (
+      {hasGeometry && (
         <svg
           className="overview-sparkline"
           viewBox="0 0 200 40"
           role="img"
           aria-label={`Daily unit cost sparkline for ${economics.metric}`}
         >
-          <path d={pathD} className="overview-sparkline-path" fill="none" />
+          {geometry.paths.map((d) => (
+            <path
+              key={d}
+              d={d}
+              className="overview-sparkline-path"
+              fill="none"
+            />
+          ))}
+          {geometry.dots.map((point) => (
+            <circle
+              key={`${point.x},${point.y}`}
+              className="overview-sparkline-dot"
+              cx={point.x}
+              cy={point.y}
+              r="1.5"
+            />
+          ))}
         </svg>
       )}
     </article>

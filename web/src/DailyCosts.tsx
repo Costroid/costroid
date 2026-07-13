@@ -24,8 +24,13 @@ type Anomaly = components["schemas"]["Anomaly"];
 
 // FetchParams identifies the request a held "ready" result was fetched FOR, so a
 // render can detect synchronously that the current props no longer match it.
-type FetchParams = { start: string; end: string; groupBy: CostGroupBy };
-type CostFetchParams = FetchParams & { currency: string };
+type FetchParams = {
+  start: string;
+  end: string;
+  groupBy: CostGroupBy;
+  currency: string;
+};
+type CostFetchParams = FetchParams;
 
 type CostsState =
   | { status: "loading" }
@@ -60,11 +65,18 @@ export default function DailyCosts({
   range?: Range;
 }) {
   const [state, setState] = useState<CostsState>({ status: "loading" });
+  const displayedCurrency =
+    state.status === "ready" ? state.costs.currency : null;
   const [groupBy, setGroupBy] = useState<CostGroupBy>("service");
   const [currency, setCurrency] = useState<string>("");
   const [anomalyState, setAnomalyState] = useState<AnomalyState>({
     status: "loading",
-    params: { start: range.start, end: range.end, groupBy: "service" },
+    params: {
+      start: range.start,
+      end: range.end,
+      groupBy: "service",
+      currency: "",
+    },
   });
   const { start, end } = range;
 
@@ -119,27 +131,34 @@ export default function DailyCosts({
     return () => controller.abort();
   }, [start, end, groupBy, currency]);
 
-  // The anomaly overlay is fetched with the SAME range + groupBy as the chart,
-  // but independently: a failure here must never break the chart (it only drops
-  // the overlay and shows a small notice). No stale markers — the held flags
-  // carry the params they were fetched for.
+  // The anomaly overlay is fetched with the SAME range + groupBy + resolved
+  // currency as the chart, but independently: a failure here must never break
+  // the chart (it only drops the overlay and shows a small notice). No stale
+  // markers — the held flags carry the params they were fetched for.
   useEffect(() => {
-    setAnomalyState({ status: "loading", params: { start, end, groupBy } });
+    if (displayedCurrency === null) {
+      return;
+    }
+
+    const params = {
+      start,
+      end,
+      groupBy,
+      currency: displayedCurrency,
+    };
+    setAnomalyState({ status: "loading", params });
     const controller = new AbortController();
 
     async function loadAnomalies() {
       try {
-        const body = await getAnomalies(
-          { start, end, groupBy },
-          controller.signal,
-        );
+        const body = await getAnomalies(params, controller.signal);
         if (controller.signal.aborted) {
           return;
         }
         setAnomalyState({
           status: "ready",
           flags: body.anomalies ?? [],
-          params: { start, end, groupBy },
+          params,
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -148,14 +167,14 @@ export default function DailyCosts({
         setAnomalyState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
-          params: { start, end, groupBy },
+          params,
         });
       }
     }
 
     void loadAnomalies();
     return () => controller.abort();
-  }, [start, end, groupBy]);
+  }, [start, end, groupBy, displayedCurrency]);
 
   const groupLabel = groupLabelOf(groupBy);
 
@@ -163,7 +182,8 @@ export default function DailyCosts({
   const anomalyMatches =
     anomalyState.params.start === start &&
     anomalyState.params.end === end &&
-    anomalyState.params.groupBy === groupBy;
+    anomalyState.params.groupBy === groupBy &&
+    anomalyState.params.currency === displayedCurrency;
   const anomalyFlags =
     anomalyState.status === "ready" && anomalyMatches ? anomalyState.flags : [];
   const anomalyNotice =

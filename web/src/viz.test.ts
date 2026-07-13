@@ -11,6 +11,7 @@ import {
   compactAxisLabel,
   segmentPath,
   serviceColor,
+  sparklineGeometry,
   sparklinePoints,
   sumIntegerStrings,
   yTicks,
@@ -239,5 +240,21 @@ describe("sparklinePoints", () => {
 
   it("returns empty when all values are null", () => {
     expect(sparklinePoints([null, null], 100, 10)).toEqual([]);
+  });
+});
+
+describe("sparklineGeometry", () => {
+  it("turns a single point into a dot coordinate, not a bare move-to path", () => {
+    expect(sparklineGeometry([5], 100, 20)).toEqual({
+      paths: [],
+      dots: [{ x: 50, y: 20 }],
+    });
+  });
+
+  it("keeps multi-point segments as SVG paths", () => {
+    expect(sparklineGeometry([1, 2], 100, 20)).toEqual({
+      paths: ["M0.00,20.00 L100.00,0.00"],
+      dots: [],
+    });
   });
 });
