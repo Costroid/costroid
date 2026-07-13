@@ -110,51 +110,51 @@ describe("App", () => {
     );
   });
 
-  it("defaults to the Costs view", async () => {
+  it("defaults to the Overview view", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "Daily cost by service" }),
+      await screen.findByRole("heading", { name: "Overview" }),
     ).toBeTruthy();
-    const costsButton = screen.getByRole("button", { name: "Costs" });
-    expect(costsButton.getAttribute("aria-current")).toBe("page");
+    const overviewButton = screen.getByRole("button", { name: "Overview" });
+    expect(overviewButton.getAttribute("aria-current")).toBe("page");
   });
 
-  it("registers Overview first in the nav and still defaults to Costs", async () => {
+  it("registers Overview first in the nav and defaults to Overview", async () => {
     vi.stubGlobal("fetch", mockFetch());
     render(<App />);
-    await screen.findByRole("heading", { name: "Daily cost by service" });
+    await screen.findByRole("heading", { name: "Overview" });
 
     const nav = screen.getByRole("navigation", { name: "Dashboard views" });
     const buttons = nav.querySelectorAll("button");
     expect(buttons[0]?.textContent).toContain("Overview");
     expect(
       screen
-        .getByRole("button", { name: "Costs" })
+        .getByRole("button", { name: "Overview" })
         .getAttribute("aria-current"),
     ).toBe("page");
     expect(
       screen
-        .getByRole("button", { name: "Overview" })
+        .getByRole("button", { name: "Costs" })
         .getAttribute("aria-current"),
     ).toBeNull();
   });
 
-  it("switches to the Overview view on click", async () => {
+  it("switches to the Costs view on click", async () => {
     vi.stubGlobal("fetch", mockFetch());
     render(<App />);
-    await screen.findByRole("heading", { name: "Daily cost by service" });
+    await screen.findByRole("heading", { name: "Overview" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Costs" }));
 
     expect(
-      await screen.findByRole("heading", { name: "Overview" }),
+      await screen.findByRole("heading", { name: "Daily cost by service" }),
     ).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: "Overview" })
+        .getByRole("button", { name: "Costs" })
         .getAttribute("aria-current"),
     ).toBe("page");
   });
@@ -164,7 +164,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Daily cost by service" });
+    await screen.findByRole("heading", { name: "Overview" });
 
     fireEvent.click(screen.getByRole("button", { name: "Tokens" }));
 
@@ -187,7 +187,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Daily cost by service" });
+    await screen.findByRole("heading", { name: "Overview" });
 
     fireEvent.click(screen.getByRole("button", { name: "Usage" }));
 
@@ -205,7 +205,7 @@ describe("App", () => {
   it("switches to the Unit economics view on click", async () => {
     vi.stubGlobal("fetch", mockFetch());
     render(<App />);
-    await screen.findByRole("heading", { name: "Daily cost by service" });
+    await screen.findByRole("heading", { name: "Overview" });
 
     fireEvent.click(screen.getByRole("button", { name: "Unit economics" }));
 
@@ -226,7 +226,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Showing all time")).toBeTruthy();
-    await screen.findByRole("heading", { name: "Daily cost by service" });
+    await screen.findByRole("heading", { name: "Overview" });
 
     fireEvent.change(screen.getByLabelText(/start date/i), {
       target: { value: "2026-05-01" },
@@ -245,7 +245,7 @@ describe("App", () => {
     ).toBeTruthy();
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        "/api/v1/costs/daily?start=2026-05-01&end=2026-05-31",
+        "/api/v1/costs/summary?start=2026-05-01&end=2026-05-31&groupBy=provider",
         expect.anything(),
       ),
     );
@@ -267,7 +267,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Daily cost by service" });
+    await screen.findByRole("heading", { name: "Overview" });
 
     fireEvent.change(screen.getByLabelText(/end date/i), {
       target: { value: "2026-05-31" },

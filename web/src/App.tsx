@@ -58,7 +58,7 @@ function rangeIndicator(range: Range): string {
 
 export default function App() {
   const [state, setState] = useState<MetaState>({ status: "loading" });
-  const [view, setView] = useState<View>("costs");
+  const [view, setView] = useState<View>("overview");
   const [range, setRange] = useState<Range>({ start: "", end: "" });
 
   useEffect(() => {
