@@ -86,9 +86,15 @@ export default function DailyCosts({
         if (controller.signal.aborted) {
           return;
         }
+        // A selected currency no longer present in the range (e.g. the date
+        // range narrowed to a window without it) snaps to the first in-range
+        // currency — never the server's ECHOED request currency, which would
+        // leave the stale selection filtering to an empty series while the
+        // selector may be hidden (single-currency range), stranding the user.
+        // An empty range snaps to "" (the server default).
         const nextCurrency =
           currency !== "" && !costs.currencies.includes(currency)
-            ? costs.currency
+            ? (costs.currencies[0] ?? "")
             : currency;
         if (nextCurrency !== currency) {
           setCurrency(nextCurrency);

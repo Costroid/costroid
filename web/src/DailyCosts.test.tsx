@@ -244,7 +244,9 @@ describe("DailyCosts", () => {
   it("does not commit an aborted stale currency response", async () => {
     const initial = dailyBody("EUR", ["EUR", "USD"], "1.000000000000000001");
     const fresh = dailyBody("USD", ["EUR", "USD"], "2.000000000000000002");
-    const stale = dailyBody("EUR", ["EUR", "GBP"], "9.999999999999999999");
+    // Echoes the requested USD (faithful to the server); it is discarded on
+    // abort regardless, but the mock must not misrepresent the contract.
+    const stale = dailyBody("USD", ["EUR", "GBP"], "9.999999999999999999");
     let resolveStale!: (response: Response) => void;
     const staleResponse = new Promise<Response>((resolve) => {
       resolveStale = resolve;
@@ -295,11 +297,20 @@ describe("DailyCosts", () => {
     ).toBe("true");
   });
 
-  it("falls back to the response currency when fresh currencies drop the selection", async () => {
+  it("recovers to an in-range currency when the range drops the selection", async () => {
     const initial = dailyBody("EUR", ["EUR", "USD"], "1.000000000000000001");
     const selected = dailyBody("USD", ["EUR", "USD"], "2.000000000000000002");
-    const dropped = dailyBody("EUR", ["EUR", "GBP"], "3.000000000000000003");
-    const fallback = dailyBody("EUR", ["EUR", "GBP"], "4.000000000000000004");
+    // Faithful to the real server: a requested currency absent from the range
+    // is ECHOED back with an EMPTY series (verified live — GET ?currency=USD on
+    // a EUR-only range returns {currency:"USD",currencies:["EUR"],days:[],
+    // total:"0"}). The client must NOT trust this echo as its selection.
+    const droppedUsd: DailyCostsResponse = {
+      currency: "USD",
+      currencies: ["EUR"],
+      total: "0",
+      days: [],
+    };
+    const recovered = dailyBody("EUR", ["EUR"], "4.000000000000000004");
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -308,10 +319,10 @@ describe("DailyCosts", () => {
           return Promise.resolve(fakeResponse(200, anomaliesBody()));
         }
         if (url.includes("start=2026-06-01") && url.includes("currency=EUR")) {
-          return Promise.resolve(fakeResponse(200, fallback));
+          return Promise.resolve(fakeResponse(200, recovered));
         }
         if (url.includes("start=2026-06-01") && url.includes("currency=USD")) {
-          return Promise.resolve(fakeResponse(200, dropped));
+          return Promise.resolve(fakeResponse(200, droppedUsd));
         }
         if (url.includes("currency=USD")) {
           return Promise.resolve(fakeResponse(200, selected));
@@ -328,8 +339,13 @@ describe("DailyCosts", () => {
       (await screen.findAllByText("2.000000000000000002")).length,
     ).toBeGreaterThan(0);
 
+    // Narrow to a window where USD has no rows and only EUR remains — a
+    // single-currency range, so the selector is hidden and offers no manual
+    // escape from the stale USD filter.
     rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
 
+    // The client must snap to the first in-range currency (EUR) and render its
+    // real series — NOT strand on the echoed-but-empty USD response.
     expect(
       (await screen.findAllByText("4.000000000000000004")).length,
     ).toBeGreaterThan(0);
@@ -338,10 +354,8 @@ describe("DailyCosts", () => {
         "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30&currency=EUR",
       ),
     );
-    expect(screen.queryByRole("button", { name: "USD" })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "EUR" }).getAttribute("aria-pressed"),
-    ).toBe("true");
+    // Single-currency range hides the selector entirely.
+    expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
   });
 
   it("fetches daily costs for a provided range", async () => {
