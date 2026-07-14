@@ -24,6 +24,17 @@ export default defineConfig({
         { label: 'Introduction', link: '/' },
         { label: 'Getting started', slug: 'getting-started' },
         { label: 'Security & deployment', slug: 'security' },
+        {
+          label: 'Connectors',
+          items: [
+            { label: 'Overview', slug: 'connectors' },
+            { label: 'AWS', slug: 'connectors/aws' },
+            { label: 'Azure', slug: 'connectors/azure' },
+            { label: 'Google Cloud (Preview)', slug: 'connectors/gcp' },
+            { label: 'AI vendors', slug: 'connectors/ai-vendors' },
+            { label: 'FOCUS / CSV files', slug: 'connectors/focus-csv' },
+          ],
+        },
         ...openAPISidebarGroups,
       ],
     }),
