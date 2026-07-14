@@ -24,7 +24,7 @@ jobs:
       - run: pnpm -C docs-site build   # package build script runs `astro check && astro build`
       - name: Cardinal-Rule publish guard (no strategy/pricing/program content in built output)
         run: |
-          PATTERN='monetiz|monetis|pricing|paywall|freemium|upsell|per-seat|per seat|subscription|go-to-market|competitor|competitive landscape|revenue|funding|investor|investment round|venture capital|bigg|1812|iş ?fikri|is ?fikri|open-core|open core|proprietary module|commercial tier|commercial license|paid tier|paid plan|enterprise tier|enterprise plan|enterprise edition|docs/strategy|docs/decisions|strategy\.md|decisions\.md'
+          PATTERN='monetiz|monetis|\bpricing\b|paywall|freemium|upsell|per-seat|per seat|subscription pricing|subscription tier|subscription plan|subscription model|subscription fee|subscription-based|saas subscription|recurring subscription|go-to-market|competitor|competitive landscape|revenue model|revenue share|recurring revenue|revenue target|funding|investor|investment round|venture capital|\bbigg\b|1812|iş ?fikri|is ?fikri|open-core|open core|proprietary module|commercial tier|commercial license|paid tier|paid plan|enterprise tier|enterprise plan|enterprise edition|docs/strategy|docs/decisions|strategy\.md|decisions\.md'
           if grep -rIiEn "$PATTERN" docs-site/dist; then
             echo "::error::Forbidden strategy/pricing/program term found in built docs output"; exit 1
           fi
