@@ -93,7 +93,7 @@ release-snapshot:
 ## sbom: catalog Go and pnpm source dependencies as CycloneDX JSON.
 sbom:
 	mkdir -p release
-	SYFT_CHECK_FOR_APP_UPDATE=false syft dir:. --exclude './.git/**' --exclude './.agents/**' --exclude './.claude/**' --exclude './.codex/**' --exclude './bin/**' --exclude './dist/**' --exclude './release/**' --exclude './release-input/**' --exclude './archive-stage/**' --exclude './node_modules/**' --exclude './web/node_modules/**' --exclude './internal/webdist/dist/**' -o cyclonedx-json=release/costroid.cdx.json
+	SYFT_CHECK_FOR_APP_UPDATE=false syft dir:. --exclude './.git/**' --exclude './.agents/**' --exclude './.claude/**' --exclude './.codex/**' --exclude './bin/**' --exclude './dist/**' --exclude './release/**' --exclude './release-input/**' --exclude './archive-stage/**' --exclude './node_modules/**' --exclude './web/node_modules/**' --exclude './docs-site/**' --exclude './internal/webdist/dist/**' -o cyclonedx-json=release/costroid.cdx.json
 
 ## vulncheck: fail when a known vulnerability is reachable from Costroid.
 vulncheck:

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The Costroid Authors
+name: Docs
+on:
+  push:
+    branches: [main]
+    paths: ['docs-site/**', 'contracts/openapi.yaml', '.github/workflows/docs.yml']
+  pull_request:
+    paths: ['docs-site/**', 'contracts/openapi.yaml', '.github/workflows/docs.yml']
+permissions:
+  contents: read
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 'lts/*', cache: 'pnpm', cache-dependency-path: 'docs-site/pnpm-lock.yaml' }
+      - run: pnpm -C docs-site install --frozen-lockfile
+      - run: pnpm -C docs-site build   # package build script runs `astro check && astro build`
+      - name: Cardinal-Rule publish guard (no strategy/pricing/program content in built output)
+        run: |
+          PATTERN='monetiz|monetis|pricing|paywall|freemium|upsell|per-seat|per seat|subscription|go-to-market|competitor|competitive landscape|revenue|funding|investor|investment round|venture capital|bigg|1812|iş ?fikri|is ?fikri|open-core|open core|proprietary module|commercial tier|commercial license|paid tier|paid plan|enterprise tier|enterprise plan|enterprise edition|docs/strategy|docs/decisions|strategy\.md|decisions\.md'
+          if grep -rIiEn "$PATTERN" docs-site/dist; then
+            echo "::error::Forbidden strategy/pricing/program term found in built docs output"; exit 1
+          fi
+          echo "Cardinal-Rule guard: clean"
