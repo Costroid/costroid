@@ -35,6 +35,20 @@ export default defineConfig({
             { label: 'FOCUS / CSV files', slug: 'connectors/focus-csv' },
           ],
         },
+        {
+          label: 'Guides',
+          items: [
+            { label: 'Multi-currency', slug: 'guides/multi-currency' },
+            { label: 'Operations', slug: 'guides/operations' },
+          ],
+        },
+        {
+          label: 'Reference',
+          items: [
+            { label: 'CLI flags', slug: 'reference/cli-flags' },
+            { label: 'FOCUS coverage', slug: 'reference/focus-coverage' },
+          ],
+        },
         ...openAPISidebarGroups,
       ],
     }),
