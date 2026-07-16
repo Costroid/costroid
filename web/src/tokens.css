@@ -44,11 +44,13 @@
   --radius-lg: 0.875rem;
   --shadow-sm: 0 1px 2px rgb(15 23 42 / 7%);
   --shadow-md: 0 12px 30px rgb(15 23 42 / 8%);
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 5%), 0 6px 16px rgb(15 23 42 / 6%);
 
   --bg: #f6f7f9;
   --surface: #ffffff;
   --surface-2: #eef1f5;
   --border: #8792a5;
+  --border-soft: #dfe4ec;
   --border-strong: #68758a;
   --ink: #172033;
   --ink-secondary: #465269;
@@ -79,10 +81,12 @@
   :root {
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 35%);
     --shadow-md: 0 14px 34px rgb(0 0 0 / 30%);
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 20px rgb(0 0 0 / 30%);
     --bg: #0d1119;
     --surface: #141a24;
     --surface-2: #1b2330;
     --border: #586982;
+    --border-soft: #26303f;
     --border-strong: #71829d;
     --ink: #f2f5fa;
     --ink-secondary: #c4ccda;
