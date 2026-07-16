@@ -8,6 +8,7 @@ import { EmptyIcon } from "./icons";
 import { Money } from "./money";
 import type { Range } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
+import { HEIGHT, lineChartGeometry, MARGIN, WIDTH, yTicks } from "./viz";
 
 type BusinessMetricInfo = components["schemas"]["BusinessMetricInfo"];
 type UnitEconomicsResponse = components["schemas"]["UnitEconomics"];
@@ -223,6 +224,24 @@ function EmptyState() {
 }
 
 function EconomicsTable({ economics }: { economics: UnitEconomicsResponse }) {
+  // Geometry only: Number() for the y-scale of unitCost strings (D40).
+  // Uncovered days (no unitCost) open gaps in the line.
+  const values = economics.days.map((d) =>
+    d.unitCost === undefined || d.unitCost === null ? null : Number(d.unitCost),
+  );
+  const nums = values.filter(
+    (v): v is number => v !== null && Number.isFinite(v),
+  );
+  const hasChart = nums.length > 0;
+  const ticks = hasChart ? yTicks(Math.max(...nums)) : [];
+  const top = hasChart ? ticks[ticks.length - 1].value || 1 : 1;
+  const geometry = lineChartGeometry(values, top);
+  const plotHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
+  const baseline = MARGIN.top + plotHeight;
+  const yOf = (value: number) => baseline - (value / top) * plotHeight;
+  // Long ranges: label every k-th day so at most ~12 date labels render.
+  const labelEvery = Math.max(1, Math.ceil(economics.days.length / 12));
+
   return (
     <div>
       <div className="stat-grid">
@@ -253,7 +272,66 @@ function EconomicsTable({ economics }: { economics: UnitEconomicsResponse }) {
           subtitle={`${economics.currency} / ${economics.metric}`}
         />
       </div>
-      <div className="table-panel">
+      {hasChart && (
+        <div className="viz-panel">
+          <div className="chart-wrapper">
+            <svg
+              viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+              role="img"
+              aria-label={`Daily unit cost for ${economics.metric}`}
+              className="viz-chart"
+            >
+              {ticks.map((tick) => (
+                <g key={tick.label}>
+                  <line
+                    x1={MARGIN.left}
+                    x2={WIDTH - MARGIN.right}
+                    y1={yOf(tick.value)}
+                    y2={yOf(tick.value)}
+                    className={tick.value === 0 ? "viz-baseline" : "viz-grid"}
+                  />
+                  <text
+                    x={MARGIN.left - 8}
+                    y={yOf(tick.value) + 3}
+                    className="viz-tick"
+                    textAnchor="end"
+                  >
+                    {tick.label}
+                  </text>
+                </g>
+              ))}
+              {geometry.paths.map((d) => (
+                <path key={d} d={d} className="viz-line-path" fill="none" />
+              ))}
+              {geometry.dots.map((point) => (
+                <circle
+                  key={`${point.x},${point.y}`}
+                  className="viz-line-dot"
+                  cx={point.x}
+                  cy={point.y}
+                  r="2.5"
+                />
+              ))}
+              {economics.days.map(
+                (day, i) =>
+                  i % labelEvery === 0 && (
+                    <text
+                      key={day.date}
+                      x={geometry.xs[i]}
+                      y={baseline + 16}
+                      className="viz-tick"
+                      textAnchor="middle"
+                    >
+                      {day.date.slice(5)}
+                    </text>
+                  ),
+              )}
+            </svg>
+          </div>
+        </div>
+      )}
+      <details className="viz-table">
+        <summary>View as table</summary>
         <table>
           <thead>
             <tr>
@@ -278,7 +356,7 @@ function EconomicsTable({ economics }: { economics: UnitEconomicsResponse }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </details>
     </div>
   );
 }

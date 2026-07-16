@@ -295,7 +295,10 @@ export default function Overview({
 
 function PeriodTotalCard({ summary }: { summary: CostsSummary }) {
   return (
-    <article className="overview-card" aria-labelledby="overview-period-total">
+    <article
+      className="overview-card overview-hero"
+      aria-labelledby="overview-period-total"
+    >
       <h3 id="overview-period-total" className="overview-card-title">
         Period total
       </h3>

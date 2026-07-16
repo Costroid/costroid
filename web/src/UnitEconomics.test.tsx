@@ -333,6 +333,92 @@ describe("UnitEconomics", () => {
     expect(screen.queryByText("999.999999999999999999")).toBeNull();
   });
 
+  it("renders the daily unit-cost line chart with the table collapsed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input) === "/api/v1/business-metrics"
+            ? fakeResponse(200, metricsBody("requests"))
+            : fakeResponse(200, {
+                metric: "requests",
+                currency: "USD",
+                currencies: ["USD"],
+                days: [
+                  {
+                    date: "2026-05-01",
+                    cost: "1",
+                    quantity: "2",
+                    unitCost: "0.5",
+                  },
+                  {
+                    date: "2026-05-02",
+                    cost: "2",
+                    quantity: "2",
+                    unitCost: "1",
+                  },
+                  // Uncovered day: no unitCost → a gap in the line.
+                  { date: "2026-05-03", cost: "0" },
+                  {
+                    date: "2026-05-04",
+                    cost: "3",
+                    quantity: "3",
+                    unitCost: "1",
+                  },
+                ],
+                period: {
+                  coveredDays: 3,
+                  cost: "6",
+                  quantity: "7",
+                  unitCost: "0.857142857142857143",
+                },
+              }),
+        ),
+      ),
+    );
+    const { container } = render(<UnitEconomics />);
+
+    expect(
+      await screen.findByRole("img", { name: "Daily unit cost for requests" }),
+    ).toBeTruthy();
+    // Days 1–2 form a path; the gap isolates day 4 into a dot.
+    expect(container.querySelectorAll(".viz-line-path")).toHaveLength(1);
+    expect(container.querySelectorAll(".viz-line-dot")).toHaveLength(1);
+    // The zero grid line sits on the plot baseline (y = HEIGHT - MARGIN.bottom
+    // = 196) — pins the view's own tick scale against an orientation flip.
+    expect(container.querySelector(".viz-baseline")?.getAttribute("y1")).toBe(
+      "196",
+    );
+    // The full table survives behind a collapsed disclosure.
+    expect(screen.getByText("View as table")).toBeTruthy();
+    expect(container.querySelector("details.viz-table")).toBeTruthy();
+    expect(container.querySelector("details.viz-table[open]")).toBeNull();
+    // Exact values still reach the DOM inside the table.
+    expect(screen.getAllByTitle("0.5 USD").length).toBeGreaterThan(0);
+  });
+
+  it("renders no chart when no day carries a unit cost", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input) === "/api/v1/business-metrics"
+            ? fakeResponse(200, metricsBody("requests"))
+            : fakeResponse(200, {
+                ...economicsBody("USD", ["USD"]),
+                // Covered-but-unmetered: days exist, none has a unitCost.
+                // Pins the guard on NUMERIC values, not day count.
+                days: [{ date: "2026-05-01", cost: "1" }],
+              }),
+        ),
+      ),
+    );
+    render(<UnitEconomics />);
+
+    expect(await screen.findByText("View as table")).toBeTruthy();
+    expect(screen.queryByRole("img", { name: /Daily unit cost/ })).toBeNull();
+  });
+
   it("shows the CLI empty state", async () => {
     vi.stubGlobal(
       "fetch",

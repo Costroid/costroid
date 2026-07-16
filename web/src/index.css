@@ -880,6 +880,38 @@ thead th {
   overflow-wrap: anywhere;
 }
 
+/* Unit-economics daily line chart (shares the viz-chart frame). */
+.viz-line-path {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.viz-line-dot {
+  fill: var(--accent);
+}
+
+/* Overview hierarchy: cards embed StatCards flat (no card-in-card border),
+   and the period total is the hero stat. */
+.overview-card .stat-card {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.overview-hero .stat-value {
+  font-size: clamp(var(--text-2xl), 3.5vw, var(--text-3xl));
+}
+
+/* The hero card's title and its StatCard label are the same words —
+   show them once (the h3 keeps labelling the card for AT). */
+.overview-hero .stat-label {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

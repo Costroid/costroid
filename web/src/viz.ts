@@ -157,6 +157,33 @@ export function compareDecimalMagnitude(a: string, b: string): number {
   return 0;
 }
 
+// Shared gap-aware segmentation: maps each non-null value through the given
+// coordinate functions; null/non-finite entries split the polyline into
+// separate segments (no interpolation across an uncovered day).
+function pointSegments(
+  values: (number | null)[],
+  xOf: (i: number) => number,
+  yOf: (v: number) => number,
+): { x: number; y: number }[][] {
+  const segments: { x: number; y: number }[][] = [];
+  let current: { x: number; y: number }[] = [];
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (v === null || !Number.isFinite(v)) {
+      if (current.length > 0) {
+        segments.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push({ x: xOf(i), y: yOf(v) });
+  }
+  if (current.length > 0) {
+    segments.push(current);
+  }
+  return segments;
+}
+
 /**
  * Sparkline polyline points for a series of numeric y-values (positions only).
  * Null entries are uncovered days: they open a gap (no interpolation across
@@ -183,30 +210,60 @@ export function sparklinePoints(
   const n = values.length;
   const xOf = (i: number) => (n === 1 ? width / 2 : (i / (n - 1)) * width);
   const yOf = (v: number) => height - ((v - min) / span) * height;
-
-  const segments: { x: number; y: number }[][] = [];
-  let current: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) {
-    const v = values[i];
-    if (v === null || !Number.isFinite(v)) {
-      if (current.length > 0) {
-        segments.push(current);
-        current = [];
-      }
-      continue;
-    }
-    current.push({ x: xOf(i), y: yOf(v) });
-  }
-  if (current.length > 0) {
-    segments.push(current);
-  }
-  return segments;
+  return pointSegments(values, xOf, yOf);
 }
 
 export type SparklineGeometry = {
   paths: string[];
   dots: { x: number; y: number }[];
 };
+
+export type LineChartGeometry = SparklineGeometry & {
+  /** Per-day center x in chart coordinates (for date labels etc.). */
+  xs: number[];
+};
+
+/**
+ * Full line-chart geometry on the shared chart frame (WIDTH/HEIGHT/MARGIN):
+ * maps per-day values onto the plot area with a 0..top y-scale (the yTicks
+ * domain, so grid lines and the line share one scale). Null entries are
+ * uncovered days and open a gap; multi-point segments become paths and
+ * singletons become dots (a bare SVG move-to paints no pixels). Positions
+ * only — the caller renders values as strings elsewhere (D40).
+ */
+export function lineChartGeometry(
+  values: (number | null)[],
+  top: number,
+): LineChartGeometry {
+  const n = values.length;
+  const plotWidth = WIDTH - MARGIN.left - MARGIN.right;
+  const plotHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
+  const xOf = (i: number) =>
+    n === 1
+      ? MARGIN.left + plotWidth / 2
+      : MARGIN.left + (i / (n - 1)) * plotWidth;
+  const xs = Array.from({ length: n }, (_, i) => xOf(i));
+  const geometry: LineChartGeometry = { paths: [], dots: [], xs };
+  if (n === 0 || !(top > 0)) {
+    return geometry;
+  }
+  const yOf = (v: number) => MARGIN.top + plotHeight - (v / top) * plotHeight;
+  for (const segment of pointSegments(values, xOf, yOf)) {
+    if (segment.length === 1) {
+      geometry.dots.push(segment[0]);
+      continue;
+    }
+    geometry.paths.push(
+      segment
+        .map(
+          (point, index) =>
+            `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+        )
+        .join(" "),
+    );
+  }
+  return geometry;
+}
 
 /**
  * Converts sparkline points into visible SVG geometry. Multi-point segments

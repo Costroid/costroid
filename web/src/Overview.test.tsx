@@ -175,6 +175,10 @@ describe("Overview", () => {
     expect(total.getAttribute("title")).toBe(`${PERIOD_TOTAL} USD`);
     // The raw 18-digit string never renders as text — display precision only.
     expect(screen.queryByText(PERIOD_TOTAL)).toBeNull();
+    // The period total is the hero stat of the Overview grid.
+    expect(
+      total.closest(".overview-card")?.classList.contains("overview-hero"),
+    ).toBe(true);
     // Currency appears as StatCard subtitle for the period total.
     const currencyHits = screen.getAllByText("USD");
     expect(currencyHits.length).toBeGreaterThan(0);

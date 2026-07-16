@@ -3,12 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  HEIGHT,
   MARGIN,
   SERIES_SLOTS,
   WIDTH,
   capLabelPositions,
   compareDecimalMagnitude,
   compactAxisLabel,
+  lineChartGeometry,
   segmentPath,
   serviceColor,
   sparklineGeometry,
@@ -256,5 +258,48 @@ describe("sparklineGeometry", () => {
       paths: ["M0.00,20.00 L100.00,0.00"],
       dots: [],
     });
+  });
+});
+
+describe("lineChartGeometry", () => {
+  // Shared frame: WIDTH 640, HEIGHT 220, MARGIN {top:20,right:8,bottom:24,
+  // left:48} → plot 584×176, baseline y=196.
+  const plotWidth = WIDTH - MARGIN.left - MARGIN.right;
+  const plotHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
+  const baseline = MARGIN.top + plotHeight;
+
+  it("maps values onto the 0..top plot scale within the chart frame", () => {
+    const g = lineChartGeometry([0, 10], 10);
+    // v=0 sits on the baseline, v=top on the plot's top edge.
+    expect(g.paths).toEqual([
+      `M${MARGIN.left.toFixed(2)},${baseline.toFixed(2)} L${(MARGIN.left + plotWidth).toFixed(2)},${MARGIN.top.toFixed(2)}`,
+    ]);
+    expect(g.dots).toEqual([]);
+    expect(g.xs).toEqual([MARGIN.left, MARGIN.left + plotWidth]);
+  });
+
+  it("opens a gap at uncovered days and renders singletons as dots", () => {
+    const g = lineChartGeometry([5, null, 5, 10], 10);
+    expect(g.dots).toHaveLength(1);
+    expect(g.dots[0]).toEqual({ x: MARGIN.left, y: baseline - plotHeight / 2 });
+    expect(g.paths).toHaveLength(1);
+    expect(g.xs).toHaveLength(4);
+  });
+
+  it("centers a single-day series as one dot", () => {
+    const g = lineChartGeometry([10], 10);
+    expect(g.dots).toEqual([{ x: MARGIN.left + plotWidth / 2, y: MARGIN.top }]);
+    expect(g.paths).toEqual([]);
+  });
+
+  it("returns xs but no geometry when top is not positive", () => {
+    const g = lineChartGeometry([1, 2], 0);
+    expect(g.paths).toEqual([]);
+    expect(g.dots).toEqual([]);
+    expect(g.xs).toHaveLength(2);
+  });
+
+  it("returns empty geometry for an empty series", () => {
+    expect(lineChartGeometry([], 10)).toEqual({ paths: [], dots: [], xs: [] });
   });
 });
