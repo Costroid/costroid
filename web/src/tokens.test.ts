@@ -4,10 +4,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// Read via fs, NOT `?raw` imports: under vite 8 / vitest 4 a `.css?raw`
-// import resolves to an EMPTY STRING in the test environment, which made the
-// original parity pin below pass vacuously (an empty set equals an empty
-// set). The guard below makes that failure mode loud.
+// Read via fs, NOT `?raw` imports: vitest's default `test.css: false` blanks
+// CSS modules BEFORE vite's raw handling runs, so a `.css?raw` import
+// resolves to an EMPTY STRING (all vitest majors; reported upstream as
+// vitest-dev/vitest#10788). That made the original parity pin below pass
+// vacuously (an empty set equals an empty set). The guard below makes that
+// failure mode loud.
 const read = (rel: string): string =>
   readFileSync(new URL(rel, import.meta.url), "utf8");
 const baseCss = read("./tokens.css");
