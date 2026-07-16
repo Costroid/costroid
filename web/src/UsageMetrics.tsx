@@ -209,7 +209,7 @@ function EmptyState() {
           </code>
         </pre>
         <p>
-          Stop <code>costroid serve</code> while ingesting — the embedded store
+          Stop <code>costroid serve</code> while ingesting; the embedded store
           allows a single process at a time.
         </p>
       </div>

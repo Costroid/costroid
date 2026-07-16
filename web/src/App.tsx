@@ -103,7 +103,7 @@ export default function App() {
       </a>
       {state.status === "ready" && state.meta.demo && (
         <div className="demo-banner" role="status">
-          DEMO — synthetic data
+          DEMO: synthetic data
         </div>
       )}
       <header className="app-header">

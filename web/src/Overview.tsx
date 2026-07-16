@@ -386,7 +386,7 @@ function MoversCard({ summary }: { summary: CostsSummary }) {
           Largest providers
         </h3>
         <p className="overview-muted">
-          No preceding window to compare — ranking by period total.
+          No preceding window to compare; ranking by period total.
         </p>
         <ul className="overview-key-list">
           {summary.keys.map((k) => (
@@ -448,8 +448,8 @@ function AnomalyCountCard({ anomalies }: { anomalies: Anomaly[] }) {
   const decreases = anomalies.filter((a) => a.direction === "decrease").length;
   const subtitle =
     count === 0
-      ? "by service — no spikes or dips in this range"
-      : `by service — ${increases} increase${increases === 1 ? "" : "s"}, ${decreases} decrease${decreases === 1 ? "" : "s"}`;
+      ? "by service: no spikes or dips in this range"
+      : `by service: ${increases} increase${increases === 1 ? "" : "s"}, ${decreases} decrease${decreases === 1 ? "" : "s"}`;
 
   return (
     <article className="overview-card" aria-labelledby="overview-anomalies">
@@ -459,7 +459,7 @@ function AnomalyCountCard({ anomalies }: { anomalies: Anomaly[] }) {
       <StatCard
         label="Flagged days"
         value={count}
-        subtitle={count === 0 ? <span>All clear — {subtitle}</span> : subtitle}
+        subtitle={count === 0 ? <span>All clear; {subtitle}</span> : subtitle}
       />
     </article>
   );

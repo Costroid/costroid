@@ -84,7 +84,7 @@ describe("App", () => {
     expect(await screen.findByText("costroid")).toBeTruthy();
     expect(screen.getByText("0.1.0-test")).toBeTruthy();
     expect(screen.getByText("1.4")).toBeTruthy();
-    expect(screen.queryByText("DEMO — synthetic data")).toBeNull();
+    expect(screen.queryByText("DEMO: synthetic data")).toBeNull();
     expect(fetch).toHaveBeenCalledWith("/api/v1/meta", expect.anything());
   });
 
@@ -93,7 +93,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("DEMO — synthetic data")).toBeTruthy();
+    expect(await screen.findByText("DEMO: synthetic data")).toBeTruthy();
   });
 
   it("shows an error state when the request fails", async () => {
