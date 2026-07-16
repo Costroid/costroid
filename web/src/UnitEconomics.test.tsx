@@ -249,7 +249,7 @@ describe("UnitEconomics", () => {
     await Promise.resolve();
 
     expect(screen.queryByTitle("1.000000000000000001 EUR")).toBeNull();
-    expect(screen.getByLabelText("Loading unit economics…")).toBeTruthy();
+    expect(screen.getByText("Loading unit economics…")).toBeTruthy();
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(

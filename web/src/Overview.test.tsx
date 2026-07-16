@@ -383,8 +383,33 @@ describe("Overview", () => {
     const unitCost = await screen.findByText(UNIT_COST_DISPLAY);
     expect(unitCost.getAttribute("title")).toBe(`${UNIT_COST} USD`);
     // No loading skeletons left for anomalies/unit.
-    expect(screen.queryByLabelText("Loading anomalies…")).toBeNull();
-    expect(screen.queryByLabelText("Loading unit economics…")).toBeNull();
+    expect(screen.queryByText("Loading overview…")).toBeNull();
+    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(0);
+  });
+
+  it("retries all three fetches from one error card's Retry", async () => {
+    let failAnomalies = true;
+    const fetchMock = mockRoutes({
+      anomalies: () =>
+        failAnomalies
+          ? fakeResponse(500, null)
+          : fakeResponse(200, anomaliesBody()),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText(/Failed to load anomalies/)).toBeTruthy();
+    const callsBeforeRetry = fetchMock.mock.calls.length;
+
+    failAnomalies = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    // The shared token re-runs ALL of the view's fetch effects.
+    expect(await screen.findByText("Flagged days")).toBeTruthy();
+    expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(
+      callsBeforeRetry + 3,
+    );
   });
 
   it("isolates anomalies 500: only card 4 degrades", async () => {
@@ -730,9 +755,8 @@ describe("Overview", () => {
     expect(screen.queryByText(/Failed to load cost summary/)).toBeNull();
     expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
     expect(screen.queryByText(/Failed to load unit cost/)).toBeNull();
-    expect(screen.getByLabelText("Loading cost summary…")).toBeTruthy();
-    expect(screen.getByLabelText("Loading anomalies…")).toBeTruthy();
-    expect(screen.getByLabelText("Loading unit economics…")).toBeTruthy();
+    expect(screen.getByText("Loading overview…")).toBeTruthy();
+    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(3);
   });
 
   it("downgrades stale terminal states synchronously when currency changes", async () => {
@@ -783,8 +807,7 @@ describe("Overview", () => {
 
     expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
     expect(screen.queryByText(/Failed to load unit cost/)).toBeNull();
-    expect(screen.getByLabelText("Loading cost summary…")).toBeTruthy();
-    expect(screen.getByLabelText("Loading anomalies…")).toBeTruthy();
-    expect(screen.getByLabelText("Loading unit economics…")).toBeTruthy();
+    expect(screen.getByText("Loading overview…")).toBeTruthy();
+    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(3);
   });
 });

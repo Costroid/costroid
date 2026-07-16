@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -90,7 +91,7 @@ describe("DailyTokens", () => {
     // Legend structurally lists every service once.
     expect(container.querySelectorAll(".viz-legend li")).toHaveLength(2);
     expect(
-      screen.getByRole("img", {
+      screen.getByRole("group", {
         name: "Stacked daily token usage by service",
       }),
     ).toBeTruthy();
@@ -252,7 +253,7 @@ describe("DailyTokens", () => {
     render(<DailyTokens />);
 
     expect(
-      await screen.findByRole("img", {
+      await screen.findByRole("group", {
         name: "Stacked daily token usage by service",
       }),
     ).toBeTruthy();
@@ -275,7 +276,7 @@ describe("DailyTokens", () => {
     );
 
     render(<DailyTokens />);
-    await screen.findByRole("img", {
+    await screen.findByRole("group", {
       name: "Stacked daily token usage by service",
     });
     // Compact SI form (e.g. 1.2P) — not the full 19-digit string on the axis.
@@ -311,7 +312,7 @@ describe("DailyTokens", () => {
     );
 
     const { container } = render(<DailyTokens />);
-    await screen.findByRole("img", {
+    await screen.findByRole("group", {
       name: "Stacked daily token usage by service",
     });
 
@@ -324,5 +325,116 @@ describe("DailyTokens", () => {
     const x = Number(bigCap!.getAttribute("x"));
     const estWidth = Math.max(7, big.length * 6.2);
     expect(x + estWidth / 2).toBeLessThanOrEqual(WIDTH - MARGIN.right);
+  });
+
+  it("commits no [new range + stale chart] frame on a range change", async () => {
+    const rows: DailyTokenUsage[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: "1500000",
+      },
+    ];
+    const pending = new Promise<Response>(() => undefined);
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        calls += 1;
+        return calls === 1 ? Promise.resolve(fakeResponse(200, rows)) : pending;
+      }),
+    );
+
+    function Harness() {
+      const [range, setRange] = useState({ start: "", end: "" });
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => setRange({ start: "2026-05-01", end: "2026-05-02" })}
+          >
+            Change range
+          </button>
+          <DailyTokens range={range} />
+        </>
+      );
+    }
+    render(<Harness />);
+    await screen.findByRole("group", {
+      name: "Stacked daily token usage by service",
+    });
+
+    // Observe the committed frame before passive effects run: the held data
+    // was fetched for the old range, so the render must derive loading
+    // synchronously instead of showing the stale chart beside the new range.
+    screen.getByRole("button", { name: "Change range" }).click();
+    await Promise.resolve();
+
+    expect(screen.getByText("Loading daily token usage…")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: /token usage/ })).toBeNull();
+  });
+
+  it("retries the fetch when the error card's Retry is pressed", async () => {
+    const rows: DailyTokenUsage[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: "1500000",
+      },
+    ];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        calls += 1;
+        return calls === 1
+          ? Promise.reject(new Error("boom"))
+          : Promise.resolve(fakeResponse(200, rows));
+      }),
+    );
+
+    render(<DailyTokens />);
+    expect(
+      await screen.findByText(/Failed to load daily token usage/),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("group", {
+        name: "Stacked daily token usage by service",
+      }),
+    ).toBeTruthy();
+    expect(calls).toBe(2);
+  });
+
+  it("associates and Escape-dismisses the day tooltip on keyboard focus", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          fakeResponse(200, [
+            {
+              date: "2026-05-01",
+              serviceName: "OpenAI API",
+              consumedUnit: "Tokens",
+              consumedQuantity: "1500000",
+            },
+          ] satisfies DailyTokenUsage[]),
+        ),
+      ),
+    );
+
+    render(<DailyTokens />);
+    const hitTarget = await screen.findByLabelText("2026-05-01 token details");
+    fireEvent.focus(hitTarget);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.id).toBe("tokens-tooltip");
+    expect(hitTarget.getAttribute("aria-describedby")).toBe("tokens-tooltip");
+
+    fireEvent.keyDown(hitTarget, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(hitTarget.getAttribute("aria-describedby")).toBeNull();
   });
 });

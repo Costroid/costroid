@@ -38,6 +38,22 @@ body {
   clip-path: inset(50%);
 }
 
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  z-index: 10;
+}
+
+.skip-link:focus-visible {
+  left: var(--space-4);
+  top: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+
 button,
 input,
 select {
@@ -50,6 +66,7 @@ select,
 summary {
   outline: 2px solid transparent;
   outline-offset: 2px;
+  touch-action: manipulation;
 }
 
 button:focus-visible,
@@ -205,6 +222,19 @@ summary:focus-visible {
   font-weight: 500;
 }
 
+.date-range-control button,
+.cost-group-control button {
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    transform 160ms ease-out;
+}
+
+.date-range-control button:active,
+.cost-group-control button:active {
+  transform: scale(0.97);
+}
+
 .date-range-control button:hover {
   border-color: var(--accent);
   color: var(--accent-hover);
@@ -269,6 +299,7 @@ summary:focus-visible {
 .view-panel {
   min-width: 0;
   margin-top: var(--space-6);
+  scroll-margin-top: var(--space-4);
 }
 
 .view-heading {
@@ -313,12 +344,17 @@ summary:focus-visible {
 }
 
 .cost-group-control button {
+  min-height: 2.25rem;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-secondary);
   cursor: pointer;
   padding: var(--space-1) var(--space-3);
+}
+
+.cost-group-control button:hover {
+  color: var(--ink);
 }
 
 .cost-group-control button[aria-pressed="true"] {
@@ -426,13 +462,21 @@ summary:focus-visible {
 }
 
 .viz-chart .viz-day:hover .viz-segment,
-.viz-chart .viz-day:focus .viz-segment {
+.viz-chart .viz-day:focus-within .viz-segment {
   opacity: 0.72;
 }
 
 .viz-hit-target {
   cursor: crosshair;
   fill: transparent;
+}
+
+/* The tabbable rect is SVG, so the app's button/input focus ring doesn't
+   apply; a stroke is the reliable cross-browser indicator here. */
+.viz-hit-target:focus-visible {
+  outline: 2px solid transparent;
+  stroke: var(--focus-ring);
+  stroke-width: 2;
 }
 
 .chart-tooltip {
@@ -505,6 +549,20 @@ summary:focus-visible {
   font-weight: 500;
 }
 
+/* Fade the revealed table in (opacity only — open lays out immediately;
+   close holds layout for the fade-out, then snaps via allow-discrete).
+   Browsers without ::details-content keep the snap. */
+.viz-table::details-content {
+  opacity: 0;
+  transition:
+    opacity 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    content-visibility 200ms allow-discrete;
+}
+
+.viz-table[open]::details-content {
+  opacity: 1;
+}
+
 .viz-table table,
 .table-panel table,
 .usage-metrics-unit table {
@@ -574,6 +632,31 @@ thead th {
   overflow-wrap: anywhere;
 }
 
+.state-retry {
+  margin-top: var(--space-4);
+  min-height: 2.25rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 500;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    transform 160ms ease-out;
+}
+
+.state-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.state-retry:active {
+  transform: scale(0.97);
+}
+
 .viz-empty pre {
   max-width: 100%;
   overflow-x: auto;
@@ -595,15 +678,28 @@ thead th {
 
 .skeleton-line,
 .skeleton-chart {
+  position: relative;
+  overflow: hidden;
   border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+/* The sheen sweeps as a transform so the loop stays compositor-only (up to
+   three skeletons shimmer concurrently on Overview); linear, per constant
+   motion. */
+.skeleton-line::after,
+.skeleton-chart::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   background: linear-gradient(
     90deg,
-    var(--surface-2) 30%,
+    transparent 30%,
     var(--border) 50%,
-    var(--surface-2) 70%
+    transparent 70%
   );
-  background-size: 240% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+  transform: translateX(-100%);
+  animation: shimmer 1.4s linear infinite;
 }
 
 .skeleton-line {
@@ -618,11 +714,8 @@ thead th {
 }
 
 @keyframes shimmer {
-  from {
-    background-position: 100% 0;
-  }
   to {
-    background-position: -100% 0;
+    transform: translateX(100%);
   }
 }
 
@@ -892,10 +985,6 @@ thead th {
   fill: var(--accent);
 }
 
-.stat-value {
-  overflow-wrap: anywhere;
-}
-
 /* Unit-economics daily line chart (shares the viz-chart frame). */
 .viz-line-path {
   stroke: var(--accent);
@@ -936,5 +1025,13 @@ thead th {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  /* ::details-content is its own pseudo-element — the wildcards above do
+     not cover it. Kept as a SEPARATE rule: an unsupported pseudo-element
+     in a selector list would invalidate the entire wildcard rule in
+     browsers without ::details-content. */
+  *::details-content {
+    transition-duration: 0.01ms !important;
   }
 }

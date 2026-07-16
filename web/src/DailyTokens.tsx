@@ -6,7 +6,7 @@ import type { components } from "./api/schema";
 import { getTokensDaily } from "./api";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
-import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
+import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 import {
   HEIGHT,
   MARGIN,
@@ -23,10 +23,21 @@ import {
 
 type DailyTokenUsage = components["schemas"]["DailyTokenUsage"];
 
+// The ready state carries the params it was fetched FOR, so a render can
+// detect synchronously that the current props no longer match it (same
+// staleness pattern as DailyCosts).
 type TokensState =
   | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; rows: DailyTokenUsage[] };
+  | {
+      status: "error";
+      message: string;
+      params: { start: string; end: string };
+    }
+  | {
+      status: "ready";
+      rows: DailyTokenUsage[];
+      params: { start: string; end: string };
+    };
 
 type DayGroup = {
   date: string;
@@ -75,9 +86,11 @@ export default function DailyTokens({
   range?: Range;
 }) {
   const [state, setState] = useState<TokensState>({ status: "loading" });
+  const [retryToken, setRetryToken] = useState(0);
   const { start, end } = range;
 
   useEffect(() => {
+    setState({ status: "loading" });
     const controller = new AbortController();
 
     async function load() {
@@ -86,7 +99,7 @@ export default function DailyTokens({
         if (controller.signal.aborted) {
           return;
         }
-        setState({ status: "ready", rows });
+        setState({ status: "ready", rows, params: { start, end } });
       } catch (err) {
         if (controller.signal.aborted) {
           return;
@@ -94,13 +107,23 @@ export default function DailyTokens({
         setState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
+          params: { start, end },
         });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [start, end]);
+  }, [start, end, retryToken]);
+
+  // Derive staleness synchronously (see DailyCosts): held data — or a held
+  // error — fetched for a different range must not render beside the new
+  // range for even one frame.
+  const view: TokensState =
+    (state.status === "ready" || state.status === "error") &&
+    (state.params.start !== start || state.params.end !== end)
+      ? { status: "loading" }
+      : state;
 
   return (
     <section aria-labelledby="tokens-title">
@@ -110,20 +133,23 @@ export default function DailyTokens({
           <h2 id="tokens-title">Daily token usage by service</h2>
         </div>
       </div>
-      {state.status === "loading" && (
-        <LoadingSkeleton label="Loading daily token usage…" />
-      )}
-      {state.status === "error" && (
-        <ErrorState>
-          Failed to load daily token usage: {state.message}
+      <ViewStatus
+        message={
+          view.status === "loading"
+            ? "Loading daily token usage…"
+            : view.status === "ready"
+              ? "Daily token usage loaded"
+              : ""
+        }
+      />
+      {view.status === "loading" && <LoadingSkeleton />}
+      {view.status === "error" && (
+        <ErrorState onRetry={() => setRetryToken((t) => t + 1)}>
+          Failed to load daily token usage: {view.message}
         </ErrorState>
       )}
-      {state.status === "ready" &&
-        (state.rows.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <Chart rows={state.rows} />
-        ))}
+      {view.status === "ready" &&
+        (view.rows.length === 0 ? <EmptyState /> : <Chart rows={view.rows} />)}
     </section>
   );
 }
@@ -157,6 +183,20 @@ function EmptyState() {
 
 function Chart({ rows }: { rows: DailyTokenUsage[] }) {
   const [activeDay, setActiveDay] = useState<number | null>(null);
+  // WCAG 1.4.13: Escape dismisses the tooltip whether it was opened by hover
+  // or by keyboard focus, so listen at the document while it is showing.
+  useEffect(() => {
+    if (activeDay === null) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setActiveDay(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [activeDay]);
   const days = groupByDate(rows);
   const services = [
     ...new Set(days.flatMap((d) => d.services.map((s) => s.serviceName))),
@@ -201,9 +241,11 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
       )}
       <div className="viz-panel">
         <div className="chart-wrapper">
+          {/* role="group", not "img": an img would declare its focusable,
+              labeled hit-target rects presentational. */}
           <svg
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-            role="img"
+            role="group"
             aria-label="Stacked daily token usage by service"
             className="viz-chart"
           >
@@ -220,6 +262,7 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
                   x={MARGIN.left - 8}
                   y={yOf(tick.value) + 3}
                   className="viz-tick"
+                  aria-hidden="true"
                   textAnchor="end"
                 >
                   {compactAxisLabel(tick.value)}
@@ -274,6 +317,7 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
                       x={x + barWidth / 2}
                       y={baseline + 16}
                       className="viz-tick"
+                      aria-hidden="true"
                       textAnchor="middle"
                     >
                       {day.date.slice(5)}
@@ -287,6 +331,9 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
                     height={plotHeight}
                     tabIndex={0}
                     aria-label={`${day.date} token details`}
+                    aria-describedby={
+                      activeDay === i ? "tokens-tooltip" : undefined
+                    }
                     onPointerEnter={() => setActiveDay(i)}
                     onPointerLeave={() => setActiveDay(null)}
                     onFocus={() => setActiveDay(i)}
@@ -299,6 +346,7 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
           {tooltipDay && (
             <div
               className="chart-tooltip"
+              id="tokens-tooltip"
               role="tooltip"
               style={{ left: `${tooltipLeft}%`, top: "52%" }}
             >

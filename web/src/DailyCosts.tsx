@@ -7,7 +7,7 @@ import { getAnomalies, getCostsDaily, type CostGroupBy } from "./api";
 import { EmptyIcon } from "./icons";
 import { formatMoney, Money } from "./money";
 import type { Range } from "./range";
-import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
+import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 import {
   HEIGHT,
   MARGIN,
@@ -35,7 +35,7 @@ type CostFetchParams = FetchParams;
 
 type CostsState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; params: CostFetchParams }
   | { status: "ready"; costs: DailyCosts; params: CostFetchParams };
 
 // AnomalyState is fetched independently of the chart: a failure never blocks the
@@ -66,6 +66,7 @@ export default function DailyCosts({
   range?: Range;
 }) {
   const [state, setState] = useState<CostsState>({ status: "loading" });
+  const [retryToken, setRetryToken] = useState(0);
   const displayedCurrency =
     state.status === "ready" ? state.costs.currency : null;
   const [groupBy, setGroupBy] = useState<CostGroupBy>("service");
@@ -124,13 +125,14 @@ export default function DailyCosts({
         setState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
+          params: { start, end, groupBy, currency },
         });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [start, end, groupBy, currency]);
+  }, [start, end, groupBy, currency, retryToken]);
 
   // The anomaly overlay is fetched with the SAME range + groupBy + resolved
   // currency as the chart, but independently: a failure here must never break
@@ -200,7 +202,7 @@ export default function DailyCosts({
   // here — not via effect timing — is what eliminates the [new heading + old
   // chart] frame.
   const view: CostsState =
-    state.status === "ready" &&
+    (state.status === "ready" || state.status === "error") &&
     (state.params.start !== start ||
       state.params.end !== end ||
       state.params.groupBy !== groupBy ||
@@ -252,11 +254,20 @@ export default function DailyCosts({
           </div>
         )}
       </div>
-      {view.status === "loading" && (
-        <LoadingSkeleton label="Loading daily costs…" />
-      )}
+      <ViewStatus
+        message={
+          view.status === "loading"
+            ? "Loading daily costs…"
+            : view.status === "ready"
+              ? "Daily costs loaded"
+              : ""
+        }
+      />
+      {view.status === "loading" && <LoadingSkeleton />}
       {view.status === "error" && (
-        <ErrorState>Failed to load daily costs: {view.message}</ErrorState>
+        <ErrorState onRetry={() => setRetryToken((t) => t + 1)}>
+          Failed to load daily costs: {view.message}
+        </ErrorState>
       )}
       {view.status === "ready" &&
         (view.costs.days.length === 0 ? (
@@ -312,6 +323,20 @@ function Chart({
   anomalies: Anomaly[];
 }) {
   const [activeDay, setActiveDay] = useState<number | null>(null);
+  // WCAG 1.4.13: Escape dismisses the tooltip whether it was opened by hover
+  // or by keyboard focus, so listen at the document while it is showing.
+  useEffect(() => {
+    if (activeDay === null) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setActiveDay(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [activeDay]);
   const groupLabel = groupLabelOf(groupBy);
   const groups = [
     ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.key))),
@@ -370,9 +395,11 @@ function Chart({
       </div>
       <div className="viz-panel">
         <div className="chart-wrapper">
+          {/* role="group", not "img": an img would declare its focusable,
+              labeled hit-target rects presentational. */}
           <svg
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-            role="img"
+            role="group"
             aria-label={`Stacked daily cost by ${groupLabel}`}
             className="viz-chart"
           >
@@ -389,6 +416,7 @@ function Chart({
                   x={MARGIN.left - 8}
                   y={yOf(tick.value) + 3}
                   className="viz-tick"
+                  aria-hidden="true"
                   textAnchor="end"
                 >
                   {tick.label}
@@ -454,6 +482,7 @@ function Chart({
                       x={x + barWidth / 2}
                       y={baseline + 16}
                       className="viz-tick"
+                      aria-hidden="true"
                       textAnchor="middle"
                     >
                       {day.date.slice(5)}
@@ -467,6 +496,9 @@ function Chart({
                     height={plotHeight}
                     tabIndex={0}
                     aria-label={`${day.date} cost details`}
+                    aria-describedby={
+                      activeDay === i ? "costs-tooltip" : undefined
+                    }
                     onPointerEnter={() => setActiveDay(i)}
                     onPointerLeave={() => setActiveDay(null)}
                     onFocus={() => setActiveDay(i)}
@@ -479,6 +511,7 @@ function Chart({
           {tooltipDay && (
             <div
               className="chart-tooltip"
+              id="costs-tooltip"
               role="tooltip"
               style={{ left: `${tooltipLeft}%`, top: "52%" }}
             >

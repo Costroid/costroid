@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -245,5 +246,89 @@ describe("UsageMetrics", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("500");
+  });
+
+  it("retries the fetch when the error card's Retry is pressed", async () => {
+    const rows: DailyUsageMetric[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "gpt-4o",
+        serviceTier: "",
+        metricName: "uncached_input_tokens",
+        unit: "Tokens",
+        quantity: "100",
+      },
+    ];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        calls += 1;
+        return calls === 1
+          ? Promise.resolve(fakeResponse(500, null))
+          : Promise.resolve(fakeResponse(200, rows));
+      }),
+    );
+
+    render(<UsageMetrics />);
+    expect(
+      await screen.findByText(/Failed to load daily usage metrics/),
+    ).toBeTruthy();
+
+    screen.getByRole("button", { name: "Retry" }).click();
+    expect(
+      await screen.findByRole("heading", { name: "Tokens", level: 3 }),
+    ).toBeTruthy();
+    expect(calls).toBe(2);
+  });
+
+  it("commits no [new range + stale table] frame on a range change", async () => {
+    const rows: DailyUsageMetric[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "gpt-4o",
+        serviceTier: "",
+        metricName: "uncached_input_tokens",
+        unit: "Tokens",
+        quantity: "100",
+      },
+    ];
+    const pending = new Promise<Response>(() => undefined);
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        calls += 1;
+        return calls === 1 ? Promise.resolve(fakeResponse(200, rows)) : pending;
+      }),
+    );
+
+    function Harness() {
+      const [range, setRange] = useState({ start: "", end: "" });
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => setRange({ start: "2026-05-01", end: "2026-05-02" })}
+          >
+            Change range
+          </button>
+          <UsageMetrics range={range} />
+        </>
+      );
+    }
+    render(<Harness />);
+    await screen.findByRole("heading", { name: "Tokens", level: 3 });
+
+    // Observe the committed frame before passive effects run: the held data
+    // was fetched for the old range, so the render must derive loading
+    // synchronously instead of showing the stale tables beside the new range.
+    screen.getByRole("button", { name: "Change range" }).click();
+    await Promise.resolve();
+
+    expect(screen.getByText("Loading daily usage metrics…")).toBeTruthy();
+    expect(
+      screen.queryByRole("heading", { name: "Tokens", level: 3 }),
+    ).toBeNull();
   });
 });

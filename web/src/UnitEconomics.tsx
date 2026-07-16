@@ -7,7 +7,7 @@ import { getBusinessMetrics, getUnitEconomicsDaily } from "./api";
 import { EmptyIcon } from "./icons";
 import { Money } from "./money";
 import type { Range } from "./range";
-import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
+import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 import { HEIGHT, lineChartGeometry, MARGIN, WIDTH, yTicks } from "./viz";
 
 type BusinessMetricInfo = components["schemas"]["BusinessMetricInfo"];
@@ -48,9 +48,13 @@ export default function UnitEconomics({
   const [economicsState, setEconomicsState] = useState<EconomicsState>({
     status: "idle",
   });
+  // One token re-runs both fetch effects; both error cards share it.
+  const [retryToken, setRetryToken] = useState(0);
+  const retry = () => setRetryToken((t) => t + 1);
   const { start, end } = range;
 
   useEffect(() => {
+    setMetricsState({ status: "loading" });
     const controller = new AbortController();
     async function loadMetrics() {
       try {
@@ -68,7 +72,7 @@ export default function UnitEconomics({
     }
     void loadMetrics();
     return () => controller.abort();
-  }, []);
+  }, [retryToken]);
 
   useEffect(() => {
     if (selectedMetric === "") {
@@ -113,7 +117,7 @@ export default function UnitEconomics({
     }
     void loadEconomics();
     return () => controller.abort();
-  }, [selectedMetric, start, end, currency]);
+  }, [selectedMetric, start, end, currency, retryToken]);
 
   // A metric/range/currency change commits before its passive effect can replace
   // the old response with an explicit loading state. Hide that stale terminal
@@ -138,6 +142,7 @@ export default function UnitEconomics({
           <label className="metric-control">
             Business metric
             <select
+              name="business-metric"
               value={selectedMetric}
               onChange={(event) => setSelectedMetric(event.target.value)}
             >
@@ -172,11 +177,20 @@ export default function UnitEconomics({
             </div>
           )}
       </div>
-      {metricsState.status === "loading" && (
-        <LoadingSkeleton label="Loading business metrics…" />
-      )}
+      <ViewStatus
+        message={
+          metricsState.status === "loading"
+            ? "Loading business metrics…"
+            : economics.status === "loading"
+              ? "Loading unit economics…"
+              : economics.status === "ready"
+                ? "Unit economics loaded"
+                : ""
+        }
+      />
+      {metricsState.status === "loading" && <LoadingSkeleton />}
       {metricsState.status === "error" && (
-        <ErrorState>
+        <ErrorState onRetry={retry}>
           Failed to load business metrics: {metricsState.message}
         </ErrorState>
       )}
@@ -185,11 +199,9 @@ export default function UnitEconomics({
           <EmptyState />
         ) : (
           <>
-            {economics.status === "loading" && (
-              <LoadingSkeleton label="Loading unit economics…" />
-            )}
+            {economics.status === "loading" && <LoadingSkeleton />}
             {economics.status === "error" && (
-              <ErrorState>
+              <ErrorState onRetry={retry}>
                 Failed to load unit economics: {economics.message}
               </ErrorState>
             )}

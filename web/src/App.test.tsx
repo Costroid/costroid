@@ -110,6 +110,17 @@ describe("App", () => {
     );
   });
 
+  it("renders a skip link targeting the view panel", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+
+    render(<App />);
+
+    const skipLink = screen.getByRole("link", { name: "Skip to content" });
+    expect(skipLink.getAttribute("href")).toBe("#view-panel");
+    expect(document.getElementById("view-panel")).toBeTruthy();
+    await screen.findByRole("heading", { name: "Overview" });
+  });
+
   it("defaults to the Overview view", async () => {
     vi.stubGlobal("fetch", mockFetch());
 

@@ -7,14 +7,25 @@ import { getUsageMetricsDaily } from "./api";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
 import { sumIntegerStrings } from "./viz";
-import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
+import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 
 type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
 
+// The ready state carries the params it was fetched FOR, so a render can
+// detect synchronously that the current props no longer match it (same
+// staleness pattern as DailyCosts).
 type MetricsState =
   | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; rows: DailyUsageMetric[] };
+  | {
+      status: "error";
+      message: string;
+      params: { start: string; end: string };
+    }
+  | {
+      status: "ready";
+      rows: DailyUsageMetric[];
+      params: { start: string; end: string };
+    };
 
 type SeriesKey = {
   serviceName: string;
@@ -104,9 +115,11 @@ export default function UsageMetrics({
   range?: Range;
 }) {
   const [state, setState] = useState<MetricsState>({ status: "loading" });
+  const [retryToken, setRetryToken] = useState(0);
   const { start, end } = range;
 
   useEffect(() => {
+    setState({ status: "loading" });
     const controller = new AbortController();
 
     async function load() {
@@ -118,7 +131,7 @@ export default function UsageMetrics({
         if (controller.signal.aborted) {
           return;
         }
-        setState({ status: "ready", rows });
+        setState({ status: "ready", rows, params: { start, end } });
       } catch (err) {
         if (controller.signal.aborted) {
           return;
@@ -126,13 +139,23 @@ export default function UsageMetrics({
         setState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
+          params: { start, end },
         });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [start, end]);
+  }, [start, end, retryToken]);
+
+  // Derive staleness synchronously (see DailyCosts): held data — or a held
+  // error — fetched for a different range must not render beside the new
+  // range for even one frame.
+  const view: MetricsState =
+    (state.status === "ready" || state.status === "error") &&
+    (state.params.start !== start || state.params.end !== end)
+      ? { status: "loading" }
+      : state;
 
   return (
     <section className="usage-metrics" aria-labelledby="usage-title">
@@ -142,19 +165,26 @@ export default function UsageMetrics({
           <h2 id="usage-title">Daily usage metrics</h2>
         </div>
       </div>
-      {state.status === "loading" && (
-        <LoadingSkeleton label="Loading daily usage metrics…" />
-      )}
-      {state.status === "error" && (
-        <ErrorState>
-          Failed to load daily usage metrics: {state.message}
+      <ViewStatus
+        message={
+          view.status === "loading"
+            ? "Loading daily usage metrics…"
+            : view.status === "ready"
+              ? "Daily usage metrics loaded"
+              : ""
+        }
+      />
+      {view.status === "loading" && <LoadingSkeleton />}
+      {view.status === "error" && (
+        <ErrorState onRetry={() => setRetryToken((t) => t + 1)}>
+          Failed to load daily usage metrics: {view.message}
         </ErrorState>
       )}
-      {state.status === "ready" &&
-        (state.rows.length === 0 ? (
+      {view.status === "ready" &&
+        (view.rows.length === 0 ? (
           <EmptyState />
         ) : (
-          <MetricsTables rows={state.rows} />
+          <MetricsTables rows={view.rows} />
         ))}
     </section>
   );

@@ -52,4 +52,26 @@ describe("DateRangeControl", () => {
 
     expect(screen.queryByText("Start date is after end date.")).toBeNull();
   });
+
+  it("announces the reversed-range hint via a persistent live region", () => {
+    const onChange = vi.fn();
+    render(
+      <DateRangeControl
+        range={{ start: "2026-05-01", end: "2026-05-31" }}
+        onChange={onChange}
+      />,
+    );
+
+    // The status node exists (empty) BEFORE the hint appears — a live region
+    // mounted already populated is unreliably announced.
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("");
+    expect(
+      screen.getByLabelText(/start date/i).getAttribute("aria-describedby"),
+    ).toBe("date-range-hint");
+    expect(
+      screen.getByLabelText(/end date/i).getAttribute("aria-describedby"),
+    ).toBe("date-range-hint");
+    expect(status.id).toBe("date-range-hint");
+  });
 });

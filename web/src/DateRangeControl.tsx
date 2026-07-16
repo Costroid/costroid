@@ -53,7 +53,10 @@ export default function DateRangeControl({
         <span>Start date</span>
         <input
           type="date"
+          name="start-date"
+          autoComplete="off"
           value={range.start}
+          aria-describedby="date-range-hint"
           onChange={(event) =>
             onChange({ start: event.currentTarget.value, end: range.end })
           }
@@ -63,7 +66,10 @@ export default function DateRangeControl({
         <span>End date</span>
         <input
           type="date"
+          name="end-date"
+          autoComplete="off"
           value={range.end}
+          aria-describedby="date-range-hint"
           onChange={(event) =>
             onChange({ start: range.start, end: event.currentTarget.value })
           }
@@ -72,9 +78,11 @@ export default function DateRangeControl({
       <button type="button" onClick={() => onChange({ start: "", end: "" })}>
         All time
       </button>
-      {isReversed && (
-        <p className="date-range-hint">Start date is after end date.</p>
-      )}
+      {/* Persistent live region: a hint that mounts already populated is
+          unreliably announced, so the node stays and the text swaps. */}
+      <p className="date-range-hint" id="date-range-hint" role="status">
+        {isReversed ? "Start date is after end date." : ""}
+      </p>
     </div>
   );
 }

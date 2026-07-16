@@ -129,6 +129,31 @@ describe("DailyCosts", () => {
     ).toContain("256.9833670123456789 USD");
   });
 
+  it("associates and Escape-dismisses the day tooltip on keyboard focus", async () => {
+    renderChart({
+      currency: "USD",
+      currencies: ["USD"],
+      total: "10.00",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "10.00",
+          services: [{ key: "OpenAI API", cost: "10.00" }],
+        },
+      ],
+    });
+
+    const hitTarget = await screen.findByLabelText("2026-05-01 cost details");
+    fireEvent.focus(hitTarget);
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip.id).toBe("costs-tooltip");
+    expect(hitTarget.getAttribute("aria-describedby")).toBe("costs-tooltip");
+
+    fireEvent.keyDown(hitTarget, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(hitTarget.getAttribute("aria-describedby")).toBeNull();
+  });
+
   it("renders totals, legend, and table from the API response", async () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
@@ -171,7 +196,7 @@ describe("DailyCosts", () => {
     expect(container.querySelectorAll(".viz-legend li")).toHaveLength(3);
     // The chart itself is rendered.
     expect(
-      screen.getByRole("img", { name: "Stacked daily cost by service" }),
+      screen.getByRole("group", { name: "Stacked daily cost by service" }),
     ).toBeTruthy();
     // The table view shows display precision with exact values in titles.
     expect(screen.getAllByTitle("3.6288 USD").length).toBeGreaterThanOrEqual(1);
@@ -456,7 +481,7 @@ describe("DailyCosts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Provider" }));
 
     expect(
-      await screen.findByRole("img", {
+      await screen.findByRole("group", {
         name: "Stacked daily cost by provider",
       }),
     ).toBeTruthy();
@@ -575,15 +600,17 @@ describe("DailyCosts", () => {
       }),
     );
     render(<DailyCosts />);
-    await screen.findByRole("img", { name: "Stacked daily cost by service" });
+    await screen.findByRole("group", { name: "Stacked daily cost by service" });
 
     fireEvent.click(screen.getByRole("button", { name: "Provider" }));
     expect(screen.getByText("Loading daily costs…")).toBeTruthy();
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: /Stacked daily cost/ }),
+    ).toBeNull();
 
     resolveProviderCosts(fakeResponse(200, costs));
     expect(
-      await screen.findByRole("img", {
+      await screen.findByRole("group", {
         name: "Stacked daily cost by provider",
       }),
     ).toBeTruthy();
@@ -614,7 +641,7 @@ describe("DailyCosts", () => {
       vi.fn(() => Promise.resolve(fakeResponse(200, costs))),
     );
     render(<DailyCosts />);
-    await screen.findByRole("img", { name: "Stacked daily cost by service" });
+    await screen.findByRole("group", { name: "Stacked daily cost by service" });
 
     screen.getByRole("button", { name: "Provider" }).click();
     await Promise.resolve();
@@ -625,7 +652,9 @@ describe("DailyCosts", () => {
       screen.getByRole("heading", { name: "Daily cost by provider" }),
     ).toBeTruthy();
     expect(screen.getByText("Loading daily costs…")).toBeTruthy();
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: /Stacked daily cost/ }),
+    ).toBeNull();
   });
 
   it("keeps credit days inside the plot and reports net totals", async () => {
@@ -720,7 +749,7 @@ describe("DailyCosts", () => {
       ],
     };
     const { container } = renderChart(costs);
-    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    await screen.findByRole("group", { name: /Stacked daily cost/ });
     const tiny = [...container.querySelectorAll("path")].find(
       (path) =>
         path.querySelector("title")?.textContent ===
@@ -752,7 +781,7 @@ describe("DailyCosts", () => {
       ],
     };
     const { container } = renderChart(costs);
-    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    await screen.findByRole("group", { name: /Stacked daily cost/ });
 
     const tiny = [...container.querySelectorAll("path")].find(
       (path) =>
@@ -798,7 +827,7 @@ describe("DailyCosts", () => {
         { key: "Amazon Simple Storage Service", cost: "3" },
       ]),
     );
-    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    await screen.findByRole("group", { name: /Stacked daily cost/ });
     const before = fillOf(first.container, "AWS Lambda");
     cleanup();
     vi.unstubAllGlobals();
@@ -809,7 +838,7 @@ describe("DailyCosts", () => {
         { key: "Amazon S3 Glacier", cost: "0.5" },
       ]),
     );
-    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    await screen.findByRole("group", { name: /Stacked daily cost/ });
     const after = fillOf(second.container, "AWS Lambda");
 
     expect(before).toMatch(/^var\(--viz-series-\d\)$/);
@@ -828,7 +857,7 @@ describe("DailyCosts", () => {
       })),
     };
     const { container } = renderChart(costs);
-    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    await screen.findByRole("group", { name: /Stacked daily cost/ });
 
     const dateLabels = [...container.querySelectorAll("text")].filter((t) =>
       /^\d{2}-\d{2}$/.test(t.textContent ?? ""),
@@ -921,7 +950,7 @@ describe("DailyCosts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Allocation" }));
 
     expect(
-      await screen.findByRole("img", {
+      await screen.findByRole("group", {
         name: "Stacked daily cost by allocation",
       }),
     ).toBeTruthy();
@@ -1004,7 +1033,7 @@ describe("DailyCosts", () => {
     );
 
     const { container } = render(<DailyCosts />);
-    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    await screen.findByRole("group", { name: /Stacked daily cost/ });
 
     await waitFor(() =>
       expect(
@@ -1218,7 +1247,7 @@ describe("DailyCosts", () => {
     );
 
     const { container } = render(<DailyCosts />);
-    await screen.findByRole("img", { name: /Stacked daily cost/ });
+    await screen.findByRole("group", { name: /Stacked daily cost/ });
 
     // A chart marker appears EXACTLY on the flagged day (one per day, keyed by
     // data-date) — never on the mundane days.
@@ -1274,7 +1303,7 @@ describe("DailyCosts", () => {
 
     // The chart still renders despite the anomaly fetch failing...
     expect(
-      await screen.findByRole("img", { name: /Stacked daily cost/ }),
+      await screen.findByRole("group", { name: /Stacked daily cost/ }),
     ).toBeTruthy();
     // ...with a non-blocking notice and no markers, and NOT the cost error alert.
     await screen.findByText(/Anomaly overlay unavailable/);

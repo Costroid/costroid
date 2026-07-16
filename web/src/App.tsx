@@ -97,6 +97,9 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      <a className="skip-link" href="#view-panel">
+        Skip to content
+      </a>
       {state.status === "ready" && state.meta.demo && (
         <div className="demo-banner" role="status">
           DEMO — synthetic data
@@ -113,7 +116,7 @@ export default function App() {
           </div>
         </div>
         {state.status === "loading" && (
-          <div className="instance-meta" aria-label="Loading instance metadata">
+          <div className="instance-meta" role="status">
             <div>
               <span>Instance</span>
               <strong>Loading…</strong>
@@ -179,7 +182,7 @@ export default function App() {
           </div>
         </nav>
       </div>
-      <div className="view-panel">
+      <div className="view-panel" id="view-panel" tabIndex={-1}>
         {view === "overview" && <Overview range={range} />}
         {view === "costs" && <DailyCosts range={range} />}
         {view === "tokens" && <DailyTokens range={range} />}

@@ -12,7 +12,7 @@ import {
 import { EmptyIcon } from "./icons";
 import { Money } from "./money";
 import type { Range } from "./range";
-import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
+import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 import {
   compareDecimalMagnitude,
   serviceColor,
@@ -59,6 +59,9 @@ export default function Overview({
     status: "loading",
   });
   const [unitState, setUnitState] = useState<UnitState>({ status: "loading" });
+  // One token re-runs all three fetch effects; every error card shares it.
+  const [retryToken, setRetryToken] = useState(0);
+  const retry = () => setRetryToken((t) => t + 1);
 
   // Effect 1: costs summary → cards 1–3 (degrade together).
   useEffect(() => {
@@ -101,7 +104,7 @@ export default function Overview({
     }
     void load();
     return () => controller.abort();
-  }, [start, end, currency]);
+  }, [start, end, currency, retryToken]);
 
   // Effect 2: anomalies by service → card 4.
   useEffect(() => {
@@ -135,7 +138,7 @@ export default function Overview({
     }
     void load();
     return () => controller.abort();
-  }, [start, end, currency]);
+  }, [start, end, currency, retryToken]);
 
   // Effect 3: business metrics → unit economics (chained) → card 5.
   useEffect(() => {
@@ -180,7 +183,7 @@ export default function Overview({
     }
     void load();
     return () => controller.abort();
-  }, [start, end, currency]);
+  }, [start, end, currency, retryToken]);
 
   // Synchronous staleness: held terminal data for different params → loading.
   // This includes errors so a range/currency change never flashes an old error
@@ -238,16 +241,29 @@ export default function Overview({
           )}
       </div>
 
+      <ViewStatus
+        message={
+          summary.status === "loading" ||
+          anomalies.status === "loading" ||
+          unit.status === "loading"
+            ? "Loading overview…"
+            : summary.status === "error" ||
+                anomalies.status === "error" ||
+                unit.status === "error"
+              ? ""
+              : "Overview loaded"
+        }
+      />
       <div className="overview-grid">
         {/* Cards 1–3: summary chain */}
         {summary.status === "loading" && (
           <div className="overview-summary-block">
-            <LoadingSkeleton label="Loading cost summary…" />
+            <LoadingSkeleton />
           </div>
         )}
         {summary.status === "error" && (
           <div className="overview-summary-block">
-            <ErrorState>
+            <ErrorState onRetry={retry}>
               Failed to load cost summary: {summary.message}
             </ErrorState>
           </div>
@@ -262,11 +278,9 @@ export default function Overview({
 
         <div className="overview-card-slot overview-anomaly-slot">
           {/* Card 4: anomalies */}
-          {anomalies.status === "loading" && (
-            <LoadingSkeleton label="Loading anomalies…" />
-          )}
+          {anomalies.status === "loading" && <LoadingSkeleton />}
           {anomalies.status === "error" && (
-            <ErrorState>
+            <ErrorState onRetry={retry}>
               Failed to load anomalies: {anomalies.message}
             </ErrorState>
           )}
@@ -277,11 +291,11 @@ export default function Overview({
 
         <div className="overview-card-slot overview-unit-slot">
           {/* Card 5: unit cost */}
-          {unit.status === "loading" && (
-            <LoadingSkeleton label="Loading unit economics…" />
-          )}
+          {unit.status === "loading" && <LoadingSkeleton />}
           {unit.status === "error" && (
-            <ErrorState>Failed to load unit cost: {unit.message}</ErrorState>
+            <ErrorState onRetry={retry}>
+              Failed to load unit cost: {unit.message}
+            </ErrorState>
           )}
           {unit.status === "empty" && <UnitEmptyState />}
           {unit.status === "ready" && (
