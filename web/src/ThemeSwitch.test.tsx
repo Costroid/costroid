@@ -67,14 +67,14 @@ describe("ThemeSwitch", () => {
   it("keeps theme-color metas in sync with a forced theme", () => {
     const meta = document.createElement("meta");
     meta.name = "theme-color";
-    meta.content = "#f6f7f9";
+    meta.content = "#f9f9f9";
     document.head.appendChild(meta);
     try {
       render(<ThemeSwitch />);
       fireEvent.click(screen.getByRole("button", { name: "Dark theme" }));
-      expect(meta.content).toBe("#0d1119");
+      expect(meta.content).toBe("#0b0b0b");
       fireEvent.click(screen.getByRole("button", { name: "Device theme" }));
-      expect(meta.content).toBe("#f6f7f9");
+      expect(meta.content).toBe("#f9f9f9");
     } finally {
       meta.remove();
     }

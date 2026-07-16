@@ -10,6 +10,10 @@
   src: url("./assets/InterVariable.woff2") format("woff2");
 }
 
+/* Monochrome chrome palette: the Radix Gray steps interfere.com ships, shared
+   with the marketing site (gray-2/3 surfaces, gray-6/9/11 borders, gray-11/12
+   text; dark page #0b0b0b). Data-viz keeps its full categorical palette —
+   series color is functional, not brand. */
 :root {
   color-scheme: light dark;
   font-family:
@@ -42,23 +46,23 @@
   --radius-sm: 0.375rem;
   --radius-md: 0.625rem;
   --radius-lg: 0.875rem;
-  --shadow-sm: 0 1px 2px rgb(15 23 42 / 7%);
-  --shadow-md: 0 12px 30px rgb(15 23 42 / 8%);
-  --shadow-card: 0 1px 2px rgb(15 23 42 / 5%), 0 6px 16px rgb(15 23 42 / 6%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 7%);
+  --shadow-md: 0 12px 30px rgb(0 0 0 / 8%);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 5%), 0 6px 16px rgb(0 0 0 / 6%);
 
-  --bg: #f6f7f9;
+  --bg: #f9f9f9;
   --surface: #ffffff;
-  --surface-2: #eef1f5;
-  --border: #8792a5;
-  --border-soft: #dfe4ec;
-  --border-strong: #68758a;
-  --ink: #172033;
-  --ink-secondary: #465269;
-  --ink-muted: #5f6d84;
-  --accent: #315fc3;
-  --accent-hover: #244ba2;
+  --surface-2: #f0f0f0;
+  --border: #8d8d8d;
+  --border-soft: #d9d9d9;
+  --border-strong: #646464;
+  --ink: #202020;
+  --ink-secondary: #525252;
+  --ink-muted: #646464;
+  --accent: #202020;
+  --accent-hover: #000000;
   --on-accent: #ffffff;
-  --focus-ring: #315fc3;
+  --focus-ring: #202020;
 
   /* Validated categorical palette with selected dark-mode steps. */
   --viz-series-1: #2a78d6;
@@ -69,10 +73,10 @@
   --viz-series-6: #e34948;
   --viz-series-7: #e87ba4;
   --viz-series-8: #eb6834;
-  --viz-grid: #e1e0d9;
-  --viz-baseline: #c3c2b7;
-  --viz-muted: #898781;
-  --viz-ink-secondary: #52514e;
+  --viz-grid: #e0e0e0;
+  --viz-baseline: #c1c1c1;
+  --viz-muted: #8d8d8d;
+  --viz-ink-secondary: #525252;
   --viz-anomaly-increase: #d1462f;
   --viz-anomaly-decrease: #2a6fb0;
 }
@@ -91,19 +95,19 @@
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 35%);
     --shadow-md: 0 14px 34px rgb(0 0 0 / 30%);
     --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 20px rgb(0 0 0 / 30%);
-    --bg: #0d1119;
-    --surface: #141a24;
-    --surface-2: #1b2330;
-    --border: #586982;
-    --border-soft: #26303f;
-    --border-strong: #71829d;
-    --ink: #f2f5fa;
-    --ink-secondary: #c4ccda;
-    --ink-muted: #a7b2c4;
-    --accent: #83a9ff;
-    --accent-hover: #a5c0ff;
-    --on-accent: #10192b;
-    --focus-ring: #9ab8ff;
+    --bg: #0b0b0b;
+    --surface: #111111;
+    --surface-2: #222222;
+    --border: #606060;
+    --border-soft: #2e2e2e;
+    --border-strong: #8d8d8d;
+    --ink: #eeeeee;
+    --ink-secondary: #c4c4c4;
+    --ink-muted: #b4b4b4;
+    --accent: #eeeeee;
+    --accent-hover: #ffffff;
+    --on-accent: #000000;
+    --focus-ring: #eeeeee;
 
     --viz-series-1: #3987e5;
     --viz-series-2: #199e70;
@@ -113,9 +117,9 @@
     --viz-series-6: #e66767;
     --viz-series-7: #d55181;
     --viz-series-8: #d95926;
-    --viz-grid: #2c2c2a;
-    --viz-baseline: #383835;
-    --viz-ink-secondary: #c3c2b7;
+    --viz-grid: #2c2c2c;
+    --viz-baseline: #3a3a3a;
+    --viz-ink-secondary: #c4c4c4;
     --viz-anomaly-increase: #f2765f;
     --viz-anomaly-decrease: #6ba6dd;
   }
@@ -126,19 +130,19 @@
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 35%);
   --shadow-md: 0 14px 34px rgb(0 0 0 / 30%);
   --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 20px rgb(0 0 0 / 30%);
-  --bg: #0d1119;
-  --surface: #141a24;
-  --surface-2: #1b2330;
-  --border: #586982;
-  --border-soft: #26303f;
-  --border-strong: #71829d;
-  --ink: #f2f5fa;
-  --ink-secondary: #c4ccda;
-  --ink-muted: #a7b2c4;
-  --accent: #83a9ff;
-  --accent-hover: #a5c0ff;
-  --on-accent: #10192b;
-  --focus-ring: #9ab8ff;
+  --bg: #0b0b0b;
+  --surface: #111111;
+  --surface-2: #222222;
+  --border: #606060;
+  --border-soft: #2e2e2e;
+  --border-strong: #8d8d8d;
+  --ink: #eeeeee;
+  --ink-secondary: #c4c4c4;
+  --ink-muted: #b4b4b4;
+  --accent: #eeeeee;
+  --accent-hover: #ffffff;
+  --on-accent: #000000;
+  --focus-ring: #eeeeee;
 
   --viz-series-1: #3987e5;
   --viz-series-2: #199e70;
@@ -148,9 +152,9 @@
   --viz-series-6: #e66767;
   --viz-series-7: #d55181;
   --viz-series-8: #d95926;
-  --viz-grid: #2c2c2a;
-  --viz-baseline: #383835;
-  --viz-ink-secondary: #c3c2b7;
+  --viz-grid: #2c2c2c;
+  --viz-baseline: #3a3a3a;
+  --viz-ink-secondary: #c4c4c4;
   --viz-anomaly-increase: #f2765f;
   --viz-anomaly-decrease: #6ba6dd;
 }

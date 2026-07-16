@@ -12,7 +12,7 @@ const STORAGE_KEY = "costroid-theme";
 
 // tokens.css --bg values; the browser-chrome color must track a forced theme
 // (the media attributes on the meta tags only follow the OS preference).
-const THEME_COLOR = { dark: "#0d1119", light: "#f6f7f9" } as const;
+const THEME_COLOR = { dark: "#0b0b0b", light: "#f9f9f9" } as const;
 
 export function readStoredTheme(): ThemePreference {
   try {

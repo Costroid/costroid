@@ -414,7 +414,10 @@ summary:focus-visible {
 }
 
 .cost-group-control button[aria-pressed="true"] {
-  border-color: var(--border);
+  /* Same 70% mix as .view-nav (D62): the selected pill sits in a
+     --surface-2 track, and the surface/text cues alone are below the
+     SC 1.4.11 floor — plain --border lands under 3:1 against the track. */
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
   background: var(--surface);
   color: var(--ink);
   box-shadow: var(--shadow-sm);
