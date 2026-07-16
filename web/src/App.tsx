@@ -101,11 +101,6 @@ export default function App() {
       <a className="skip-link" href="#view-panel">
         Skip to content
       </a>
-      {state.status === "ready" && state.meta.demo && (
-        <div className="demo-banner" role="status">
-          DEMO: synthetic data
-        </div>
-      )}
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark">

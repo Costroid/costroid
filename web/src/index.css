@@ -84,23 +84,6 @@ summary:focus-visible {
     var(--space-8);
 }
 
-.demo-banner {
-  margin-bottom: var(--space-4);
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--viz-anomaly-increase);
-  border-radius: var(--radius-md);
-  background: color-mix(
-    in srgb,
-    var(--viz-anomaly-increase) 14%,
-    var(--surface)
-  );
-  color: var(--ink);
-  font-size: var(--text-sm);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-align: center;
-}
-
 .app-header {
   display: flex;
   align-items: center;

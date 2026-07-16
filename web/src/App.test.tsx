@@ -84,16 +84,16 @@ describe("App", () => {
     expect(await screen.findByText("costroid")).toBeTruthy();
     expect(screen.getByText("0.1.0-test")).toBeTruthy();
     expect(screen.getByText("1.4")).toBeTruthy();
-    expect(screen.queryByText("DEMO: synthetic data")).toBeNull();
     expect(fetch).toHaveBeenCalledWith("/api/v1/meta", expect.anything());
   });
 
-  it("shows the persistent synthetic-data banner in demo mode", async () => {
+  it("renders no synthetic-data banner, even in demo mode", async () => {
     vi.stubGlobal("fetch", mockFetch(true));
 
     render(<App />);
 
-    expect(await screen.findByText("DEMO: synthetic data")).toBeTruthy();
+    expect(await screen.findByText("costroid")).toBeTruthy();
+    expect(screen.queryByText(/DEMO/)).toBeNull();
   });
 
   it("shows an error state when the request fails", async () => {
