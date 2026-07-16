@@ -10,6 +10,7 @@ import {
   getUnitEconomicsDaily,
 } from "./api";
 import { EmptyIcon } from "./icons";
+import { Money } from "./money";
 import type { Range } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 import {
@@ -300,7 +301,7 @@ function PeriodTotalCard({ summary }: { summary: CostsSummary }) {
       </h3>
       <StatCard
         label="Period total"
-        value={summary.total}
+        value={<Money value={summary.total} currency={summary.currency} />}
         subtitle={summary.currency}
       />
     </article>
@@ -346,7 +347,9 @@ function ProviderSplitCard({ summary }: { summary: CostsSummary }) {
                   style={{ background: serviceColor(k.key) }}
                 />
                 <span className="overview-key-name">{k.key}</span>
-                <span className="overview-key-total">{k.total}</span>
+                <span className="overview-key-total">
+                  <Money value={k.total} currency={summary.currency} />
+                </span>
               </li>
             ))}
           </ul>
@@ -372,7 +375,9 @@ function MoversCard({ summary }: { summary: CostsSummary }) {
           {summary.keys.map((k) => (
             <li key={k.key}>
               <span className="overview-key-name">{k.key}</span>
-              <span className="overview-key-total">{k.total}</span>
+              <span className="overview-key-total">
+                <Money value={k.total} currency={summary.currency} />
+              </span>
             </li>
           ))}
         </ul>
@@ -407,8 +412,12 @@ function MoversCard({ summary }: { summary: CostsSummary }) {
         {ranked.map((k) => (
           <li key={k.key}>
             <span className="overview-key-name">{k.key}</span>
-            <span className="overview-key-delta">{k.delta}</span>
-            <span className="overview-key-total">{k.total}</span>
+            <span className="overview-key-delta">
+              <Money value={k.delta} currency={summary.currency} signed />
+            </span>
+            <span className="overview-key-total">
+              <Money value={k.total} currency={summary.currency} />
+            </span>
           </li>
         ))}
       </ul>
@@ -454,7 +463,12 @@ function UnitCostCard({ economics }: { economics: UnitEconomics }) {
       </h3>
       <StatCard
         label="Period unit cost"
-        value={economics.period.unitCost ?? "—"}
+        value={
+          <Money
+            value={economics.period.unitCost}
+            currency={economics.currency}
+          />
+        }
         subtitle={`${economics.currency} / ${economics.metric}`}
       />
       {hasGeometry && (

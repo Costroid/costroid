@@ -27,6 +27,10 @@ function fakeResponse(status: number, body: unknown): Response {
 }
 
 const PERIOD_TOTAL = "964050.632653589793238462";
+// Money renders at display precision; the exact string moves to the title.
+const PERIOD_TOTAL_DISPLAY = "964,050.63";
+const UNIT_COST = "0.044569658748120211";
+const UNIT_COST_DISPLAY = "0.04457";
 
 function summaryBody(overrides: Partial<CostsSummary> = {}): CostsSummary {
   return {
@@ -163,11 +167,14 @@ afterEach(() => {
 });
 
 describe("Overview", () => {
-  it("renders the verbatim 18-digit period total and currency subtitle", async () => {
+  it("formats the 18-digit period total for display with the exact value in the title", async () => {
     vi.stubGlobal("fetch", mockRoutes());
     render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
 
-    expect(await screen.findByText(PERIOD_TOTAL)).toBeTruthy();
+    const total = await screen.findByText(PERIOD_TOTAL_DISPLAY);
+    expect(total.getAttribute("title")).toBe(`${PERIOD_TOTAL} USD`);
+    // The raw 18-digit string never renders as text — display precision only.
+    expect(screen.queryByText(PERIOD_TOTAL)).toBeNull();
     // Currency appears as StatCard subtitle for the period total.
     const currencyHits = screen.getAllByText("USD");
     expect(currencyHits.length).toBeGreaterThan(0);
@@ -193,7 +200,7 @@ describe("Overview", () => {
       <Overview range={{ start: "2026-05-01", end: "2026-05-31" }} />,
     );
 
-    await screen.findByText(PERIOD_TOTAL);
+    await screen.findByText(PERIOD_TOTAL_DISPLAY);
     expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
 
     rerender(<Overview range={{ start: "2026-06-01", end: "2026-06-30" }} />);
@@ -330,7 +337,7 @@ describe("Overview", () => {
         "/api/v1/unit-economics/daily?metric=requests%20served&currency=EUR",
       );
     });
-    expect(screen.getAllByText("7").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("7.00").length).toBeGreaterThan(0);
     expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
   });
 
@@ -368,8 +375,9 @@ describe("Overview", () => {
     // Anomaly card shows data (count=1), not a skeleton.
     expect(await screen.findByText("Flagged days")).toBeTruthy();
     expect(screen.getByText("1")).toBeTruthy();
-    // Unit cost card shows data.
-    expect(await screen.findByText("0.044569658748120211")).toBeTruthy();
+    // Unit cost card shows data at display precision, exact in the title.
+    const unitCost = await screen.findByText(UNIT_COST_DISPLAY);
+    expect(unitCost.getAttribute("title")).toBe(`${UNIT_COST} USD`);
     // No loading skeletons left for anomalies/unit.
     expect(screen.queryByLabelText("Loading anomalies…")).toBeNull();
     expect(screen.queryByLabelText("Loading unit economics…")).toBeNull();
@@ -384,13 +392,13 @@ describe("Overview", () => {
     );
     render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
 
-    expect(await screen.findByText(PERIOD_TOTAL)).toBeTruthy();
+    expect(await screen.findByText(PERIOD_TOTAL_DISPLAY)).toBeTruthy();
     expect(
       await screen.findByText(
         /Failed to load anomalies: GET \/api\/v1\/anomalies returned 500/,
       ),
     ).toBeTruthy();
-    expect(await screen.findByText("0.044569658748120211")).toBeTruthy();
+    expect(await screen.findByText(UNIT_COST_DISPLAY)).toBeTruthy();
   });
 
   it("isolates metrics 500: only card 5 degrades", async () => {
@@ -402,7 +410,7 @@ describe("Overview", () => {
     );
     render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
 
-    expect(await screen.findByText(PERIOD_TOTAL)).toBeTruthy();
+    expect(await screen.findByText(PERIOD_TOTAL_DISPLAY)).toBeTruthy();
     expect(
       await screen.findByText(
         /Failed to load unit cost: GET \/api\/v1\/business-metrics returned 500/,
@@ -434,14 +442,14 @@ describe("Overview", () => {
     expect(await screen.findByText("Largest providers")).toBeTruthy();
     expect(screen.queryByText("Top movers")).toBeNull();
     // Totals only — no delta strings. Split + movers both list key totals.
-    expect(screen.getAllByText("500").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("300").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("500.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("300.00").length).toBeGreaterThan(0);
     // No signed delta column present under the movers card.
     const movers = screen.getByText("Largest providers").closest("article");
     expect(movers!.querySelector(".overview-key-delta")).toBeNull();
   });
 
-  it("labels Change and Total while ranking movers by |delta| with verbatim values", async () => {
+  it("labels Change and Total while ranking movers by |delta| with signed display deltas", async () => {
     vi.stubGlobal(
       "fetch",
       mockRoutes({
@@ -481,9 +489,11 @@ describe("Overview", () => {
 
     expect(await screen.findByText("Top movers")).toBeTruthy();
     expect(screen.getByText("vs 2026-03-14 → 2026-04-12")).toBeTruthy();
-    expect(screen.getByText("-50")).toBeTruthy();
-    expect(screen.getByText("30")).toBeTruthy();
-    expect(screen.getByText("10")).toBeTruthy();
+    // Deltas carry an explicit sign; the exact wire value sits in the title.
+    const negativeDelta = screen.getByText("-50.00");
+    expect(negativeDelta.getAttribute("title")).toBe("-50 USD");
+    expect(screen.getByText("+30.00")).toBeTruthy();
+    expect(screen.getByText("+10.00")).toBeTruthy();
     expect(screen.getByText("Change")).toBeTruthy();
     expect(screen.getByText("Total")).toBeTruthy();
 
@@ -646,14 +656,14 @@ describe("Overview", () => {
 
     rerender(<Overview range={{ start: "2026-06-12", end: "2026-07-11" }} />);
 
-    expect((await screen.findAllByText("99")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("99.00")).length).toBeGreaterThan(0);
 
     // Stale first response must not overwrite the new total.
     resolveSlow!(fakeResponse(200, summaryBody({ total: PERIOD_TOTAL })));
     await waitFor(() => {
-      expect(screen.queryByText(PERIOD_TOTAL)).toBeNull();
+      expect(screen.queryByText(PERIOD_TOTAL_DISPLAY)).toBeNull();
     });
-    expect(screen.getAllByText("99").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("99.00").length).toBeGreaterThan(0);
 
     // Second range used rangeQuery form.
     expect(

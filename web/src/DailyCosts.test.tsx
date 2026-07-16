@@ -103,8 +103,8 @@ function fetchedURLs(): string[] {
 }
 
 describe("DailyCosts", () => {
-  it("shows verbatim day values when a chart day receives focus", async () => {
-    renderChart({
+  it("shows display-precision day values on focus with the exact value in the SVG title", async () => {
+    const { container } = renderChart({
       currency: "USD",
       currencies: ["USD"],
       total: "256.9833670123456789",
@@ -120,8 +120,13 @@ describe("DailyCosts", () => {
     const hitTarget = await screen.findByLabelText("2026-05-01 cost details");
     fireEvent.focus(hitTarget);
     const tooltip = screen.getByRole("tooltip");
-    expect(tooltip.textContent).toContain("256.9833670123456789 USD");
+    expect(tooltip.textContent).toContain("256.98 USD");
     expect(tooltip.textContent).toContain("OpenAI API");
+    expect(tooltip.textContent).not.toContain("256.9833670123456789");
+    // The exact wire value survives in the segment's native SVG title.
+    expect(
+      container.querySelector(".viz-segment title")?.textContent,
+    ).toContain("256.9833670123456789 USD");
   });
 
   it("renders totals, legend, and table from the API response", async () => {
@@ -157,18 +162,20 @@ describe("DailyCosts", () => {
 
     const { container } = render(<DailyCosts />);
 
-    // Period total.
-    expect(await screen.findByText("9.3618")).toBeTruthy();
-    // Per-day totals on the column caps.
-    expect(screen.getAllByText("4.6809").length).toBeGreaterThanOrEqual(2);
+    // Period total at display precision, exact value in the title.
+    const total = await screen.findByText("9.36");
+    expect(total.getAttribute("title")).toBe("9.3618 USD");
+    // Per-day totals on the column caps (display precision).
+    expect(screen.getAllByText("4.68").length).toBeGreaterThanOrEqual(2);
     // Legend structurally lists every service once.
     expect(container.querySelectorAll(".viz-legend li")).toHaveLength(3);
     // The chart itself is rendered.
     expect(
       screen.getByRole("img", { name: "Stacked daily cost by service" }),
     ).toBeTruthy();
-    // The table view carries the exact per-service values.
-    expect(screen.getAllByText("3.6288").length).toBeGreaterThanOrEqual(1);
+    // The table view shows display precision with exact values in titles.
+    expect(screen.getAllByTitle("3.6288 USD").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("3.63").length).toBeGreaterThanOrEqual(1);
     expect(fetch).toHaveBeenCalledWith(
       "/api/v1/costs/daily",
       expect.anything(),
@@ -235,15 +242,13 @@ describe("DailyCosts", () => {
     fireEvent.click(screen.getByRole("button", { name: "USD" }));
 
     expect(
-      (await screen.findAllByText("30.987654321098765434")).length,
+      (await screen.findAllByTitle("30.987654321098765434 USD")).length,
     ).toBeGreaterThan(0);
     await waitFor(() =>
       expect(fetchedURLs()).toContain("/api/v1/costs/daily?currency=USD"),
     );
     fireEvent.focus(screen.getByLabelText("2026-05-01 cost details"));
-    expect(screen.getByRole("tooltip").textContent).toContain(
-      "30.987654321098765434 USD",
-    );
+    expect(screen.getByRole("tooltip").textContent).toContain("30.99 USD");
     await waitFor(() =>
       expect(
         fetchedURLs().filter((url) => url.startsWith("/api/v1/anomalies")),
@@ -293,7 +298,7 @@ describe("DailyCosts", () => {
     );
     rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
     expect(
-      (await screen.findAllByText("2.000000000000000002")).length,
+      (await screen.findAllByTitle("2.000000000000000002 USD")).length,
     ).toBeGreaterThan(0);
 
     await act(async () => {
@@ -301,10 +306,10 @@ describe("DailyCosts", () => {
       await staleResponse;
     });
 
-    expect(screen.getAllByText("2.000000000000000002").length).toBeGreaterThan(
-      0,
-    );
-    expect(screen.queryByText("9.999999999999999999")).toBeNull();
+    expect(
+      screen.getAllByTitle("2.000000000000000002 USD").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByTitle("9.999999999999999999 USD")).toBeNull();
     expect(
       screen.getByRole("button", { name: "USD" }).getAttribute("aria-pressed"),
     ).toBe("true");
@@ -349,7 +354,7 @@ describe("DailyCosts", () => {
     await screen.findByRole("group", { name: "Currency" });
     fireEvent.click(screen.getByRole("button", { name: "USD" }));
     expect(
-      (await screen.findAllByText("2.000000000000000002")).length,
+      (await screen.findAllByTitle("2.000000000000000002 USD")).length,
     ).toBeGreaterThan(0);
 
     // Narrow to a window where USD has no rows and only EUR remains — a
@@ -360,7 +365,7 @@ describe("DailyCosts", () => {
     // The client must snap to the first in-range currency (EUR) and render its
     // real series — NOT strand on the echoed-but-empty USD response.
     expect(
-      (await screen.findAllByText("4.000000000000000004")).length,
+      (await screen.findAllByTitle("4.000000000000000004 EUR")).length,
     ).toBeGreaterThan(0);
     await waitFor(() =>
       expect(fetchedURLs()).toContain(
@@ -460,7 +465,7 @@ describe("DailyCosts", () => {
     ).toBeGreaterThan(0);
     expect((await screen.findAllByText("OpenAI")).length).toBeGreaterThan(0);
     expect(
-      (await screen.findAllByText("0.333333333333333333")).length,
+      (await screen.findAllByTitle("0.333333333333333333 USD")).length,
     ).toBeGreaterThan(0);
     expect(container.querySelectorAll(".viz-legend li")).toHaveLength(2);
     await waitFor(() =>
@@ -926,7 +931,9 @@ describe("DailyCosts", () => {
     expect((await screen.findAllByText("Unallocated")).length).toBeGreaterThan(
       0,
     );
-    expect((await screen.findAllByText("25.4016")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByTitle("25.4016 USD")).length).toBeGreaterThan(
+      0,
+    );
     expect(container.querySelectorAll(".viz-legend li")).toHaveLength(2);
     await waitFor(() =>
       expect(fetchedURLs()).toContain("/api/v1/costs/daily?groupBy=allocation"),
@@ -1121,7 +1128,7 @@ describe("DailyCosts", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "USD" }));
     expect(
-      (await screen.findAllByText("30.987654321098765434")).length,
+      (await screen.findAllByTitle("30.987654321098765434 USD")).length,
     ).toBeGreaterThan(0);
     await waitFor(() =>
       expect(fetchedURLs()).toContain("/api/v1/anomalies?currency=USD"),

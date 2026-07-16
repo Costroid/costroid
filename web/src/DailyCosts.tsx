@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import { getAnomalies, getCostsDaily, type CostGroupBy } from "./api";
 import { EmptyIcon } from "./icons";
+import { formatMoney, Money } from "./money";
 import type { Range } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 import {
@@ -346,8 +347,11 @@ function Chart({
   // Long ranges: label every k-th day so at most ~12 date labels render.
   const labelEvery = Math.max(1, Math.ceil(costs.days.length / 12));
 
-  // Cap labels remain verbatim. Positions only — edge clamp + collision thin.
-  const capPositions = capLabelPositions(costs.days.map((d) => d.total));
+  // Cap labels render at display precision (exact net total in the SVG
+  // title); positions are sized from the SAME formatted strings so the
+  // edge clamp + collision thinning match what is drawn.
+  const capLabels = costs.days.map((d) => formatMoney(d.total));
+  const capPositions = capLabelPositions(capLabels);
 
   const tooltipDay = activeDay === null ? null : costs.days[activeDay];
   const tooltipLeft =
@@ -360,7 +364,7 @@ function Chart({
       <div className="stat-grid">
         <StatCard
           label="Period total (net)"
-          value={costs.total}
+          value={<Money value={costs.total} currency={costs.currency} />}
           subtitle={costs.currency}
         />
       </div>
@@ -433,8 +437,8 @@ function Chart({
                       className="viz-cap"
                       textAnchor="middle"
                     >
-                      <title>Net day total</title>
-                      {day.total}
+                      <title>{`Net day total: ${day.total} ${costs.currency}`}</title>
+                      {capLabels[i]}
                     </text>
                   )}
                   {flagsByDate.has(day.date) && (
@@ -483,14 +487,14 @@ function Chart({
                 <span className="chart-tooltip-row" key={service.key}>
                   <span>{service.key}</span>
                   <span>
-                    {service.cost} {costs.currency}
+                    {formatMoney(service.cost)} {costs.currency}
                   </span>
                 </span>
               ))}
               <span className="chart-tooltip-row">
                 <span>Total (net)</span>
                 <span>
-                  {tooltipDay.total} {costs.currency}
+                  {formatMoney(tooltipDay.total)} {costs.currency}
                 </span>
               </span>
             </div>
@@ -539,10 +543,15 @@ function Chart({
                 </th>
                 {groups.map((name) => (
                   <td key={name}>
-                    {day.services.find((s) => s.key === name)?.cost ?? "—"}
+                    <Money
+                      value={day.services.find((s) => s.key === name)?.cost}
+                      currency={costs.currency}
+                    />
                   </td>
                 ))}
-                <td>{day.total}</td>
+                <td>
+                  <Money value={day.total} currency={costs.currency} />
+                </td>
               </tr>
             ))}
           </tbody>

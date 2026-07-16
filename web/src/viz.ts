@@ -241,7 +241,8 @@ export function sparklineGeometry(
  * the clamped center-x at which to anchor (textAnchor="middle") that day's
  * cap label, or null to omit it (no value, too wide for the plot, or it would
  * collide with the previously placed label). Positions only — the caller
- * still renders the verbatim value string. Uses the shared WIDTH/MARGIN so
+ * renders the SAME strings it passed in (display-formatted money for
+ * costs, verbatim counts for tokens). Uses the shared WIDTH/MARGIN so
  * a cap never clips the viewBox edge. ~6.2px/char matches the 11px
  * tabular-nums `.viz-cap` glyph advance.
  */

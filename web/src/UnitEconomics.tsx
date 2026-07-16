@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import { getBusinessMetrics, getUnitEconomicsDaily } from "./api";
 import { EmptyIcon } from "./icons";
+import { Money } from "./money";
 import type { Range } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard } from "./ViewState";
 
@@ -228,7 +229,12 @@ function EconomicsTable({ economics }: { economics: UnitEconomicsResponse }) {
         <StatCard label="Covered days" value={economics.period.coveredDays} />
         <StatCard
           label="Period cost"
-          value={economics.period.cost}
+          value={
+            <Money
+              value={economics.period.cost}
+              currency={economics.currency}
+            />
+          }
           subtitle={economics.currency}
         />
         <StatCard
@@ -238,7 +244,12 @@ function EconomicsTable({ economics }: { economics: UnitEconomicsResponse }) {
         />
         <StatCard
           label="Period unit cost"
-          value={economics.period.unitCost ?? "—"}
+          value={
+            <Money
+              value={economics.period.unitCost}
+              currency={economics.currency}
+            />
+          }
           subtitle={`${economics.currency} / ${economics.metric}`}
         />
       </div>
@@ -256,9 +267,13 @@ function EconomicsTable({ economics }: { economics: UnitEconomicsResponse }) {
             {economics.days.map((day) => (
               <tr key={day.date}>
                 <th scope="row">{day.date}</th>
-                <td>{day.cost ?? "—"}</td>
+                <td>
+                  <Money value={day.cost} currency={economics.currency} />
+                </td>
                 <td>{day.quantity ?? "—"}</td>
-                <td>{day.unitCost ?? "—"}</td>
+                <td>
+                  <Money value={day.unitCost} currency={economics.currency} />
+                </td>
               </tr>
             ))}
           </tbody>

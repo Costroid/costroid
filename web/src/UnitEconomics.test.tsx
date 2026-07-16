@@ -109,7 +109,9 @@ describe("UnitEconomics", () => {
     ).toBeGreaterThanOrEqual(3);
     expect(screen.getByText("12345678901234567.89")).toBeTruthy();
     expect(screen.getAllByText("—")).toHaveLength(4);
-    expect(screen.getByText("1.000000000000000001")).toBeTruthy();
+    // Costs render at display precision; the exact value moves to the title.
+    const dayCost = screen.getByTitle("1.000000000000000001 USD");
+    expect(dayCost.textContent).toBe("1.00");
     expect(fetch).toHaveBeenCalledWith(
       "/api/v1/business-metrics",
       expect.anything(),
@@ -238,15 +240,15 @@ describe("UnitEconomics", () => {
 
     render(<UnitEconomics />);
     await screen.findByRole("group", { name: "Currency" });
-    expect(screen.getAllByText("1.000000000000000001").length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      screen.getAllByTitle("1.000000000000000001 EUR").length,
+    ).toBeGreaterThan(0);
 
     // Observe the committed currency-mismatch frame before passive effects run.
     screen.getByRole("button", { name: "USD" }).click();
     await Promise.resolve();
 
-    expect(screen.queryByText("1.000000000000000001")).toBeNull();
+    expect(screen.queryByTitle("1.000000000000000001 EUR")).toBeNull();
     expect(screen.getByLabelText("Loading unit economics…")).toBeTruthy();
 
     await waitFor(() =>
@@ -262,7 +264,7 @@ describe("UnitEconomics", () => {
       ),
     );
     expect(
-      (await screen.findAllByText("2.000000000000000002")).length,
+      (await screen.findAllByTitle("2.000000000000000002 USD")).length,
     ).toBeGreaterThan(0);
     expect(
       screen.getByRole("button", { name: "USD" }).getAttribute("aria-pressed"),
@@ -326,7 +328,7 @@ describe("UnitEconomics", () => {
       expect(screen.queryByRole("group", { name: "Currency" })).toBeNull(),
     );
     expect(
-      (await screen.findAllByText("7.000000000000000007")).length,
+      (await screen.findAllByTitle("7.000000000000000007 EUR")).length,
     ).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("999.999999999999999999")).toBeNull();
   });
