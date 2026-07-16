@@ -16,6 +16,21 @@
       content="#0d1119"
     />
     <title>Costroid</title>
+    <script>
+      // Pre-paint theme override: applies the stored Device/Dark/Light choice
+      // before the bundle loads so a forced theme never flashes the OS one.
+      // Kept to the attribute only — meta sync + the switcher live in React
+      // (src/theme.ts / src/ThemeSwitch.tsx).
+      (() => {
+        try {
+          var t = localStorage.getItem("costroid-theme");
+          if (t === "dark" || t === "light")
+            document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {
+          /* storage unavailable — device theme applies */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

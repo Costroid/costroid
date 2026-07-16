@@ -77,8 +77,17 @@
   --viz-anomaly-decrease: #2a6fb0;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Device mode on a dark OS. Keep value-identical to the block below
+   (the explicit override); the theme switcher sets html[data-theme]. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 35%);
     --shadow-md: 0 14px 34px rgb(0 0 0 / 30%);
     --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 20px rgb(0 0 0 / 30%);
@@ -110,4 +119,38 @@
     --viz-anomaly-increase: #f2765f;
     --viz-anomaly-decrease: #6ba6dd;
   }
+}
+
+/* Explicit dark override. Keep value-identical to the block above. */
+:root[data-theme="dark"] {
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 35%);
+  --shadow-md: 0 14px 34px rgb(0 0 0 / 30%);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 20px rgb(0 0 0 / 30%);
+  --bg: #0d1119;
+  --surface: #141a24;
+  --surface-2: #1b2330;
+  --border: #586982;
+  --border-soft: #26303f;
+  --border-strong: #71829d;
+  --ink: #f2f5fa;
+  --ink-secondary: #c4ccda;
+  --ink-muted: #a7b2c4;
+  --accent: #83a9ff;
+  --accent-hover: #a5c0ff;
+  --on-accent: #10192b;
+  --focus-ring: #9ab8ff;
+
+  --viz-series-1: #3987e5;
+  --viz-series-2: #199e70;
+  --viz-series-3: #c98500;
+  --viz-series-4: #008300;
+  --viz-series-5: #9085e9;
+  --viz-series-6: #e66767;
+  --viz-series-7: #d55181;
+  --viz-series-8: #d95926;
+  --viz-grid: #2c2c2a;
+  --viz-baseline: #383835;
+  --viz-ink-secondary: #c3c2b7;
+  --viz-anomaly-increase: #f2765f;
+  --viz-anomaly-decrease: #6ba6dd;
 }

@@ -82,6 +82,35 @@ export function UnitEconomicsIcon(props: IconProps) {
   );
 }
 
+export function MonitorIcon(props: IconProps) {
+  // Lucide-derived "monitor" stroke paths (ISC).
+  return (
+    <Icon {...props}>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+    </Icon>
+  );
+}
+
+export function MoonIcon(props: IconProps) {
+  // Lucide-derived "moon" stroke path (ISC).
+  return (
+    <Icon {...props}>
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+    </Icon>
+  );
+}
+
+export function SunIcon(props: IconProps) {
+  // Lucide-derived "sun" stroke paths (ISC).
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41" />
+    </Icon>
+  );
+}
+
 export function WarningIcon(props: IconProps) {
   return (
     <Icon {...props}>

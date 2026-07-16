@@ -142,12 +142,68 @@ summary:focus-visible {
   font-size: var(--text-xs);
 }
 
+.header-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
 .instance-meta {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-2);
   margin: 0;
+}
+
+/* Device / Dark / Light. Same pill language as instance-meta; sized so the
+   header height does not change (baseline lock for the demo poster). */
+.theme-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .theme-switch button:active {
+    transform: scale(0.97);
+  }
+}
+
+.theme-switch button:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+/* Pressed = inverted, so the active mode reads apart from hover. */
+.theme-switch button[aria-pressed="true"] {
+  color: var(--on-accent);
+  background: var(--accent);
 }
 
 .instance-meta div {
@@ -790,6 +846,7 @@ thead th {
     flex-direction: column;
   }
 
+  .header-tools,
   .instance-meta {
     justify-content: flex-start;
   }

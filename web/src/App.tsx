@@ -17,6 +17,7 @@ import {
   UsageIcon,
   WarningIcon,
 } from "./icons";
+import { ThemeSwitch } from "./ThemeSwitch";
 import Overview from "./Overview";
 import type { Range } from "./range";
 import UsageMetrics from "./UsageMetrics";
@@ -115,38 +116,41 @@ export default function App() {
             <p className="brand-subtitle">FOCUS-native cost intelligence</p>
           </div>
         </div>
-        {state.status === "loading" && (
-          <div className="instance-meta" role="status">
-            <div>
-              <span>Instance</span>
-              <strong>Loading…</strong>
+        <div className="header-tools">
+          {state.status === "loading" && (
+            <div className="instance-meta" role="status">
+              <div>
+                <span>Instance</span>
+                <strong>Loading…</strong>
+              </div>
             </div>
-          </div>
-        )}
-        {state.status === "error" && (
-          <div className="instance-meta" role="alert">
-            <div>
-              <WarningIcon size={14} />
-              <span>Failed to load instance metadata: {state.message}</span>
+          )}
+          {state.status === "error" && (
+            <div className="instance-meta" role="alert">
+              <div>
+                <WarningIcon size={14} />
+                <span>Failed to load instance metadata: {state.message}</span>
+              </div>
             </div>
-          </div>
-        )}
-        {state.status === "ready" && (
-          <dl className="instance-meta">
-            <div>
-              <dt>Name</dt>
-              <dd>{state.meta.name}</dd>
-            </div>
-            <div>
-              <dt>Version</dt>
-              <dd>{state.meta.version}</dd>
-            </div>
-            <div>
-              <dt>FOCUS</dt>
-              <dd>{state.meta.focusVersion}</dd>
-            </div>
-          </dl>
-        )}
+          )}
+          {state.status === "ready" && (
+            <dl className="instance-meta">
+              <div>
+                <dt>Name</dt>
+                <dd>{state.meta.name}</dd>
+              </div>
+              <div>
+                <dt>Version</dt>
+                <dd>{state.meta.version}</dd>
+              </div>
+              <div>
+                <dt>FOCUS</dt>
+                <dd>{state.meta.focusVersion}</dd>
+              </div>
+            </dl>
+          )}
+          <ThemeSwitch />
+        </div>
       </header>
       <div className="toolbar">
         <div className="range-bar">

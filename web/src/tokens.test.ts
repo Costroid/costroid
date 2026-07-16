@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import baseCss from "./tokens.css?raw";
-import demoCss from "./tokens.demo.css?raw";
+
+// Read via fs, NOT `?raw` imports: under vite 8 / vitest 4 a `.css?raw`
+// import resolves to an EMPTY STRING in the test environment, which made the
+// original parity pin below pass vacuously (an empty set equals an empty
+// set). The guard below makes that failure mode loud.
+const read = (rel: string): string =>
+  readFileSync(new URL(rel, import.meta.url), "utf8");
+const baseCss = read("./tokens.css");
+const demoCss = read("./tokens.demo.css");
 
 // Demo builds swap ./tokens.css for ./tokens.demo.css (vite.config.ts), so a
 // custom property defined in only one file silently collapses every var()
@@ -17,7 +25,40 @@ describe("design-token parity", () => {
   it("tokens.css and tokens.demo.css define the same custom properties", () => {
     const base = names(baseCss);
     const demo = names(demoCss);
+    // Guard against vacuous success on an empty/failed read.
+    expect(base.size).toBeGreaterThan(20);
     expect([...base].filter((n) => !demo.has(n))).toEqual([]);
     expect([...demo].filter((n) => !base.has(n))).toEqual([]);
+  });
+
+  // The dark palette exists TWICE per file: device mode (the
+  // prefers-color-scheme media block, scoped :root:not([data-theme="light"]))
+  // and the explicit :root[data-theme="dark"] override. If someone tweaks a
+  // dark token in one block only, forced-dark silently diverges from
+  // device-dark — the same drift class as above, within one file.
+  const darkBlocks = (css: string): [string, string] => {
+    const media = css.match(
+      /@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{([^}]*)\}/,
+    );
+    const attr = css.match(/\n:root\[data-theme="dark"\] \{\n([^}]*--[^}]*)\}/);
+    if (!media || !attr) throw new Error("dark token block not found");
+    return [media[1], attr[1]];
+  };
+  const declarations = (block: string): Map<string, string> =>
+    new Map(
+      [...block.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [
+        m[1],
+        m[2].trim(),
+      ]),
+    );
+
+  it.each([
+    ["tokens.css", baseCss],
+    ["tokens.demo.css", demoCss],
+  ])("%s: the two dark blocks are declaration-identical", (_name, css) => {
+    const [media, attr] = darkBlocks(css);
+    expect(Object.fromEntries(declarations(attr))).toEqual(
+      Object.fromEntries(declarations(media)),
+    );
   });
 });
