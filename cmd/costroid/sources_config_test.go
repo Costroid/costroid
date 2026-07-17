@@ -45,7 +45,7 @@ func TestParseSourcesStrictValidation(t *testing.T) {
 		{name: "duplicate name", body: `{"sources":[{"name":"same","connector":"aws-focus","path":"x"},{"name":"same","connector":"aws-focus","path":"y"}]}`, wantError: "duplicated"},
 		{name: "unknown connector", body: `{"sources":[{"name":"unknown","connector":"nope"}]}`, wantError: "unknown connector"},
 		{name: "focus csv missing focusVersion", body: `{"sources":[{"name":"csv","connector":"focus-csv","path":"x"}]}`, wantError: `"focusVersion"`},
-		{name: "focus csv unknown focusVersion", body: `{"sources":[{"name":"csv","connector":"focus-csv","path":"x","focusVersion":"9.9"}]}`, wantError: "supported values"},
+		{name: "focus csv unknown focusVersion", body: `{"sources":[{"name":"csv","connector":"focus-csv","path":"x","focusVersion":"9.9"}]}`, wantError: `source "csv": field "focusVersion" has unsupported value "9.9"`},
 		{name: "missing connector field", body: `{"sources":[{"name":"s3","connector":"aws-focus-s3","prefix":"exports"}]}`, wantError: `"bucket"`},
 	}
 	for _, test := range tests {

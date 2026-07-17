@@ -329,6 +329,10 @@ func validateConfigFocusVersion(value string) error {
 		validation := &sourceValidationError{connector: focuscsv.Name, fields: []sourceField{sourceFieldFocusVersion}}
 		return validation
 	}
+	// This list must stay in lockstep with focuscsv.ParseVersion (the
+	// authoritative acceptor, which canonicalizes 1.0r2 to 1.0); the CLI
+	// defers version validation to discovery, a sources file rejects it at
+	// parse time.
 	switch value {
 	case "1.0", "1.0r2", "1.1", "1.2", "1.3", "1.4":
 		return nil
@@ -340,7 +344,10 @@ func validateConfigFocusVersion(value string) error {
 func configSourceValidation(name string, err error) error {
 	var validation *sourceValidationError
 	if !errors.As(err, &validation) {
-		return err
+		// Non-field-shaped validation failures (e.g. an unsupported
+		// focusVersion value) still need the source name so a multi-source
+		// file identifies the offending entry.
+		return fmt.Errorf("source %q: %w", name, err)
 	}
 	fields := make([]string, 0, len(validation.fields))
 	for _, field := range validation.fields {

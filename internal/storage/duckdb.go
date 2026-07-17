@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/duckdb/duckdb-go/v2"
 	"github.com/shopspring/decimal"
@@ -984,7 +985,15 @@ func (s *DuckDB) UpsertSyncState(ctx context.Context, state SyncState) error {
 // the operational history without bound.
 func (s *DuckDB) RecordSyncRun(ctx context.Context, run SyncRun) error {
 	if len(run.Error) > 1000 {
-		run.Error = run.Error[:1000]
+		truncated := run.Error[:1000]
+		// The byte cut can split a multi-byte UTF-8 rune; DuckDB rejects
+		// invalid UTF-8 VARCHAR values, and a rejected insert would silently
+		// drop the run record this table exists to keep. Trim to the last
+		// complete rune (at most 3 trailing bytes).
+		for len(truncated) > 0 && !utf8.ValidString(truncated) {
+			truncated = truncated[:len(truncated)-1]
+		}
+		run.Error = truncated
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

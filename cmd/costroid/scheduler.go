@@ -190,9 +190,17 @@ func (s *ingestScheduler) run(index int) {
 	case result = <-resultCh:
 		timer.Stop()
 	case <-timer.C():
-		timedOut = true
-		cancel()
-		result = <-resultCh
+		// The runner may have delivered its result in the same instant the
+		// timer fired (both channels ready, select picks randomly); prefer
+		// the real result over a fabricated timeout.
+		select {
+		case result = <-resultCh:
+			timer.Stop()
+		default:
+			timedOut = true
+			cancel()
+			result = <-resultCh
+		}
 	case <-s.ctx.Done():
 		timer.Stop()
 		cancel()
@@ -202,7 +210,11 @@ func (s *ingestScheduler) run(index int) {
 
 	finished := s.clock.Now().UTC()
 	run := summarizeScheduledRun(source, started, finished, result, timedOut)
-	if err := s.recorder.RecordSyncRun(s.ctx, run); err != nil && s.ctx.Err() == nil {
+	// Record with a non-cancellable context: a run that finishes (or is
+	// interrupted) during shutdown must still leave its row, and the store
+	// is guaranteed open here because serve closes it only after Stop joins
+	// this goroutine.
+	if err := s.recorder.RecordSyncRun(context.WithoutCancel(s.ctx), run); err != nil {
 		s.logger.Error("recording scheduled sync", "source", source.name, "connector", source.connector, "error", err)
 	}
 	finishAttrs := []any{

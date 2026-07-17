@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/shopspring/decimal"
 
@@ -461,6 +462,51 @@ func TestSyncRunRecordingAndRetention(t *testing.T) {
 	}
 	if count != 50 {
 		t.Fatalf("retained rows = %d, want 50 after the 51st insert", count)
+	}
+}
+
+// TestSyncRunErrorTruncationRuneSafe pins that the 1000-byte error bound
+// never splits a multi-byte UTF-8 rune: DuckDB rejects invalid UTF-8, and a
+// rejected insert would silently drop exactly the failed-run record the
+// sync_runs table exists to keep.
+func TestSyncRunErrorTruncationRuneSafe(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	base := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
+
+	// 999 ASCII bytes, then a 3-byte rune straddling the 1000-byte cut.
+	boundary := strings.Repeat("x", 999) + strings.Repeat("€", 100)
+	if err := store.RecordSyncRun(ctx, SyncRun{
+		SourceName: "multibyte", Connector: "focus-csv", TenantID: "default",
+		StartedAt: base, FinishedAt: base.Add(time.Second), Outcome: "error", Error: boundary,
+	}); err != nil {
+		t.Fatalf("RecordSyncRun with multibyte error near the boundary: %v", err)
+	}
+	statuses, err := store.SyncStatuses(ctx)
+	if err != nil {
+		t.Fatalf("SyncStatuses: %v", err)
+	}
+	var got *SyncRun
+	for i := range statuses {
+		if statuses[i].Latest.SourceName == "multibyte" {
+			got = &statuses[i].Latest
+		}
+	}
+	if got == nil {
+		t.Fatal("multibyte run row was not recorded")
+	}
+	if len(got.Error) == 0 || len(got.Error) > 1000 {
+		t.Fatalf("stored error length = %d, want 1..1000 bytes", len(got.Error))
+	}
+	if !utf8.ValidString(got.Error) {
+		t.Fatalf("stored error is not valid UTF-8: %q", got.Error[len(got.Error)-8:])
+	}
+	if !strings.HasPrefix(got.Error, strings.Repeat("x", 999)) {
+		t.Fatal("stored error lost its leading content")
 	}
 }
 

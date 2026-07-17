@@ -55,7 +55,7 @@ commands:
           unauthenticated, read-only, and binds 127.0.0.1:8080 by default.)
   serve   serve the HTTP API and dashboard
           costroid serve [--addr host:port] [--allocation-rules <path>]
-		                 [--sync] [--sources <path>]
+                         [--sync] [--sources <path>]
                          (--auth-token-file <path> | --auth-trusted-header <name> | --no-auth)
           (binds 127.0.0.1:8080 by default — loopback only; pass a non-loopback
           --addr to expose it. serve refuses to start unless authentication is

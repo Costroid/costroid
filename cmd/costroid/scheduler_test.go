@@ -80,6 +80,7 @@ func (t *fakeSchedulerTimer) Stop() bool {
 type syncRunMemoryRecorder struct {
 	mu            sync.Mutex
 	runs          []storage.SyncRun
+	recordCtxErrs []error
 	recorded      chan storage.SyncRun
 	closed        bool
 	useAfterClose bool
@@ -89,7 +90,7 @@ func newSyncRunMemoryRecorder() *syncRunMemoryRecorder {
 	return &syncRunMemoryRecorder{recorded: make(chan storage.SyncRun, 128)}
 }
 
-func (r *syncRunMemoryRecorder) RecordSyncRun(_ context.Context, run storage.SyncRun) error {
+func (r *syncRunMemoryRecorder) RecordSyncRun(ctx context.Context, run storage.SyncRun) error {
 	r.mu.Lock()
 	if r.closed {
 		r.useAfterClose = true
@@ -97,6 +98,9 @@ func (r *syncRunMemoryRecorder) RecordSyncRun(_ context.Context, run storage.Syn
 		return errors.New("recorder closed")
 	}
 	r.runs = append(r.runs, run)
+	// The real store rejects work on a cancelled context, so tests assert
+	// the scheduler always records with a live one.
+	r.recordCtxErrs = append(r.recordCtxErrs, ctx.Err())
 	r.mu.Unlock()
 	r.recorded <- run
 	return nil
@@ -215,6 +219,37 @@ func TestSchedulerTimeoutUsesFakeClock(t *testing.T) {
 	run := <-recorder.recorded
 	if run.Outcome != "error" || !strings.Contains(run.Error, "timed out after 1h0m0s") {
 		t.Fatalf("timeout run = %+v", run)
+	}
+}
+
+// TestSchedulerShutdownStillRecordsInterruptedRun pins that a run in flight
+// when Stop cancels the scheduler still leaves its sync_runs row, recorded
+// with a non-cancelled context (the real store rejects work on a cancelled
+// context, which would silently drop the record).
+func TestSchedulerShutdownStillRecordsInterruptedRun(t *testing.T) {
+	clock := newFakeSchedulerClock(time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC))
+	recorder := newSyncRunMemoryRecorder()
+	started := make(chan struct{})
+	runner := func(ctx context.Context, _ scheduledSource, _ ingestOutput) scheduledRunResult {
+		close(started)
+		<-ctx.Done()
+		return scheduledRunResult{discoveryErr: ctx.Err()}
+	}
+	scheduler := newIngestScheduler(context.Background(), clock, recorder,
+		[]scheduledSource{testScheduledSource("interrupted", 24*time.Hour)}, runner, nil)
+	scheduler.Start()
+	<-started
+	scheduler.Stop()
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.runs) != 1 {
+		t.Fatalf("recorded runs = %d, want 1 (the interrupted attempt)", len(recorder.runs))
+	}
+	if recorder.runs[0].Outcome != "error" {
+		t.Fatalf("interrupted run outcome = %q, want error", recorder.runs[0].Outcome)
+	}
+	if recorder.recordCtxErrs[0] != nil {
+		t.Fatalf("recording context was cancelled (%v); the real store would drop the row", recorder.recordCtxErrs[0])
 	}
 }
 
