@@ -1,13 +1,28 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2026 The Costroid Authors */
 
-/* Inter is bundled from rsms/inter 4.1 under the SIL Open Font License 1.1. */
+/* Geist is bundled from vercel/geist-font 1.7.2 under the SIL Open Font
+   License 1.1. */
 @font-face {
-  font-family: "Inter";
+  font-family: "Geist";
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
-  src: url("./assets/InterVariable.woff2") format("woff2");
+  src: url("./assets/GeistVariable.woff2") format("woff2");
+}
+
+/* Metric-matched Arial fallback (next/font's computed overrides for Geist):
+   the pre-swap frame keeps Geist's layout so the swap can't shift text. The
+   unicode-range scopes it to the Latin set; anything outside still falls
+   through to system-ui rather than sticking on size-adjusted Arial. */
+@font-face {
+  font-family: "Geist Fallback";
+  src: local("Arial");
+  unicode-range: U+0000-00FF, U+0100-017F;
+  ascent-override: 95.94%;
+  descent-override: 28.16%;
+  line-gap-override: 0%;
+  size-adjust: 104.76%;
 }
 
 /* Monochrome chrome palette: the Radix Gray steps interfere.com ships, shared
@@ -17,7 +32,8 @@
 :root {
   color-scheme: light dark;
   font-family:
-    Inter,
+    Geist,
+    "Geist Fallback",
     system-ui,
     -apple-system,
     "Segoe UI",
