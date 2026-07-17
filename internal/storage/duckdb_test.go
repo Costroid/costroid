@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -387,6 +388,133 @@ func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	}
 	if len(got.Days) != 2 {
 		t.Fatalf("after second batch, days = %+v, want 2 days", got.Days)
+	}
+}
+
+func TestSyncRunRecordingAndRetention(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	base := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
+
+	success := SyncRun{
+		SourceName: "healthy", Connector: "focus-csv", TenantID: "default",
+		StartedAt: base, FinishedAt: base.Add(time.Minute), Outcome: "success",
+		PeriodsProcessed: 2, PeriodsSkipped: 1, RecordsIngested: 7,
+	}
+	if err := store.RecordSyncRun(ctx, success); err != nil {
+		t.Fatalf("RecordSyncRun(success): %v", err)
+	}
+	longError := strings.Repeat("x", 1200)
+	if err := store.RecordSyncRun(ctx, SyncRun{
+		SourceName: "failed", Connector: "focus-csv", TenantID: "default",
+		StartedAt: base, FinishedAt: base.Add(time.Second), Outcome: "error", Error: longError,
+	}); err != nil {
+		t.Fatalf("RecordSyncRun(error): %v", err)
+	}
+	if err := store.RecordSyncRun(ctx, SyncRun{
+		SourceName: "mixed", Connector: "focus-csv", TenantID: "default",
+		StartedAt: base, FinishedAt: base.Add(2 * time.Second), Outcome: "partial", Error: "one period failed",
+		PeriodsProcessed: 1, RecordsIngested: 2,
+	}); err != nil {
+		t.Fatalf("RecordSyncRun(partial): %v", err)
+	}
+
+	statuses, err := store.SyncStatuses(ctx)
+	if err != nil {
+		t.Fatalf("SyncStatuses: %v", err)
+	}
+	byName := map[string]SyncStatus{}
+	for _, status := range statuses {
+		byName[status.Latest.SourceName] = status
+	}
+	got := byName["healthy"]
+	if got.Latest.Outcome != "success" || got.Latest.PeriodsProcessed != 2 || got.Latest.PeriodsSkipped != 1 || got.Latest.RecordsIngested != 7 {
+		t.Fatalf("healthy status = %+v", got)
+	}
+	if got.LastSuccessAt == nil || !got.LastSuccessAt.Equal(success.FinishedAt) {
+		t.Fatalf("healthy last success = %v, want %s", got.LastSuccessAt, success.FinishedAt)
+	}
+	if got := byName["failed"].Latest.Error; len(got) != 1000 || got != longError[:1000] {
+		t.Fatalf("failed error bytes = %d, want exactly 1000", len(got))
+	}
+	if got := byName["mixed"].Latest; got.Outcome != "partial" || got.Error != "one period failed" {
+		t.Fatalf("mixed status = %+v", got)
+	}
+
+	for i := 0; i < 51; i++ {
+		started := base.Add(time.Duration(i) * time.Minute)
+		if err := store.RecordSyncRun(ctx, SyncRun{
+			SourceName: "retained", Connector: "aws-focus", TenantID: "acme",
+			StartedAt: started, FinishedAt: started.Add(time.Second), Outcome: "success",
+		}); err != nil {
+			t.Fatalf("RecordSyncRun(retained %d): %v", i, err)
+		}
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sync_runs WHERE source_name = 'retained' AND tenant_id = 'acme'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 50 {
+		t.Fatalf("retained rows = %d, want 50 after the 51st insert", count)
+	}
+}
+
+// TestAPIReadDuringIngestWriteTransaction pins the in-process scheduler
+// architecture: API reads use the same open DuckDB while an ingest-style write
+// transaction is held open on a separate pooled connection.
+func TestAPIReadDuringIngestWriteTransaction(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	batch := Batch{Connector: "aws-focus", SourceIdentity: "overlap", ContentHash: "one", TenantID: focus.DefaultTenant}
+	record := testRecord(t, "Compute", day(1), "1")
+	if _, err := store.ReplaceIngestBatch(ctx, batch, []focus.CostRecord{record}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := store.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM cost_records WHERE batch_connector = ? AND batch_source_identity = ?`,
+		batch.Connector, batch.SourceIdentity); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, insertRecordSQL, insertRecordArgs(batch, &record)...); err != nil {
+		t.Fatal(err)
+	}
+
+	readDone := make(chan error, 1)
+	go func() {
+		currencies, err := store.BillingCurrencies(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+		if err == nil && !slices.Equal(currencies, []string{"USD"}) {
+			err = fmt.Errorf("currencies = %v, want [USD]", currencies)
+		}
+		if err == nil {
+			_, err = store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "USD")
+		}
+		readDone <- err
+	}()
+	if err := <-readDone; err != nil {
+		t.Fatalf("API-style read while write transaction was open: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("committing held write: %v", err)
 	}
 }
 

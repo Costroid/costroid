@@ -1,0 +1,313 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The Costroid Authors
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Costroid/costroid/internal/api"
+	"github.com/Costroid/costroid/internal/storage"
+)
+
+const scheduledRunTimeout = time.Hour
+
+type schedulerTimer interface {
+	C() <-chan time.Time
+	Stop() bool
+}
+
+type schedulerClock interface {
+	Now() time.Time
+	NewTimer(time.Duration) schedulerTimer
+}
+
+type realSchedulerClock struct{}
+
+func (realSchedulerClock) Now() time.Time { return time.Now().UTC() }
+func (realSchedulerClock) NewTimer(d time.Duration) schedulerTimer {
+	return realSchedulerTimer{timer: time.NewTimer(d)}
+}
+
+type realSchedulerTimer struct{ timer *time.Timer }
+
+func (t realSchedulerTimer) C() <-chan time.Time { return t.timer.C }
+func (t realSchedulerTimer) Stop() bool          { return t.timer.Stop() }
+
+type syncRunRecorder interface {
+	RecordSyncRun(context.Context, storage.SyncRun) error
+}
+
+type scheduledRunResult struct {
+	jobs         []ingestJobResult
+	discoveryErr error
+}
+
+type scheduledSourceRunner func(context.Context, scheduledSource, ingestOutput) scheduledRunResult
+
+type scheduledSourceState struct {
+	source    scheduledSource
+	nextRunAt time.Time
+}
+
+type ingestScheduler struct {
+	clock    schedulerClock
+	recorder syncRunRecorder
+	runner   scheduledSourceRunner
+	logger   *slog.Logger
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	mu      sync.RWMutex
+	sources []scheduledSourceState
+}
+
+func newIngestScheduler(parent context.Context, clock schedulerClock, recorder syncRunRecorder, sources []scheduledSource, runner scheduledSourceRunner, logger *slog.Logger) *ingestScheduler {
+	ctx, cancel := context.WithCancel(parent)
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	states := make([]scheduledSourceState, 0, len(sources))
+	now := clock.Now().UTC()
+	for _, source := range sources {
+		states = append(states, scheduledSourceState{source: source, nextRunAt: now})
+	}
+	return &ingestScheduler{
+		clock: clock, recorder: recorder, runner: runner, logger: logger,
+		ctx: ctx, cancel: cancel, sources: states,
+	}
+}
+
+func (s *ingestScheduler) Start() {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.loop()
+	}()
+}
+
+// Stop cancels any in-flight run and joins the scheduler goroutine. serve calls
+// it before closing the shared DuckDB handle.
+func (s *ingestScheduler) Stop() {
+	s.cancel()
+	s.wg.Wait()
+}
+
+// SyncSchedule implements api.SyncScheduleProvider.
+func (s *ingestScheduler) SyncSchedule() []api.SyncScheduleSource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]api.SyncScheduleSource, 0, len(s.sources))
+	for _, state := range s.sources {
+		result = append(result, api.SyncScheduleSource{
+			Name: state.source.name, Connector: state.source.connector,
+			Tenant: state.source.tenant, Interval: state.source.intervalText,
+			NextRunAt: state.nextRunAt.UTC(),
+		})
+	}
+	return result
+}
+
+func (s *ingestScheduler) loop() {
+	for {
+		if s.ctx.Err() != nil {
+			return
+		}
+		index, wait := s.nextDue()
+		if index >= 0 {
+			s.run(index)
+			continue
+		}
+		timer := s.clock.NewTimer(wait)
+		select {
+		case <-s.ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C():
+		}
+	}
+}
+
+// nextDue selects the oldest due timestamp, using config order as the stable
+// tie-breaker. This runs every source due at startup before an overdue source's
+// coalesced rerun can overtake the rest of that startup cycle.
+func (s *ingestScheduler) nextDue() (index int, wait time.Duration) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ctx.Err() != nil {
+		return -1, 0
+	}
+	now := s.clock.Now().UTC()
+	selected := -1
+	var earliest time.Time
+	for i, state := range s.sources {
+		if selected == -1 || state.nextRunAt.Before(earliest) {
+			selected = i
+			earliest = state.nextRunAt
+		}
+	}
+	if selected == -1 {
+		return -1, time.Hour
+	}
+	if !earliest.After(now) {
+		return selected, 0
+	}
+	return -1, earliest.Sub(now)
+}
+
+func (s *ingestScheduler) run(index int) {
+	started := s.clock.Now().UTC()
+	s.mu.Lock()
+	state := &s.sources[index]
+	source := state.source
+	state.nextRunAt = started.Add(source.interval)
+	s.mu.Unlock()
+
+	s.logger.Info("scheduled sync started", "source", source.name, "connector", source.connector, "tenant", source.tenant)
+	output := ingestOutput{
+		stdout: syncLogWriter{logger: s.logger, source: source, level: slog.LevelInfo},
+		stderr: syncLogWriter{logger: s.logger, source: source, level: slog.LevelError},
+	}
+
+	runCtx, cancel := context.WithCancel(s.ctx)
+	resultCh := make(chan scheduledRunResult, 1)
+	go func() { resultCh <- s.runner(runCtx, source, output) }()
+	timeUntilTimeout := started.Add(scheduledRunTimeout).Sub(s.clock.Now().UTC())
+	timer := s.clock.NewTimer(timeUntilTimeout)
+	var (
+		result   scheduledRunResult
+		timedOut bool
+	)
+	select {
+	case result = <-resultCh:
+		timer.Stop()
+	case <-timer.C():
+		timedOut = true
+		cancel()
+		result = <-resultCh
+	case <-s.ctx.Done():
+		timer.Stop()
+		cancel()
+		result = <-resultCh
+	}
+	cancel()
+
+	finished := s.clock.Now().UTC()
+	run := summarizeScheduledRun(source, started, finished, result, timedOut)
+	if err := s.recorder.RecordSyncRun(s.ctx, run); err != nil && s.ctx.Err() == nil {
+		s.logger.Error("recording scheduled sync", "source", source.name, "connector", source.connector, "error", err)
+	}
+	finishAttrs := []any{
+		"source", source.name, "connector", source.connector, "tenant", source.tenant,
+		"outcome", run.Outcome, "duration", finished.Sub(started).String(),
+		"periods_processed", run.PeriodsProcessed, "periods_skipped", run.PeriodsSkipped,
+		"records_ingested", run.RecordsIngested,
+	}
+	if run.Error != "" {
+		finishAttrs = append(finishAttrs, "error", run.Error)
+	}
+	s.logger.Info("scheduled sync finished", finishAttrs...)
+}
+
+func summarizeScheduledRun(source scheduledSource, started, finished time.Time, result scheduledRunResult, timedOut bool) storage.SyncRun {
+	run := storage.SyncRun{
+		SourceName: source.name, Connector: source.connector, TenantID: source.tenant,
+		StartedAt: started, FinishedAt: finished,
+	}
+	if timedOut {
+		run.Outcome = "error"
+		run.Error = fmt.Sprintf("scheduled run timed out after %s", scheduledRunTimeout)
+		return run
+	}
+	if result.discoveryErr != nil {
+		run.Outcome = "error"
+		run.Error = result.discoveryErr.Error()
+		return run
+	}
+	var succeeded, failed int
+	var failures []string
+	for _, job := range result.jobs {
+		if job.err != nil {
+			failed++
+			failures = append(failures, job.err.Error())
+		} else {
+			succeeded++
+		}
+		if job.skippedUnchanged && job.err == nil {
+			run.PeriodsSkipped++
+		} else if job.err == nil {
+			run.PeriodsProcessed++
+		}
+		if !job.skippedUnchanged {
+			run.RecordsIngested += int64(job.recordsIngested)
+		}
+	}
+	switch {
+	case failed == 0:
+		run.Outcome = "success"
+	case succeeded > 0:
+		run.Outcome = "partial"
+		run.Error = strings.Join(failures, "; ")
+	default:
+		run.Outcome = "error"
+		run.Error = strings.Join(failures, "; ")
+	}
+	return run
+}
+
+func runScheduledSource(store *storage.DuckDB) scheduledSourceRunner {
+	return func(ctx context.Context, source scheduledSource, output ingestOutput) scheduledRunResult {
+		jobs, err := buildScheduledJobs(ctx, store, source, output)
+		if err != nil {
+			return scheduledRunResult{discoveryErr: err}
+		}
+		return scheduledRunResult{jobs: runIngestCore(ctx, store, jobs, source.tenant, output)}
+	}
+}
+
+func buildScheduledJobs(ctx context.Context, store *storage.DuckDB, source scheduledSource, output ingestOutput) ([]ingestJob, error) {
+	switch cfg := source.config.(type) {
+	case awsFocusSource:
+		return buildAWSFocusJobs(ctx, cfg, "", false, output)
+	case awsFocusS3Source:
+		return buildAWSFocusS3Jobs(ctx, store, cfg, "", false, output)
+	case azureFocusSource:
+		return buildAzureFocusJobs(ctx, store, cfg, "", false, output)
+	case gcpFocusBQSource:
+		return buildGCPFocusBQJobs(ctx, store, cfg, "", false, output)
+	case anthropicCostSource:
+		return buildAnthropicCostJobs(ctx, store, cfg, "", false, output)
+	case openAICostSource:
+		return buildOpenAICostJobs(ctx, store, cfg, "", false, output)
+	case focusCSVSource:
+		return buildFocusCSVJobs(ctx, cfg, "", false, output)
+	default:
+		return nil, fmt.Errorf("unsupported scheduled connector configuration %T", source.config)
+	}
+}
+
+type syncLogWriter struct {
+	logger *slog.Logger
+	source scheduledSource
+	level  slog.Level
+}
+
+func (w syncLogWriter) Write(p []byte) (int, error) {
+	message := strings.TrimSuffix(string(p), "\n")
+	if message != "" {
+		w.logger.Log(context.Background(), w.level, "scheduled sync detail",
+			"source", w.source.name, "connector", w.source.connector,
+			"tenant", w.source.tenant, "message", message)
+	}
+	return len(p), nil
+}
+
+var _ api.SyncScheduleProvider = (*ingestScheduler)(nil)

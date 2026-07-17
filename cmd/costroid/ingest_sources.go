@@ -94,6 +94,7 @@ const (
 	sourceFieldDataset        sourceField = "dataset"
 	sourceFieldTable          sourceField = "table"
 	sourceFieldLocation       sourceField = "location"
+	sourceFieldFocusVersion   sourceField = "focusVersion"
 )
 
 // sourceValidationError preserves the connector and offending field identity

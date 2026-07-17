@@ -192,10 +192,42 @@ type Store interface {
 	// false when no such slot existed.
 	DeleteCredential(ctx context.Context, name string) (deleted bool, err error)
 
+	// RecordSyncRun records one scheduled source attempt and transactionally
+	// prunes older attempts so only the newest 50 rows per
+	// (SourceName, TenantID) retention key remain.
+	RecordSyncRun(ctx context.Context, run SyncRun) error
+
+	// SyncStatuses returns the latest scheduled run and last successful finish
+	// time for every (source_name, tenant_id) pair, ordered by source then tenant.
+	SyncStatuses(ctx context.Context) ([]SyncStatus, error)
+
 	// Close releases the underlying database. The embedded store is
 	// single-writer (DuckDB): it must be closed before another process
 	// can open the same data directory.
 	Close() error
+}
+
+// SyncRun is one scheduled source attempt. It records operational counts only;
+// no cost amount or credential material belongs on this surface.
+type SyncRun struct {
+	SourceName       string
+	Connector        string
+	TenantID         string
+	StartedAt        time.Time
+	FinishedAt       time.Time
+	Outcome          string
+	Error            string
+	PeriodsProcessed int64
+	PeriodsSkipped   int64
+	RecordsIngested  int64
+}
+
+// SyncStatus is the latest run plus the last successful finish time for one
+// (source_name, tenant_id) retention key. LastSuccessAt is nil when none of the
+// retained runs succeeded.
+type SyncStatus struct {
+	Latest        SyncRun
+	LastSuccessAt *time.Time
 }
 
 // SyncState is one source's incremental-sync tuple (decision D16,

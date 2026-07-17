@@ -979,6 +979,93 @@ func (s *DuckDB) UpsertSyncState(ctx context.Context, state SyncState) error {
 	return nil
 }
 
+// RecordSyncRun implements Store. The error is bounded by bytes before it
+// reaches the database, so an unexpectedly large connector error cannot grow
+// the operational history without bound.
+func (s *DuckDB) RecordSyncRun(ctx context.Context, run SyncRun) error {
+	if len(run.Error) > 1000 {
+		run.Error = run.Error[:1000]
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning sync-run transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sync_runs (
+			source_name, connector, tenant_id, started_at, finished_at, outcome,
+			error, periods_processed, periods_skipped, records_ingested
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.SourceName, run.Connector, run.TenantID, run.StartedAt.UTC(), run.FinishedAt.UTC(),
+		run.Outcome, run.Error, run.PeriodsProcessed, run.PeriodsSkipped, run.RecordsIngested); err != nil {
+		return fmt.Errorf("inserting sync run: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sync_runs
+		 WHERE rowid IN (
+			SELECT rowid FROM sync_runs
+			WHERE source_name = ? AND tenant_id = ?
+			ORDER BY started_at DESC, finished_at DESC, rowid DESC
+			OFFSET 50
+		 )`, run.SourceName, run.TenantID); err != nil {
+		return fmt.Errorf("pruning sync runs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing sync-run transaction: %w", err)
+	}
+	return nil
+}
+
+// SyncStatuses implements Store.
+func (s *DuckDB) SyncStatuses(ctx context.Context) ([]SyncStatus, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`WITH ranked AS (
+			SELECT source_name, connector, tenant_id, started_at, finished_at,
+				outcome, error, periods_processed, periods_skipped, records_ingested,
+				ROW_NUMBER() OVER (
+					PARTITION BY source_name, tenant_id
+					ORDER BY started_at DESC, finished_at DESC, rowid DESC
+				) AS rank,
+				MAX(CASE WHEN outcome = 'success' THEN finished_at END) OVER (
+					PARTITION BY source_name, tenant_id
+				) AS last_success_at
+			FROM sync_runs
+		)
+		SELECT source_name, connector, tenant_id, started_at, finished_at,
+			outcome, error, periods_processed, periods_skipped, records_ingested,
+			last_success_at
+		FROM ranked WHERE rank = 1
+		ORDER BY source_name ASC, tenant_id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("querying sync status: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	statuses := []SyncStatus{}
+	for rows.Next() {
+		var status SyncStatus
+		var lastSuccess sql.NullTime
+		if err := rows.Scan(
+			&status.Latest.SourceName, &status.Latest.Connector, &status.Latest.TenantID,
+			&status.Latest.StartedAt, &status.Latest.FinishedAt, &status.Latest.Outcome,
+			&status.Latest.Error, &status.Latest.PeriodsProcessed,
+			&status.Latest.PeriodsSkipped, &status.Latest.RecordsIngested, &lastSuccess,
+		); err != nil {
+			return nil, fmt.Errorf("scanning sync status: %w", err)
+		}
+		status.Latest.StartedAt = status.Latest.StartedAt.UTC()
+		status.Latest.FinishedAt = status.Latest.FinishedAt.UTC()
+		if lastSuccess.Valid {
+			value := lastSuccess.Time.UTC()
+			status.LastSuccessAt = &value
+		}
+		statuses = append(statuses, status)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying sync status: %w", err)
+	}
+	return statuses, nil
+}
+
 // ManifestAttributions implements Store.
 func (s *DuckDB) ManifestAttributions(ctx context.Context, connector string) (map[string]ManifestAttribution, error) {
 	rows, err := s.db.QueryContext(ctx,

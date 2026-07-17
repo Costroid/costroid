@@ -97,6 +97,13 @@ type fakeStore struct {
 	gotDimension    allocation.Dimension
 	dimensionLog    []allocation.Dimension
 	allocQueryCount int
+
+	syncStatuses    []storage.SyncStatus
+	syncStatusesErr error
+}
+
+func (f *fakeStore) SyncStatuses(context.Context) ([]storage.SyncStatus, error) {
+	return append([]storage.SyncStatus{}, f.syncStatuses...), f.syncStatusesErr
 }
 
 func (f *fakeStore) BillingCurrencies(_ context.Context, tenant string, start, end time.Time) ([]string, error) {

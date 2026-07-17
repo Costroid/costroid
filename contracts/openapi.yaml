@@ -35,6 +35,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Meta"
+  /api/v1/sync/status:
+    get:
+      operationId: getSyncStatus
+      summary: Scheduled ingestion status
+      description: >-
+        Reports whether this serve process runs the scheduled-ingest loop and
+        the latest persisted attempt for every source-name and tenant pair.
+        Enabled instances include configured intervals and next-run times.
+        History-only sources remain visible after removal from the config.
+      responses:
+        "200":
+          description: Current scheduler configuration merged with persisted run history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncStatusResponse"
+        "500":
+          description: Reading persisted sync history failed.
+          content:
+            text/plain:
+              schema:
+                type: string
   /api/v1/costs/daily:
     get:
       operationId: getDailyCosts
@@ -498,6 +520,80 @@ components:
           type: boolean
           description: True only for the isolated, synthetic, read-only product demo.
           example: false
+    SyncStatusResponse:
+      type: object
+      required:
+        - enabled
+        - sources
+      properties:
+        enabled:
+          type: boolean
+          description: True when this serve process runs scheduled ingestion.
+        sources:
+          type: array
+          description: One entry per source-name and tenant retention key.
+          items:
+            $ref: "#/components/schemas/SyncSourceStatus"
+    SyncSourceStatus:
+      type: object
+      required:
+        - name
+        - connector
+        - tenant
+      properties:
+        name:
+          type: string
+        connector:
+          type: string
+        tenant:
+          type: string
+        interval:
+          type: string
+          description: Configured Go duration string, present only for an enabled configured source.
+        nextRunAt:
+          type: string
+          format: date-time
+          description: Next due time in UTC, present only for an enabled configured source.
+        lastRun:
+          $ref: "#/components/schemas/SyncLastRun"
+        lastSuccessAt:
+          type: string
+          format: date-time
+          description: Last successful finish time in UTC, absent when the source has never succeeded.
+    SyncLastRun:
+      type: object
+      required:
+        - startedAt
+        - finishedAt
+        - outcome
+        - periodsProcessed
+        - periodsSkipped
+        - recordsIngested
+      properties:
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+          enum:
+            - success
+            - partial
+            - error
+        error:
+          type: string
+          description: Present only when the recorded error is non-empty.
+        periodsProcessed:
+          type: integer
+          format: int64
+        periodsSkipped:
+          type: integer
+          format: int64
+        recordsIngested:
+          type: integer
+          format: int64
     DailyCosts:
       type: object
       required:

@@ -45,6 +45,22 @@ type CostStore interface {
 	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyUsageMetric, error)
 	BusinessMetricNames(ctx context.Context, tenant string) ([]storage.BusinessMetricInfo, error)
 	DailyBusinessMetricQuantities(ctx context.Context, tenant, metric string, start, end time.Time) ([]storage.DayQuantity, error)
+	SyncStatuses(ctx context.Context) ([]storage.SyncStatus, error)
+}
+
+// SyncScheduleSource is the live scheduler state merged into persisted sync
+// history by GET /api/v1/sync/status.
+type SyncScheduleSource struct {
+	Name      string
+	Connector string
+	Tenant    string
+	Interval  string
+	NextRunAt time.Time
+}
+
+// SyncScheduleProvider supplies a concurrency-safe scheduler snapshot.
+type SyncScheduleProvider interface {
+	SyncSchedule() []SyncScheduleSource
 }
 
 // Server implements the generated ServerInterface.
@@ -57,6 +73,7 @@ type Server struct {
 	// (the live-reload semantic); the file's presence and validity surface as
 	// per-request 400/500, never at startup.
 	allocationRulesPath string
+	syncSchedule        SyncScheduleProvider
 }
 
 var _ ServerInterface = (*Server)(nil)
@@ -83,6 +100,72 @@ func (s *Server) GetMeta(w http.ResponseWriter, _ *http.Request) {
 		FocusVersion: focusVersion,
 		Demo:         s.demo,
 	})
+}
+
+// GetSyncStatus implements GET /api/v1/sync/status by merging configured live
+// scheduler state with persisted history keyed by (source name, tenant).
+func (s *Server) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
+	history, err := s.store.SyncStatuses(r.Context())
+	if err != nil {
+		http.Error(w, "querying sync status: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	byKey := make(map[string]storage.SyncStatus, len(history))
+	for _, status := range history {
+		byKey[syncStatusKey(status.Latest.SourceName, status.Latest.TenantID)] = status
+	}
+
+	response := SyncStatusResponse{Enabled: s.syncSchedule != nil, Sources: []SyncSourceStatus{}}
+	if s.syncSchedule != nil {
+		for _, configured := range s.syncSchedule.SyncSchedule() {
+			entry := SyncSourceStatus{
+				Name: configured.Name, Connector: configured.Connector, Tenant: configured.Tenant,
+				Interval: &configured.Interval,
+			}
+			next := configured.NextRunAt.UTC()
+			entry.NextRunAt = &next
+			key := syncStatusKey(configured.Name, configured.Tenant)
+			if status, ok := byKey[key]; ok {
+				mergeSyncHistory(&entry, status)
+				delete(byKey, key)
+			}
+			response.Sources = append(response.Sources, entry)
+		}
+	}
+	for _, status := range history {
+		key := syncStatusKey(status.Latest.SourceName, status.Latest.TenantID)
+		if _, ok := byKey[key]; !ok {
+			continue
+		}
+		entry := SyncSourceStatus{
+			Name: status.Latest.SourceName, Connector: status.Latest.Connector,
+			Tenant: status.Latest.TenantID,
+		}
+		mergeSyncHistory(&entry, status)
+		response.Sources = append(response.Sources, entry)
+		delete(byKey, key)
+	}
+	writeJSON(w, response)
+}
+
+func syncStatusKey(name, tenant string) string { return name + "\x00" + tenant }
+
+func mergeSyncHistory(entry *SyncSourceStatus, status storage.SyncStatus) {
+	latest := status.Latest
+	lastRun := SyncLastRun{
+		StartedAt: latest.StartedAt.UTC(), FinishedAt: latest.FinishedAt.UTC(),
+		Outcome:          SyncLastRunOutcome(latest.Outcome),
+		PeriodsProcessed: latest.PeriodsProcessed, PeriodsSkipped: latest.PeriodsSkipped,
+		RecordsIngested: latest.RecordsIngested,
+	}
+	if latest.Error != "" {
+		lastRun.Error = &latest.Error
+	}
+	entry.LastRun = &lastRun
+	if status.LastSuccessAt != nil {
+		lastSuccess := status.LastSuccessAt.UTC()
+		entry.LastSuccessAt = &lastSuccess
+	}
 }
 
 // GetDailyCosts implements GET /api/v1/costs/daily. Invalid date
@@ -521,6 +604,7 @@ type handlerOptions struct {
 	auth     *AuthConfig
 	readOnly bool
 	demo     bool
+	sync     SyncScheduleProvider
 }
 
 // WithAuth installs the authentication middleware built from cfg, gating the
@@ -541,6 +625,12 @@ func WithReadOnly() HandlerOption {
 // WithDemo marks /api/v1/meta as an isolated synthetic demo instance.
 func WithDemo() HandlerOption {
 	return func(o *handlerOptions) { o.demo = true }
+}
+
+// WithSyncSchedule enables the status endpoint's live scheduler fields. The
+// provider must return a concurrency-safe snapshot.
+func WithSyncSchedule(provider SyncScheduleProvider) HandlerOption {
+	return func(o *handlerOptions) { o.sync = provider }
 }
 
 func readOnly(next http.Handler) http.Handler {
@@ -569,6 +659,7 @@ func NewHandler(version string, static fs.FS, store CostStore, allocationRulesPa
 	mux.Handle("/", staticHandler(static))
 	server := NewServer(version, store, allocationRulesPath)
 	server.demo = o.demo
+	server.syncSchedule = o.sync
 	h := HandlerFromMux(server, mux)
 	if o.auth != nil {
 		h = o.auth.middleware(h)

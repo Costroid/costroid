@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -54,18 +55,25 @@ commands:
           unauthenticated, read-only, and binds 127.0.0.1:8080 by default.)
   serve   serve the HTTP API and dashboard
           costroid serve [--addr host:port] [--allocation-rules <path>]
+		                 [--sync] [--sources <path>]
                          (--auth-token-file <path> | --auth-trusted-header <name> | --no-auth)
           (binds 127.0.0.1:8080 by default — loopback only; pass a non-loopback
           --addr to expose it. serve refuses to start unless authentication is
           configured: a bearer token via --auth-token-file/$COSTROID_AUTH_TOKEN(_FILE),
           forward-auth via --auth-trusted-header (recommended header X-WEBAUTH-USER)
           behind a trusted reverse proxy, or --no-auth to opt out explicitly. See
-          docs/security.md and 'costroid serve -h')
+          docs/security.md and 'costroid serve -h'. --sync runs sources from the
+          strict sources JSON inside serve; --sources overrides its resolved path.)
   allocation  validate the query-time cost-allocation (virtual tagging) rules file
           costroid allocation validate [--rules <path>]
           (the rules path resolves from --rules, then $COSTROID_ALLOCATION_RULES,
           then <config-dir>/costroid/allocation.json; reads only the JSON file —
           no store, so it is safe to run while 'costroid serve' is running)
+  sources  validate the scheduled-ingestion sources file
+          costroid sources validate [--sources <path>]
+          (the path resolves from --sources, then $COSTROID_SOURCES, then
+          <config-dir>/costroid/sources.json; performs structural validation
+          only and does not open the store, check credentials, or contact sources)
   metrics  import user-authored business metrics for unit economics
           costroid metrics import --path <file.csv> [--source-label <label>]
                                   [--tenant default]
@@ -134,8 +142,9 @@ commands:
                        credentials; --force is a documented no-op — it keeps no sync state)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
-store allows a single process at a time: stop 'costroid serve' before
-running 'costroid ingest' or 'costroid metrics import'`
+store allows a single process at a time. Manual 'costroid ingest' and
+'costroid metrics import' require stopping serve; use 'costroid serve --sync'
+for scheduled ingestion inside the serving process`
 
 // errReported signals that the failure was already printed (e.g. by the
 // FlagSet), so main must not print it a second time.
@@ -161,6 +170,8 @@ func run(args []string) error {
 		return serve(args[1:])
 	case "allocation":
 		return allocationCmd(args[1:])
+	case "sources":
+		return sourcesCmd(args[1:])
 	case "metrics":
 		return metricsCmd(args[1:])
 	case "credentials":
@@ -532,6 +543,8 @@ func parseFlags(flags *flag.FlagSet, args []string) (stop bool, err error) {
 type serveSettings struct {
 	addr                string
 	allocationRulesPath string
+	sync                bool
+	sources             sourcesConfig
 
 	// noAuth is true only when --no-auth was passed: the sole way to serve
 	// unauthenticated.
@@ -558,6 +571,8 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addrFlag := flags.String("addr", "", `listen address (overrides $COSTROID_ADDR; default "127.0.0.1:8080" — loopback. Pass a non-loopback address, e.g. 0.0.0.0:8080, to expose it on the network)`)
 	allocationRulesFlag := flags.String("allocation-rules", "", allocationRulesFlagUsage)
+	syncFlag := flags.Bool("sync", false, "run configured sources immediately and on their intervals inside this serve process")
+	sourcesFlag := flags.String("sources", "", sourcesFlagUsage)
 	tokenFileFlag := flags.String("auth-token-file", "", "bearer auth: path to a file holding the API token (overrides $COSTROID_AUTH_TOKEN_FILE; preferred over the weaker $COSTROID_AUTH_TOKEN). There is no --auth-token value flag — argv is world-readable")
 	trustedHeaderFlag := flags.String("auth-trusted-header", "", "forward-auth: the identity header your reverse proxy sets (overrides $COSTROID_AUTH_TRUSTED_HEADER; empty disables forward-auth; recommended value X-WEBAUTH-USER)")
 	trustedProxiesFlag := flags.String("auth-trusted-proxies", "", "forward-auth: comma-separated trusted proxy CIDRs whose identity header is honored (overrides $COSTROID_AUTH_TRUSTED_PROXIES; default 127.0.0.0/8,::1/128; IPv4 prefixes broader than /8 and IPv6 broader than /16 are refused)")
@@ -603,6 +618,17 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	}
 
 	cfg.allocationRulesPath = resolveAllocationRulesPath(*allocationRulesFlag)
+	if *syncFlag {
+		path := resolveSourcesPath(*sourcesFlag)
+		cfg.sources, err = loadSourcesConfig(path)
+		if err != nil {
+			return serveSettings{}, "", false, fmt.Errorf("loading scheduled sources: %w", err)
+		}
+		if len(cfg.sources.sources) == 0 {
+			return serveSettings{}, "", false, errors.New("scheduled ingestion is enabled but the sources file has an empty sources array")
+		}
+		cfg.sync = true
+	}
 
 	// Warnings ACCUMULATE (never clobber): the allocation-rules warning and the
 	// --no-auth warning can co-occur, and the --no-auth warning must ALWAYS
@@ -778,12 +804,26 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	var scheduler *ingestScheduler
+	defer func() {
+		if scheduler != nil {
+			scheduler.Stop()
+		}
+		_ = store.Close()
+	}()
+
+	handlerOptions := authOptions(cfg)
+	if cfg.sync {
+		logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		scheduler = newIngestScheduler(ctx, realSchedulerClock{}, store, cfg.sources.sources, runScheduledSource(store), logger)
+		handlerOptions = append(handlerOptions, api.WithSyncSchedule(scheduler))
+		scheduler.Start()
+	}
 
 	// Wire the handler as accessLog( auth( static+API ) ): the access log is
 	// OUTERMOST and always on for serve; the auth middleware is installed only
 	// when a mode is configured (--no-auth installs none).
-	handler := api.NewHandler(version, webdist.FS(), store, cfg.allocationRulesPath, authOptions(cfg)...)
+	handler := api.NewHandler(version, webdist.FS(), store, cfg.allocationRulesPath, handlerOptions...)
 	handler = api.AccessLog(os.Stderr, cfg.authModeName)(handler)
 
 	srv := &http.Server{
@@ -1361,36 +1401,54 @@ func focusCSVJobs(periods []focuscsv.Period, period string) ([]ingestJob, error)
 	return jobs, nil
 }
 
-// runIngest runs every job through the shared pipeline. Each period's
-// replace is transactional and independent, so one failing period
-// doesn't roll back the others; the exit status is non-zero if any
-// failed, and every period's outcome is printed.
-func runIngest(ctx context.Context, store storage.Store, jobs []ingestJob, tenant string) error {
-	var failed []string
+type ingestJobResult struct {
+	period           string
+	outcome          string
+	recordsIngested  int
+	skippedUnchanged bool
+	err              error
+}
+
+// runIngestCore runs every job through the shared pipeline and returns one
+// structured outcome per period. Callers choose the output sink: the CLI uses
+// its process streams while the scheduler routes every line through slog.
+func runIngestCore(ctx context.Context, store storage.Store, jobs []ingestJob, tenant string, output ingestOutput) []ingestJobResult {
+	results := make([]ingestJobResult, 0, len(jobs))
 	for _, job := range jobs {
+		jobResult := ingestJobResult{period: job.period, outcome: "success"}
 		label := ""
 		if job.period != "" {
 			label = "period " + job.period + ": "
 		}
 		if job.discoveryErr != nil {
-			failed = append(failed, job.period)
-			fmt.Fprintf(os.Stderr, "costroid: %sfailed: %v\n", label, job.discoveryErr)
+			jobResult.outcome = "error"
+			jobResult.err = job.discoveryErr
+			output.errorf("costroid: %sfailed: %v\n", label, job.discoveryErr)
+			results = append(results, jobResult)
 			continue
 		}
 		if job.conn == nil {
-			fmt.Printf("%sunchanged since %s; skipped\n", label, job.skippedSince.UTC().Format(time.RFC3339))
+			jobResult.skippedUnchanged = true
+			output.printf("%sunchanged since %s; skipped\n", label, job.skippedSince.UTC().Format(time.RFC3339))
+			results = append(results, jobResult)
 			continue
 		}
 		result, err := ingest.Run(ctx, job.conn, store, tenant)
 		if err != nil {
-			failed = append(failed, job.period)
-			fmt.Fprintf(os.Stderr, "costroid: %sfailed: %v\n", label, err)
+			jobResult.outcome = "error"
+			jobResult.err = err
+			output.errorf("costroid: %sfailed: %v\n", label, err)
+			results = append(results, jobResult)
 			continue
 		}
+		jobResult.recordsIngested = result.Records
+		jobResult.skippedUnchanged = result.Unchanged
 		if job.sync != nil {
 			if err := store.UpsertSyncState(ctx, *job.sync); err != nil {
-				failed = append(failed, job.period)
-				fmt.Fprintf(os.Stderr, "costroid: %sfailed recording sync state: %v\n", label, err)
+				jobResult.outcome = "error"
+				jobResult.err = err
+				output.errorf("costroid: %sfailed recording sync state: %v\n", label, err)
+				results = append(results, jobResult)
 				continue
 			}
 		}
@@ -1406,24 +1464,40 @@ func runIngest(ctx context.Context, store storage.Store, jobs []ingestJob, tenan
 				TenantID:       tenant,
 			}
 			if err := store.ReplaceUsageBatch(ctx, batch, job.usageMetrics); err != nil {
-				failed = append(failed, job.period)
-				fmt.Fprintf(os.Stderr, "costroid: %sfailed recording usage metrics: %v\n", label, err)
+				jobResult.outcome = "error"
+				jobResult.err = err
+				output.errorf("costroid: %sfailed recording usage metrics: %v\n", label, err)
+				results = append(results, jobResult)
 				continue
 			}
 		}
 		switch {
 		case result.Unchanged:
-			fmt.Printf("%ssource content unchanged; batch %s/%s kept as is (%d record(s), tenant %s)\n",
+			output.printf("%ssource content unchanged; batch %s/%s kept as is (%d record(s), tenant %s)\n",
 				label, result.Batch.Connector, result.Batch.SourceIdentity, result.Records, result.Batch.TenantID)
 		case result.Replaced:
 			// Restatement visibility (decision D26d): the period's stored
 			// BilledCost total before → after the replace.
-			fmt.Printf("%sreplaced (%d records; BilledCost %s → %s)\n",
+			output.printf("%sreplaced (%d records; BilledCost %s → %s)\n",
 				label, result.Records, result.PreviousBilledCost, result.NewBilledCost)
 		default:
-			fmt.Printf("%singested %d record(s) as batch %s/%s (tenant %s, %s)\n",
+			output.printf("%singested %d record(s) as batch %s/%s (tenant %s, %s)\n",
 				label, result.Records, result.Batch.Connector, result.Batch.SourceIdentity,
 				result.Batch.TenantID, result.Batch.ContentHash)
+		}
+		results = append(results, jobResult)
+	}
+	return results
+}
+
+// runIngest is the thin CLI wrapper. It preserves the historical output and
+// aggregate exit error while the scheduler consumes runIngestCore directly.
+func runIngest(ctx context.Context, store storage.Store, jobs []ingestJob, tenant string) error {
+	results := runIngestCore(ctx, store, jobs, tenant, ingestOutput{stdout: os.Stdout, stderr: os.Stderr})
+	var failed []string
+	for _, result := range results {
+		if result.err != nil {
+			failed = append(failed, result.period)
 		}
 	}
 	if len(failed) > 0 {

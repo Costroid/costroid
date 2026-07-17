@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sync/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scheduled ingestion status
+         * @description Reports whether this serve process runs the scheduled-ingest loop and the latest persisted attempt for every source-name and tenant pair. Enabled instances include configured intervals and next-run times. History-only sources remain visible after removal from the config.
+         */
+        get: operations["getSyncStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/costs/daily": {
         parameters: {
             query?: never;
@@ -205,6 +225,46 @@ export interface components {
              * @example false
              */
             demo: boolean;
+        };
+        SyncStatusResponse: {
+            /** @description True when this serve process runs scheduled ingestion. */
+            enabled: boolean;
+            /** @description One entry per source-name and tenant retention key. */
+            sources: components["schemas"]["SyncSourceStatus"][];
+        };
+        SyncSourceStatus: {
+            name: string;
+            connector: string;
+            tenant: string;
+            /** @description Configured Go duration string, present only for an enabled configured source. */
+            interval?: string;
+            /**
+             * Format: date-time
+             * @description Next due time in UTC, present only for an enabled configured source.
+             */
+            nextRunAt?: string;
+            lastRun?: components["schemas"]["SyncLastRun"];
+            /**
+             * Format: date-time
+             * @description Last successful finish time in UTC, absent when the source has never succeeded.
+             */
+            lastSuccessAt?: string;
+        };
+        SyncLastRun: {
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            finishedAt: string;
+            /** @enum {string} */
+            outcome: "success" | "partial" | "error";
+            /** @description Present only when the recorded error is non-empty. */
+            error?: string;
+            /** Format: int64 */
+            periodsProcessed: number;
+            /** Format: int64 */
+            periodsSkipped: number;
+            /** Format: int64 */
+            recordsIngested: number;
         };
         DailyCosts: {
             /**
@@ -575,6 +635,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Meta"];
+                };
+            };
+        };
+    };
+    getSyncStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current scheduler configuration merged with persisted run history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncStatusResponse"];
+                };
+            };
+            /** @description Reading persisted sync history failed. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
         };

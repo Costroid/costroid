@@ -9,10 +9,32 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for SyncLastRunOutcome.
+const (
+	Error   SyncLastRunOutcome = "error"
+	Partial SyncLastRunOutcome = "partial"
+	Success SyncLastRunOutcome = "success"
+)
+
+// Valid indicates whether the value is a known member of the SyncLastRunOutcome enum.
+func (e SyncLastRunOutcome) Valid() bool {
+	switch e {
+	case Error:
+		return true
+	case Partial:
+		return true
+	case Success:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for GetAnomaliesParamsGroupBy.
 const (
@@ -285,6 +307,47 @@ type ServiceCost struct {
 	Key string `json:"key"`
 }
 
+// SyncLastRun defines model for SyncLastRun.
+type SyncLastRun struct {
+	// Error Present only when the recorded error is non-empty.
+	Error            *string            `json:"error,omitempty"`
+	FinishedAt       time.Time          `json:"finishedAt"`
+	Outcome          SyncLastRunOutcome `json:"outcome"`
+	PeriodsProcessed int64              `json:"periodsProcessed"`
+	PeriodsSkipped   int64              `json:"periodsSkipped"`
+	RecordsIngested  int64              `json:"recordsIngested"`
+	StartedAt        time.Time          `json:"startedAt"`
+}
+
+// SyncLastRunOutcome defines model for SyncLastRun.Outcome.
+type SyncLastRunOutcome string
+
+// SyncSourceStatus defines model for SyncSourceStatus.
+type SyncSourceStatus struct {
+	Connector string `json:"connector"`
+
+	// Interval Configured Go duration string, present only for an enabled configured source.
+	Interval *string      `json:"interval,omitempty"`
+	LastRun  *SyncLastRun `json:"lastRun,omitempty"`
+
+	// LastSuccessAt Last successful finish time in UTC, absent when the source has never succeeded.
+	LastSuccessAt *time.Time `json:"lastSuccessAt,omitempty"`
+	Name          string     `json:"name"`
+
+	// NextRunAt Next due time in UTC, present only for an enabled configured source.
+	NextRunAt *time.Time `json:"nextRunAt,omitempty"`
+	Tenant    string     `json:"tenant"`
+}
+
+// SyncStatusResponse defines model for SyncStatusResponse.
+type SyncStatusResponse struct {
+	// Enabled True when this serve process runs scheduled ingestion.
+	Enabled bool `json:"enabled"`
+
+	// Sources One entry per source-name and tenant retention key.
+	Sources []SyncSourceStatus `json:"sources"`
+}
+
 // UnitEconomics defines model for UnitEconomics.
 type UnitEconomics struct {
 	// Currencies All billing currencies with cost rows in the requested range, sorted ascending. This is the source for a currency selector and is [] (never null) when the range is empty.
@@ -431,6 +494,9 @@ type ServerInterface interface {
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
+	// Scheduled ingestion status
+	// (GET /api/v1/sync/status)
+	GetSyncStatus(w http.ResponseWriter, r *http.Request)
 	// Daily and period unit economics for one business metric
 	// (GET /api/v1/unit-economics/daily)
 	GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, params GetDailyUnitEconomicsParams)
@@ -689,6 +755,20 @@ func (siw *ServerInterfaceWrapper) GetMeta(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMeta(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSyncStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSyncStatus(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1001,6 +1081,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/summary", wrapper.GetCostsSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sync/status", wrapper.GetSyncStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/unit-economics/daily", wrapper.GetDailyUnitEconomics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/metrics/daily", wrapper.GetDailyUsageMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/tokens/daily", wrapper.GetDailyTokens)

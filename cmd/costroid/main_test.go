@@ -533,6 +533,7 @@ func hermeticServeEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("COSTROID_ADDR", "")
 	t.Setenv(allocationRulesEnvVar, "")
+	t.Setenv(sourcesEnvVar, "")
 	t.Setenv(envAuthToken, "")
 	t.Setenv(envAuthTokenFile, "")
 	t.Setenv(envAuthTrustedHeader, "")
