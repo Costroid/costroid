@@ -131,6 +131,29 @@ costroid serve --no-auth                    # loopback, for local single-user us
 Anyone who can reach the address can then read all billing data. Use it only on a
 loopback bind for local, single-user use — never on a network-exposed address.
 
+## Scheduled ingestion process posture
+
+`costroid serve --sync` changes the long-running serve process from a store
+reader into both a store reader and a connector runner. It reads the encrypted
+credential vault, so the D32 credential key file must be readable by the serve
+user. Keep that key file outside the data directory, permission it narrowly,
+and never put key material in `sources.json`.
+
+Scheduled AWS and Azure connectors use their ambient SDK credential chains.
+Those identities must be present in the serve process environment. Short-lived
+or SSO credentials may expire while serve is running, so monitor
+`GET /api/v1/sync/status` and renew the ambient session when a run fails.
+Scheduled connectors also make outbound requests from the serve process; apply
+the same egress restrictions and least-privilege read-only permissions used for
+manual ingest.
+
+Each scheduled AI run calls the vendor Admin APIs again, so a shorter interval
+multiplies Admin-key API traffic. Anthropic's Admin key cannot be scoped below
+full organization admin. Prefer generous intervals, protect the D32 key file,
+and use the status endpoint instead of increasing frequency merely to check
+whether a source is healthy. Scheduler logs contain source metadata and
+connector errors, never credential material or AI prompt or response content.
+
 ## TLS
 
 Costroid terminates **no TLS itself**. For any non-loopback deployment, put it

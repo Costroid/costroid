@@ -56,8 +56,13 @@ Use `--no-auth` only with a loopback bind for local, single-user access. Both `:
 
 ## Ingest your first export
 
-:::caution[Stop the server before ingesting]
-The embedded store allows a single process at a time. Stop `costroid serve` before running `costroid ingest` or `costroid metrics import`. Restart the server after the command finishes.
+:::caution[Manual ingest and the scheduled alternative]
+The embedded store allows a single process at a time. Stop `costroid serve`
+before running a manual `costroid ingest` or `costroid metrics import`, then
+restart it after the command finishes. For unattended refreshes without
+stopping the dashboard, configure sources and run `costroid serve --sync`; the
+in-process scheduler shares serve's open store. See
+[Scheduled ingestion](/guides/operations/#scheduled-ingestion).
 :::
 
 For a local AWS FOCUS export:

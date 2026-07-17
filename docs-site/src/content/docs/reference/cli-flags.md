@@ -1,6 +1,6 @@
 ---
 title: CLI flags
-description: Every Costroid command and flag — serve, demo, ingest, credentials, metrics, and allocation.
+description: Every Costroid command and flag, including scheduled sources, serve, demo, ingest, credentials, metrics, and allocation.
 ---
 
 <!-- SPDX-License-Identifier: Apache-2.0 -->
@@ -8,8 +8,8 @@ description: Every Costroid command and flag — serve, demo, ingest, credential
 
 ## Command overview
 
-Costroid has six top-level commands: `demo`, `serve`, `allocation`, `metrics`,
-`credentials`, and `ingest`. Running `costroid` without a command prints this
+Costroid has seven top-level commands: `demo`, `serve`, `allocation`, `sources`,
+`metrics`, `credentials`, and `ingest`. Running `costroid` without a command prints this
 usage block:
 
 ```text
@@ -23,18 +23,25 @@ commands:
           unauthenticated, read-only, and binds 127.0.0.1:8080 by default.)
   serve   serve the HTTP API and dashboard
           costroid serve [--addr host:port] [--allocation-rules <path>]
+		                 [--sync] [--sources <path>]
                          (--auth-token-file <path> | --auth-trusted-header <name> | --no-auth)
           (binds 127.0.0.1:8080 by default — loopback only; pass a non-loopback
           --addr to expose it. serve refuses to start unless authentication is
           configured: a bearer token via --auth-token-file/$COSTROID_AUTH_TOKEN(_FILE),
           forward-auth via --auth-trusted-header (recommended header X-WEBAUTH-USER)
           behind a trusted reverse proxy, or --no-auth to opt out explicitly. See
-          docs/security.md and 'costroid serve -h')
+          docs/security.md and 'costroid serve -h'. --sync runs sources from the
+          strict sources JSON inside serve; --sources overrides its resolved path.)
   allocation  validate the query-time cost-allocation (virtual tagging) rules file
           costroid allocation validate [--rules <path>]
           (the rules path resolves from --rules, then $COSTROID_ALLOCATION_RULES,
           then <config-dir>/costroid/allocation.json; reads only the JSON file —
           no store, so it is safe to run while 'costroid serve' is running)
+  sources  validate the scheduled-ingestion sources file
+          costroid sources validate [--sources <path>]
+          (the path resolves from --sources, then $COSTROID_SOURCES, then
+          <config-dir>/costroid/sources.json; performs structural validation
+          only and does not open the store, check credentials, or contact sources)
   metrics  import user-authored business metrics for unit economics
           costroid metrics import --path <file.csv> [--source-label <label>]
                                   [--tenant default]
@@ -103,8 +110,9 @@ commands:
                        credentials; --force is a documented no-op — it keeps no sync state)
 
 The store location is $COSTROID_DATA_DIR (default ./data). The embedded
-store allows a single process at a time: stop 'costroid serve' before
-running 'costroid ingest' or 'costroid metrics import'
+store allows a single process at a time. Manual 'costroid ingest' and
+'costroid metrics import' require stopping serve; use 'costroid serve --sync'
+for scheduled ingestion inside the serving process
 ```
 
 There is no `costroid version` command. Read the running version from the
@@ -123,6 +131,7 @@ Flags take precedence over their corresponding environment variables.
 | `$COSTROID_AUTH_TRUSTED_HEADER` | Identity header for forward-auth; empty disables that mode. |
 | `$COSTROID_AUTH_TRUSTED_PROXIES` | Comma-separated trusted proxy CIDRs; effective default `127.0.0.0/8,::1/128` when forward-auth is configured. |
 | `$COSTROID_ALLOCATION_RULES` | Path to the allocation-rules JSON file; default `<config-dir>/costroid/allocation.json`. |
+| `$COSTROID_SOURCES` | Path to the scheduled-ingestion sources JSON file; default `<config-dir>/costroid/sources.json`. It carries a path, never credential material. |
 | `$COSTROID_CREDENTIALS_KEY_FILE` | Path to the credential key file; it carries a path, never key material. Default `~/.config/costroid/credentials.key`. |
 | `$GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service-account JSON when no explicit encrypted-vault slot is selected. It carries a path, never the JSON value. |
 | `$AWS_*` | The AWS SDK ambient identity/configuration chain used by `aws-focus-s3`, including environment, shared configuration or SSO, and IAM roles. Costroid does not store these credentials. |
@@ -142,6 +151,8 @@ environment value. AWS and Azure instead use their SDK ambient identity chains.
 | `-auth-trusted-header` | `forward-auth: the identity header your reverse proxy sets (overrides $COSTROID_AUTH_TRUSTED_HEADER; empty disables forward-auth; recommended value X-WEBAUTH-USER)` |
 | `-auth-trusted-proxies` | `forward-auth: comma-separated trusted proxy CIDRs whose identity header is honored (overrides $COSTROID_AUTH_TRUSTED_PROXIES; default 127.0.0.0/8,::1/128; IPv4 prefixes broader than /8 and IPv6 broader than /16 are refused)` |
 | `-no-auth` | `serve WITHOUT authentication — the ONLY way to run unauthenticated (not recommended on a network-exposed address)` |
+| `-sources` | `sources JSON path (overrides $COSTROID_SOURCES; default <config-dir>/costroid/sources.json)` |
+| `-sync` | `run configured sources immediately and on their intervals inside this serve process` |
 
 There is no `--auth-token` value flag because argv is world-readable through
 tools such as `ps` and `/proc/<pid>/cmdline`. There are no TLS flags; terminate
@@ -255,3 +266,23 @@ validate reads only the JSON file — no store — so it is safe to run alongsid
 
 Validation reads only the JSON file and does not open the store, so it is safe
 to run while `costroid serve` is running.
+
+## `costroid sources validate`
+
+```text
+usage: costroid sources <subcommand>
+
+subcommands:
+  validate [--sources <path>]  parse and structurally validate the sources file
+
+The path resolves from --sources, then $COSTROID_SOURCES, then
+<config-dir>/costroid/sources.json. Validation reads only the JSON file. It
+does not open the store, check credential slots, or contact remote sources
+```
+
+| Flag | Verbatim help |
+| --- | --- |
+| `-sources` | `sources JSON path (overrides $COSTROID_SOURCES; default <config-dir>/costroid/sources.json)` |
+
+Validation is safe alongside `serve`. It checks structure and connector fields,
+but it does not open the store, read credential slots, or contact a provider.

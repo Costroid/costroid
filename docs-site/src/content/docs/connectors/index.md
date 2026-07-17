@@ -81,9 +81,12 @@ periods whose source state is unchanged. It is a documented no-op for
 `anthropic-cost`, `openai-cost`, and `focus-csv`, which keep no incremental sync
 state.
 
-The embedded store has a single-writer rule. Stop `costroid serve` before
-running an ingest; [Getting started](/getting-started/) covers that workflow.
-Run `costroid ingest -h` for the complete current flag list.
+The embedded store has a single-writer rule. Stop `costroid serve` before a
+manual ingest. For unattended refreshes, declare the same connector settings in
+the strict sources JSON and run `costroid serve --sync`; its serial scheduler
+shares serve's open store. The [operations guide](/guides/operations/#scheduled-ingestion)
+covers the config format, intervals, status endpoint, and credential posture.
+Run `costroid ingest -h` for the complete current manual-ingest flag list.
 
 ## Exact money and version information
 

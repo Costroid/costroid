@@ -80,7 +80,7 @@ Start the server for local single-user use, then ingest a billing export:
 costroid serve --no-auth
 ```
 
-Open <http://localhost:8080>. `serve` binds `127.0.0.1:8080` by default and refuses to start until you choose an authentication mode (`--no-auth` is the explicit opt-out above). To load data, stop the server (the embedded store allows a single process at a time) and ingest a FOCUS export:
+Open <http://localhost:8080>. `serve` binds `127.0.0.1:8080` by default and refuses to start until you choose an authentication mode (`--no-auth` is the explicit opt-out above). For a manual load, stop the server (the embedded store allows a single process at a time) and ingest a FOCUS export:
 
 ```bash
 # a local AWS FOCUS export file
@@ -102,6 +102,13 @@ costroid ingest --connector gcp-focus-bq --dataset-project <host-project> \
 # any generic FOCUS or CSV export (declare its FOCUS version — no sniffing)
 costroid ingest --connector focus-csv --path <export.csv> --focus-version 1.2
 ```
+
+For unattended refreshes, configure a strict `sources.json` file and run
+`costroid serve --sync`. The scheduler runs inside the serving process and
+shares its open DuckDB handle, so the dashboard stays available while sources
+refresh. Manual `costroid ingest` still requires stopping `serve`. See the
+[scheduled-ingestion guide](./docs-site/src/content/docs/guides/operations.md#scheduled-ingestion)
+and check `GET /api/v1/sync/status` for the latest result of each source.
 
 The connectors are `aws-focus`, `aws-focus-s3`, `azure-focus`, `gcp-focus-bq` (on `main` since v0.1.0), `anthropic-cost`, `openai-cost`, and `focus-csv`; run `costroid ingest -h` for the full flag reference. For the AI vendors, first store the Admin API key in the encrypted credential store (`costroid credentials set <slot>`), then `costroid ingest --connector openai-cost` (or `anthropic-cost`). Manage stored provider credentials with the `costroid credentials` subcommands (`init`, `set`, `list`, `delete`).
 
