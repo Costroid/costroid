@@ -991,21 +991,28 @@ func ingestCmd(args []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	output := ingestOutput{stdout: os.Stdout, stderr: os.Stderr}
 
 	switch *connectorFlag {
 	case awsfocus.Name:
-		if *pathFlag == "" {
-			return errors.New("--path is required for the aws-focus connector")
+		cfg := awsFocusSource{tenant: *tenantFlag, path: *pathFlag}
+		if err := validateAWSFocusSource(cfg); err != nil {
+			return cliSourceValidation(err)
 		}
 		store, err := storage.Open(ctx, dataDir())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-		return runIngest(ctx, store, []ingestJob{{conn: awsfocus.New(*pathFlag)}}, *tenantFlag)
+		jobs, err := buildAWSFocusJobs(ctx, cfg, *periodFlag, *forceFlag, output)
+		if err != nil {
+			return err
+		}
+		return runIngest(ctx, store, jobs, cfg.tenant)
 	case awsfocuss3.Name:
-		if *bucketFlag == "" || *prefixFlag == "" {
-			return errors.New("--bucket and --prefix are required for the aws-focus-s3 connector")
+		cfg := awsFocusS3Source{tenant: *tenantFlag, bucket: *bucketFlag, prefix: *prefixFlag}
+		if err := validateAWSFocusS3Source(cfg); err != nil {
+			return cliSourceValidation(err)
 		}
 		// The store opens BEFORE discovery: discovery needs the stored
 		// sync tuples to skip unchanged periods (migration 0003).
@@ -1018,45 +1025,18 @@ func ingestCmd(args []string) error {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-
-		// --force bypasses the tuple skip by discovering with no prior
-		// state; every period then falls through to the content-hash
-		// path, which still short-circuits byte-identical deliveries.
-		prior := map[string]awsfocuss3.ManifestState{}
-		if !*forceFlag {
-			states, err := store.SyncStates(ctx, awsfocuss3.Name)
-			if err != nil {
-				return err
-			}
-			for id, st := range states {
-				// The tuple skip is tenant-aware (slice-3 review fix-up):
-				// a batch homed under a different tenant must not be
-				// skipped. Dropping its tuple sends the period down the
-				// content-hash path, whose tenant-sensitive short-circuit
-				// re-homes the stored records.
-				if st.TenantID != *tenantFlag {
-					continue
-				}
-				prior[id] = awsfocuss3.ManifestState{
-					Key:          st.ManifestKey,
-					ETag:         st.ManifestETag,
-					LastModified: st.ManifestLastModified,
-					Size:         st.ManifestSize,
-				}
-			}
-		}
-		periods, err := awsfocuss3.Discover(ctx, *bucketFlag, *prefixFlag, prior)
+		jobs, err := buildAWSFocusS3Jobs(ctx, store, cfg, *periodFlag, *forceFlag, output)
 		if err != nil {
 			return err
 		}
-		jobs, err := s3Jobs(periods, *periodFlag)
-		if err != nil {
-			return err
-		}
-		return runIngest(ctx, store, jobs, *tenantFlag)
+		return runIngest(ctx, store, jobs, cfg.tenant)
 	case azurefocus.Name:
-		if *accountURLFlag == "" || *containerFlag == "" || *prefixFlag == "" {
-			return errors.New("--account-url, --container, and --prefix are required for the azure-focus connector")
+		cfg := azureFocusSource{
+			tenant: *tenantFlag, accountURL: *accountURLFlag,
+			container: *containerFlag, prefix: *prefixFlag,
+		}
+		if err := validateAzureFocusSource(cfg); err != nil {
+			return cliSourceValidation(err)
 		}
 		// Same shape as aws-focus-s3: the store opens (and locks) before
 		// discovery, which needs both the stored sync tuples and the
@@ -1066,38 +1046,21 @@ func ingestCmd(args []string) error {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-
-		prior := map[string]azurefocus.ManifestState{}
-		if !*forceFlag {
-			states, err := store.SyncStates(ctx, azurefocus.Name)
-			if err != nil {
-				return err
-			}
-			for id, st := range states {
-				// Tenant-aware tuple skip, exactly as for aws-focus-s3.
-				if st.TenantID != *tenantFlag {
-					continue
-				}
-				prior[id] = azurefocus.ManifestState{
-					Key:          st.ManifestKey,
-					ETag:         st.ManifestETag,
-					LastModified: st.ManifestLastModified,
-					Size:         st.ManifestSize,
-				}
-			}
-		}
-		periods, err := azurefocus.Discover(ctx, *accountURLFlag, *containerFlag, *prefixFlag, prior, store)
+		jobs, err := buildAzureFocusJobs(ctx, store, cfg, *periodFlag, *forceFlag, output)
 		if err != nil {
 			return err
 		}
-		jobs, err := azureJobs(periods, *periodFlag)
-		if err != nil {
-			return err
-		}
-		return runIngest(ctx, store, jobs, *tenantFlag)
+		return runIngest(ctx, store, jobs, cfg.tenant)
 	case gcpfocusbq.Name:
-		if *datasetProjectFlag == "" || *datasetFlag == "" || *tableFlag == "" || *locationFlag == "" {
-			return errors.New("--dataset-project, --dataset, --table, and --location are required for the gcp-focus-bq connector")
+		cfg := gcpFocusBQSource{
+			tenant: *tenantFlag, datasetProject: *datasetProjectFlag,
+			dataset: *datasetFlag, table: *tableFlag, location: *locationFlag,
+			jobProject: *jobProjectFlag, credential: *credentialFlag,
+			baseURL: *baseURLFlag, tokenURL: *tokenURLFlag,
+			since: *sinceFlag, keyFile: *keyFileFlag,
+		}
+		if err := validateGCPFocusBQSource(cfg); err != nil {
+			return cliSourceValidation(err)
 		}
 		// The store opens before credential loading and discovery: tenant-aware
 		// SyncState drives the month skip, and a vault credential lives here.
@@ -1106,116 +1069,54 @@ func ingestCmd(args []string) error {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-
-		baseURL := firstNonEmpty(*baseURLFlag, gcpfocusbq.DefaultBaseURL)
-		tokenURL := firstNonEmpty(*tokenURLFlag, gcpfocusbq.DefaultTokenURL)
-		credentialJSON, err := gcpServiceAccountJSON(ctx, store, *keyFileFlag, *credentialFlag)
+		jobs, err := buildGCPFocusBQJobs(ctx, store, cfg, *periodFlag, *forceFlag, output)
 		if err != nil {
 			return err
 		}
-		client, err := gcpfocusbq.NewClient(aiHTTPClient(), baseURL, tokenURL, credentialJSON)
-		if err != nil {
-			return err
-		}
-		coords := gcpfocusbq.Coordinates{
-			DatasetProject: *datasetProjectFlag,
-			Dataset:        *datasetFlag,
-			Table:          *tableFlag,
-			Location:       *locationFlag,
-			JobProject:     *jobProjectFlag,
-			Since:          *sinceFlag,
-		}
-		prior := map[string]gcpfocusbq.ChangeState{}
-		if !*forceFlag {
-			states, err := store.SyncStates(ctx, gcpfocusbq.Name)
-			if err != nil {
-				return err
-			}
-			for id, st := range states {
-				if st.TenantID != *tenantFlag {
-					continue
-				}
-				prior[id] = gcpfocusbq.ChangeState{
-					Key:          st.ManifestKey,
-					Token:        st.ManifestETag,
-					LastModified: st.ManifestLastModified,
-					Size:         st.ManifestSize,
-				}
-			}
-		}
-		periods, err := gcpfocusbq.Discover(ctx, client, coords, prior)
-		if err != nil {
-			return err
-		}
-		probe := client.ProbeResult()
-		partitioning := "absent"
-		if probe.TimePartitioning {
-			partitioning = "present"
-		}
-		fmt.Printf("gcp-focus-bq table probe: timePartitioning=%s\n", partitioning)
-		if len(probe.AdditiveColumns) > 0 {
-			fmt.Fprintf(os.Stderr, "costroid: gcp-focus-bq Preview schema added column(s) not selected by this connector: %s\n", strings.Join(probe.AdditiveColumns, ", "))
-		}
-		jobs, err := gcpJobs(periods, *periodFlag)
-		if err != nil {
-			return err
-		}
-		return runIngest(ctx, store, jobs, *tenantFlag)
+		return runIngest(ctx, store, jobs, cfg.tenant)
 	case anthropiccost.Name:
-		slot := firstNonEmpty(*credentialFlag, anthropiccost.Name)
-		baseURL := firstNonEmpty(*baseURLFlag, anthropiccost.DefaultBaseURL)
-		secret, store, err := openVaultSecret(ctx, *keyFileFlag, slot)
+		cfg := anthropicCostSource{
+			tenant: *tenantFlag, credential: *credentialFlag,
+			baseURL: *baseURLFlag, since: *sinceFlag, keyFile: *keyFileFlag,
+		}
+		if err := validateAnthropicCostSource(cfg); err != nil {
+			return cliSourceValidation(err)
+		}
+		store, err := storage.Open(ctx, dataDir())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-		periods, err := anthropiccost.Discover(ctx, aiHTTPClient(), baseURL, slot, secret, *sinceFlag, *periodFlag)
+		jobs, err := buildAnthropicCostJobs(ctx, store, cfg, *periodFlag, *forceFlag, output)
 		if err != nil {
 			return err
 		}
-		jobs := make([]ingestJob, 0, len(periods))
-		for _, p := range periods {
-			job := aiJob(p.Month, p.Conn, p.Err)
-			if p.Conn != nil {
-				if s := p.Conn.AnomalySummary(); s != "" {
-					fmt.Printf("period %s: %s\n", p.Month, s)
-				}
-				// Stash the concrete connector's cost-orphaned usage metrics on
-				// the job (non-nil, empty if none); runIngest writes them only
-				// after this period's cost ingest succeeds. Mirrors how sync is
-				// captured here and consumed later.
-				job.usageMetrics = p.Conn.UsageMetrics()
-			}
-			jobs = append(jobs, job)
-		}
-		return runIngest(ctx, store, jobs, *tenantFlag)
+		return runIngest(ctx, store, jobs, cfg.tenant)
 	case openaicost.Name:
-		slot := firstNonEmpty(*credentialFlag, openaicost.Name)
-		baseURL := firstNonEmpty(*baseURLFlag, openaicost.DefaultBaseURL)
-		secret, store, err := openVaultSecret(ctx, *keyFileFlag, slot)
+		cfg := openAICostSource{
+			tenant: *tenantFlag, credential: *credentialFlag,
+			baseURL: *baseURLFlag, since: *sinceFlag, keyFile: *keyFileFlag,
+		}
+		if err := validateOpenAICostSource(cfg); err != nil {
+			return cliSourceValidation(err)
+		}
+		store, err := storage.Open(ctx, dataDir())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-		periods, err := openaicost.Discover(ctx, aiHTTPClient(), baseURL, slot, secret, *sinceFlag, *periodFlag)
+		jobs, err := buildOpenAICostJobs(ctx, store, cfg, *periodFlag, *forceFlag, output)
 		if err != nil {
 			return err
 		}
-		jobs := make([]ingestJob, 0, len(periods))
-		for _, p := range periods {
-			job := aiJob(p.Month, p.Conn, p.Err)
-			if p.Conn != nil {
-				if s := p.Conn.AnomalySummary(); s != "" {
-					fmt.Printf("period %s: %s\n", p.Month, s)
-				}
-				job.usageMetrics = p.Conn.UsageMetrics()
-			}
-			jobs = append(jobs, job)
-		}
-		return runIngest(ctx, store, jobs, *tenantFlag)
+		return runIngest(ctx, store, jobs, cfg.tenant)
 	case focuscsv.Name:
-		if *pathFlag == "" {
-			return errors.New("--path is required for the focus-csv connector")
+		cfg := focusCSVSource{
+			tenant: *tenantFlag, path: *pathFlag, focusVersion: *focusVersionFlag,
+			sourceLabel: *sourceLabelFlag, lenient: *lenientFlag,
+		}
+		if err := validateFocusCSVSource(cfg); err != nil {
+			return cliSourceValidation(err)
 		}
 		// Discovery (version check, file read, header validation, per-month
 		// split) runs BEFORE the store opens: a bad --focus-version or file
@@ -1224,23 +1125,16 @@ func ingestCmd(args []string) error {
 		// content-hash short-circuit still makes an unchanged re-import a
 		// no-op). One import must carry the COMPLETE data for each month it
 		// touches under a --source-label (a part-file replaces the month).
-		periods, warnings, err := focuscsv.Discover(*pathFlag, focus.Version(*focusVersionFlag), *sourceLabelFlag, *lenientFlag)
+		jobs, err := buildFocusCSVJobs(ctx, cfg, *periodFlag, *forceFlag, output)
 		if err != nil {
 			return err
-		}
-		for _, w := range warnings {
-			fmt.Fprintln(os.Stderr, "costroid:", w)
 		}
 		store, err := storage.Open(ctx, dataDir())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-		jobs, err := focusCSVJobs(periods, *periodFlag)
-		if err != nil {
-			return err
-		}
-		return runIngest(ctx, store, jobs, *tenantFlag)
+		return runIngest(ctx, store, jobs, cfg.tenant)
 	case "":
 		return errors.New(`--connector is required (available: "aws-focus", "aws-focus-s3", "azure-focus", "gcp-focus-bq", "anthropic-cost", "openai-cost", "focus-csv")`)
 	default:
@@ -1269,33 +1163,6 @@ func aiJob(month string, conn ingest.Connector, discoveryErr error) ingestJob {
 		return ingestJob{period: month, discoveryErr: discoveryErr}
 	}
 	return ingestJob{period: month, conn: conn}
-}
-
-// openVaultSecret opens the store (taking the single-writer lock), opens the
-// credential vault, and loads the named slot's secret — failing fast, BEFORE
-// any network dial, if the key file or credential is missing. On success the
-// caller owns closing the returned store.
-func openVaultSecret(ctx context.Context, keyFileFlag, slot string) (credentials.Secret, *storage.DuckDB, error) {
-	store, err := storage.Open(ctx, dataDir())
-	if err != nil {
-		return credentials.Secret{}, nil, err
-	}
-	keyPath, err := credentials.ResolveKeyPath(keyFileFlag)
-	if err != nil {
-		_ = store.Close()
-		return credentials.Secret{}, nil, err
-	}
-	vault, err := credentials.Open(keyPath, store)
-	if err != nil {
-		_ = store.Close()
-		return credentials.Secret{}, nil, err
-	}
-	secret, err := vault.Get(ctx, slot)
-	if err != nil {
-		_ = store.Close()
-		return credentials.Secret{}, nil, err
-	}
-	return secret, store, nil
 }
 
 // gcpServiceAccountJSON applies the GCP credential precedence without ever
