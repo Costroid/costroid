@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/alert"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest/anthropiccost"
 	"github.com/Costroid/costroid/internal/ingest/awsfocus"
@@ -37,6 +38,11 @@ var sourceNamePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 type sourcesConfig struct {
 	defaultIntervalText string
 	sources             []scheduledSource
+	// alerts is the parsed, store-free alert-channel list from the optional
+	// top-level "alerts" block. serve --sync resolves each channel's secret
+	// slot and constructs the concrete alert.Channel at startup; an empty list
+	// is a soft no-op (alerting disabled).
+	alerts []alertChannelConfig
 }
 
 type scheduledSource struct {
@@ -51,6 +57,36 @@ type scheduledSource struct {
 type sourcesDocument struct {
 	DefaultInterval string             `json:"defaultInterval"`
 	Sources         *[]json.RawMessage `json:"sources"`
+	// Alerts is the optional alert-channel block. Absent (nil) or empty is a
+	// soft no-op; it is parsed per entry by parseAlertChannel.
+	Alerts *[]json.RawMessage `json:"alerts"`
+}
+
+// alertChannelConfig is one parsed, store-free alert channel. It carries the
+// slot NAMES for secrets, never secret material; serve --sync resolves them via
+// the D32 vault at startup.
+type alertChannelConfig struct {
+	name     string
+	kind     string // "webhook" | "slack"
+	endpoint string // webhook only
+	authSlot string // webhook only, optional (vault slot for a bearer token)
+	urlSlot  string // slack only (vault slot holding the incoming-webhook URL)
+}
+
+type alertChannelCommonJSON struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type webhookAlertJSON struct {
+	alertChannelCommonJSON
+	Endpoint string `json:"endpoint"`
+	AuthSlot string `json:"authSlot"`
+}
+
+type slackAlertJSON struct {
+	alertChannelCommonJSON
+	URLSlot string `json:"urlSlot"`
 }
 
 type sourceCommonJSON struct {
@@ -186,7 +222,70 @@ func parseSources(r io.Reader) (sourcesConfig, error) {
 		names[source.name] = struct{}{}
 		result.sources = append(result.sources, source)
 	}
+
+	if document.Alerts != nil {
+		alertNames := make(map[string]struct{}, len(*document.Alerts))
+		for index, raw := range *document.Alerts {
+			channel, err := parseAlertChannel(raw, index+1)
+			if err != nil {
+				return sourcesConfig{}, err
+			}
+			if _, exists := alertNames[channel.name]; exists {
+				return sourcesConfig{}, fmt.Errorf("alert %d name %q is duplicated; alert channel names must be unique", index+1, channel.name)
+			}
+			alertNames[channel.name] = struct{}{}
+			result.alerts = append(result.alerts, channel)
+		}
+	}
 	return result, nil
+}
+
+// parseAlertChannel decodes one alert-channel entry with per-type strict
+// decoding (mirroring parseScheduledSource): a webhook entry may not carry
+// slack fields and vice versa. It validates STRUCTURE only (required fields,
+// endpoint shape, non-empty slot names); it never resolves a secret or hits the
+// network. Phase A has a single implicit trigger (sync-failure): every
+// configured channel receives sync-failure alerts, so there is deliberately no
+// "triggers" field yet. Phase B (anomaly alerting) will add trigger
+// subscriptions.
+func parseAlertChannel(raw json.RawMessage, index int) (alertChannelConfig, error) {
+	var probe alertChannelCommonJSON
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return alertChannelConfig{}, fmt.Errorf("alert %d is not a valid JSON object: %w", index, err)
+	}
+	if probe.Name == "" {
+		return alertChannelConfig{}, fmt.Errorf("alert %d field \"name\" is required", index)
+	}
+	if !sourceNamePattern.MatchString(probe.Name) {
+		return alertChannelConfig{}, fmt.Errorf("alert %d field \"name\" must match [a-z0-9-]+; got %q", index, probe.Name)
+	}
+	switch probe.Type {
+	case "webhook":
+		var value webhookAlertJSON
+		if err := decodeStrictSource(raw, &value); err != nil {
+			return alertChannelConfig{}, fmt.Errorf("alert %q: %w", probe.Name, err)
+		}
+		if value.Endpoint == "" {
+			return alertChannelConfig{}, fmt.Errorf("alert %q field \"endpoint\" is required for type \"webhook\"", probe.Name)
+		}
+		if err := alert.ValidateWebhookEndpoint(value.Endpoint); err != nil {
+			return alertChannelConfig{}, fmt.Errorf("alert %q field \"endpoint\": %w", probe.Name, err)
+		}
+		return alertChannelConfig{name: probe.Name, kind: "webhook", endpoint: value.Endpoint, authSlot: value.AuthSlot}, nil
+	case "slack":
+		var value slackAlertJSON
+		if err := decodeStrictSource(raw, &value); err != nil {
+			return alertChannelConfig{}, fmt.Errorf("alert %q: %w", probe.Name, err)
+		}
+		if value.URLSlot == "" {
+			return alertChannelConfig{}, fmt.Errorf("alert %q field \"urlSlot\" is required for type \"slack\"", probe.Name)
+		}
+		return alertChannelConfig{name: probe.Name, kind: "slack", urlSlot: value.URLSlot}, nil
+	case "":
+		return alertChannelConfig{}, fmt.Errorf("alert %q field \"type\" is required", probe.Name)
+	default:
+		return alertChannelConfig{}, fmt.Errorf("alert %q has unknown type %q; supported types: webhook, slack", probe.Name, probe.Type)
+	}
 }
 
 func parseScheduledSource(raw json.RawMessage, index int, defaultText string, defaultInterval time.Duration) (scheduledSource, error) {
@@ -392,6 +491,6 @@ func sourcesCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("sources file valid: %d source(s); structural validation only, credential slots and remote reachability were not checked\n", len(cfg.sources))
+	fmt.Printf("sources file valid: %d source(s), %d alert channel(s); structural validation only, credential slots and remote reachability were not checked\n", len(cfg.sources), len(cfg.alerts))
 	return nil
 }

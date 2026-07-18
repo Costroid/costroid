@@ -44,6 +44,21 @@ type syncRunRecorder interface {
 	RecordSyncRun(context.Context, storage.SyncRun) error
 }
 
+// syncAlerter is notified of every completed scheduled run. The implementation
+// (alert.Notifier) owns the edge-triggered dedup state machine and decides
+// whether to send; it never returns an error, so a broken alert channel can
+// never affect the scheduler.
+type syncAlerter interface {
+	NotifySyncRun(context.Context, storage.SyncRun)
+}
+
+// noopAlerter is the default alerter: a serve without configured alert channels
+// (and every scheduler test) uses it, so no alert is ever emitted unless serve
+// sets a real Notifier after construction.
+type noopAlerter struct{}
+
+func (noopAlerter) NotifySyncRun(context.Context, storage.SyncRun) {}
+
 type scheduledRunResult struct {
 	jobs         []ingestJobResult
 	discoveryErr error
@@ -61,6 +76,11 @@ type ingestScheduler struct {
 	recorder syncRunRecorder
 	runner   scheduledSourceRunner
 	logger   *slog.Logger
+	// alerter is notified of every completed run. It defaults to a no-op inside
+	// newIngestScheduler; serve --sync sets a real alert.Notifier after
+	// construction (before Start), so the constructor signature and every test
+	// call site stay unchanged.
+	alerter syncAlerter
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -82,7 +102,8 @@ func newIngestScheduler(parent context.Context, clock schedulerClock, recorder s
 	}
 	return &ingestScheduler{
 		clock: clock, recorder: recorder, runner: runner, logger: logger,
-		ctx: ctx, cancel: cancel, sources: states,
+		alerter: noopAlerter{},
+		ctx:     ctx, cancel: cancel, sources: states,
 	}
 }
 
@@ -217,6 +238,15 @@ func (s *ingestScheduler) run(index int) {
 	if err := s.recorder.RecordSyncRun(context.WithoutCancel(s.ctx), run); err != nil {
 		s.logger.Error("recording scheduled sync", "source", source.name, "connector", source.connector, "error", err)
 	}
+	// Notify unconditionally: the alerter's state machine decides whether to
+	// send, and it must observe successes too (the recovery transition). Uses
+	// s.ctx (cancellable) so a Stop during shutdown cancels an in-flight send
+	// rather than delaying shutdown; a best-effort alert dropped at shutdown is
+	// fine because the run is durably recorded and re-seeded from SyncStatuses
+	// on restart. NotifySyncRun never returns an error and is hard-bounded by a
+	// per-send timeout, so a slow or broken endpoint can never crash or deadlock
+	// the scheduler.
+	s.alerter.NotifySyncRun(s.ctx, run)
 	finishAttrs := []any{
 		"source", source.name, "connector", source.connector, "tenant", source.tenant,
 		"outcome", run.Outcome, "duration", finished.Sub(started).String(),

@@ -340,3 +340,51 @@ func TestSchedulerCoalescesMissedTicks(t *testing.T) {
 	default:
 	}
 }
+
+type recordingAlerter struct {
+	ch chan storage.SyncRun
+}
+
+func (a recordingAlerter) NotifySyncRun(_ context.Context, run storage.SyncRun) {
+	a.ch <- run
+}
+
+// TestSchedulerNotifiesAlerterForEveryRun pins that run() hands EVERY completed
+// run (success and failure alike) to the injected alerter after recording it.
+// The recovery transition depends on the alerter observing successes, so the
+// hook is deliberately unconditional; removing it makes this test time out.
+func TestSchedulerNotifiesAlerterForEveryRun(t *testing.T) {
+	clock := newFakeSchedulerClock(time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC))
+	recorder := newSyncRunMemoryRecorder()
+	runner := func(_ context.Context, source scheduledSource, _ ingestOutput) scheduledRunResult {
+		if source.name == "b" {
+			return scheduledRunResult{discoveryErr: errors.New("b failed discovery")}
+		}
+		return successfulScheduledResult()
+	}
+	scheduler := newIngestScheduler(context.Background(), clock, recorder,
+		[]scheduledSource{testScheduledSource("a", 24*time.Hour), testScheduledSource("b", 24*time.Hour)}, runner, nil)
+	alerter := recordingAlerter{ch: make(chan storage.SyncRun, 8)}
+	scheduler.alerter = alerter
+	scheduler.Start()
+	t.Cleanup(scheduler.Stop)
+
+	recv := func() storage.SyncRun {
+		t.Helper()
+		select {
+		case run := <-alerter.ch:
+			return run
+		case <-time.After(5 * time.Second):
+			t.Fatal("scheduler did not notify the alerter")
+			return storage.SyncRun{}
+		}
+	}
+	outcomes := map[string]string{}
+	for i := 0; i < 2; i++ {
+		run := recv()
+		outcomes[run.SourceName] = run.Outcome
+	}
+	if outcomes["a"] != "success" || outcomes["b"] != "error" {
+		t.Fatalf("alerter observed = %v, want a=success b=error", outcomes)
+	}
+}

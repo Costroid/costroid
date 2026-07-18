@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Costroid/costroid/internal/alert"
 	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/api"
 	"github.com/Costroid/costroid/internal/businessmetrics"
@@ -637,6 +638,9 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	if w := allocationWarning(cfg.allocationRulesPath); w != "" {
 		warnings = append(warnings, w)
 	}
+	if cfg.sync && len(cfg.sources.alerts) == 0 {
+		warnings = append(warnings, "scheduled ingestion is enabled but no alert channels are configured; sync failures will not send any notification")
+	}
 	if cfg.noAuth {
 		warnings = append(warnings, noAuthWarning(cfg.addr))
 	}
@@ -815,7 +819,21 @@ func serve(args []string) error {
 	handlerOptions := authOptions(cfg)
 	if cfg.sync {
 		logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		// Resolve alert channel secrets from the D32 vault BEFORE constructing
+		// the scheduler, so a missing slot is a startup error and serve never
+		// starts with a half-configured alerter.
+		channels, err := buildAlertChannels(ctx, store, cfg.sources.alerts)
+		if err != nil {
+			return err
+		}
 		scheduler = newIngestScheduler(ctx, realSchedulerClock{}, store, cfg.sources.sources, runScheduledSource(store), logger)
+		if len(channels) > 0 {
+			statuses, err := store.SyncStatuses(ctx)
+			if err != nil {
+				return fmt.Errorf("seeding alert state from sync status: %w", err)
+			}
+			scheduler.alerter = alert.NewNotifier(channels, logger, statuses)
+		}
 		handlerOptions = append(handlerOptions, api.WithSyncSchedule(scheduler))
 		scheduler.Start()
 	}
@@ -1243,6 +1261,43 @@ func gcpServiceAccountJSON(ctx context.Context, store *storage.DuckDB, keyFileFl
 		return nil, fmt.Errorf("no $GOOGLE_APPLICATION_CREDENTIALS path and default vault credential unavailable: %w", err)
 	}
 	return []byte(secret.Reveal()), nil
+}
+
+// buildAlertChannels resolves each parsed alert channel's secret slot from the
+// D32 vault and constructs the concrete alert.Channel. An empty key-file string
+// makes credentials.ResolveKeyPath fall back to $COSTROID_CREDENTIALS_KEY_FILE
+// then the D32 default (serve has no --key-file flag). A missing slot is a
+// startup error naming the channel and slot, so serve never starts with a
+// half-configured alerter.
+func buildAlertChannels(ctx context.Context, store *storage.DuckDB, configs []alertChannelConfig) ([]alert.Channel, error) {
+	channels := make([]alert.Channel, 0, len(configs))
+	for _, config := range configs {
+		switch config.kind {
+		case "webhook":
+			var auth *credentials.Secret
+			if config.authSlot != "" {
+				secret, err := vaultSecret(ctx, store, "", config.authSlot)
+				if err != nil {
+					return nil, fmt.Errorf("alert channel %q auth slot %q: %w", config.name, config.authSlot, err)
+				}
+				auth = &secret
+			}
+			channel, err := alert.NewWebhookChannel(config.name, config.endpoint, auth)
+			if err != nil {
+				return nil, fmt.Errorf("alert channel %q: %w", config.name, err)
+			}
+			channels = append(channels, channel)
+		case "slack":
+			secret, err := vaultSecret(ctx, store, "", config.urlSlot)
+			if err != nil {
+				return nil, fmt.Errorf("alert channel %q url slot %q: %w", config.name, config.urlSlot, err)
+			}
+			channels = append(channels, alert.NewSlackChannel(config.name, secret))
+		default:
+			return nil, fmt.Errorf("alert channel %q has unsupported type %q", config.name, config.kind)
+		}
+	}
+	return channels, nil
 }
 
 func vaultSecret(ctx context.Context, store *storage.DuckDB, keyFileFlag, slot string) (credentials.Secret, error) {

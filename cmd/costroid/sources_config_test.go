@@ -73,6 +73,72 @@ func TestParseSourcesStrictValidation(t *testing.T) {
 	}
 }
 
+func TestParseSourcesAlerts(t *testing.T) {
+	valid := `{"sources":[],"alerts":[
+		{"name":"ops-webhook","type":"webhook","endpoint":"https://ops.example.com/hook","authSlot":"ops-token"},
+		{"name":"team-slack","type":"slack","urlSlot":"slack-url"}
+	]}`
+	cfg, err := parseSources(strings.NewReader(valid))
+	if err != nil {
+		t.Fatalf("valid alerts block: %v", err)
+	}
+	if len(cfg.alerts) != 2 {
+		t.Fatalf("alerts = %d, want 2", len(cfg.alerts))
+	}
+	if cfg.alerts[0].kind != "webhook" || cfg.alerts[0].endpoint != "https://ops.example.com/hook" || cfg.alerts[0].authSlot != "ops-token" {
+		t.Errorf("webhook channel = %+v", cfg.alerts[0])
+	}
+	if cfg.alerts[1].kind != "slack" || cfg.alerts[1].urlSlot != "slack-url" {
+		t.Errorf("slack channel = %+v", cfg.alerts[1])
+	}
+
+	tests := []struct {
+		name      string
+		body      string
+		wantError string
+	}{
+		{"unknown field", `{"sources":[],"alerts":[{"name":"x","type":"webhook","endpoint":"https://h/h","typo":true}]}`, `unknown field "typo"`},
+		{"unknown type", `{"sources":[],"alerts":[{"name":"x","type":"email"}]}`, `unknown type "email"`},
+		{"missing type", `{"sources":[],"alerts":[{"name":"x"}]}`, `field "type" is required`},
+		{"webhook missing endpoint", `{"sources":[],"alerts":[{"name":"x","type":"webhook"}]}`, `field "endpoint" is required`},
+		{"webhook http non-loopback", `{"sources":[],"alerts":[{"name":"x","type":"webhook","endpoint":"http://ops.example.com/h"}]}`, "must use https"},
+		{"webhook loopback http ok endpoint but as error path n/a", `{"sources":[],"alerts":[{"name":"x","type":"webhook","endpoint":"ftp://h/h"}]}`, "http:// or https://"},
+		{"slack missing urlSlot", `{"sources":[],"alerts":[{"name":"x","type":"slack"}]}`, `field "urlSlot" is required`},
+		{"slack rejects endpoint field", `{"sources":[],"alerts":[{"name":"x","type":"slack","urlSlot":"s","endpoint":"https://h/h"}]}`, `unknown field "endpoint"`},
+		{"webhook rejects urlSlot field", `{"sources":[],"alerts":[{"name":"x","type":"webhook","endpoint":"https://h/h","urlSlot":"s"}]}`, `unknown field "urlSlot"`},
+		{"invalid name", `{"sources":[],"alerts":[{"name":"Bad_Name","type":"slack","urlSlot":"s"}]}`, "must match [a-z0-9-]+"},
+		{"missing name", `{"sources":[],"alerts":[{"type":"slack","urlSlot":"s"}]}`, `field "name" is required`},
+		{"duplicate name", `{"sources":[],"alerts":[{"name":"dup","type":"slack","urlSlot":"a"},{"name":"dup","type":"slack","urlSlot":"b"}]}`, "duplicated"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseSources(strings.NewReader(test.body))
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("parseSources error = %v, want containing %q", err, test.wantError)
+			}
+		})
+	}
+
+	// A missing alerts block is a soft no-op: zero channels, no error.
+	noAlerts, err := parseSources(strings.NewReader(`{"sources":[{"name":"aws","connector":"aws-focus","path":"x"}]}`))
+	if err != nil || len(noAlerts.alerts) != 0 {
+		t.Fatalf("missing alerts block: err=%v alerts=%d", err, len(noAlerts.alerts))
+	}
+
+	// sources validate reports the alert-channel count structurally.
+	path := filepath.Join(t.TempDir(), "sources.json")
+	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI([]string{"sources", "validate", "--sources", path}, "")
+	if err != nil {
+		t.Fatalf("validate with alerts: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "2 alert channel(s)") {
+		t.Errorf("validate output missing alert-channel count: %s", out)
+	}
+}
+
 func TestSharedSourceValidationCLIAndConfig(t *testing.T) {
 	cliErr := ingestCmd([]string{"--connector", "aws-focus-s3", "--bucket", "billing"})
 	if cliErr == nil {
