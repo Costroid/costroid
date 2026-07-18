@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/api"
+	"github.com/Costroid/costroid/internal/demodata"
 	"github.com/Costroid/costroid/internal/devtools/fakeblob"
 	"github.com/Costroid/costroid/internal/devtools/fakes3"
 	"github.com/Costroid/costroid/internal/ingest/azurefocus"
@@ -46,7 +48,8 @@ func TestPrepareDemoIsolatedSyntheticOnly(t *testing.T) {
 	t.Setenv("COSTROID_CREDENTIALS_KEY_FILE", filepath.Join(normalDir, "credentials.key"))
 	t.Setenv("COSTROID_ADDR", "")
 
-	prepared, stop, err := prepareDemo(context.Background(), nil, time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC))
+	asOf := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	prepared, stop, err := prepareDemo(context.Background(), nil, asOf)
 	if err != nil || stop {
 		t.Fatalf("prepareDemo = (stop %v, err %v)", stop, err)
 	}
@@ -56,6 +59,9 @@ func TestPrepareDemoIsolatedSyntheticOnly(t *testing.T) {
 	}
 	if prepared.addr != "127.0.0.1:8080" {
 		t.Errorf("default demo addr = %q, want loopback", prepared.addr)
+	}
+	if !prepared.asOf.Equal(asOf) {
+		t.Errorf("prepared demo asOf = %s, want %s", prepared.asOf, asOf)
 	}
 	if filepath.Dir(prepared.allocationPath) != prepared.dataDir {
 		t.Errorf("allocation path %s is outside isolated demo dir %s", prepared.allocationPath, prepared.dataDir)
@@ -68,8 +74,10 @@ func TestPrepareDemoIsolatedSyntheticOnly(t *testing.T) {
 		t.Fatalf("normal data/credential directory was touched: %+v", entries)
 	}
 
-	handler := api.NewHandler("test", os.DirFS(t.TempDir()), prepared.store, prepared.allocationPath, api.WithReadOnly(), api.WithDemo())
-	for _, path := range []string{"/api/v1/meta", "/api/v1/costs/daily?groupBy=allocation"} {
+	handler := api.NewHandler("test", os.DirFS(t.TempDir()), prepared.store, prepared.allocationPath,
+		api.WithReadOnly(), api.WithDemo(),
+		api.WithSyncSchedule(demoSyncSchedule(demodata.SyncSchedule(prepared.asOf))))
+	for _, path := range []string{"/api/v1/meta", "/api/v1/sync/status", "/api/v1/costs/daily?groupBy=allocation"} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {
@@ -77,6 +85,15 @@ func TestPrepareDemoIsolatedSyntheticOnly(t *testing.T) {
 		}
 		if path == "/api/v1/meta" && !strings.Contains(rec.Body.String(), `"demo":true`) {
 			t.Errorf("demo meta = %s", rec.Body.String())
+		}
+		if path == "/api/v1/sync/status" {
+			var status api.SyncStatusResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+				t.Fatal(err)
+			}
+			if !status.Enabled || len(status.Sources) != 4 || status.Sources[2].LastRun == nil || status.Sources[2].LastRun.Outcome != api.Error {
+				t.Errorf("demo sync status = %+v, want enabled four-source schedule with third source failing", status)
+			}
 		}
 		if strings.Contains(path, "allocation") && (!strings.Contains(rec.Body.String(), `"key":"Production"`) || !strings.Contains(rec.Body.String(), `"key":"Unallocated"`)) {
 			t.Errorf("allocation story buckets missing: %s", rec.Body.String())

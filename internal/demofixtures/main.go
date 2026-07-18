@@ -42,6 +42,16 @@ var captureAsOf = time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
 // the fixture never drifts with the build's -ldflags version.
 const demoVersion = "0.1.0"
 
+type demoSyncSchedule []demodata.SyncScheduleSource
+
+func (s demoSyncSchedule) SyncSchedule() []api.SyncScheduleSource {
+	result := make([]api.SyncScheduleSource, len(s))
+	for i, source := range s {
+		result[i] = api.SyncScheduleSource(source)
+	}
+	return result
+}
+
 // preset is one capturable demo date range, pinned to captureAsOf.
 type preset struct {
 	id    string
@@ -95,7 +105,9 @@ func run(outDir string) error {
 	}
 
 	var static fs.FS = fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("demo")}}
-	handler := api.NewHandler(demoVersion, static, store, allocationPath, api.WithReadOnly(), api.WithDemo())
+	handler := api.NewHandler(demoVersion, static, store, allocationPath,
+		api.WithReadOnly(), api.WithDemo(),
+		api.WithSyncSchedule(demoSyncSchedule(demodata.SyncSchedule(captureAsOf))))
 
 	fixturesDir := filepath.Join(outDir, "fixtures")
 	if err := resetDir(fixturesDir); err != nil {
@@ -115,6 +127,9 @@ func run(outDir string) error {
 
 	// Range-independent fixtures.
 	if err := capture("meta", "/api/v1/meta"); err != nil {
+		return err
+	}
+	if err := capture("sync-status", "/api/v1/sync/status"); err != nil {
 		return err
 	}
 	if err := capture("business-metrics", "/api/v1/business-metrics"); err != nil {

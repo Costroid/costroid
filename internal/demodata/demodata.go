@@ -36,6 +36,84 @@ const ExactAmount = "3141.592653589793238462"
 
 const businessMetricName = "requests served"
 
+const syncInterval = "6h"
+
+type syncRunSpec struct {
+	startedOffset    time.Duration
+	finishedOffset   time.Duration
+	outcome          string
+	error            string
+	periodsProcessed int64
+	periodsSkipped   int64
+	recordsIngested  int64
+}
+
+type syncSourceSpec struct {
+	name      string
+	connector string
+	runs      []syncRunSpec
+}
+
+var syncSources = []syncSourceSpec{
+	{
+		name: "aws-prod", connector: "aws",
+		runs: []syncRunSpec{{
+			startedOffset: 3 * time.Hour, finishedOffset: 3*time.Hour + 47*time.Second,
+			outcome: "success", periodsProcessed: 1, periodsSkipped: 5, recordsIngested: 12_904,
+		}},
+	},
+	{
+		name: "azure-main", connector: "azure",
+		runs: []syncRunSpec{{
+			startedOffset: 3 * time.Hour, finishedOffset: 3*time.Hour + 72*time.Second,
+			outcome: "success", periodsProcessed: 1, periodsSkipped: 5, recordsIngested: 8_231,
+		}},
+	},
+	{
+		name: "openai-cost", connector: "openai-cost",
+		runs: []syncRunSpec{
+			{
+				startedOffset: -3 * time.Hour, finishedOffset: -3*time.Hour + 30*time.Second,
+				outcome: "success", periodsProcessed: 1, periodsSkipped: 5, recordsIngested: 1_200,
+			},
+			{
+				startedOffset: 3 * time.Hour, finishedOffset: 3*time.Hour + 5*time.Second,
+				outcome: "error", error: "openai cost API request failed: 429 Too Many Requests",
+			},
+		},
+	},
+	{
+		name: "anthropic-cost", connector: "anthropic-cost",
+		runs: []syncRunSpec{{
+			startedOffset: 3 * time.Hour, finishedOffset: 3*time.Hour + 20*time.Second,
+			outcome: "success", periodsProcessed: 1, periodsSkipped: 5, recordsIngested: 1_455,
+		}},
+	},
+}
+
+// SyncScheduleSource is one display-only synthetic scheduler source.
+type SyncScheduleSource struct {
+	Name      string
+	Connector string
+	Tenant    string
+	Interval  string
+	NextRunAt time.Time
+}
+
+// SyncSchedule returns the deterministic display-only scheduler snapshot for
+// the synthetic demo. It starts no scheduler and performs no I/O.
+func SyncSchedule(asOf time.Time) []SyncScheduleSource {
+	day := utcDay(asOf)
+	schedule := make([]SyncScheduleSource, 0, len(syncSources))
+	for _, source := range syncSources {
+		schedule = append(schedule, SyncScheduleSource{
+			Name: source.name, Connector: source.connector, Tenant: focus.DefaultTenant,
+			Interval: syncInterval, NextRunAt: day.Add(9 * time.Hour),
+		})
+	}
+	return schedule
+}
+
 // AllocationRules is the query-time allocation ruleset the demo writes into its
 // isolated store so a groupBy=allocation query returns the Production vs
 // Unallocated split instead of a 400. It is synthetic, demo-only, and matches
@@ -128,6 +206,26 @@ func Seed(ctx context.Context, store *storage.DuckDB, asOf time.Time, seed int64
 	}
 	if err := seedBusinessMetrics(ctx, store, start, end); err != nil {
 		return err
+	}
+	if err := seedSyncRuns(ctx, store, asOf); err != nil {
+		return err
+	}
+	return nil
+}
+
+func seedSyncRuns(ctx context.Context, store *storage.DuckDB, asOf time.Time) error {
+	day := utcDay(asOf)
+	for _, source := range syncSources {
+		for _, run := range source.runs {
+			if err := store.RecordSyncRun(ctx, storage.SyncRun{
+				SourceName: source.name, Connector: source.connector, TenantID: focus.DefaultTenant,
+				StartedAt: day.Add(run.startedOffset), FinishedAt: day.Add(run.finishedOffset),
+				Outcome: run.outcome, Error: run.error, PeriodsProcessed: run.periodsProcessed,
+				PeriodsSkipped: run.periodsSkipped, RecordsIngested: run.recordsIngested,
+			}); err != nil {
+				return fmt.Errorf("storing synthetic sync run for %s: %w", source.name, err)
+			}
+		}
 	}
 	return nil
 }

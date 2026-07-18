@@ -864,7 +864,18 @@ type preparedDemo struct {
 	dataDir        string
 	allocationPath string
 	addr           string
+	asOf           time.Time
 	removeDataDir  bool
+}
+
+type demoSyncSchedule []demodata.SyncScheduleSource
+
+func (s demoSyncSchedule) SyncSchedule() []api.SyncScheduleSource {
+	result := make([]api.SyncScheduleSource, len(s))
+	for i, source := range s {
+		result[i] = api.SyncScheduleSource(source)
+	}
+	return result
 }
 
 func (p *preparedDemo) close() {
@@ -889,7 +900,7 @@ func prepareDemo(ctx context.Context, args []string, asOf time.Time) (*preparedD
 		return nil, stop, err
 	}
 
-	prepared := &preparedDemo{addr: resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))}
+	prepared := &preparedDemo{addr: resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR")), asOf: asOf}
 	if *dataDirFlag == "" {
 		dir, err := os.MkdirTemp("", "costroid-demo-")
 		if err != nil {
@@ -951,7 +962,9 @@ func demo(args []string) error {
 	}
 	defer prepared.close()
 
-	handler := api.NewHandler(version, webdist.FS(), prepared.store, prepared.allocationPath, api.WithReadOnly(), api.WithDemo())
+	handler := api.NewHandler(version, webdist.FS(), prepared.store, prepared.allocationPath,
+		api.WithReadOnly(), api.WithDemo(),
+		api.WithSyncSchedule(demoSyncSchedule(demodata.SyncSchedule(prepared.asOf))))
 	handler = api.AccessLog(os.Stderr, "demo")(handler)
 	srv := &http.Server{
 		Addr:              prepared.addr,
