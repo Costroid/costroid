@@ -10,11 +10,21 @@ import (
 	"strings"
 )
 
+// MaxFreeTextBytes bounds every ingested FOCUS field value. It is a Cardinal-Rule
+// (decision D7) SIZE tripwire: the longest legitimate value is a worst-case cloud
+// resource ARN (~2 KB), so 8 KiB clears real metadata with wide margin, while a
+// bulk prompt or response dump (many KB) is rejected at ingest rather than
+// persisted. It is not a content classifier; content shorter than the bound is
+// out of its scope.
+const MaxFreeTextBytes = 8192
+
 // Rule is one FOCUS conformance check applied to a 1.4-shaped RawRecord.
 // IDs reference the FOCUS 1.4 requirements model (model-1.4.json, e.g.
 // CAU-ChargeCategory-C-003-M) so further FOCUS-Validator-style rules slot
-// in alongside these. Check returns nil when the record satisfies the
-// rule.
+// in alongside these. A Costroid-specific persistence guard instead uses a
+// COSTROID-* prefix (e.g. COSTROID-FieldLength-001), not a FOCUS CAU-* id,
+// because it is not a FOCUS conformance requirement. Check returns nil when
+// the record satisfies the rule.
 type Rule struct {
 	ID          string
 	Description string
@@ -124,6 +134,47 @@ func DefaultRules() []Rule {
 			if v := r["Tags"]; v != "" {
 				if _, err := ParseTags(v); err != nil {
 					return fmt.Errorf("column Tags: %w", err)
+				}
+			}
+			return nil
+		},
+	})
+
+	rules = append(rules, Rule{
+		ID:          "COSTROID-FieldLength-001",
+		Description: "No ingested field value may exceed the Cardinal-Rule size bound (a bulk content dump is rejected, never persisted).",
+		Check: func(r RawRecord) error {
+			keys := make([]string, 0, len(r))
+			for k := range r {
+				if k != "Tags" {
+					keys = append(keys, k)
+				}
+			}
+			slices.Sort(keys)
+			for _, col := range keys {
+				if n := len(r[col]); n > MaxFreeTextBytes {
+					return fmt.Errorf("%s is %d bytes, over the %d-byte field size bound (rejected as a possible content leak, not persisted)", col, n, MaxFreeTextBytes)
+				}
+			}
+			if v := r["Tags"]; v != "" {
+				// Only length-check parseable Tags; a malformed cell is already
+				// reported by CAU-Tags-C-001-M. Bound each key and each string value,
+				// never the whole cell. Do NOT echo the key or value into the error
+				// (a key can itself be large) - report only a byte count.
+				if tags, err := ParseTags(v); err == nil {
+					tkeys := make([]string, 0, len(tags))
+					for k := range tags {
+						tkeys = append(tkeys, k)
+					}
+					slices.Sort(tkeys)
+					for _, key := range tkeys {
+						if n := len(key); n > MaxFreeTextBytes {
+							return fmt.Errorf("column Tags: a key is %d bytes, over the %d-byte field size bound", n, MaxFreeTextBytes)
+						}
+						if s, ok := tags[key].(string); ok && len(s) > MaxFreeTextBytes {
+							return fmt.Errorf("column Tags: a value is %d bytes, over the %d-byte field size bound", len(s), MaxFreeTextBytes)
+						}
+					}
 				}
 			}
 			return nil
