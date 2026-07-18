@@ -46,6 +46,11 @@ function mockFetch(demo = false) {
     if (path === "/api/v1/business-metrics") {
       return Promise.resolve(fakeResponse(200, { metrics: [] }));
     }
+    if (path === "/api/v1/sync/status") {
+      return Promise.resolve(
+        fakeResponse(200, { enabled: false, sources: [] }),
+      );
+    }
     if (path === "/api/v1/costs/summary") {
       return Promise.resolve(fakeResponse(200, emptySummary));
     }
@@ -229,6 +234,27 @@ describe("App", () => {
         .getAttribute("aria-current"),
     ).toBe("page");
     expect(await screen.findByText(/No business metrics yet/)).toBeTruthy();
+  });
+
+  it("registers Sources last and switches to it on click", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    render(<App />);
+    await screen.findByRole("heading", { name: "Overview" });
+
+    const nav = screen.getByRole("navigation", { name: "Dashboard views" });
+    const buttons = nav.querySelectorAll("button");
+    expect(buttons[buttons.length - 1]?.textContent).toContain("Sources");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Scheduled ingestion" }),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Sources" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
   });
 
   it("threads the selected date range to the active view", async () => {

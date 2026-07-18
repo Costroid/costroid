@@ -12,6 +12,7 @@ import {
   BrandIcon,
   CostsIcon,
   OverviewIcon,
+  SourcesIcon,
   TokensIcon,
   UnitEconomicsIcon,
   UsageIcon,
@@ -20,6 +21,7 @@ import {
 import { ThemeSwitch } from "./ThemeSwitch";
 import Overview from "./Overview";
 import type { Range } from "./range";
+import Sources from "./Sources";
 import UsageMetrics from "./UsageMetrics";
 import UnitEconomics from "./UnitEconomics";
 
@@ -30,7 +32,8 @@ type MetaState =
   | { status: "error"; message: string }
   | { status: "ready"; meta: Meta };
 
-type View = "overview" | "costs" | "tokens" | "usage" | "unit-economics";
+type View =
+  "overview" | "costs" | "tokens" | "usage" | "unit-economics" | "sources";
 
 const VIEWS = [
   { id: "overview", label: "Overview", icon: OverviewIcon },
@@ -42,6 +45,7 @@ const VIEWS = [
     label: "Unit economics",
     icon: UnitEconomicsIcon,
   },
+  { id: "sources", label: "Sources", icon: SourcesIcon },
 ] satisfies { id: View; label: string; icon: typeof CostsIcon }[];
 
 function rangeIndicator(range: Range): string {
@@ -187,6 +191,7 @@ export default function App() {
         {view === "tokens" && <DailyTokens range={range} />}
         {view === "usage" && <UsageMetrics range={range} />}
         {view === "unit-economics" && <UnitEconomics range={range} />}
+        {view === "sources" && <Sources />}
       </div>
     </main>
   );

@@ -14,6 +14,7 @@ import type { components } from "./api/schema";
 import { DEMO_PRESETS, type DemoPresetId } from "./demo/ranges";
 
 type Meta = components["schemas"]["Meta"];
+type SyncStatusResponse = components["schemas"]["SyncStatusResponse"];
 type DailyCosts = components["schemas"]["DailyCosts"];
 type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomalies = components["schemas"]["Anomalies"];
@@ -51,6 +52,12 @@ function presetOf(start: string, end: string): DemoPresetId {
 
 export function getMeta(_signal?: AbortSignal): Promise<Meta> {
   return Promise.resolve(fixture<Meta>("meta"));
+}
+
+export function getSyncStatus(
+  _signal?: AbortSignal,
+): Promise<SyncStatusResponse> {
+  return Promise.resolve(fixture<SyncStatusResponse>("sync-status"));
 }
 
 export function getCostsDaily(

@@ -13,6 +13,7 @@ import type { components } from "./api/schema";
 import { rangeQuery } from "./range";
 
 type Meta = components["schemas"]["Meta"];
+type SyncStatusResponse = components["schemas"]["SyncStatusResponse"];
 type DailyCosts = components["schemas"]["DailyCosts"];
 type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomalies = components["schemas"]["Anomalies"];
@@ -34,6 +35,16 @@ export async function getMeta(signal?: AbortSignal): Promise<Meta> {
     throw new Error(`GET /api/v1/meta returned ${res.status}`);
   }
   return (await res.json()) as Meta;
+}
+
+export async function getSyncStatus(
+  signal?: AbortSignal,
+): Promise<SyncStatusResponse> {
+  const res = await fetch("/api/v1/sync/status", { signal });
+  if (!res.ok) {
+    throw new Error(`GET /api/v1/sync/status returned ${res.status}`);
+  }
+  return (await res.json()) as SyncStatusResponse;
 }
 
 export async function getCostsDaily(

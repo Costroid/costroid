@@ -79,6 +79,9 @@
   --accent-hover: #000000;
   --on-accent: #ffffff;
   --focus-ring: #202020;
+  --badge-success-bg: #0f7a45;
+  --badge-partial-bg: #8a5a00;
+  --badge-error-bg: #c02c1a;
 
   /* Validated categorical palette with selected dark-mode steps. */
   --viz-series-1: #2a78d6;
