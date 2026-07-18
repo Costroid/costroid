@@ -125,6 +125,7 @@ source's interval and next due time, its latest run, and its last successful
 time. Removed sources remain visible from retained history. When serve runs
 without `--sync`, the endpoint returns history only. The endpoint is under
 `/api/` and uses the same authentication gate as cost data.
+The dashboard's "Sources" view renders this same status.
 
 The serve process must be able to read the D32 credential key file and makes
 outbound connector requests. AWS and Azure ambient identity chains must exist
