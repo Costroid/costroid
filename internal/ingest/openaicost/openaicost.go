@@ -158,6 +158,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
 	"github.com/Costroid/costroid/internal/ingest/aiconn"
+	"github.com/Costroid/costroid/internal/ingest/aiwire"
 	"github.com/Costroid/costroid/internal/storage"
 )
 
@@ -191,8 +192,6 @@ const usageLimit = "31"
 const serviceName = "OpenAI API"
 
 const (
-	maxBodyBytes  = 1 << 20
-	max429Retries = 5
 	// pageLimit is the requested time-bucket page size (API max 180). A
 	// whole month fits in one page; the fake paginates independently to
 	// exercise the cursor path.
@@ -304,7 +303,7 @@ func fetchCost(ctx context.Context, client *http.Client, base, apiKey, month str
 			return nil, nil, err
 		}
 		var resp costsPage
-		if err := json.Unmarshal(body, &resp); err != nil {
+		if err := body.Decode(&resp); err != nil {
 			return nil, nil, fmt.Errorf("openai-cost %s: decoding costs response: %w", month, err)
 		}
 		for _, raw := range resp.Data {
@@ -368,7 +367,7 @@ func fetchUsageEndpoint(ctx context.Context, client *http.Client, base, apiKey, 
 			return nil, err
 		}
 		var resp usagePage
-		if err := json.Unmarshal(body, &resp); err != nil {
+		if err := body.Decode(&resp); err != nil {
 			return nil, fmt.Errorf("openai-cost %s: decoding usage response: %w", month, err)
 		}
 		for _, raw := range resp.Data {
@@ -472,75 +471,38 @@ func openaiUsageMetrics(buckets []bucket) []storage.Metric {
 	return metrics
 }
 
-// doGet issues one GET with the Bearer auth header and bounded 429 retries.
-// what names the endpoint (e.g. "costs", "usage endpoint completions") for
-// accurate error messages. It NEVER logs or echoes the api key, request headers,
-// or the request URL (which would carry the query string).
-func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month, what string) ([]byte, error) {
-	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
-		if err != nil {
-			return nil, fmt.Errorf("openai-cost %s: building request: %w", month, err)
-		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("openai-cost %s: requesting %s failed: %s", month, what, scrubTransportErr(err))
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-		_ = resp.Body.Close()
-
-		switch {
-		case resp.StatusCode == http.StatusOK:
-			if readErr != nil {
-				return nil, fmt.Errorf("openai-cost %s: reading the %s body: %w", month, what, readErr)
-			}
-			return body, nil
-		case resp.StatusCode == http.StatusTooManyRequests && attempt < max429Retries:
-			if err := waitRetryAfter(ctx, resp.Header.Get("Retry-After")); err != nil {
-				return nil, err
-			}
-			continue
-		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-			return nil, fmt.Errorf("openai-cost %s: the OpenAI Admin API key was rejected (HTTP %d) — check the "+
+// doGet issues one GET with the Bearer auth header through the shared aiwire
+// chokepoint and translates aiwire's typed *StatusError back into this
+// connector's bespoke, body-free error prose. what names the endpoint (e.g.
+// "costs", "usage endpoint completions") for accurate error messages. The raw
+// response body never enters an error: it stays trapped inside the returned
+// aiwire.Body until a caller pulls out modeled fields via Body.Decode. The api
+// key, request headers, and request URL (with its query string) are never
+// logged or echoed — aiwire owns the bounded 429 retry and the query scrub.
+func doGet(ctx context.Context, client *http.Client, requestURL, apiKey, month, what string) (aiwire.Body, error) {
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+apiKey)
+	body, err := aiwire.Get(ctx, client, requestURL, header)
+	if err == nil {
+		return body, nil
+	}
+	var se *aiwire.StatusError
+	if errors.As(err, &se) {
+		switch se.Status {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return aiwire.Body{}, fmt.Errorf("openai-cost %s: the OpenAI Admin API key was rejected (HTTP %d) — check the "+
 				"credential slot holds a valid admin key whose Restricted scope can read the usage resource "+
 				"(costs and usage share one 'Usage' read permission): %s",
-				month, resp.StatusCode, truncateBody(body))
+				month, se.Status, se.VendorCode)
 		default:
-			return nil, fmt.Errorf("openai-cost %s: %s request failed (HTTP %d) — if the window predates the "+
-				"available history, ingest a more recent --since/--period: %s", month, what, resp.StatusCode, truncateBody(body))
+			return aiwire.Body{}, fmt.Errorf("openai-cost %s: %s request failed (HTTP %d) — if the window predates the "+
+				"available history, ingest a more recent --since/--period: %s", month, what, se.Status, se.VendorCode)
 		}
 	}
-}
-
-// waitRetryAfter honors a Retry-After header — either delta-seconds or an
-// RFC 1123 HTTP-date (both forms the spec permits) — bounded to a sane
-// maximum, or a short default when the header is absent or unparseable. A
-// date already in the past yields a zero wait (retry immediately).
-func waitRetryAfter(ctx context.Context, header string) error {
-	wait := retryAfterDelay(header)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(wait):
-		return nil
-	}
-}
-
-// retryAfterDelay parses a Retry-After header into a bounded wait duration.
-func retryAfterDelay(header string) time.Duration {
-	const maxWait = 60 * time.Second
-	if header == "" {
-		return 2 * time.Second
-	}
-	if secs, err := time.ParseDuration(header + "s"); err == nil && secs > 0 {
-		return min(secs, maxWait)
-	}
-	if t, err := http.ParseTime(header); err == nil {
-		return min(max(time.Until(t), 0), maxWait)
-	}
-	return 2 * time.Second
+	// A transport failure, request-build error, or 200-body-read error is already
+	// body-free and query-scrubbed by aiwire — wrap it with this connector's own
+	// transport prose (verbatim).
+	return aiwire.Body{}, fmt.Errorf("openai-cost %s: requesting %s failed: %s", month, what, err)
 }
 
 // costsPage is the response envelope (object="page"); Data elements are kept
@@ -968,23 +930,4 @@ func (c *Connector) synthesize(b bucket, res result) (focus.RawRecord, error) {
 		}
 	}
 	return rec, nil
-}
-
-func truncateBody(body []byte) string {
-	s := strings.TrimSpace(string(body))
-	if len(s) > 300 {
-		s = s[:300] + "…"
-	}
-	return s
-}
-
-func scrubTransportErr(err error) string {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
-		if u, perr := url.Parse(urlErr.URL); perr == nil {
-			u.RawQuery = ""
-			return urlErr.Op + " " + u.String() + ": " + urlErr.Err.Error()
-		}
-	}
-	return err.Error()
 }
