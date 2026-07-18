@@ -119,11 +119,20 @@ The guarantee above is narrow and honest. These are the things it does not do.
    code requires extending the checked roots, and a reviewer has to keep them in
    step. The check catches a changed field on an existing struct automatically;
    it cannot see a struct nobody added to the roots.
-3. **Free-text metadata from other connectors is not length-bounded yet.** Cloud
-   and community connectors can carry free-text columns such as resource tags or
-   labels. Those are not yet bounded in length at the persistence boundary, so a
-   deployer who places sensitive text in a cloud resource tag could persist it.
-   This is a planned hardening, not something enforced today.
+3. **A persistence-boundary size bound is enforced, but it is not content
+   classification.** Every ingested field value, and every usage-metric string,
+   is length bounded at the persistence boundary: a value over 8 KiB is rejected
+   rather than persisted, so a bulk prompt or response dump cannot be stored in
+   any column, including a required, connector-controlled column such as a service
+   name or a resource tag value. The usage-metric unit column is further
+   constrained to an enforced closed allowlist. Three limits keep this claim
+   honest. First, it is a size tripwire, not a content classifier, so short
+   sensitive text under the bound still persists; keeping labels and resource tags
+   free of sensitive values stays the deployer's responsibility. Second, tags are
+   bounded per key and per string value, not in aggregate, so content spread
+   across many small tag values is not caught by size alone. Third, this closes
+   the oversized-dump path only; it does not claim to have solved the content
+   problem.
 4. **At-rest encryption is the deployer's responsibility.** Costroid stores data
    on the infrastructure you run it on; encrypting that storage is up to you.
 5. **This is structural absence, not runtime classification.** The guarantee is
