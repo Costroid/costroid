@@ -23,7 +23,13 @@ export default defineConfig({
       sidebar: [
         { label: 'Introduction', link: '/' },
         { label: 'Getting started', slug: 'getting-started' },
-        { label: 'Security & deployment', slug: 'security' },
+        {
+          label: 'Security & deployment',
+          items: [
+            { label: 'Overview', slug: 'security' },
+            { label: 'Threat model', slug: 'security/threat-model' },
+          ],
+        },
         {
           label: 'Connectors',
           items: [
