@@ -114,6 +114,14 @@ describe("Sources", () => {
     expect(screen.getAllByText("openai-cost")).toHaveLength(2);
     expect(screen.getAllByText("anthropic-cost")).toHaveLength(2);
     expect(screen.getByText("On")).toBeTruthy();
+    const sourcesCard = screen
+      .getByText("Sources")
+      .closest(".stat-card") as HTMLElement;
+    expect(within(sourcesCard).getByText("4")).toBeTruthy();
+    const failingCard = screen
+      .getByText("Failing")
+      .closest(".stat-card") as HTMLElement;
+    expect(within(failingCard).getByText("1")).toBeTruthy();
     expect(screen.getByText("12904")).toBeTruthy();
     expect(screen.getAllByText("error")).toHaveLength(1);
     expect(screen.getByText("error").classList.contains("outcome-error")).toBe(
