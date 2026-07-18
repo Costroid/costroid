@@ -24,6 +24,7 @@ import (
 	"github.com/Costroid/costroid/internal/devtools/fakeopenai"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest"
+	"github.com/Costroid/costroid/internal/ingest/contentsafety"
 	"github.com/Costroid/costroid/internal/ingest/openaicost"
 	"github.com/Costroid/costroid/internal/storage"
 )
@@ -752,26 +753,30 @@ func TestUsagePaginationFollowsCursor(t *testing.T) {
 
 // TestUsageCardinalRulePathsOnly (mandated test #10) proves the connector issues
 // requests ONLY to /costs and the ten usage paths — never /projects, /users, or
-// any ID→name resolution call (Cardinal Rule D7).
+// any ID→name resolution call (Cardinal Rule D7). The forbidden-path assertion
+// is routed through contentsafety.ForbiddenPaths, the shared Layer-2 allowlist
+// comparator; the distinct-usage-path coverage assertion stays connector-specific.
 func TestUsageCardinalRulePathsOnly(t *testing.T) {
-	allowed := map[string]bool{"/v1/organization/costs": true}
+	allowed := []string{"/v1/organization/costs"}
 	for _, name := range []string{
 		"completions", "embeddings", "moderations", "images",
 		"audio_speeches", "audio_transcriptions", "code_interpreter_sessions",
 		"vector_stores", "web_search_calls", "file_search_calls",
 	} {
-		allowed["/v1/organization/usage/"+name] = true
+		allowed = append(allowed, "/v1/organization/usage/"+name)
 	}
 	h, baseURL := startFake(t, fixture)
 	discoverMonth(t, h, baseURL, "2026-05")
+	var observed []string
 	sawUsage := map[string]bool{}
 	for _, r := range h.Requests() {
-		if !allowed[r.Path] {
-			t.Errorf("connector hit a forbidden path %q (only /costs and the 10 usage paths are permitted)", r.Path)
-		}
+		observed = append(observed, r.Path)
 		if strings.HasPrefix(r.Path, "/v1/organization/usage/") {
 			sawUsage[r.Path] = true
 		}
+	}
+	for _, p := range contentsafety.ForbiddenPaths(observed, allowed) {
+		t.Errorf("connector hit a forbidden path %q (only /costs and the 10 usage paths are permitted)", p)
 	}
 	if len(sawUsage) != 10 {
 		t.Errorf("connector fetched %d distinct usage paths, want all 10: %v", len(sawUsage), sawUsage)
