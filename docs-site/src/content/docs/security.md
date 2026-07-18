@@ -160,6 +160,16 @@ Scheduled connectors also make outbound requests from the serve process; apply
 the same egress restrictions and least-privilege read-only permissions used for
 manual ingest.
 
+When an `alerts` block is configured, `serve --sync` also POSTs sync-failure
+notifications to the operator-configured webhook or Slack endpoints. There is no
+default or built-in destination: alerting is off unless you configure it, and it
+sends only to the endpoints you name. Alert payloads carry operational metadata
+only (source, connector, tenant, outcome, run counts, timestamps, and the same
+error text shown by `GET /api/v1/sync/status`), never a cost amount, a
+credential, or AI prompt or response content. Channel secrets (a webhook bearer
+token, a Slack incoming-webhook URL) live in the D32 vault and are referenced by
+slot name, never inline in `sources.json`.
+
 Each scheduled AI run calls the vendor Admin APIs again, so a shorter interval
 multiplies Admin-key API traffic. Anthropic's Admin key cannot be scoped below
 full organization admin. Prefer generous intervals, protect the D32 key file,

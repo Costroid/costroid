@@ -131,7 +131,78 @@ The serve process must be able to read the D32 credential key file and makes
 outbound connector requests. AWS and Azure ambient identity chains must exist
 in serve's environment and short-lived SSO sessions may expire. Frequent AI
 schedules multiply Admin-key API traffic; Anthropic's Admin key is unscopeable,
-so prefer generous intervals. See [Security & deployment](/security/#scheduled-ingestion-process-posture).
+so prefer generous intervals. With an `alerts` block configured, `serve --sync`
+also POSTs sync-failure notifications to your own webhook or Slack endpoints
+(see Alerting on sync failures below). See [Security & deployment](/security/#scheduled-ingestion-process-posture).
+
+## Alerting on sync failures
+
+Scheduled ingestion can notify you when a source fails. Alerting is opt-in and
+off by default: it is active only under `serve --sync`, and only when the
+sources file declares an `alerts` block. There is no built-in or default
+endpoint, so an unconfigured Costroid notifies nowhere.
+
+Add a top-level `alerts` array to `sources.json`. Each entry is an independent
+delivery target of type `webhook` or `slack`:
+
+```json
+{
+  "sources": [ ],
+  "alerts": [
+    {
+      "name": "ops-webhook",
+      "type": "webhook",
+      "endpoint": "https://ops.example.com/costroid/hooks",
+      "authSlot": "alert-webhook-token"
+    },
+    {
+      "name": "team-slack",
+      "type": "slack",
+      "urlSlot": "alert-slack-url"
+    }
+  ]
+}
+```
+
+| Type | Required fields | Optional fields |
+| --- | --- | --- |
+| `webhook` | `name`, `endpoint` | `authSlot` |
+| `slack` | `name`, `urlSlot` | none |
+
+Every channel `name` is unique and matches `[a-z0-9-]+`. A `webhook` posts the
+alert as a JSON body to `endpoint`, which must use `https` unless the host is
+loopback; when `authSlot` is set, its vault secret is sent as an
+`Authorization: Bearer` header. A `slack` posts `{"text": ...}` to a Slack
+incoming-webhook URL. Secrets are never inline: `authSlot` and `urlSlot` name
+D32 credential slots, and the Slack URL is itself treated as a secret. Store the
+tokens before starting serve:
+
+```sh
+costroid credentials set alert-webhook-token   # reads the token from stdin
+costroid credentials set alert-slack-url        # reads the whole Slack URL from stdin
+```
+
+`costroid sources validate` checks the `alerts` block structurally (types,
+required fields, endpoint shape, non-empty slot names) without opening the store
+or contacting anything. At `serve --sync` startup each slot is resolved from the
+vault; a missing slot is a startup error naming the channel and slot.
+
+Delivery is edge-triggered, per source, so a persistent outage does not page you
+every run:
+
+- The first failing run of a healthy source sends a failing alert.
+- A source that stays failing re-alerts at most once every 24 hours.
+- The first success after a failing streak sends one recovered alert.
+- Continued success sends nothing.
+
+State is seeded from history at startup, so restarting serve during an outage
+does not immediately re-page, and a later recovery still sends exactly one
+recovered alert. Alerts carry operational metadata only: the source, connector,
+tenant, outcome, run counts, timestamps, and the same error text shown by
+`GET /api/v1/sync/status`. They never carry a cost amount, a credential, or any
+AI prompt or response content. A channel that is slow or down is retried once
+and then skipped for that run; it never blocks the other channels or the
+scheduler.
 
 ## Backups
 
