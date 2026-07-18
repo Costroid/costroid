@@ -654,6 +654,15 @@ var insertUsageMetricSQL = fmt.Sprintf(`INSERT INTO usage_metrics (
 	service_name, service_tier, metric_name, unit, quantity
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS DECIMAL(38,%[1]d)))`, MaxDecimalScale)
 
+// allowedUnits is the closed usage-metric Unit vocabulary (storage.Metric.Unit
+// doc). ReplaceUsageBatch rejects any other unit so a connector cannot smuggle a
+// free-text value through the unit column; a genuinely new unit is a deliberate,
+// reviewer-visible addition here.
+var allowedUnits = map[string]bool{
+	"Tokens": true, "Requests": true, "Unknown": true, "Images": true,
+	"Characters": true, "Seconds": true, "Sessions": true, "Bytes": true, "Calls": true,
+}
+
 // ReplaceUsageBatch implements Store.
 func (s *DuckDB) ReplaceUsageBatch(ctx context.Context, batch UsageBatch, metrics []Metric) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -677,6 +686,16 @@ func (s *DuckDB) ReplaceUsageBatch(ctx context.Context, batch UsageBatch, metric
 	defer func() { _ = stmt.Close() }()
 	for i := range metrics {
 		m := &metrics[i]
+		if !allowedUnits[m.Unit] {
+			return fmt.Errorf("usage metric %d: unit %q is not one of the allowed units", i+1, m.Unit)
+		}
+		for _, f := range []struct{ name, val string }{
+			{"metric_name", m.MetricName}, {"service_name", m.ServiceName}, {"service_tier", m.ServiceTier},
+		} {
+			if n := len(f.val); n > focus.MaxFreeTextBytes {
+				return fmt.Errorf("usage metric %d: %s is %d bytes, over the %d-byte field size bound (rejected as a possible content leak)", i+1, f.name, n, focus.MaxFreeTextBytes)
+			}
+		}
 		if _, err := stmt.ExecContext(ctx,
 			batch.TenantID, batch.Connector, batch.SourceIdentity, m.ChargePeriodStart.UTC(),
 			m.ServiceName, m.ServiceTier, m.MetricName, m.Unit, m.Quantity.String()); err != nil {
