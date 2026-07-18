@@ -95,6 +95,13 @@ func TestWebhookChannelPostsWhitelistedPayloadWithAuth(t *testing.T) {
 	if decoded.Kind != KindFailing || decoded.Source != "aws-prod" || decoded.Outcome != "error" || decoded.Error != "429 Too Many Requests" {
 		t.Errorf("decoded = %+v", decoded)
 	}
+	// The operational triage counts are carried verbatim (failingRun sets three
+	// distinct values, so a field swap or a dropped count in buildMessage fails
+	// here).
+	if decoded.PeriodsProcessed != 2 || decoded.PeriodsSkipped != 1 || decoded.RecordsIngested != 5 {
+		t.Errorf("count fields not carried verbatim: processed=%d skipped=%d ingested=%d",
+			decoded.PeriodsProcessed, decoded.PeriodsSkipped, decoded.RecordsIngested)
+	}
 	// The bearer token is a header, never the body.
 	if strings.Contains(string(got.body), "super-secret-token") || strings.Contains(string(got.body), "Bearer") {
 		t.Errorf("payload leaked a credential: %s", got.body)
