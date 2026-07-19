@@ -33,12 +33,16 @@ const (
 	responseBodyLimit = 1 << 20
 )
 
-// Channel is one delivery target. Send posts msg and returns an error that
-// NEVER includes the channel's secret (an endpoint token, a Slack incoming
-// webhook URL, or a bearer token). Name identifies the channel in isolation
+// Channel is one delivery target. Send posts a sync-failure Message and
+// SendAnomaly posts an anomaly AnomalyMessage; both return an error that NEVER
+// includes the channel's secret (an endpoint token, a Slack incoming webhook
+// URL, or a bearer token). The two payloads share the same transport
+// (httpPoster) and the same endpoint/auth path, so a channel delivers both
+// through one configured target. Name identifies the channel in isolation
 // logging.
 type Channel interface {
 	Send(ctx context.Context, msg Message) error
+	SendAnomaly(ctx context.Context, msg AnomalyMessage) error
 	Name() string
 }
 
@@ -166,6 +170,21 @@ func (c *webhookChannel) Send(ctx context.Context, msg Message) error {
 	return c.poster.post(ctx, c.endpoint.String(), "application/json", body, authHeader)
 }
 
+// SendAnomaly POSTs the AnomalyMessage as JSON to the same endpoint, over the
+// same auth path and shared transport as Send. The whitelist struct is
+// marshalled verbatim.
+func (c *webhookChannel) SendAnomaly(ctx context.Context, msg AnomalyMessage) error {
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshalling anomaly alert payload: %w", err)
+	}
+	authHeader := ""
+	if c.auth != nil {
+		authHeader = "Bearer " + c.auth.Reveal()
+	}
+	return c.poster.post(ctx, c.endpoint.String(), "application/json", body, authHeader)
+}
+
 // slackChannel POSTs {"text": ...} to a Slack incoming-webhook URL. The URL is
 // itself the secret and is Reveal()'d once per Send, only at the POST.
 type slackChannel struct {
@@ -194,6 +213,19 @@ func (c *slackChannel) Send(ctx context.Context, msg Message) error {
 	return c.poster.post(ctx, c.url.Reveal(), "application/json", body, "")
 }
 
+// SendAnomaly POSTs {"text": anomalySlackText(msg)} to the same Slack
+// incoming-webhook URL as Send, over the shared transport.
+func (c *slackChannel) SendAnomaly(ctx context.Context, msg AnomalyMessage) error {
+	payload := struct {
+		Text string `json:"text"`
+	}{Text: anomalySlackText(msg)}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshalling Slack anomaly alert: %w", err)
+	}
+	return c.poster.post(ctx, c.url.Reveal(), "application/json", body, "")
+}
+
 // slackText is a concise human summary carrying the source and outcome. It adds
 // no cost amount, credential, or AI content of its own, and contains no em dash
 // (rule 9). The connector error text, when present, is appended verbatim (the
@@ -215,6 +247,20 @@ func slackText(msg Message) string {
 		text += "; " + msg.Error
 	}
 	return text
+}
+
+// anomalySlackText is a concise human summary of an anomaly alert. Unlike
+// slackText it carries the aggregate cost figures (observed and median) the
+// AnomalyMessage whitelist permits - they are cost metadata, never usage
+// content - and it contains no em dash (rule 9). The subject is the FOCUS
+// service key, or "total" for the whole-tenant daily-spend series.
+func anomalySlackText(msg AnomalyMessage) string {
+	subject := msg.Key
+	if msg.Scope == "total" || msg.Key == "" {
+		subject = "total"
+	}
+	return fmt.Sprintf("Costroid anomaly: %s spend %s on %s; observed %s vs median %s (%s)",
+		subject, msg.Direction, msg.Date, msg.Observed, msg.Median, msg.Currency)
 }
 
 // validateWebhookEndpoint is the alert-specific endpoint guard. Unlike the

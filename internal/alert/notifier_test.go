@@ -21,8 +21,9 @@ type recordingChannel struct {
 	name string
 	err  error
 
-	mu   sync.Mutex
-	sent []Message
+	mu            sync.Mutex
+	sent          []Message
+	sentAnomalies []AnomalyMessage
 }
 
 func (c *recordingChannel) Name() string { return c.name }
@@ -32,6 +33,22 @@ func (c *recordingChannel) Send(_ context.Context, msg Message) error {
 	defer c.mu.Unlock()
 	c.sent = append(c.sent, msg)
 	return c.err
+}
+
+func (c *recordingChannel) SendAnomaly(_ context.Context, msg AnomalyMessage) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sentAnomalies = append(c.sentAnomalies, msg)
+	return c.err
+}
+
+// anomalies returns a copy of the anomaly messages recorded so far.
+func (c *recordingChannel) anomalies() []AnomalyMessage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]AnomalyMessage, len(c.sentAnomalies))
+	copy(out, c.sentAnomalies)
+	return out
 }
 
 func (c *recordingChannel) kinds() []TransitionKind {
