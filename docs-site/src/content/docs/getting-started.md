@@ -14,6 +14,20 @@ Download the archive for your platform and the accompanying verification files f
 chmod +x costroid
 ```
 
+## Install with the script
+
+On Linux or macOS, download and verify a release in one command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Costroid/costroid/main/scripts/install.sh | sh
+```
+
+The script detects your operating system and architecture, downloads the matching release archive, verifies its SHA-256 against the published `checksums.txt` (and the cosign signature when [cosign](https://github.com/sigstore/cosign) is installed) before extracting, and installs `costroid` to `~/.local/bin`. Two environment variables adjust it: set `COSTROID_VERSION` to pin a release such as `v0.1.0` (the default is the latest), and `COSTROID_INSTALL_DIR` to change the install directory (the default is `~/.local/bin`).
+
+The script is fetched over HTTPS from this repository, so its trust is transport trust; the script itself is not signature-verified, only the release archive it downloads is checksum-verified and cosign-verified. If you would rather inspect it first, read [`scripts/install.sh`](https://github.com/Costroid/costroid/blob/main/scripts/install.sh), or use the manual download and verification steps below instead.
+
+Windows users should download the archive from [GitHub Releases](https://github.com/Costroid/costroid/releases) and verify it manually with the [Verify the release](#verify-the-release) steps below.
+
 ## Verify the release
 
 Release archives, the CycloneDX source SBOM, checksums, signature bundle, and build-provenance attestations are published together. From the directory containing those files, run:

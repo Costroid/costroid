@@ -58,7 +58,7 @@ For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./
 
 ### Fastest path — run the demo (about 5 minutes)
 
-1. **Download the binary** for your platform from [GitHub Releases](https://github.com/Costroid/costroid/releases), make it executable (`chmod +x costroid`), and put it on your `PATH` (or run it as `./costroid`). *Optional but recommended:* verify the release before running it — the checksums are keyless-signed and each artifact carries a GitHub build-provenance attestation; the steps are in [`SECURITY.md`](./SECURITY.md).
+1. **Download the binary** for your platform from [GitHub Releases](https://github.com/Costroid/costroid/releases), make it executable (`chmod +x costroid`), and put it on your `PATH` (or run it as `./costroid`). *Optional but recommended:* verify the release before running it — the checksums are keyless-signed and each artifact carries a GitHub build-provenance attestation; the steps are in [`SECURITY.md`](./SECURITY.md). Or install with the script (Linux and macOS), which downloads and verifies the release for you: `curl -fsSL https://raw.githubusercontent.com/Costroid/costroid/main/scripts/install.sh | sh`; see [Getting started](./docs-site/src/content/docs/getting-started.md#install-with-the-script) for options.
 
 2. **Run the demo** — an instant, synthetic, read-only dashboard with no data setup:
 
