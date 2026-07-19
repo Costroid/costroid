@@ -294,7 +294,7 @@ func TestIngestIdempotencyAndRestatement(t *testing.T) {
 // carrying the first per-service totals and every June day the second.
 func assertDays(t *testing.T, ctx context.Context, store storage.Store, wantDays int, may, june map[string]string) {
 	t.Helper()
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestIngestCorrectionRetroactivity(t *testing.T) {
 	}
 
 	ingestAll() // 2026-05 + 2026-06
-	baseline, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	baseline, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -564,7 +564,7 @@ func TestIngestCorrectionRetroactivity(t *testing.T) {
 	copyTree(t, corrections, tree) // adds period 2026-07
 	ingestAll()                    // 05/06 short-circuit unchanged; 07 fresh
 
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}

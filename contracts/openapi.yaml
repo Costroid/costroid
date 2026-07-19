@@ -73,10 +73,16 @@ paths:
         returns that series and currencies contains its one code; a mixed range
         defaults to the alphabetically-first currency's series and currencies
         lists every available code. When currency is present, only that
-        currency's series is returned. A valid code absent from currencies
-        returns 200 with total "0", days [], and currency echoing the requested
-        code. An empty range returns currencies [], currency "", total "0", and
-        days []. An invalid currency shape returns 400.
+        currency's series is returned. When provider is present, only that
+        FOCUS ServiceProviderName's rows are aggregated and currencies lists
+        only currencies with rows for that provider. Providers always lists
+        every provider with cost rows in the requested range, unscoped by the
+        provider and currency filters, sorted ascending, and is [] for an empty
+        range. A valid currency or provider absent from the corresponding list
+        returns 200 with total "0", days [], and the requested value echoed.
+        An empty range returns currencies [], providers [], currency "",
+        provider "", total "0", and days []. An invalid currency or provider
+        shape returns 400.
       parameters:
         - name: start
           in: query
@@ -112,6 +118,16 @@ paths:
           schema:
             type: string
             pattern: ^[A-Z]{3}$
+        - name: provider
+          in: query
+          description: >-
+            Optional FOCUS ServiceProviderName whose rows to include. Omit to
+            include every provider. Free text at most 8192 bytes; must be
+            non-empty when present.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 8192
       responses:
         "200":
           description: Daily costs grouped by the requested dimension for the requested period.
@@ -121,9 +137,9 @@ paths:
                 $ref: "#/components/schemas/DailyCosts"
         "400":
           description: >-
-            Invalid start date, end date, groupBy value, or currency shape; or
-            groupBy=allocation was requested but no allocation rules are
-            configured or the rules file was not found.
+            Invalid start date, end date, groupBy value, currency shape, or
+            provider shape; or groupBy=allocation was requested but no
+            allocation rules are configured or the rules file was not found.
           content:
             text/plain:
               schema:
@@ -240,12 +256,13 @@ paths:
         range-INDEPENDENT: the full stored history up to the requested end is
         scored, then only flags whose day falls inside [start, end] are returned,
         so a given day yields the identical flag regardless of the queried start.
-        Passing currency scopes scoring to that billing currency. When currency
-        is omitted, scoring defaults to the alphabetically-first billing
-        currency in the requested window [start, end], falling back to full
-        history when the window is empty. Every statistic is an exact decimal
-        string and the detector's fixed parameters are echoed, so each flag is
-        hand-recomputable.
+        Passing currency scopes scoring to that billing currency. Passing
+        provider scopes scoring to that FOCUS ServiceProviderName's history.
+        When currency is omitted, scoring defaults to the alphabetically-first
+        billing currency for the selected provider in the requested window
+        [start, end], falling back to full history when the window is empty.
+        Every statistic is an exact decimal string and the detector's fixed
+        parameters are echoed, so each flag is hand-recomputable.
       parameters:
         - name: start
           in: query
@@ -283,6 +300,16 @@ paths:
           schema:
             type: string
             pattern: ^[A-Z]{3}$
+        - name: provider
+          in: query
+          description: >-
+            Optional FOCUS ServiceProviderName whose history to score. Omit to
+            score every provider. Free text at most 8192 bytes; must be
+            non-empty when present.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 8192
       responses:
         "200":
           description: Detected anomalies for the requested period; [] when none.
@@ -292,9 +319,9 @@ paths:
                 $ref: "#/components/schemas/Anomalies"
         "400":
           description: >-
-            Invalid start date, end date, groupBy value, or currency shape; or
-            groupBy=allocation was requested but no allocation rules are
-            configured or the rules file was not found.
+            Invalid start date, end date, groupBy value, currency shape, or
+            provider shape; or groupBy=allocation was requested but no
+            allocation rules are configured or the rules file was not found.
           content:
             text/plain:
               schema:
@@ -600,6 +627,8 @@ components:
         - currency
         - currencies
         - days
+        - provider
+        - providers
         - total
       properties:
         currency:
@@ -621,6 +650,24 @@ components:
           example:
             - EUR
             - USD
+        provider:
+          type: string
+          description: >-
+            FOCUS ServiceProviderName of this response's rows: the provider
+            query parameter when provided, otherwise "".
+          example: Amazon Web Services
+        providers:
+          type: array
+          description: >-
+            All FOCUS ServiceProviderName values with cost rows in the requested
+            range, not scoped by the provider or currency filters, sorted
+            ascending. This is the source for a provider selector and is []
+            (never null) when the range is empty.
+          items:
+            type: string
+          example:
+            - Amazon Web Services
+            - Microsoft
         days:
           type: array
           description: One entry per calendar day with data, days ascending.

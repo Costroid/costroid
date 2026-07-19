@@ -22,8 +22,8 @@ import (
 // dedup identities, and count recorded rows (a zero count is the first-enable
 // signal).
 type anomalyStore interface {
-	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
-	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency string, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
+	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time, provider string) ([]string, error)
+	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency, provider string, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
 	InsertNewAnomalyAlerts(ctx context.Context, alerts []storage.AnomalyAlert, at time.Time) ([]storage.AnomalyAlert, error)
 	AnomalyAlertCount(ctx context.Context, tenant string) (int, error)
 }
@@ -76,13 +76,13 @@ type scopedFlagCurrency struct {
 // independently.
 func (a *AnomalyNotifier) scan(ctx context.Context) ([]scopedFlagCurrency, error) {
 	now := a.now()
-	currencies, err := a.store.BillingCurrencies(ctx, a.tenant, time.Time{}, now)
+	currencies, err := a.store.BillingCurrencies(ctx, a.tenant, time.Time{}, now, "")
 	if err != nil {
 		return nil, fmt.Errorf("listing billing currencies: %w", err)
 	}
 	var out []scopedFlagCurrency
 	for _, currency := range currencies {
-		daily, err := a.store.DailyCostsByService(ctx, a.tenant, time.Time{}, now, currency, storage.GroupByService)
+		daily, err := a.store.DailyCostsByService(ctx, a.tenant, time.Time{}, now, currency, "", storage.GroupByService)
 		if err != nil {
 			return nil, fmt.Errorf("loading daily costs for currency %q: %w", currency, err)
 		}

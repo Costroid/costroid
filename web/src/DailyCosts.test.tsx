@@ -55,6 +55,8 @@ function dailyBody(
   return {
     currency,
     currencies,
+    provider: "",
+    providers: ["Amazon Web Services"],
     total,
     days: [
       {
@@ -107,6 +109,8 @@ describe("DailyCosts", () => {
     const { container } = renderChart({
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "256.9833670123456789",
       days: [
         {
@@ -133,6 +137,8 @@ describe("DailyCosts", () => {
     renderChart({
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "10.00",
       days: [
         {
@@ -158,6 +164,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "9.3618",
       days: [
         {
@@ -214,6 +222,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "3.00",
       days: [
         {
@@ -408,6 +418,8 @@ describe("DailyCosts", () => {
     const droppedUsd: DailyCostsResponse = {
       currency: "USD",
       currencies: ["EUR"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "0",
       days: [],
     };
@@ -463,6 +475,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1.00",
       days: [
         {
@@ -490,6 +504,8 @@ describe("DailyCosts", () => {
     const serviceCosts: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1.00",
       days: [
         {
@@ -502,6 +518,8 @@ describe("DailyCosts", () => {
     const providerCosts: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1.333333333333333334",
       days: [
         {
@@ -561,6 +579,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1.00",
       days: [
         {
@@ -596,6 +616,8 @@ describe("DailyCosts", () => {
     const response = (total: string): DailyCostsResponse => ({
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total,
       days: [
         {
@@ -631,6 +653,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1",
       days: [
         {
@@ -685,6 +709,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1",
       days: [
         {
@@ -722,6 +748,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "3.50",
       days: [
         {
@@ -769,6 +797,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "0.30",
       days: [
         {
@@ -794,6 +824,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "100.000001",
       days: [
         {
@@ -826,6 +858,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "2.4193",
       days: [
         {
@@ -866,6 +900,8 @@ describe("DailyCosts", () => {
     const day = (services: { key: string; cost: string }[]) => ({
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "9",
       days: [{ date: "2026-05-01", total: "9", services }],
     });
@@ -907,6 +943,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "30",
       days: Array.from({ length: 30 }, (_, i) => ({
         date: `2026-05-${String(i + 1).padStart(2, "0")}`,
@@ -928,6 +966,8 @@ describe("DailyCosts", () => {
     const empty: DailyCostsResponse = {
       currency: "",
       currencies: [],
+      provider: "",
+      providers: [],
       total: "0",
       days: [],
     };
@@ -964,6 +1004,8 @@ describe("DailyCosts", () => {
     const serviceCosts: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1.00",
       days: [
         {
@@ -976,6 +1018,8 @@ describe("DailyCosts", () => {
     const allocationCosts: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "32.7663",
       days: [
         {
@@ -1054,6 +1098,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "EUR",
       currencies: ["EUR", "USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "3.123456789012345679",
       days: [
         {
@@ -1113,6 +1159,8 @@ describe("DailyCosts", () => {
     const eurCosts: DailyCostsResponse = {
       currency: "EUR",
       currencies: ["EUR", "USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "3.123456789012345679",
       days: [
         {
@@ -1125,6 +1173,8 @@ describe("DailyCosts", () => {
     const usdCosts: DailyCostsResponse = {
       currency: "USD",
       currencies: ["EUR", "USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "30.987654321098765434",
       days: [
         {
@@ -1251,6 +1301,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "400",
       days: [
         {
@@ -1339,6 +1391,8 @@ describe("DailyCosts", () => {
     const costs: DailyCostsResponse = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "100",
       days: [
         {

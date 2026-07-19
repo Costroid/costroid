@@ -12,7 +12,7 @@ describe("api.demo export surface", () => {
 });
 
 describe("api.demo getCostsDaily", () => {
-  it("returns the same fixture with and without a currency parameter", async () => {
+  it("returns equal fixture data with ignored filters and hides provider controls", async () => {
     const params = { start: "", end: "", groupBy: "service" as const };
 
     const withoutCurrency = await demoApi.getCostsDaily(params);
@@ -20,8 +20,36 @@ describe("api.demo getCostsDaily", () => {
       ...params,
       currency: "EUR",
     });
+    const withProvider = await demoApi.getCostsDaily({
+      ...params,
+      provider: "Amazon Web Services",
+    });
 
-    expect(withCurrency).toBe(withoutCurrency);
+    expect(withCurrency).toEqual(withoutCurrency);
+    expect(withProvider).toEqual(withoutCurrency);
+    expect(withoutCurrency.provider).toBe("");
+    expect(withoutCurrency.providers).toEqual([]);
+    expect(withoutCurrency.days.length).toBeGreaterThan(0);
+    expect(withoutCurrency.currencies.length).toBeGreaterThan(0);
+  });
+});
+
+describe("api.demo getAnomalies", () => {
+  it("returns the same fixture with and without currency or provider filters", async () => {
+    const params = { start: "", end: "", groupBy: "service" as const };
+
+    const unfiltered = await demoApi.getAnomalies(params);
+    const withCurrency = await demoApi.getAnomalies({
+      ...params,
+      currency: "EUR",
+    });
+    const withProvider = await demoApi.getAnomalies({
+      ...params,
+      provider: "Amazon Web Services",
+    });
+
+    expect(withCurrency).toBe(unfiltered);
+    expect(withProvider).toBe(unfiltered);
   });
 });
 

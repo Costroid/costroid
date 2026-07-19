@@ -67,7 +67,7 @@ export interface paths {
         };
         /**
          * Daily cost by service, provider, or allocation
-         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation applies the query-time cost-allocation rules (virtual tagging) and keys each cost by its allocation label, with cost matching no rule under "Unallocated". Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost. When currency is absent, a single-currency range returns that series and currencies contains its one code; a mixed range defaults to the alphabetically-first currency's series and currencies lists every available code. When currency is present, only that currency's series is returned. A valid code absent from currencies returns 200 with total "0", days [], and currency echoing the requested code. An empty range returns currencies [], currency "", total "0", and days []. An invalid currency shape returns 400.
+         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation applies the query-time cost-allocation rules (virtual tagging) and keys each cost by its allocation label, with cost matching no rule under "Unallocated". Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost. When currency is absent, a single-currency range returns that series and currencies contains its one code; a mixed range defaults to the alphabetically-first currency's series and currencies lists every available code. When currency is present, only that currency's series is returned. When provider is present, only that FOCUS ServiceProviderName's rows are aggregated and currencies lists only currencies with rows for that provider. Providers always lists every provider with cost rows in the requested range, unscoped by the provider and currency filters, sorted ascending, and is [] for an empty range. A valid currency or provider absent from the corresponding list returns 200 with total "0", days [], and the requested value echoed. An empty range returns currencies [], providers [], currency "", provider "", total "0", and days []. An invalid currency or provider shape returns 400.
          */
         get: operations["getDailyCosts"];
         put?: never;
@@ -109,7 +109,7 @@ export interface paths {
         };
         /**
          * Statistical cost anomalies (spikes and dips)
-         * @description Flags spikes and dips in the daily cost series with a robust median/MAD detector computed at QUERY time — stateless, so retroactive FOCUS corrections are automatically re-scored. Uses the SAME groupBy dimensions as /api/v1/costs/daily and scores both the per-day TOTAL series (the sum over the day's keys) and each grouping key's own series. Flags are range-INDEPENDENT: the full stored history up to the requested end is scored, then only flags whose day falls inside [start, end] are returned, so a given day yields the identical flag regardless of the queried start. Passing currency scopes scoring to that billing currency. When currency is omitted, scoring defaults to the alphabetically-first billing currency in the requested window [start, end], falling back to full history when the window is empty. Every statistic is an exact decimal string and the detector's fixed parameters are echoed, so each flag is hand-recomputable.
+         * @description Flags spikes and dips in the daily cost series with a robust median/MAD detector computed at QUERY time — stateless, so retroactive FOCUS corrections are automatically re-scored. Uses the SAME groupBy dimensions as /api/v1/costs/daily and scores both the per-day TOTAL series (the sum over the day's keys) and each grouping key's own series. Flags are range-INDEPENDENT: the full stored history up to the requested end is scored, then only flags whose day falls inside [start, end] are returned, so a given day yields the identical flag regardless of the queried start. Passing currency scopes scoring to that billing currency. Passing provider scopes scoring to that FOCUS ServiceProviderName's history. When currency is omitted, scoring defaults to the alphabetically-first billing currency for the selected provider in the requested window [start, end], falling back to full history when the window is empty. Every statistic is an exact decimal string and the detector's fixed parameters are echoed, so each flag is hand-recomputable.
          */
         get: operations["getAnomalies"];
         put?: never;
@@ -280,6 +280,19 @@ export interface components {
              *     ]
              */
             currencies: string[];
+            /**
+             * @description FOCUS ServiceProviderName of this response's rows: the provider query parameter when provided, otherwise "".
+             * @example Amazon Web Services
+             */
+            provider: string;
+            /**
+             * @description All FOCUS ServiceProviderName values with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a provider selector and is [] (never null) when the range is empty.
+             * @example [
+             *       "Amazon Web Services",
+             *       "Microsoft"
+             *     ]
+             */
+            providers: string[];
             /** @description One entry per calendar day with data, days ascending. */
             days: components["schemas"]["DailyCost"][];
             /**
@@ -679,6 +692,8 @@ export interface operations {
                 groupBy?: "service" | "provider" | "allocation";
                 /** @description Optional three-letter uppercase billing currency whose series to return. Omit to use the alphabetically-first currency in the range. */
                 currency?: string;
+                /** @description Optional FOCUS ServiceProviderName whose rows to include. Omit to include every provider. Free text at most 8192 bytes; must be non-empty when present. */
+                provider?: string;
             };
             header?: never;
             path?: never;
@@ -695,7 +710,7 @@ export interface operations {
                     "application/json": components["schemas"]["DailyCosts"];
                 };
             };
-            /** @description Invalid start date, end date, groupBy value, or currency shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
+            /** @description Invalid start date, end date, groupBy value, currency shape, or provider shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -773,6 +788,8 @@ export interface operations {
                 groupBy?: "service" | "provider" | "allocation";
                 /** @description Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window is empty. */
                 currency?: string;
+                /** @description Optional FOCUS ServiceProviderName whose history to score. Omit to score every provider. Free text at most 8192 bytes; must be non-empty when present. */
+                provider?: string;
             };
             header?: never;
             path?: never;
@@ -789,7 +806,7 @@ export interface operations {
                     "application/json": components["schemas"]["Anomalies"];
                 };
             };
-            /** @description Invalid start date, end date, groupBy value, or currency shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
+            /** @description Invalid start date, end date, groupBy value, currency shape, or provider shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
             400: {
                 headers: {
                     [name: string]: unknown;

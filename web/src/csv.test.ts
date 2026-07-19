@@ -12,6 +12,8 @@ describe("dailyCostsToCsv", () => {
     const costs: DailyCosts = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "10.00",
       days: [
         {
@@ -42,6 +44,8 @@ describe("dailyCostsToCsv", () => {
     const costs: DailyCosts = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1234.567890123456789012",
       days: [
         {
@@ -65,6 +69,8 @@ describe("dailyCostsToCsv", () => {
     const costs: DailyCosts = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "6",
       days: [
         {
@@ -90,6 +96,8 @@ describe("dailyCostsToCsv", () => {
     const costs: DailyCosts = {
       currency: "USD",
       currencies: ["USD"],
+      provider: "",
+      providers: ["Amazon Web Services"],
       total: "1",
       days: [
         {
@@ -108,6 +116,8 @@ describe("dailyCostsCsvFilename", () => {
   const costs: DailyCosts = {
     currency: "USD",
     currencies: ["USD"],
+    provider: "",
+    providers: ["Amazon Web Services"],
     total: "2",
     days: [
       {

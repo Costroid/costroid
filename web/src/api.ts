@@ -48,7 +48,11 @@ export async function getSyncStatus(
 }
 
 export async function getCostsDaily(
-  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
+  params: RangeParams & {
+    groupBy: CostGroupBy;
+    currency?: string;
+    provider?: string;
+  },
   signal?: AbortSignal,
 ): Promise<DailyCosts> {
   const q = rangeQuery(params.start, params.end);
@@ -59,6 +63,9 @@ export async function getCostsDaily(
       : "");
   if (params.currency) {
     url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
+  }
+  if (params.provider) {
+    url += `${url.includes("?") ? "&" : "?"}provider=${encodeURIComponent(params.provider)}`;
   }
   const res = await fetch(url, { signal });
   if (!res.ok) {
@@ -95,7 +102,11 @@ export async function getCostsSummary(
 }
 
 export async function getAnomalies(
-  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
+  params: RangeParams & {
+    groupBy: CostGroupBy;
+    currency?: string;
+    provider?: string;
+  },
   signal?: AbortSignal,
 ): Promise<Anomalies> {
   const q = rangeQuery(params.start, params.end);
@@ -106,6 +117,9 @@ export async function getAnomalies(
       : "");
   if (params.currency) {
     url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
+  }
+  if (params.provider) {
+    url += `${url.includes("?") ? "&" : "?"}provider=${encodeURIComponent(params.provider)}`;
   }
   const res = await fetch(url, { signal });
   if (!res.ok) {

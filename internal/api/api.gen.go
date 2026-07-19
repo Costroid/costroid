@@ -243,6 +243,12 @@ type DailyCosts struct {
 	// Days One entry per calendar day with data, days ascending.
 	Days []DailyCost `json:"days"`
 
+	// Provider FOCUS ServiceProviderName of this response's rows: the provider query parameter when provided, otherwise "".
+	Provider string `json:"provider"`
+
+	// Providers All FOCUS ServiceProviderName values with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a provider selector and is [] (never null) when the range is empty.
+	Providers []string `json:"providers"`
+
 	// Total Total cost of the whole period, as a decimal string.
 	Total string `json:"total"`
 }
@@ -403,6 +409,9 @@ type GetAnomaliesParams struct {
 
 	// Currency Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window is empty.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
+
+	// Provider Optional FOCUS ServiceProviderName whose history to score. Omit to score every provider. Free text at most 8192 bytes; must be non-empty when present.
+	Provider *string `form:"provider,omitempty" json:"provider,omitempty"`
 }
 
 // GetAnomaliesParamsGroupBy defines parameters for GetAnomalies.
@@ -421,6 +430,9 @@ type GetDailyCostsParams struct {
 
 	// Currency Optional three-letter uppercase billing currency whose series to return. Omit to use the alphabetically-first currency in the range.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
+
+	// Provider Optional FOCUS ServiceProviderName whose rows to include. Omit to include every provider. Free text at most 8192 bytes; must be non-empty when present.
+	Provider *string `form:"provider,omitempty" json:"provider,omitempty"`
 }
 
 // GetDailyCostsParamsGroupBy defines parameters for GetDailyCosts.
@@ -581,6 +593,19 @@ func (siw *ServerInterfaceWrapper) GetAnomalies(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// ------------- Optional query parameter "provider" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "provider", r.URL.Query(), &params.Provider, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "provider"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAnomalies(w, r, params)
 	}))
@@ -663,6 +688,19 @@ func (siw *ServerInterfaceWrapper) GetDailyCosts(w http.ResponseWriter, r *http.
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "currency"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "currency", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "provider" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "provider", r.URL.Query(), &params.Provider, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "provider"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
 		}
 		return
 	}

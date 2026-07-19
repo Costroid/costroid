@@ -60,14 +60,14 @@ func newFakeAnomalyStore(currencies []string, daily map[string]storage.DailyCost
 	}
 }
 
-func (f *fakeAnomalyStore) BillingCurrencies(_ context.Context, _ string, _, _ time.Time) ([]string, error) {
+func (f *fakeAnomalyStore) BillingCurrencies(_ context.Context, _ string, _, _ time.Time, _ string) ([]string, error) {
 	if f.failCurrencies {
 		return nil, errors.New("currencies unavailable")
 	}
 	return append([]string(nil), f.currencies...), nil
 }
 
-func (f *fakeAnomalyStore) DailyCostsByService(_ context.Context, _ string, _, _ time.Time, currency string, _ ...storage.CostGroupBy) (storage.DailyCosts, error) {
+func (f *fakeAnomalyStore) DailyCostsByService(_ context.Context, _ string, _, _ time.Time, currency, _ string, _ ...storage.CostGroupBy) (storage.DailyCosts, error) {
 	if f.failDaily {
 		return storage.DailyCosts{}, errors.New("daily costs unavailable")
 	}

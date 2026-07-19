@@ -61,13 +61,18 @@ export function getSyncStatus(
 }
 
 export function getCostsDaily(
-  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
+  params: RangeParams & {
+    groupBy: CostGroupBy;
+    currency?: string;
+    provider?: string;
+  },
   _signal?: AbortSignal,
 ): Promise<DailyCosts> {
   const preset = presetOf(params.start, params.end);
-  return Promise.resolve(
-    fixture<DailyCosts>(`costs.${preset}.${params.groupBy}`),
-  );
+  const costs = fixture<DailyCosts>(`costs.${preset}.${params.groupBy}`);
+  // Deliberate demo-mode omission: fixtures cannot be filtered by provider, so
+  // empty the selector source to keep every rendered control functional.
+  return Promise.resolve({ ...costs, provider: "", providers: [] });
 }
 
 export function getCostsSummary(
@@ -81,7 +86,11 @@ export function getCostsSummary(
 }
 
 export function getAnomalies(
-  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
+  params: RangeParams & {
+    groupBy: CostGroupBy;
+    currency?: string;
+    provider?: string;
+  },
   _signal?: AbortSignal,
 ): Promise<Anomalies> {
   const preset = presetOf(params.start, params.end);

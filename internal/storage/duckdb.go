@@ -306,8 +306,8 @@ func insertRecordArgs(batch Batch, r *focus.CostRecord) []any {
 	}
 }
 
-// BillingCurrencies implements Store.
-func (s *DuckDB) BillingCurrencies(ctx context.Context, tenant string, start, end time.Time) ([]string, error) {
+// Providers implements Store.
+func (s *DuckDB) Providers(ctx context.Context, tenant string, start, end time.Time) ([]string, error) {
 	where := "WHERE x_tenant_id = ?"
 	args := []any{tenant}
 	if !start.IsZero() {
@@ -317,6 +317,43 @@ func (s *DuckDB) BillingCurrencies(ctx context.Context, tenant string, start, en
 	if !end.IsZero() {
 		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
 		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+
+	result := []string{}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT service_provider_name FROM cost_records `+where+` ORDER BY service_provider_name`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying providers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var provider string
+		if err := rows.Scan(&provider); err != nil {
+			return nil, fmt.Errorf("scanning provider: %w", err)
+		}
+		result = append(result, provider)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying providers: %w", err)
+	}
+	return result, nil
+}
+
+// BillingCurrencies implements Store.
+func (s *DuckDB) BillingCurrencies(ctx context.Context, tenant string, start, end time.Time, provider string) ([]string, error) {
+	where := "WHERE x_tenant_id = ?"
+	args := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		args = append(args, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+	if provider != "" {
+		where += " AND service_provider_name = ?"
+		args = append(args, provider)
 	}
 
 	result := []string{}
@@ -340,7 +377,7 @@ func (s *DuckDB) BillingCurrencies(ctx context.Context, tenant string, start, en
 }
 
 // DailyCostsByService implements Store.
-func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency string, groupBy ...CostGroupBy) (DailyCosts, error) {
+func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency, provider string, groupBy ...CostGroupBy) (DailyCosts, error) {
 	where := "WHERE x_tenant_id = ?"
 	args := []any{tenant}
 	if !start.IsZero() {
@@ -350,6 +387,10 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 	if !end.IsZero() {
 		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
 		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+	if provider != "" {
+		where += " AND service_provider_name = ?"
+		args = append(args, provider)
 	}
 
 	result := DailyCosts{Currency: currency}
@@ -559,7 +600,7 @@ func compileAllocationCase(dim allocation.Dimension) (string, []any, error) {
 // cost landing in allocation.UnallocatedLabel. Every rule-supplied string is a
 // BOUND parameter (never interpolated); its aggregation, tenant scoping, single
 // -currency guard, decimal exactness, and ordering mirror DailyCostsByService.
-func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency string) (DailyCosts, error) {
+func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency, provider string) (DailyCosts, error) {
 	where := "WHERE x_tenant_id = ?"
 	whereArgs := []any{tenant}
 	if !start.IsZero() {
@@ -569,6 +610,10 @@ func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, star
 	if !end.IsZero() {
 		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
 		whereArgs = append(whereArgs, end.UTC().Format(time.DateOnly))
+	}
+	if provider != "" {
+		where += " AND service_provider_name = ?"
+		whereArgs = append(whereArgs, provider)
 	}
 
 	result := DailyCosts{Currency: currency}

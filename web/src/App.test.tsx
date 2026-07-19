@@ -19,7 +19,14 @@ function fakeResponse(status: number, body: unknown): Response {
   } as Response;
 }
 
-const emptyCosts = { currency: "", currencies: [], total: "0", days: [] };
+const emptyCosts = {
+  currency: "",
+  currencies: [],
+  provider: "",
+  providers: [],
+  total: "0",
+  days: [],
+};
 
 const emptySummary = { currency: "", currencies: [], total: "0", keys: [] };
 

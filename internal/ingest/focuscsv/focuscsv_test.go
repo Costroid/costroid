@@ -368,7 +368,7 @@ func TestIngestConformantFixtures(t *testing.T) {
 	}
 
 	// All three services surface in the daily view.
-	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	daily, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestFocus10And11BilledTotals(t *testing.T) {
 		store := openStore(t)
 		periods, _ := discover(t, tc.path, tc.version, tc.label)
 		ingestPeriods(t, store, periods, focus.DefaultTenant)
-		daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "")
+		daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
 		if err != nil {
 			t.Fatalf("%s: DailyCostsByService: %v", tc.path, err)
 		}
@@ -759,7 +759,7 @@ func TestScientificNotationParsesExactly(t *testing.T) {
 	periods, _ := discover(t, path, focus.V1_4, "sci")
 	ingestPeriods(t, store, periods, focus.DefaultTenant)
 
-	daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}
@@ -1085,7 +1085,7 @@ func TestLenientAcceptsZoneBearingQuirks(t *testing.T) {
 	}
 
 	// Exact stored money total (COUPLED to the fixture: 1 + 2 + 3 = 6).
-	daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	daily, err := store.DailyCostsByService(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService: %v", err)
 	}

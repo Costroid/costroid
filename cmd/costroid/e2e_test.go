@@ -284,7 +284,7 @@ func gcpServiceTotal(t *testing.T, tenant, service string) decimal.Decimal {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{}, "")
+	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func gcpAllocationTotal(t *testing.T, tenant string, dim allocation.Dimension, l
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	daily, err := store.DailyCostsByAllocation(context.Background(), tenant, time.Time{}, time.Time{}, dim, "")
+	daily, err := store.DailyCostsByAllocation(context.Background(), tenant, time.Time{}, time.Time{}, dim, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2449,7 +2449,7 @@ func tenantDaysNonEmpty(t *testing.T, tenant string) bool {
 		t.Fatalf("opening store: %v", err)
 	}
 	defer func() { _ = store.Close() }()
-	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{}, "")
+	daily, err := store.DailyCostsByService(context.Background(), tenant, time.Time{}, time.Time{}, "", "")
 	if err != nil {
 		t.Fatalf("DailyCostsByService(%s): %v", tenant, err)
 	}

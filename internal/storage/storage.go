@@ -60,11 +60,19 @@ type Store interface {
 	// no-op and report Unchanged.
 	ReplaceIngestBatch(ctx context.Context, batch Batch, records []focus.CostRecord) (ReplaceResult, error)
 
+	// Providers returns the distinct FOCUS ServiceProviderName values for one
+	// tenant whose cost rows fall inside the inclusive UTC calendar-day bounds,
+	// sorted ascending. A zero bound is unbounded on that side. An empty range
+	// returns a non-nil empty slice.
+	Providers(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
+
 	// BillingCurrencies returns the distinct FOCUS BillingCurrency values for
 	// one tenant whose cost rows fall inside the inclusive UTC calendar-day
-	// bounds, sorted ascending. A zero bound is unbounded on that side. An
-	// empty range returns a non-nil empty slice.
-	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
+	// bounds, sorted ascending. A zero bound is unbounded on that side. A
+	// non-empty provider filters to that exact FOCUS ServiceProviderName; an
+	// empty provider preserves unfiltered behavior. An empty range returns a
+	// non-nil empty slice.
+	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time, provider string) ([]string, error)
 
 	// DailyCostsByService returns, for one tenant, the total BilledCost
 	// per UTC calendar day (of ChargePeriodStart) per grouping key:
@@ -73,7 +81,9 @@ type Store interface {
 	// zero start or end means unbounded on that side; a non-zero bound is
 	// an inclusive calendar-day bound. A non-empty currency filters to that
 	// exact BillingCurrency and is echoed even when no rows match. An empty
-	// currency preserves the single-currency guard over the whole range.
+	// currency preserves the single-currency guard over the whole range. A
+	// non-empty provider filters to that exact FOCUS ServiceProviderName; an
+	// empty provider preserves unfiltered behavior.
 	//
 	// Time-series aggregation is by ChargePeriod, not BillingPeriod
 	// (decision D26c): FOCUS correction rows (ChargeClass="Correction")
@@ -82,7 +92,7 @@ type Store interface {
 	// correction retroactively adjusts the corrected days. Cost history
 	// legitimately changes when providers issue corrections — this is
 	// intended, documented, and tested behavior.
-	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency string, groupBy ...CostGroupBy) (DailyCosts, error)
+	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency, provider string, groupBy ...CostGroupBy) (DailyCosts, error)
 
 	// DailyCostsByAllocation is the query-time cost-allocation sibling of
 	// DailyCostsByService (decision D18b, "virtual tagging"): it returns the
@@ -92,14 +102,14 @@ type Store interface {
 	// MUST be a validated allocation.Dimension; the store binds every
 	// rule-supplied value, tag key, and label as a parameter (the injection
 	// boundary) and, while it may assume validity, stays memory-safe on garbage.
-	// Currency filtering and empty-currency guard semantics match
-	// DailyCostsByService.
+	// Currency and provider filtering and empty-currency guard semantics match
+	// DailyCostsByService. An empty provider preserves unfiltered behavior.
 	// Aggregation, tenant scoping (decision D15), the single-currency guard
 	// (decision D23c), decimal exactness (decisions D23/D25), and the
 	// day-ascending-then-key-ascending ordering are identical to
 	// DailyCostsByService; the currency guard is duplicated inline rather than
 	// shared, with its SQL and error message kept byte-identical.
-	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency string) (DailyCosts, error)
+	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency, provider string) (DailyCosts, error)
 
 	// DailyTokensByService returns, for one tenant, the total
 	// ConsumedQuantity per UTC calendar day (of ChargePeriodStart) per

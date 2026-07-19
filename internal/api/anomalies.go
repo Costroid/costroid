@@ -45,6 +45,14 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
 		return
 	}
+	if params.Provider != nil && (*params.Provider == "" || len(*params.Provider) > focus.MaxFreeTextBytes) {
+		http.Error(w, "provider must be a non-empty string of at most 8192 bytes", http.StatusBadRequest)
+		return
+	}
+	provider := ""
+	if params.Provider != nil {
+		provider = *params.Provider
+	}
 
 	var (
 		daily   storage.DailyCosts
@@ -57,13 +65,13 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 	// to full history for the default so currency is never "" — an empty currency
 	// on the full-history detection fetch would trip the D23(c) mixed-currency
 	// guard and 500.
-	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end)
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end, provider)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if len(currencies) == 0 {
-		currencies, err = s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, time.Time{}, end)
+		currencies, err = s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, time.Time{}, end, provider)
 		if err != nil {
 			http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -84,12 +92,12 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		if !ok {
 			return // loadAllocationDimension already wrote the error response
 		}
-		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, time.Time{}, end, dim, currency)
+		daily, err = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, time.Time{}, end, dim, currency, provider)
 	case params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupByProvider:
 		groupBy = "provider"
-		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, storage.GroupByProvider)
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupByProvider)
 	default:
-		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, storage.GroupByService)
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupByService)
 	}
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)

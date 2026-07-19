@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/storage"
 )
 
@@ -222,7 +223,7 @@ func TestGetAnomaliesDefaultsToWindowFirstCurrency(t *testing.T) {
 		})
 	}
 	store := &fakeStore{
-		currenciesFn: func(_ string, start, _ time.Time) ([]string, error) {
+		currenciesFn: func(_ string, start, _ time.Time, _ string) ([]string, error) {
 			if start.IsZero() {
 				return []string{"AUD", "USD"}, nil
 			}
@@ -267,7 +268,7 @@ func TestGetAnomaliesDefaultsToWindowFirstCurrency(t *testing.T) {
 func TestGetAnomaliesEmptyWindowFallsBackToFullHistoryCurrency(t *testing.T) {
 	const guard = "stored records mix billing currencies (EUR, USD); currency conversion is not supported yet"
 	store := &fakeStore{
-		currenciesFn: func(_ string, start, _ time.Time) ([]string, error) {
+		currenciesFn: func(_ string, start, _ time.Time, _ string) ([]string, error) {
 			if start.IsZero() {
 				return []string{"EUR", "USD"}, nil
 			}
@@ -306,7 +307,7 @@ func TestGetAnomaliesEmptyWindowFallsBackToFullHistoryCurrency(t *testing.T) {
 
 func TestGetAnomaliesEmptyWindowFallbackErrorIs500(t *testing.T) {
 	store := &fakeStore{
-		currenciesFn: func(_ string, start, _ time.Time) ([]string, error) {
+		currenciesFn: func(_ string, start, _ time.Time, _ string) ([]string, error) {
 			if start.IsZero() {
 				return nil, errors.New("fallback scan failed")
 			}
@@ -338,6 +339,78 @@ func TestGetAnomaliesInvalidCurrencyIs400(t *testing.T) {
 	if store.currenciesQueryCount != 0 || store.queryCount != 0 || store.allocQueryCount != 0 {
 		t.Fatalf("invalid currency reached store: currencies=%d service=%d allocation=%d",
 			store.currenciesQueryCount, store.queryCount, store.allocQueryCount)
+	}
+}
+
+func TestGetAnomaliesProviderValidationAndStoreThreading(t *testing.T) {
+	const selectedProvider = "Amazon Web Services"
+	rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[]}]}`)
+
+	for _, tt := range []struct {
+		name           string
+		groupBy        string
+		rulesPath      string
+		wantGroupBy    storage.CostGroupBy
+		wantService    int
+		wantAllocation int
+	}{
+		{name: "service", wantGroupBy: storage.GroupByService, wantService: 1},
+		{name: "provider grouping", groupBy: "&groupBy=provider", wantGroupBy: storage.GroupByProvider, wantService: 1},
+		{name: "allocation", groupBy: "&groupBy=allocation", rulesPath: rules, wantAllocation: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{
+				currenciesFn: func(_ string, start, _ time.Time, provider string) ([]string, error) {
+					if provider != selectedProvider {
+						return nil, errors.New("provider missing from currency lookup")
+					}
+					if !start.IsZero() {
+						return []string{}, nil
+					}
+					return []string{"USD"}, nil
+				},
+				dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+					return storage.DailyCosts{Currency: currency, Days: []storage.DayCosts{}}, nil
+				},
+			}
+			rec := httptest.NewRecorder()
+			NewHandler("test", testStatic(), store, tt.rulesPath).ServeHTTP(rec,
+				httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?start=2026-06-01&provider=Amazon%20Web%20Services"+tt.groupBy, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+			}
+			if store.currenciesQueryCount != 2 || len(store.currenciesProviderLog) != 2 ||
+				store.currenciesProviderLog[0] != selectedProvider || store.currenciesProviderLog[1] != selectedProvider {
+				t.Fatalf("currency provider log = %v, want provider on window and fallback lookups", store.currenciesProviderLog)
+			}
+			if len(store.queryLog) != 1 || store.queryLog[0].currency != "USD" || store.queryLog[0].provider != selectedProvider {
+				t.Fatalf("daily query log = %+v, want USD and provider %q", store.queryLog, selectedProvider)
+			}
+			if store.queryCount != tt.wantService || store.allocQueryCount != tt.wantAllocation {
+				t.Fatalf("service/allocation queries = %d/%d, want %d/%d", store.queryCount, store.allocQueryCount, tt.wantService, tt.wantAllocation)
+			}
+			if tt.wantService == 1 && store.gotGroupBy != tt.wantGroupBy {
+				t.Fatalf("groupBy = %v, want %v", store.gotGroupBy, tt.wantGroupBy)
+			}
+		})
+	}
+
+	for _, query := range []string{"?provider=", "?provider=" + strings.Repeat("p", focus.MaxFreeTextBytes+1)} {
+		t.Run("invalid provider", func(t *testing.T) {
+			store := &fakeStore{}
+			rec := httptest.NewRecorder()
+			NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+				httptest.NewRequest(http.MethodGet, "/api/v1/anomalies"+query, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body)
+			}
+			if body := strings.TrimSpace(rec.Body.String()); body != "provider must be a non-empty string of at most 8192 bytes" {
+				t.Fatalf("body = %q", body)
+			}
+			if store.currenciesQueryCount != 0 || len(store.queryLog) != 0 {
+				t.Fatalf("invalid provider reached store: currencies=%d daily=%d", store.currenciesQueryCount, len(store.queryLog))
+			}
+		})
 	}
 }
 

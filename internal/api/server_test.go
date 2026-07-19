@@ -22,6 +22,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Costroid/costroid/internal/allocation"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/storage"
 )
 
@@ -33,20 +34,28 @@ const groupByUnset = storage.CostGroupBy(-1)
 
 // fakeStore records the query it received and returns canned costs.
 type fakeStore struct {
-	daily                storage.DailyCosts
-	dailyErr             error
-	currencies           []string
-	currenciesErr        error
-	gotTenant            string
-	gotStart             time.Time
-	gotEnd               time.Time
-	gotCurrency          string
-	gotGroupBy           storage.CostGroupBy
-	queryCount           int
-	gotCurrenciesTenant  string
-	gotCurrenciesStart   time.Time
-	gotCurrenciesEnd     time.Time
-	currenciesQueryCount int
+	daily                 storage.DailyCosts
+	dailyErr              error
+	providers             []string
+	providersErr          error
+	currencies            []string
+	currenciesErr         error
+	gotTenant             string
+	gotStart              time.Time
+	gotEnd                time.Time
+	gotCurrency           string
+	gotGroupBy            storage.CostGroupBy
+	queryCount            int
+	gotCurrenciesTenant   string
+	gotCurrenciesStart    time.Time
+	gotCurrenciesEnd      time.Time
+	gotCurrenciesProvider string
+	currenciesProviderLog []string
+	currenciesQueryCount  int
+	gotProvidersTenant    string
+	gotProvidersStart     time.Time
+	gotProvidersEnd       time.Time
+	providersQueryCount   int
 
 	// dailyFn, when set, overrides daily/dailyErr for both service and
 	// allocation queries so multi-window handlers can return different data
@@ -58,12 +67,13 @@ type fakeStore struct {
 	// currenciesFn, when set, overrides currencies/currenciesErr and receives the
 	// [start,end] window so a test can return DIFFERENT billing currencies for the
 	// window vs full history (the slice-34 window-vs-full-history divergence).
-	currenciesFn func(tenant string, start, end time.Time) ([]string, error)
+	currenciesFn func(tenant string, start, end time.Time, provider string) ([]string, error)
 
 	// queryLog records every DailyCostsByService/Allocation call.
 	queryLog []struct {
 		start, end time.Time
 		currency   string
+		provider   string
 	}
 
 	// token-usage query recording, kept separate from the cost fields.
@@ -106,13 +116,26 @@ func (f *fakeStore) SyncStatuses(context.Context) ([]storage.SyncStatus, error) 
 	return append([]storage.SyncStatus{}, f.syncStatuses...), f.syncStatusesErr
 }
 
-func (f *fakeStore) BillingCurrencies(_ context.Context, tenant string, start, end time.Time) ([]string, error) {
+func (f *fakeStore) Providers(_ context.Context, tenant string, start, end time.Time) ([]string, error) {
+	f.gotProvidersTenant = tenant
+	f.gotProvidersStart = start
+	f.gotProvidersEnd = end
+	f.providersQueryCount++
+	if f.providersErr != nil {
+		return nil, f.providersErr
+	}
+	return append([]string{}, f.providers...), nil
+}
+
+func (f *fakeStore) BillingCurrencies(_ context.Context, tenant string, start, end time.Time, provider string) ([]string, error) {
 	f.gotCurrenciesTenant = tenant
 	f.gotCurrenciesStart = start
 	f.gotCurrenciesEnd = end
+	f.gotCurrenciesProvider = provider
+	f.currenciesProviderLog = append(f.currenciesProviderLog, provider)
 	f.currenciesQueryCount++
 	if f.currenciesFn != nil {
-		return f.currenciesFn(tenant, start, end)
+		return f.currenciesFn(tenant, start, end, provider)
 	}
 	if f.currenciesErr != nil {
 		return nil, f.currenciesErr
@@ -126,7 +149,7 @@ func (f *fakeStore) BillingCurrencies(_ context.Context, tenant string, start, e
 	return []string{}, nil
 }
 
-func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency string) (storage.DailyCosts, error) {
+func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency, provider string) (storage.DailyCosts, error) {
 	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
 	f.gotCurrency = currency
 	f.gotDimension = dim
@@ -135,7 +158,8 @@ func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, sta
 	f.queryLog = append(f.queryLog, struct {
 		start, end time.Time
 		currency   string
-	}{start: start, end: end, currency: currency})
+		provider   string
+	}{start: start, end: end, currency: currency, provider: provider})
 	if f.dailyCurrencyFn != nil {
 		return f.dailyCurrencyFn(tenant, start, end, currency, storage.GroupByService)
 	}
@@ -145,7 +169,7 @@ func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, sta
 	return f.daily, f.dailyErr
 }
 
-func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time, currency string, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error) {
+func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start, end time.Time, currency, provider string, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error) {
 	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
 	f.gotCurrency = currency
 	f.gotGroupBy = groupByUnset
@@ -156,7 +180,8 @@ func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start,
 	f.queryLog = append(f.queryLog, struct {
 		start, end time.Time
 		currency   string
-	}{start: start, end: end, currency: currency})
+		provider   string
+	}{start: start, end: end, currency: currency, provider: provider})
 	if f.dailyCurrencyFn != nil {
 		gb := groupByUnset
 		if len(groupBy) > 0 {
@@ -398,7 +423,7 @@ func TestReadOnlyMiddleware(t *testing.T) {
 }
 
 func TestGetDailyCostsSingleCurrencyResponseAddsCurrenciesOnly(t *testing.T) {
-	store := &fakeStore{daily: storage.DailyCosts{
+	store := &fakeStore{providers: []string{"Amazon Web Services"}, daily: storage.DailyCosts{
 		Currency: "USD",
 		Days: []storage.DayCosts{
 			{
@@ -461,7 +486,7 @@ func TestGetDailyCostsSingleCurrencyResponseAddsCurrenciesOnly(t *testing.T) {
 	}
 
 	var want DailyCosts
-	if err := json.Unmarshal([]byte(`{"currencies":["USD"],"currency":"USD","days":[{"date":"2026-05-01","services":[{"cost":"0.1896","key":"AWS Lambda"},{"cost":"3.6288","key":"Amazon Elastic Compute Cloud"}],"total":"3.8184"},{"date":"2026-05-02","services":[{"cost":"0.1896","key":"AWS Lambda"}],"total":"0.1896"}],"total":"4.008"}`), &want); err != nil {
+	if err := json.Unmarshal([]byte(`{"currencies":["USD"],"currency":"USD","days":[{"date":"2026-05-01","services":[{"cost":"0.1896","key":"AWS Lambda"},{"cost":"3.6288","key":"Amazon Elastic Compute Cloud"}],"total":"3.8184"},{"date":"2026-05-02","services":[{"cost":"0.1896","key":"AWS Lambda"}],"total":"0.1896"}],"provider":"","providers":["Amazon Web Services"],"total":"4.008"}`), &want); err != nil {
 		t.Fatalf("decoding expected full response: %v", err)
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -514,9 +539,123 @@ func TestGetDailyCostsEmptyRangeCurrenciesNeverNull(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
-	want := `{"currencies":[],"currency":"","days":[],"total":"0"}`
+	want := `{"currencies":[],"currency":"","days":[],"provider":"","providers":[],"total":"0"}`
 	if body := strings.TrimSpace(rec.Body.String()); body != want {
 		t.Fatalf("empty response = %s, want %s", body, want)
+	}
+}
+
+func TestGetDailyCostsProviderParamValidationAndStoreThreading(t *testing.T) {
+	const selectedProvider = "Amazon Web Services"
+	rules := writeRules(t, `{"dimensions":[{"name":"team","rules":[]}]}`)
+
+	for _, tt := range []struct {
+		name           string
+		groupBy        string
+		rulesPath      string
+		wantGroupBy    storage.CostGroupBy
+		wantService    int
+		wantAllocation int
+	}{
+		{name: "service", wantGroupBy: storage.GroupByService, wantService: 1},
+		{name: "provider grouping", groupBy: "&groupBy=provider", wantGroupBy: storage.GroupByProvider, wantService: 1},
+		{name: "allocation", groupBy: "&groupBy=allocation", rulesPath: rules, wantAllocation: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{
+				providers:  []string{"Amazon Web Services", "Microsoft"},
+				currencies: []string{"USD"},
+				dailyCurrencyFn: func(_ string, _, _ time.Time, currency string, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+					return dayCosts(t, "2026-05-01", currency, map[string]string{"Compute": "1.000000000000000001"}), nil
+				},
+			}
+			rec := httptest.NewRecorder()
+			NewHandler("test", testStatic(), store, tt.rulesPath).ServeHTTP(rec,
+				httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?provider=Amazon%20Web%20Services"+tt.groupBy, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+			}
+			var got DailyCosts
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Provider != selectedProvider || got.Total != "1.000000000000000001" || len(got.Days) != 1 ||
+				!reflect.DeepEqual(got.Providers, []string{"Amazon Web Services", "Microsoft"}) ||
+				!reflect.DeepEqual(got.Currencies, []string{"USD"}) {
+				t.Fatalf("provider-filtered response = %+v", got)
+			}
+			if store.gotCurrenciesProvider != selectedProvider {
+				t.Fatalf("BillingCurrencies provider = %q, want %q", store.gotCurrenciesProvider, selectedProvider)
+			}
+			if len(store.queryLog) != 1 || store.queryLog[0].provider != selectedProvider {
+				t.Fatalf("daily query log = %+v, want provider %q", store.queryLog, selectedProvider)
+			}
+			if store.queryCount != tt.wantService || store.allocQueryCount != tt.wantAllocation {
+				t.Fatalf("service/allocation queries = %d/%d, want %d/%d", store.queryCount, store.allocQueryCount, tt.wantService, tt.wantAllocation)
+			}
+			if tt.wantService == 1 && store.gotGroupBy != tt.wantGroupBy {
+				t.Fatalf("groupBy = %v, want %v", store.gotGroupBy, tt.wantGroupBy)
+			}
+		})
+	}
+
+	for _, query := range []string{"?provider=", "?provider=" + strings.Repeat("p", focus.MaxFreeTextBytes+1)} {
+		t.Run("invalid provider", func(t *testing.T) {
+			store := &fakeStore{}
+			rec := httptest.NewRecorder()
+			NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+				httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily"+query, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body)
+			}
+			if body := strings.TrimSpace(rec.Body.String()); body != "provider must be a non-empty string of at most 8192 bytes" {
+				t.Fatalf("body = %q", body)
+			}
+			if store.providersQueryCount != 0 || store.currenciesQueryCount != 0 || len(store.queryLog) != 0 {
+				t.Fatalf("invalid provider reached store: providers=%d currencies=%d daily=%d", store.providersQueryCount, store.currenciesQueryCount, len(store.queryLog))
+			}
+		})
+	}
+}
+
+func TestGetDailyCostsAbsentProviderReturnsEchoedZeroSeries(t *testing.T) {
+	store := &fakeStore{
+		providers:  []string{"Amazon Web Services", "Microsoft"},
+		currencies: []string{},
+		daily:      storage.DailyCosts{Currency: "", Days: []storage.DayCosts{}},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?provider=Unknown%20Provider", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	var got DailyCosts
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Provider != "Unknown Provider" || got.Total != "0" || len(got.Days) != 0 || len(got.Currencies) != 0 ||
+		!reflect.DeepEqual(got.Providers, []string{"Amazon Web Services", "Microsoft"}) {
+		t.Fatalf("absent-provider response = %+v, want echoed zero series with full providers", got)
+	}
+	if store.gotCurrenciesProvider != "Unknown Provider" || len(store.queryLog) != 1 || store.queryLog[0].provider != "Unknown Provider" {
+		t.Fatalf("absent-provider request shape = currencies %q log %+v", store.gotCurrenciesProvider, store.queryLog)
+	}
+}
+
+func TestGetDailyCostsProvidersErrorIs500(t *testing.T) {
+	store := &fakeStore{providersErr: errors.New("provider catalog unavailable")}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "querying daily costs: provider catalog unavailable" {
+		t.Fatalf("body = %q", body)
+	}
+	if store.providersQueryCount != 1 || store.currenciesQueryCount != 0 || len(store.queryLog) != 0 {
+		t.Fatalf("query counts after Providers failure = providers:%d currencies:%d daily:%d, want 1/0/0", store.providersQueryCount, store.currenciesQueryCount, len(store.queryLog))
 	}
 }
 
@@ -733,7 +872,7 @@ func TestGetDailyCostsDateParams(t *testing.T) {
 	// Empty store: empty days array (not null), zero total, no currency.
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily", nil))
-	if body := strings.TrimSpace(rec.Body.String()); body != `{"currencies":[],"currency":"","days":[],"total":"0"}` {
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"currencies":[],"currency":"","days":[],"provider":"","providers":[],"total":"0"}` {
 		t.Errorf("empty store response = %s", body)
 	}
 }
