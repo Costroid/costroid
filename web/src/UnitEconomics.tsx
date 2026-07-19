@@ -23,6 +23,7 @@ type EconomicsFetchParams = {
   start: string;
   end: string;
   currency: string;
+  provider: string;
 };
 
 type EconomicsState =
@@ -45,6 +46,7 @@ export default function UnitEconomics({
   });
   const [selectedMetric, setSelectedMetric] = useState("");
   const [currency, setCurrency] = useState<string>("");
+  const [provider, setProvider] = useState<string>("");
   const [economicsState, setEconomicsState] = useState<EconomicsState>({
     status: "idle",
   });
@@ -80,7 +82,7 @@ export default function UnitEconomics({
       return;
     }
     const controller = new AbortController();
-    const params = { metric: selectedMetric, start, end, currency };
+    const params = { metric: selectedMetric, start, end, currency, provider };
     setEconomicsState({ status: "loading" });
     async function loadEconomics() {
       try {
@@ -90,6 +92,7 @@ export default function UnitEconomics({
             start,
             end,
             ...(currency ? { currency } : {}),
+            ...(provider ? { provider } : {}),
           },
           controller.signal,
         );
@@ -105,6 +108,12 @@ export default function UnitEconomics({
           setCurrency(nextCurrency);
           return;
         }
+        // Mirror the currency snap convention above: reconcile against the
+        // unscoped provider LIST, select All, and do not commit the stale body.
+        if (provider !== "" && !body.providers.includes(provider)) {
+          setProvider("");
+          return;
+        }
         setEconomicsState({ status: "ready", economics: body, params });
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -117,17 +126,18 @@ export default function UnitEconomics({
     }
     void loadEconomics();
     return () => controller.abort();
-  }, [selectedMetric, start, end, currency, retryToken]);
+  }, [selectedMetric, start, end, currency, provider, retryToken]);
 
-  // A metric/range/currency change commits before its passive effect can replace
-  // the old response with an explicit loading state. Hide that stale terminal
-  // response synchronously so the controls and table never disagree for a frame.
+  // A metric/range/currency/provider change commits before its passive effect
+  // can replace the old response with an explicit loading state. Hide that stale
+  // terminal response synchronously so controls and table never disagree.
   const economics: EconomicsState =
     (economicsState.status === "ready" || economicsState.status === "error") &&
     (economicsState.params.metric !== selectedMetric ||
       economicsState.params.start !== start ||
       economicsState.params.end !== end ||
-      economicsState.params.currency !== currency)
+      economicsState.params.currency !== currency ||
+      economicsState.params.provider !== provider)
       ? { status: "loading" }
       : economicsState;
 
@@ -172,6 +182,33 @@ export default function UnitEconomics({
                   onClick={() => setCurrency(code)}
                 >
                   {code}
+                </button>
+              ))}
+            </div>
+          )}
+        {economics.status === "ready" &&
+          economics.economics.providers.length > 1 && (
+            <div
+              className="cost-group-control"
+              role="group"
+              aria-label="Provider"
+            >
+              <span>Provider</span>
+              <button
+                type="button"
+                aria-pressed={provider === ""}
+                onClick={() => setProvider("")}
+              >
+                All providers
+              </button>
+              {economics.economics.providers.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={provider === name}
+                  onClick={() => setProvider(name)}
+                >
+                  {name}
                 </button>
               ))}
             </div>

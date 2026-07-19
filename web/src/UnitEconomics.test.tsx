@@ -8,6 +8,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import UnitEconomics from "./UnitEconomics";
 
@@ -224,6 +225,154 @@ describe("UnitEconomics", () => {
     ).toBe("false");
   });
 
+  it("renders the provider selector only for multiple providers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/business-metrics") {
+          return Promise.resolve(fakeResponse(200, metricsBody("requests")));
+        }
+        const multiple = url.includes("start=2026-06-01");
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...economicsBody("USD", ["USD"]),
+            provider: "",
+            providers: multiple
+              ? ["Amazon Web Services", "Microsoft"]
+              : ["Amazon Web Services"],
+          }),
+        );
+      }),
+    );
+    const { rerender } = render(
+      <UnitEconomics range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+
+    await screen.findByText("Covered days");
+    expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
+
+    rerender(
+      <UnitEconomics range={{ start: "2026-06-01", end: "2026-06-30" }} />,
+    );
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    expect(
+      within(selector)
+        .getByRole("button", { name: "All providers" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      Array.from(selector.querySelectorAll("button")).map(
+        (button) => button.textContent,
+      ),
+    ).toEqual(["All providers", "Amazon Web Services", "Microsoft"]);
+  });
+
+  it("selecting a provider sends its encoded value", async () => {
+    const providers = ["Amazon Web Services", "Microsoft"];
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/business-metrics") {
+        return Promise.resolve(fakeResponse(200, metricsBody("requests")));
+      }
+      const requested =
+        new URL(url, "http://x").searchParams.get("provider") ?? "";
+      return Promise.resolve(
+        fakeResponse(200, {
+          ...economicsBody("USD", ["USD"]),
+          provider: requested,
+          providers,
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<UnitEconomics />);
+
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    fireEvent.click(
+      within(selector).getByRole("button", { name: "Amazon Web Services" }),
+    );
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/unit-economics/daily?metric=requests&provider=Amazon%20Web%20Services",
+        expect.anything(),
+      ),
+    );
+    expect(
+      within(screen.getByRole("group", { name: "Provider" }))
+        .getByRole("button", { name: "Amazon Web Services" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("snaps a dropped provider selection to All without committing the stale body", async () => {
+    const selectedProvider = "Amazon Web Services";
+    let selectionDropped = false;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/business-metrics") {
+        return Promise.resolve(fakeResponse(200, metricsBody("requests")));
+      }
+      const requested =
+        new URL(url, "http://x").searchParams.get("provider") ?? "";
+      if (requested === selectedProvider) {
+        selectionDropped = true;
+        // The server echoes a valid absent provider while the unscoped list
+        // proves it is no longer selectable.
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...economicsBody("", []),
+            provider: requested,
+            providers: ["Microsoft"],
+            days: [
+              {
+                date: "2026-05-01",
+                quantity: "999.999999999999999999",
+              },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(
+        fakeResponse(200, {
+          ...economicsBodyWithCost("USD", ["USD"], "7.000000000000000007"),
+          provider: "",
+          providers: selectionDropped
+            ? ["Microsoft"]
+            : [selectedProvider, "Microsoft"],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<UnitEconomics />);
+
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    fireEvent.click(
+      within(selector).getByRole("button", { name: selectedProvider }),
+    );
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/unit-economics/daily?metric=requests&provider=Amazon%20Web%20Services",
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) =>
+            String(input) === "/api/v1/unit-economics/daily?metric=requests",
+        ).length,
+      ).toBeGreaterThanOrEqual(2),
+    );
+    expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
+    expect(
+      (await screen.findAllByTitle("7.000000000000000007 USD")).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("999.999999999999999999")).toBeNull();
+  });
+
   it("selecting a currency refetches unit economics with the encoded currency", async () => {
     let resolveUSD!: (response: Response) => void;
     const heldUSD = new Promise<Response>((resolve) => {
@@ -275,6 +424,45 @@ describe("UnitEconomics", () => {
     expect(
       screen.getByRole("button", { name: "USD" }).getAttribute("aria-pressed"),
     ).toBe("true");
+  });
+
+  it("commits no stale content frame on a provider switch", async () => {
+    let holdRequests = false;
+    const pending = new Promise<Response>(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/business-metrics") {
+          return Promise.resolve(fakeResponse(200, metricsBody("requests")));
+        }
+        if (holdRequests) return pending;
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...economicsBodyWithCost("USD", ["USD"], "1.000000000000000001"),
+            provider: "",
+            providers: ["Amazon Web Services", "Microsoft"],
+          }),
+        );
+      }),
+    );
+
+    render(<UnitEconomics />);
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    expect(
+      screen.getAllByTitle("1.000000000000000001 USD").length,
+    ).toBeGreaterThan(0);
+
+    holdRequests = true;
+    // Native click OUTSIDE act commits the synchronous provider-mismatch frame;
+    // one microtask observes it before the passive effect publishes loading.
+    within(selector)
+      .getByRole("button", { name: "Amazon Web Services" })
+      .click();
+    await Promise.resolve();
+
+    expect(screen.queryAllByTitle("1.000000000000000001 USD")).toHaveLength(0);
+    expect(screen.getByText("Loading unit economics…")).toBeTruthy();
   });
 
   it("reconciles a dropped selection against currencies rather than the echoed currency", async () => {
