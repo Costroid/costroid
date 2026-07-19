@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -107,6 +108,129 @@ func TestPrepareDemoIsolatedSyntheticOnly(t *testing.T) {
 	if _, _, err := prepareDemo(context.Background(), []string{"--data-dir", nonempty}, time.Now()); err == nil || !strings.Contains(err.Error(), "not empty") {
 		t.Fatalf("prepareDemo(nonempty) error = %v, want synthetic-only refusal", err)
 	}
+}
+
+func TestPrepareDemoIgnoresDatabaseEncryptionKeyFile(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "db-encryption.key")
+	if err := os.WriteFile(keyFile, []byte("demo-must-not-use-this-key\n"), 0o600); err != nil {
+		t.Fatalf("writing database-encryption key file: %v", err)
+	}
+	t.Setenv(dbEncryptionKeyFileEnvVar, keyFile)
+	t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+
+	demoDir := t.TempDir()
+	prepared, stop, err := prepareDemo(context.Background(), []string{"--data-dir", demoDir}, time.Now())
+	if err != nil || stop {
+		t.Fatalf("prepareDemo = (stop %v, err %v)", stop, err)
+	}
+	prepared.close()
+
+	contents, err := os.ReadFile(filepath.Join(demoDir, storage.DatabaseFile))
+	if err != nil {
+		t.Fatalf("reading demo database: %v", err)
+	}
+	if !bytes.Contains(contents, []byte("Synthetic daily usage")) {
+		t.Fatal("plaintext demo database does not expose its synthetic marker")
+	}
+	store, err := storage.Open(context.Background(), demoDir)
+	if err != nil {
+		t.Fatalf("reopening demo without an encryption key: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("closing reopened demo: %v", err)
+	}
+}
+
+func TestOpenStoreDatabaseEncryptionKeyFileResolution(t *testing.T) {
+	writeKey := func(t *testing.T, contents string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "db-encryption.key")
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatalf("writing key file: %v", err)
+		}
+		return path
+	}
+	reopenWithKey := func(t *testing.T, dir, key string) {
+		t.Helper()
+		store, err := storage.Open(context.Background(), dir, storage.WithEncryptionKey(key))
+		if err != nil {
+			t.Fatalf("reopening encrypted store: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("closing reopened store: %v", err)
+		}
+	}
+
+	t.Run("flag overrides env and trims one newline", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("COSTROID_DATA_DIR", dir)
+		t.Setenv(dbEncryptionKeyFileEnvVar, writeKey(t, "environment-key"))
+		flagKeyFile := writeKey(t, " flag key \n")
+		store, err := openStore(context.Background(), flagKeyFile)
+		if err != nil {
+			t.Fatalf("openStore: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		reopenWithKey(t, dir, " flag key ")
+	})
+
+	t.Run("env carries the path", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("COSTROID_DATA_DIR", dir)
+		t.Setenv(dbEncryptionKeyFileEnvVar, writeKey(t, "environment-key\n"))
+		store, err := openStore(context.Background(), "")
+		if err != nil {
+			t.Fatalf("openStore: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		reopenWithKey(t, dir, "environment-key")
+	})
+
+	t.Run("unset stays plaintext", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("COSTROID_DATA_DIR", dir)
+		t.Setenv(dbEncryptionKeyFileEnvVar, "")
+		store, err := openStore(context.Background(), "")
+		if err != nil {
+			t.Fatalf("openStore: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		plaintext, err := storage.Open(context.Background(), dir)
+		if err != nil {
+			t.Fatalf("reopening plaintext store: %v", err)
+		}
+		if err := plaintext.Close(); err != nil {
+			t.Fatalf("closing plaintext store: %v", err)
+		}
+	})
+
+	t.Run("requested encryption fails closed", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "missing.key")
+		empty := writeKey(t, "")
+		newlineOnly := writeKey(t, "\n")
+		unreadable := t.TempDir()
+		for name, keyFile := range map[string]string{
+			"missing":      missing,
+			"unreadable":   unreadable,
+			"empty":        empty,
+			"newline only": newlineOnly,
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Setenv("COSTROID_DATA_DIR", t.TempDir())
+				t.Setenv(dbEncryptionKeyFileEnvVar, writeKey(t, "must-not-fall-back"))
+				_, err := openStore(context.Background(), keyFile)
+				if err == nil || !strings.Contains(err.Error(), "the db-encryption key file "+keyFile+" is empty or unreadable") {
+					t.Fatalf("openStore error = %v, want fail-closed error naming %s", err, keyFile)
+				}
+			})
+		}
+	})
 }
 
 func TestPrepareDemoRefusesServeDataDirectory(t *testing.T) {
@@ -551,6 +675,7 @@ func hermeticServeEnv(t *testing.T) {
 	t.Setenv("COSTROID_ADDR", "")
 	t.Setenv(allocationRulesEnvVar, "")
 	t.Setenv(sourcesEnvVar, "")
+	t.Setenv(dbEncryptionKeyFileEnvVar, "")
 	t.Setenv(envAuthToken, "")
 	t.Setenv(envAuthTokenFile, "")
 	t.Setenv(envAuthTrustedHeader, "")
@@ -563,6 +688,21 @@ func hermeticServeEnv(t *testing.T) {
 // configures a silent bearer token to satisfy the fail-closed policy without
 // perturbing the allocation-warning assertions.
 func TestServeConfig(t *testing.T) {
+	t.Run("database encryption key-file flag is distinct", func(t *testing.T) {
+		hermeticServeEnv(t)
+		t.Setenv(envAuthToken, "silent-token")
+		keyFile := filepath.Join(t.TempDir(), "database.key")
+		cfg, warning, stop, err := serveConfig([]string{"--db-encryption-key-file", keyFile})
+		if err != nil || stop || cfg.dbEncryptionKeyFile != keyFile {
+			t.Fatalf("serveConfig = (%+v, %q, %v, %v), want database key path %q", cfg, warning, stop, err, keyFile)
+		}
+		for _, phrase := range []string{"at-rest DATABASE-encryption", "distinct from --key-file", "CREDENTIAL-store key"} {
+			if !strings.Contains(dbEncryptionKeyFileUsage, phrase) {
+				t.Errorf("dbEncryptionKeyFileUsage = %q, want phrase %q", dbEncryptionKeyFileUsage, phrase)
+			}
+		}
+	})
+
 	t.Run("flag beats env", func(t *testing.T) {
 		hermeticServeEnv(t)
 		t.Setenv(envAuthToken, "silent-token")

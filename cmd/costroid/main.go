@@ -235,7 +235,7 @@ func metricsImport(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	store, err := storage.Open(ctx, dataDir())
+	store, err := openStore(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -385,6 +385,11 @@ func credentialsCmd(args []string) error {
 
 const keyFileFlagUsage = "key file path (overrides $COSTROID_CREDENTIALS_KEY_FILE; default ~/.config/costroid/credentials.key)"
 
+const (
+	dbEncryptionKeyFileEnvVar = "COSTROID_DB_ENCRYPTION_KEY_FILE"
+	dbEncryptionKeyFileUsage  = "at-rest DATABASE-encryption key file path (distinct from --key-file, the D32 CREDENTIAL-store key; overrides $COSTROID_DB_ENCRYPTION_KEY_FILE)"
+)
+
 func credentialsInit(args []string) error {
 	flags := flag.NewFlagSet("credentials init", flag.ContinueOnError)
 	keyFileFlag := flags.String("key-file", "", keyFileFlagUsage)
@@ -426,7 +431,7 @@ func credentialsSet(args []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	store, err := storage.Open(ctx, dataDir())
+	store, err := openStore(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -478,7 +483,7 @@ func credentialsList(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	store, err := storage.Open(ctx, dataDir())
+	store, err := openStore(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -510,7 +515,7 @@ func credentialsDelete(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	store, err := storage.Open(ctx, dataDir())
+	store, err := openStore(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -544,6 +549,7 @@ func parseFlags(flags *flag.FlagSet, args []string) (stop bool, err error) {
 type serveSettings struct {
 	addr                string
 	allocationRulesPath string
+	dbEncryptionKeyFile string
 	sync                bool
 	sources             sourcesConfig
 
@@ -572,6 +578,7 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addrFlag := flags.String("addr", "", `listen address (overrides $COSTROID_ADDR; default "127.0.0.1:8080" — loopback. Pass a non-loopback address, e.g. 0.0.0.0:8080, to expose it on the network)`)
 	allocationRulesFlag := flags.String("allocation-rules", "", allocationRulesFlagUsage)
+	dbEncryptionKeyFileFlag := flags.String("db-encryption-key-file", "", dbEncryptionKeyFileUsage)
 	syncFlag := flags.Bool("sync", false, "run configured sources immediately and on their intervals inside this serve process")
 	sourcesFlag := flags.String("sources", "", sourcesFlagUsage)
 	tokenFileFlag := flags.String("auth-token-file", "", "bearer auth: path to a file holding the API token (overrides $COSTROID_AUTH_TOKEN_FILE; preferred over the weaker $COSTROID_AUTH_TOKEN). There is no --auth-token value flag — argv is world-readable")
@@ -583,6 +590,7 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	}
 
 	cfg.addr = resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))
+	cfg.dbEncryptionKeyFile = *dbEncryptionKeyFileFlag
 
 	bearerToken, err := resolveBearerToken(*tokenFileFlag)
 	if err != nil {
@@ -804,7 +812,7 @@ func serve(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	store, err := storage.Open(ctx, dataDir())
+	store, err := openStore(ctx, cfg.dbEncryptionKeyFile)
 	if err != nil {
 		return err
 	}
@@ -1080,6 +1088,7 @@ func ingestCmd(args []string) error {
 	tokenURLFlag := flags.String("token-url", "", "OAuth token endpoint (gcp-focus-bq; default: Google's production endpoint; plain HTTP is loopback-only)")
 	sinceFlag := flags.String("since", "", "ingest calendar months from this one forward, YYYY-MM (gcp-focus-bq, anthropic-cost, openai-cost; AI default: the last 12 months)")
 	keyFileFlag := flags.String("key-file", "", keyFileFlagUsage)
+	dbEncryptionKeyFileFlag := flags.String("db-encryption-key-file", "", dbEncryptionKeyFileUsage)
 	if stop, err := parseFlags(flags, args); stop || err != nil {
 		return err
 	}
@@ -1094,7 +1103,7 @@ func ingestCmd(args []string) error {
 		if err := validateAWSFocusSource(cfg); err != nil {
 			return cliSourceValidation(err)
 		}
-		store, err := storage.Open(ctx, dataDir())
+		store, err := openStore(ctx, *dbEncryptionKeyFileFlag)
 		if err != nil {
 			return err
 		}
@@ -1115,7 +1124,7 @@ func ingestCmd(args []string) error {
 		// the single-writer file lock inside sql.Open itself — a running
 		// `costroid serve` therefore fails fast right here with the
 		// store's actionable in-use message.
-		store, err := storage.Open(ctx, dataDir())
+		store, err := openStore(ctx, *dbEncryptionKeyFileFlag)
 		if err != nil {
 			return err
 		}
@@ -1136,7 +1145,7 @@ func ingestCmd(args []string) error {
 		// Same shape as aws-focus-s3: the store opens (and locks) before
 		// discovery, which needs both the stored sync tuples and the
 		// manifest-attribution cache (migration 0004).
-		store, err := storage.Open(ctx, dataDir())
+		store, err := openStore(ctx, *dbEncryptionKeyFileFlag)
 		if err != nil {
 			return err
 		}
@@ -1159,7 +1168,7 @@ func ingestCmd(args []string) error {
 		}
 		// The store opens before credential loading and discovery: tenant-aware
 		// SyncState drives the month skip, and a vault credential lives here.
-		store, err := storage.Open(ctx, dataDir())
+		store, err := openStore(ctx, *dbEncryptionKeyFileFlag)
 		if err != nil {
 			return err
 		}
@@ -1177,7 +1186,7 @@ func ingestCmd(args []string) error {
 		if err := validateAnthropicCostSource(cfg); err != nil {
 			return cliSourceValidation(err)
 		}
-		store, err := storage.Open(ctx, dataDir())
+		store, err := openStore(ctx, *dbEncryptionKeyFileFlag)
 		if err != nil {
 			return err
 		}
@@ -1195,7 +1204,7 @@ func ingestCmd(args []string) error {
 		if err := validateOpenAICostSource(cfg); err != nil {
 			return cliSourceValidation(err)
 		}
-		store, err := storage.Open(ctx, dataDir())
+		store, err := openStore(ctx, *dbEncryptionKeyFileFlag)
 		if err != nil {
 			return err
 		}
@@ -1224,7 +1233,7 @@ func ingestCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		store, err := storage.Open(ctx, dataDir())
+		store, err := openStore(ctx, *dbEncryptionKeyFileFlag)
 		if err != nil {
 			return err
 		}
@@ -1605,6 +1614,29 @@ func dataDir() string {
 		return dir
 	}
 	return "data"
+}
+
+// openStore opens the real Costroid store. A flag path overrides the
+// environment path; either source requests encryption and therefore fails
+// closed if the key file cannot provide a non-empty key.
+func openStore(ctx context.Context, keyFileOverride string) (*storage.DuckDB, error) {
+	keyFile := keyFileOverride
+	if keyFile == "" {
+		keyFile = os.Getenv(dbEncryptionKeyFileEnvVar)
+	}
+	if keyFile == "" {
+		return storage.Open(ctx, dataDir())
+	}
+
+	contents, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("the db-encryption key file %s is empty or unreadable", keyFile)
+	}
+	key := trimOneTrailingNewline(string(contents))
+	if key == "" {
+		return nil, fmt.Errorf("the db-encryption key file %s is empty or unreadable", keyFile)
+	}
+	return storage.Open(ctx, dataDir(), storage.WithEncryptionKey(key))
 }
 
 // resolveAddr picks the listen address: the --addr flag wins over
