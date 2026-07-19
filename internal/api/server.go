@@ -36,6 +36,8 @@ const focusVersion = "1.4"
 
 var billingCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 
+var providerShapeMessage = fmt.Sprintf("provider must be a non-empty string of at most %d bytes", focus.MaxFreeTextBytes)
+
 // CostStore is the slice of the storage interface the API reads from.
 type CostStore interface {
 	Providers(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
@@ -191,7 +193,7 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		return
 	}
 	if params.Provider != nil && (*params.Provider == "" || len(*params.Provider) > focus.MaxFreeTextBytes) {
-		http.Error(w, "provider must be a non-empty string of at most 8192 bytes", http.StatusBadRequest)
+		http.Error(w, providerShapeMessage, http.StatusBadRequest)
 		return
 	}
 

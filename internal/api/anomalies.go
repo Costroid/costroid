@@ -46,7 +46,7 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		return
 	}
 	if params.Provider != nil && (*params.Provider == "" || len(*params.Provider) > focus.MaxFreeTextBytes) {
-		http.Error(w, "provider must be a non-empty string of at most 8192 bytes", http.StatusBadRequest)
+		http.Error(w, providerShapeMessage, http.StatusBadRequest)
 		return
 	}
 	provider := ""

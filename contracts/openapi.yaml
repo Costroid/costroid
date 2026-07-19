@@ -80,9 +80,9 @@ paths:
         provider and currency filters, sorted ascending, and is [] for an empty
         range. A valid currency or provider absent from the corresponding list
         returns 200 with total "0", days [], and the requested value echoed.
-        An empty range returns currencies [], providers [], currency "",
-        provider "", total "0", and days []. An invalid currency or provider
-        shape returns 400.
+        An empty range with no currency or provider requested returns currencies
+        [], providers [], currency "", provider "", total "0", and days []. An
+        invalid currency or provider shape returns 400.
       parameters:
         - name: start
           in: query

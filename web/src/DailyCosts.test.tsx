@@ -371,7 +371,7 @@ describe("DailyCosts", () => {
     const fresh = dailyBody("USD", ["EUR", "USD"], "2.000000000000000002");
     // Echoes the requested USD (faithful to the server); it is discarded on
     // abort regardless, but the mock must not misrepresent the contract.
-    const stale = dailyBody("USD", ["EUR", "GBP"], "9.999999999999999999");
+    const stale = dailyBody("USD", ["EUR", "USD"], "9.999999999999999999");
     let resolveStale!: (response: Response) => void;
     const staleResponse = new Promise<Response>((resolve) => {
       resolveStale = resolve;

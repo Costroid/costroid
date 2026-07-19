@@ -584,8 +584,8 @@ func TestGetDailyCostsProviderParamValidationAndStoreThreading(t *testing.T) {
 				!reflect.DeepEqual(got.Currencies, []string{"USD"}) {
 				t.Fatalf("provider-filtered response = %+v", got)
 			}
-			if store.gotCurrenciesProvider != selectedProvider {
-				t.Fatalf("BillingCurrencies provider = %q, want %q", store.gotCurrenciesProvider, selectedProvider)
+			if store.currenciesQueryCount != 1 || len(store.currenciesProviderLog) != 1 || store.currenciesProviderLog[0] != selectedProvider {
+				t.Fatalf("BillingCurrencies provider log = %v, want exactly [%q]", store.currenciesProviderLog, selectedProvider)
 			}
 			if len(store.queryLog) != 1 || store.queryLog[0].provider != selectedProvider {
 				t.Fatalf("daily query log = %+v, want provider %q", store.queryLog, selectedProvider)
