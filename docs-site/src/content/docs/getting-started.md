@@ -68,6 +68,29 @@ Open [http://localhost:8080](http://localhost:8080). When `COSTROID_ADDR` is uns
 Use `--no-auth` only with a loopback bind for local, single-user access. Both `:8080` and `0.0.0.0:8080` listen on all interfaces. Before using either public bind, configure one of the authentication modes and a TLS-terminating reverse proxy described in [Security & deployment](/security/).
 :::
 
+## Run with a container
+
+Each release publishes prebuilt multi-architecture images (`linux/amd64` and `linux/arm64`) to the GitHub Container Registry at `ghcr.io/costroid/costroid`. The default command runs the demo, so this needs no data or configuration:
+
+```sh
+docker run --rm -p 8080:8080 ghcr.io/costroid/costroid:latest
+```
+
+Open `http://localhost:8080`. The demo is synthetic and read-only; its store is written to an ephemeral directory inside the container and removed on exit, so no volume is needed.
+
+To serve your own data instead, mount a volume for the store, pass an auth token, and run `serve`:
+
+```sh
+printf '%s' "$COSTROID_TOKEN" > token
+docker run --rm -p 8080:8080 \
+  -v costroid-data:/data \
+  -v "$PWD/token:/run/secrets/costroid-token:ro" \
+  -e COSTROID_AUTH_TOKEN_FILE=/run/secrets/costroid-token \
+  ghcr.io/costroid/costroid:latest serve
+```
+
+The image binds `0.0.0.0:8080` inside the container (via `COSTROID_ADDR`) and `serve` fails closed if no authentication is configured. For Kubernetes manifests and image verification, see the [Operations guide](/guides/operations/#running-in-a-container); for a network-exposed deployment behind a reverse proxy, see [Security & deployment](/security/).
+
 ## Ingest your first export
 
 :::caution[Manual ingest and the scheduled alternative]

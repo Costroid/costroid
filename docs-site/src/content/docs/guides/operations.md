@@ -34,6 +34,59 @@ data directory.
 `costroid allocation validate` is the exception: it reads only the rules JSON
 file and does not open the store, so it can run alongside `serve`.
 
+## Running in a container
+
+Costroid publishes a multi-architecture image (`linux/amd64`, `linux/arm64`) to `ghcr.io/costroid/costroid` with each release. The image is built from a distroless base (`gcr.io/distroless/cc-debian12`), runs as a non-root user (uid 65532), and contains no shell or package manager.
+
+The default command is `demo` (synthetic, read-only, ephemeral). To serve your own data, run `serve` with a mounted volume for the store and an auth token:
+
+```sh
+docker run --rm -p 8080:8080 \
+  -v costroid-data:/data \
+  -v "$PWD/token:/run/secrets/costroid-token:ro" \
+  -e COSTROID_AUTH_TOKEN_FILE=/run/secrets/costroid-token \
+  ghcr.io/costroid/costroid:latest serve
+```
+
+The image sets `COSTROID_ADDR=0.0.0.0:8080` and `COSTROID_DATA_DIR=/data`. The `/data` directory is owned by uid 65532 in the image, so a fresh Docker named volume inherits that ownership and `serve` can write its `costroid.duckdb` store. `demo` does not use `/data`; it writes an ephemeral store under `/tmp`.
+
+### Kubernetes
+
+A Kubernetes-mounted volume does not inherit the image's directory ownership, so `serve` needs `fsGroup: 65532` (a pod-level setting) to make the mounted `/data` writable. The image has no shell, so it cannot define a Docker `HEALTHCHECK`; use an `httpGet` probe against `/healthz` (always unauthenticated) instead. `fsGroup` belongs to the pod `securityContext`, while `readOnlyRootFilesystem` and dropped capabilities belong to the container one:
+
+```yaml
+spec:                              # pod spec (a Deployment's .spec.template.spec)
+  securityContext:                 # pod-level
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532                 # makes the mounted /data writable by serve
+  containers:
+    - name: costroid
+      image: ghcr.io/costroid/costroid:latest
+      args: ["serve"]
+      ports: [{ containerPort: 8080 }]
+      securityContext:             # container-level
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - { name: tmp, mountPath: /tmp }
+        - { name: data, mountPath: /data }
+      livenessProbe:  { httpGet: { path: /healthz, port: 8080 } }
+      readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+  volumes:
+    - { name: tmp, emptyDir: {} }
+    - { name: data, emptyDir: {} }  # replace with a PersistentVolumeClaim to persist serve data
+```
+
+With `readOnlyRootFilesystem: true`, the writable `emptyDir` at `/tmp` covers the demo path and the `/data` volume covers `serve`. This is a pod-spec fragment (`fsGroup` at pod scope, `readOnlyRootFilesystem`/`capabilities` at container scope); do NOT collapse the two `securityContext` blocks into one, since `fsGroup` is rejected in a container-level `securityContext`.
+
+### Verifying the image
+
+The image is keyless-signed and carries build-provenance and SBOM attestations. See [SECURITY.md](https://github.com/Costroid/costroid/blob/main/SECURITY.md#verify-release-artifacts) for the `cosign verify` and `gh attestation verify` commands.
+
 ## Scheduled ingestion
 
 Create a strict JSON sources file, validate it without opening the store, then

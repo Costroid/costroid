@@ -68,6 +68,8 @@ For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./
 
    Then open <http://localhost:8080>. The demo seeds an isolated synthetic store and serves the real dashboard read-only; it never reads your data directory, credential store, or connectors.
 
+   Prefer a container? Each release publishes a multi-arch, distroless image: `docker run --rm -p 8080:8080 ghcr.io/costroid/costroid:latest` runs the same demo; see [Getting started](./docs-site/src/content/docs/getting-started.md#run-with-a-container).
+
 ### Then: your own data
 
 Start the server for local single-user use, then ingest a billing export:
