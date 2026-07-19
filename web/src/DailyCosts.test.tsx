@@ -607,6 +607,48 @@ describe("DailyCosts", () => {
     expect((await screen.findAllByTitle("1 USD")).length).toBeGreaterThan(0);
   });
 
+  it("commits no stale all-providers chart frame on a provider switch", async () => {
+    // Provider twin of the grouping-switch frame test below: a native
+    // button.click() OUTSIDE act commits the synchronous re-render (provider
+    // already selected) without flushing the passive effect, so the committed
+    // frame is exactly what the stale-view derivation produces. Dropping the
+    // provider term from that derivation commits one frame of the old
+    // all-providers chart under the newly pressed selection; this pins the
+    // loading frame instead. (An act-wrapped fireEvent flushes the effect
+    // first and makes this vacuous.)
+    const providers = ["Amazon Web Services", "Microsoft"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        if (url.includes("provider=Amazon%20Web%20Services")) {
+          return Promise.resolve(
+            fakeResponse(
+              200,
+              providerDailyBody("Amazon Web Services", providers, "1"),
+            ),
+          );
+        }
+        return Promise.resolve(
+          fakeResponse(200, providerDailyBody("", providers, "3")),
+        );
+      }),
+    );
+    render(<DailyCosts />);
+    await screen.findByRole("group", { name: "Provider" });
+
+    screen.getByRole("button", { name: "Amazon Web Services" }).click();
+    await Promise.resolve();
+
+    expect(screen.getByText("Loading daily costs…")).toBeTruthy();
+    expect(
+      screen.queryByRole("group", { name: /Stacked daily cost/ }),
+    ).toBeNull();
+  });
+
   it("snaps a dropped provider selection to All providers", async () => {
     const initialProviders = ["Amazon Web Services", "Microsoft"];
     const initial = providerDailyBody("", initialProviders, "3");
