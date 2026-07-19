@@ -125,6 +125,20 @@ uncached_input_tokens, web_search_requests, workspace_id
 The token and request fields (for example output_tokens, uncached_input_tokens,
 num_model_requests, web_search_requests) are aggregate counts, not content.
 
+## Encryption at rest
+
+Costroid can opt in to DuckDB-native encryption for a new embedded store. With
+a database-encryption key file configured, the database file, its write-ahead
+log (WAL), and DuckDB temporary files are encrypted at rest. This protects data
+in a stolen store file, disk, or backup.
+
+This boundary does not protect a running Costroid process, where the key and
+plaintext data live in memory. It also does not protect a host where an
+attacker can read the key file, a core dump of the running process, or plaintext
+that remains in the operating system page cache. At-rest store encryption is
+defense-in-depth alongside full-disk or filesystem encryption, not a replacement
+for host hardening and key-file access controls.
+
 ## Residual risks
 
 The guarantee above is narrow and honest. These are the things it does not do.
@@ -150,8 +164,10 @@ The guarantee above is narrow and honest. These are the things it does not do.
    across many small tag values is not caught by size alone. Third, this closes
    the oversized-dump path only; it does not claim to have solved the content
    problem.
-4. **At-rest encryption is the deployer's responsibility.** Costroid stores data
-   on the infrastructure you run it on; encrypting that storage is up to you.
+4. **At-rest encryption is opt-in.** Without a database-encryption key file, the
+   embedded store keeps its plaintext default. Key custody, full-disk or
+   filesystem encryption, and secure disposal of plaintext backups remain the
+   deployer's responsibility.
 5. **This is structural absence, not runtime classification.** The guarantee is
    that prompt and response content has no modeled path into Costroid at the AI
    connector boundary. It is not a runtime classifier that inspects values and

@@ -12,6 +12,47 @@ DuckDB is Costroid's embedded store. The data directory comes from
 `$COSTROID_DATA_DIR` and defaults to `./data`; the database is the single file
 `costroid.duckdb` inside that directory.
 
+## Encryption at rest
+
+DuckDB-native at-rest encryption is opt-in for new stores. Generate a
+high-entropy key file with permissions that restrict it to the Costroid
+operator:
+
+```sh
+umask 077
+head -c 32 /dev/urandom | base64 > costroid-db.key
+```
+
+Set the environment variable to the key-file path so every command that opens
+the real store uses the same key:
+
+```sh
+export COSTROID_DB_ENCRYPTION_KEY_FILE=/etc/costroid/costroid-db.key
+costroid serve --auth-token-file /run/secrets/costroid-token
+```
+
+`serve` and `ingest` also accept the path explicitly:
+
+```sh
+costroid serve --db-encryption-key-file /etc/costroid/costroid-db.key \
+  --auth-token-file /run/secrets/costroid-token
+costroid ingest --db-encryption-key-file /etc/costroid/costroid-db.key \
+  --connector aws-focus --path ./export.csv
+```
+
+The environment variable carries the path, never the key itself. The
+`--db-encryption-key-file` flag is the at-rest database key and is distinct
+from `ingest --key-file`, which selects the D32 credential-store key. Supply
+the database key to every command that opens the store. A missing, unreadable,
+or empty key file is an error and never falls back to plaintext.
+
+Encryption applies only when creating a new store. An existing plaintext store
+cannot be opened with a key. Back up the existing data, re-ingest it into a
+fresh empty data directory with the key configured, verify the replacement,
+and then retire the plaintext copy according to your retention policy. Keep
+the key separate from store backups: losing it makes the encrypted store
+unreadable.
+
 ## Single writer
 
 DuckDB allows one read-write process per database file. If another `costroid`
