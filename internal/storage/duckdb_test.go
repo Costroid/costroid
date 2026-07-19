@@ -149,6 +149,57 @@ func TestEncryptedOpenRoundTrip(t *testing.T) {
 	}
 }
 
+// TestEncryptedOpenSingleQuoteKeyRoundTripsAndDoesNotLeak locks in the
+// single-quote escaping in the ATTACH statement. A key containing a single
+// quote must be doubled so it stays inside the SQL string literal: the
+// round-trip proves the escaping is correct, and reopening with a wrong
+// quote-bearing key proves such a key never leaks into the returned error.
+func TestEncryptedOpenSingleQuoteKeyRoundTripsAndDoesNotLeak(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	key := "he'llo-single-quote-key"
+	record := testRecord(t, "Single-quote key service", day(1), "2.5")
+	batch := Batch{
+		Connector:      "aws-focus",
+		SourceIdentity: "single-quote-key",
+		ContentHash:    "sha256:single-quote-key",
+		TenantID:       focus.DefaultTenant,
+	}
+
+	store, err := Open(ctx, dir, WithEncryptionKey(key))
+	if err != nil {
+		t.Fatalf("encrypted Open with single-quote key: %v", err)
+	}
+	if _, err := store.ReplaceIngestBatch(ctx, batch, []focus.CostRecord{record}); err != nil {
+		t.Fatalf("ReplaceIngestBatch: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	store, err = Open(ctx, dir, WithEncryptionKey(key))
+	if err != nil {
+		t.Fatalf("reopen with same single-quote key: %v", err)
+	}
+	costs, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	if len(costs.Days) != 1 || len(costs.Days[0].Services) != 1 ||
+		costs.Days[0].Services[0].Cost.String() != record.BilledCost.String() {
+		_ = store.Close()
+		t.Fatalf("reopened costs = %+v, want cost %s", costs, record.BilledCost)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close after read: %v", err)
+	}
+
+	wrongKey := "wr'ong-single-quote-key"
+	_, err = Open(ctx, dir, WithEncryptionKey(wrongKey))
+	assertOpenError(t, err, "encrypted and the provided key is wrong", wrongKey)
+}
+
 func TestEncryptedOpenErrorsAreActionableAndDoNotLeakKey(t *testing.T) {
 	ctx := context.Background()
 	encryptedDir := t.TempDir()
