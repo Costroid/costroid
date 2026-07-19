@@ -59,6 +59,21 @@ type noopAlerter struct{}
 
 func (noopAlerter) NotifySyncRun(context.Context, storage.SyncRun) {}
 
+// anomalyChecker scans for and alerts on new cost anomalies after a
+// cost-changing run. The implementation (alert.AnomalyNotifier) owns its own
+// persisted dedup and never returns an error, so a scan or send failure can
+// never affect the scheduler.
+type anomalyChecker interface {
+	CheckAndNotify(ctx context.Context)
+}
+
+// noopAnomalyChecker is the default: a serve without opt-in anomaly alerting
+// (and every scheduler test) uses it, so no anomaly scan runs unless serve sets
+// a real alert.AnomalyNotifier after construction.
+type noopAnomalyChecker struct{}
+
+func (noopAnomalyChecker) CheckAndNotify(context.Context) {}
+
 type scheduledRunResult struct {
 	jobs         []ingestJobResult
 	discoveryErr error
@@ -81,6 +96,11 @@ type ingestScheduler struct {
 	// construction (before Start), so the constructor signature and every test
 	// call site stay unchanged.
 	alerter syncAlerter
+	// anomalyChecker is invoked after a cost-changing run to alert on new cost
+	// anomalies. It defaults to a no-op inside newIngestScheduler; serve --sync
+	// sets a real alert.AnomalyNotifier after construction when anomaly alerting
+	// is opted in, exactly like alerter.
+	anomalyChecker anomalyChecker
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -102,8 +122,9 @@ func newIngestScheduler(parent context.Context, clock schedulerClock, recorder s
 	}
 	return &ingestScheduler{
 		clock: clock, recorder: recorder, runner: runner, logger: logger,
-		alerter: noopAlerter{},
-		ctx:     ctx, cancel: cancel, sources: states,
+		alerter:        noopAlerter{},
+		anomalyChecker: noopAnomalyChecker{},
+		ctx:            ctx, cancel: cancel, sources: states,
 	}
 }
 
@@ -247,6 +268,17 @@ func (s *ingestScheduler) run(index int) {
 	// per-send timeout, so a slow or broken endpoint can never crash or deadlock
 	// the scheduler.
 	s.alerter.NotifySyncRun(s.ctx, run)
+	// After a run that actually changed cost data, scan for and alert on new
+	// cost anomalies. A failed run or a skip-only run changed nothing, so no new
+	// anomaly is possible; skipping avoids a wasted full-history scan. Uses s.ctx
+	// (cancellable) so a Stop cancels an in-flight send. CheckAndNotify never
+	// returns an error (a scan, insert, or send failure is swallowed and
+	// logged), so it can never break the scheduler. No tenant is threaded from
+	// run: a cost anomaly is a property of the DefaultTenant aggregate cost
+	// history, which the notifier scans on its own.
+	if (run.Outcome == "success" || run.Outcome == "partial") && run.RecordsIngested > 0 {
+		s.anomalyChecker.CheckAndNotify(s.ctx)
+	}
 	finishAttrs := []any{
 		"source", source.name, "connector", source.connector, "tenant", source.tenant,
 		"outcome", run.Outcome, "duration", finished.Sub(started).String(),

@@ -834,6 +834,30 @@ func serve(args []string) error {
 			}
 			scheduler.alerter = alert.NewNotifier(channels, logger, statuses)
 		}
+		if cfg.sources.anomalyAlertsEnabled {
+			if len(channels) == 0 {
+				logger.Warn("anomaly alerts enabled but no alert channels configured; anomaly alerting disabled")
+			} else {
+				an := alert.NewAnomalyNotifier(channels, store, logger, focus.DefaultTenant, time.Now)
+				count, err := store.AnomalyAlertCount(ctx, focus.DefaultTenant)
+				switch {
+				case err != nil:
+					logger.Warn("could not read anomaly-alert state; anomaly alerting disabled", "error", err)
+				case count == 0:
+					// First enable: record all currently-detectable anomalies WITHOUT
+					// alerting so an upgraded store full of history does not storm. Only
+					// install the checker once the table is known-seeded, so a seed error
+					// can never leave an empty table that the next run pages in full.
+					if err := an.Seed(ctx); err != nil {
+						logger.Warn("could not seed anomaly-alert state; anomaly alerting disabled", "error", err)
+					} else {
+						scheduler.anomalyChecker = an
+					}
+				default:
+					scheduler.anomalyChecker = an
+				}
+			}
+		}
 		handlerOptions = append(handlerOptions, api.WithSyncSchedule(scheduler))
 		scheduler.Start()
 	}

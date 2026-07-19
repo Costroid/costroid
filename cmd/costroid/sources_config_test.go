@@ -139,6 +139,30 @@ func TestParseSourcesAlerts(t *testing.T) {
 	}
 }
 
+func TestParseSourcesAnomalyAlerts(t *testing.T) {
+	on, err := parseSources(strings.NewReader(`{"sources":[],"anomalyAlerts":{"enabled":true}}`))
+	if err != nil || !on.anomalyAlertsEnabled {
+		t.Fatalf(`anomalyAlerts {"enabled":true}: err=%v enabled=%v, want enabled`, err, on.anomalyAlertsEnabled)
+	}
+	off, err := parseSources(strings.NewReader(`{"sources":[],"anomalyAlerts":{"enabled":false}}`))
+	if err != nil || off.anomalyAlertsEnabled {
+		t.Fatalf(`anomalyAlerts {"enabled":false}: err=%v enabled=%v, want disabled`, err, off.anomalyAlertsEnabled)
+	}
+	absent, err := parseSources(strings.NewReader(`{"sources":[]}`))
+	if err != nil || absent.anomalyAlertsEnabled {
+		t.Fatalf("absent anomalyAlerts: err=%v enabled=%v, want disabled", err, absent.anomalyAlertsEnabled)
+	}
+
+	// A malformed value is a clear parse error, consistent with the strict
+	// decoding of every other top-level block.
+	if _, err := parseSources(strings.NewReader(`{"sources":[],"anomalyAlerts":{"enabled":"yes"}}`)); err == nil {
+		t.Fatal("a non-boolean enabled should be a parse error")
+	}
+	if _, err := parseSources(strings.NewReader(`{"sources":[],"anomalyAlerts":{"typo":true}}`)); err == nil || !strings.Contains(err.Error(), `unknown field "typo"`) {
+		t.Fatalf("an unknown anomalyAlerts field should be rejected: %v", err)
+	}
+}
+
 func TestSharedSourceValidationCLIAndConfig(t *testing.T) {
 	cliErr := ingestCmd([]string{"--connector", "aws-focus-s3", "--bucket", "billing"})
 	if cliErr == nil {

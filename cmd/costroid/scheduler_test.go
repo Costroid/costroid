@@ -388,3 +388,67 @@ func TestSchedulerNotifiesAlerterForEveryRun(t *testing.T) {
 		t.Fatalf("alerter observed = %v, want a=success b=error", outcomes)
 	}
 }
+
+type recordingAnomalyChecker struct {
+	ch chan struct{}
+}
+
+func (c recordingAnomalyChecker) CheckAndNotify(context.Context) {
+	c.ch <- struct{}{}
+}
+
+// TestSchedulerAnomalyCheckGate pins run()'s gate: CheckAndNotify is invoked
+// exactly once after a cost-changing run (success or partial with
+// RecordsIngested > 0) and NOT at all after a run that changed no cost data (an
+// error run, or a records-0 run), so a failed or skip-only run never triggers a
+// wasted full-history scan.
+func TestSchedulerAnomalyCheckGate(t *testing.T) {
+	cases := []struct {
+		name     string
+		result   scheduledRunResult
+		wantFire bool
+	}{
+		{"success with records", successfulScheduledResult(), true},
+		{"partial with records", scheduledRunResult{jobs: []ingestJobResult{
+			{outcome: "success", recordsIngested: 3},
+			{outcome: "error", err: errors.New("one period failed")},
+		}}, true},
+		{"error run", scheduledRunResult{discoveryErr: errors.New("discovery failed")}, false},
+		{"zero records", scheduledRunResult{jobs: []ingestJobResult{{outcome: "success", recordsIngested: 0}}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := newFakeSchedulerClock(time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC))
+			recorder := newSyncRunMemoryRecorder()
+			runner := func(context.Context, scheduledSource, ingestOutput) scheduledRunResult { return tc.result }
+			scheduler := newIngestScheduler(context.Background(), clock, recorder,
+				[]scheduledSource{testScheduledSource("s", 24*time.Hour)}, runner, nil)
+			checker := recordingAnomalyChecker{ch: make(chan struct{}, 4)}
+			scheduler.anomalyChecker = checker
+			scheduler.Start()
+			t.Cleanup(scheduler.Stop)
+
+			// The scheduler schedules the next run only after run() fully returns,
+			// i.e. after the gate + CheckAndNotify decision. Waiting for that 24h
+			// timer is a deterministic barrier past the decision, with no wall clock.
+			waitForFakeTimer(t, clock, 24*time.Hour)
+
+			fired := false
+			select {
+			case <-checker.ch:
+				fired = true
+			default:
+			}
+			if fired != tc.wantFire {
+				t.Fatalf("CheckAndNotify fired = %v, want %v", fired, tc.wantFire)
+			}
+			if tc.wantFire {
+				select {
+				case <-checker.ch:
+					t.Fatal("CheckAndNotify fired more than once for a single run")
+				default:
+				}
+			}
+		})
+	}
+}

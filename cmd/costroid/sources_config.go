@@ -43,6 +43,11 @@ type sourcesConfig struct {
 	// slot and constructs the concrete alert.Channel at startup; an empty list
 	// is a soft no-op (alerting disabled).
 	alerts []alertChannelConfig
+	// anomalyAlertsEnabled is the optional top-level "anomalyAlerts" opt-in.
+	// It is a single GLOBAL on/off (off by default): when on, detected cost
+	// anomalies fan out to the SAME configured alert channels. There is
+	// deliberately no threshold, per-channel, or routing knob.
+	anomalyAlertsEnabled bool
 }
 
 type scheduledSource struct {
@@ -60,6 +65,12 @@ type sourcesDocument struct {
 	// Alerts is the optional alert-channel block. Absent (nil) or empty is a
 	// soft no-op; it is parsed per entry by parseAlertChannel.
 	Alerts *[]json.RawMessage `json:"alerts"`
+	// AnomalyAlerts is the optional anomaly-alerting opt-in. Absent (nil) or
+	// {"enabled": false} is off; it carries a single global on/off and no other
+	// knob.
+	AnomalyAlerts *struct {
+		Enabled bool `json:"enabled"`
+	} `json:"anomalyAlerts"`
 }
 
 // alertChannelConfig is one parsed, store-free alert channel. It carries the
@@ -236,6 +247,10 @@ func parseSources(r io.Reader) (sourcesConfig, error) {
 			alertNames[channel.name] = struct{}{}
 			result.alerts = append(result.alerts, channel)
 		}
+	}
+
+	if document.AnomalyAlerts != nil {
+		result.anomalyAlertsEnabled = document.AnomalyAlerts.Enabled
 	}
 	return result, nil
 }
