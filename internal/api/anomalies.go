@@ -8,9 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/shopspring/decimal"
-
 	"github.com/Costroid/costroid/internal/anomaly"
+	"github.com/Costroid/costroid/internal/anomalyscan"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/storage"
 )
@@ -107,33 +106,10 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 // Ordering is deterministic: date-ascending, then total scope before key scope,
 // then key-ascending. The parameters block echoes the exact detector constants.
 func buildAnomalies(daily storage.DailyCosts, groupBy string, start, end time.Time) Anomalies {
-	total := make([]anomaly.Observation, 0, len(daily.Days))
-	keySeries := map[string][]anomaly.Observation{}
-	var keyOrder []string
-	for _, day := range daily.Days {
-		sum := decimal.Zero
-		for _, svc := range day.Services {
-			sum = sum.Add(svc.Cost)
-			if _, seen := keySeries[svc.ServiceName]; !seen {
-				keyOrder = append(keyOrder, svc.ServiceName)
-			}
-			keySeries[svc.ServiceName] = append(keySeries[svc.ServiceName],
-				anomaly.Observation{Date: day.Date, Value: svc.Cost})
-		}
-		total = append(total, anomaly.Observation{Date: day.Date, Value: sum})
-	}
-
 	flags := []Anomaly{}
-	for _, f := range anomaly.Detect(total) {
-		if inRange(f.Date, start, end) {
-			flags = append(flags, toAnomaly(f, "total", ""))
-		}
-	}
-	for _, key := range keyOrder {
-		for _, f := range anomaly.Detect(keySeries[key]) {
-			if inRange(f.Date, start, end) {
-				flags = append(flags, toAnomaly(f, "key", key))
-			}
+	for _, sf := range anomalyscan.Flags(daily) {
+		if inRange(sf.Flag.Date, start, end) {
+			flags = append(flags, toAnomaly(sf.Flag, sf.Scope, sf.Key))
 		}
 	}
 	sortAnomalies(flags)
