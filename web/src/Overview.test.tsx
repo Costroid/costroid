@@ -282,6 +282,10 @@ describe("Overview", () => {
             );
           }
           if (requested !== "") {
+            // Previous-window fields require a BOUNDED request (contract
+            // condition i), so this test renders a bounded range below; the
+            // dates echo the server's derivation for June (prevEnd =
+            // start - 1 day, prevStart = prevEnd - (end - start)).
             return fakeResponse(
               200,
               summaryBody({
@@ -289,8 +293,8 @@ describe("Overview", () => {
                 providers,
                 currencies: ["USD"],
                 previousTotal: "6",
-                previousStart: "2026-04-01",
-                previousEnd: "2026-04-30",
+                previousStart: "2026-05-02",
+                previousEnd: "2026-05-31",
                 keys: [
                   {
                     key: "Amazon EC2",
@@ -324,7 +328,7 @@ describe("Overview", () => {
           ),
       }),
     );
-    render(<Overview />);
+    render(<Overview range={{ start: "2026-06-01", end: "2026-06-30" }} />);
 
     const selector = await screen.findByRole("group", { name: "Provider" });
     fireEvent.click(
@@ -332,6 +336,7 @@ describe("Overview", () => {
     );
 
     const encoded = "Amazon%20Web%20Services";
+    const bounded = "start=2026-06-01&end=2026-06-30";
     await waitFor(() => {
       const urls = fetchedURLs();
       const summaryURL = urls.find(
@@ -339,12 +344,16 @@ describe("Overview", () => {
           url.startsWith("/api/v1/costs/summary") &&
           url.includes(`provider=${encoded}`),
       );
-      expect(summaryURL).toBe(`/api/v1/costs/summary?provider=${encoded}`);
+      expect(summaryURL).toBe(
+        `/api/v1/costs/summary?${bounded}&provider=${encoded}`,
+      );
       expect(summaryURL).not.toContain("groupBy=provider");
       expect(summaryURL).not.toContain("groupBy=service");
-      expect(urls).toContain(`/api/v1/anomalies?provider=${encoded}`);
       expect(urls).toContain(
-        `/api/v1/unit-economics/daily?metric=requests%20served&provider=${encoded}`,
+        `/api/v1/anomalies?${bounded}&provider=${encoded}`,
+      );
+      expect(urls).toContain(
+        `/api/v1/unit-economics/daily?metric=requests%20served&${bounded}&provider=${encoded}`,
       );
     });
     expect(await screen.findByText("Spend by service")).toBeTruthy();
