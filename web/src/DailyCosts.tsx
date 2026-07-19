@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import { getAnomalies, getCostsDaily, type CostGroupBy } from "./api";
+import { dailyCostsCsvFilename, dailyCostsToCsv, downloadCsv } from "./csv";
 import { EmptyIcon } from "./icons";
 import { formatMoney, Money } from "./money";
 import type { Range } from "./range";
@@ -544,6 +545,19 @@ function Chart({
             </li>
           ))}
         </ul>
+      </div>
+      <div className="viz-table-actions">
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(
+              dailyCostsCsvFilename(costs, groupBy),
+              dailyCostsToCsv(costs),
+            )
+          }
+        >
+          Download CSV
+        </button>
       </div>
       <details className="viz-table">
         <summary>View as table</summary>

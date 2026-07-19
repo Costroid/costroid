@@ -207,6 +207,64 @@ describe("DailyCosts", () => {
     );
     expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
     expect(screen.queryByText("Currency")).toBeNull();
+    expect(screen.getByRole("button", { name: "Download CSV" })).toBeTruthy();
+  });
+
+  it("downloads the displayed daily costs as CSV", async () => {
+    const costs: DailyCostsResponse = {
+      currency: "USD",
+      currencies: ["USD"],
+      total: "3.00",
+      days: [
+        {
+          date: "2026-05-01",
+          total: "1.00",
+          services: [{ key: "AWS Lambda", cost: "1.00" }],
+        },
+        {
+          date: "2026-05-03",
+          total: "2.00",
+          services: [{ key: "AWS Lambda", cost: "2.00" }],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input).includes("/api/v1/anomalies")
+            ? fakeResponse(200, anomaliesBody())
+            : fakeResponse(200, costs),
+        ),
+      ),
+    );
+    class StubURL extends URL {}
+    const createURL = vi.fn((_blob: Blob) => "blob:test");
+    const revokeURL = vi.fn();
+    StubURL.createObjectURL = createURL;
+    StubURL.revokeObjectURL = revokeURL;
+    vi.stubGlobal("URL", StubURL);
+    let downloadName = "";
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadName = this.download;
+      });
+
+    render(<DailyCosts />);
+    await screen.findByRole("group", {
+      name: "Stacked daily cost by service",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
+
+    expect(createURL).toHaveBeenCalledTimes(1);
+    const blob = createURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe("text/csv;charset=utf-8");
+    expect(downloadName).toBe(
+      "costroid-daily-costs-service-USD-2026-05-01_2026-05-03.csv",
+    );
+    expect(revokeURL).toHaveBeenCalledWith("blob:test");
+    clickSpy.mockRestore();
   });
 
   it("renders a currency selector only for mixed-currency responses", async () => {
@@ -886,6 +944,7 @@ describe("DailyCosts", () => {
     ).toBeTruthy();
     // The single-writer store means the server must be stopped first.
     expect(screen.getByText(/single process at a time/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download CSV" })).toBeNull();
   });
 
   it("shows an error state when the request fails", async () => {
@@ -898,6 +957,7 @@ describe("DailyCosts", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("500");
+    expect(screen.queryByRole("button", { name: "Download CSV" })).toBeNull();
   });
 
   it("refetches and renders daily costs grouped by allocation", async () => {

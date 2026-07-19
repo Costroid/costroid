@@ -593,6 +593,12 @@ summary:focus-visible {
   border-radius: 2px;
 }
 
+.viz-table-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-4);
+}
+
 .viz-table {
   max-width: 100%;
   margin-top: var(--space-4);
