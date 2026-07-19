@@ -1,0 +1,7 @@
+# The image only needs the two prebuilt linux release binaries. Ignore the whole
+# repo, then re-include just those, so the build context stays tiny even when the
+# context is the repo root (excludes .git, node_modules, .claude, web/, dist/,
+# testdata/, docs-site/, etc.). The Dockerfile is read out-of-band, not via context.
+*
+!costroid-linux-amd64
+!costroid-linux-arm64
