@@ -6,6 +6,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,27 +34,49 @@ type DuckDB struct {
 
 var _ Store = (*DuckDB)(nil)
 
+type openConfig struct {
+	encryptionKey string
+}
+
+// Option configures how the embedded database is opened.
+type Option func(*openConfig)
+
+// WithEncryptionKey enables DuckDB native at-rest encryption using key as the
+// ENCRYPTION_KEY. An empty key is a no-op (the store stays plaintext). The key
+// is never logged.
+func WithEncryptionKey(key string) Option {
+	return func(c *openConfig) { c.encryptionKey = key }
+}
+
 // Open opens (creating if needed) the embedded database inside dataDir
 // and applies pending schema migrations (decision D19).
 //
 // DuckDB allows a single read-write process per database file: opening a
 // data directory that another Costroid process holds open fails with an
 // actionable error.
-func Open(ctx context.Context, dataDir string) (*DuckDB, error) {
+func Open(ctx context.Context, dataDir string, opts ...Option) (*DuckDB, error) {
+	var cfg openConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating data directory %s: %w", dataDir, err)
 	}
 	path := filepath.Join(dataDir, DatabaseFile)
+	if cfg.encryptionKey != "" {
+		return openEncrypted(ctx, dataDir, path, cfg.encryptionKey)
+	}
 
 	db, err := sql.Open("duckdb", path)
 	if err != nil {
-		return nil, openError(err, dataDir, path)
+		return nil, openError(err, dataDir, path, false)
 	}
 	if err := db.PingContext(ctx); err != nil {
 		// The failed pool still holds the DuckDB instance (and its file
 		// lock) until closed.
 		_ = db.Close()
-		return nil, openError(err, dataDir, path)
+		return nil, openError(err, dataDir, path, false)
 	}
 
 	if err := migrate(ctx, db); err != nil {
@@ -63,19 +86,65 @@ func Open(ctx context.Context, dataDir string) (*DuckDB, error) {
 	return &DuckDB{db: db}, nil
 }
 
+func openEncrypted(ctx context.Context, dataDir, path, key string) (*DuckDB, error) {
+	escape := func(value string) string {
+		return strings.ReplaceAll(value, "'", "''")
+	}
+	bootstrap := []string{
+		fmt.Sprintf("ATTACH IF NOT EXISTS '%s' AS costroid (ENCRYPTION_KEY '%s')", escape(path), escape(key)),
+		"USE costroid",
+		"SET temp_file_encryption=true",
+	}
+	connector, err := duckdb.NewConnector("", func(execer driver.ExecerContext) error {
+		for _, statement := range bootstrap {
+			if _, err := execer.ExecContext(ctx, statement, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, openError(err, dataDir, path, true)
+	}
+
+	db := sql.OpenDB(connector)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, openError(err, dataDir, path, true)
+	}
+	if err := migrate(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, openError(err, dataDir, path, true)
+	}
+	return &DuckDB{db: db}, nil
+}
+
 // openError classifies embedded-database open failures into actionable
 // messages. The single-writer lock refusal must be classified on BOTH
 // open paths: duckdb-go v2 implements database/sql's DriverContext, so
-// sql.Open itself opens the database file (and takes — or is refused —
+// sql.Open itself opens the database file (and takes - or is refused -
 // its lock) rather than deferring to the first use; PingContext only
 // covers whatever failure sql.Open did not surface.
-func openError(err error, dataDir, path string) error {
-	if strings.Contains(err.Error(), "Could not set lock on file") {
-		return fmt.Errorf("the Costroid database in %s is in use by another process — "+
+func openError(err error, dataDir, path string, encrypted bool) error {
+	switch {
+	case strings.Contains(err.Error(), "Wrong encryption key"):
+		return fmt.Errorf("the Costroid database in %s is encrypted and the provided key is wrong; "+
+			"check --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE", dataDir)
+	case strings.Contains(err.Error(), "Cannot open encrypted database"):
+		return fmt.Errorf("the Costroid database in %s is encrypted; provide the key via "+
+			"--db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE", dataDir)
+	case strings.Contains(err.Error(), "is not encrypted"):
+		return fmt.Errorf("the Costroid database in %s is not encrypted; at-rest encryption applies to a NEW store - "+
+			"back up your data and re-ingest into a fresh, empty data directory with the key set", dataDir)
+	case strings.Contains(err.Error(), "Could not set lock on file"):
+		return fmt.Errorf("the Costroid database in %s is in use by another process - "+
 			"the embedded store allows a single process at a time, so stop the other "+
 			"costroid process (e.g. `costroid serve`) before running this command", dataDir)
+	case encrypted:
+		return fmt.Errorf("opening the encrypted Costroid database in %s failed", dataDir)
+	default:
+		return fmt.Errorf("opening DuckDB database %s: %w", path, err)
 	}
-	return fmt.Errorf("opening DuckDB database %s: %w", path, err)
 }
 
 // Close implements Store.

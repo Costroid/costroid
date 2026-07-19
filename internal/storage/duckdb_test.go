@@ -5,13 +5,17 @@ package storage
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -104,6 +108,245 @@ func appliedMigrations(t *testing.T, store *DuckDB) []string {
 		t.Fatalf("reading schema_migrations: %v", err)
 	}
 	return versions
+}
+
+func TestEncryptedOpenRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	key := "slice-47-round-trip-key"
+	record := testRecord(t, "Encrypted round-trip service", day(1), "1.2345")
+	batch := Batch{
+		Connector:      "aws-focus",
+		SourceIdentity: "encrypted-round-trip",
+		ContentHash:    "sha256:encrypted-round-trip",
+		TenantID:       focus.DefaultTenant,
+	}
+
+	store, err := Open(ctx, dir, WithEncryptionKey(key))
+	if err != nil {
+		t.Fatalf("encrypted Open: %v", err)
+	}
+	if _, err := store.ReplaceIngestBatch(ctx, batch, []focus.CostRecord{record}); err != nil {
+		t.Fatalf("ReplaceIngestBatch: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	store, err = Open(ctx, dir, WithEncryptionKey(key))
+	if err != nil {
+		t.Fatalf("reopen with same key: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	costs, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
+	if err != nil {
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	if len(costs.Days) != 1 || len(costs.Days[0].Services) != 1 ||
+		costs.Days[0].Services[0].ServiceName != record.ServiceName ||
+		costs.Days[0].Services[0].Cost.String() != record.BilledCost.String() {
+		t.Fatalf("reopened costs = %+v, want service %q cost %s", costs, record.ServiceName, record.BilledCost)
+	}
+}
+
+func TestEncryptedOpenErrorsAreActionableAndDoNotLeakKey(t *testing.T) {
+	ctx := context.Background()
+	encryptedDir := t.TempDir()
+	correctKey := "slice-47-correct-key-must-not-leak"
+	store, err := Open(ctx, encryptedDir, WithEncryptionKey(correctKey))
+	if err != nil {
+		t.Fatalf("creating encrypted store: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("closing encrypted store: %v", err)
+	}
+
+	t.Run("wrong key", func(t *testing.T) {
+		wrongKey := "slice-47-wrong-key-must-not-leak"
+		_, err := Open(ctx, encryptedDir, WithEncryptionKey(wrongKey))
+		assertOpenError(t, err, "encrypted and the provided key is wrong", wrongKey)
+	})
+
+	t.Run("no key", func(t *testing.T) {
+		_, err := Open(ctx, encryptedDir)
+		assertOpenError(t, err, "encrypted; provide the key", correctKey)
+	})
+
+	t.Run("plaintext with key", func(t *testing.T) {
+		plaintextDir := t.TempDir()
+		plaintextStore, err := Open(ctx, plaintextDir)
+		if err != nil {
+			t.Fatalf("creating plaintext store: %v", err)
+		}
+		if err := plaintextStore.Close(); err != nil {
+			t.Fatalf("closing plaintext store: %v", err)
+		}
+
+		_, err = Open(ctx, plaintextDir, WithEncryptionKey(correctKey))
+		assertOpenError(t, err, "not encrypted; at-rest encryption applies to a NEW store", correctKey)
+		if !strings.Contains(err.Error(), "back up your data and re-ingest") {
+			t.Fatalf("plaintext adoption error = %q, want backup and re-ingest guidance", err)
+		}
+	})
+}
+
+func assertOpenError(t *testing.T, err error, want string, secret string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("Open succeeded, want error containing %q", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("Open error = %q, want substring %q", err, want)
+	}
+	for _, forbidden := range []string{secret, "ATTACH ", "(ENCRYPTION_KEY '"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("Open error leaked %q: %q", forbidden, err)
+		}
+	}
+}
+
+func TestEncryptedStoreIsOpaqueOnDisk(t *testing.T) {
+	ctx := context.Background()
+	marker := "costroid-s47-opacity-9f0b13c78ad245e6817cf3950a4d62be-" +
+		"71c925e4b83640fda29c507e18f63b94-5ad01c7382ef4960b417c936e85f20d7"
+	writeMarker := func(t *testing.T, dir string, opts ...Option) {
+		t.Helper()
+		store, err := Open(ctx, dir, opts...)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		batch := Batch{
+			Connector:      "aws-focus",
+			SourceIdentity: "opacity-proof",
+			ContentHash:    "sha256:opacity-proof",
+			TenantID:       focus.DefaultTenant,
+		}
+		if _, err := store.ReplaceIngestBatch(ctx, batch, []focus.CostRecord{
+			testRecord(t, marker, day(1), "0.123456789012345678"),
+		}); err != nil {
+			t.Fatalf("ReplaceIngestBatch: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+	readDatabase := func(t *testing.T, dir string) []byte {
+		t.Helper()
+		contents, err := os.ReadFile(filepath.Join(dir, DatabaseFile))
+		if err != nil {
+			t.Fatalf("reading database: %v", err)
+		}
+		return contents
+	}
+
+	encryptedDir := t.TempDir()
+	writeMarker(t, encryptedDir, WithEncryptionKey("slice-47-opacity-key"))
+	if bytes.Contains(readDatabase(t, encryptedDir), []byte(marker)) {
+		t.Fatal("distinctive service marker is visible in encrypted database bytes")
+	}
+
+	plaintextDir := t.TempDir()
+	writeMarker(t, plaintextDir)
+	if !bytes.Contains(readDatabase(t, plaintextDir), []byte(marker)) {
+		t.Fatal("plaintext control does not contain the distinctive service marker")
+	}
+}
+
+func TestEncryptedOpenEnablesTempFileEncryption(t *testing.T) {
+	store, err := Open(context.Background(), t.TempDir(), WithEncryptionKey("slice-47-temp-encryption-key"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	var enabled bool
+	if err := store.db.QueryRow(`SELECT current_setting('temp_file_encryption')`).Scan(&enabled); err != nil {
+		t.Fatalf("reading temp_file_encryption: %v", err)
+	}
+	if !enabled {
+		t.Fatal("temp_file_encryption = false, want true")
+	}
+}
+
+func TestEncryptedOpenInitializesEveryPooledConnection(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	key := "slice-47-pool-key"
+	store, err := Open(ctx, dir, WithEncryptionKey(key))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	batch := Batch{
+		Connector:      "aws-focus",
+		SourceIdentity: "pooled-connections",
+		ContentHash:    "sha256:pooled-connections",
+		TenantID:       focus.DefaultTenant,
+	}
+	if _, err := store.ReplaceIngestBatch(ctx, batch, []focus.CostRecord{
+		testRecord(t, "Pooled connection proof", day(1), "0.75"),
+	}); err != nil {
+		t.Fatalf("ReplaceIngestBatch: %v", err)
+	}
+	store.db.SetMaxOpenConns(3)
+	store.db.SetMaxIdleConns(3)
+
+	connections := make([]*sql.Conn, 3)
+	for i := range connections {
+		connections[i], err = store.db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("acquiring connection %d: %v", i+1, err)
+		}
+		defer func(conn *sql.Conn) { _ = conn.Close() }(connections[i])
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, len(connections))
+	var wg sync.WaitGroup
+	for i, conn := range connections {
+		wg.Add(1)
+		go func(index int, conn *sql.Conn) {
+			defer wg.Done()
+			<-start
+			for query := 0; query < 4; query++ {
+				var count int
+				if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM cost_records`).Scan(&count); err != nil {
+					errs <- fmt.Errorf("connection %d query %d: %w", index+1, query+1, err)
+					return
+				}
+				if count != 1 {
+					errs <- fmt.Errorf("connection %d query %d count = %d, want 1", index+1, query+1, count)
+					return
+				}
+			}
+		}(i, conn)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	for _, conn := range connections {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("closing pooled connection: %v", err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := Open(ctx, dir, WithEncryptionKey(key))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	var count int
+	if err := reopened.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cost_records`).Scan(&count); err != nil {
+		t.Fatalf("query after reopen: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count after reopen = %d, want 1", count)
+	}
 }
 
 func TestReplaceIngestBatchAndDailyCosts(t *testing.T) {
@@ -1147,7 +1390,16 @@ func TestHelperHoldStore(t *testing.T) {
 	if dir == "" {
 		t.Skip("helper for the cross-process lock test only")
 	}
-	store, err := Open(context.Background(), dir)
+	var opts []Option
+	if keyFile := os.Getenv("COSTROID_TEST_HOLD_STORE_KEY_FILE"); keyFile != "" {
+		key, err := os.ReadFile(keyFile)
+		if err != nil {
+			fmt.Println("HELPER_OPEN_ERROR: reading key file:", err)
+			return
+		}
+		opts = append(opts, WithEncryptionKey(string(key)))
+	}
+	store, err := Open(context.Background(), dir, opts...)
 	if err != nil {
 		fmt.Println("HELPER_OPEN_ERROR:", err)
 		return
@@ -1164,12 +1416,28 @@ func TestHelperHoldStore(t *testing.T) {
 // refused the file lock. The second Open must return the actionable
 // in-use message, not the raw DuckDB error (slice-3 review fix-up).
 func TestOpenLockedByAnotherProcessIsActionable(t *testing.T) {
+	assertOpenLockedByAnotherProcessIsActionable(t, "")
+}
+
+func TestEncryptedOpenLockedByAnotherProcessIsActionable(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "db-encryption.key")
+	if err := os.WriteFile(keyFile, []byte("slice-47-cross-process-key"), 0o600); err != nil {
+		t.Fatalf("writing key file: %v", err)
+	}
+	assertOpenLockedByAnotherProcessIsActionable(t, keyFile)
+}
+
+func assertOpenLockedByAnotherProcessIsActionable(t *testing.T, keyFile string) {
+	t.Helper()
 	dir := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperHoldStore$", "-test.v")
 	cmd.Env = append(os.Environ(), "COSTROID_TEST_HOLD_STORE_DIR="+dir)
+	if keyFile != "" {
+		cmd.Env = append(cmd.Env, "COSTROID_TEST_HOLD_STORE_KEY_FILE="+keyFile)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("stdin pipe: %v", err)
@@ -1202,7 +1470,15 @@ func TestOpenLockedByAnotherProcessIsActionable(t *testing.T) {
 		t.Fatalf("helper process never reported the store open (scan error: %v)", scanner.Err())
 	}
 
-	_, err = Open(ctx, dir)
+	var opts []Option
+	if keyFile != "" {
+		key, readErr := os.ReadFile(keyFile)
+		if readErr != nil {
+			t.Fatalf("reading key file: %v", readErr)
+		}
+		opts = append(opts, WithEncryptionKey(string(key)))
+	}
+	_, err = Open(ctx, dir, opts...)
 	if err == nil {
 		t.Fatal("Open succeeded while another process holds the store")
 	}
