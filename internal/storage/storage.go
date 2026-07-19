@@ -230,6 +230,21 @@ type SyncStatus struct {
 	LastSuccessAt *time.Time
 }
 
+// AnomalyAlert is one recorded anomaly-alert identity: the dedup key for "have
+// we already alerted on this exact anomaly". It carries only cost metadata
+// (scope, a FOCUS service key, currency, the anomaly day, direction) - never
+// usage content. The alerted_at column is stamped from the `at` value the caller
+// passes to InsertNewAnomalyAlerts (never a clock); this struct holds only the
+// primary-key identity.
+type AnomalyAlert struct {
+	TenantID  string
+	Scope     string // "total" or "key"
+	SeriesKey string // "" for total scope
+	Currency  string
+	Date      time.Time // the anomaly calendar day (see the DATE-binding note below)
+	Direction string    // "increase" or "decrease"
+}
+
 // SyncState is one source's incremental-sync tuple (decision D16,
 // "incremental"): the S3 listing metadata of the source's partition-level
 // manifest as of the last successful sync. A billing period whose listed

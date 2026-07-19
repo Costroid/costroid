@@ -1044,6 +1044,76 @@ func (s *DuckDB) RecordSyncRun(ctx context.Context, run SyncRun) error {
 	return nil
 }
 
+// InsertNewAnomalyAlerts records each alert if it is not already present,
+// stamping alerted_at from at (never a clock), and returns the subset that was
+// newly inserted, in input order. That returned slice is exactly the anomalies
+// never recorded before: what the future alerter notifies on. The dedup identity
+// is the table's primary key (tenant, scope, series key, currency, anomaly day,
+// direction); an alert already recorded, or repeated within this same batch, is
+// inserted once and reported new at most once.
+//
+// It runs as a single transaction inserting one row at a time with ON CONFLICT
+// DO NOTHING RETURNING: a conflict returns no row, so an input alert joins the
+// result only when its row was actually inserted, and the per-row form preserves
+// input order and reports an intra-batch duplicate exactly once (a row inserted
+// earlier in this uncommitted transaction is visible to the next insert). A
+// multi-row VALUES ... RETURNING is deliberately NOT used: its returned-row order
+// is not guaranteed to match input order.
+//
+// anomaly_date is bound as CAST(? AS DATE) over the day string
+// (alert.Date.UTC().Format(time.DateOnly)), the store's DATE idiom: the DATE type
+// normalizes any time component to the calendar day, so two flags on the same day
+// can never split into two dedup rows.
+func (s *DuckDB) InsertNewAnomalyAlerts(ctx context.Context, alerts []AnomalyAlert, at time.Time) ([]AnomalyAlert, error) {
+	inserted := []AnomalyAlert{}
+	if len(alerts) == 0 {
+		return inserted, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning anomaly-alert transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, alert := range alerts {
+		var tenant string
+		err := tx.QueryRowContext(ctx,
+			`INSERT INTO anomaly_alerts (
+				tenant_id, scope, series_key, currency, anomaly_date, direction, alerted_at
+			 ) VALUES (?, ?, ?, ?, CAST(? AS DATE), ?, ?)
+			 ON CONFLICT DO NOTHING
+			 RETURNING tenant_id`,
+			alert.TenantID, alert.Scope, alert.SeriesKey, alert.Currency,
+			alert.Date.UTC().Format(time.DateOnly), alert.Direction, at.UTC()).Scan(&tenant)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// A conflict returns no row: this identity was already recorded (in a
+			// prior call or earlier in this batch), so it is not newly inserted.
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("inserting anomaly alert: %w", err)
+		}
+		inserted = append(inserted, alert)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing anomaly-alert transaction: %w", err)
+	}
+	return inserted, nil
+}
+
+// AnomalyAlertCount returns the number of recorded anomaly-alert dedup rows for
+// the tenant. The alerter reads a zero count as a first enable and seeds the
+// table silently (recording current anomalies without notifying). This is a
+// read, so it runs on the shared connection like the store's other counts rather
+// than opening a transaction.
+func (s *DuckDB) AnomalyAlertCount(ctx context.Context, tenant string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM anomaly_alerts WHERE tenant_id = ?`, tenant).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting anomaly alerts: %w", err)
+	}
+	return count, nil
+}
+
 // SyncStatuses implements Store.
 func (s *DuckDB) SyncStatuses(ctx context.Context) ([]SyncStatus, error) {
 	rows, err := s.db.QueryContext(ctx,
