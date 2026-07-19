@@ -259,10 +259,10 @@ func parseSources(r io.Reader) (sourcesConfig, error) {
 // decoding (mirroring parseScheduledSource): a webhook entry may not carry
 // slack fields and vice versa. It validates STRUCTURE only (required fields,
 // endpoint shape, non-empty slot names); it never resolves a secret or hits the
-// network. Phase A has a single implicit trigger (sync-failure): every
-// configured channel receives sync-failure alerts, so there is deliberately no
-// "triggers" field yet. Phase B (anomaly alerting) will add trigger
-// subscriptions.
+// network. Every configured channel receives every alert kind: sync-failure
+// alerts always, and cost-anomaly alerts when anomalyAlerts is enabled. The
+// fan-out is global by design, so there is deliberately no per-channel
+// "triggers" field.
 func parseAlertChannel(raw json.RawMessage, index int) (alertChannelConfig, error) {
 	var probe alertChannelCommonJSON
 	if err := json.Unmarshal(raw, &probe); err != nil {
