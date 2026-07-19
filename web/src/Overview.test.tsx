@@ -9,6 +9,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import Overview from "./Overview";
 import type { components } from "./api/schema";
@@ -216,6 +217,230 @@ describe("Overview", () => {
     expect(
       screen.getByRole("button", { name: "EUR" }).getAttribute("aria-pressed"),
     ).toBe("true");
+  });
+
+  it("renders the provider selector only when the summary lists more than one provider", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: (url) => {
+          const multiple = url.includes("start=2026-06-01");
+          return fakeResponse(
+            200,
+            summaryBody({
+              provider: "",
+              providers: multiple
+                ? ["Amazon Web Services", "Microsoft"]
+                : ["Amazon Web Services"],
+            }),
+          );
+        },
+      }),
+    );
+    const { rerender } = render(
+      <Overview range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+
+    await screen.findByText(PERIOD_TOTAL_DISPLAY);
+    expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
+
+    rerender(<Overview range={{ start: "2026-06-01", end: "2026-06-30" }} />);
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    expect(
+      screen
+        .getByRole("button", { name: "All providers" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      Array.from(selector.querySelectorAll("button")).map(
+        (button) => button.textContent,
+      ),
+    ).toEqual(["All providers", "Amazon Web Services", "Microsoft"]);
+  });
+
+  it("drills a provider selection into services and threads the provider to every chain", async () => {
+    const providerFrom = (url: string) =>
+      new URL(url, "http://x").searchParams.get("provider") ?? "";
+    const providers = ["Amazon Web Services", "Microsoft"];
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: (url) => {
+          const requested = providerFrom(url);
+          if (requested === "Microsoft") {
+            return fakeResponse(
+              200,
+              summaryBody({
+                provider: requested,
+                providers,
+                currencies: ["USD"],
+                keys: [
+                  { key: "Virtual Machines", total: "7" },
+                  { key: "Blob Storage", total: "3" },
+                ],
+              }),
+            );
+          }
+          if (requested !== "") {
+            return fakeResponse(
+              200,
+              summaryBody({
+                provider: requested,
+                providers,
+                currencies: ["USD"],
+                previousTotal: "6",
+                previousStart: "2026-04-01",
+                previousEnd: "2026-04-30",
+                keys: [
+                  {
+                    key: "Amazon EC2",
+                    total: "10",
+                    previousTotal: "4",
+                    delta: "6",
+                  },
+                  {
+                    key: "Amazon S3",
+                    total: "5",
+                    previousTotal: "2",
+                    delta: "3",
+                  },
+                ],
+              }),
+            );
+          }
+          return fakeResponse(
+            200,
+            summaryBody({ provider: "", providers, currencies: ["USD"] }),
+          );
+        },
+        unit: (url) =>
+          fakeResponse(
+            200,
+            unitBody({
+              provider: providerFrom(url),
+              providers,
+              currencies: ["USD"],
+            }),
+          ),
+      }),
+    );
+    render(<Overview />);
+
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    fireEvent.click(
+      within(selector).getByRole("button", { name: "Amazon Web Services" }),
+    );
+
+    const encoded = "Amazon%20Web%20Services";
+    await waitFor(() => {
+      const urls = fetchedURLs();
+      const summaryURL = urls.find(
+        (url) =>
+          url.startsWith("/api/v1/costs/summary") &&
+          url.includes(`provider=${encoded}`),
+      );
+      expect(summaryURL).toBe(`/api/v1/costs/summary?provider=${encoded}`);
+      expect(summaryURL).not.toContain("groupBy=provider");
+      expect(summaryURL).not.toContain("groupBy=service");
+      expect(urls).toContain(`/api/v1/anomalies?provider=${encoded}`);
+      expect(urls).toContain(
+        `/api/v1/unit-economics/daily?metric=requests%20served&provider=${encoded}`,
+      );
+    });
+    expect(await screen.findByText("Spend by service")).toBeTruthy();
+    expect(
+      screen.getByRole("img", { name: "Service spend split" }),
+    ).toBeTruthy();
+    const movers = screen.getByText("Top movers").closest("article");
+    expect(within(movers!).getByText("Service")).toBeTruthy();
+
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Provider" })).getByRole(
+        "button",
+        { name: "Microsoft" },
+      ),
+    );
+    expect(await screen.findByText("Largest services")).toBeTruthy();
+    expect(screen.queryByText("Largest providers")).toBeNull();
+  });
+
+  it("snaps a dropped provider selection to All using the providers list, not the echo", async () => {
+    const selectedProvider = "Amazon Web Services";
+    let selectionDropped = false;
+    const providerFrom = (url: string) =>
+      new URL(url, "http://x").searchParams.get("provider") ?? "";
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: (url) => {
+          const requested = providerFrom(url);
+          if (requested === selectedProvider) {
+            selectionDropped = true;
+            // Contract-faithful valid-absent response: echo the request while
+            // the unscoped selector list proves the provider is gone.
+            return fakeResponse(
+              200,
+              summaryBody({
+                provider: requested,
+                providers: ["Microsoft"],
+                currency: "",
+                currencies: [],
+                total: "0",
+                keys: [],
+              }),
+            );
+          }
+          return fakeResponse(
+            200,
+            summaryBody({
+              provider: "",
+              providers: selectionDropped
+                ? ["Microsoft"]
+                : [selectedProvider, "Microsoft"],
+            }),
+          );
+        },
+        unit: (url) => {
+          const requested = providerFrom(url);
+          return fakeResponse(
+            200,
+            unitBody({
+              provider: requested,
+              providers: selectionDropped
+                ? ["Microsoft"]
+                : [selectedProvider, "Microsoft"],
+              ...(requested
+                ? {
+                    currency: "",
+                    currencies: [],
+                    days: [],
+                    period: { coveredDays: 0, cost: "0", quantity: "0" },
+                  }
+                : {}),
+            }),
+          );
+        },
+      }),
+    );
+    render(<Overview />);
+
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    fireEvent.click(
+      within(selector).getByRole("button", { name: selectedProvider }),
+    );
+
+    await waitFor(() => {
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/summary?provider=Amazon%20Web%20Services",
+      );
+      expect(
+        fetchedURLs().filter(
+          (url) => url === "/api/v1/costs/summary?groupBy=provider",
+        ).length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
+    expect(await screen.findByText("Spend by provider")).toBeTruthy();
   });
 
   it("refetches summary, anomalies, and unit economics for the selected currency", async () => {
@@ -704,14 +929,19 @@ describe("Overview", () => {
         u.includes("/api/v1/costs/summary?start=2026-06-12&end=2026-07-11"),
       ),
     ).toBe(true);
-    // groupBy=provider present on EVERY summary request (non-default) — a
-    // regression dropping it on refetch must fail, so no cumulative .some().
+    // Every request pins its mode independently. Unfiltered summaries group by
+    // provider; filtered drill-down uses the service default and omits groupBy.
     const summaryURLs = fetchedURLs().filter((u) =>
       u.includes("/api/v1/costs/summary"),
     );
     expect(summaryURLs.length).toBeGreaterThan(1);
     for (const u of summaryURLs) {
-      expect(u).toContain("groupBy=provider");
+      const filtered = new URL(u, "http://x").searchParams.has("provider");
+      if (filtered) {
+        expect(u).not.toContain("groupBy=provider");
+      } else {
+        expect(u).toContain("groupBy=provider");
+      }
     }
   });
 
@@ -811,6 +1041,60 @@ describe("Overview", () => {
 
     expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
     expect(screen.queryByText(/Failed to load unit cost/)).toBeNull();
+    expect(screen.getByText("Loading overview…")).toBeTruthy();
+    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(3);
+  });
+
+  it("commits no stale card frame on a provider switch", async () => {
+    let holdRequests = false;
+    const pending = new Promise<Response>(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (holdRequests) return pending;
+
+        const path = new URL(String(input), "http://localhost").pathname;
+        if (path === "/api/v1/costs/summary") {
+          return Promise.resolve(
+            fakeResponse(
+              200,
+              summaryBody({
+                provider: "",
+                providers: ["Amazon Web Services", "Microsoft"],
+              }),
+            ),
+          );
+        }
+        if (path === "/api/v1/anomalies") {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        if (path === "/api/v1/business-metrics") {
+          return Promise.resolve(fakeResponse(200, metricsBody()));
+        }
+        if (path === "/api/v1/unit-economics/daily") {
+          return Promise.resolve(fakeResponse(200, unitBody()));
+        }
+        return Promise.resolve(fakeResponse(404, null));
+      }),
+    );
+
+    render(<Overview />);
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    expect(await screen.findByText(PERIOD_TOTAL_DISPLAY)).toBeTruthy();
+    expect(await screen.findByText("Flagged days")).toBeTruthy();
+    expect(await screen.findByText(UNIT_COST_DISPLAY)).toBeTruthy();
+
+    holdRequests = true;
+    // Native click OUTSIDE act commits the synchronous provider-mismatch frame;
+    // one microtask observes it before passive effects publish loading state.
+    within(selector)
+      .getByRole("button", { name: "Amazon Web Services" })
+      .click();
+    await Promise.resolve();
+
+    expect(screen.queryByText(PERIOD_TOTAL_DISPLAY)).toBeNull();
+    expect(screen.queryByText("Flagged days")).toBeNull();
+    expect(screen.queryByText(UNIT_COST_DISPLAY)).toBeNull();
     expect(screen.getByText("Loading overview…")).toBeTruthy();
     expect(document.querySelectorAll(".skeleton-card")).toHaveLength(3);
   });

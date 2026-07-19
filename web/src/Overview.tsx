@@ -23,7 +23,12 @@ type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomaly = components["schemas"]["Anomaly"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
 
-type FetchParams = { start: string; end: string; currency: string };
+type FetchParams = {
+  start: string;
+  end: string;
+  currency: string;
+  provider: string;
+};
 
 type SummaryState =
   | { status: "loading" }
@@ -52,6 +57,7 @@ export default function Overview({
 }) {
   const { start, end } = range;
   const [currency, setCurrency] = useState<string>("");
+  const [provider, setProvider] = useState<string>("");
   const [summaryState, setSummaryState] = useState<SummaryState>({
     status: "loading",
   });
@@ -73,8 +79,9 @@ export default function Overview({
           {
             start,
             end,
-            groupBy: "provider",
+            groupBy: provider ? "service" : "provider",
             ...(currency ? { currency } : {}),
+            ...(provider ? { provider } : {}),
           },
           controller.signal,
         );
@@ -88,23 +95,33 @@ export default function Overview({
         if (nextCurrency !== currency) {
           setCurrency(nextCurrency);
         }
+        // All providers is a valid display state. Reconcile against the
+        // unscoped selector LIST, never the echoed requested provider, and
+        // still commit this ready body while the snapped request starts.
+        const nextProvider =
+          provider !== "" && !summary.providers.includes(provider)
+            ? ""
+            : provider;
+        if (nextProvider !== provider) {
+          setProvider(nextProvider);
+        }
         setSummaryState({
           status: "ready",
           summary,
-          params: { start, end, currency },
+          params: { start, end, currency, provider },
         });
       } catch (err) {
         if (controller.signal.aborted) return;
         setSummaryState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
-          params: { start, end, currency },
+          params: { start, end, currency, provider },
         });
       }
     }
     void load();
     return () => controller.abort();
-  }, [start, end, currency, retryToken]);
+  }, [start, end, currency, provider, retryToken]);
 
   // Effect 2: anomalies by service → card 4.
   useEffect(() => {
@@ -118,6 +135,7 @@ export default function Overview({
             end,
             groupBy: "service",
             ...(currency ? { currency } : {}),
+            ...(provider ? { provider } : {}),
           },
           controller.signal,
         );
@@ -125,20 +143,20 @@ export default function Overview({
         setAnomalyState({
           status: "ready",
           anomalies: body.anomalies ?? [],
-          params: { start, end, currency },
+          params: { start, end, currency, provider },
         });
       } catch (err) {
         if (controller.signal.aborted) return;
         setAnomalyState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
-          params: { start, end, currency },
+          params: { start, end, currency, provider },
         });
       }
     }
     void load();
     return () => controller.abort();
-  }, [start, end, currency, retryToken]);
+  }, [start, end, currency, provider, retryToken]);
 
   // Effect 3: business metrics → unit economics (chained) → card 5.
   useEffect(() => {
@@ -153,7 +171,7 @@ export default function Overview({
         if (!first) {
           setUnitState({
             status: "empty",
-            params: { start, end, currency },
+            params: { start, end, currency, provider },
           });
           return;
         }
@@ -163,6 +181,7 @@ export default function Overview({
             start,
             end,
             ...(currency ? { currency } : {}),
+            ...(provider ? { provider } : {}),
           },
           controller.signal,
         );
@@ -170,36 +189,38 @@ export default function Overview({
         setUnitState({
           status: "ready",
           economics,
-          params: { start, end, currency },
+          params: { start, end, currency, provider },
         });
       } catch (err) {
         if (controller.signal.aborted) return;
         setUnitState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
-          params: { start, end, currency },
+          params: { start, end, currency, provider },
         });
       }
     }
     void load();
     return () => controller.abort();
-  }, [start, end, currency, retryToken]);
+  }, [start, end, currency, provider, retryToken]);
 
   // Synchronous staleness: held terminal data for different params → loading.
-  // This includes errors so a range/currency change never flashes an old error
-  // for one frame before the passive effects set their loading states.
+  // This includes errors so a range/currency/provider change never flashes an
+  // old error for one frame before the passive effects set loading states.
   const summary: SummaryState =
     (summaryState.status === "ready" || summaryState.status === "error") &&
     (summaryState.params.start !== start ||
       summaryState.params.end !== end ||
-      summaryState.params.currency !== currency)
+      summaryState.params.currency !== currency ||
+      summaryState.params.provider !== provider)
       ? { status: "loading" }
       : summaryState;
   const anomalies: AnomalyState =
     (anomalyState.status === "ready" || anomalyState.status === "error") &&
     (anomalyState.params.start !== start ||
       anomalyState.params.end !== end ||
-      anomalyState.params.currency !== currency)
+      anomalyState.params.currency !== currency ||
+      anomalyState.params.provider !== provider)
       ? { status: "loading" }
       : anomalyState;
   const unit: UnitState =
@@ -208,9 +229,12 @@ export default function Overview({
       unitState.status === "error") &&
     (unitState.params.start !== start ||
       unitState.params.end !== end ||
-      unitState.params.currency !== currency)
+      unitState.params.currency !== currency ||
+      unitState.params.provider !== provider)
       ? { status: "loading" }
       : unitState;
+  const filtered =
+    summary.status === "ready" && summary.summary.provider !== "";
 
   return (
     <section className="overview" aria-labelledby="overview-title">
@@ -239,6 +263,32 @@ export default function Overview({
               ))}
             </div>
           )}
+        {summary.status === "ready" && summary.summary.providers.length > 1 && (
+          <div
+            className="cost-group-control"
+            role="group"
+            aria-label="Provider"
+          >
+            <span>Provider</span>
+            <button
+              type="button"
+              aria-pressed={provider === ""}
+              onClick={() => setProvider("")}
+            >
+              All providers
+            </button>
+            {summary.summary.providers.map((name) => (
+              <button
+                key={name}
+                type="button"
+                aria-pressed={provider === name}
+                onClick={() => setProvider(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <ViewStatus
@@ -271,8 +321,8 @@ export default function Overview({
         {summary.status === "ready" && (
           <>
             <PeriodTotalCard summary={summary.summary} />
-            <ProviderSplitCard summary={summary.summary} />
-            <MoversCard summary={summary.summary} />
+            <ProviderSplitCard summary={summary.summary} filtered={filtered} />
+            <MoversCard summary={summary.summary} filtered={filtered} />
           </>
         )}
 
@@ -325,7 +375,13 @@ function PeriodTotalCard({ summary }: { summary: CostsSummary }) {
   );
 }
 
-function ProviderSplitCard({ summary }: { summary: CostsSummary }) {
+function ProviderSplitCard({
+  summary,
+  filtered,
+}: {
+  summary: CostsSummary;
+  filtered: boolean;
+}) {
   // Widths are Number() geometry only (D40); displayed money stays strings.
   const widths = summary.keys.map((k) => Math.max(0, Number(k.total)));
   const sum = widths.reduce((a, b) => a + b, 0) || 1;
@@ -333,7 +389,7 @@ function ProviderSplitCard({ summary }: { summary: CostsSummary }) {
   return (
     <article className="overview-card" aria-labelledby="overview-split">
       <h3 id="overview-split" className="overview-card-title">
-        Spend by provider
+        {filtered ? "Spend by service" : "Spend by provider"}
       </h3>
       {summary.keys.length === 0 ? (
         <p className="overview-muted">No cost in this range.</p>
@@ -342,7 +398,9 @@ function ProviderSplitCard({ summary }: { summary: CostsSummary }) {
           <div
             className="overview-split-bar"
             role="img"
-            aria-label="Provider spend split"
+            aria-label={
+              filtered ? "Service spend split" : "Provider spend split"
+            }
           >
             {summary.keys.map((k, i) => (
               <span
@@ -376,14 +434,20 @@ function ProviderSplitCard({ summary }: { summary: CostsSummary }) {
   );
 }
 
-function MoversCard({ summary }: { summary: CostsSummary }) {
+function MoversCard({
+  summary,
+  filtered,
+}: {
+  summary: CostsSummary;
+  filtered: boolean;
+}) {
   // NORMAL when ≥1 key carries delta (equivalently previousTotal present at top).
   const hasDelta = summary.keys.some((k) => k.delta !== undefined);
   if (!hasDelta) {
     return (
       <article className="overview-card" aria-labelledby="overview-movers">
         <h3 id="overview-movers" className="overview-card-title">
-          Largest providers
+          {filtered ? "Largest services" : "Largest providers"}
         </h3>
         <p className="overview-muted">
           No preceding window to compare; ranking by period total.
@@ -421,7 +485,7 @@ function MoversCard({ summary }: { summary: CostsSummary }) {
       </h3>
       {windowLabel && <p className="overview-muted">vs {windowLabel}</p>}
       <div className="overview-movers-header">
-        <span>Provider</span>
+        <span>{filtered ? "Service" : "Provider"}</span>
         <span>Change</span>
         <span>Total</span>
       </div>
