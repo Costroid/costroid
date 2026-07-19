@@ -19,6 +19,23 @@ ingests, stores, logs, caches, or transmits prompt or response content. What it
 reads is limited to money amounts, currencies, day and month timestamps, model
 and workspace identifiers, and aggregate token and request counts.
 
+## Outbound alert payloads
+
+Costroid can send two kinds of operational alert to an operator-configured
+webhook or Slack channel: a sync-failure alert and a cost-anomaly alert. Both
+are metadata only and neither ever carries a prompt, a response, or any usage
+content.
+
+They differ deliberately in one respect. A sync-failure alert carries no cost
+figure at all. A cost-anomaly alert carries aggregate cost figures for the
+anomalous day: the observed amount, the baseline median, the deviation, and the
+threshold, each an exact decimal string, alongside a FOCUS service key, the
+currency, the day, and the direction. This is a deliberate, documented widening
+of the alert whitelist: those figures are aggregate cost metadata, which the
+Cardinal Rule permits, and an anomaly alert is not useful without its magnitude.
+The widening is bounded to a fixed payload struct; it adds no usage-metric value
+and no free-form text drawn from a source.
+
 ## Data flow
 
 Both AI connectors make outbound HTTP GET requests to a fixed allowlist of cost

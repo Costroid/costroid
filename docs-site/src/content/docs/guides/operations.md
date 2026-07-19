@@ -257,6 +257,45 @@ AI prompt or response content. A channel that is slow or down is retried once
 and then skipped for that run; it never blocks the other channels or the
 scheduler.
 
+## Anomaly alerting
+
+Scheduled ingestion can also notify you when a day's cost is anomalous. This
+reuses the SAME `alerts` channels; it adds no new endpoint and no new secret.
+It is opt-in and off by default. Turn it on with a top-level `anomalyAlerts`
+object alongside the `alerts` block:
+
+```json
+{
+  "sources": [ ],
+  "alerts": [ ],
+  "anomalyAlerts": { "enabled": true }
+}
+```
+
+`enabled` is the only field: a single global on/off. When it is on, every
+configured channel receives anomaly alerts; there is no per-channel selection,
+threshold, or sensitivity knob. The detector's parameters are fixed and
+published, so an alert is hand-recomputable from the daily figures rather than
+tuned per deployment. With `anomalyAlerts` absent, or `{"enabled": false}`,
+anomaly alerting is off.
+
+An anomaly is detected on the tenant's total daily spend and on each service's
+own daily series, in both directions (a spike or a dip), per billing currency.
+Each detected anomaly alerts exactly once: it is recorded in a persisted dedup
+table, so it never re-pages on a later run and there is no reminder cadence.
+
+The first time you enable anomaly alerting, Costroid seeds that table from your
+existing history WITHOUT sending anything, so switching it on over a store full
+of past data does not produce a burst of alerts for old anomalies. Only
+anomalies detected after that first enable are delivered.
+
+Unlike a sync-failure alert, an anomaly alert carries aggregate cost figures:
+the observed amount, the baseline median, the deviation, and the threshold, each
+as an exact decimal string, plus a FOCUS service key, the currency, the day, and
+the direction. These are cost metadata; the payload still never carries a
+credential or any AI prompt or response content. See the
+[threat model](/security/threat-model/) for the Cardinal-Rule note on this.
+
 ## Backups
 
 Cold-copy `costroid.duckdb`, or the whole data directory, while no `costroid`
