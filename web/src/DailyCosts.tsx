@@ -31,6 +31,7 @@ type FetchParams = {
   end: string;
   groupBy: CostGroupBy;
   currency: string;
+  provider: string;
 };
 type CostFetchParams = FetchParams;
 
@@ -70,8 +71,11 @@ export default function DailyCosts({
   const [retryToken, setRetryToken] = useState(0);
   const displayedCurrency =
     state.status === "ready" ? state.costs.currency : null;
+  const displayedProvider =
+    state.status === "ready" ? state.costs.provider : null;
   const [groupBy, setGroupBy] = useState<CostGroupBy>("service");
   const [currency, setCurrency] = useState<string>("");
+  const [provider, setProvider] = useState<string>("");
   const [anomalyState, setAnomalyState] = useState<AnomalyState>({
     status: "loading",
     params: {
@@ -79,6 +83,7 @@ export default function DailyCosts({
       end: range.end,
       groupBy: "service",
       currency: "",
+      provider: "",
     },
   });
   const { start, end } = range;
@@ -95,6 +100,7 @@ export default function DailyCosts({
             end,
             groupBy,
             ...(currency ? { currency } : {}),
+            ...(provider ? { provider } : {}),
           },
           controller.signal,
         );
@@ -114,10 +120,19 @@ export default function DailyCosts({
         if (nextCurrency !== currency) {
           setCurrency(nextCurrency);
         }
+        // Unlike currency, all providers is a valid display state, so a
+        // narrowed range that drops the selection safely lands on All.
+        const nextProvider =
+          provider !== "" && !costs.providers.includes(provider)
+            ? ""
+            : provider;
+        if (nextProvider !== provider) {
+          setProvider(nextProvider);
+        }
         setState({
           status: "ready",
           costs,
-          params: { start, end, groupBy, currency },
+          params: { start, end, groupBy, currency, provider },
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -126,21 +141,21 @@ export default function DailyCosts({
         setState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
-          params: { start, end, groupBy, currency },
+          params: { start, end, groupBy, currency, provider },
         });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [start, end, groupBy, currency, retryToken]);
+  }, [start, end, groupBy, currency, provider, retryToken]);
 
   // The anomaly overlay is fetched with the SAME range + groupBy + resolved
   // currency as the chart, but independently: a failure here must never break
   // the chart (it only drops the overlay and shows a small notice). No stale
   // markers — the held flags carry the params they were fetched for.
   useEffect(() => {
-    if (displayedCurrency === null) {
+    if (displayedCurrency === null || displayedProvider === null) {
       return;
     }
 
@@ -149,13 +164,23 @@ export default function DailyCosts({
       end,
       groupBy,
       currency: displayedCurrency,
+      provider: displayedProvider,
     };
     setAnomalyState({ status: "loading", params });
     const controller = new AbortController();
 
     async function loadAnomalies() {
       try {
-        const body = await getAnomalies(params, controller.signal);
+        const body = await getAnomalies(
+          {
+            start: params.start,
+            end: params.end,
+            groupBy: params.groupBy,
+            currency: params.currency,
+            ...(params.provider ? { provider: params.provider } : {}),
+          },
+          controller.signal,
+        );
         if (controller.signal.aborted) {
           return;
         }
@@ -178,7 +203,7 @@ export default function DailyCosts({
 
     void loadAnomalies();
     return () => controller.abort();
-  }, [start, end, groupBy, displayedCurrency]);
+  }, [start, end, groupBy, displayedCurrency, displayedProvider]);
 
   const groupLabel = groupLabelOf(groupBy);
 
@@ -187,7 +212,8 @@ export default function DailyCosts({
     anomalyState.params.start === start &&
     anomalyState.params.end === end &&
     anomalyState.params.groupBy === groupBy &&
-    anomalyState.params.currency === displayedCurrency;
+    anomalyState.params.currency === displayedCurrency &&
+    anomalyState.params.provider === displayedProvider;
   const anomalyFlags =
     anomalyState.status === "ready" && anomalyMatches ? anomalyState.flags : [];
   const anomalyNotice =
@@ -207,7 +233,8 @@ export default function DailyCosts({
     (state.params.start !== start ||
       state.params.end !== end ||
       state.params.groupBy !== groupBy ||
-      state.params.currency !== currency)
+      state.params.currency !== currency ||
+      state.params.provider !== provider)
       ? { status: "loading" }
       : state;
 
@@ -250,6 +277,32 @@ export default function DailyCosts({
                 onClick={() => setCurrency(code)}
               >
                 {code}
+              </button>
+            ))}
+          </div>
+        )}
+        {view.status === "ready" && view.costs.providers.length > 1 && (
+          <div
+            className="cost-group-control"
+            role="group"
+            aria-label="Provider"
+          >
+            <span>Provider</span>
+            <button
+              type="button"
+              aria-pressed={provider === ""}
+              onClick={() => setProvider("")}
+            >
+              All providers
+            </button>
+            {view.costs.providers.map((name) => (
+              <button
+                key={name}
+                type="button"
+                aria-pressed={provider === name}
+                onClick={() => setProvider(name)}
+              >
+                {name}
               </button>
             ))}
           </div>

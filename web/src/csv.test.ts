@@ -144,4 +144,20 @@ describe("dailyCostsCsvFilename", () => {
       "costroid-daily-costs-service-2026-05-01_2026-05-03.csv",
     );
   });
+
+  it.each([
+    ["Amazon Web Services", "amazon-web-services"],
+    ["GOOGLE.Cloud / AI", "google-cloud-ai"],
+    ["  Microsoft!!!Azure  ", "microsoft-azure"],
+  ])("sanitizes provider %s for the filename", (provider, segment) => {
+    expect(dailyCostsCsvFilename({ ...costs, provider }, "service")).toBe(
+      `costroid-daily-costs-service-${segment}-USD-2026-05-01_2026-05-03.csv`,
+    );
+  });
+
+  it("omits a provider that sanitizes to an empty segment", () => {
+    expect(
+      dailyCostsCsvFilename({ ...costs, provider: "!!!" }, "service"),
+    ).toBe("costroid-daily-costs-service-USD-2026-05-01_2026-05-03.csv");
+  });
 });

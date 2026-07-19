@@ -68,6 +68,19 @@ function dailyBody(
   };
 }
 
+function providerDailyBody(
+  provider: string,
+  providers: string[],
+  total: string,
+  key = "Shared Compute",
+): DailyCostsResponse {
+  return {
+    ...dailyBody("USD", ["USD"], total, key),
+    provider,
+    providers,
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -215,6 +228,7 @@ describe("DailyCosts", () => {
     );
     expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
     expect(screen.queryByText("Currency")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
     expect(screen.getByRole("button", { name: "Download CSV" })).toBeTruthy();
   });
 
@@ -469,6 +483,197 @@ describe("DailyCosts", () => {
     );
     // Single-currency range hides the selector entirely.
     expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
+  });
+
+  it("renders the provider selector, requests the encoded provider, overlays it, and names its CSV", async () => {
+    const providers = ["Amazon Web Services", "Microsoft"];
+    const initial = providerDailyBody("", providers, "3.000000000000000003");
+    const selected = providerDailyBody(
+      "Amazon Web Services",
+      providers,
+      "1.111111111111111111",
+      "AWS Compute",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            url.includes("provider=Amazon%20Web%20Services")
+              ? selected
+              : initial,
+          ),
+        );
+      }),
+    );
+    class StubURL extends URL {}
+    StubURL.createObjectURL = vi.fn((_blob: Blob) => "blob:provider-test");
+    StubURL.revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", StubURL);
+    let downloadName = "";
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadName = this.download;
+      });
+
+    render(<DailyCosts />);
+
+    expect(await screen.findByRole("group", { name: "Provider" })).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "All providers" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("button", { name: "Amazon Web Services" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Amazon Web Services" }),
+    );
+
+    expect(
+      (await screen.findAllByTitle("1.111111111111111111 USD")).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen
+        .getByRole("button", { name: "Amazon Web Services" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("button", { name: "All providers" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/daily?provider=Amazon%20Web%20Services",
+      ),
+    );
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/anomalies?currency=USD&provider=Amazon%20Web%20Services",
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
+    expect(downloadName).toBe(
+      "costroid-daily-costs-service-amazon-web-services-USD-2026-05-01_2026-05-01.csv",
+    );
+    clickSpy.mockRestore();
+  });
+
+  it("shows loading synchronously while a provider refetch is pending", async () => {
+    const providers = ["Amazon Web Services", "Microsoft"];
+    const initial = providerDailyBody("", providers, "3");
+    const selected = providerDailyBody("Amazon Web Services", providers, "1");
+    let resolveSelected!: (response: Response) => void;
+    const heldSelected = new Promise<Response>((resolve) => {
+      resolveSelected = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        if (url.includes("provider=Amazon%20Web%20Services")) {
+          return heldSelected;
+        }
+        return Promise.resolve(fakeResponse(200, initial));
+      }),
+    );
+    render(<DailyCosts />);
+    await screen.findByRole("group", { name: "Provider" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Amazon Web Services" }),
+    );
+    expect(screen.getByText("Loading daily costs…")).toBeTruthy();
+    expect(
+      screen.queryByRole("group", { name: /Stacked daily cost/ }),
+    ).toBeNull();
+
+    resolveSelected(fakeResponse(200, selected));
+    expect((await screen.findAllByTitle("1 USD")).length).toBeGreaterThan(0);
+  });
+
+  it("snaps a dropped provider selection to All providers", async () => {
+    const initialProviders = ["Amazon Web Services", "Microsoft"];
+    const initial = providerDailyBody("", initialProviders, "3");
+    const selected = providerDailyBody(
+      "Amazon Web Services",
+      initialProviders,
+      "1",
+    );
+    const dropped: DailyCostsResponse = {
+      currency: "",
+      currencies: [],
+      provider: "Amazon Web Services",
+      providers: ["Microsoft"],
+      total: "0",
+      days: [],
+    };
+    const recovered = providerDailyBody("", ["Microsoft"], "4", "Azure");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody()));
+        }
+        if (url.includes("start=2026-06-01")) {
+          return Promise.resolve(
+            fakeResponse(
+              200,
+              url.includes("provider=Amazon%20Web%20Services")
+                ? dropped
+                : recovered,
+            ),
+          );
+        }
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            url.includes("provider=Amazon%20Web%20Services")
+              ? selected
+              : initial,
+          ),
+        );
+      }),
+    );
+    const { rerender } = render(
+      <DailyCosts range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+    await screen.findByRole("group", { name: "Provider" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Amazon Web Services" }),
+    );
+    expect((await screen.findAllByTitle("1 USD")).length).toBeGreaterThan(0);
+
+    rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
+
+    expect((await screen.findAllByTitle("4 USD")).length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30&provider=Amazon%20Web%20Services",
+      ),
+    );
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30",
+      ),
+    );
+    expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
   });
 
   it("fetches daily costs for a provided range", async () => {
@@ -1153,6 +1358,92 @@ describe("DailyCosts", () => {
       fetchedURLs().filter((url) => url.startsWith("/api/v1/anomalies")),
     ).toEqual(["/api/v1/anomalies?currency=EUR"]);
     expect(screen.queryByText(/Anomaly overlay unavailable/)).toBeNull();
+  });
+
+  it("removes stale provider markers before the selected overlay resolves", async () => {
+    const providers = ["Amazon Web Services", "Microsoft"];
+    const initial = providerDailyBody("", providers, "3");
+    const selected = providerDailyBody("Amazon Web Services", providers, "1");
+    const flags: Anomaly[] = [
+      {
+        date: "2026-05-01",
+        scope: "total",
+        direction: "increase",
+        observed: "3",
+        median: "1",
+        mad: "0.1",
+        scaledMad: "0.14826",
+        threshold: "0.44478",
+        deviation: "2",
+      },
+    ];
+    let resolveSelectedAnomalies!: (response: Response) => void;
+    const heldSelectedAnomalies = new Promise<Response>((resolve) => {
+      resolveSelectedAnomalies = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/costs/daily")) {
+          return Promise.resolve(
+            fakeResponse(
+              200,
+              url.includes("provider=Amazon%20Web%20Services")
+                ? selected
+                : initial,
+            ),
+          );
+        }
+        if (url.includes("provider=Amazon%20Web%20Services")) {
+          return heldSelectedAnomalies;
+        }
+        return Promise.resolve(fakeResponse(200, anomaliesBody(flags)));
+      }),
+    );
+
+    const { container } = render(<DailyCosts />);
+    await waitFor(() =>
+      expect(
+        container.querySelector(
+          '.viz-chart .viz-anomaly[data-direction="increase"]',
+        ),
+      ).toBeTruthy(),
+    );
+
+    let sawStaleProviderMarker = false;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (
+            node instanceof Element &&
+            (node.matches('.viz-anomaly[data-direction="increase"]') ||
+              node.querySelector('.viz-anomaly[data-direction="increase"]') !==
+                null)
+          ) {
+            sawStaleProviderMarker = true;
+          }
+        }
+      }
+    });
+    observer.observe(container, { childList: true, subtree: true });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Amazon Web Services" }),
+    );
+    expect((await screen.findAllByTitle("1 USD")).length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain(
+        "/api/v1/anomalies?currency=USD&provider=Amazon%20Web%20Services",
+      ),
+    );
+    await Promise.resolve();
+
+    expect(container.querySelector(".viz-chart .viz-anomaly")).toBeNull();
+    expect(sawStaleProviderMarker).toBe(false);
+    observer.disconnect();
+
+    resolveSelectedAnomalies(fakeResponse(200, anomaliesBody()));
   });
 
   it("removes stale currency markers before the switched overlay resolves", async () => {

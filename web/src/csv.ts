@@ -40,16 +40,22 @@ export function dailyCostsToCsv(costs: DailyCosts): string {
   return "\uFEFF" + lines.join("\r\n") + "\r\n";
 }
 
-// dailyCostsCsvFilename names the download after the grouping, currency, and
-// the actual data span (first..last day). Caller guarantees days.length > 0.
+// dailyCostsCsvFilename names the download after the grouping, active provider,
+// currency, and the actual data span (first..last day). Caller guarantees
+// days.length > 0.
 export function dailyCostsCsvFilename(
   costs: DailyCosts,
   groupBy: CostGroupBy,
 ): string {
   const first = costs.days[0].date;
   const last = costs.days[costs.days.length - 1].date;
+  const provider = costs.provider
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const providerSegment = provider ? `-${provider}` : "";
   const cur = costs.currency ? `-${costs.currency}` : "";
-  return `costroid-daily-costs-${groupBy}${cur}-${first}_${last}.csv`;
+  return `costroid-daily-costs-${groupBy}${providerSegment}${cur}-${first}_${last}.csv`;
 }
 
 // downloadCsv triggers a browser download of csv under filename. It is the only
