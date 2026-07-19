@@ -287,8 +287,21 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
 		return
 	}
+	if params.Provider != nil && (*params.Provider == "" || len(*params.Provider) > focus.MaxFreeTextBytes) {
+		http.Error(w, providerShapeMessage, http.StatusBadRequest)
+		return
+	}
 
-	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end, "")
+	provider := ""
+	if params.Provider != nil {
+		provider = *params.Provider
+	}
+	providers, err := s.store.Providers(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end, provider)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -310,7 +323,7 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		}
 	}
 
-	current, err := s.queryDailyCosts(r.Context(), start, end, currency, params.GroupBy, dim, isAllocation)
+	current, err := s.queryDailyCosts(r.Context(), start, end, currency, provider, params.GroupBy, dim, isAllocation)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -320,6 +333,8 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 	resp := CostsSummary{
 		Currency:   curCurrency,
 		Currencies: currencies,
+		Provider:   provider,
+		Providers:  providers,
 		Total:      curGrand.String(),
 		Keys:       make([]CostSummaryKey, 0, len(curTotals)),
 	}
@@ -336,7 +351,7 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		// prevEnd = start − 1 day; prevStart = prevEnd − (end − start).
 		prevEnd = start.AddDate(0, 0, -1)
 		prevStart = prevEnd.Add(-end.Sub(start))
-		previous, err := s.queryDailyCosts(r.Context(), prevStart, prevEnd, currency, params.GroupBy, dim, isAllocation)
+		previous, err := s.queryDailyCosts(r.Context(), prevStart, prevEnd, currency, provider, params.GroupBy, dim, isAllocation)
 		if err != nil {
 			http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -395,15 +410,15 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 // queryDailyCosts runs the same store path as GetDailyCosts for one window.
 // Allocation rules are pre-resolved once by the caller and shared across both
 // windows. On store failure this returns the error without writing a response.
-func (s *Server) queryDailyCosts(ctx context.Context, start, end time.Time, currency string, groupBy *GetCostsSummaryParamsGroupBy, dim allocation.Dimension, isAllocation bool) (storage.DailyCosts, error) {
+func (s *Server) queryDailyCosts(ctx context.Context, start, end time.Time, currency, provider string, groupBy *GetCostsSummaryParamsGroupBy, dim allocation.Dimension, isAllocation bool) (storage.DailyCosts, error) {
 	if isAllocation {
-		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim, currency, "")
+		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim, currency, provider)
 	}
 	gb := storage.GroupByService
 	if groupBy != nil && *groupBy == Provider {
 		gb = storage.GroupByProvider
 	}
-	return s.store.DailyCostsByService(ctx, focus.DefaultTenant, start, end, currency, "", gb)
+	return s.store.DailyCostsByService(ctx, focus.DefaultTenant, start, end, currency, provider, gb)
 }
 
 // periodKeyTotals sums per-key period totals and the grand total with exact
@@ -558,6 +573,10 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
 		return
 	}
+	if params.Provider != nil && (*params.Provider == "" || len(*params.Provider) > focus.MaxFreeTextBytes) {
+		http.Error(w, providerShapeMessage, http.StatusBadRequest)
+		return
+	}
 	metric := params.Metric
 	start, end := time.Time{}, time.Time{}
 	if params.Start != nil {
@@ -565,6 +584,10 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 	}
 	if params.End != nil {
 		end = params.End.Time
+	}
+	provider := ""
+	if params.Provider != nil {
+		provider = *params.Provider
 	}
 
 	infos, err := s.store.BusinessMetricNames(r.Context(), focus.DefaultTenant)
@@ -584,7 +607,12 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end, "")
+	providers, err := s.store.Providers(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end, provider)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -596,7 +624,7 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		currency = currencies[0]
 	}
 
-	costs, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, currency, "")
+	costs, err := s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, currency, provider)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -606,7 +634,10 @@ func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "querying daily business metric quantities: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, mergeUnitEconomics(metric, costs, quantities, currencies))
+	resp := mergeUnitEconomics(metric, costs, quantities, currencies)
+	resp.Provider = provider
+	resp.Providers = providers
+	writeJSON(w, resp)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

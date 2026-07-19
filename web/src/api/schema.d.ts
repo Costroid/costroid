@@ -88,7 +88,7 @@ export interface paths {
         /**
          * Period cost summary with optional preceding-window comparison
          * @description Period totals by grouping key for the requested [start, end] window, plus an optional preceding-window comparison computed server-side. groupBy semantics and validation match /api/v1/costs/daily (service / provider / allocation; allocation unconfigured → 400; malformed rules → 500). All money values are exact decimal strings (never floats). The response `total` equals /api/v1/costs/daily's period total for identical params. Keys are ordered total-desc, then key-asc.
-         *     Preceding window: prevEnd = start − 1 day, prevStart = prevEnd − (end − start). The selected currency is pinned to BOTH windows. ALL previous-window fields (previousTotal, previousStart, previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT together — never null or "" — when the preceding window is UNDEFINED: (i) start or end is unbounded/empty; (ii) the current window is empty (there are no keys to compare); or (iii) the preceding-window query returns zero cost rows in the selected currency. Never emit previousTotal "0" for a data-empty preceding window. A store error from either window is a 500.
+         *     Preceding window: prevEnd = start − 1 day, prevStart = prevEnd − (end − start). The selected currency is pinned to BOTH windows. The selected provider is pinned to BOTH windows. When provider is present, currencies lists only that provider's currencies. Providers always lists every provider with cost rows in the CURRENT window, unscoped by the provider and currency filters, sorted ascending, and is [] for an empty range. ALL previous-window fields (previousTotal, previousStart, previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT together — never null or "" — when the preceding window is UNDEFINED: (i) start or end is unbounded/empty; (ii) the current window is empty (there are no keys to compare); or (iii) the preceding-window query returns zero cost rows in the selected currency. Never emit previousTotal "0" for a data-empty preceding window. A store error from either window is a 500.
          *     When the preceding window is DEFINED, every key carries delta = total − previousTotal (exact decimal.Sub); keys absent from the previous window omit previousTotal while delta equals total (previousTotal-absence alone marks newness). "Gone" keys (present only in the previous window) are out of scope for this version. Empty CURRENT window: total "0", keys [] (never null). No share field — client Number() geometry only.
          */
         get: operations["getCostsSummary"];
@@ -169,7 +169,7 @@ export interface paths {
         };
         /**
          * Daily and period unit economics for one business metric
-         * @description Merges exact daily BilledCost with one imported business metric. A day is covered only when both a cost total (of any sign) and a positive quantity exist. Period cost and quantity aggregate covered days only. unitCost is derived in Go as cost / quantity rounded to scale 18, round-half-away-from-zero, then rendered as a decimal string with trailing zeros trimmed. A rendered "0" means the exact quotient rounds to zero at scale 18. Ratios are derived on read and never stored.
+         * @description Merges exact daily BilledCost with one imported business metric. A day is covered only when both a cost total (of any sign) and a positive quantity exist. Period cost and quantity aggregate covered days only. A provider filter applies ONLY to the cost side: business-metric quantities are org-wide, so unit cost under a filter is the selected provider's cost per org-wide unit, and days where only other providers had cost count as uncovered. unitCost is derived in Go as cost / quantity rounded to scale 18, round-half-away-from-zero, then rendered as a decimal string with trailing zeros trimmed. A rendered "0" means the exact quotient rounds to zero at scale 18. Ratios are derived on read and never stored.
          */
         get: operations["getDailyUnitEconomics"];
         put?: never;
@@ -315,6 +315,19 @@ export interface components {
              *     ]
              */
             currencies: string[];
+            /**
+             * @description FOCUS ServiceProviderName of this response's rows: the provider query parameter when provided, otherwise "".
+             * @example Amazon Web Services
+             */
+            provider: string;
+            /**
+             * @description All FOCUS ServiceProviderName values with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a provider selector and is [] (never null) when the range is empty.
+             * @example [
+             *       "Amazon Web Services",
+             *       "Microsoft"
+             *     ]
+             */
+            providers: string[];
             /**
              * @description Period total for the current window as a decimal string. Equals /api/v1/costs/daily's period total for identical params. "0" when the current window is empty.
              * @example 964050.632653589793238462
@@ -579,6 +592,19 @@ export interface components {
              *     ]
              */
             currencies: string[];
+            /**
+             * @description FOCUS ServiceProviderName of this response's rows: the provider query parameter when provided, otherwise "".
+             * @example Amazon Web Services
+             */
+            provider: string;
+            /**
+             * @description All FOCUS ServiceProviderName values with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a provider selector and is [] (never null) when the range is empty.
+             * @example [
+             *       "Amazon Web Services",
+             *       "Microsoft"
+             *     ]
+             */
+            providers: string[];
             /** @description Union of cost and metric days, day-ascending. */
             days: components["schemas"]["UnitEconomicsDay"][];
             period: components["schemas"]["UnitEconomicsPeriod"];
@@ -741,6 +767,8 @@ export interface operations {
                 groupBy?: "service" | "provider" | "allocation";
                 /** @description Optional three-letter uppercase billing currency whose summary to return. Omit to use the alphabetically-first currency in the current window. */
                 currency?: string;
+                /** @description Optional FOCUS ServiceProviderName whose rows to include. Omit to include every provider. Free text at most 8192 bytes; must be non-empty when present. */
+                provider?: string;
             };
             header?: never;
             path?: never;
@@ -757,7 +785,7 @@ export interface operations {
                     "application/json": components["schemas"]["CostsSummary"];
                 };
             };
-            /** @description Invalid start date, end date, groupBy value, or currency shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
+            /** @description Invalid start date, end date, groupBy value, currency shape, or provider shape; or groupBy=allocation was requested but no allocation rules are configured or the rules file was not found. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -900,6 +928,8 @@ export interface operations {
                 end?: string;
                 /** @description Optional three-letter uppercase billing currency whose costs to merge with the business metric. Omit to use the alphabetically-first currency in the range. */
                 currency?: string;
+                /** @description Optional FOCUS ServiceProviderName. Filters ONLY the cost side: business-metric quantities are org-wide, so unit cost under a filter is the selected provider's cost per org-wide unit, and days where only other providers had cost count as uncovered. */
+                provider?: string;
             };
             header?: never;
             path?: never;
@@ -916,7 +946,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnitEconomics"];
                 };
             };
-            /** @description Missing or empty metric, an invalid start/end date, or an invalid currency shape. */
+            /** @description Missing or empty metric, an invalid start/end date, an invalid currency shape, or an invalid provider shape. */
             400: {
                 headers: {
                     [name: string]: unknown;

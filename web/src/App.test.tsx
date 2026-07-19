@@ -28,7 +28,14 @@ const emptyCosts = {
   days: [],
 };
 
-const emptySummary = { currency: "", currencies: [], total: "0", keys: [] };
+const emptySummary = {
+  currency: "",
+  currencies: [],
+  provider: "",
+  providers: [],
+  total: "0",
+  keys: [],
+};
 
 function mockFetch(demo = false) {
   return vi.fn((input: RequestInfo | URL) => {

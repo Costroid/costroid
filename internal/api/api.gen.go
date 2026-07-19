@@ -216,6 +216,12 @@ type CostsSummary struct {
 	// PreviousTotal Period total of the preceding window as a decimal string. Present only when the preceding window is defined (see path description); omitted entirely otherwise — never null or "0" for an undefined window.
 	PreviousTotal *string `json:"previousTotal,omitempty"`
 
+	// Provider FOCUS ServiceProviderName of this response's rows: the provider query parameter when provided, otherwise "".
+	Provider string `json:"provider"`
+
+	// Providers All FOCUS ServiceProviderName values with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a provider selector and is [] (never null) when the range is empty.
+	Providers []string `json:"providers"`
+
 	// Total Period total for the current window as a decimal string. Equals /api/v1/costs/daily's period total for identical params. "0" when the current window is empty.
 	Total string `json:"total"`
 }
@@ -366,6 +372,12 @@ type UnitEconomics struct {
 	Days   []UnitEconomicsDay  `json:"days"`
 	Metric string              `json:"metric"`
 	Period UnitEconomicsPeriod `json:"period"`
+
+	// Provider FOCUS ServiceProviderName of this response's rows: the provider query parameter when provided, otherwise "".
+	Provider string `json:"provider"`
+
+	// Providers All FOCUS ServiceProviderName values with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a provider selector and is [] (never null) when the range is empty.
+	Providers []string `json:"providers"`
 }
 
 // UnitEconomicsDay defines model for UnitEconomicsDay.
@@ -451,6 +463,9 @@ type GetCostsSummaryParams struct {
 
 	// Currency Optional three-letter uppercase billing currency whose summary to return. Omit to use the alphabetically-first currency in the current window.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
+
+	// Provider Optional FOCUS ServiceProviderName whose rows to include. Omit to include every provider. Free text at most 8192 bytes; must be non-empty when present.
+	Provider *string `form:"provider,omitempty" json:"provider,omitempty"`
 }
 
 // GetCostsSummaryParamsGroupBy defines parameters for GetCostsSummary.
@@ -469,6 +484,9 @@ type GetDailyUnitEconomicsParams struct {
 
 	// Currency Optional three-letter uppercase billing currency whose costs to merge with the business metric. Omit to use the alphabetically-first currency in the range.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
+
+	// Provider Optional FOCUS ServiceProviderName. Filters ONLY the cost side: business-metric quantities are org-wide, so unit cost under a filter is the selected provider's cost per org-wide unit, and days where only other providers had cost count as uncovered.
+	Provider *string `form:"provider,omitempty" json:"provider,omitempty"`
 }
 
 // GetDailyUsageMetricsParams defines parameters for GetDailyUsageMetrics.
@@ -777,6 +795,19 @@ func (siw *ServerInterfaceWrapper) GetCostsSummary(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// ------------- Optional query parameter "provider" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "provider", r.URL.Query(), &params.Provider, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "provider"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCostsSummary(w, r, params)
 	}))
@@ -873,6 +904,19 @@ func (siw *ServerInterfaceWrapper) GetDailyUnitEconomics(w http.ResponseWriter, 
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "currency"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "currency", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "provider" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "provider", r.URL.Query(), &params.Provider, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "provider"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
 		}
 		return
 	}

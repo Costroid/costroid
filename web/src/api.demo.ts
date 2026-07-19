@@ -76,13 +76,20 @@ export function getCostsDaily(
 }
 
 export function getCostsSummary(
-  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
+  params: RangeParams & {
+    groupBy: CostGroupBy;
+    currency?: string;
+    provider?: string;
+  },
   _signal?: AbortSignal,
 ): Promise<CostsSummary> {
   const preset = presetOf(params.start, params.end);
-  return Promise.resolve(
-    fixture<CostsSummary>(`costs-summary.${preset}.${params.groupBy}`),
+  const summary = fixture<CostsSummary>(
+    `costs-summary.${preset}.${params.groupBy}`,
   );
+  // Deliberate demo-mode omission: fixtures cannot be filtered by provider, so
+  // empty the selector source to keep every rendered control functional.
+  return Promise.resolve({ ...summary, provider: "", providers: [] });
 }
 
 export function getAnomalies(
@@ -126,13 +133,18 @@ export function getBusinessMetrics(
 }
 
 export function getUnitEconomicsDaily(
-  params: RangeParams & { metric: string; currency?: string },
+  params: RangeParams & {
+    metric: string;
+    currency?: string;
+    provider?: string;
+  },
   _signal?: AbortSignal,
 ): Promise<UnitEconomics> {
   // Only one business metric is captured; the range selects the fixture.
-  return Promise.resolve(
-    fixture<UnitEconomics>(
-      `unit-economics.${presetOf(params.start, params.end)}`,
-    ),
+  const economics = fixture<UnitEconomics>(
+    `unit-economics.${presetOf(params.start, params.end)}`,
   );
+  // Deliberate demo-mode omission: fixtures cannot be filtered by provider, so
+  // empty the selector source to keep every rendered control functional.
+  return Promise.resolve({ ...economics, provider: "", providers: [] });
 }

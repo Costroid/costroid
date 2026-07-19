@@ -34,6 +34,8 @@ function economicsBody(currency: string, currencies: string[]) {
     metric: "requests",
     currency,
     currencies,
+    provider: "",
+    providers: ["Amazon Web Services"],
     days: [],
     period: { coveredDays: 0, cost: "0", quantity: "0" },
   };
@@ -79,6 +81,8 @@ describe("UnitEconomics", () => {
             metric: "a b&c",
             currency: "USD",
             currencies: ["USD"],
+            provider: "",
+            providers: ["Amazon Web Services"],
             days: [
               { date: "2026-05-01", cost: "1.000000000000000001" },
               {
@@ -153,6 +157,8 @@ describe("UnitEconomics", () => {
             metric,
             currency: "USD",
             currencies: ["USD"],
+            provider: "",
+            providers: ["Amazon Web Services"],
             days: [],
             period: { coveredDays: 0, cost: "0", quantity: "0" },
           }),
@@ -344,6 +350,8 @@ describe("UnitEconomics", () => {
                 metric: "requests",
                 currency: "USD",
                 currencies: ["USD"],
+                provider: "",
+                providers: ["Amazon Web Services"],
                 days: [
                   {
                     date: "2026-05-01",

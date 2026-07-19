@@ -166,7 +166,12 @@ paths:
         identical params. Keys are ordered total-desc, then key-asc.
 
         Preceding window: prevEnd = start − 1 day, prevStart = prevEnd −
-        (end − start). The selected currency is pinned to BOTH windows. ALL
+        (end − start). The selected currency is pinned to BOTH windows. The
+        selected provider is pinned to BOTH windows. When provider is present,
+        currencies lists only that provider's currencies. Providers always
+        lists every provider with cost rows in the CURRENT window, unscoped by
+        the provider and currency filters, sorted ascending, and is [] for an
+        empty range. ALL
         previous-window fields (previousTotal, previousStart, previousEnd, and
         every keys[].previousTotal / keys[].delta) are ABSENT together — never
         null or "" — when the preceding window is UNDEFINED: (i) start or end
@@ -219,6 +224,16 @@ paths:
           schema:
             type: string
             pattern: ^[A-Z]{3}$
+        - name: provider
+          in: query
+          description: >-
+            Optional FOCUS ServiceProviderName whose rows to include. Omit to
+            include every provider. Free text at most 8192 bytes; must be
+            non-empty when present.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 8192
       responses:
         "200":
           description: Period cost summary for the requested window.
@@ -228,9 +243,9 @@ paths:
                 $ref: "#/components/schemas/CostsSummary"
         "400":
           description: >-
-            Invalid start date, end date, groupBy value, or currency shape; or
-            groupBy=allocation was requested but no allocation rules are
-            configured or the rules file was not found.
+            Invalid start date, end date, groupBy value, currency shape, or
+            provider shape; or groupBy=allocation was requested but no
+            allocation rules are configured or the rules file was not found.
           content:
             text/plain:
               schema:
@@ -412,10 +427,14 @@ paths:
         Merges exact daily BilledCost with one imported business metric. A day
         is covered only when both a cost total (of any sign) and a positive
         quantity exist. Period cost and quantity aggregate covered days only.
-        unitCost is derived in Go as cost / quantity rounded to scale 18,
-        round-half-away-from-zero, then rendered as a decimal string with
-        trailing zeros trimmed. A rendered "0" means the exact quotient rounds
-        to zero at scale 18. Ratios are derived on read and never stored.
+        A provider filter applies ONLY to the cost side: business-metric
+        quantities are org-wide, so unit cost under a filter is the selected
+        provider's cost per org-wide unit, and days where only other providers
+        had cost count as uncovered. unitCost is derived in Go as cost /
+        quantity rounded to scale 18, round-half-away-from-zero, then rendered
+        as a decimal string with trailing zeros trimmed. A rendered "0" means
+        the exact quotient rounds to zero at scale 18. Ratios are derived on
+        read and never stored.
       parameters:
         - name: metric
           in: query
@@ -444,6 +463,17 @@ paths:
           schema:
             type: string
             pattern: ^[A-Z]{3}$
+        - name: provider
+          in: query
+          description: >-
+            Optional FOCUS ServiceProviderName. Filters ONLY the cost side:
+            business-metric quantities are org-wide, so unit cost under a
+            filter is the selected provider's cost per org-wide unit, and days
+            where only other providers had cost count as uncovered.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 8192
       responses:
         "200":
           description: Daily gaps and covered-only period unit economics.
@@ -453,8 +483,8 @@ paths:
                 $ref: "#/components/schemas/UnitEconomics"
         "400":
           description: >-
-            Missing or empty metric, an invalid start/end date, or an invalid
-            currency shape.
+            Missing or empty metric, an invalid start/end date, an invalid
+            currency shape, or an invalid provider shape.
           content:
             text/plain:
               schema:
@@ -682,6 +712,8 @@ components:
       required:
         - currency
         - currencies
+        - provider
+        - providers
         - total
         - keys
       properties:
@@ -704,6 +736,24 @@ components:
           example:
             - EUR
             - USD
+        provider:
+          type: string
+          description: >-
+            FOCUS ServiceProviderName of this response's rows: the provider
+            query parameter when provided, otherwise "".
+          example: Amazon Web Services
+        providers:
+          type: array
+          description: >-
+            All FOCUS ServiceProviderName values with cost rows in the requested
+            range, not scoped by the provider or currency filters, sorted
+            ascending. This is the source for a provider selector and is []
+            (never null) when the range is empty.
+          items:
+            type: string
+          example:
+            - Amazon Web Services
+            - Microsoft
         total:
           type: string
           description: >-
@@ -1032,6 +1082,8 @@ components:
         - metric
         - currency
         - currencies
+        - provider
+        - providers
         - days
         - period
       properties:
@@ -1056,6 +1108,24 @@ components:
           example:
             - EUR
             - USD
+        provider:
+          type: string
+          description: >-
+            FOCUS ServiceProviderName of this response's rows: the provider
+            query parameter when provided, otherwise "".
+          example: Amazon Web Services
+        providers:
+          type: array
+          description: >-
+            All FOCUS ServiceProviderName values with cost rows in the requested
+            range, not scoped by the provider or currency filters, sorted
+            ascending. This is the source for a provider selector and is []
+            (never null) when the range is empty.
+          items:
+            type: string
+          example:
+            - Amazon Web Services
+            - Microsoft
         days:
           type: array
           description: Union of cost and metric days, day-ascending.

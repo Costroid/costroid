@@ -82,7 +82,11 @@ export async function getCostsDaily(
 }
 
 export async function getCostsSummary(
-  params: RangeParams & { groupBy: CostGroupBy; currency?: string },
+  params: RangeParams & {
+    groupBy: CostGroupBy;
+    currency?: string;
+    provider?: string;
+  },
   signal?: AbortSignal,
 ): Promise<CostsSummary> {
   const q = rangeQuery(params.start, params.end);
@@ -93,6 +97,9 @@ export async function getCostsSummary(
       : "");
   if (params.currency) {
     url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
+  }
+  if (params.provider) {
+    url += `${url.includes("?") ? "&" : "?"}provider=${encodeURIComponent(params.provider)}`;
   }
   const res = await fetch(url, { signal });
   if (!res.ok) {
@@ -163,7 +170,11 @@ export async function getBusinessMetrics(
 }
 
 export async function getUnitEconomicsDaily(
-  params: RangeParams & { metric: string; currency?: string },
+  params: RangeParams & {
+    metric: string;
+    currency?: string;
+    provider?: string;
+  },
   signal?: AbortSignal,
 ): Promise<UnitEconomics> {
   const rangeSuffix = rangeQuery(params.start, params.end).replace("?", "&");
@@ -172,6 +183,9 @@ export async function getUnitEconomicsDaily(
     rangeSuffix;
   if (params.currency) {
     url += `&currency=${encodeURIComponent(params.currency)}`;
+  }
+  if (params.provider) {
+    url += `&provider=${encodeURIComponent(params.provider)}`;
   }
   const res = await fetch(url, { signal });
   if (!res.ok) {

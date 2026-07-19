@@ -34,6 +34,42 @@ describe("api.demo getCostsDaily", () => {
   });
 });
 
+describe("api.demo getCostsSummary", () => {
+  it("returns equal fixture data with ignored provider filters and hides provider controls", async () => {
+    const params = { start: "", end: "", groupBy: "service" as const };
+
+    const withoutProvider = await demoApi.getCostsSummary(params);
+    const withProvider = await demoApi.getCostsSummary({
+      ...params,
+      provider: "Amazon Web Services",
+    });
+
+    expect(withProvider).toEqual(withoutProvider);
+    expect(withoutProvider.provider).toBe("");
+    expect(withoutProvider.providers).toEqual([]);
+    expect(withoutProvider.keys.length).toBeGreaterThan(0);
+    expect(withoutProvider.currencies.length).toBeGreaterThan(0);
+  });
+});
+
+describe("api.demo getUnitEconomicsDaily", () => {
+  it("returns equal fixture data with ignored provider filters and hides provider controls", async () => {
+    const params = { start: "", end: "", metric: "requests served" };
+
+    const withoutProvider = await demoApi.getUnitEconomicsDaily(params);
+    const withProvider = await demoApi.getUnitEconomicsDaily({
+      ...params,
+      provider: "Amazon Web Services",
+    });
+
+    expect(withProvider).toEqual(withoutProvider);
+    expect(withoutProvider.provider).toBe("");
+    expect(withoutProvider.providers).toEqual([]);
+    expect(withoutProvider.days.length).toBeGreaterThan(0);
+    expect(withoutProvider.currencies.length).toBeGreaterThan(0);
+  });
+});
+
 describe("api.demo getAnomalies", () => {
   it("returns the same fixture with and without currency or provider filters", async () => {
     const params = { start: "", end: "", groupBy: "service" as const };

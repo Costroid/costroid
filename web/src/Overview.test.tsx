@@ -36,6 +36,8 @@ function summaryBody(overrides: Partial<CostsSummary> = {}): CostsSummary {
   return {
     currency: "USD",
     currencies: ["USD"],
+    provider: "",
+    providers: ["Amazon Web Services"],
     total: PERIOD_TOTAL,
     keys: [
       { key: "Amazon Web Services", total: "500000.000000000000000000" },
@@ -65,6 +67,8 @@ function unitBody(overrides: Partial<UnitEconomics> = {}): UnitEconomics {
   return {
     currency: "USD",
     currencies: ["USD"],
+    provider: "",
+    providers: ["Amazon Web Services"],
     metric: "requests served",
     period: {
       coveredDays: 3,
