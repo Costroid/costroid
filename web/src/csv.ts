@@ -46,16 +46,21 @@ export function dailyCostsToCsv(costs: DailyCosts): string {
 export function dailyCostsCsvFilename(
   costs: DailyCosts,
   groupBy: CostGroupBy,
+  tagKey = "",
 ): string {
   const first = costs.days[0].date;
   const last = costs.days[costs.days.length - 1].date;
-  const provider = costs.provider
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const slug = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  const provider = slug(costs.provider);
+  const tagKeySegment =
+    groupBy === "tag" && slug(tagKey) ? `-${slug(tagKey)}` : "";
   const providerSegment = provider ? `-${provider}` : "";
   const cur = costs.currency ? `-${costs.currency}` : "";
-  return `costroid-daily-costs-${groupBy}${providerSegment}${cur}-${first}_${last}.csv`;
+  return `costroid-daily-costs-${groupBy}${tagKeySegment}${providerSegment}${cur}-${first}_${last}.csv`;
 }
 
 // downloadCsv triggers a browser download of csv under filename. It is the only

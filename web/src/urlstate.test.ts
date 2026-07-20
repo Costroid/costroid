@@ -52,13 +52,29 @@ describe("readUrlState", () => {
     expect(readUrlState()).toEqual({});
   });
 
-  it.each(["subaccount", "region"] as const)(
-    "accepts the new %s grouping value",
-    (groupBy) => {
-      window.location.hash = `#groupBy=${groupBy}`;
-      expect(readUrlState()).toEqual({ groupBy });
-    },
-  );
+  it.each([
+    "service",
+    "provider",
+    "allocation",
+    "subaccount",
+    "region",
+  ] as const)("accepts the plain %s grouping value", (groupBy) => {
+    window.location.hash = `#groupBy=${groupBy}`;
+    expect(readUrlState()).toEqual({ groupBy });
+  });
+
+  it("decodes a tag grouping and key from the groupBy value", () => {
+    window.location.hash = "#groupBy=tag%3Ateam";
+    expect(readUrlState()).toEqual({ groupBy: "tag", tagKey: "team" });
+  });
+
+  it("drops tag groupings with an empty or overlong key", () => {
+    window.location.hash = "#groupBy=tag%3A";
+    expect(readUrlState()).toEqual({});
+
+    window.location.hash = `#groupBy=${encodeURIComponent(`tag:${"é".repeat(4097)}`)}`;
+    expect(readUrlState()).toEqual({});
+  });
 });
 
 describe("writeUrlState", () => {
@@ -124,5 +140,10 @@ describe("writeUrlState", () => {
     writeUrlState({ view: "costs", provider: "Amazon Web Services" });
 
     expect(replaceState).not.toHaveBeenCalled();
+  });
+
+  it("encodes a tag grouping and key inside groupBy", () => {
+    writeUrlState({ groupBy: "tag", tagKey: "team" });
+    expect(window.location.hash).toBe("#groupBy=tag%3Ateam");
   });
 });

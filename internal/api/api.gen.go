@@ -186,6 +186,9 @@ type AnomalyParameters struct {
 	// RelativeFloor Fraction of the absolute median a deviation must also reach, as a decimal string.
 	RelativeFloor string `json:"relativeFloor"`
 
+	// TagKey The requested FOCUS Tags key echoed verbatim, or "" when the request is not grouped by tag.
+	TagKey string `json:"tagKey"`
+
 	// WindowDays Maximum trailing observed days in the baseline window.
 	WindowDays int `json:"windowDays"`
 }
@@ -281,6 +284,9 @@ type DailyCosts struct {
 
 	// Providers All FOCUS ServiceProviderName values with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a provider selector and is [] (never null) when the range is empty.
 	Providers []string `json:"providers"`
+
+	// TagKeys All FOCUS Tags keys with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a tag-key picker and is [] (never null) when the range is empty.
+	TagKeys []string `json:"tagKeys"`
 
 	// Total Total cost of the whole period, as a decimal string.
 	Total string `json:"total"`

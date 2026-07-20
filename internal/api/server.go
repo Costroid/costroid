@@ -233,6 +233,11 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	tagKeys, err := s.store.TagKeys(r.Context(), focus.DefaultTenant, start, end)
+	if err != nil {
+		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	currencies, err := s.store.BillingCurrencies(r.Context(), focus.DefaultTenant, start, end, provider)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
@@ -278,7 +283,7 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 
 	resp := DailyCosts{
 		Currency: daily.Currency, Currencies: currencies, Days: []DailyCost{},
-		Provider: provider, Providers: providers,
+		Provider: provider, Providers: providers, TagKeys: tagKeys,
 	}
 	grandTotal := decimal.Zero
 	for _, day := range daily.Days {

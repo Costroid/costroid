@@ -59,6 +59,7 @@ function anomaliesBody(flags: Anomalies["anomalies"] = []): Anomalies {
       minObservations: 10,
       relativeFloor: "0.1",
       groupBy: "service",
+      tagKey: "",
     },
     anomalies: flags,
   };

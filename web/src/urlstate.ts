@@ -31,13 +31,14 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CURRENCY = /^[A-Z]{3}$/;
 
 type View = (typeof VIEWS)[number];
-type GroupBy = (typeof GROUPINGS)[number];
+type GroupBy = (typeof GROUPINGS)[number] | "tag";
 
 export type UrlState = {
   view?: View;
   start?: string;
   end?: string;
   groupBy?: GroupBy;
+  tagKey?: string;
   currency?: string;
   provider?: string;
   metric?: string;
@@ -66,6 +67,12 @@ export function readUrlState(): UrlState {
   if (end !== null && DATE.test(end)) state.end = end;
   if (groupBy !== null && includes(GROUPINGS, groupBy)) {
     state.groupBy = groupBy;
+  } else if (groupBy?.startsWith("tag:")) {
+    const tagKey = groupBy.slice("tag:".length);
+    if (tagKey !== "" && new TextEncoder().encode(tagKey).byteLength <= 8192) {
+      state.groupBy = "tag";
+      state.tagKey = tagKey;
+    }
   }
   if (currency !== null && CURRENCY.test(currency)) state.currency = currency;
   if (
@@ -85,7 +92,10 @@ export function writeUrlState(partial: UrlState): void {
   const params = new URLSearchParams();
 
   for (const key of STATE_KEYS) {
-    const value = next[key];
+    let value = next[key];
+    if (key === "groupBy" && value === "tag") {
+      value = next.tagKey ? `tag:${next.tagKey}` : undefined;
+    }
     if (
       value === undefined ||
       value === "" ||

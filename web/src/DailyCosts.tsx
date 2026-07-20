@@ -31,6 +31,7 @@ type FetchParams = {
   start: string;
   end: string;
   groupBy: CostGroupBy;
+  tagKey: string;
   currency: string;
   provider: string;
 };
@@ -55,6 +56,7 @@ const GROUP_BY_OPTIONS: { id: CostGroupBy; label: string }[] = [
   { id: "allocation", label: "Allocation" },
   { id: "subaccount", label: "Subaccount" },
   { id: "region", label: "Region" },
+  { id: "tag", label: "Tag" },
 ];
 
 // groupLabelOf maps a grouping id to the lowercase heading/aria noun.
@@ -79,6 +81,9 @@ export default function DailyCosts({
   const [groupBy, setGroupBy] = useState<CostGroupBy>(
     () => readUrlState().groupBy ?? "service",
   );
+  const [tagKey, setTagKey] = useState<string>(
+    () => readUrlState().tagKey ?? "",
+  );
   const [currency, setCurrency] = useState<string>(
     () => readUrlState().currency ?? "",
   );
@@ -91,6 +96,7 @@ export default function DailyCosts({
       start: range.start,
       end: range.end,
       groupBy: "service",
+      tagKey: "",
       currency: "",
       provider: "",
     },
@@ -98,8 +104,8 @@ export default function DailyCosts({
   const { start, end } = range;
 
   useEffect(() => {
-    writeUrlState({ groupBy, currency, provider });
-  }, [groupBy, currency, provider]);
+    writeUrlState({ groupBy, tagKey, currency, provider });
+  }, [groupBy, tagKey, currency, provider]);
 
   useEffect(() => {
     setState({ status: "loading" });
@@ -112,6 +118,7 @@ export default function DailyCosts({
             start,
             end,
             groupBy,
+            ...(groupBy === "tag" ? { tagKey } : {}),
             ...(currency ? { currency } : {}),
             ...(provider ? { provider } : {}),
           },
@@ -142,10 +149,18 @@ export default function DailyCosts({
         if (nextProvider !== provider) {
           setProvider(nextProvider);
         }
+        if (groupBy === "tag") {
+          if (costs.tagKeys.length === 0) {
+            setGroupBy("service");
+            setTagKey("");
+          } else if (!costs.tagKeys.includes(tagKey)) {
+            setTagKey(costs.tagKeys[0]);
+          }
+        }
         setState({
           status: "ready",
           costs,
-          params: { start, end, groupBy, currency, provider },
+          params: { start, end, groupBy, tagKey, currency, provider },
         });
       } catch (err) {
         if (controller.signal.aborted) {
@@ -154,14 +169,14 @@ export default function DailyCosts({
         setState({
           status: "error",
           message: err instanceof Error ? err.message : String(err),
-          params: { start, end, groupBy, currency, provider },
+          params: { start, end, groupBy, tagKey, currency, provider },
         });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [start, end, groupBy, currency, provider, retryToken]);
+  }, [start, end, groupBy, tagKey, currency, provider, retryToken]);
 
   // The anomaly overlay is fetched with the SAME range + groupBy + resolved
   // currency as the chart, but independently: a failure here must never break
@@ -176,6 +191,7 @@ export default function DailyCosts({
       start,
       end,
       groupBy,
+      tagKey,
       currency: displayedCurrency,
       provider: displayedProvider,
     };
@@ -189,6 +205,7 @@ export default function DailyCosts({
             start: params.start,
             end: params.end,
             groupBy: params.groupBy,
+            ...(params.groupBy === "tag" ? { tagKey: params.tagKey } : {}),
             currency: params.currency,
             ...(params.provider ? { provider: params.provider } : {}),
           },
@@ -216,15 +233,17 @@ export default function DailyCosts({
 
     void loadAnomalies();
     return () => controller.abort();
-  }, [start, end, groupBy, displayedCurrency, displayedProvider]);
+  }, [start, end, groupBy, tagKey, displayedCurrency, displayedProvider]);
 
-  const groupLabel = groupLabelOf(groupBy);
+  const groupLabel =
+    groupBy === "tag" ? `tag ${tagKey}` : groupLabelOf(groupBy);
 
   // Only use flags fetched for the CURRENT grouping/range (never a stale set).
   const anomalyMatches =
     anomalyState.params.start === start &&
     anomalyState.params.end === end &&
     anomalyState.params.groupBy === groupBy &&
+    anomalyState.params.tagKey === tagKey &&
     anomalyState.params.currency === displayedCurrency &&
     anomalyState.params.provider === displayedProvider;
   const anomalyFlags =
@@ -246,6 +265,7 @@ export default function DailyCosts({
     (state.params.start !== start ||
       state.params.end !== end ||
       state.params.groupBy !== groupBy ||
+      state.params.tagKey !== tagKey ||
       state.params.currency !== currency ||
       state.params.provider !== provider)
       ? { status: "loading" }
@@ -264,17 +284,48 @@ export default function DailyCosts({
           aria-label="Group costs by"
         >
           <span>Group by</span>
-          {GROUP_BY_OPTIONS.map((option) => (
+          {GROUP_BY_OPTIONS.filter(
+            (option) =>
+              option.id !== "tag" ||
+              (view.status === "ready" && view.costs.tagKeys.length > 0),
+          ).map((option) => (
             <button
               key={option.id}
               type="button"
               aria-pressed={groupBy === option.id}
-              onClick={() => setGroupBy(option.id)}
+              onClick={() => {
+                if (option.id === "tag" && view.status === "ready") {
+                  setTagKey(
+                    view.costs.tagKeys.includes(tagKey)
+                      ? tagKey
+                      : view.costs.tagKeys[0],
+                  );
+                }
+                setGroupBy(option.id);
+              }}
             >
               {option.label}
             </button>
           ))}
         </div>
+        {groupBy === "tag" &&
+          view.status === "ready" &&
+          view.costs.tagKeys.length > 0 && (
+            <label className="cost-group-control">
+              <span>Tag key</span>
+              <select
+                aria-label="Tag key"
+                value={tagKey}
+                onChange={(event) => setTagKey(event.target.value)}
+              >
+                {view.costs.tagKeys.map((key) => (
+                  <option key={key} value={key}>
+                    {key}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         {view.status === "ready" && view.costs.currencies.length > 1 && (
           <div
             className="cost-group-control"
@@ -349,6 +400,7 @@ export default function DailyCosts({
             <Chart
               costs={view.costs}
               groupBy={groupBy}
+              tagKey={tagKey}
               anomalies={anomalyFlags}
             />
           </>
@@ -383,10 +435,12 @@ function EmptyState() {
 function Chart({
   costs,
   groupBy,
+  tagKey,
   anomalies,
 }: {
   costs: DailyCosts;
   groupBy: CostGroupBy;
+  tagKey: string;
   anomalies: Anomaly[];
 }) {
   const [activeDay, setActiveDay] = useState<number | null>(null);
@@ -404,7 +458,8 @@ function Chart({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [activeDay]);
-  const groupLabel = groupLabelOf(groupBy);
+  const groupLabel =
+    groupBy === "tag" ? `tag ${tagKey}` : groupLabelOf(groupBy);
   const groups = [
     ...new Set(costs.days.flatMap((d) => d.services.map((s) => s.key))),
   ].sort();
@@ -617,7 +672,7 @@ function Chart({
           type="button"
           onClick={() =>
             downloadCsv(
-              dailyCostsCsvFilename(costs, groupBy),
+              dailyCostsCsvFilename(costs, groupBy, tagKey),
               dailyCostsToCsv(costs),
             )
           }

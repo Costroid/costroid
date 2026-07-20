@@ -24,7 +24,7 @@ type UnitEconomics = components["schemas"]["UnitEconomics"];
 
 // CostGroupBy is the shared grouping enum for the costs and anomalies endpoints.
 export type CostGroupBy =
-  "service" | "provider" | "allocation" | "subaccount" | "region";
+  "service" | "provider" | "allocation" | "subaccount" | "region" | "tag";
 
 // RangeParams is the inclusive [start, end] range threaded through most views;
 // "" on either side means unbounded on that side.
@@ -51,6 +51,7 @@ export async function getSyncStatus(
 export async function getCostsDaily(
   params: RangeParams & {
     groupBy: CostGroupBy;
+    tagKey?: string;
     currency?: string;
     provider?: string;
   },
@@ -62,6 +63,9 @@ export async function getCostsDaily(
     (params.groupBy !== "service"
       ? `${q ? "&" : "?"}groupBy=${params.groupBy}`
       : "");
+  if (params.groupBy === "tag") {
+    url += `${url.includes("?") ? "&" : "?"}tagKey=${encodeURIComponent(params.tagKey ?? "")}`;
+  }
   if (params.currency) {
     url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
   }
@@ -85,6 +89,7 @@ export async function getCostsDaily(
 export async function getCostsSummary(
   params: RangeParams & {
     groupBy: CostGroupBy;
+    tagKey?: string;
     currency?: string;
     provider?: string;
   },
@@ -96,6 +101,9 @@ export async function getCostsSummary(
     (params.groupBy !== "service"
       ? `${q ? "&" : "?"}groupBy=${params.groupBy}`
       : "");
+  if (params.groupBy === "tag") {
+    url += `${url.includes("?") ? "&" : "?"}tagKey=${encodeURIComponent(params.tagKey ?? "")}`;
+  }
   if (params.currency) {
     url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
   }
@@ -112,6 +120,7 @@ export async function getCostsSummary(
 export async function getAnomalies(
   params: RangeParams & {
     groupBy: CostGroupBy;
+    tagKey?: string;
     currency?: string;
     provider?: string;
   },
@@ -123,6 +132,9 @@ export async function getAnomalies(
     (params.groupBy !== "service"
       ? `${q ? "&" : "?"}groupBy=${params.groupBy}`
       : "");
+  if (params.groupBy === "tag") {
+    url += `${url.includes("?") ? "&" : "?"}tagKey=${encodeURIComponent(params.tagKey ?? "")}`;
+  }
   if (params.currency) {
     url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
   }

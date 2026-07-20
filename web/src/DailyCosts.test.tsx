@@ -11,6 +11,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import DailyCosts from "./DailyCosts";
+import { getCostsSummary } from "./api";
 import { HEIGHT, MARGIN } from "./viz";
 import type { components } from "./api/schema";
 
@@ -31,6 +32,8 @@ function fakeResponse(status: number, body: unknown): Response {
 function anomaliesBody(
   flags: Anomaly[] = [],
   currency = "USD",
+  groupBy = "service",
+  tagKey = "",
 ): AnomaliesResponse {
   return {
     currency,
@@ -40,7 +43,8 @@ function anomaliesBody(
       windowDays: 30,
       minObservations: 10,
       relativeFloor: "0.1",
-      groupBy: "service",
+      groupBy,
+      tagKey,
     },
     anomalies: flags,
   };
@@ -57,6 +61,7 @@ function dailyBody(
     currencies,
     provider: "",
     providers: ["Amazon Web Services"],
+    tagKeys: [],
     total,
     days: [
       {
@@ -212,6 +217,322 @@ describe("DailyCosts", () => {
     });
   });
 
+  it("shows Tag from discovered keys and sends the first encoded key to costs and anomalies", async () => {
+    const tagKeys = ["cost center"];
+    const serviceCosts = { ...dailyBody("USD", ["USD"], "3"), tagKeys };
+    const tagCosts = {
+      ...dailyBody("USD", ["USD"], "3", "platform"),
+      tagKeys,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/anomalies")) {
+          const body = anomaliesBody([], "USD");
+          const params = new URL(url, "http://x").searchParams;
+          body.parameters.groupBy = params.get("groupBy") ?? "service";
+          body.parameters.tagKey = params.get("tagKey") ?? "";
+          return Promise.resolve(fakeResponse(200, body));
+        }
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            url.includes("groupBy=tag") ? tagCosts : serviceCosts,
+          ),
+        );
+      }),
+    );
+
+    render(<DailyCosts />);
+    await screen.findByRole("button", { name: "Tag" });
+    fireEvent.click(screen.getByRole("button", { name: "Tag" }));
+
+    await waitFor(() => {
+      expect(fetchedURLs()).toContain(
+        "/api/v1/costs/daily?groupBy=tag&tagKey=cost%20center",
+      );
+      expect(fetchedURLs()).toContain(
+        "/api/v1/anomalies?groupBy=tag&tagKey=cost%20center&currency=USD",
+      );
+    });
+    expect(
+      await screen.findByRole("heading", {
+        name: "Daily cost by tag cost center",
+      }),
+    ).toBeTruthy();
+    expect((screen.getByLabelText("Tag key") as HTMLSelectElement).value).toBe(
+      "cost center",
+    );
+  });
+
+  it("does not render Tag when discovery returns no keys", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          fakeResponse(
+            200,
+            String(input).startsWith("/api/v1/anomalies")
+              ? anomaliesBody()
+              : dailyBody("USD", ["USD"], "1"),
+          ),
+        ),
+      ),
+    );
+    render(<DailyCosts />);
+    await screen.findByRole("group", { name: "Stacked daily cost by service" });
+    expect(screen.queryByRole("button", { name: "Tag" })).toBeNull();
+  });
+
+  it("encodes the tag key in the summary request builder", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(fakeResponse(200, {})));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getCostsSummary({
+      start: "",
+      end: "",
+      groupBy: "tag",
+      tagKey: "cost center",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/costs/summary?groupBy=tag&tagKey=cost%20center",
+      { signal: undefined },
+    );
+  });
+
+  it("mounts a tag deep link on the first request and writes a switched key", async () => {
+    window.location.hash = "#groupBy=tag%3Aenvironment";
+    const tagKeys = ["environment", "team"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        const params = new URL(url, "http://x").searchParams;
+        if (url.startsWith("/api/v1/anomalies")) {
+          const body = anomaliesBody([], "USD");
+          body.parameters.groupBy = "tag";
+          body.parameters.tagKey = params.get("tagKey") ?? "";
+          return Promise.resolve(fakeResponse(200, body));
+        }
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...dailyBody("USD", ["USD"], "1", params.get("tagKey") ?? ""),
+            tagKeys,
+          }),
+        );
+      }),
+    );
+
+    render(<DailyCosts />);
+    await screen.findByLabelText("Tag key");
+    expect(
+      fetchedURLs().find((url) => url.startsWith("/api/v1/costs/daily")),
+    ).toBe("/api/v1/costs/daily?groupBy=tag&tagKey=environment");
+
+    fireEvent.change(screen.getByLabelText("Tag key"), {
+      target: { value: "team" },
+    });
+    await waitFor(() => {
+      const daily = fetchedURLs().filter((url) =>
+        url.startsWith("/api/v1/costs/daily"),
+      );
+      expect(daily[daily.length - 1]).toBe(
+        "/api/v1/costs/daily?groupBy=tag&tagKey=team",
+      );
+      expect(window.location.hash).toBe("#groupBy=tag%3Ateam");
+    });
+  });
+
+  it("snaps a vanished selected tag key to the first returned key with a new request", async () => {
+    window.location.hash = "#groupBy=tag%3Ateam";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/anomalies")) {
+        return Promise.resolve(fakeResponse(200, anomaliesBody()));
+      }
+      const params = new URL(url, "http://x").searchParams;
+      const narrowed = params.get("start") === "2026-06-01";
+      const tagKeys = narrowed ? ["environment"] : ["environment", "team"];
+      return Promise.resolve(
+        fakeResponse(200, {
+          ...dailyBody("USD", ["USD"], "1", params.get("tagKey") ?? "service"),
+          tagKeys,
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = render(
+      <DailyCosts range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+    await screen.findByLabelText("Tag key");
+    const before = fetchedURLs().filter((url) =>
+      url.startsWith("/api/v1/costs/daily"),
+    ).length;
+
+    rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
+
+    await waitFor(() => {
+      const daily = fetchedURLs().filter((url) =>
+        url.startsWith("/api/v1/costs/daily"),
+      );
+      expect(daily.length).toBeGreaterThan(before + 1);
+      expect(daily[daily.length - 1]).toBe(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30&groupBy=tag&tagKey=environment",
+      );
+    });
+  });
+
+  it("snaps tag grouping to service when discovery becomes empty with a new request", async () => {
+    window.location.hash = "#groupBy=tag%3Ateam";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/anomalies")) {
+        return Promise.resolve(fakeResponse(200, anomaliesBody()));
+      }
+      const params = new URL(url, "http://x").searchParams;
+      const narrowed = params.get("start") === "2026-06-01";
+      return Promise.resolve(
+        fakeResponse(200, {
+          ...dailyBody("USD", ["USD"], "1"),
+          tagKeys: narrowed ? [] : ["team"],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = render(
+      <DailyCosts range={{ start: "2026-05-01", end: "2026-05-31" }} />,
+    );
+    await screen.findByLabelText("Tag key");
+    const before = fetchedURLs().filter((url) =>
+      url.startsWith("/api/v1/costs/daily"),
+    ).length;
+
+    rerender(<DailyCosts range={{ start: "2026-06-01", end: "2026-06-30" }} />);
+
+    await waitFor(() => {
+      const daily = fetchedURLs().filter((url) =>
+        url.startsWith("/api/v1/costs/daily"),
+      );
+      expect(daily.length).toBeGreaterThan(before + 1);
+      expect(daily[daily.length - 1]).toBe(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30",
+      );
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Daily cost by service" }),
+    ).toBeTruthy();
+  });
+
+  it("commits no new-tag-key frame with an old-key chart or anomaly marker", async () => {
+    window.location.hash = "#groupBy=tag%3Aenvironment";
+    const tagKeys = ["environment", "team"];
+    const oldFlags: Anomaly[] = [
+      {
+        date: "2026-05-01",
+        scope: "total",
+        direction: "increase",
+        observed: "3",
+        median: "1",
+        mad: "0.1",
+        scaledMad: "0.14826",
+        threshold: "0.44478",
+        deviation: "2",
+      },
+    ];
+    let resolveTeamCosts!: (response: Response) => void;
+    const heldTeamCosts = new Promise<Response>((resolve) => {
+      resolveTeamCosts = resolve;
+    });
+    let resolveTeamAnomalies!: (response: Response) => void;
+    const heldTeamAnomalies = new Promise<Response>((resolve) => {
+      resolveTeamAnomalies = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        const tagKey = new URL(url, "http://x").searchParams.get("tagKey");
+        if (url.startsWith("/api/v1/anomalies")) {
+          return tagKey === "team"
+            ? heldTeamAnomalies
+            : Promise.resolve(
+                fakeResponse(
+                  200,
+                  anomaliesBody(oldFlags, "USD", "tag", tagKey ?? ""),
+                ),
+              );
+        }
+        if (tagKey === "team") return heldTeamCosts;
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...dailyBody("USD", ["USD"], "3", "production"),
+            tagKeys,
+          }),
+        );
+      }),
+    );
+
+    const { container } = render(<DailyCosts />);
+    await waitFor(() =>
+      expect(container.querySelector(".viz-chart .viz-anomaly")).toBeTruthy(),
+    );
+    let sawOldMarkerAfterSwitch = false;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (
+            node instanceof Element &&
+            (node.matches(".viz-anomaly") ||
+              node.querySelector(".viz-anomaly") !== null)
+          ) {
+            sawOldMarkerAfterSwitch = true;
+          }
+        }
+      }
+    });
+    observer.observe(container, { childList: true, subtree: true });
+
+    const select = screen.getByLabelText("Tag key") as HTMLSelectElement;
+    select.value = "team";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await Promise.resolve();
+
+    expect(
+      screen.getByRole("heading", { name: "Daily cost by tag team" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Loading daily costs…")).toBeTruthy();
+    expect(
+      screen.queryByRole("group", { name: /Stacked daily cost/ }),
+    ).toBeNull();
+    expect(container.querySelector(".viz-chart .viz-anomaly")).toBeNull();
+
+    await act(async () => {
+      resolveTeamCosts(
+        fakeResponse(200, {
+          ...dailyBody("USD", ["USD"], "4", "platform"),
+          tagKeys,
+        }),
+      );
+    });
+    expect(
+      await screen.findByRole("group", {
+        name: "Stacked daily cost by tag team",
+      }),
+    ).toBeTruthy();
+    await Promise.resolve();
+    expect(container.querySelector(".viz-chart .viz-anomaly")).toBeNull();
+    expect(sawOldMarkerAfterSwitch).toBe(false);
+    observer.disconnect();
+
+    await act(async () => {
+      resolveTeamAnomalies(
+        fakeResponse(200, anomaliesBody([], "USD", "tag", "team")),
+      );
+    });
+  });
+
   it("writes filter interactions in canonical form and omits grouping default", async () => {
     const providers = ["Amazon Web Services", "Microsoft"];
     vi.stubGlobal(
@@ -265,6 +586,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "256.9833670123456789",
       days: [
         {
@@ -293,6 +615,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "10.00",
       days: [
         {
@@ -320,6 +643,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "9.3618",
       days: [
         {
@@ -379,6 +703,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "3.00",
       days: [
         {
@@ -575,6 +900,7 @@ describe("DailyCosts", () => {
       currencies: ["EUR"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "0",
       days: [],
     };
@@ -803,6 +1129,7 @@ describe("DailyCosts", () => {
       currencies: [],
       provider: "Amazon Web Services",
       providers: ["Microsoft"],
+      tagKeys: [],
       total: "0",
       days: [],
     };
@@ -866,6 +1193,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1.00",
       days: [
         {
@@ -895,6 +1223,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1.00",
       days: [
         {
@@ -909,6 +1238,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1.333333333333333334",
       days: [
         {
@@ -970,6 +1300,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1.00",
       days: [
         {
@@ -1007,6 +1338,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total,
       days: [
         {
@@ -1044,6 +1376,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1",
       days: [
         {
@@ -1100,6 +1433,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1",
       days: [
         {
@@ -1139,6 +1473,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "3.50",
       days: [
         {
@@ -1188,6 +1523,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "0.30",
       days: [
         {
@@ -1215,6 +1551,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "100.000001",
       days: [
         {
@@ -1249,6 +1586,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "2.4193",
       days: [
         {
@@ -1291,6 +1629,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "9",
       days: [{ date: "2026-05-01", total: "9", services }],
     });
@@ -1334,6 +1673,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "30",
       days: Array.from({ length: 30 }, (_, i) => ({
         date: `2026-05-${String(i + 1).padStart(2, "0")}`,
@@ -1357,6 +1697,7 @@ describe("DailyCosts", () => {
       currencies: [],
       provider: "",
       providers: [],
+      tagKeys: [],
       total: "0",
       days: [],
     };
@@ -1395,6 +1736,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1.00",
       days: [
         {
@@ -1409,6 +1751,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "32.7663",
       days: [
         {
@@ -1489,6 +1832,7 @@ describe("DailyCosts", () => {
       currencies: ["EUR", "USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "3.123456789012345679",
       days: [
         {
@@ -1636,6 +1980,7 @@ describe("DailyCosts", () => {
       currencies: ["EUR", "USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "3.123456789012345679",
       days: [
         {
@@ -1650,6 +1995,7 @@ describe("DailyCosts", () => {
       currencies: ["EUR", "USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "30.987654321098765434",
       days: [
         {
@@ -1778,6 +2124,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "400",
       days: [
         {
@@ -1868,6 +2215,7 @@ describe("DailyCosts", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "100",
       days: [
         {

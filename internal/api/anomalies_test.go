@@ -76,7 +76,7 @@ func TestGetAnomaliesContractPins(t *testing.T) {
 	}
 	// Parameters echo — every value.
 	p := got.Parameters
-	if p.K != "3" || p.ConsistencyConstant != "1.4826" || p.WindowDays != 30 || p.MinObservations != 10 || p.RelativeFloor != "0.1" || p.GroupBy != "service" {
+	if p.K != "3" || p.ConsistencyConstant != "1.4826" || p.WindowDays != 30 || p.MinObservations != 10 || p.RelativeFloor != "0.1" || p.GroupBy != "service" || p.TagKey != "" {
 		t.Errorf("parameters echo = %+v", p)
 	}
 
@@ -544,5 +544,8 @@ func TestGetAnomaliesTagGroupingRoutesKeyAndEchoesGrouping(t *testing.T) {
 	}
 	if got.Parameters.GroupBy != "tag" {
 		t.Fatalf("parameters.groupBy = %q, want tag", got.Parameters.GroupBy)
+	}
+	if got.Parameters.TagKey != "cost center" {
+		t.Fatalf("parameters.tagKey = %q, want cost center", got.Parameters.TagKey)
 	}
 }

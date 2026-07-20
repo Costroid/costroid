@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing/fstest"
 	"time"
@@ -171,6 +172,30 @@ func run(outDir string) error {
 		}
 	}
 
+	tagKeys, err := capturedTagKeys(filepath.Join(fixturesDir, "costs.full.service.json"))
+	if err != nil {
+		return err
+	}
+	if err := validateTagKeySlugCollisions(tagKeys); err != nil {
+		return err
+	}
+	for _, tagKey := range tagKeys {
+		tagSlug := providerSlug(tagKey)
+		tagQuery := "&groupBy=tag&tagKey=" + url.QueryEscape(tagKey)
+		for _, p := range ps {
+			rq := rangeQuery(p.start, p.end)
+			if err := capture(fmt.Sprintf("costs.%s.tag.%s", p.id, tagSlug), "/api/v1/costs/daily"+rq+tagQuery); err != nil {
+				return err
+			}
+			if err := capture(fmt.Sprintf("costs-summary.%s.tag.%s", p.id, tagSlug), "/api/v1/costs/summary"+rq+tagQuery); err != nil {
+				return err
+			}
+			if err := capture(fmt.Sprintf("anomalies.%s.tag.%s", p.id, tagSlug), "/api/v1/anomalies"+rq+tagQuery); err != nil {
+				return err
+			}
+		}
+	}
+
 	providers, err := capturedProviders(filepath.Join(fixturesDir, "costs.full.service.json"))
 	if err != nil {
 		return err
@@ -199,6 +224,19 @@ func run(outDir string) error {
 					return err
 				}
 			}
+			for _, tagKey := range tagKeys {
+				tagSlug := providerSlug(tagKey)
+				tagQuery := "&groupBy=tag&tagKey=" + url.QueryEscape(tagKey)
+				if err := capture(filepath.Join("filtered", fmt.Sprintf("costs.%s.tag.%s.%s", p.id, tagSlug, slug)), "/api/v1/costs/daily"+rq+tagQuery+providerQuery); err != nil {
+					return err
+				}
+				if err := capture(filepath.Join("filtered", fmt.Sprintf("costs-summary.%s.tag.%s.%s", p.id, tagSlug, slug)), "/api/v1/costs/summary"+rq+tagQuery+providerQuery); err != nil {
+					return err
+				}
+				if err := capture(filepath.Join("filtered", fmt.Sprintf("anomalies.%s.tag.%s.%s", p.id, tagSlug, slug)), "/api/v1/anomalies"+rq+tagQuery+providerQuery); err != nil {
+					return err
+				}
+			}
 			econPath := "/api/v1/unit-economics/daily?metric=" + url.QueryEscape(demodata.BusinessMetricName()) +
 				"&start=" + p.start.Format(time.DateOnly) + "&end=" + p.end.Format(time.DateOnly) + providerQuery
 			if err := capture(filepath.Join("filtered", fmt.Sprintf("unit-economics.%s.%s", p.id, slug)), econPath); err != nil {
@@ -213,6 +251,42 @@ func run(outDir string) error {
 
 	fmt.Printf("captured fixtures into %s and generated %s (asOf %s)\n",
 		fixturesDir, filepath.Join(outDir, "ranges.ts"), captureAsOf.Format(time.DateOnly))
+	return nil
+}
+
+type capturedDaily struct {
+	TagKeys []string `json:"tagKeys"`
+}
+
+func capturedTagKeys(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading captured tag keys from %s: %w", path, err)
+	}
+	var response capturedDaily
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("decoding captured tag keys from %s: %w", path, err)
+	}
+	return pinnedCapturedTagKeys(response)
+}
+
+func pinnedCapturedTagKeys(response capturedDaily) ([]string, error) {
+	want := []string{"environment"}
+	if !slices.Equal(response.TagKeys, want) {
+		return nil, fmt.Errorf("captured tag keys = %q, want exactly %q", response.TagKeys, want)
+	}
+	return append([]string{}, response.TagKeys...), nil
+}
+
+func validateTagKeySlugCollisions(keys []string) error {
+	seen := make(map[string]string, len(keys))
+	for _, key := range keys {
+		slug := providerSlug(key)
+		if previous, ok := seen[slug]; ok && previous != key {
+			return fmt.Errorf("captured tag keys %q and %q share slug %q", previous, key, slug)
+		}
+		seen[slug] = key
+	}
 	return nil
 }
 

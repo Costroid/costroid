@@ -27,7 +27,7 @@ type UnitEconomics = components["schemas"]["UnitEconomics"];
 // These mirror ./api's shared enums. They are re-declared (not imported) so the
 // demo alias never makes this module import itself.
 export type CostGroupBy =
-  "service" | "provider" | "allocation" | "subaccount" | "region";
+  "service" | "provider" | "allocation" | "subaccount" | "region" | "tag";
 export type RangeParams = { start: string; end: string };
 
 // Vite inlines the base fixtures into the demo entry chunk and emits filtered
@@ -51,6 +51,7 @@ function fixture<T>(name: string): T {
 const knownProviders = new Set(
   fixture<DailyCosts>("costs.full.service").providers,
 );
+const knownTagKeys = new Set(fixture<DailyCosts>("costs.full.service").tagKeys);
 
 function providerSlug(provider: string): string {
   return provider
@@ -78,6 +79,25 @@ function resolveProviderFixture<T>(
   return Promise.resolve(fixture<T>(baseName));
 }
 
+function resolveGroupedFixture<T>(
+  kind: "costs" | "costs-summary" | "anomalies",
+  preset: DemoPresetId,
+  groupBy: CostGroupBy,
+  tagKey: string,
+  provider: string,
+): Promise<T> {
+  if (groupBy === "tag") {
+    if (!knownTagKeys.has(tagKey)) {
+      return Promise.resolve(fixture<T>(`${kind}.${preset}.service`));
+    }
+    return resolveProviderFixture<T>(
+      `${kind}.${preset}.tag.${providerSlug(tagKey)}`,
+      provider,
+    );
+  }
+  return resolveProviderFixture<T>(`${kind}.${preset}.${groupBy}`, provider);
+}
+
 // presetOf maps a [start, end] range to the captured preset it belongs to.
 // All-time ("", "") or any unrecognized range falls back to the full window.
 function presetOf(start: string, end: string): DemoPresetId {
@@ -98,6 +118,7 @@ export function getSyncStatus(
 export function getCostsDaily(
   params: RangeParams & {
     groupBy: CostGroupBy;
+    tagKey?: string;
     currency?: string;
     provider?: string;
   },
@@ -105,8 +126,11 @@ export function getCostsDaily(
 ): Promise<DailyCosts> {
   const preset = presetOf(params.start, params.end);
   const provider = params.provider ?? "";
-  return resolveProviderFixture<DailyCosts>(
-    `costs.${preset}.${params.groupBy}`,
+  return resolveGroupedFixture<DailyCosts>(
+    "costs",
+    preset,
+    params.groupBy,
+    params.tagKey ?? "",
     provider,
   );
 }
@@ -114,6 +138,7 @@ export function getCostsDaily(
 export function getCostsSummary(
   params: RangeParams & {
     groupBy: CostGroupBy;
+    tagKey?: string;
     currency?: string;
     provider?: string;
   },
@@ -121,8 +146,11 @@ export function getCostsSummary(
 ): Promise<CostsSummary> {
   const preset = presetOf(params.start, params.end);
   const provider = params.provider ?? "";
-  return resolveProviderFixture<CostsSummary>(
-    `costs-summary.${preset}.${params.groupBy}`,
+  return resolveGroupedFixture<CostsSummary>(
+    "costs-summary",
+    preset,
+    params.groupBy,
+    params.tagKey ?? "",
     provider,
   );
 }
@@ -130,6 +158,7 @@ export function getCostsSummary(
 export function getAnomalies(
   params: RangeParams & {
     groupBy: CostGroupBy;
+    tagKey?: string;
     currency?: string;
     provider?: string;
   },
@@ -137,8 +166,11 @@ export function getAnomalies(
 ): Promise<Anomalies> {
   const preset = presetOf(params.start, params.end);
   const provider = params.provider ?? "";
-  return resolveProviderFixture<Anomalies>(
-    `anomalies.${preset}.${params.groupBy}`,
+  return resolveGroupedFixture<Anomalies>(
+    "anomalies",
+    preset,
+    params.groupBy,
+    params.tagKey ?? "",
     provider,
   );
 }

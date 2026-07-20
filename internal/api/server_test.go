@@ -534,7 +534,7 @@ func TestGetDailyCostsSingleCurrencyResponseAddsCurrenciesOnly(t *testing.T) {
 	}
 
 	var want DailyCosts
-	if err := json.Unmarshal([]byte(`{"currencies":["USD"],"currency":"USD","days":[{"date":"2026-05-01","services":[{"cost":"0.1896","key":"AWS Lambda"},{"cost":"3.6288","key":"Amazon Elastic Compute Cloud"}],"total":"3.8184"},{"date":"2026-05-02","services":[{"cost":"0.1896","key":"AWS Lambda"}],"total":"0.1896"}],"provider":"","providers":["Amazon Web Services"],"total":"4.008"}`), &want); err != nil {
+	if err := json.Unmarshal([]byte(`{"currencies":["USD"],"currency":"USD","days":[{"date":"2026-05-01","services":[{"cost":"0.1896","key":"AWS Lambda"},{"cost":"3.6288","key":"Amazon Elastic Compute Cloud"}],"total":"3.8184"},{"date":"2026-05-02","services":[{"cost":"0.1896","key":"AWS Lambda"}],"total":"0.1896"}],"provider":"","providers":["Amazon Web Services"],"tagKeys":[],"total":"4.008"}`), &want); err != nil {
 		t.Fatalf("decoding expected full response: %v", err)
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -587,7 +587,7 @@ func TestGetDailyCostsEmptyRangeCurrenciesNeverNull(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
-	want := `{"currencies":[],"currency":"","days":[],"provider":"","providers":[],"total":"0"}`
+	want := `{"currencies":[],"currency":"","days":[],"provider":"","providers":[],"tagKeys":[],"total":"0"}`
 	if body := strings.TrimSpace(rec.Body.String()); body != want {
 		t.Fatalf("empty response = %s, want %s", body, want)
 	}
@@ -939,7 +939,7 @@ func TestGetDailyCostsDateParams(t *testing.T) {
 	// Empty store: empty days array (not null), zero total, no currency.
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily", nil))
-	if body := strings.TrimSpace(rec.Body.String()); body != `{"currencies":[],"currency":"","days":[],"provider":"","providers":[],"total":"0"}` {
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"currencies":[],"currency":"","days":[],"provider":"","providers":[],"tagKeys":[],"total":"0"}` {
 		t.Errorf("empty store response = %s", body)
 	}
 }
@@ -2337,6 +2337,32 @@ func TestGetDailyCostsTagGroupingRoutesKey(t *testing.T) {
 	}
 	if store.tagQueryCount != 1 || store.queryCount != 0 || !reflect.DeepEqual(store.tagKeyLog, []string{"cost center"}) {
 		t.Fatalf("tag/service calls = %d/%d keys=%v, want 1/0 [cost center]", store.tagQueryCount, store.queryCount, store.tagKeyLog)
+	}
+}
+
+func TestGetDailyCostsAlwaysReturnsUnscopedTagKeysForRange(t *testing.T) {
+	store := &fakeStore{
+		tagKeys:    []string{"cost center", "environment"},
+		currencies: []string{"USD"},
+		daily:      dayCosts(t, "2026-06-15", "USD", map[string]string{"service": "1"}),
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/costs/daily?start=2026-06-01&end=2026-06-30&provider=Amazon%20Web%20Services&currency=USD", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	var got DailyCosts
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.TagKeys, []string{"cost center", "environment"}) {
+		t.Fatalf("tagKeys = %v, want pass-through [cost center environment]", got.TagKeys)
+	}
+	if store.tagKeysQueryCount != 1 || store.gotTagKeysTenant != focus.DefaultTenant ||
+		store.gotTagKeysStart != time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) ||
+		store.gotTagKeysEnd != time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC) {
+		t.Fatalf("TagKeys call = count %d tenant %q range [%s,%s]", store.tagKeysQueryCount, store.gotTagKeysTenant, store.gotTagKeysStart, store.gotTagKeysEnd)
 	}
 }
 

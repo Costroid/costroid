@@ -122,7 +122,7 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		return
 	}
 
-	writeJSON(w, buildAnomalies(daily, groupBy, start, end))
+	writeJSON(w, buildAnomalies(daily, groupBy, tagKey, start, end))
 }
 
 // buildAnomalies scores the per-day TOTAL series (the sum over each day's keys,
@@ -131,7 +131,7 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 // that key has data; the total exists only on days present in the response.
 // Ordering is deterministic: date-ascending, then total scope before key scope,
 // then key-ascending. The parameters block echoes the exact detector constants.
-func buildAnomalies(daily storage.DailyCosts, groupBy string, start, end time.Time) Anomalies {
+func buildAnomalies(daily storage.DailyCosts, groupBy, tagKey string, start, end time.Time) Anomalies {
 	flags := []Anomaly{}
 	for _, sf := range anomalyscan.Flags(daily) {
 		if inRange(sf.Flag.Date, start, end) {
@@ -149,6 +149,7 @@ func buildAnomalies(daily storage.DailyCosts, groupBy string, start, end time.Ti
 			MinObservations:     anomaly.MinObservations,
 			RelativeFloor:       anomaly.RelativeFloor.String(),
 			GroupBy:             groupBy,
+			TagKey:              tagKey,
 		},
 		Anomalies: flags,
 	}

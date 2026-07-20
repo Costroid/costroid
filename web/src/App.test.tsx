@@ -24,6 +24,7 @@ const emptyCosts = {
   currencies: [],
   provider: "",
   providers: [],
+  tagKeys: [],
   total: "0",
   days: [],
 };
@@ -79,6 +80,7 @@ function mockFetch(demo = false) {
             minObservations: 10,
             relativeFloor: "0.1",
             groupBy: "service",
+            tagKey: "",
           },
           anomalies: [],
         }),
@@ -522,6 +524,7 @@ describe("App", () => {
               minObservations: 10,
               relativeFloor: "0.1",
               groupBy: parsed.searchParams.get("groupBy") ?? "service",
+              tagKey: "",
             },
             anomalies: [],
           }),

@@ -7,10 +7,12 @@ import * as demoApi from "./api.demo";
 import baseAnomalies from "./demo/fixtures/anomalies.full.service.json";
 import baseSummary from "./demo/fixtures/costs-summary.full.service.json";
 import baseCosts from "./demo/fixtures/costs.full.service.json";
+import baseTagCosts from "./demo/fixtures/costs.full.tag.environment.json";
 import baseRegionCosts from "./demo/fixtures/costs.last30.region.json";
 import amazonAnomalies from "./demo/fixtures/filtered/anomalies.full.service.amazon-web-services.json";
 import amazonSummary from "./demo/fixtures/filtered/costs-summary.full.service.amazon-web-services.json";
 import amazonCosts from "./demo/fixtures/filtered/costs.full.service.amazon-web-services.json";
+import amazonTagCosts from "./demo/fixtures/filtered/costs.full.tag.environment.amazon-web-services.json";
 import amazonSubaccountCosts from "./demo/fixtures/filtered/costs.last30.subaccount.amazon-web-services.json";
 import googleAnomalies from "./demo/fixtures/filtered/anomalies.full.service.google.json";
 import amazonEconomics from "./demo/fixtures/filtered/unit-economics.full.amazon-web-services.json";
@@ -125,6 +127,27 @@ describe("api.demo provider-filtered fixtures", () => {
           await demoApi.getAnomalies({ ...range, groupBy, provider });
           resolutions += 1;
         }
+        await demoApi.getCostsDaily({
+          ...range,
+          groupBy: "tag",
+          tagKey: "environment",
+          provider,
+        });
+        resolutions += 1;
+        await demoApi.getCostsSummary({
+          ...range,
+          groupBy: "tag",
+          tagKey: "environment",
+          provider,
+        });
+        resolutions += 1;
+        await demoApi.getAnomalies({
+          ...range,
+          groupBy: "tag",
+          tagKey: "environment",
+          provider,
+        });
+        resolutions += 1;
         await demoApi.getUnitEconomicsDaily({
           ...range,
           metric: "requests served",
@@ -134,7 +157,7 @@ describe("api.demo provider-filtered fixtures", () => {
       }
     }
 
-    expect(resolutions).toBe(240);
+    expect(resolutions).toBe(285);
   });
 
   it("returns base and provider-filtered drill-down fixtures by identity", async () => {
@@ -153,6 +176,33 @@ describe("api.demo provider-filtered fixtures", () => {
 
     expect(region).toBe(baseRegionCosts);
     expect(subaccount).toBe(amazonSubaccountCosts);
+  });
+
+  it("returns known tag-key fixtures by identity", async () => {
+    const base = await demoApi.getCostsDaily({
+      ...fullServiceRange,
+      groupBy: "tag",
+      tagKey: "environment",
+    });
+    const filtered = await demoApi.getCostsDaily({
+      ...fullServiceRange,
+      groupBy: "tag",
+      tagKey: "environment",
+      provider: "Amazon Web Services",
+    });
+
+    expect(base).toBe(baseTagCosts);
+    expect(filtered).toBe(amazonTagCosts);
+  });
+
+  it("returns the base service fixture for an unknown tag key", async () => {
+    const costs = await demoApi.getCostsDaily({
+      ...fullServiceRange,
+      groupBy: "tag",
+      tagKey: "unknown key",
+    });
+
+    expect(costs).toBe(baseCosts);
   });
 
   it("returns provider-rescored Google anomalies", async () => {
@@ -188,6 +238,29 @@ describe("api.demo missing filtered fixture", () => {
       isolatedDemoApi.getCostsDaily({ ...fullServiceRange, provider }),
     ).rejects.toThrow(
       "missing demo fixture: filtered/costs.full.service.fabricated-provider.json",
+    );
+  });
+
+  it("throws when a tag key is known but its filtered fixture is missing", async () => {
+    const tagKey = "missing key";
+    vi.resetModules();
+    vi.doMock("./demo/fixtures/costs.full.service.json", () => ({
+      default: {
+        ...baseCosts,
+        tagKeys: [...baseCosts.tagKeys, tagKey],
+      },
+    }));
+    const isolatedDemoApi = await import("./api.demo");
+
+    await expect(
+      isolatedDemoApi.getCostsDaily({
+        ...fullServiceRange,
+        groupBy: "tag",
+        tagKey,
+        provider: "Amazon Web Services",
+      }),
+    ).rejects.toThrow(
+      "missing demo fixture: filtered/costs.full.tag.missing-key.amazon-web-services.json",
     );
   });
 });

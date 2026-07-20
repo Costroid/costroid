@@ -14,6 +14,7 @@ describe("dailyCostsToCsv", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "10.00",
       days: [
         {
@@ -46,6 +47,7 @@ describe("dailyCostsToCsv", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1234.567890123456789012",
       days: [
         {
@@ -71,6 +73,7 @@ describe("dailyCostsToCsv", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "6",
       days: [
         {
@@ -98,6 +101,7 @@ describe("dailyCostsToCsv", () => {
       currencies: ["USD"],
       provider: "",
       providers: ["Amazon Web Services"],
+      tagKeys: [],
       total: "1",
       days: [
         {
@@ -118,6 +122,7 @@ describe("dailyCostsCsvFilename", () => {
     currencies: ["USD"],
     provider: "",
     providers: ["Amazon Web Services"],
+    tagKeys: [],
     total: "2",
     days: [
       {
@@ -159,5 +164,14 @@ describe("dailyCostsCsvFilename", () => {
     expect(
       dailyCostsCsvFilename({ ...costs, provider: "!!!" }, "service"),
     ).toBe("costroid-daily-costs-service-USD-2026-05-01_2026-05-03.csv");
+  });
+
+  it("adds a sanitized tag key segment only for tag grouping", () => {
+    expect(dailyCostsCsvFilename(costs, "tag", "Cost Center / Team")).toBe(
+      "costroid-daily-costs-tag-cost-center-team-USD-2026-05-01_2026-05-03.csv",
+    );
+    expect(dailyCostsCsvFilename(costs, "service", "Cost Center")).toBe(
+      "costroid-daily-costs-service-USD-2026-05-01_2026-05-03.csv",
+    );
   });
 });

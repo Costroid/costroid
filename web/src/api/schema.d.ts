@@ -293,6 +293,13 @@ export interface components {
              *     ]
              */
             providers: string[];
+            /**
+             * @description All FOCUS Tags keys with cost rows in the requested range, not scoped by the provider or currency filters, sorted ascending. This is the source for a tag-key picker and is [] (never null) when the range is empty.
+             * @example [
+             *       "environment"
+             *     ]
+             */
+            tagKeys: string[];
             /** @description One entry per calendar day with data, days ascending. */
             days: components["schemas"]["DailyCost"][];
             /**
@@ -443,6 +450,11 @@ export interface components {
              * @example service
              */
             groupBy: string;
+            /**
+             * @description The requested FOCUS Tags key echoed verbatim, or "" when the request is not grouped by tag.
+             * @example environment
+             */
+            tagKey: string;
         };
         Anomaly: {
             /**
