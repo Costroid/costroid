@@ -5,6 +5,8 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -14,6 +16,95 @@ import (
 	"github.com/Costroid/costroid/internal/allocation"
 	"github.com/Costroid/costroid/internal/focus"
 )
+
+func TestDailyCostsByTagExactSumNullishStatesAndProviderFilter(t *testing.T) {
+	ctx := context.Background()
+	platformA := withTags(testRecord(t, "platform-a", day(1), "123456789012345678.333333333333333333"), map[string]any{"team": "platform"})
+	platformB := withTags(testRecord(t, "platform-b", day(1), "123456789012345678.666666666666666667"), map[string]any{"team": "platform"})
+	product := withTags(testRecord(t, "product", day(1), "7.000000000000000001"), map[string]any{"team": "product"})
+	product.ServiceProviderName = "Google"
+	noTags := withTags(testRecord(t, "no-tags", day(1), "0.1"), nil)
+	missingTeam := withTags(testRecord(t, "missing-team", day(1), "0.02"), map[string]any{"other": "x"})
+	missingTeam.ServiceProviderName = "Google"
+	jsonNullTeam := withTags(testRecord(t, "json-null-team", day(1), "0.003"), map[string]any{"team": nil})
+	jsonNullTeam.ServiceProviderName = "Google"
+	store := allocStore(t, platformA, platformB, product, noTags, missingTeam, jsonNullTeam)
+
+	var nullTags, absentKey, jsonNull int
+	if err := store.db.QueryRow(`SELECT
+		COUNT(*) FILTER (WHERE service_name = 'no-tags' AND tags IS NULL),
+		COUNT(*) FILTER (WHERE service_name = 'missing-team' AND tags IS NOT NULL AND json_extract(tags, '$.team') IS NULL),
+		COUNT(*) FILTER (WHERE service_name = 'json-null-team' AND CAST(json_extract(tags, '$.team') AS VARCHAR) = 'null')
+		FROM cost_records`).Scan(&nullTags, &absentKey, &jsonNull); err != nil {
+		t.Fatalf("assert distinct stored tag states: %v", err)
+	}
+	if nullTags != 1 || absentKey != 1 || jsonNull != 1 {
+		t.Fatalf("stored null-ish tag states = NULL:%d absent:%d JSON-null:%d, want 1/1/1", nullTags, absentKey, jsonNull)
+	}
+
+	got, err := store.DailyCostsByTag(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "team", "", "")
+	if err != nil {
+		t.Fatalf("DailyCostsByTag: %v", err)
+	}
+	if labels := flattenLabels(got); len(labels) != 3 {
+		t.Fatalf("tag bucket count = %d (%v), want exactly 3", len(labels), labels)
+	}
+	assertLabels(t, got, map[string]string{
+		"platform":   "246913578024691357",
+		"product":    "7.000000000000000001",
+		"(untagged)": "0.123",
+	})
+
+	filtered, err := store.DailyCostsByTag(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "team", "", "AWS")
+	if err != nil {
+		t.Fatalf("DailyCostsByTag(AWS): %v", err)
+	}
+	assertLabels(t, filtered, map[string]string{
+		"platform":   "246913578024691357",
+		"(untagged)": "0.1",
+	})
+	if len(flattenLabels(filtered)) >= len(flattenLabels(got)) {
+		t.Fatalf("provider-filtered buckets = %v, want fewer than unfiltered %v", flattenLabels(filtered), flattenLabels(got))
+	}
+}
+
+func TestDailyCostsByTagScalarValuesAndLiteralFallbackMerge(t *testing.T) {
+	store := allocStore(t,
+		withTags(testRecord(t, "empty", day(1), "1"), map[string]any{"team": ""}),
+		withTags(testRecord(t, "number", day(1), "2"), map[string]any{"team": json.Number("42")}),
+		withTags(testRecord(t, "boolean", day(1), "3"), map[string]any{"team": true}),
+		withTags(testRecord(t, "literal-fallback", day(1), "4"), map[string]any{"team": "(untagged)"}),
+		withTags(testRecord(t, "missing", day(1), "5"), nil),
+	)
+	got, err := store.DailyCostsByTag(context.Background(), focus.DefaultTenant, time.Time{}, time.Time{}, "team", "", "")
+	if err != nil {
+		t.Fatalf("DailyCostsByTag: %v", err)
+	}
+	assertLabels(t, got, map[string]string{"": "1", "42": "2", "true": "3", "(untagged)": "9"})
+}
+
+func TestTagKeysSortedDistinctRangeAndEmptyNonNil(t *testing.T) {
+	inRangeA := withTags(testRecord(t, "a", day(1), "1"), map[string]any{"team": "platform", "env": "prod"})
+	inRangeB := withTags(testRecord(t, "b", day(2), "2"), map[string]any{"team": "product"})
+	nullTags := withTags(testRecord(t, "null-tags", day(2), "3"), nil)
+	outOfRange := withTags(testRecord(t, "later", day(3), "4"), map[string]any{"later": "yes"})
+	store := allocStore(t, inRangeA, inRangeB, nullTags, outOfRange)
+
+	got, err := store.TagKeys(context.Background(), focus.DefaultTenant, day(1), day(2))
+	if err != nil {
+		t.Fatalf("TagKeys(range): %v", err)
+	}
+	if !slices.Equal(got, []string{"env", "team"}) {
+		t.Fatalf("TagKeys(range) = %v, want [env team]", got)
+	}
+	empty, err := store.TagKeys(context.Background(), focus.DefaultTenant, day(4), day(4))
+	if err != nil {
+		t.Fatalf("TagKeys(empty): %v", err)
+	}
+	if empty == nil || len(empty) != 0 {
+		t.Fatalf("TagKeys(empty) = %#v, want non-nil []", empty)
+	}
+}
 
 // --- helpers ---------------------------------------------------------------
 

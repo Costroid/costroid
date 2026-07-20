@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -524,4 +525,24 @@ func TestGetAnomaliesGroupByComposition(t *testing.T) {
 			t.Error("store queried despite the unconfigured 400")
 		}
 	})
+}
+
+func TestGetAnomaliesTagGroupingRoutesKeyAndEchoesGrouping(t *testing.T) {
+	store := anomalyFakeStore(t)
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?groupBy=tag&tagKey=cost%20center", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if store.tagQueryCount != 1 || store.queryCount != 0 || !reflect.DeepEqual(store.tagKeyLog, []string{"cost center"}) {
+		t.Fatalf("tag/service calls = %d/%d keys=%v, want 1/0 [cost center]", store.tagQueryCount, store.queryCount, store.tagKeyLog)
+	}
+	var got Anomalies
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Parameters.GroupBy != "tag" {
+		t.Fatalf("parameters.groupBy = %q, want tag", got.Parameters.GroupBy)
+	}
 }

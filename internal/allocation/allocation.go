@@ -279,3 +279,8 @@ func validateTagKey(key string) error {
 	}
 	return nil
 }
+
+// ValidateTagKey validates a FOCUS Tags key for literal DuckDB extraction.
+func ValidateTagKey(key string) error {
+	return validateTagKey(key)
+}

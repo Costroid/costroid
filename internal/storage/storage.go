@@ -71,6 +71,12 @@ type Store interface {
 	// returns a non-nil empty slice.
 	Providers(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
 
+	// TagKeys returns the distinct FOCUS Tags keys for one tenant whose cost
+	// rows fall inside the inclusive UTC calendar-day bounds, sorted ascending.
+	// A zero bound is unbounded on that side. An empty range returns a non-nil
+	// empty slice.
+	TagKeys(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
+
 	// BillingCurrencies returns the distinct FOCUS BillingCurrency values for
 	// one tenant whose cost rows fall inside the inclusive UTC calendar-day
 	// bounds, sorted ascending. A zero bound is unbounded on that side. A
@@ -116,6 +122,14 @@ type Store interface {
 	// DailyCostsByService; the currency guard is duplicated inline rather than
 	// shared, with its SQL and error message kept byte-identical.
 	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency, provider string) (DailyCosts, error)
+
+	// DailyCostsByTag is the bound-parameter grouping sibling of
+	// DailyCostsByAllocation: it returns the same DailyCosts shape, but groups by
+	// the value of tagKey and places rows without a non-null value under
+	// "(untagged)". The tag key is always bound as data. Currency and provider
+	// filtering, tenant and range scoping, exact decimal aggregation, the
+	// single-currency guard, and ordering match DailyCostsByAllocation.
+	DailyCostsByTag(ctx context.Context, tenant string, start, end time.Time, tagKey, currency, provider string) (DailyCosts, error)
 
 	// DailyTokensByService returns, for one tenant, the total
 	// ConsumedQuantity per UTC calendar day (of ChargePeriodStart) per
@@ -375,7 +389,7 @@ type ReplaceResult struct {
 	NewBilledCost decimal.Decimal
 }
 
-// DailyCosts is the result of DailyCostsByService or DailyCostsByAllocation.
+// DailyCosts is the result of a daily-cost grouping query.
 type DailyCosts struct {
 	// Currency is the single BillingCurrency of this result: the requested
 	// currency when the query is filtered (even when no records matched), or

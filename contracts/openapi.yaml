@@ -67,12 +67,13 @@ paths:
         groupBy=provider uses FOCUS ServiceProviderName; groupBy=subaccount
         uses FOCUS SubAccountName, with rows missing one grouped under
         "(no subaccount)"; groupBy=region uses FOCUS RegionName, with rows
-        missing one grouped under "(no region)"; groupBy=allocation applies
-        the query-time cost-allocation rules (virtual tagging) and keys each
-        cost by its allocation label, with cost matching no rule under
-        "Unallocated". Ordering is deterministic: days ascending, keys sorted
-        by name. Costs are decimal strings — never floats — so no precision is
-        lost. When currency is absent, a single-currency range
+        missing one grouped under "(no region)"; groupBy=tag uses the value of
+        the requested FOCUS Tags key, with untagged cost grouped under
+        "(untagged)"; groupBy=allocation applies the query-time cost-allocation
+        rules (virtual tagging) and keys each cost by its allocation label, with
+        cost matching no rule under "Unallocated". Ordering is deterministic:
+        days ascending, keys sorted by name. Costs are decimal strings — never
+        floats — so no precision is lost. When currency is absent, a single-currency range
         returns that series and currencies contains its one code; a mixed range
         defaults to the alphabetically-first currency's series and currencies
         lists every available code. When currency is present, only that
@@ -114,7 +115,15 @@ paths:
               - allocation
               - subaccount
               - region
+              - tag
             default: service
+        - name: tagKey
+          in: query
+          description: >-
+            Optional FOCUS Tags key whose per-row value becomes the grouping
+            key. Used only with groupBy=tag.
+          schema:
+            type: string
         - name: currency
           in: query
           description: >-
@@ -165,9 +174,9 @@ paths:
         Period totals by grouping key for the requested [start, end] window,
         plus an optional preceding-window comparison computed server-side.
         groupBy semantics and validation match /api/v1/costs/daily (service /
-        provider / allocation / subaccount / region; allocation unconfigured
-        → 400; malformed rules → 500). All money values are exact decimal
-        strings (never floats).
+        provider / allocation / subaccount / region / tag; allocation
+        unconfigured → 400; malformed rules → 500). All money values are
+        exact decimal strings (never floats).
         The response `total` equals /api/v1/costs/daily's period total for
         identical params. Keys are ordered total-desc, then key-asc.
 
@@ -222,7 +231,15 @@ paths:
               - allocation
               - subaccount
               - region
+              - tag
             default: service
+        - name: tagKey
+          in: query
+          description: >-
+            Optional FOCUS Tags key whose per-row value becomes the grouping
+            key. Used only with groupBy=tag.
+          schema:
+            type: string
         - name: currency
           in: query
           description: >-
@@ -314,7 +331,15 @@ paths:
               - allocation
               - subaccount
               - region
+              - tag
             default: service
+        - name: tagKey
+          in: query
+          description: >-
+            Optional FOCUS Tags key whose per-row value becomes the grouping
+            key. Used only with groupBy=tag.
+          schema:
+            type: string
         - name: currency
           in: query
           description: >-
@@ -813,7 +838,9 @@ components:
             ServiceProviderName (groupBy=provider), FOCUS SubAccountName
             (groupBy=subaccount; missing names appear under "(no subaccount)"),
             FOCUS RegionName (groupBy=region; missing names appear under
-            "(no region)"), or the allocation label (groupBy=allocation).
+            "(no region)"), the value of the requested FOCUS Tags key
+            (groupBy=tag; untagged cost appears under "(untagged)"), or the
+            allocation label (groupBy=allocation).
           example: Amazon Web Services
         total:
           type: string
@@ -867,8 +894,10 @@ components:
             ServiceProviderName (groupBy=provider), FOCUS SubAccountName
             (groupBy=subaccount; missing names appear under "(no subaccount)"),
             FOCUS RegionName (groupBy=region; missing names appear under
-            "(no region)"), or the allocation label (groupBy=allocation; cost
-            matching no rule appears under "Unallocated").
+            "(no region)"), the value of the requested FOCUS Tags key
+            (groupBy=tag; untagged cost appears under "(untagged)"), or the
+            allocation label (groupBy=allocation; cost matching no rule appears
+            under "Unallocated").
           example: Amazon Elastic Compute Cloud
         cost:
           type: string

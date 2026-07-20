@@ -339,6 +339,39 @@ func (s *DuckDB) Providers(ctx context.Context, tenant string, start, end time.T
 	return result, nil
 }
 
+// TagKeys implements Store.
+func (s *DuckDB) TagKeys(ctx context.Context, tenant string, start, end time.Time) ([]string, error) {
+	where := "WHERE x_tenant_id = ?"
+	args := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		args = append(args, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+
+	result := []string{}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT k FROM cost_records, UNNEST(json_keys(tags)) AS u(k) `+where+` ORDER BY k`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying tag keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scanning tag key: %w", err)
+		}
+		result = append(result, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying tag keys: %w", err)
+	}
+	return result, nil
+}
+
 // BillingCurrencies implements Store.
 func (s *DuckDB) BillingCurrencies(ctx context.Context, tenant string, start, end time.Time, provider string) ([]string, error) {
 	where := "WHERE x_tenant_id = ?"
@@ -694,6 +727,89 @@ func (s *DuckDB) DailyCostsByAllocation(ctx context.Context, tenant string, star
 		}
 		last := &result.Days[len(result.Days)-1]
 		last.Services = append(last.Services, ServiceCost{ServiceName: label, Cost: cost})
+	}
+	if err := rows.Err(); err != nil {
+		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)
+	}
+	return result, nil
+}
+
+// DailyCostsByTag implements Store. The tag key placeholder occurs in the
+// SELECT before every WHERE placeholder, so it binds first and GROUP BY /
+// ORDER BY use the alias instead of repeating the expression.
+func (s *DuckDB) DailyCostsByTag(ctx context.Context, tenant string, start, end time.Time, tagKey, currency, provider string) (DailyCosts, error) {
+	where := "WHERE x_tenant_id = ?"
+	whereArgs := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		whereArgs = append(whereArgs, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		whereArgs = append(whereArgs, end.UTC().Format(time.DateOnly))
+	}
+	if provider != "" {
+		where += " AND service_provider_name = ?"
+		whereArgs = append(whereArgs, provider)
+	}
+
+	result := DailyCosts{Currency: currency}
+	if currency == "" {
+		currencies, err := s.db.QueryContext(ctx,
+			`SELECT DISTINCT billing_currency FROM cost_records `+where+` ORDER BY billing_currency`, whereArgs...)
+		if err != nil {
+			return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+		}
+		defer func() { _ = currencies.Close() }()
+		for currencies.Next() {
+			var c string
+			if err := currencies.Scan(&c); err != nil {
+				return DailyCosts{}, fmt.Errorf("scanning billing currency: %w", err)
+			}
+			if result.Currency != "" && result.Currency != c {
+				return DailyCosts{}, fmt.Errorf("stored records mix billing currencies (%s, %s); currency conversion is not supported yet", result.Currency, c)
+			}
+			result.Currency = c
+		}
+		if err := currencies.Err(); err != nil {
+			return DailyCosts{}, fmt.Errorf("querying billing currencies: %w", err)
+		}
+	}
+
+	if currency != "" {
+		where += " AND billing_currency = ?"
+		whereArgs = append(whereArgs, currency)
+	}
+	args := make([]any, 0, 1+len(whereArgs))
+	args = append(args, tagKey)
+	args = append(args, whereArgs...)
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT CAST(charge_period_start AS DATE) AS day, COALESCE(json_extract_string(tags, ?), '(untagged)') AS cost_group, SUM(billed_cost)
+		 FROM cost_records `+where+`
+		 GROUP BY day, cost_group
+		 ORDER BY day ASC, cost_group ASC`, args...)
+	if err != nil {
+		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			day time.Time
+			key string
+			sum duckdb.Decimal
+		)
+		if err := rows.Scan(&day, &key, &sum); err != nil {
+			return DailyCosts{}, fmt.Errorf("scanning daily cost row: %w", err)
+		}
+		cost := decimal.NewFromBigInt(sum.Value, -int32(sum.Scale)) //nolint:gosec // DuckDB DECIMAL scale is at most 38.
+		day = day.UTC()
+		if n := len(result.Days); n == 0 || !result.Days[n-1].Date.Equal(day) {
+			result.Days = append(result.Days, DayCosts{Date: day})
+		}
+		last := &result.Days[len(result.Days)-1]
+		last.Services = append(last.Services, ServiceCost{ServiceName: key, Cost: cost})
 	}
 	if err := rows.Err(); err != nil {
 		return DailyCosts{}, fmt.Errorf("querying daily costs: %w", err)

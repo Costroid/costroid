@@ -43,6 +43,7 @@ const (
 	GetAnomaliesParamsGroupByRegion     GetAnomaliesParamsGroupBy = "region"
 	GetAnomaliesParamsGroupByService    GetAnomaliesParamsGroupBy = "service"
 	GetAnomaliesParamsGroupBySubaccount GetAnomaliesParamsGroupBy = "subaccount"
+	GetAnomaliesParamsGroupByTag        GetAnomaliesParamsGroupBy = "tag"
 )
 
 // Valid indicates whether the value is a known member of the GetAnomaliesParamsGroupBy enum.
@@ -58,6 +59,8 @@ func (e GetAnomaliesParamsGroupBy) Valid() bool {
 		return true
 	case GetAnomaliesParamsGroupBySubaccount:
 		return true
+	case GetAnomaliesParamsGroupByTag:
+		return true
 	default:
 		return false
 	}
@@ -70,6 +73,7 @@ const (
 	GetDailyCostsParamsGroupByRegion     GetDailyCostsParamsGroupBy = "region"
 	GetDailyCostsParamsGroupByService    GetDailyCostsParamsGroupBy = "service"
 	GetDailyCostsParamsGroupBySubaccount GetDailyCostsParamsGroupBy = "subaccount"
+	GetDailyCostsParamsGroupByTag        GetDailyCostsParamsGroupBy = "tag"
 )
 
 // Valid indicates whether the value is a known member of the GetDailyCostsParamsGroupBy enum.
@@ -85,6 +89,8 @@ func (e GetDailyCostsParamsGroupBy) Valid() bool {
 		return true
 	case GetDailyCostsParamsGroupBySubaccount:
 		return true
+	case GetDailyCostsParamsGroupByTag:
+		return true
 	default:
 		return false
 	}
@@ -97,6 +103,7 @@ const (
 	Region     GetCostsSummaryParamsGroupBy = "region"
 	Service    GetCostsSummaryParamsGroupBy = "service"
 	Subaccount GetCostsSummaryParamsGroupBy = "subaccount"
+	Tag        GetCostsSummaryParamsGroupBy = "tag"
 )
 
 // Valid indicates whether the value is a known member of the GetCostsSummaryParamsGroupBy enum.
@@ -111,6 +118,8 @@ func (e GetCostsSummaryParamsGroupBy) Valid() bool {
 	case Service:
 		return true
 	case Subaccount:
+		return true
+	case Tag:
 		return true
 	default:
 		return false
@@ -204,7 +213,7 @@ type CostSummaryKey struct {
 	// Delta Exact total − previousTotal (decimal.Sub). Present on EVERY key when the preceding window is defined; omitted on every key when undefined. For a new key (no previousTotal), delta equals total.
 	Delta *string `json:"delta,omitempty"`
 
-	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), or the allocation label (groupBy=allocation).
+	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), the value of the requested FOCUS Tags key (groupBy=tag; untagged cost appears under "(untagged)"), or the allocation label (groupBy=allocation).
 	Key string `json:"key"`
 
 	// PreviousTotal Period total for this key in the preceding window. Present only when the preceding window is defined AND the key had cost there; omitted for new keys (delta then equals total) and when the window is undefined.
@@ -333,7 +342,7 @@ type ServiceCost struct {
 	// Cost Cost total, as a decimal string.
 	Cost string `json:"cost"`
 
-	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
+	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), the value of the requested FOCUS Tags key (groupBy=tag; untagged cost appears under "(untagged)"), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
 	Key string `json:"key"`
 }
 
@@ -437,6 +446,9 @@ type GetAnomaliesParams struct {
 	// GroupBy Cost grouping dimension (the same set as /api/v1/costs/daily).
 	GroupBy *GetAnomaliesParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
 
+	// TagKey Optional FOCUS Tags key whose per-row value becomes the grouping key. Used only with groupBy=tag.
+	TagKey *string `form:"tagKey,omitempty" json:"tagKey,omitempty"`
+
 	// Currency Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window is empty.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
 
@@ -458,6 +470,9 @@ type GetDailyCostsParams struct {
 	// GroupBy Cost grouping dimension.
 	GroupBy *GetDailyCostsParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
 
+	// TagKey Optional FOCUS Tags key whose per-row value becomes the grouping key. Used only with groupBy=tag.
+	TagKey *string `form:"tagKey,omitempty" json:"tagKey,omitempty"`
+
 	// Currency Optional three-letter uppercase billing currency whose series to return. Omit to use the alphabetically-first currency in the range.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
 
@@ -478,6 +493,9 @@ type GetCostsSummaryParams struct {
 
 	// GroupBy Cost grouping dimension (same set as /api/v1/costs/daily).
 	GroupBy *GetCostsSummaryParamsGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+
+	// TagKey Optional FOCUS Tags key whose per-row value becomes the grouping key. Used only with groupBy=tag.
+	TagKey *string `form:"tagKey,omitempty" json:"tagKey,omitempty"`
 
 	// Currency Optional three-letter uppercase billing currency whose summary to return. Omit to use the alphabetically-first currency in the current window.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
@@ -616,6 +634,19 @@ func (siw *ServerInterfaceWrapper) GetAnomalies(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// ------------- Optional query parameter "tagKey" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tagKey", r.URL.Query(), &params.TagKey, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tagKey"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagKey", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "currency" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "currency", r.URL.Query(), &params.Currency, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
@@ -715,6 +746,19 @@ func (siw *ServerInterfaceWrapper) GetDailyCosts(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "tagKey" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tagKey", r.URL.Query(), &params.TagKey, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tagKey"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagKey", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "currency" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "currency", r.URL.Query(), &params.Currency, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
@@ -796,6 +840,19 @@ func (siw *ServerInterfaceWrapper) GetCostsSummary(w http.ResponseWriter, r *htt
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tagKey" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tagKey", r.URL.Query(), &params.TagKey, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tagKey"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagKey", Err: err})
 		}
 		return
 	}

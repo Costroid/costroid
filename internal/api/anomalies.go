@@ -41,6 +41,11 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
 		return
 	}
+	isTag := params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupByTag
+	if err := validateTagGrouping(isTag, params.TagKey); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if params.Currency != nil && !billingCurrencyPattern.MatchString(*params.Currency) {
 		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
 		return
@@ -52,6 +57,10 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 	provider := ""
 	if params.Provider != nil {
 		provider = *params.Provider
+	}
+	tagKey := ""
+	if params.TagKey != nil {
+		tagKey = *params.TagKey
 	}
 
 	var (
@@ -102,6 +111,9 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 	case params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupByRegion:
 		groupBy = "region"
 		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupByRegion)
+	case isTag:
+		groupBy = "tag"
+		daily, err = s.store.DailyCostsByTag(r.Context(), focus.DefaultTenant, time.Time{}, end, tagKey, currency, provider)
 	default:
 		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupByService)
 	}

@@ -38,6 +38,8 @@ type fakeStore struct {
 	dailyErr              error
 	providers             []string
 	providersErr          error
+	tagKeys               []string
+	tagKeysErr            error
 	currencies            []string
 	currenciesErr         error
 	gotTenant             string
@@ -61,6 +63,12 @@ type fakeStore struct {
 		tenant     string
 		start, end time.Time
 	}
+	gotTagKeysTenant  string
+	gotTagKeysStart   time.Time
+	gotTagKeysEnd     time.Time
+	tagKeysQueryCount int
+	tagKeyLog         []string
+	tagQueryCount     int
 
 	// dailyFn, when set, overrides daily/dailyErr for both service and
 	// allocation queries so multi-window handlers can return different data
@@ -136,6 +144,17 @@ func (f *fakeStore) Providers(_ context.Context, tenant string, start, end time.
 	return append([]string{}, f.providers...), nil
 }
 
+func (f *fakeStore) TagKeys(_ context.Context, tenant string, start, end time.Time) ([]string, error) {
+	f.gotTagKeysTenant = tenant
+	f.gotTagKeysStart = start
+	f.gotTagKeysEnd = end
+	f.tagKeysQueryCount++
+	if f.tagKeysErr != nil {
+		return nil, f.tagKeysErr
+	}
+	return append([]string{}, f.tagKeys...), nil
+}
+
 func (f *fakeStore) BillingCurrencies(_ context.Context, tenant string, start, end time.Time, provider string) ([]string, error) {
 	f.gotCurrenciesTenant = tenant
 	f.gotCurrenciesStart = start
@@ -164,6 +183,25 @@ func (f *fakeStore) DailyCostsByAllocation(_ context.Context, tenant string, sta
 	f.gotDimension = dim
 	f.dimensionLog = append(f.dimensionLog, dim)
 	f.allocQueryCount++
+	f.queryLog = append(f.queryLog, struct {
+		start, end time.Time
+		currency   string
+		provider   string
+	}{start: start, end: end, currency: currency, provider: provider})
+	if f.dailyCurrencyFn != nil {
+		return f.dailyCurrencyFn(tenant, start, end, currency, storage.GroupByService)
+	}
+	if f.dailyFn != nil {
+		return f.dailyFn(tenant, start, end, storage.GroupByService)
+	}
+	return f.daily, f.dailyErr
+}
+
+func (f *fakeStore) DailyCostsByTag(_ context.Context, tenant string, start, end time.Time, tagKey, currency, provider string) (storage.DailyCosts, error) {
+	f.gotTenant, f.gotStart, f.gotEnd = tenant, start, end
+	f.gotCurrency = currency
+	f.tagKeyLog = append(f.tagKeyLog, tagKey)
+	f.tagQueryCount++
 	f.queryLog = append(f.queryLog, struct {
 		start, end time.Time
 		currency   string
@@ -2245,4 +2283,77 @@ func TestGetCostsSummaryAllocationErrors(t *testing.T) {
 			t.Errorf("body = %s", rec.Body)
 		}
 	})
+}
+
+func TestTagGroupingValidationAcrossHandlers(t *testing.T) {
+	endpoints := []string{
+		"/api/v1/costs/daily",
+		"/api/v1/costs/summary",
+		"/api/v1/anomalies",
+	}
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{name: "tag without key", query: "?groupBy=tag", want: "groupBy=tag requires the tagKey parameter"},
+		{name: "key without tag", query: "?tagKey=team", want: "the tagKey parameter requires groupBy=tag"},
+		{name: "empty key", query: "?groupBy=tag&tagKey=", want: "tagKey must be a non-empty string of at most 8192 bytes"},
+		{name: "overlong key", query: "?groupBy=tag&tagKey=" + strings.Repeat("k", focus.MaxFreeTextBytes+1), want: "tagKey must be a non-empty string of at most 8192 bytes"},
+		{name: "DuckDB path key", query: "?groupBy=tag&tagKey=%24team", want: "tag key \"$team\" begins with '$', which DuckDB interprets as a JSONPath expression, not a literal key; drop the '$'"},
+	}
+	for _, endpoint := range endpoints {
+		for _, tt := range tests {
+			t.Run(endpoint+"/"+tt.name, func(t *testing.T) {
+				store := &fakeStore{}
+				rec := httptest.NewRecorder()
+				NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+					httptest.NewRequest(http.MethodGet, endpoint+tt.query, nil))
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body)
+				}
+				if body := strings.TrimSpace(rec.Body.String()); body != tt.want {
+					t.Fatalf("body = %q, want %q", body, tt.want)
+				}
+				if store.providersQueryCount != 0 || store.currenciesQueryCount != 0 || store.queryCount != 0 || store.allocQueryCount != 0 || store.tagQueryCount != 0 {
+					t.Fatalf("invalid tag request reached store: providers=%d currencies=%d service=%d allocation=%d tag=%d",
+						store.providersQueryCount, store.currenciesQueryCount, store.queryCount, store.allocQueryCount, store.tagQueryCount)
+				}
+			})
+		}
+	}
+}
+
+func TestGetDailyCostsTagGroupingRoutesKey(t *testing.T) {
+	store := &fakeStore{
+		currencies: []string{"USD"},
+		daily:      dayCosts(t, "2026-05-01", "USD", map[string]string{"platform": "1.000000000000000001"}),
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily?groupBy=tag&tagKey=cost%20center", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if store.tagQueryCount != 1 || store.queryCount != 0 || !reflect.DeepEqual(store.tagKeyLog, []string{"cost center"}) {
+		t.Fatalf("tag/service calls = %d/%d keys=%v, want 1/0 [cost center]", store.tagQueryCount, store.queryCount, store.tagKeyLog)
+	}
+}
+
+func TestGetCostsSummaryTagGroupingRoutesBothWindows(t *testing.T) {
+	store := &fakeStore{
+		currencies: []string{"USD"},
+		dailyFn: func(_ string, start, _ time.Time, _ storage.CostGroupBy) (storage.DailyCosts, error) {
+			return dayCosts(t, start.AddDate(0, 0, 1).Format(time.DateOnly), "USD", map[string]string{"platform": "1"}), nil
+		},
+	}
+	rec := httptest.NewRecorder()
+	NewHandler("test", testStatic(), store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/v1/costs/summary?start=2026-06-01&end=2026-06-30&groupBy=tag&tagKey=cost%20center", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if store.tagQueryCount != 2 || store.queryCount != 0 || !reflect.DeepEqual(store.tagKeyLog, []string{"cost center", "cost center"}) {
+		t.Fatalf("tag/service calls = %d/%d keys=%v, want 2/0 [cost center cost center]", store.tagQueryCount, store.queryCount, store.tagKeyLog)
+	}
 }

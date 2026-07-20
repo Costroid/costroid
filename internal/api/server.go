@@ -37,18 +37,36 @@ const focusVersion = "1.4"
 var billingCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 
 var providerShapeMessage = fmt.Sprintf("provider must be a non-empty string of at most %d bytes", focus.MaxFreeTextBytes)
+var tagKeyShapeMessage = fmt.Sprintf("tagKey must be a non-empty string of at most %d bytes", focus.MaxFreeTextBytes)
 
 // CostStore is the slice of the storage interface the API reads from.
 type CostStore interface {
 	Providers(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
+	TagKeys(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
 	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time, provider string) ([]string, error)
 	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency, provider string, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
 	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency, provider string) (storage.DailyCosts, error)
+	DailyCostsByTag(ctx context.Context, tenant string, start, end time.Time, tagKey, currency, provider string) (storage.DailyCosts, error)
 	DailyTokensByService(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyTokenUsage, error)
 	DailyUsageMetrics(ctx context.Context, tenant string, start, end time.Time) ([]storage.DailyUsageMetric, error)
 	BusinessMetricNames(ctx context.Context, tenant string) ([]storage.BusinessMetricInfo, error)
 	DailyBusinessMetricQuantities(ctx context.Context, tenant, metric string, start, end time.Time) ([]storage.DayQuantity, error)
 	SyncStatuses(ctx context.Context) ([]storage.SyncStatus, error)
+}
+
+func validateTagGrouping(isTag bool, tagKey *string) error {
+	switch {
+	case isTag && tagKey == nil:
+		return errors.New("groupBy=tag requires the tagKey parameter")
+	case !isTag && tagKey != nil:
+		return errors.New("the tagKey parameter requires groupBy=tag")
+	case tagKey != nil && (*tagKey == "" || len(*tagKey) > focus.MaxFreeTextBytes):
+		return errors.New(tagKeyShapeMessage)
+	case tagKey != nil:
+		return allocation.ValidateTagKey(*tagKey)
+	default:
+		return nil
+	}
 }
 
 // SyncScheduleSource is the live scheduler state merged into persisted sync
@@ -188,6 +206,11 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
 		return
 	}
+	isTag := params.GroupBy != nil && *params.GroupBy == GetDailyCostsParamsGroupByTag
+	if err := validateTagGrouping(isTag, params.TagKey); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if params.Currency != nil && !billingCurrencyPattern.MatchString(*params.Currency) {
 		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
 		return
@@ -200,6 +223,10 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 	provider := ""
 	if params.Provider != nil {
 		provider = *params.Provider
+	}
+	tagKey := ""
+	if params.TagKey != nil {
+		tagKey = *params.TagKey
 	}
 	providers, err := s.store.Providers(r.Context(), focus.DefaultTenant, start, end)
 	if err != nil {
@@ -228,6 +255,8 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 			return // loadAllocationDimension already wrote the error response
 		}
 		daily, queryErr = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, start, end, dim, currency, provider)
+	} else if isTag {
+		daily, queryErr = s.store.DailyCostsByTag(r.Context(), focus.DefaultTenant, start, end, tagKey, currency, provider)
 	} else {
 		groupBy := storage.GroupByService
 		if params.GroupBy != nil {
@@ -290,6 +319,11 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		http.Error(w, "invalid groupBy value", http.StatusBadRequest)
 		return
 	}
+	isTag := params.GroupBy != nil && *params.GroupBy == Tag
+	if err := validateTagGrouping(isTag, params.TagKey); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if params.Currency != nil && !billingCurrencyPattern.MatchString(*params.Currency) {
 		http.Error(w, "currency must be a three-letter uppercase code (for example, USD)", http.StatusBadRequest)
 		return
@@ -302,6 +336,10 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 	provider := ""
 	if params.Provider != nil {
 		provider = *params.Provider
+	}
+	tagKey := ""
+	if params.TagKey != nil {
+		tagKey = *params.TagKey
 	}
 	providers, err := s.store.Providers(r.Context(), focus.DefaultTenant, start, end)
 	if err != nil {
@@ -330,7 +368,7 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		}
 	}
 
-	current, err := s.queryDailyCosts(r.Context(), start, end, currency, provider, params.GroupBy, dim, isAllocation)
+	current, err := s.queryDailyCosts(r.Context(), start, end, currency, provider, tagKey, params.GroupBy, dim, isAllocation)
 	if err != nil {
 		http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -358,7 +396,7 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 		// prevEnd = start − 1 day; prevStart = prevEnd − (end − start).
 		prevEnd = start.AddDate(0, 0, -1)
 		prevStart = prevEnd.Add(-end.Sub(start))
-		previous, err := s.queryDailyCosts(r.Context(), prevStart, prevEnd, currency, provider, params.GroupBy, dim, isAllocation)
+		previous, err := s.queryDailyCosts(r.Context(), prevStart, prevEnd, currency, provider, tagKey, params.GroupBy, dim, isAllocation)
 		if err != nil {
 			http.Error(w, "querying daily costs: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -417,9 +455,12 @@ func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params 
 // queryDailyCosts runs the same store path as GetDailyCosts for one window.
 // Allocation rules are pre-resolved once by the caller and shared across both
 // windows. On store failure this returns the error without writing a response.
-func (s *Server) queryDailyCosts(ctx context.Context, start, end time.Time, currency, provider string, groupBy *GetCostsSummaryParamsGroupBy, dim allocation.Dimension, isAllocation bool) (storage.DailyCosts, error) {
+func (s *Server) queryDailyCosts(ctx context.Context, start, end time.Time, currency, provider, tagKey string, groupBy *GetCostsSummaryParamsGroupBy, dim allocation.Dimension, isAllocation bool) (storage.DailyCosts, error) {
 	if isAllocation {
 		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim, currency, provider)
+	}
+	if groupBy != nil && *groupBy == Tag {
+		return s.store.DailyCostsByTag(ctx, focus.DefaultTenant, start, end, tagKey, currency, provider)
 	}
 	gb := storage.GroupByService
 	if groupBy != nil {
