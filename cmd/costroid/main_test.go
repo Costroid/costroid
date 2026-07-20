@@ -1256,7 +1256,7 @@ func TestMetricsImportCLISummary(t *testing.T) {
 	}
 }
 
-// --- store encrypt / rekey / decrypt (slice 57) ---
+// --- store encrypt / rekey / decrypt ---
 
 const (
 	cliStoreKeyA = "cli-store-key-a's-quote"
@@ -1305,7 +1305,7 @@ func writeGzipFocusCSV(t *testing.T, billedCost string) string {
 			billedCost, billedCost, billedCost, billedCost),
 		"",
 	}, "\n")
-	path := filepath.Join(t.TempDir(), "slice57-export.csv.gz")
+	path := filepath.Join(t.TempDir(), "convert-export.csv.gz")
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create gzip: %v", err)

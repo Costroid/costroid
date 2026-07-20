@@ -28,9 +28,9 @@ import (
 // Quote-bearing synthetic keys: prove escapeSQLString and that errors never
 // echo ENCRYPTION_KEY literals.
 const (
-	convertKeyA = "slice-57-key-a's-quote"
-	convertKeyB = "slice-57-key-b's-quote"
-	convertKeyC = "slice-57-wrong-key's-quote"
+	convertKeyA = "convert-key-a's-quote"
+	convertKeyB = "convert-key-b's-quote"
+	convertKeyC = "convert-wrong-key's-quote"
 )
 
 func assertNoKeyLeak(t *testing.T, err error, secrets ...string) {
