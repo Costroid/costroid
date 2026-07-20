@@ -1,0 +1,1 @@
+{"currencies":["USD"],"currency":"USD","keys":[{"delta":"815.02","key":"global","previousTotal":"13952.96","total":"14767.98"}],"previousEnd":"2026-04-12","previousStart":"2026-01-13","previousTotal":"13952.96","provider":"OpenAI","providers":["Amazon Web Services","Anthropic","Google","Microsoft","OpenAI"],"total":"14767.98"}

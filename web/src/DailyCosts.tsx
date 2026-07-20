@@ -53,6 +53,8 @@ const GROUP_BY_OPTIONS: { id: CostGroupBy; label: string }[] = [
   { id: "service", label: "Service" },
   { id: "provider", label: "Provider" },
   { id: "allocation", label: "Allocation" },
+  { id: "subaccount", label: "Subaccount" },
+  { id: "region", label: "Region" },
 ];
 
 // groupLabelOf maps a grouping id to the lowercase heading/aria noun.

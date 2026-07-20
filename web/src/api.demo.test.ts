@@ -7,9 +7,11 @@ import * as demoApi from "./api.demo";
 import baseAnomalies from "./demo/fixtures/anomalies.full.service.json";
 import baseSummary from "./demo/fixtures/costs-summary.full.service.json";
 import baseCosts from "./demo/fixtures/costs.full.service.json";
+import baseRegionCosts from "./demo/fixtures/costs.last30.region.json";
 import amazonAnomalies from "./demo/fixtures/filtered/anomalies.full.service.amazon-web-services.json";
 import amazonSummary from "./demo/fixtures/filtered/costs-summary.full.service.amazon-web-services.json";
 import amazonCosts from "./demo/fixtures/filtered/costs.full.service.amazon-web-services.json";
+import amazonSubaccountCosts from "./demo/fixtures/filtered/costs.last30.subaccount.amazon-web-services.json";
 import googleAnomalies from "./demo/fixtures/filtered/anomalies.full.service.google.json";
 import amazonEconomics from "./demo/fixtures/filtered/unit-economics.full.amazon-web-services.json";
 import baseEconomics from "./demo/fixtures/unit-economics.full.json";
@@ -103,7 +105,13 @@ describe("api.demo provider-filtered fixtures", () => {
   it("resolves the complete provider, preset, and grouping matrix", async () => {
     expect(baseCosts.providers).toHaveLength(5);
     expect(DEMO_PRESETS).toHaveLength(3);
-    const groupings = ["service", "provider", "allocation"] as const;
+    const groupings = [
+      "service",
+      "provider",
+      "allocation",
+      "subaccount",
+      "region",
+    ] as const;
     let resolutions = 0;
 
     for (const provider of baseCosts.providers) {
@@ -126,7 +134,25 @@ describe("api.demo provider-filtered fixtures", () => {
       }
     }
 
-    expect(resolutions).toBe(150);
+    expect(resolutions).toBe(240);
+  });
+
+  it("returns base and provider-filtered drill-down fixtures by identity", async () => {
+    const last30 = DEMO_PRESETS.find((preset) => preset.id === "last30")!;
+    const range = { start: last30.start, end: last30.end };
+
+    const region = await demoApi.getCostsDaily({
+      ...range,
+      groupBy: "region",
+    });
+    const subaccount = await demoApi.getCostsDaily({
+      ...range,
+      groupBy: "subaccount",
+      provider: "Amazon Web Services",
+    });
+
+    expect(region).toBe(baseRegionCosts);
+    expect(subaccount).toBe(amazonSubaccountCosts);
   });
 
   it("returns provider-rescored Google anomalies", async () => {

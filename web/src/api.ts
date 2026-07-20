@@ -23,7 +23,8 @@ type BusinessMetrics = components["schemas"]["BusinessMetrics"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
 
 // CostGroupBy is the shared grouping enum for the costs and anomalies endpoints.
-export type CostGroupBy = "service" | "provider" | "allocation";
+export type CostGroupBy =
+  "service" | "provider" | "allocation" | "subaccount" | "region";
 
 // RangeParams is the inclusive [start, end] range threaded through most views;
 // "" on either side means unbounded on that side.

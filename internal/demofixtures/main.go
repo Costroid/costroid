@@ -120,7 +120,7 @@ func run(outDir string) error {
 	}
 
 	ps := presets(captureAsOf)
-	groupings := []string{"service", "provider", "allocation"}
+	groupings := []string{"service", "provider", "allocation", "subaccount", "region"}
 
 	capture := func(name, path string) error {
 		body, err := getOK(handler, path)

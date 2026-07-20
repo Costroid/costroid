@@ -51,6 +51,14 @@ describe("readUrlState", () => {
     window.location.hash = "#view-panel";
     expect(readUrlState()).toEqual({});
   });
+
+  it.each(["subaccount", "region"] as const)(
+    "accepts the new %s grouping value",
+    (groupBy) => {
+      window.location.hash = `#groupBy=${groupBy}`;
+      expect(readUrlState()).toEqual({ groupBy });
+    },
+  );
 });
 
 describe("writeUrlState", () => {

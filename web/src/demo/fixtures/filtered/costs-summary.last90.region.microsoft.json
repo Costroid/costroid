@@ -1,0 +1,1 @@
+{"currencies":["USD"],"currency":"USD","keys":[{"delta":"5473.53","key":"eastus","previousTotal":"92929.76","total":"98403.29"}],"previousEnd":"2026-04-12","previousStart":"2026-01-13","previousTotal":"92929.76","provider":"Microsoft","providers":["Amazon Web Services","Anthropic","Google","Microsoft","OpenAI"],"total":"98403.29"}

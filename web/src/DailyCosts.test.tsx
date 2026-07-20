@@ -121,7 +121,7 @@ function fetchedURLs(): string[] {
 describe("DailyCosts", () => {
   it("applies hash filters to the first costs and anomaly requests from a loading frame", async () => {
     window.location.hash =
-      "#groupBy=provider&currency=USD&provider=Amazon+Web+Services&metric=requests";
+      "#groupBy=region&currency=USD&provider=Amazon+Web+Services&metric=requests";
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       const params = new URL(url, "http://x").searchParams;
@@ -129,7 +129,7 @@ describe("DailyCosts", () => {
       const requestedProvider = params.get("provider") ?? "";
       if (url.startsWith("/api/v1/anomalies")) {
         const body = anomaliesBody([], requestedCurrency);
-        body.parameters.groupBy = "provider";
+        body.parameters.groupBy = "region";
         return Promise.resolve(fakeResponse(200, body));
       }
       return Promise.resolve(
@@ -153,15 +153,63 @@ describe("DailyCosts", () => {
     await waitFor(() => {
       const urls = fetchedURLs();
       expect(urls.find((url) => url.startsWith("/api/v1/costs/daily"))).toBe(
-        "/api/v1/costs/daily?groupBy=provider&currency=USD&provider=Amazon%20Web%20Services",
+        "/api/v1/costs/daily?groupBy=region&currency=USD&provider=Amazon%20Web%20Services",
       );
       expect(urls.find((url) => url.startsWith("/api/v1/anomalies"))).toBe(
-        "/api/v1/anomalies?groupBy=provider&currency=USD&provider=Amazon%20Web%20Services",
+        "/api/v1/anomalies?groupBy=region&currency=USD&provider=Amazon%20Web%20Services",
       );
     });
     expect(window.location.hash).toBe(
-      "#groupBy=provider&currency=USD&provider=Amazon+Web+Services&metric=requests",
+      "#groupBy=region&currency=USD&provider=Amazon+Web+Services&metric=requests",
     );
+  });
+
+  it("renders five grouping options and threads Region while Service omits groupBy", async () => {
+    const costs = providerDailyBody("", ["Amazon Web Services"], "3");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/v1/anomalies")) {
+          return Promise.resolve(fakeResponse(200, anomaliesBody([], "USD")));
+        }
+        return Promise.resolve(fakeResponse(200, costs));
+      }),
+    );
+
+    render(<DailyCosts />);
+    await screen.findByRole("group", { name: "Stacked daily cost by service" });
+    await waitFor(() =>
+      expect(fetchedURLs()).toContain("/api/v1/anomalies?currency=USD"),
+    );
+
+    const grouping = screen.getByRole("group", { name: "Group costs by" });
+    expect(grouping.querySelectorAll("button[aria-pressed]")).toHaveLength(5);
+
+    fireEvent.click(screen.getByRole("button", { name: "Region" }));
+    await waitFor(() => {
+      expect(fetchedURLs()).toContain("/api/v1/costs/daily?groupBy=region");
+      expect(fetchedURLs()).toContain(
+        "/api/v1/anomalies?groupBy=region&currency=USD",
+      );
+    });
+
+    const serviceCostsBefore = fetchedURLs().filter(
+      (url) => url === "/api/v1/costs/daily",
+    ).length;
+    const serviceAnomaliesBefore = fetchedURLs().filter(
+      (url) => url === "/api/v1/anomalies?currency=USD",
+    ).length;
+    fireEvent.click(screen.getByRole("button", { name: "Service" }));
+    await waitFor(() => {
+      expect(
+        fetchedURLs().filter((url) => url === "/api/v1/costs/daily").length,
+      ).toBeGreaterThan(serviceCostsBefore);
+      expect(
+        fetchedURLs().filter((url) => url === "/api/v1/anomalies?currency=USD")
+          .length,
+      ).toBeGreaterThan(serviceAnomaliesBefore);
+    });
   });
 
   it("writes filter interactions in canonical form and omits grouping default", async () => {

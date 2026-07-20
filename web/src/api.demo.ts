@@ -26,7 +26,8 @@ type UnitEconomics = components["schemas"]["UnitEconomics"];
 
 // These mirror ./api's shared enums. They are re-declared (not imported) so the
 // demo alias never makes this module import itself.
-export type CostGroupBy = "service" | "provider" | "allocation";
+export type CostGroupBy =
+  "service" | "provider" | "allocation" | "subaccount" | "region";
 export type RangeParams = { start: string; end: string };
 
 // Vite inlines the base fixtures into the demo entry chunk and emits filtered

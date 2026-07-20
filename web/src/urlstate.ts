@@ -20,7 +20,13 @@ const VIEWS = [
   "sources",
 ] as const;
 
-const GROUPINGS = ["service", "provider", "allocation"] as const;
+const GROUPINGS = [
+  "service",
+  "provider",
+  "allocation",
+  "subaccount",
+  "region",
+] as const;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CURRENCY = /^[A-Z]{3}$/;
 

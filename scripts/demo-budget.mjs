@@ -10,7 +10,7 @@
 //   - First-paint app (index.html + referenced JS + all CSS): summed gzip
 //     size at level 9 (each file is served gzip-compressed) <= 150 KB.
 //   - Lazy chunks (unreferenced JS/MJS): summed gzip size at level 9
-//     <= 128 KB.
+//     <= 192 KB.
 //   - Font (assets/*.woff2): raw WIRE bytes (woff2 is already compressed,
 //     so gz is the wrong metric) <= 80 KB.
 // The app and font gates bound the combined first-paint transfer to <= 230 KB
@@ -29,7 +29,7 @@ import { join, extname, relative } from "node:path";
 const GZIP = (buf) => gzipSync(buf, { level: 9 }).length;
 
 const APP_BUDGET = 150 * 1024; // 153,600 B — first-paint html+css+referenced js
-const LAZY_BUDGET = 128 * 1024; // 131,072 B, summed gz@9 of lazy js/mjs
+const LAZY_BUDGET = 192 * 1024; // 196,608 B, summed gz@9 of lazy js/mjs
 const FONT_BUDGET = 80 * 1024; //  81,920 B — woff2 wire bytes
 const COMBINED_CEILING = APP_BUDGET + FONT_BUDGET; // 230 KB worst case
 
