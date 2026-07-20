@@ -758,15 +758,34 @@ func (s *DuckDB) DailyTokensByService(ctx context.Context, tenant string, start,
 	return out, nil
 }
 
-// insertUsageMetricSQL binds the quantity as a string and casts it to the
-// column's DECIMAL scale inside DuckDB, exactly like insertRecordSQL, so a
-// value stays exact and is never silently rounded (decision D25). service_name
-// and service_tier bind as plain strings — "" is a valid non-null value, so the
-// tier-less OpenAI rows store "" and never SQL NULL.
+// insertUsageMetricSQL binds the quantity as a string and casts it at the
+// column's DECIMAL scale inside DuckDB, exactly like insertRecordSQL.
+// ReplaceUsageBatch rejects over-scale and over-magnitude quantities before
+// the insert, so the stored value is exact by construction (decision D25).
+// service_name and service_tier bind as plain strings — "" is a valid non-null
+// value, so the tier-less OpenAI rows store "" and never SQL NULL.
 var insertUsageMetricSQL = fmt.Sprintf(`INSERT INTO usage_metrics (
 	x_tenant_id, connector, source_identity, charge_period_start,
 	service_name, service_tier, metric_name, unit, quantity
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS DECIMAL(38,%[1]d)))`, MaxDecimalScale)
+
+// maxStoreIntegerAbs is the smallest magnitude DECIMAL(38,MaxDecimalScale)
+// cannot hold.
+var maxStoreIntegerAbs = decimal.New(1, 38-MaxDecimalScale)
+
+func usageMetricQuantityError(metricIndex int, d decimal.Decimal) error {
+	if !d.Equal(d.Truncate(MaxDecimalScale)) {
+		return fmt.Errorf(
+			"usage metric %d: quantity value %s has more than %d fractional digits; the embedded store holds DECIMAL(38,%d) and never rounds silently",
+			metricIndex, d, MaxDecimalScale, MaxDecimalScale)
+	}
+	if d.Abs().Cmp(maxStoreIntegerAbs) >= 0 {
+		return fmt.Errorf(
+			"usage metric %d: quantity value %s has more than %d integer digits; the embedded store holds DECIMAL(38,%d) and never truncates silently",
+			metricIndex, d, 38-MaxDecimalScale, MaxDecimalScale)
+	}
+	return nil
+}
 
 // allowedUnits is the closed usage-metric Unit vocabulary (storage.Metric.Unit
 // doc). ReplaceUsageBatch rejects any other unit so a connector cannot smuggle a
@@ -809,6 +828,9 @@ func (s *DuckDB) ReplaceUsageBatch(ctx context.Context, batch UsageBatch, metric
 			if n := len(f.val); n > focus.MaxFreeTextBytes {
 				return fmt.Errorf("usage metric %d: %s is %d bytes, over the %d-byte field size bound (rejected as a possible content leak)", i+1, f.name, n, focus.MaxFreeTextBytes)
 			}
+		}
+		if err := usageMetricQuantityError(i+1, m.Quantity); err != nil {
+			return err
 		}
 		if _, err := stmt.ExecContext(ctx,
 			batch.TenantID, batch.Connector, batch.SourceIdentity, m.ChargePeriodStart.UTC(),

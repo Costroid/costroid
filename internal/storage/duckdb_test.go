@@ -1053,6 +1053,148 @@ func assertDailyTokens(t *testing.T, got, want []DailyTokenUsage) {
 	}
 }
 
+func TestReplaceUsageBatchRejectsOverScaleQuantityAndRollsBack(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	batch := UsageBatch{Connector: "openai-cost", SourceIdentity: "src-over-scale", TenantID: focus.DefaultTenant}
+	seed := []Metric{
+		usageMetric(t, "uncached_input_tokens", "Tokens"),
+		usageMetric(t, "output_tokens", "Tokens"),
+		usageMetric(t, "web_search_requests", "Requests"),
+	}
+	if err := store.ReplaceUsageBatch(ctx, batch, seed); err != nil {
+		t.Fatalf("seed ReplaceUsageBatch: %v", err)
+	}
+	if n := countUsageRows(t, store, batch.Connector, batch.SourceIdentity); n != len(seed) {
+		t.Fatalf("after seed, rows = %d, want %d", n, len(seed))
+	}
+
+	overScale := dec(t, "0.1234567890123456789")
+	if overScale.Equal(overScale.Truncate(MaxDecimalScale)) {
+		t.Fatalf("over-scale input %s unexpectedly equals its %d-digit truncation", overScale, MaxDecimalScale)
+	}
+	bad := []Metric{
+		usageMetric(t, "output_tokens", "Tokens"),
+		usageMetric(t, "uncached_input_tokens", "Tokens"),
+	}
+	bad[1].Quantity = overScale
+	wantErr := fmt.Sprintf("usage metric 2: quantity value %s has more than %d fractional digits; the embedded store holds DECIMAL(38,%d) and never rounds silently", overScale, MaxDecimalScale, MaxDecimalScale)
+	if err := store.ReplaceUsageBatch(ctx, batch, bad); err == nil || err.Error() != wantErr {
+		t.Fatalf("over-scale error = %v, want %q", err, wantErr)
+	}
+	if n := countUsageRows(t, store, batch.Connector, batch.SourceIdentity); n != len(seed) {
+		t.Fatalf("after over-scale rejection, rows = %d, want the %d seeded rows to survive", n, len(seed))
+	}
+}
+
+func TestReplaceUsageBatchRejectsOverMagnitudeQuantityAndRollsBack(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	batch := UsageBatch{Connector: "anthropic-cost", SourceIdentity: "src-over-magnitude", TenantID: focus.DefaultTenant}
+	seed := []Metric{
+		usageMetric(t, "uncached_input_tokens", "Tokens"),
+		usageMetric(t, "output_tokens", "Tokens"),
+		usageMetric(t, "web_search_requests", "Requests"),
+	}
+	if err := store.ReplaceUsageBatch(ctx, batch, seed); err != nil {
+		t.Fatalf("seed ReplaceUsageBatch: %v", err)
+	}
+	if n := countUsageRows(t, store, batch.Connector, batch.SourceIdentity); n != len(seed) {
+		t.Fatalf("after seed, rows = %d, want %d", n, len(seed))
+	}
+
+	overMagnitude := decimal.New(1, 20)
+	bad := []Metric{
+		usageMetric(t, "output_tokens", "Tokens"),
+		usageMetric(t, "uncached_input_tokens", "Tokens"),
+	}
+	bad[1].Quantity = overMagnitude
+	err = store.ReplaceUsageBatch(ctx, batch, bad)
+	wantWording := fmt.Sprintf("usage metric 2: quantity value %s has more than %d integer digits", overMagnitude, 38-MaxDecimalScale)
+	if err == nil || !strings.Contains(err.Error(), wantWording) {
+		t.Fatalf("over-magnitude error = %v, want error containing %q", err, wantWording)
+	}
+	if n := countUsageRows(t, store, batch.Connector, batch.SourceIdentity); n != len(seed) {
+		t.Fatalf("after over-magnitude rejection, rows = %d, want the %d seeded rows to survive", n, len(seed))
+	}
+}
+
+func TestReplaceUsageBatchAcceptsScaleBoundaryExactly(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	const quantityText = "0.123456789012345678"
+	quantity := dec(t, quantityText)
+	if quantity.Equal(quantity.Truncate(MaxDecimalScale-1)) || !quantity.Equal(quantity.Truncate(MaxDecimalScale)) {
+		t.Fatalf("boundary input %s does not exercise exactly %d fractional digits", quantity, MaxDecimalScale)
+	}
+	metric := usageMetric(t, "uncached_input_tokens", "Tokens")
+	metric.Quantity = quantity
+	batch := UsageBatch{Connector: "openai-cost", SourceIdentity: "src-scale-boundary", TenantID: focus.DefaultTenant}
+	if err := store.ReplaceUsageBatch(ctx, batch, []Metric{metric}); err != nil {
+		t.Fatalf("ReplaceUsageBatch: %v", err)
+	}
+
+	got, err := store.DailyUsageMetrics(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("DailyUsageMetrics rows = %+v, want 1", got)
+	}
+	if got[0].Quantity.String() != quantityText {
+		t.Fatalf("quantity round-trip = %q, want %q", got[0].Quantity.String(), quantityText)
+	}
+}
+
+func TestReplaceUsageBatchAcceptsTrailingZerosBeyondScale(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	quantity, err := decimal.NewFromString("1.1000000000000000000000")
+	if err != nil {
+		t.Fatalf("parsing trailing-zero quantity: %v", err)
+	}
+	if quantity.Exponent() != -22 || quantity.String() != "1.1" {
+		t.Fatalf("trailing-zero input exponent/string = %d/%q, want -22/1.1", quantity.Exponent(), quantity.String())
+	}
+	metric := usageMetric(t, "uncached_input_tokens", "Tokens")
+	metric.Quantity = quantity
+	batch := UsageBatch{Connector: "anthropic-cost", SourceIdentity: "src-trailing-zeros", TenantID: focus.DefaultTenant}
+	if err := store.ReplaceUsageBatch(ctx, batch, []Metric{metric}); err != nil {
+		t.Fatalf("ReplaceUsageBatch: %v", err)
+	}
+
+	got, err := store.DailyUsageMetrics(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("DailyUsageMetrics: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("DailyUsageMetrics rows = %+v, want 1", got)
+	}
+	if !got[0].Quantity.Equal(quantity) {
+		t.Fatalf("quantity round-trip = %s, want value equal to %s", got[0].Quantity, quantity)
+	}
+}
+
 // TestDailyUsageMetrics proves the usage_metrics query (migration 0006): the
 // two-dimension (metric_name, unit) GROUP-BY guard, a >2^53 float-hazard sum
 // staying exact, the service_tier="" round-trip, isolation from BOTH FOCUS
