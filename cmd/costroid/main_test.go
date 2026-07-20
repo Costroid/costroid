@@ -5,8 +5,11 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -20,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/demodata"
 	"github.com/Costroid/costroid/internal/devtools/fakeblob"
 	"github.com/Costroid/costroid/internal/devtools/fakes3"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/ingest/azurefocus"
 	"github.com/Costroid/costroid/internal/storage"
 )
@@ -1248,6 +1252,470 @@ func TestMetricsImportCLISummary(t *testing.T) {
 	for _, want := range []string{"3 business metric row(s)", "2 metric(s)", "2026-05-01 through 2026-05-03", `source label "business"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want %q", out, want)
+		}
+	}
+}
+
+// --- store encrypt / rekey / decrypt (slice 57) ---
+
+const (
+	cliStoreKeyA = "cli-store-key-a's-quote"
+	cliStoreKeyB = "cli-store-key-b's-quote"
+	cliStoreKeyC = "cli-store-env-key's-quote"
+	cliExactCost = "0.123456789012345678"
+)
+
+func writeKeyFile(t *testing.T, key string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "db.key")
+	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	return path
+}
+
+func assertCLINoKeyLeak(t *testing.T, out string, err error, secrets ...string) {
+	t.Helper()
+	blob := out
+	if err != nil {
+		blob += "\n" + err.Error()
+	}
+	for _, secret := range secrets {
+		if secret != "" && strings.Contains(blob, secret) {
+			t.Fatalf("CLI output/error leaked secret %q:\n%s", secret, blob)
+		}
+	}
+	for _, forbidden := range []string{"ATTACH ", "(ENCRYPTION_KEY '"} {
+		if strings.Contains(blob, forbidden) {
+			t.Fatalf("CLI output/error leaked %q:\n%s", forbidden, blob)
+		}
+	}
+}
+
+func writeGzipFocusCSV(t *testing.T, billedCost string) string {
+	t.Helper()
+	// Minimal AWS FOCUS 1.2 gzip CSV (gzip-mandatory for aws-focus).
+	csv := strings.Join([]string{
+		"BilledCost,EffectiveCost,ListCost,ContractedCost,BillingCurrency,BillingAccountId," +
+			"BillingPeriodStart,BillingPeriodEnd,ChargePeriodStart,ChargePeriodEnd,ChargeCategory," +
+			"ServiceName,ServiceCategory,ProviderName,PublisherName,InvoiceIssuerName",
+		fmt.Sprintf("%s,%s,%s,%s,USD,999999999999,"+
+			"2026-05-01T00:00:00Z,2026-06-01T00:00:00Z,2026-05-01T00:00:00Z,2026-05-02T00:00:00Z,Usage,"+
+			"Amazon Elastic Compute Cloud,Compute,AWS,AWS,\"Amazon Web Services, Inc.\"",
+			billedCost, billedCost, billedCost, billedCost),
+		"",
+	}, "\n")
+	path := filepath.Join(t.TempDir(), "slice57-export.csv.gz")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create gzip: %v", err)
+	}
+	gz := gzip.NewWriter(f)
+	if _, err := gz.Write([]byte(csv)); err != nil {
+		t.Fatalf("write gzip: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close file: %v", err)
+	}
+	return path
+}
+
+func removeStoreBak(t *testing.T, dataDir string) {
+	t.Helper()
+	live := filepath.Join(dataDir, storage.DatabaseFile)
+	for _, p := range []string{live + ".bak", live + ".bak.wal"} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove %s: %v", p, err)
+		}
+	}
+}
+
+func assertExactCostViaOpen(t *testing.T, dataDir, key, want string) {
+	t.Helper()
+	ctx := context.Background()
+	var opts []storage.Option
+	if key != "" {
+		opts = append(opts, storage.WithEncryptionKey(key))
+	}
+	store, err := storage.Open(ctx, dataDir, opts...)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	costs, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", "")
+	if err != nil {
+		t.Fatalf("DailyCostsByService: %v", err)
+	}
+	if len(costs.Days) != 1 || len(costs.Days[0].Services) != 1 ||
+		costs.Days[0].Services[0].Cost.String() != want {
+		t.Fatalf("costs = %+v, want %s", costs, want)
+	}
+}
+
+func TestStoreEncryptionFullChain(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv(dbEncryptionKeyFileEnvVar, "")
+
+	exportPath := writeGzipFocusCSV(t, cliExactCost)
+	out, err := runCLI([]string{"ingest", "--connector", "aws-focus", "--path", exportPath}, "")
+	if err != nil {
+		t.Fatalf("seed ingest: %v\n%s", err, out)
+	}
+
+	keyA := writeKeyFile(t, cliStoreKeyA)
+	keyB := writeKeyFile(t, cliStoreKeyB)
+
+	// encrypt
+	out, err = runCLI([]string{"store", "encrypt", "--new-db-encryption-key-file", keyA}, "")
+	assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+	if err != nil {
+		t.Fatalf("encrypt: %v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("encrypt lines = %d (%q), want 3", len(lines), out)
+	}
+	if !strings.HasPrefix(lines[0], "encrypted the Costroid store in "+dataDir+": verified ") ||
+		!strings.Contains(lines[0], " tables, ") || !strings.Contains(lines[0], " rows") {
+		t.Fatalf("encrypt line0 = %q", lines[0])
+	}
+	bak := filepath.Join(dataDir, storage.DatabaseFile+".bak")
+	wantWarn := "WARNING: the ORIGINAL PLAINTEXT database remains at " + bak +
+		" - remove it once you have verified the encrypted store (note: deleting a file does not securely erase it on every filesystem)"
+	if lines[1] != wantWarn {
+		t.Fatalf("encrypt line1 = %q\nwant %q", lines[1], wantWarn)
+	}
+	wantNext := "next: run costroid with --db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE pointing at this key file"
+	if lines[2] != wantNext {
+		t.Fatalf("encrypt line2 = %q", lines[2])
+	}
+	// Read: unchanged re-ingest short-circuit with key env + exact cost.
+	t.Setenv(dbEncryptionKeyFileEnvVar, keyA)
+	out, err = runCLI([]string{"ingest", "--connector", "aws-focus", "--path", exportPath}, "")
+	assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+	if err != nil {
+		t.Fatalf("read after encrypt: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "unchanged") {
+		t.Fatalf("expected unchanged short-circuit after encrypt:\n%s", out)
+	}
+	assertExactCostViaOpen(t, dataDir, cliStoreKeyA, cliExactCost)
+
+	// rekey
+	removeStoreBak(t, dataDir)
+	out, err = runCLI([]string{
+		"store", "rekey",
+		"--db-encryption-key-file", keyA,
+		"--new-db-encryption-key-file", keyB,
+	}, "")
+	assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+	if err != nil {
+		t.Fatalf("rekey: %v\n%s", err, out)
+	}
+	lines = strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("rekey lines = %d (%q), want 3", len(lines), out)
+	}
+	if !strings.HasPrefix(lines[0], "re-keyed the Costroid store in "+dataDir+": verified ") {
+		t.Fatalf("rekey line0 = %q", lines[0])
+	}
+	wantBak := "the backup at " + bak + " is encrypted with the PREVIOUS key - remove it once you have verified the re-keyed store"
+	if lines[1] != wantBak {
+		t.Fatalf("rekey line1 = %q\nwant %q", lines[1], wantBak)
+	}
+	wantRekeyNext := "next: point --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE at the NEW key file before running costroid"
+	if lines[2] != wantRekeyNext {
+		t.Fatalf("rekey line2 = %q", lines[2])
+	}
+	t.Setenv(dbEncryptionKeyFileEnvVar, keyB)
+	out, err = runCLI([]string{"ingest", "--connector", "aws-focus", "--path", exportPath}, "")
+	assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+	if err != nil || !strings.Contains(out, "unchanged") {
+		t.Fatalf("read after rekey: %v\n%s", err, out)
+	}
+	assertExactCostViaOpen(t, dataDir, cliStoreKeyB, cliExactCost)
+
+	// decrypt
+	removeStoreBak(t, dataDir)
+	out, err = runCLI([]string{
+		"store", "decrypt",
+		"--db-encryption-key-file", keyB,
+		"--allow-plaintext",
+	}, "")
+	assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+	if err != nil {
+		t.Fatalf("decrypt: %v\n%s", err, out)
+	}
+	lines = strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("decrypt lines = %d (%q), want 3", len(lines), out)
+	}
+	if !strings.HasPrefix(lines[0], "decrypted the Costroid store in "+dataDir+": verified ") {
+		t.Fatalf("decrypt line0 = %q", lines[0])
+	}
+	wantDec := "the store is now PLAINTEXT on disk; the backup at " + bak + " is encrypted with the previous key"
+	if lines[1] != wantDec {
+		t.Fatalf("decrypt line1 = %q\nwant %q", lines[1], wantDec)
+	}
+	wantDecNext := "next: unset --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE before running costroid"
+	if lines[2] != wantDecNext {
+		t.Fatalf("decrypt line2 = %q", lines[2])
+	}
+	t.Setenv(dbEncryptionKeyFileEnvVar, "")
+	out, err = runCLI([]string{"ingest", "--connector", "aws-focus", "--path", exportPath}, "")
+	assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+	if err != nil || !strings.Contains(out, "unchanged") {
+		t.Fatalf("keyless read after decrypt: %v\n%s", err, out)
+	}
+	assertExactCostViaOpen(t, dataDir, "", cliExactCost)
+}
+
+func TestStoreEncryptionFlagMatrix(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COSTROID_DATA_DIR", dataDir)
+	t.Setenv(dbEncryptionKeyFileEnvVar, "")
+
+	exportPath := writeGzipFocusCSV(t, cliExactCost)
+	if out, err := runCLI([]string{"ingest", "--connector", "aws-focus", "--path", exportPath}, ""); err != nil {
+		t.Fatalf("seed: %v\n%s", err, out)
+	}
+
+	keyA := writeKeyFile(t, cliStoreKeyA)
+	keyB := writeKeyFile(t, cliStoreKeyB)
+	keyEnv := writeKeyFile(t, cliStoreKeyC)
+
+	t.Run("encrypt missing new key flag", func(t *testing.T) {
+		out, err := runCLI([]string{"store", "encrypt"}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA)
+		if err == nil || !strings.Contains(err.Error(), "--new-db-encryption-key-file") {
+			t.Fatalf("err = %v out = %q", err, out)
+		}
+	})
+
+	t.Run("encrypt rejects current-key flag", func(t *testing.T) {
+		out, err := runCLI([]string{
+			"store", "encrypt",
+			"--db-encryption-key-file", keyA,
+			"--new-db-encryption-key-file", keyB,
+		}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+		if !errors.Is(err, errReported) {
+			t.Fatalf("err = %v, want errReported", err)
+		}
+		if !strings.Contains(out, "flag provided but not defined: -db-encryption-key-file") {
+			t.Fatalf("out = %q", out)
+		}
+	})
+
+	t.Run("encrypt ignores env current key", func(t *testing.T) {
+		// Env key DIFFERS from the new key; encrypt must still succeed.
+		t.Setenv(dbEncryptionKeyFileEnvVar, keyEnv)
+		out, err := runCLI([]string{"store", "encrypt", "--new-db-encryption-key-file", keyA}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyC)
+		if err != nil {
+			t.Fatalf("encrypt with stale env: %v\n%s", err, out)
+		}
+		assertExactCostViaOpen(t, dataDir, cliStoreKeyA, cliExactCost)
+		// Opening with the env key must fail as wrong key.
+		_, openErr := storage.Open(context.Background(), dataDir, storage.WithEncryptionKey(cliStoreKeyC))
+		if openErr == nil || !strings.Contains(openErr.Error(), "encrypted and the provided key is wrong") {
+			t.Fatalf("open with env key err = %v", openErr)
+		}
+		t.Setenv(dbEncryptionKeyFileEnvVar, "")
+	})
+
+	// Store is now encrypted with keyA; remove bak for later steps.
+	removeStoreBak(t, dataDir)
+
+	t.Run("rekey missing new key flag", func(t *testing.T) {
+		out, err := runCLI([]string{"store", "rekey", "--db-encryption-key-file", keyA}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA)
+		if err == nil || !strings.Contains(err.Error(), "--new-db-encryption-key-file") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("rekey without current key source", func(t *testing.T) {
+		t.Setenv(dbEncryptionKeyFileEnvVar, "")
+		out, err := runCLI([]string{"store", "rekey", "--new-db-encryption-key-file", keyB}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyB)
+		want := "the current db-encryption key is required: pass --db-encryption-key-file or set $COSTROID_DB_ENCRYPTION_KEY_FILE"
+		if err == nil || err.Error() != want {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("decrypt without current key source", func(t *testing.T) {
+		t.Setenv(dbEncryptionKeyFileEnvVar, "")
+		out, err := runCLI([]string{"store", "decrypt", "--allow-plaintext"}, "")
+		assertCLINoKeyLeak(t, out, err)
+		want := "the current db-encryption key is required: pass --db-encryption-key-file or set $COSTROID_DB_ENCRYPTION_KEY_FILE"
+		if err == nil || err.Error() != want {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("decrypt without allow-plaintext", func(t *testing.T) {
+		out, err := runCLI([]string{"store", "decrypt", "--db-encryption-key-file", keyA}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA)
+		if err == nil || !strings.Contains(err.Error(), "--allow-plaintext") {
+			t.Fatalf("err = %v", err)
+		}
+		if !strings.Contains(err.Error(), "plaintext") {
+			t.Fatalf("err = %v, want plaintext explanation", err)
+		}
+	})
+
+	t.Run("empty key files fail closed", func(t *testing.T) {
+		empty := filepath.Join(t.TempDir(), "empty.key")
+		if err := os.WriteFile(empty, []byte(""), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		want := "the db-encryption key file " + empty + " is empty or unreadable"
+		// rekey with empty current key file
+		out, err := runCLI([]string{
+			"store", "rekey",
+			"--db-encryption-key-file", empty,
+			"--new-db-encryption-key-file", keyB,
+		}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyB)
+		if err == nil || err.Error() != want {
+			t.Fatalf("err = %v, want %q", err, want)
+		}
+		// empty new key file
+		out, err = runCLI([]string{
+			"store", "rekey",
+			"--db-encryption-key-file", keyA,
+			"--new-db-encryption-key-file", empty,
+		}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA)
+		if err == nil || err.Error() != want {
+			t.Fatalf("err = %v, want %q", err, want)
+		}
+		// encrypt empty new key file (on a fresh plaintext dir)
+		plainDir := t.TempDir()
+		t.Setenv("COSTROID_DATA_DIR", plainDir)
+		store, openErr := storage.Open(context.Background(), plainDir)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		out, err = runCLI([]string{"store", "encrypt", "--new-db-encryption-key-file", empty}, "")
+		assertCLINoKeyLeak(t, out, err)
+		if err == nil || err.Error() != want {
+			t.Fatalf("encrypt empty key err = %v, want %q", err, want)
+		}
+	})
+}
+
+func TestStoreEncryptionDirectionAdvice(t *testing.T) {
+	t.Run("encrypt on encrypted", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("COSTROID_DATA_DIR", dir)
+		t.Setenv(dbEncryptionKeyFileEnvVar, "")
+		keyA := writeKeyFile(t, cliStoreKeyA)
+		keyB := writeKeyFile(t, cliStoreKeyB)
+		store, err := storage.Open(context.Background(), dir, storage.WithEncryptionKey(cliStoreKeyA))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		out, err := runCLI([]string{"store", "encrypt", "--new-db-encryption-key-file", keyB}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+		if err == nil || !strings.Contains(err.Error(), "costroid store rekey") {
+			t.Fatalf("err = %v", err)
+		}
+		_ = keyA
+	})
+
+	t.Run("rekey on plaintext", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("COSTROID_DATA_DIR", dir)
+		t.Setenv(dbEncryptionKeyFileEnvVar, "")
+		keyA := writeKeyFile(t, cliStoreKeyA)
+		keyB := writeKeyFile(t, cliStoreKeyB)
+		store, err := storage.Open(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		out, err := runCLI([]string{
+			"store", "rekey",
+			"--db-encryption-key-file", keyA,
+			"--new-db-encryption-key-file", keyB,
+		}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA, cliStoreKeyB)
+		if err == nil || !strings.Contains(err.Error(), "costroid store encrypt") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("decrypt on plaintext", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("COSTROID_DATA_DIR", dir)
+		t.Setenv(dbEncryptionKeyFileEnvVar, "")
+		keyA := writeKeyFile(t, cliStoreKeyA)
+		store, err := storage.Open(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		out, err := runCLI([]string{
+			"store", "decrypt",
+			"--db-encryption-key-file", keyA,
+			"--allow-plaintext",
+		}, "")
+		assertCLINoKeyLeak(t, out, err, cliStoreKeyA)
+		if err == nil || err.Error() != "the store is already plaintext - nothing to decrypt" {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+func TestStoreUsageText(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("run(nil) = nil")
+	}
+	for _, want := range []string{
+		"store",
+		"encrypt",
+		"rekey",
+		"decrypt",
+		"--allow-plaintext",
+		"costroid.duckdb.bak",
+		"stop 'costroid serve'",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("top-level usage missing %q", want)
+		}
+	}
+	// store without subcommand prints storeUsage via the error.
+	out, err := runCLI([]string{"store"}, "")
+	if err == nil {
+		t.Fatal("store with no subcommand succeeded")
+	}
+	blob := err.Error() + out
+	for _, want := range []string{
+		"offline",
+		"costroid.duckdb.bak",
+		"--allow-plaintext",
+		"costroid serve",
+	} {
+		if !strings.Contains(blob, want) {
+			t.Errorf("store usage missing %q:\n%s", want, blob)
 		}
 	}
 }

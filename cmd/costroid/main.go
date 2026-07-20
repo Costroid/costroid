@@ -87,6 +87,13 @@ commands:
           costroid credentials set <name>     (reads the secret from stdin)
           costroid credentials list
           costroid credentials delete <name>
+  store   convert the embedded store between at-rest encryption states offline
+          costroid store encrypt --new-db-encryption-key-file <path>
+          costroid store rekey   [--db-encryption-key-file <path>] --new-db-encryption-key-file <path>
+          costroid store decrypt [--db-encryption-key-file <path>] --allow-plaintext
+          (stop 'costroid serve' first; needs free disk roughly the size of the
+          store; the original is kept as costroid.duckdb.bak; decrypt rewrites
+          the store as plaintext and requires --allow-plaintext)
   ingest  ingest a cost export into the store
           local file:  costroid ingest --connector aws-focus --path <file> [--tenant default]
           live S3:     costroid ingest --connector aws-focus-s3 --bucket <b> --prefix <p>
@@ -177,11 +184,186 @@ func run(args []string) error {
 		return metricsCmd(args[1:])
 	case "credentials":
 		return credentialsCmd(args[1:])
+	case "store":
+		return storeCmd(args[1:])
 	case "ingest":
 		return ingestCmd(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q\n%s", args[0], usage)
 	}
+}
+
+const storeUsage = `usage: costroid store <subcommand>
+
+subcommands:
+  encrypt --new-db-encryption-key-file <path>
+          adopt at-rest encryption on a plaintext store
+  rekey   [--db-encryption-key-file <path>] --new-db-encryption-key-file <path>
+          replace the at-rest encryption key on an already-encrypted store
+  decrypt [--db-encryption-key-file <path>] --allow-plaintext
+          remove at-rest encryption (writes a plaintext store; requires
+          --allow-plaintext)
+
+These commands convert the embedded store offline. Stop 'costroid serve' (and
+any other costroid process holding the store) before running them. Free disk
+roughly the size of the store is required for the copy. The original database
+is retained as costroid.duckdb.bak under the data directory until you remove
+it. decrypt rewrites the store as plaintext on disk and requires
+--allow-plaintext to proceed. The current key for rekey/decrypt resolves from
+--db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE (flag wins). The
+new key for encrypt/rekey is only --new-db-encryption-key-file (no env var)`
+
+// storeCmd dispatches offline store encryption conversion verbs (D79 follow-up).
+func storeCmd(args []string) error {
+	if len(args) == 0 {
+		return errors.New("missing store subcommand\n" + storeUsage)
+	}
+	switch args[0] {
+	case "encrypt":
+		return storeEncrypt(args[1:])
+	case "rekey":
+		return storeRekey(args[1:])
+	case "decrypt":
+		return storeDecrypt(args[1:])
+	default:
+		return fmt.Errorf("unknown store subcommand %q\n%s", args[0], storeUsage)
+	}
+}
+
+const newDBEncryptionKeyFileUsage = "NEW at-rest DATABASE-encryption key file path (distinct from --key-file, the D32 CREDENTIAL-store key; no env var - explicit per invocation)"
+
+func storeEncrypt(args []string) error {
+	flags := flag.NewFlagSet("store encrypt", flag.ContinueOnError)
+	newKeyFile := flags.String("new-db-encryption-key-file", "", newDBEncryptionKeyFileUsage)
+	// Deliberately no --db-encryption-key-file: encrypt ignores a stale env var
+	// and rejects the current-key flag as unknown.
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	if *newKeyFile == "" {
+		return errors.New("--new-db-encryption-key-file is required for store encrypt")
+	}
+	newKey, err := loadDBEncryptionKeyFile(*newKeyFile)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	change, err := storage.ChangeEncryption(ctx, dataDir(), "", newKey)
+	if err != nil {
+		return mapStoreDirectionError("encrypt", err)
+	}
+	fmt.Printf("encrypted the Costroid store in %s: verified %d tables, %d rows\n",
+		dataDir(), change.Tables, change.Rows)
+	fmt.Printf("WARNING: the ORIGINAL PLAINTEXT database remains at %s - remove it once you have verified the encrypted store (note: deleting a file does not securely erase it on every filesystem)\n",
+		change.BackupPath)
+	fmt.Printf("next: run costroid with --db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE pointing at this key file\n")
+	return nil
+}
+
+func storeRekey(args []string) error {
+	flags := flag.NewFlagSet("store rekey", flag.ContinueOnError)
+	currentKeyFile := flags.String("db-encryption-key-file", "", dbEncryptionKeyFileUsage)
+	newKeyFile := flags.String("new-db-encryption-key-file", "", newDBEncryptionKeyFileUsage)
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	if *newKeyFile == "" {
+		return errors.New("--new-db-encryption-key-file is required for store rekey")
+	}
+	currentPath := resolveCurrentDBEncryptionKeyFile(*currentKeyFile)
+	if currentPath == "" {
+		return errors.New("the current db-encryption key is required: pass --db-encryption-key-file or set $COSTROID_DB_ENCRYPTION_KEY_FILE")
+	}
+	currentKey, err := loadDBEncryptionKeyFile(currentPath)
+	if err != nil {
+		return err
+	}
+	newKey, err := loadDBEncryptionKeyFile(*newKeyFile)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	change, err := storage.ChangeEncryption(ctx, dataDir(), currentKey, newKey)
+	if err != nil {
+		return mapStoreDirectionError("rekey", err)
+	}
+	fmt.Printf("re-keyed the Costroid store in %s: verified %d tables, %d rows\n",
+		dataDir(), change.Tables, change.Rows)
+	fmt.Printf("the backup at %s is encrypted with the PREVIOUS key - remove it once you have verified the re-keyed store\n",
+		change.BackupPath)
+	fmt.Printf("next: point --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE at the NEW key file before running costroid\n")
+	return nil
+}
+
+func storeDecrypt(args []string) error {
+	flags := flag.NewFlagSet("store decrypt", flag.ContinueOnError)
+	currentKeyFile := flags.String("db-encryption-key-file", "", dbEncryptionKeyFileUsage)
+	allowPlaintext := flags.Bool("allow-plaintext", false, "required confirmation that decrypt rewrites the store as plaintext on disk")
+	if stop, err := parseFlags(flags, args); stop || err != nil {
+		return err
+	}
+	if !*allowPlaintext {
+		return errors.New("decrypt rewrites the store as plaintext on disk; pass --allow-plaintext to proceed")
+	}
+	currentPath := resolveCurrentDBEncryptionKeyFile(*currentKeyFile)
+	if currentPath == "" {
+		return errors.New("the current db-encryption key is required: pass --db-encryption-key-file or set $COSTROID_DB_ENCRYPTION_KEY_FILE")
+	}
+	currentKey, err := loadDBEncryptionKeyFile(currentPath)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	change, err := storage.ChangeEncryption(ctx, dataDir(), currentKey, "")
+	if err != nil {
+		return mapStoreDirectionError("decrypt", err)
+	}
+	fmt.Printf("decrypted the Costroid store in %s: verified %d tables, %d rows\n",
+		dataDir(), change.Tables, change.Rows)
+	fmt.Printf("the store is now PLAINTEXT on disk; the backup at %s is encrypted with the previous key\n",
+		change.BackupPath)
+	fmt.Printf("next: unset --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE before running costroid\n")
+	return nil
+}
+
+// mapStoreDirectionError adds verb-appropriate advice for storage sentinels.
+func mapStoreDirectionError(verb string, err error) error {
+	switch {
+	case errors.Is(err, storage.ErrStoreAlreadyEncrypted) && verb == "encrypt":
+		return fmt.Errorf("%w; use `costroid store rekey` (or `decrypt`) to change an already-encrypted store", err)
+	case errors.Is(err, storage.ErrStoreNotEncrypted) && verb == "rekey":
+		return fmt.Errorf("%w; use `costroid store encrypt` to adopt encryption on a plaintext store", err)
+	case errors.Is(err, storage.ErrStoreNotEncrypted) && verb == "decrypt":
+		return errors.New("the store is already plaintext - nothing to decrypt")
+	default:
+		return err
+	}
+}
+
+// resolveCurrentDBEncryptionKeyFile applies flag-over-env for the CURRENT
+// database-encryption key file path (never the secret itself).
+func resolveCurrentDBEncryptionKeyFile(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return os.Getenv(dbEncryptionKeyFileEnvVar)
+}
+
+// loadDBEncryptionKeyFile reads a database-encryption key file, trims exactly
+// one trailing newline, and fails closed on missing/unreadable/empty content.
+func loadDBEncryptionKeyFile(keyFile string) (string, error) {
+	contents, err := os.ReadFile(keyFile)
+	if err != nil {
+		return "", fmt.Errorf("the db-encryption key file %s is empty or unreadable", keyFile)
+	}
+	key := trimOneTrailingNewline(string(contents))
+	if key == "" {
+		return "", fmt.Errorf("the db-encryption key file %s is empty or unreadable", keyFile)
+	}
+	return key, nil
 }
 
 const metricsUsage = `usage: costroid metrics <subcommand>
@@ -1620,21 +1802,13 @@ func dataDir() string {
 // environment path; either source requests encryption and therefore fails
 // closed if the key file cannot provide a non-empty key.
 func openStore(ctx context.Context, keyFileOverride string) (*storage.DuckDB, error) {
-	keyFile := keyFileOverride
-	if keyFile == "" {
-		keyFile = os.Getenv(dbEncryptionKeyFileEnvVar)
-	}
+	keyFile := resolveCurrentDBEncryptionKeyFile(keyFileOverride)
 	if keyFile == "" {
 		return storage.Open(ctx, dataDir())
 	}
-
-	contents, err := os.ReadFile(keyFile)
+	key, err := loadDBEncryptionKeyFile(keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("the db-encryption key file %s is empty or unreadable", keyFile)
-	}
-	key := trimOneTrailingNewline(string(contents))
-	if key == "" {
-		return nil, fmt.Errorf("the db-encryption key file %s is empty or unreadable", keyFile)
+		return nil, err
 	}
 	return storage.Open(ctx, dataDir(), storage.WithEncryptionKey(key))
 }
