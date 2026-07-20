@@ -127,10 +127,11 @@ num_model_requests, web_search_requests) are aggregate counts, not content.
 
 ## Encryption at rest
 
-Costroid can opt in to DuckDB-native encryption for a new embedded store. With
-a database-encryption key file configured, the database file, its write-ahead
-log (WAL), and DuckDB temporary files are encrypted at rest. This protects data
-in a stolen store file, disk, or backup.
+Costroid can opt in to DuckDB-native encryption for an embedded store (create a
+new store with a database-encryption key file, or convert an existing store
+offline with `costroid store encrypt|rekey|decrypt`). With a key configured, the
+database file, its write-ahead log (WAL), and DuckDB temporary files are
+encrypted at rest. This protects data in a stolen store file, disk, or backup.
 
 This boundary does not protect a running Costroid process, where the key and
 plaintext data live in memory. It also does not protect a host where an
@@ -165,9 +166,11 @@ The guarantee above is narrow and honest. These are the things it does not do.
    the oversized-dump path only; it does not claim to have solved the content
    problem.
 4. **At-rest encryption is opt-in.** Without a database-encryption key file, the
-   embedded store keeps its plaintext default. Key custody, full-disk or
-   filesystem encryption, and secure disposal of plaintext backups remain the
-   deployer's responsibility.
+   embedded store keeps its plaintext default. Adoption, re-key, and decrypt are
+   offline (`costroid store encrypt|rekey|decrypt`); after encrypt, a retained
+   plaintext `costroid.duckdb.bak` is itself a stolen-disk artifact until
+   removed. Key custody, full-disk or filesystem encryption, and secure
+   disposal of plaintext backups remain the deployer's responsibility.
 5. **This is structural absence, not runtime classification.** The guarantee is
    that prompt and response content has no modeled path into Costroid at the AI
    connector boundary. It is not a runtime classifier that inspects values and

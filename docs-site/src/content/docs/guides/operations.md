@@ -14,9 +14,10 @@ DuckDB is Costroid's embedded store. The data directory comes from
 
 ## Encryption at rest
 
-DuckDB-native at-rest encryption is opt-in for new stores. Generate a
-high-entropy key file with permissions that restrict it to the Costroid
-operator:
+DuckDB-native at-rest encryption is opt-in. You can create a new store already
+encrypted, or convert an existing store offline with `costroid store encrypt`.
+Generate a high-entropy key file with permissions that restrict it to the
+Costroid operator:
 
 ```sh
 umask 077
@@ -46,12 +47,48 @@ from `ingest --key-file`, which selects the D32 credential-store key. Supply
 the database key to every command that opens the store. A missing, unreadable,
 or empty key file is an error and never falls back to plaintext.
 
-Encryption applies only when creating a new store. An existing plaintext store
-cannot be opened with a key. Back up the existing data, re-ingest it into a
-fresh empty data directory with the key configured, verify the replacement,
-and then retire the plaintext copy according to your retention policy. Keep
-the key separate from store backups: losing it makes the encrypted store
+Keep the key separate from store backups: losing it makes the encrypted store
 unreadable.
+
+### Changing store encryption
+
+Convert an existing store between encryption states with the offline
+`costroid store` verbs. Stop `costroid serve` (and any other process holding
+the store) first. Free disk roughly the size of the store is required for the
+copy. The original database is retained as `costroid.duckdb.bak` under the data
+directory until you remove it.
+
+```sh
+# Plaintext store -> encrypted (new key file only; no env var for the new key)
+costroid store encrypt --new-db-encryption-key-file /etc/costroid/costroid-db.key
+
+# Encrypted store -> new key (current key via flag or $COSTROID_DB_ENCRYPTION_KEY_FILE)
+costroid store rekey \
+  --db-encryption-key-file /etc/costroid/costroid-db.key \
+  --new-db-encryption-key-file /etc/costroid/costroid-db-new.key
+
+# Encrypted store -> plaintext (requires explicit confirmation)
+costroid store decrypt \
+  --db-encryption-key-file /etc/costroid/costroid-db.key \
+  --allow-plaintext
+```
+
+After `encrypt`, the backup at `costroid.duckdb.bak` is the ORIGINAL PLAINTEXT
+database. Remove it once you have verified the encrypted store. Deleting a file
+does not securely erase it on every filesystem. After `rekey`, the backup is
+encrypted with the PREVIOUS key. After `decrypt`, the live store is plaintext
+and the backup remains encrypted with the previous key.
+
+If a conversion is interrupted mid-swap (the live `costroid.duckdb` is missing
+but `costroid.duckdb.bak` is present), restore the backup first:
+
+```sh
+mv "$COSTROID_DATA_DIR/costroid.duckdb.bak" "$COSTROID_DATA_DIR/costroid.duckdb"
+# and the .bak.wal sibling if present
+rm -f "$COSTROID_DATA_DIR/costroid.duckdb.convert-tmp" \
+  "$COSTROID_DATA_DIR/costroid.duckdb.convert-tmp.wal"
+# then re-run the conversion
+```
 
 ## Single writer
 
