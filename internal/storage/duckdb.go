@@ -434,6 +434,10 @@ func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, 
 		groupColumn = "service_name"
 	case GroupByProvider:
 		groupColumn = "service_provider_name"
+	case GroupBySubaccount:
+		groupColumn = "COALESCE(sub_account_name, '(no subaccount)')"
+	case GroupByRegion:
+		groupColumn = "COALESCE(region_name, '(no region)')"
 	default:
 		groupColumn = "service_name"
 	}

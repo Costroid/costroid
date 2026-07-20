@@ -678,6 +678,103 @@ func TestDailyCostsByServiceGroupsByProviderExactly(t *testing.T) {
 	}
 }
 
+func TestDailyCostsByServiceGroupsBySubaccountAndRegionWithNullFallbackAndProviderFilter(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	withDimensions := func(r focus.CostRecord, provider, subaccountID, subaccountName, regionID, regionName string) focus.CostRecord {
+		r.ServiceProviderName = provider
+		r.HostProviderName = provider
+		r.InvoiceIssuerName = provider
+		r.SubAccountID = subaccountID
+		r.SubAccountName = subaccountName
+		r.RegionID = regionID
+		r.RegionName = regionName
+		return r
+	}
+
+	records := []focus.CostRecord{
+		withDimensions(testRecord(t, "GPT-4o input tokens", day(1), "0.111111111111111111"), "OpenAI", "project-production", "Production", "use1", "us-east-1"),
+		withDimensions(testRecord(t, "GPT-4o output tokens", day(1), "0.222222222222222222"), "OpenAI", "project-production", "Production", "use1", "us-east-1"),
+		withDimensions(testRecord(t, "GPT-4o cached input tokens", day(1), "1.000000000000000001"), "OpenAI", "", "", "", ""),
+		withDimensions(testRecord(t, "Azure Functions", day(1), "2.000000000000000002"), "Microsoft", "subscription-finance", "Finance", "westeurope", "West Europe"),
+	}
+	if _, err := store.ReplaceIngestBatch(ctx, Batch{
+		Connector:      "multi-source",
+		SourceIdentity: "subaccount-region-exactness",
+		ContentHash:    "sha256:subaccount-region",
+		TenantID:       focus.DefaultTenant,
+	}, records); err != nil {
+		t.Fatalf("ReplaceIngestBatch: %v", err)
+	}
+
+	for _, column := range []string{"sub_account_name", "region_name"} {
+		var nullCount int
+		if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM cost_records WHERE "+column+" IS NULL").Scan(&nullCount); err != nil {
+			t.Fatalf("querying %s NULL premise: %v", column, err)
+		}
+		if nullCount != 1 {
+			t.Fatalf("%s SQL NULL rows = %d, want 1 from the empty name write", column, nullCount)
+		}
+	}
+
+	for _, tt := range []struct {
+		name          string
+		groupBy       CostGroupBy
+		namedKey      string
+		fallbackKey   string
+		otherProvider string
+	}{
+		{name: "subaccount", groupBy: GroupBySubaccount, namedKey: "Production", fallbackKey: "(no subaccount)", otherProvider: "Finance"},
+		{name: "region", groupBy: GroupByRegion, namedKey: "us-east-1", fallbackKey: "(no region)", otherProvider: "West Europe"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			unfiltered, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", "", tt.groupBy)
+			if err != nil {
+				t.Fatalf("DailyCostsByService(unfiltered): %v", err)
+			}
+			if len(unfiltered.Days) != 1 || len(unfiltered.Days[0].Services) != 3 {
+				t.Fatalf("unfiltered buckets = %+v, want three distinct buckets", unfiltered)
+			}
+			unfilteredCosts := make(map[string]string, len(unfiltered.Days[0].Services))
+			for _, bucket := range unfiltered.Days[0].Services {
+				unfilteredCosts[bucket.ServiceName] = bucket.Cost.String()
+			}
+			if unfilteredCosts[tt.namedKey] != "0.333333333333333333" {
+				t.Fatalf("%s exact shared sum = %q, want 0.333333333333333333", tt.namedKey, unfilteredCosts[tt.namedKey])
+			}
+			if unfilteredCosts[tt.fallbackKey] != "1.000000000000000001" || unfilteredCosts[tt.otherProvider] != "2.000000000000000002" {
+				t.Fatalf("unfiltered %s buckets = %v", tt.name, unfilteredCosts)
+			}
+			if unfilteredCosts[tt.namedKey] == unfilteredCosts[tt.fallbackKey] {
+				t.Fatalf("named and fallback buckets are not distinct: %v", unfilteredCosts)
+			}
+
+			filtered, err := store.DailyCostsByService(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "", "OpenAI", tt.groupBy)
+			if err != nil {
+				t.Fatalf("DailyCostsByService(OpenAI): %v", err)
+			}
+			if len(filtered.Days) != 1 || len(filtered.Days[0].Services) != 2 {
+				t.Fatalf("filtered buckets = %+v, want named and fallback OpenAI buckets only", filtered)
+			}
+			filteredCosts := make(map[string]string, len(filtered.Days[0].Services))
+			for _, bucket := range filtered.Days[0].Services {
+				filteredCosts[bucket.ServiceName] = bucket.Cost.String()
+			}
+			if filteredCosts[tt.namedKey] != "0.333333333333333333" || filteredCosts[tt.fallbackKey] != "1.000000000000000001" {
+				t.Fatalf("filtered %s buckets = %v", tt.name, filteredCosts)
+			}
+			if _, leaked := filteredCosts[tt.otherProvider]; leaked {
+				t.Fatalf("filtered provider leaked %q bucket: %v", tt.otherProvider, filteredCosts)
+			}
+		})
+	}
+}
+
 func TestReplaceIngestBatchIdempotency(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, t.TempDir())

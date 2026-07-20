@@ -64,12 +64,15 @@ paths:
       description: >-
         Total daily BilledCost per selected grouping key, plus per-day
         and period totals. groupBy=service uses FOCUS ServiceName;
-        groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation
-        applies the query-time cost-allocation rules (virtual tagging) and
-        keys each cost by its allocation label, with cost matching no rule
-        under "Unallocated". Ordering is deterministic: days ascending, keys
-        sorted by name. Costs are decimal strings — never floats — so no
-        precision is lost. When currency is absent, a single-currency range
+        groupBy=provider uses FOCUS ServiceProviderName; groupBy=subaccount
+        uses FOCUS SubAccountName, with rows missing one grouped under
+        "(no subaccount)"; groupBy=region uses FOCUS RegionName, with rows
+        missing one grouped under "(no region)"; groupBy=allocation applies
+        the query-time cost-allocation rules (virtual tagging) and keys each
+        cost by its allocation label, with cost matching no rule under
+        "Unallocated". Ordering is deterministic: days ascending, keys sorted
+        by name. Costs are decimal strings — never floats — so no precision is
+        lost. When currency is absent, a single-currency range
         returns that series and currencies contains its one code; a mixed range
         defaults to the alphabetically-first currency's series and currencies
         lists every available code. When currency is present, only that
@@ -109,6 +112,8 @@ paths:
               - service
               - provider
               - allocation
+              - subaccount
+              - region
             default: service
         - name: currency
           in: query
@@ -160,8 +165,9 @@ paths:
         Period totals by grouping key for the requested [start, end] window,
         plus an optional preceding-window comparison computed server-side.
         groupBy semantics and validation match /api/v1/costs/daily (service /
-        provider / allocation; allocation unconfigured → 400; malformed rules
-        → 500). All money values are exact decimal strings (never floats).
+        provider / allocation / subaccount / region; allocation unconfigured
+        → 400; malformed rules → 500). All money values are exact decimal
+        strings (never floats).
         The response `total` equals /api/v1/costs/daily's period total for
         identical params. Keys are ordered total-desc, then key-asc.
 
@@ -214,6 +220,8 @@ paths:
               - service
               - provider
               - allocation
+              - subaccount
+              - region
             default: service
         - name: currency
           in: query
@@ -304,6 +312,8 @@ paths:
               - service
               - provider
               - allocation
+              - subaccount
+              - region
             default: service
         - name: currency
           in: query
@@ -799,7 +809,11 @@ components:
         key:
           type: string
           description: >-
-            Grouping key (ServiceName / ServiceProviderName / allocation label).
+            Grouping key: FOCUS ServiceName (groupBy=service), FOCUS
+            ServiceProviderName (groupBy=provider), FOCUS SubAccountName
+            (groupBy=subaccount; missing names appear under "(no subaccount)"),
+            FOCUS RegionName (groupBy=region; missing names appear under
+            "(no region)"), or the allocation label (groupBy=allocation).
           example: Amazon Web Services
         total:
           type: string
@@ -850,9 +864,11 @@ components:
           type: string
           description: >-
             Grouping key: FOCUS ServiceName (groupBy=service), FOCUS
-            ServiceProviderName (groupBy=provider), or the allocation label
-            (groupBy=allocation; cost matching no rule appears under
-            "Unallocated").
+            ServiceProviderName (groupBy=provider), FOCUS SubAccountName
+            (groupBy=subaccount; missing names appear under "(no subaccount)"),
+            FOCUS RegionName (groupBy=region; missing names appear under
+            "(no region)"), or the allocation label (groupBy=allocation; cost
+            matching no rule appears under "Unallocated").
           example: Amazon Elastic Compute Cloud
         cost:
           type: string

@@ -67,7 +67,7 @@ export interface paths {
         };
         /**
          * Daily cost by service, provider, or allocation
-         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName; groupBy=allocation applies the query-time cost-allocation rules (virtual tagging) and keys each cost by its allocation label, with cost matching no rule under "Unallocated". Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost. When currency is absent, a single-currency range returns that series and currencies contains its one code; a mixed range defaults to the alphabetically-first currency's series and currencies lists every available code. When currency is present, only that currency's series is returned. When provider is present, only that FOCUS ServiceProviderName's rows are aggregated and currencies lists only currencies with rows for that provider. Providers always lists every provider with cost rows in the requested range, unscoped by the provider and currency filters, sorted ascending, and is [] for an empty range. A valid currency or provider absent from the corresponding list returns 200 with total "0", days [], and the requested value echoed. An empty range with no currency or provider requested returns currencies [], providers [], currency "", provider "", total "0", and days []. An invalid currency or provider shape returns 400.
+         * @description Total daily BilledCost per selected grouping key, plus per-day and period totals. groupBy=service uses FOCUS ServiceName; groupBy=provider uses FOCUS ServiceProviderName; groupBy=subaccount uses FOCUS SubAccountName, with rows missing one grouped under "(no subaccount)"; groupBy=region uses FOCUS RegionName, with rows missing one grouped under "(no region)"; groupBy=allocation applies the query-time cost-allocation rules (virtual tagging) and keys each cost by its allocation label, with cost matching no rule under "Unallocated". Ordering is deterministic: days ascending, keys sorted by name. Costs are decimal strings — never floats — so no precision is lost. When currency is absent, a single-currency range returns that series and currencies contains its one code; a mixed range defaults to the alphabetically-first currency's series and currencies lists every available code. When currency is present, only that currency's series is returned. When provider is present, only that FOCUS ServiceProviderName's rows are aggregated and currencies lists only currencies with rows for that provider. Providers always lists every provider with cost rows in the requested range, unscoped by the provider and currency filters, sorted ascending, and is [] for an empty range. A valid currency or provider absent from the corresponding list returns 200 with total "0", days [], and the requested value echoed. An empty range with no currency or provider requested returns currencies [], providers [], currency "", provider "", total "0", and days []. An invalid currency or provider shape returns 400.
          */
         get: operations["getDailyCosts"];
         put?: never;
@@ -87,7 +87,7 @@ export interface paths {
         };
         /**
          * Period cost summary with optional preceding-window comparison
-         * @description Period totals by grouping key for the requested [start, end] window, plus an optional preceding-window comparison computed server-side. groupBy semantics and validation match /api/v1/costs/daily (service / provider / allocation; allocation unconfigured → 400; malformed rules → 500). All money values are exact decimal strings (never floats). The response `total` equals /api/v1/costs/daily's period total for identical params. Keys are ordered total-desc, then key-asc.
+         * @description Period totals by grouping key for the requested [start, end] window, plus an optional preceding-window comparison computed server-side. groupBy semantics and validation match /api/v1/costs/daily (service / provider / allocation / subaccount / region; allocation unconfigured → 400; malformed rules → 500). All money values are exact decimal strings (never floats). The response `total` equals /api/v1/costs/daily's period total for identical params. Keys are ordered total-desc, then key-asc.
          *     Preceding window: prevEnd = start − 1 day, prevStart = prevEnd − (end − start). The selected currency is pinned to BOTH windows. The selected provider is pinned to BOTH windows. When provider is present, currencies lists only that provider's currencies. Providers always lists every provider with cost rows in the CURRENT window, unscoped by the provider and currency filters, sorted ascending, and is [] for an empty range. ALL previous-window fields (previousTotal, previousStart, previousEnd, and every keys[].previousTotal / keys[].delta) are ABSENT together — never null or "" — when the preceding window is UNDEFINED: (i) start or end is unbounded/empty; (ii) the current window is empty (there are no keys to compare); or (iii) the preceding-window query returns zero cost rows in the selected currency. Never emit previousTotal "0" for a data-empty preceding window. A store error from either window is a 500.
          *     When the preceding window is DEFINED, every key carries delta = total − previousTotal (exact decimal.Sub); keys absent from the previous window omit previousTotal while delta equals total (previousTotal-absence alone marks newness). "Gone" keys (present only in the previous window) are out of scope for this version. Empty CURRENT window: total "0", keys [] (never null). No share field — client Number() geometry only.
          */
@@ -355,7 +355,7 @@ export interface components {
         };
         CostSummaryKey: {
             /**
-             * @description Grouping key (ServiceName / ServiceProviderName / allocation label).
+             * @description Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), or the allocation label (groupBy=allocation).
              * @example Amazon Web Services
              */
             key: string;
@@ -392,7 +392,7 @@ export interface components {
         };
         ServiceCost: {
             /**
-             * @description Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
+             * @description Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
              * @example Amazon Elastic Compute Cloud
              */
             key: string;
@@ -715,7 +715,7 @@ export interface operations {
                 /** @description Inclusive last calendar day (UTC) to include. Defaults to the full range of stored data. */
                 end?: string;
                 /** @description Cost grouping dimension. */
-                groupBy?: "service" | "provider" | "allocation";
+                groupBy?: "service" | "provider" | "allocation" | "subaccount" | "region";
                 /** @description Optional three-letter uppercase billing currency whose series to return. Omit to use the alphabetically-first currency in the range. */
                 currency?: string;
                 /** @description Optional FOCUS ServiceProviderName whose rows to include. Omit to include every provider. Free text at most 8192 bytes; must be non-empty when present. */
@@ -764,7 +764,7 @@ export interface operations {
                 /** @description Inclusive last calendar day (UTC) of the CURRENT window. Defaults to the full range of stored data. Unbounded end makes the preceding window undefined. */
                 end?: string;
                 /** @description Cost grouping dimension (same set as /api/v1/costs/daily). */
-                groupBy?: "service" | "provider" | "allocation";
+                groupBy?: "service" | "provider" | "allocation" | "subaccount" | "region";
                 /** @description Optional three-letter uppercase billing currency whose summary to return. Omit to use the alphabetically-first currency in the current window. */
                 currency?: string;
                 /** @description Optional FOCUS ServiceProviderName whose rows to include. Omit to include every provider. Free text at most 8192 bytes; must be non-empty when present. */
@@ -813,7 +813,7 @@ export interface operations {
                 /** @description Inclusive last calendar day (UTC) to score and return. Defaults to the full range of stored data. */
                 end?: string;
                 /** @description Cost grouping dimension (the same set as /api/v1/costs/daily). */
-                groupBy?: "service" | "provider" | "allocation";
+                groupBy?: "service" | "provider" | "allocation" | "subaccount" | "region";
                 /** @description Optional three-letter uppercase billing currency whose history to score. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window is empty. */
                 currency?: string;
                 /** @description Optional FOCUS ServiceProviderName whose history to score. Omit to score every provider. Free text at most 8192 bytes; must be non-empty when present. */

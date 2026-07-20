@@ -449,12 +449,41 @@ func TestGetAnomaliesGroupByComposition(t *testing.T) {
 		}
 	})
 
+	for _, tt := range []struct {
+		name        string
+		groupBy     string
+		wantGroupBy storage.CostGroupBy
+	}{
+		{name: "subaccount routes and echoes verbatim", groupBy: "subaccount", wantGroupBy: storage.GroupBySubaccount},
+		{name: "region routes and echoes verbatim", groupBy: "region", wantGroupBy: storage.GroupByRegion},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := anomalyFakeStore(t)
+			rec := httptest.NewRecorder()
+			NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+				httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?groupBy="+tt.groupBy, nil))
+			if rec.Code != http.StatusOK || store.gotGroupBy != tt.wantGroupBy {
+				t.Fatalf("status=%d groupBy=%v body=%s", rec.Code, store.gotGroupBy, rec.Body)
+			}
+			var got Anomalies
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Parameters.GroupBy != tt.groupBy {
+				t.Errorf("parameters.groupBy = %q, want %q", got.Parameters.GroupBy, tt.groupBy)
+			}
+		})
+	}
+
 	t.Run("invalid groupBy is 400 without touching the store", func(t *testing.T) {
 		store := anomalyFakeStore(t)
 		rec := httptest.NewRecorder()
 		NewHandler("test", testStatic(), store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?groupBy=bogus", nil))
 		if rec.Code != http.StatusBadRequest || store.currenciesQueryCount != 0 || store.queryCount != 0 || store.allocQueryCount != 0 {
 			t.Fatalf("status=%d currencyCount=%d queryCount=%d allocCount=%d", rec.Code, store.currenciesQueryCount, store.queryCount, store.allocQueryCount)
+		}
+		if body := strings.TrimSpace(rec.Body.String()); body != "invalid groupBy value" {
+			t.Fatalf("body = %q, want invalid groupBy value", body)
 		}
 	})
 

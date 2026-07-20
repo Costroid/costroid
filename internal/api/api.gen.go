@@ -40,7 +40,9 @@ func (e SyncLastRunOutcome) Valid() bool {
 const (
 	GetAnomaliesParamsGroupByAllocation GetAnomaliesParamsGroupBy = "allocation"
 	GetAnomaliesParamsGroupByProvider   GetAnomaliesParamsGroupBy = "provider"
+	GetAnomaliesParamsGroupByRegion     GetAnomaliesParamsGroupBy = "region"
 	GetAnomaliesParamsGroupByService    GetAnomaliesParamsGroupBy = "service"
+	GetAnomaliesParamsGroupBySubaccount GetAnomaliesParamsGroupBy = "subaccount"
 )
 
 // Valid indicates whether the value is a known member of the GetAnomaliesParamsGroupBy enum.
@@ -50,7 +52,11 @@ func (e GetAnomaliesParamsGroupBy) Valid() bool {
 		return true
 	case GetAnomaliesParamsGroupByProvider:
 		return true
+	case GetAnomaliesParamsGroupByRegion:
+		return true
 	case GetAnomaliesParamsGroupByService:
+		return true
+	case GetAnomaliesParamsGroupBySubaccount:
 		return true
 	default:
 		return false
@@ -61,7 +67,9 @@ func (e GetAnomaliesParamsGroupBy) Valid() bool {
 const (
 	GetDailyCostsParamsGroupByAllocation GetDailyCostsParamsGroupBy = "allocation"
 	GetDailyCostsParamsGroupByProvider   GetDailyCostsParamsGroupBy = "provider"
+	GetDailyCostsParamsGroupByRegion     GetDailyCostsParamsGroupBy = "region"
 	GetDailyCostsParamsGroupByService    GetDailyCostsParamsGroupBy = "service"
+	GetDailyCostsParamsGroupBySubaccount GetDailyCostsParamsGroupBy = "subaccount"
 )
 
 // Valid indicates whether the value is a known member of the GetDailyCostsParamsGroupBy enum.
@@ -71,7 +79,11 @@ func (e GetDailyCostsParamsGroupBy) Valid() bool {
 		return true
 	case GetDailyCostsParamsGroupByProvider:
 		return true
+	case GetDailyCostsParamsGroupByRegion:
+		return true
 	case GetDailyCostsParamsGroupByService:
+		return true
+	case GetDailyCostsParamsGroupBySubaccount:
 		return true
 	default:
 		return false
@@ -82,7 +94,9 @@ func (e GetDailyCostsParamsGroupBy) Valid() bool {
 const (
 	Allocation GetCostsSummaryParamsGroupBy = "allocation"
 	Provider   GetCostsSummaryParamsGroupBy = "provider"
+	Region     GetCostsSummaryParamsGroupBy = "region"
 	Service    GetCostsSummaryParamsGroupBy = "service"
+	Subaccount GetCostsSummaryParamsGroupBy = "subaccount"
 )
 
 // Valid indicates whether the value is a known member of the GetCostsSummaryParamsGroupBy enum.
@@ -92,7 +106,11 @@ func (e GetCostsSummaryParamsGroupBy) Valid() bool {
 		return true
 	case Provider:
 		return true
+	case Region:
+		return true
 	case Service:
+		return true
+	case Subaccount:
 		return true
 	default:
 		return false
@@ -186,7 +204,7 @@ type CostSummaryKey struct {
 	// Delta Exact total − previousTotal (decimal.Sub). Present on EVERY key when the preceding window is defined; omitted on every key when undefined. For a new key (no previousTotal), delta equals total.
 	Delta *string `json:"delta,omitempty"`
 
-	// Key Grouping key (ServiceName / ServiceProviderName / allocation label).
+	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), or the allocation label (groupBy=allocation).
 	Key string `json:"key"`
 
 	// PreviousTotal Period total for this key in the preceding window. Present only when the preceding window is defined AND the key had cost there; omitted for new keys (delta then equals total) and when the window is undefined.
@@ -315,7 +333,7 @@ type ServiceCost struct {
 	// Cost Cost total, as a decimal string.
 	Cost string `json:"cost"`
 
-	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
+	// Key Grouping key: FOCUS ServiceName (groupBy=service), FOCUS ServiceProviderName (groupBy=provider), FOCUS SubAccountName (groupBy=subaccount; missing names appear under "(no subaccount)"), FOCUS RegionName (groupBy=region; missing names appear under "(no region)"), or the allocation label (groupBy=allocation; cost matching no rule appears under "Unallocated").
 	Key string `json:"key"`
 }
 

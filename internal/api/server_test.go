@@ -45,6 +45,7 @@ type fakeStore struct {
 	gotEnd                time.Time
 	gotCurrency           string
 	gotGroupBy            storage.CostGroupBy
+	groupByLog            []storage.CostGroupBy
 	queryCount            int
 	gotCurrenciesTenant   string
 	gotCurrenciesStart    time.Time
@@ -184,6 +185,7 @@ func (f *fakeStore) DailyCostsByService(_ context.Context, tenant string, start,
 	if len(groupBy) > 0 {
 		f.gotGroupBy = groupBy[0]
 	}
+	f.groupByLog = append(f.groupByLog, f.gotGroupBy)
 	f.queryCount++
 	f.queryLog = append(f.queryLog, struct {
 		start, end time.Time
@@ -567,6 +569,8 @@ func TestGetDailyCostsProviderParamValidationAndStoreThreading(t *testing.T) {
 	}{
 		{name: "service", wantGroupBy: storage.GroupByService, wantService: 1},
 		{name: "provider grouping", groupBy: "&groupBy=provider", wantGroupBy: storage.GroupByProvider, wantService: 1},
+		{name: "subaccount grouping", groupBy: "&groupBy=subaccount", wantGroupBy: storage.GroupBySubaccount, wantService: 1},
+		{name: "region grouping", groupBy: "&groupBy=region", wantGroupBy: storage.GroupByRegion, wantService: 1},
 		{name: "allocation", groupBy: "&groupBy=allocation", rulesPath: rules, wantAllocation: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -813,6 +817,20 @@ func TestGetDailyCostsGroupByParam(t *testing.T) {
 			wantQuery:   true,
 		},
 		{
+			name:        "subaccount propagates subaccount",
+			query:       "?groupBy=subaccount",
+			wantStatus:  http.StatusOK,
+			wantGroupBy: storage.GroupBySubaccount,
+			wantQuery:   true,
+		},
+		{
+			name:        "region propagates region",
+			query:       "?groupBy=region",
+			wantStatus:  http.StatusOK,
+			wantGroupBy: storage.GroupByRegion,
+			wantQuery:   true,
+		},
+		{
 			name:       "bogus is rejected",
 			query:      "?groupBy=bogus",
 			wantStatus: http.StatusBadRequest,
@@ -828,6 +846,9 @@ func TestGetDailyCostsGroupByParam(t *testing.T) {
 			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/costs/daily"+tt.query, nil))
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body)
+			}
+			if !tt.wantQuery && strings.TrimSpace(rec.Body.String()) != "invalid groupBy value" {
+				t.Fatalf("body = %q, want invalid groupBy value", strings.TrimSpace(rec.Body.String()))
 			}
 			if tt.wantQuery {
 				if store.queryCount != 1 {
@@ -1581,6 +1602,56 @@ func TestGetCostsSummaryInvalidCurrencyIs400(t *testing.T) {
 		t.Fatalf("invalid currency reached store: currencies=%d service=%d allocation=%d",
 			store.currenciesQueryCount, store.queryCount, store.allocQueryCount)
 	}
+}
+
+func TestGetCostsSummarySubaccountAndRegionRouteBothWindows(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		groupBy     string
+		wantGroupBy storage.CostGroupBy
+	}{
+		{name: "subaccount", groupBy: "subaccount", wantGroupBy: storage.GroupBySubaccount},
+		{name: "region", groupBy: "region", wantGroupBy: storage.GroupByRegion},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{
+				currencies: []string{"USD"},
+				dailyFn: func(_ string, start, _ time.Time, groupBy storage.CostGroupBy) (storage.DailyCosts, error) {
+					if groupBy != tt.wantGroupBy {
+						return storage.DailyCosts{}, fmt.Errorf("groupBy = %v, want %v", groupBy, tt.wantGroupBy)
+					}
+					return dayCosts(t, start.AddDate(0, 0, 1).Format(time.DateOnly), "USD", map[string]string{"key": "1"}), nil
+				},
+			}
+			rec := httptest.NewRecorder()
+			NewHandler("test", testStatic(), store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+				"/api/v1/costs/summary?start=2026-06-01&end=2026-06-30&groupBy="+tt.groupBy, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+			}
+			if len(store.groupByLog) != 2 {
+				t.Fatalf("groupBy log = %v, want two window calls", store.groupByLog)
+			}
+			for i, got := range store.groupByLog {
+				if got != tt.wantGroupBy {
+					t.Errorf("window %d groupBy = %v, want %v", i, got, tt.wantGroupBy)
+				}
+			}
+		})
+	}
+
+	t.Run("invalid grouping keeps the existing 400", func(t *testing.T) {
+		store := &fakeStore{}
+		rec := httptest.NewRecorder()
+		NewHandler("test", testStatic(), store, "").ServeHTTP(rec,
+			httptest.NewRequest(http.MethodGet, "/api/v1/costs/summary?groupBy=bogus", nil))
+		if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != "invalid groupBy value" {
+			t.Fatalf("status = %d body = %q, want 400 invalid groupBy value", rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+		if store.currenciesQueryCount != 0 || store.queryCount != 0 || store.allocQueryCount != 0 {
+			t.Fatalf("invalid grouping reached store: currencies=%d service=%d allocation=%d", store.currenciesQueryCount, store.queryCount, store.allocQueryCount)
+		}
+	})
 }
 
 func TestGetCostsSummaryProviderParamValidationAndStoreThreading(t *testing.T) {

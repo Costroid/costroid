@@ -230,8 +230,15 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 		daily, queryErr = s.store.DailyCostsByAllocation(r.Context(), focus.DefaultTenant, start, end, dim, currency, provider)
 	} else {
 		groupBy := storage.GroupByService
-		if params.GroupBy != nil && *params.GroupBy == GetDailyCostsParamsGroupByProvider {
-			groupBy = storage.GroupByProvider
+		if params.GroupBy != nil {
+			switch *params.GroupBy {
+			case GetDailyCostsParamsGroupByProvider:
+				groupBy = storage.GroupByProvider
+			case GetDailyCostsParamsGroupBySubaccount:
+				groupBy = storage.GroupBySubaccount
+			case GetDailyCostsParamsGroupByRegion:
+				groupBy = storage.GroupByRegion
+			}
 		}
 		daily, queryErr = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, start, end, currency, provider, groupBy)
 	}
@@ -415,8 +422,15 @@ func (s *Server) queryDailyCosts(ctx context.Context, start, end time.Time, curr
 		return s.store.DailyCostsByAllocation(ctx, focus.DefaultTenant, start, end, dim, currency, provider)
 	}
 	gb := storage.GroupByService
-	if groupBy != nil && *groupBy == Provider {
-		gb = storage.GroupByProvider
+	if groupBy != nil {
+		switch *groupBy {
+		case Provider:
+			gb = storage.GroupByProvider
+		case Subaccount:
+			gb = storage.GroupBySubaccount
+		case Region:
+			gb = storage.GroupByRegion
+		}
 	}
 	return s.store.DailyCostsByService(ctx, focus.DefaultTenant, start, end, currency, provider, gb)
 }

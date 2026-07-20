@@ -96,6 +96,12 @@ func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params Get
 	case params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupByProvider:
 		groupBy = "provider"
 		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupByProvider)
+	case params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupBySubaccount:
+		groupBy = "subaccount"
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupBySubaccount)
+	case params.GroupBy != nil && *params.GroupBy == GetAnomaliesParamsGroupByRegion:
+		groupBy = "region"
+		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupByRegion)
 	default:
 		daily, err = s.store.DailyCostsByService(r.Context(), focus.DefaultTenant, time.Time{}, end, currency, provider, storage.GroupByService)
 	}

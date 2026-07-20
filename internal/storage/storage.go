@@ -37,7 +37,8 @@ import (
 // time — the store never rounds silently (exactness invariant).
 const MaxDecimalScale = 18
 
-// CostGroupBy selects the FOCUS dimension used by DailyCostsByService.
+// CostGroupBy selects the FOCUS ServiceName, ServiceProviderName,
+// SubAccountName, or RegionName dimension used by DailyCostsByService.
 type CostGroupBy int
 
 const (
@@ -45,6 +46,10 @@ const (
 	GroupByService CostGroupBy = iota
 	// GroupByProvider groups daily costs by FOCUS ServiceProviderName.
 	GroupByProvider
+	// GroupBySubaccount groups daily costs by FOCUS SubAccountName.
+	GroupBySubaccount
+	// GroupByRegion groups daily costs by FOCUS RegionName.
+	GroupByRegion
 )
 
 // Store is the storage interface (decision D5). It is deliberately sized
@@ -76,10 +81,11 @@ type Store interface {
 
 	// DailyCostsByService returns, for one tenant, the total BilledCost
 	// per UTC calendar day (of ChargePeriodStart) per grouping key:
-	// ServiceName by default, or ServiceProviderName when GroupByProvider
-	// is passed. Results are ordered days-ascending then key-ascending. A
-	// zero start or end means unbounded on that side; a non-zero bound is
-	// an inclusive calendar-day bound. A non-empty currency filters to that
+	// ServiceName by default, ServiceProviderName when GroupByProvider is
+	// passed, SubAccountName when GroupBySubaccount is passed, or RegionName
+	// when GroupByRegion is passed. Results are ordered days-ascending then
+	// key-ascending. A zero start or end means unbounded on that side; a non-zero
+	// bound is an inclusive calendar-day bound. A non-empty currency filters to that
 	// exact BillingCurrency and is echoed even when no rows match. An empty
 	// currency preserves the single-currency guard over the whole range. A
 	// non-empty provider filters to that exact FOCUS ServiceProviderName; an
