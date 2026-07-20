@@ -449,4 +449,102 @@ describe("App", () => {
       expect(window.location.hash).toBe("#start=2026-01-12&end=2026-07-11"),
     );
   });
+
+  it("reapplies shared filters across Costs and Overview while dormant keys persist", async () => {
+    window.location.hash =
+      "#view=costs&groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=requests";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const parsed = new URL(url, "http://x");
+      const currency = parsed.searchParams.get("currency") ?? "";
+      const provider = parsed.searchParams.get("provider") ?? "";
+      if (parsed.pathname === "/api/v1/meta") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            name: "costroid",
+            version: "0.1.0-test",
+            focusVersion: "1.4",
+            demo: false,
+          }),
+        );
+      }
+      if (parsed.pathname === "/api/v1/costs/daily") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptyCosts,
+            currency,
+            currencies: ["USD"],
+            provider,
+            providers: ["Amazon Web Services", "Microsoft"],
+          }),
+        );
+      }
+      if (parsed.pathname === "/api/v1/costs/summary") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptySummary,
+            currency,
+            currencies: ["USD"],
+            provider,
+            providers: ["Amazon Web Services", "Microsoft"],
+          }),
+        );
+      }
+      if (parsed.pathname === "/api/v1/anomalies") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency,
+            parameters: {
+              k: "3",
+              consistencyConstant: "1.4826",
+              windowDays: 30,
+              minObservations: 10,
+              relativeFloor: "0.1",
+              groupBy: parsed.searchParams.get("groupBy") ?? "service",
+            },
+            anomalies: [],
+          }),
+        );
+      }
+      if (parsed.pathname === "/api/v1/business-metrics") {
+        return Promise.resolve(fakeResponse(200, { metrics: [] }));
+      }
+      return Promise.resolve(fakeResponse(404, null));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Daily cost by allocation" });
+    const costsURL =
+      "/api/v1/costs/daily?groupBy=allocation&currency=USD&provider=Amazon%20Web%20Services";
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input) === costsURL),
+      ).toHaveLength(1),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    await screen.findByRole("heading", { name: "Overview" });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/costs/summary?currency=USD&provider=Amazon%20Web%20Services",
+        expect.anything(),
+      ),
+    );
+    expect(window.location.hash).toBe(
+      "#groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=requests",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Costs" }));
+    await screen.findByRole("heading", { name: "Daily cost by allocation" });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input) === costsURL),
+      ).toHaveLength(2),
+    );
+    expect(window.location.hash).toBe(
+      "#view=costs&groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=requests",
+    );
+  });
 });

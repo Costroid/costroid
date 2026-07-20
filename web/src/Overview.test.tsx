@@ -169,9 +169,74 @@ function fetchedURLs(): string[] {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
 });
 
 describe("Overview", () => {
+  it("applies hash filters to the first drill-down requests from a loading frame", async () => {
+    window.location.hash =
+      "#groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=dormant";
+    const selectedProvider = "Amazon Web Services";
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: (url) => {
+          const params = new URL(url, "http://x").searchParams;
+          return fakeResponse(
+            200,
+            summaryBody({
+              currency: params.get("currency") ?? "",
+              currencies: ["USD", "EUR"],
+              provider: params.get("provider") ?? "",
+              providers: [selectedProvider, "Microsoft"],
+              keys: [{ key: "Amazon EC2", total: "3" }],
+            }),
+          );
+        },
+        anomalies: (url) =>
+          fakeResponse(200, {
+            ...anomaliesBody(),
+            currency:
+              new URL(url, "http://x").searchParams.get("currency") ?? "USD",
+          }),
+        unit: (url) => {
+          const params = new URL(url, "http://x").searchParams;
+          return fakeResponse(
+            200,
+            unitBody({
+              currency: params.get("currency") ?? "",
+              currencies: ["USD", "EUR"],
+              provider: params.get("provider") ?? "",
+              providers: [selectedProvider, "Microsoft"],
+            }),
+          );
+        },
+      }),
+    );
+
+    render(<Overview />);
+
+    expect(screen.getByText("Loading overview…")).toBeTruthy();
+    await waitFor(() => {
+      const urls = fetchedURLs();
+      expect(urls).toContain(
+        "/api/v1/costs/summary?currency=USD&provider=Amazon%20Web%20Services",
+      );
+      expect(urls).toContain(
+        "/api/v1/anomalies?currency=USD&provider=Amazon%20Web%20Services",
+      );
+      expect(urls).toContain(
+        "/api/v1/unit-economics/daily?metric=requests%20served&currency=USD&provider=Amazon%20Web%20Services",
+      );
+    });
+    expect(
+      fetchedURLs().find((url) => url.startsWith("/api/v1/costs/summary")),
+    ).not.toContain("groupBy=");
+    expect(window.location.hash).toBe(
+      "#groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=dormant",
+    );
+  });
+
   it("formats the 18-digit period total for display with the exact value in the title", async () => {
     vi.stubGlobal("fetch", mockRoutes());
     render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
@@ -356,6 +421,9 @@ describe("Overview", () => {
         `/api/v1/unit-economics/daily?metric=requests%20served&${bounded}&provider=${encoded}`,
       );
     });
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#provider=Amazon+Web+Services"),
+    );
     expect(await screen.findByText("Spend by service")).toBeTruthy();
     expect(
       screen.getByRole("img", { name: "Service spend split" }),
@@ -448,6 +516,7 @@ describe("Overview", () => {
         ).length,
       ).toBeGreaterThanOrEqual(2);
     });
+    await waitFor(() => expect(window.location.hash).toBe(""));
     expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
     expect(await screen.findByText("Spend by provider")).toBeTruthy();
   });

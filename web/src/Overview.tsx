@@ -12,6 +12,7 @@ import {
 import { EmptyIcon } from "./icons";
 import { Money } from "./money";
 import type { Range } from "./range";
+import { readUrlState, writeUrlState } from "./urlstate";
 import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 import {
   compareDecimalMagnitude,
@@ -56,8 +57,12 @@ export default function Overview({
   range?: Range;
 }) {
   const { start, end } = range;
-  const [currency, setCurrency] = useState<string>("");
-  const [provider, setProvider] = useState<string>("");
+  const [currency, setCurrency] = useState<string>(
+    () => readUrlState().currency ?? "",
+  );
+  const [provider, setProvider] = useState<string>(
+    () => readUrlState().provider ?? "",
+  );
   const [summaryState, setSummaryState] = useState<SummaryState>({
     status: "loading",
   });
@@ -68,6 +73,10 @@ export default function Overview({
   // One token re-runs all three fetch effects; every error card shares it.
   const [retryToken, setRetryToken] = useState(0);
   const retry = () => setRetryToken((t) => t + 1);
+
+  useEffect(() => {
+    writeUrlState({ currency, provider });
+  }, [currency, provider]);
 
   // Effect 1: costs summary → cards 1–3 (degrade together).
   useEffect(() => {

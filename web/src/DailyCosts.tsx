@@ -8,6 +8,7 @@ import { dailyCostsCsvFilename, dailyCostsToCsv, downloadCsv } from "./csv";
 import { EmptyIcon } from "./icons";
 import { formatMoney, Money } from "./money";
 import type { Range } from "./range";
+import { readUrlState, writeUrlState } from "./urlstate";
 import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 import {
   HEIGHT,
@@ -73,9 +74,15 @@ export default function DailyCosts({
     state.status === "ready" ? state.costs.currency : null;
   const displayedProvider =
     state.status === "ready" ? state.costs.provider : null;
-  const [groupBy, setGroupBy] = useState<CostGroupBy>("service");
-  const [currency, setCurrency] = useState<string>("");
-  const [provider, setProvider] = useState<string>("");
+  const [groupBy, setGroupBy] = useState<CostGroupBy>(
+    () => readUrlState().groupBy ?? "service",
+  );
+  const [currency, setCurrency] = useState<string>(
+    () => readUrlState().currency ?? "",
+  );
+  const [provider, setProvider] = useState<string>(
+    () => readUrlState().provider ?? "",
+  );
   const [anomalyState, setAnomalyState] = useState<AnomalyState>({
     status: "loading",
     params: {
@@ -87,6 +94,10 @@ export default function DailyCosts({
     },
   });
   const { start, end } = range;
+
+  useEffect(() => {
+    writeUrlState({ groupBy, currency, provider });
+  }, [groupBy, currency, provider]);
 
   useEffect(() => {
     setState({ status: "loading" });

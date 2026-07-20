@@ -7,6 +7,7 @@ import { getBusinessMetrics, getUnitEconomicsDaily } from "./api";
 import { EmptyIcon } from "./icons";
 import { Money } from "./money";
 import type { Range } from "./range";
+import { readUrlState, writeUrlState } from "./urlstate";
 import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
 import { HEIGHT, lineChartGeometry, MARGIN, WIDTH, yTicks } from "./viz";
 
@@ -44,9 +45,15 @@ export default function UnitEconomics({
   const [metricsState, setMetricsState] = useState<MetricsState>({
     status: "loading",
   });
-  const [selectedMetric, setSelectedMetric] = useState("");
-  const [currency, setCurrency] = useState<string>("");
-  const [provider, setProvider] = useState<string>("");
+  const [selectedMetric, setSelectedMetric] = useState(
+    () => readUrlState().metric ?? "",
+  );
+  const [currency, setCurrency] = useState<string>(
+    () => readUrlState().currency ?? "",
+  );
+  const [provider, setProvider] = useState<string>(
+    () => readUrlState().provider ?? "",
+  );
   const [economicsState, setEconomicsState] = useState<EconomicsState>({
     status: "idle",
   });
@@ -56,6 +63,10 @@ export default function UnitEconomics({
   const { start, end } = range;
 
   useEffect(() => {
+    writeUrlState({ metric: selectedMetric, currency, provider });
+  }, [selectedMetric, currency, provider]);
+
+  useEffect(() => {
     setMetricsState({ status: "loading" });
     const controller = new AbortController();
     async function loadMetrics() {
@@ -63,7 +74,12 @@ export default function UnitEconomics({
         const body = await getBusinessMetrics(controller.signal);
         if (controller.signal.aborted) return;
         setMetricsState({ status: "ready", metrics: body.metrics });
-        setSelectedMetric((current) => current || body.metrics[0]?.name || "");
+        setSelectedMetric((current) =>
+          current !== "" &&
+          body.metrics.some((metric) => metric.name === current)
+            ? current
+            : (body.metrics[0]?.name ?? ""),
+        );
       } catch (err) {
         if (controller.signal.aborted) return;
         setMetricsState({

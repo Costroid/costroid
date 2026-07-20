@@ -84,6 +84,7 @@ function providerDailyBody(
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
 });
 
 // Mirrors MARGIN.top in DailyCosts.tsx: the top y-axis tick sits exactly
@@ -118,6 +119,98 @@ function fetchedURLs(): string[] {
 }
 
 describe("DailyCosts", () => {
+  it("applies hash filters to the first costs and anomaly requests from a loading frame", async () => {
+    window.location.hash =
+      "#groupBy=provider&currency=USD&provider=Amazon+Web+Services&metric=requests";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const params = new URL(url, "http://x").searchParams;
+      const requestedCurrency = params.get("currency") ?? "";
+      const requestedProvider = params.get("provider") ?? "";
+      if (url.startsWith("/api/v1/anomalies")) {
+        const body = anomaliesBody([], requestedCurrency);
+        body.parameters.groupBy = "provider";
+        return Promise.resolve(fakeResponse(200, body));
+      }
+      return Promise.resolve(
+        fakeResponse(200, {
+          ...providerDailyBody(
+            requestedProvider,
+            ["Amazon Web Services", "Microsoft"],
+            "3",
+            "Amazon Web Services",
+          ),
+          currency: requestedCurrency,
+          currencies: ["USD", "EUR"],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DailyCosts />);
+
+    expect(screen.getByText("Loading daily costs…")).toBeTruthy();
+    await waitFor(() => {
+      const urls = fetchedURLs();
+      expect(urls).toContain(
+        "/api/v1/costs/daily?groupBy=provider&currency=USD&provider=Amazon%20Web%20Services",
+      );
+      expect(urls).toContain(
+        "/api/v1/anomalies?groupBy=provider&currency=USD&provider=Amazon%20Web%20Services",
+      );
+    });
+    expect(window.location.hash).toBe(
+      "#groupBy=provider&currency=USD&provider=Amazon+Web+Services&metric=requests",
+    );
+  });
+
+  it("writes filter interactions in canonical form and omits grouping default", async () => {
+    const providers = ["Amazon Web Services", "Microsoft"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        const params = new URL(url, "http://x").searchParams;
+        const requestedCurrency = params.get("currency") ?? "";
+        const requestedProvider = params.get("provider") ?? "";
+        if (url.startsWith("/api/v1/anomalies")) {
+          return Promise.resolve(
+            fakeResponse(200, anomaliesBody([], requestedCurrency || "EUR")),
+          );
+        }
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...providerDailyBody(requestedProvider, providers, "3"),
+            currency: requestedCurrency || "EUR",
+            currencies: ["EUR", "USD"],
+          }),
+        );
+      }),
+    );
+    render(<DailyCosts />);
+    await screen.findByRole("group", { name: "Currency" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Provider" }));
+    await screen.findByRole("group", { name: "Currency" });
+    fireEvent.click(screen.getByRole("button", { name: "USD" }));
+    await screen.findByRole("group", { name: "Provider" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Amazon Web Services" }),
+    );
+
+    await waitFor(() =>
+      expect(window.location.hash).toBe(
+        "#groupBy=provider&currency=USD&provider=Amazon+Web+Services",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Service" }));
+    await waitFor(() =>
+      expect(window.location.hash).toBe(
+        "#currency=USD&provider=Amazon+Web+Services",
+      ),
+    );
+  });
+
   it("shows display-precision day values on focus with the exact value in the SVG title", async () => {
     const { container } = renderChart({
       currency: "USD",
@@ -715,6 +808,7 @@ describe("DailyCosts", () => {
         "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30",
       ),
     );
+    await waitFor(() => expect(window.location.hash).toBe(""));
     expect(screen.queryByRole("group", { name: "Provider" })).toBeNull();
   });
 

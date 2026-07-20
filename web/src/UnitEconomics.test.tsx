@@ -56,9 +56,46 @@ function economicsBodyWithCost(
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
 });
 
 describe("UnitEconomics", () => {
+  it("applies hash filters to the first economics request from a loading frame", async () => {
+    window.location.hash =
+      "#groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=active+users";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/business-metrics") {
+        return Promise.resolve(
+          fakeResponse(200, metricsBody("requests", "active users")),
+        );
+      }
+      const params = new URL(url, "http://x").searchParams;
+      return Promise.resolve(
+        fakeResponse(200, {
+          ...economicsBody(params.get("currency") ?? "", ["USD", "EUR"]),
+          metric: params.get("metric") ?? "",
+          provider: params.get("provider") ?? "",
+          providers: ["Amazon Web Services", "Microsoft"],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<UnitEconomics />);
+
+    expect(screen.getByText("Loading business metrics…")).toBeTruthy();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/unit-economics/daily?metric=active%20users&currency=USD&provider=Amazon%20Web%20Services",
+        expect.anything(),
+      ),
+    );
+    expect(window.location.hash).toBe(
+      "#groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=active+users",
+    );
+  });
+
   it("fetches encoded metric and range, then renders exact values and gaps", async () => {
     vi.stubGlobal(
       "fetch",
@@ -176,6 +213,9 @@ describe("UnitEconomics", () => {
         "/api/v1/unit-economics/daily?metric=active%20users",
         expect.anything(),
       ),
+    );
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#metric=active+users"),
     );
   });
 
@@ -371,6 +411,56 @@ describe("UnitEconomics", () => {
       (await screen.findAllByTitle("7.000000000000000007 USD")).length,
     ).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("999.999999999999999999")).toBeNull();
+    await waitFor(() => expect(window.location.hash).toBe("#metric=requests"));
+  });
+
+  it("snaps an unknown hash metric to the first metric and recovers to ready", async () => {
+    window.location.hash =
+      "#currency=USD&provider=Amazon+Web+Services&metric=retired";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/business-metrics") {
+        return Promise.resolve(fakeResponse(200, metricsBody("requests")));
+      }
+      const params = new URL(url, "http://x").searchParams;
+      if (params.get("metric") === "retired") {
+        return Promise.resolve(fakeResponse(404, null));
+      }
+      return Promise.resolve(
+        fakeResponse(200, {
+          ...economicsBody("USD", ["USD"]),
+          metric: "requests",
+          provider: params.get("provider") ?? "",
+          providers: ["Amazon Web Services", "Microsoft"],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<UnitEconomics />);
+
+    expect(screen.getByText("Loading business metrics…")).toBeTruthy();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/unit-economics/daily?metric=retired&currency=USD&provider=Amazon%20Web%20Services",
+        expect.anything(),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/unit-economics/daily?metric=requests&currency=USD&provider=Amazon%20Web%20Services",
+        expect.anything(),
+      );
+    });
+    expect(await screen.findByText("Covered days")).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: "Business metric",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("requests");
+    expect(window.location.hash).toBe(
+      "#currency=USD&provider=Amazon+Web+Services&metric=requests",
+    );
   });
 
   it("selecting a currency refetches unit economics with the encoded currency", async () => {
