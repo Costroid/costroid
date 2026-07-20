@@ -85,12 +85,14 @@ describe("UnitEconomics", () => {
     render(<UnitEconomics />);
 
     expect(screen.getByText("Loading business metrics…")).toBeTruthy();
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([input]) => String(input));
+      expect(
+        urls.find((url) => url.startsWith("/api/v1/unit-economics/daily")),
+      ).toBe(
         "/api/v1/unit-economics/daily?metric=active%20users&currency=USD&provider=Amazon%20Web%20Services",
-        expect.anything(),
-      ),
-    );
+      );
+    });
     expect(window.location.hash).toBe(
       "#groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=active+users",
     );

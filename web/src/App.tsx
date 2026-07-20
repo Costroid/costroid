@@ -115,7 +115,16 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <a className="skip-link" href="#view-panel">
+      <a
+        className="skip-link"
+        href="#view-panel"
+        onClick={(event) => {
+          // A real fragment navigation would replace the state hash and push
+          // a history entry; move focus to the panel without navigating.
+          event.preventDefault();
+          document.getElementById("view-panel")?.focus();
+        }}
+      >
         Skip to content
       </a>
       <header className="app-header">

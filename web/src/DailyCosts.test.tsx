@@ -152,10 +152,10 @@ describe("DailyCosts", () => {
     expect(screen.getByText("Loading daily costs…")).toBeTruthy();
     await waitFor(() => {
       const urls = fetchedURLs();
-      expect(urls).toContain(
+      expect(urls.find((url) => url.startsWith("/api/v1/costs/daily"))).toBe(
         "/api/v1/costs/daily?groupBy=provider&currency=USD&provider=Amazon%20Web%20Services",
       );
-      expect(urls).toContain(
+      expect(urls.find((url) => url.startsWith("/api/v1/anomalies"))).toBe(
         "/api/v1/anomalies?groupBy=provider&currency=USD&provider=Amazon%20Web%20Services",
       );
     });

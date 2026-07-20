@@ -148,6 +148,21 @@ describe("App", () => {
     await waitFor(() => expect(window.location.hash).toBe("#view=costs"));
   });
 
+  it("activates the skip link without navigating away from the state hash", async () => {
+    window.location.hash = "#view=costs&start=2026-06-01&end=2026-06-30";
+    vi.stubGlobal("fetch", mockFetch());
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Daily cost by service" });
+
+    fireEvent.click(screen.getByRole("link", { name: "Skip to content" }));
+
+    expect(document.activeElement?.id).toBe("view-panel");
+    expect(window.location.hash).toBe(
+      "#view=costs&start=2026-06-01&end=2026-06-30",
+    );
+  });
+
   it("defaults to the Overview view", async () => {
     vi.stubGlobal("fetch", mockFetch());
 
@@ -348,10 +363,10 @@ describe("App", () => {
     ).toBeTruthy();
     await waitFor(() => {
       const urls = fetchMock.mock.calls.map(([input]) => String(input));
-      expect(urls).toContain(
+      expect(urls.find((url) => url.startsWith("/api/v1/costs/daily"))).toBe(
         "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30",
       );
-      expect(urls).toContain(
+      expect(urls.find((url) => url.startsWith("/api/v1/anomalies"))).toBe(
         "/api/v1/anomalies?start=2026-06-01&end=2026-06-30",
       );
     });
@@ -390,8 +405,12 @@ describe("App", () => {
     window.location.hash = "#view=costs";
     vi.stubGlobal("fetch", mockFetch());
     render(<App />);
-    const historyLength = window.history.length;
     await screen.findByRole("heading", { name: "Daily cost by service" });
+    // jsdom applies fragment navigations through an async queue; flush a
+    // macrotask so queued entries land before the baseline is taken.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const historyLength = window.history.length;
+    const pushSpy = vi.spyOn(window.history, "pushState");
 
     fireEvent.click(screen.getByRole("button", { name: "Overview" }));
     fireEvent.change(screen.getByLabelText(/start date/i), {
@@ -407,7 +426,9 @@ describe("App", () => {
         "#view=tokens&start=2026-06-01&end=2026-06-30",
       ),
     );
+    expect(pushSpy).not.toHaveBeenCalled();
     expect(window.history.length).toBe(historyLength);
+    pushSpy.mockRestore();
   });
 
   it("snaps a deep-linked non-preset demo range to the full window", async () => {
