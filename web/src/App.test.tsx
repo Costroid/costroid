@@ -92,6 +92,7 @@ function mockFetch(demo = false) {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
 });
 
 describe("App", () => {
@@ -138,6 +139,13 @@ describe("App", () => {
     expect(skipLink.getAttribute("href")).toBe("#view-panel");
     expect(document.getElementById("view-panel")).toBeTruthy();
     await screen.findByRole("heading", { name: "Overview" });
+
+    window.location.hash = skipLink.getAttribute("href") ?? "";
+    expect(window.location.hash).toBe("#view-panel");
+    expect(screen.getByRole("heading", { name: "Overview" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Costs" }));
+    await waitFor(() => expect(window.location.hash).toBe("#view=costs"));
   });
 
   it("defaults to the Overview view", async () => {
@@ -326,5 +334,119 @@ describe("App", () => {
 
     expect(await screen.findByText("Showing through 2026-05-31")).toBeTruthy();
     expect(screen.queryByText("Showing  → 2026-05-31")).toBeNull();
+  });
+
+  it("mounts the deep-linked view and applies the range to its first requests", async () => {
+    window.location.hash = "#view=costs&start=2026-06-01&end=2026-06-30";
+    const fetchMock = mockFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Daily cost by service" }),
+    ).toBeTruthy();
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([input]) => String(input));
+      expect(urls).toContain(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30",
+      );
+      expect(urls).toContain(
+        "/api/v1/anomalies?start=2026-06-01&end=2026-06-30",
+      );
+    });
+  });
+
+  it("keeps the view in the hash and omits the default view", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    render(<App />);
+    await screen.findByRole("heading", { name: "Overview" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Costs" }));
+    await waitFor(() => expect(window.location.hash).toBe("#view=costs"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    await waitFor(() => expect(window.location.hash).toBe(""));
+  });
+
+  it("keeps range edits in the hash", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+    render(<App />);
+    await screen.findByRole("heading", { name: "Overview" });
+
+    fireEvent.change(screen.getByLabelText(/start date/i), {
+      target: { value: "2026-06-01" },
+    });
+    fireEvent.change(screen.getByLabelText(/end date/i), {
+      target: { value: "2026-06-30" },
+    });
+
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#start=2026-06-01&end=2026-06-30"),
+    );
+  });
+
+  it("uses replaceState so view and range interactions do not grow history", async () => {
+    window.location.hash = "#view=costs";
+    vi.stubGlobal("fetch", mockFetch());
+    render(<App />);
+    const historyLength = window.history.length;
+    await screen.findByRole("heading", { name: "Daily cost by service" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    fireEvent.change(screen.getByLabelText(/start date/i), {
+      target: { value: "2026-06-01" },
+    });
+    fireEvent.change(screen.getByLabelText(/end date/i), {
+      target: { value: "2026-06-30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Tokens" }));
+
+    await waitFor(() =>
+      expect(window.location.hash).toBe(
+        "#view=tokens&start=2026-06-01&end=2026-06-30",
+      ),
+    );
+    expect(window.history.length).toBe(historyLength);
+  });
+
+  it("snaps a deep-linked non-preset demo range to the full window", async () => {
+    window.location.hash = "#start=2026-06-01&end=2026-06-30";
+    vi.stubGlobal("fetch", mockFetch(true));
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Showing 2026-01-12 → 2026-07-11"),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Full window" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#start=2026-01-12&end=2026-07-11"),
+    );
+  });
+
+  it("keeps a production plain load hash-free after settling", async () => {
+    vi.stubGlobal("fetch", mockFetch(false));
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Overview" });
+    await screen.findByText("Showing all time");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("writes the full-window range after a demo plain load settles", async () => {
+    vi.stubGlobal("fetch", mockFetch(true));
+    render(<App />);
+
+    expect(
+      await screen.findByText("Showing 2026-01-12 → 2026-07-11"),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#start=2026-01-12&end=2026-07-11"),
+    );
   });
 });

@@ -24,6 +24,7 @@ import type { Range } from "./range";
 import Sources from "./Sources";
 import UsageMetrics from "./UsageMetrics";
 import UnitEconomics from "./UnitEconomics";
+import { readUrlState, writeUrlState } from "./urlstate";
 
 type Meta = components["schemas"]["Meta"];
 
@@ -63,8 +64,17 @@ function rangeIndicator(range: Range): string {
 
 export default function App() {
   const [state, setState] = useState<MetaState>({ status: "loading" });
-  const [view, setView] = useState<View>("overview");
-  const [range, setRange] = useState<Range>({ start: "", end: "" });
+  const [view, setView] = useState<View>(
+    () => readUrlState().view ?? "overview",
+  );
+  const [range, setRange] = useState<Range>(() => {
+    const urlState = readUrlState();
+    return { start: urlState.start ?? "", end: urlState.end ?? "" };
+  });
+
+  useEffect(() => {
+    writeUrlState({ view, start: range.start, end: range.end });
+  }, [view, range.start, range.end]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -79,9 +89,12 @@ export default function App() {
           const full = DEMO_PRESETS.find((preset) => preset.id === "full");
           if (full) {
             setRange((current) =>
-              current.start === "" && current.end === ""
-                ? { start: full.start, end: full.end }
-                : current,
+              DEMO_PRESETS.some(
+                (preset) =>
+                  preset.start === current.start && preset.end === current.end,
+              )
+                ? current
+                : { start: full.start, end: full.end },
             );
           }
         }
