@@ -39,9 +39,11 @@ private until coordinated disclosure.
 
 If we become aware of a vulnerability in Costroid that is being actively
 exploited, we will, in addition to the coordinated-disclosure process above,
-report it to the applicable coordinating authorities in line with the
-actively-exploited-vulnerability reporting obligations of the EU CRA
-(Regulation (EU) 2024/2847), which apply from 11 September 2026.
+notify the EU coordinating authorities (a CSIRT designated as coordinator and
+ENISA) on a voluntary basis under Article 15 of the EU CRA (Regulation (EU)
+2024/2847), via the ENISA-operated CRA Single Reporting Platform once it is
+live (announced for 11 September 2026). The process is documented in
+Costroid's written [cybersecurity policy](docs/cybersecurity-policy.md).
 
 Deployment hardening, including authentication and reverse-proxy TLS guidance,
 is documented in [docs/security.md](docs/security.md).
@@ -99,4 +101,7 @@ C-side vulnerability surface.
 This posture consists of SBOM-attested, signed releases with a coordinated
 vulnerability-disclosure policy, aligned with the EU CRA (Regulation (EU)
 2024/2847) Annex I vulnerability-handling expectations, ahead of the 2026/2027
-obligation deadlines.
+obligation deadlines. Costroid claims no classification under the CRA and
+adopts these practices voluntarily; the written
+[cybersecurity policy](docs/cybersecurity-policy.md) documents the full
+posture.

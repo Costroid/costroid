@@ -28,6 +28,7 @@ export default defineConfig({
           items: [
             { label: 'Overview', slug: 'security' },
             { label: 'Threat model', slug: 'security/threat-model' },
+            { label: 'Cybersecurity policy', slug: 'security/cybersecurity-policy' },
           ],
         },
         {
