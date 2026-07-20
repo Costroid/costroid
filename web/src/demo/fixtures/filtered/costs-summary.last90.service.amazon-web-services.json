@@ -1,0 +1,1 @@
+{"currencies":["USD"],"currency":"USD","keys":[{"delta":"16282.03","key":"Amazon EC2","previousTotal":"278955.53","total":"295237.56"}],"previousEnd":"2026-04-12","previousStart":"2026-01-13","previousTotal":"278955.53","provider":"Amazon Web Services","providers":["Amazon Web Services","Anthropic","Google","Microsoft","OpenAI"],"total":"295237.56"}

@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -26,6 +27,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing/fstest"
 	"time"
 
@@ -41,6 +44,8 @@ var captureAsOf = time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
 // demoVersion is the instance version surfaced in the meta fixture. Pinned so
 // the fixture never drifts with the build's -ldflags version.
 const demoVersion = "0.1.0"
+
+var nonSlugCharacters = regexp.MustCompile(`[^a-z0-9]+`)
 
 type demoSyncSchedule []demodata.SyncScheduleSource
 
@@ -166,6 +171,42 @@ func run(outDir string) error {
 		}
 	}
 
+	providers, err := capturedProviders(filepath.Join(fixturesDir, "costs.full.service.json"))
+	if err != nil {
+		return err
+	}
+	filteredDir := filepath.Join(fixturesDir, "filtered")
+	if err := os.MkdirAll(filteredDir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", filteredDir, err)
+	}
+	for _, provider := range providers {
+		providerQuery := "&provider=" + url.QueryEscape(provider)
+		slug := providerSlug(provider)
+		for _, p := range ps {
+			rq := rangeQuery(p.start, p.end)
+			for _, gb := range groupings {
+				gbq := ""
+				if gb != "service" {
+					gbq = "&groupBy=" + gb
+				}
+				if err := capture(filepath.Join("filtered", fmt.Sprintf("costs.%s.%s.%s", p.id, gb, slug)), "/api/v1/costs/daily"+rq+gbq+providerQuery); err != nil {
+					return err
+				}
+				if err := capture(filepath.Join("filtered", fmt.Sprintf("costs-summary.%s.%s.%s", p.id, gb, slug)), "/api/v1/costs/summary"+rq+gbq+providerQuery); err != nil {
+					return err
+				}
+				if err := capture(filepath.Join("filtered", fmt.Sprintf("anomalies.%s.%s.%s", p.id, gb, slug)), "/api/v1/anomalies"+rq+gbq+providerQuery); err != nil {
+					return err
+				}
+			}
+			econPath := "/api/v1/unit-economics/daily?metric=" + url.QueryEscape(demodata.BusinessMetricName()) +
+				"&start=" + p.start.Format(time.DateOnly) + "&end=" + p.end.Format(time.DateOnly) + providerQuery
+			if err := capture(filepath.Join("filtered", fmt.Sprintf("unit-economics.%s.%s", p.id, slug)), econPath); err != nil {
+				return err
+			}
+		}
+	}
+
 	if err := writeRanges(filepath.Join(outDir, "ranges.ts"), ps); err != nil {
 		return err
 	}
@@ -173,6 +214,45 @@ func run(outDir string) error {
 	fmt.Printf("captured fixtures into %s and generated %s (asOf %s)\n",
 		fixturesDir, filepath.Join(outDir, "ranges.ts"), captureAsOf.Format(time.DateOnly))
 	return nil
+}
+
+func capturedProviders(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading captured providers from %s: %w", path, err)
+	}
+	var response struct {
+		Providers []string `json:"providers"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("decoding captured providers from %s: %w", path, err)
+	}
+
+	expected := map[string]struct{}{
+		"Amazon Web Services": {},
+		"Anthropic":           {},
+		"Google":              {},
+		"Microsoft":           {},
+		"OpenAI":              {},
+	}
+	if len(response.Providers) != len(expected) {
+		return nil, fmt.Errorf("captured providers = %q, want exactly the five pinned providers", response.Providers)
+	}
+	seen := make(map[string]struct{}, len(response.Providers))
+	for _, provider := range response.Providers {
+		if _, ok := expected[provider]; !ok {
+			return nil, fmt.Errorf("captured providers = %q, want exactly the five pinned providers", response.Providers)
+		}
+		if _, duplicate := seen[provider]; duplicate {
+			return nil, fmt.Errorf("captured providers = %q, want exactly the five pinned providers", response.Providers)
+		}
+		seen[provider] = struct{}{}
+	}
+	return response.Providers, nil
+}
+
+func providerSlug(provider string) string {
+	return strings.Trim(nonSlugCharacters.ReplaceAllString(strings.ToLower(provider), "-"), "-")
 }
 
 // rangeQuery mirrors web/src/range.ts for a present [start, end] range.

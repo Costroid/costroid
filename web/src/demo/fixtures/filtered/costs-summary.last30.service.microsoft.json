@@ -1,0 +1,1 @@
+{"currencies":["USD"],"currency":"USD","keys":[{"delta":"583.22","key":"Virtual Machines","previousTotal":"32796.16","total":"33379.38"}],"previousEnd":"2026-06-11","previousStart":"2026-05-13","previousTotal":"32796.16","provider":"Microsoft","providers":["Amazon Web Services","Anthropic","Google","Microsoft","OpenAI"],"total":"33379.38"}
