@@ -234,9 +234,15 @@ func TestEncryptedOpenErrorsAreActionableAndDoNotLeakKey(t *testing.T) {
 		}
 
 		_, err = Open(ctx, plaintextDir, WithEncryptionKey(correctKey))
-		assertOpenError(t, err, "not encrypted; at-rest encryption applies to a NEW store", correctKey)
-		if !strings.Contains(err.Error(), "back up your data and re-ingest") {
-			t.Fatalf("plaintext adoption error = %q, want backup and re-ingest guidance", err)
+		assertOpenError(t, err, "is not encrypted; convert it offline with `costroid store encrypt", correctKey)
+		for _, want := range []string{
+			"--new-db-encryption-key-file",
+			"stop any running costroid first",
+			"unset --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("plaintext adoption error = %q, want substring %q", err, want)
+			}
 		}
 	})
 }

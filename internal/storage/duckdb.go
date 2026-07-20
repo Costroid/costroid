@@ -87,11 +87,8 @@ func Open(ctx context.Context, dataDir string, opts ...Option) (*DuckDB, error) 
 }
 
 func openEncrypted(ctx context.Context, dataDir, path, key string) (*DuckDB, error) {
-	escape := func(value string) string {
-		return strings.ReplaceAll(value, "'", "''")
-	}
 	bootstrap := []string{
-		fmt.Sprintf("ATTACH IF NOT EXISTS '%s' AS costroid (ENCRYPTION_KEY '%s')", escape(path), escape(key)),
+		fmt.Sprintf("ATTACH IF NOT EXISTS '%s' AS costroid (ENCRYPTION_KEY '%s')", escapeSQLString(path), escapeSQLString(key)),
 		"USE costroid",
 		"SET temp_file_encryption=true",
 	}
@@ -134,8 +131,7 @@ func openError(err error, dataDir, path string, encrypted bool) error {
 		return fmt.Errorf("the Costroid database in %s is encrypted; provide the key via "+
 			"--db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE", dataDir)
 	case strings.Contains(err.Error(), "is not encrypted"):
-		return fmt.Errorf("the Costroid database in %s is not encrypted; at-rest encryption applies to a NEW store - "+
-			"back up your data and re-ingest into a fresh, empty data directory with the key set", dataDir)
+		return fmt.Errorf("the Costroid database in %s is not encrypted; convert it offline with `costroid store encrypt --new-db-encryption-key-file <path>` (stop any running costroid first), or unset --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE to keep it unencrypted", dataDir)
 	case strings.Contains(err.Error(), "Could not set lock on file"):
 		return fmt.Errorf("the Costroid database in %s is in use by another process - "+
 			"the embedded store allows a single process at a time, so stop the other "+
