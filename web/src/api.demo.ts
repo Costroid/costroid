@@ -2,13 +2,14 @@
 // Copyright 2026 The Costroid Authors
 
 // Demo build seam: the same export surface as ./api, but served entirely from
-// fixtures captured off `costroid demo` (see internal/demofixtures). Zero
-// network. The Vite `--mode demo` alias swaps ./api for this file, so every
-// view's fetch flows here instead. Each fixture already carries the server's
-// exact period aggregates and verbatim decimal strings — nothing is
-// re-aggregated or reformatted here (that would risk money-exactness). This
-// module deliberately does NOT import ./api: under the demo alias that
-// specifier resolves back to this very file.
+// fixtures captured off `costroid demo` (see internal/demofixtures). It never
+// makes /api requests: base fixtures are inlined, while provider-filtered
+// fixtures load on demand as same-origin static chunks. The Vite `--mode demo`
+// alias swaps ./api for this file, so every view's fetch flows here instead.
+// Each fixture already carries the server's exact period aggregates and
+// verbatim decimal strings — nothing is re-aggregated or reformatted here
+// (that would risk money-exactness). This module deliberately does NOT import
+// ./api: under the demo alias that specifier resolves back to this very file.
 
 import type { components } from "./api/schema";
 import { DEMO_PRESETS, type DemoPresetId } from "./demo/ranges";
@@ -28,12 +29,15 @@ type UnitEconomics = components["schemas"]["UnitEconomics"];
 export type CostGroupBy = "service" | "provider" | "allocation";
 export type RangeParams = { start: string; end: string };
 
-// Vite inlines every captured fixture into the demo bundle (eager glob), so
-// there is no runtime request. In the normal build this module is not imported,
-// so the glob — and the fixtures — never reach the production bundle.
+// Vite inlines the base fixtures into the demo entry chunk and emits filtered
+// fixtures as lazy chunks. In the normal build this module is not imported, so
+// neither glob nor any fixture reaches the production bundle.
 const modules = import.meta.glob("./demo/fixtures/*.json", {
   eager: true,
 }) as Record<string, { default: unknown }>;
+const filteredModules = import.meta.glob(
+  "./demo/fixtures/filtered/*.json",
+) as Record<string, () => Promise<{ default: unknown }>>;
 
 function fixture<T>(name: string): T {
   const mod = modules[`./demo/fixtures/${name}.json`];
@@ -41,6 +45,36 @@ function fixture<T>(name: string): T {
     throw new Error(`missing demo fixture: ${name}.json`);
   }
   return mod.default as T;
+}
+
+const knownProviders = new Set(
+  fixture<DailyCosts>("costs.full.service").providers,
+);
+
+function providerSlug(provider: string): string {
+  return provider
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+async function filteredFixture<T>(name: string): Promise<T> {
+  const load = filteredModules[`./demo/fixtures/filtered/${name}.json`];
+  if (!load) {
+    throw new Error(`missing demo fixture: filtered/${name}.json`);
+  }
+  const mod = await load();
+  return mod.default as T;
+}
+
+function resolveProviderFixture<T>(
+  baseName: string,
+  provider: string,
+): Promise<T> {
+  if (provider && knownProviders.has(provider)) {
+    return filteredFixture<T>(`${baseName}.${providerSlug(provider)}`);
+  }
+  return Promise.resolve(fixture<T>(baseName));
 }
 
 // presetOf maps a [start, end] range to the captured preset it belongs to.
@@ -69,10 +103,11 @@ export function getCostsDaily(
   _signal?: AbortSignal,
 ): Promise<DailyCosts> {
   const preset = presetOf(params.start, params.end);
-  const costs = fixture<DailyCosts>(`costs.${preset}.${params.groupBy}`);
-  // Deliberate demo-mode omission: fixtures cannot be filtered by provider, so
-  // empty the selector source to keep every rendered control functional.
-  return Promise.resolve({ ...costs, provider: "", providers: [] });
+  const provider = params.provider ?? "";
+  return resolveProviderFixture<DailyCosts>(
+    `costs.${preset}.${params.groupBy}`,
+    provider,
+  );
 }
 
 export function getCostsSummary(
@@ -84,12 +119,11 @@ export function getCostsSummary(
   _signal?: AbortSignal,
 ): Promise<CostsSummary> {
   const preset = presetOf(params.start, params.end);
-  const summary = fixture<CostsSummary>(
+  const provider = params.provider ?? "";
+  return resolveProviderFixture<CostsSummary>(
     `costs-summary.${preset}.${params.groupBy}`,
+    provider,
   );
-  // Deliberate demo-mode omission: fixtures cannot be filtered by provider, so
-  // empty the selector source to keep every rendered control functional.
-  return Promise.resolve({ ...summary, provider: "", providers: [] });
 }
 
 export function getAnomalies(
@@ -101,8 +135,10 @@ export function getAnomalies(
   _signal?: AbortSignal,
 ): Promise<Anomalies> {
   const preset = presetOf(params.start, params.end);
-  return Promise.resolve(
-    fixture<Anomalies>(`anomalies.${preset}.${params.groupBy}`),
+  const provider = params.provider ?? "";
+  return resolveProviderFixture<Anomalies>(
+    `anomalies.${preset}.${params.groupBy}`,
+    provider,
   );
 }
 
@@ -141,10 +177,9 @@ export function getUnitEconomicsDaily(
   _signal?: AbortSignal,
 ): Promise<UnitEconomics> {
   // Only one business metric is captured; the range selects the fixture.
-  const economics = fixture<UnitEconomics>(
+  const provider = params.provider ?? "";
+  return resolveProviderFixture<UnitEconomics>(
     `unit-economics.${presetOf(params.start, params.end)}`,
+    provider,
   );
-  // Deliberate demo-mode omission: fixtures cannot be filtered by provider, so
-  // empty the selector source to keep every rendered control functional.
-  return Promise.resolve({ ...economics, provider: "", providers: [] });
 }
