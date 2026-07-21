@@ -981,6 +981,112 @@ thead th {
   .overview-card-slot {
     grid-column: span 3;
   }
+
+  .overview-insights-slot {
+    grid-column: 1 / -1;
+  }
+}
+
+.overview-insights-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.overview-insight {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.overview-insights-list > .overview-insight:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.overview-insight-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.overview-insight-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.overview-insight-magnitude {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+}
+
+.overview-insight-body {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+  line-height: 1.45;
+}
+
+.overview-insight-evidence {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.overview-insight-evidence-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.overview-insight-evidence-row dt {
+  margin: 0;
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+
+.overview-insight-evidence-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+  text-align: right;
+}
+
+.overview-insight-link {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.overview-insight-link:hover {
+  color: var(--accent-strong, var(--accent));
+}
+
+.overview-insight-link:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 2px;
 }
 
 .overview-card {

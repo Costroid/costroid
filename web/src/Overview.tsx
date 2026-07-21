@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { components } from "./api/schema";
 import {
   getAnomalies,
   getBusinessMetrics,
   getCostsSummary,
+  getInsights,
   getUnitEconomicsDaily,
 } from "./api";
 import { EmptyIcon } from "./icons";
@@ -23,6 +24,8 @@ import {
 type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomaly = components["schemas"]["Anomaly"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
+type Insight = components["schemas"]["Insight"];
+type InsightLink = components["schemas"]["InsightLink"];
 
 type FetchParams = {
   start: string;
@@ -51,10 +54,22 @@ type UnitState =
       params: FetchParams;
     };
 
+type InsightsState =
+  | { status: "loading" }
+  | { status: "error"; message: string; params: FetchParams }
+  | {
+      status: "ready";
+      insights: Insight[];
+      currency: string;
+      params: FetchParams;
+    };
+
 export default function Overview({
   range = { start: "", end: "" },
+  onNavigate,
 }: {
   range?: Range;
+  onNavigate?: (link: InsightLink) => void;
 }) {
   const { start, end } = range;
   const [currency, setCurrency] = useState<string>(
@@ -70,11 +85,18 @@ export default function Overview({
     status: "loading",
   });
   const [unitState, setUnitState] = useState<UnitState>({ status: "loading" });
-  // One token re-runs all three fetch effects; every error card shares it.
+  const [insightsState, setInsightsState] = useState<InsightsState>({
+    status: "loading",
+  });
+  // One token re-runs all four fetch effects; every error card shares it.
   const [retryToken, setRetryToken] = useState(0);
   const retry = () => setRetryToken((t) => t + 1);
+  // Once an insight link starts navigation, skip the filter write so a queued
+  // currency/provider reconciliation cannot clobber the link's hash fields.
+  const suppressFilterWrite = useRef(false);
 
   useEffect(() => {
+    if (suppressFilterWrite.current) return;
     writeUrlState({ currency, provider });
   }, [currency, provider]);
 
@@ -213,6 +235,43 @@ export default function Overview({
     return () => controller.abort();
   }, [start, end, currency, provider, retryToken]);
 
+  // Effect 4: insights digest → full-width narrative panel.
+  // The request is provider-independent (no provider query param). provider is
+  // still in deps and params so a filter switch stays coherent with caption and
+  // staleness (same loading UX as the other cards; body is unchanged).
+  useEffect(() => {
+    setInsightsState({ status: "loading" });
+    const controller = new AbortController();
+    async function load() {
+      try {
+        const body = await getInsights(
+          {
+            start,
+            end,
+            ...(currency ? { currency } : {}),
+          },
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        setInsightsState({
+          status: "ready",
+          insights: body.insights ?? [],
+          currency: body.currency,
+          params: { start, end, currency, provider },
+        });
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setInsightsState({
+          status: "error",
+          message: err instanceof Error ? err.message : String(err),
+          params: { start, end, currency, provider },
+        });
+      }
+    }
+    void load();
+    return () => controller.abort();
+  }, [start, end, currency, provider, retryToken]);
+
   // Synchronous staleness: held terminal data for different params → loading.
   // This includes errors so a range/currency/provider change never flashes an
   // old error for one frame before the passive effects set loading states.
@@ -242,8 +301,23 @@ export default function Overview({
       unitState.params.provider !== provider)
       ? { status: "loading" }
       : unitState;
+  const insights: InsightsState =
+    (insightsState.status === "ready" || insightsState.status === "error") &&
+    (insightsState.params.start !== start ||
+      insightsState.params.end !== end ||
+      insightsState.params.currency !== currency ||
+      insightsState.params.provider !== provider)
+      ? { status: "loading" }
+      : insightsState;
   const filtered =
     summary.status === "ready" && summary.summary.provider !== "";
+
+  function handleInsightNavigate(link: InsightLink) {
+    // Arm before the callback so a reconciling setCurrency/setProvider that
+    // flushes in the same commit cannot rewrite the hash the link just set.
+    suppressFilterWrite.current = true;
+    onNavigate?.(link);
+  }
 
   return (
     <section className="overview" aria-labelledby="overview-title">
@@ -304,11 +378,13 @@ export default function Overview({
         message={
           summary.status === "loading" ||
           anomalies.status === "loading" ||
-          unit.status === "loading"
+          unit.status === "loading" ||
+          insights.status === "loading"
             ? "Loading overview…"
             : summary.status === "error" ||
                 anomalies.status === "error" ||
-                unit.status === "error"
+                unit.status === "error" ||
+                insights.status === "error"
               ? ""
               : "Overview loaded"
         }
@@ -359,6 +435,25 @@ export default function Overview({
           {unit.status === "empty" && <UnitEmptyState />}
           {unit.status === "ready" && (
             <UnitCostCard economics={unit.economics} />
+          )}
+        </div>
+
+        <div className="overview-card-slot overview-insights-slot">
+          {insights.status === "loading" && <LoadingSkeleton />}
+          {insights.status === "error" && (
+            <ErrorState onRetry={retry}>
+              Failed to load insights: {insights.message}
+            </ErrorState>
+          )}
+          {insights.status === "ready" && (
+            <InsightsCard
+              insights={insights.insights}
+              currency={insights.currency}
+              start={start}
+              end={end}
+              provider={provider}
+              onNavigate={onNavigate ? handleInsightNavigate : undefined}
+            />
           )}
         </div>
       </div>
@@ -605,5 +700,89 @@ function UnitEmptyState() {
         </pre>
       </div>
     </div>
+  );
+}
+
+function InsightsCard({
+  insights,
+  currency,
+  start,
+  end,
+  provider,
+  onNavigate,
+}: {
+  insights: Insight[];
+  currency: string;
+  start: string;
+  end: string;
+  provider: string;
+  onNavigate?: (link: InsightLink) => void;
+}) {
+  const missingBound = start === "" || end === "";
+  const hasComparisonType = insights.some(
+    (item) => item.type === "top-mover" || item.type === "unit-cost-drift",
+  );
+  const showRangeHint = missingBound && !hasComparisonType;
+
+  return (
+    <article
+      className="overview-card overview-insights-panel"
+      aria-labelledby="overview-insights"
+    >
+      <h3 id="overview-insights" className="overview-card-title">
+        Insights
+      </h3>
+      {provider !== "" && (
+        <p className="overview-muted">This digest covers all providers.</p>
+      )}
+      {insights.length === 0 ? (
+        <p className="overview-muted">No insights for this range.</p>
+      ) : (
+        <ul className="overview-insights-list">
+          {insights.map((insight, index) => (
+            <li
+              key={`${insight.type}:${insight.key ?? ""}:${index}`}
+              className="overview-insight"
+            >
+              <div className="overview-insight-header">
+                <h4 className="overview-insight-title">{insight.title}</h4>
+                <span className="overview-insight-magnitude">
+                  <Money value={insight.magnitude} currency={currency} />
+                </span>
+              </div>
+              <p className="overview-insight-body">{insight.body}</p>
+              {insight.evidence.length > 0 && (
+                <dl className="overview-insight-evidence">
+                  {insight.evidence.map((row) => (
+                    <div
+                      key={row.name}
+                      className="overview-insight-evidence-row"
+                    >
+                      <dt>{row.name}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {onNavigate && (
+                <button
+                  type="button"
+                  className="overview-insight-link"
+                  aria-label={`View details for ${insight.title}`}
+                  onClick={() => onNavigate(insight.link)}
+                >
+                  View details
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {showRangeHint && (
+        <p className="overview-muted">
+          Choose a start and end date to include period comparisons.
+        </p>
+      )}
+    </article>
   );
 }

@@ -21,6 +21,7 @@ type DailyTokenUsage = components["schemas"]["DailyTokenUsage"];
 type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
 type BusinessMetrics = components["schemas"]["BusinessMetrics"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
+type Insights = components["schemas"]["Insights"];
 
 // CostGroupBy is the shared grouping enum for the costs and anomalies endpoints.
 export type CostGroupBy =
@@ -205,4 +206,22 @@ export async function getUnitEconomicsDaily(
     throw new Error(`GET /api/v1/unit-economics/daily returned ${res.status}`);
   }
   return (await res.json()) as UnitEconomics;
+}
+
+export async function getInsights(
+  params: RangeParams & {
+    currency?: string;
+  },
+  signal?: AbortSignal,
+): Promise<Insights> {
+  const q = rangeQuery(params.start, params.end);
+  let url = `/api/v1/insights${q}`;
+  if (params.currency) {
+    url += `${url.includes("?") ? "&" : "?"}currency=${encodeURIComponent(params.currency)}`;
+  }
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    throw new Error(`GET /api/v1/insights returned ${res.status}`);
+  }
+  return (await res.json()) as Insights;
 }

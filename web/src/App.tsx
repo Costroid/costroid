@@ -24,17 +24,22 @@ import type { Range } from "./range";
 import Sources from "./Sources";
 import UsageMetrics from "./UsageMetrics";
 import UnitEconomics from "./UnitEconomics";
-import { readUrlState, writeUrlState } from "./urlstate";
+import {
+  GROUPINGS,
+  VIEWS as URL_VIEWS,
+  readUrlState,
+  writeUrlState,
+  type GroupBy,
+  type View,
+} from "./urlstate";
 
 type Meta = components["schemas"]["Meta"];
+type InsightLink = components["schemas"]["InsightLink"];
 
 type MetaState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; meta: Meta };
-
-type View =
-  "overview" | "costs" | "tokens" | "usage" | "unit-economics" | "sources";
 
 const VIEWS = [
   { id: "overview", label: "Overview", icon: OverviewIcon },
@@ -48,6 +53,21 @@ const VIEWS = [
   },
   { id: "sources", label: "Sources", icon: SourcesIcon },
 ] satisfies { id: View; label: string; icon: typeof CostsIcon }[];
+
+function narrowView(value: string | undefined): View | undefined {
+  if (value === undefined) return undefined;
+  return URL_VIEWS.find((candidate) => candidate === value);
+}
+
+function narrowGroupBy(
+  value: string | undefined,
+): { ok: true; groupBy: GroupBy | undefined } | { ok: false } {
+  if (value === undefined) return { ok: true, groupBy: undefined };
+  if (value === "tag") return { ok: true, groupBy: "tag" };
+  const found = GROUPINGS.find((candidate) => candidate === value);
+  if (found !== undefined) return { ok: true, groupBy: found };
+  return { ok: false };
+}
 
 function rangeIndicator(range: Range): string {
   if (range.start === "" && range.end === "") {
@@ -112,6 +132,31 @@ export default function App() {
     void load();
     return () => controller.abort();
   }, []);
+
+  // Programmatic deep link from the Overview insights panel. Replaces drill-down
+  // state (explicit undefined clears keys the link omits) rather than merging.
+  function onNavigate(link: InsightLink) {
+    const nextView = narrowView(link.view);
+    if (nextView === undefined) return;
+    const grouping = narrowGroupBy(link.groupBy);
+    if (!grouping.ok) return;
+
+    writeUrlState({
+      view: nextView,
+      start: link.start,
+      end: link.end,
+      groupBy: grouping.groupBy,
+      tagKey: link.tagKey,
+      currency: link.currency,
+      provider: link.provider,
+      metric: link.metric,
+    });
+    setRange({
+      start: link.start ?? "",
+      end: link.end ?? "",
+    });
+    setView(nextView);
+  }
 
   return (
     <main className="app-shell">
@@ -208,7 +253,9 @@ export default function App() {
         </nav>
       </div>
       <div className="view-panel" id="view-panel" tabIndex={-1}>
-        {view === "overview" && <Overview range={range} />}
+        {view === "overview" && (
+          <Overview range={range} onNavigate={onNavigate} />
+        )}
         {view === "costs" && <DailyCosts range={range} />}
         {view === "tokens" && <DailyTokens range={range} />}
         {view === "usage" && <UsageMetrics range={range} />}

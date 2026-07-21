@@ -18,6 +18,8 @@ type CostsSummary = components["schemas"]["CostsSummary"];
 type Anomalies = components["schemas"]["Anomalies"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
 type BusinessMetrics = components["schemas"]["BusinessMetrics"];
+type Insights = components["schemas"]["Insights"];
+type Insight = components["schemas"]["Insight"];
 
 function fakeResponse(status: number, body: unknown): Response {
   return {
@@ -32,6 +34,7 @@ const PERIOD_TOTAL = "964050.632653589793238462";
 const PERIOD_TOTAL_DISPLAY = "964,050.63";
 const UNIT_COST = "0.044569658748120211";
 const UNIT_COST_DISPLAY = "0.04457";
+const INSIGHT_EVIDENCE_EXACT = "12.345678901234567890";
 
 function summaryBody(overrides: Partial<CostsSummary> = {}): CostsSummary {
   return {
@@ -120,6 +123,49 @@ function metricsBody(
   return { metrics };
 }
 
+function insightItem(overrides: Partial<Insight> = {}): Insight {
+  return {
+    type: "unallocated-spend",
+    title: "Unallocated spend",
+    body: "Of the window total, some amount is unallocated.",
+    magnitude: "100",
+    evidence: [
+      { name: "unallocatedTotal", value: "100" },
+      { name: "windowTotal", value: "500" },
+      { name: "share", value: INSIGHT_EVIDENCE_EXACT },
+    ],
+    period: { start: "2026-01-12", end: "2026-07-11" },
+    link: {
+      view: "costs",
+      start: "2026-01-12",
+      end: "2026-07-11",
+      groupBy: "allocation",
+      currency: "USD",
+    },
+    ...overrides,
+  };
+}
+
+function insightsBody(
+  insights: Insight[] = [insightItem()],
+  overrides: Partial<Insights> = {},
+): Insights {
+  return {
+    currency: "USD",
+    currencies: ["USD"],
+    parameters: {
+      k: "3",
+      consistencyConstant: "1.4826",
+      windowDays: 30,
+      minObservations: 10,
+      relativeFloor: "0.1",
+      divisionScale: 18,
+    },
+    insights,
+    ...overrides,
+  };
+}
+
 type RouteHandler = (url: string) => Promise<Response> | Response;
 
 type RouteHandlers = {
@@ -127,6 +173,7 @@ type RouteHandlers = {
   anomalies?: RouteHandler;
   metrics?: RouteHandler;
   unit?: RouteHandler;
+  insights?: RouteHandler;
 };
 
 function mockRoutes(handlers: RouteHandlers = {}) {
@@ -157,6 +204,13 @@ function mockRoutes(handlers: RouteHandlers = {}) {
     if (path === "/api/v1/unit-economics/daily") {
       return Promise.resolve(
         handlers.unit ? handlers.unit(url) : fakeResponse(200, unitBody()),
+      );
+    }
+    if (path === "/api/v1/insights") {
+      return Promise.resolve(
+        handlers.insights
+          ? handlers.insights(url)
+          : fakeResponse(200, insightsBody()),
       );
     }
     return Promise.resolve(fakeResponse(404, null));
@@ -229,6 +283,7 @@ describe("Overview", () => {
       expect(urls).toContain(
         "/api/v1/unit-economics/daily?metric=requests%20served&currency=USD&provider=Amazon%20Web%20Services",
       );
+      expect(urls).toContain("/api/v1/insights?currency=USD");
     });
     expect(
       fetchedURLs().find((url) => url.startsWith("/api/v1/costs/summary")),
@@ -571,6 +626,7 @@ describe("Overview", () => {
       expect(urls).toContain(
         "/api/v1/unit-economics/daily?metric=requests%20served&currency=USD",
       );
+      expect(urls).toContain("/api/v1/insights?currency=USD");
     });
     expect(
       screen.getByRole("button", { name: "USD" }).getAttribute("aria-pressed"),
@@ -660,6 +716,7 @@ describe("Overview", () => {
       expect(urls).toContain(
         "/api/v1/unit-economics/daily?metric=requests%20served&currency=EUR",
       );
+      expect(urls).toContain("/api/v1/insights?currency=EUR");
     });
     expect(screen.getAllByText("7.00").length).toBeGreaterThan(0);
     expect(screen.queryByRole("group", { name: "Currency" })).toBeNull();
@@ -707,7 +764,7 @@ describe("Overview", () => {
     expect(document.querySelectorAll(".skeleton-card")).toHaveLength(0);
   });
 
-  it("retries all three fetches from one error card's Retry", async () => {
+  it("retries all four fetches from one error card's Retry", async () => {
     let failAnomalies = true;
     const fetchMock = mockRoutes({
       anomalies: () =>
@@ -728,7 +785,7 @@ describe("Overview", () => {
     expect(await screen.findByText("Flagged days")).toBeTruthy();
     expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(
-      callsBeforeRetry + 3,
+      callsBeforeRetry + 4,
     );
   });
 
@@ -987,6 +1044,9 @@ describe("Overview", () => {
       if (path === "/api/v1/unit-economics/daily") {
         return Promise.resolve(fakeResponse(200, unitBody()));
       }
+      if (path === "/api/v1/insights") {
+        return Promise.resolve(fakeResponse(200, insightsBody()));
+      }
       return Promise.resolve(fakeResponse(404, null));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1065,10 +1125,11 @@ describe("Overview", () => {
     }
 
     render(<RangeHarness />);
-    expect(await screen.findAllByRole("alert")).toHaveLength(3);
+    expect(await screen.findAllByRole("alert")).toHaveLength(4);
     expect(screen.getByText(/Failed to load cost summary/)).toBeTruthy();
     expect(screen.getByText(/Failed to load anomalies/)).toBeTruthy();
     expect(screen.getByText(/Failed to load unit cost/)).toBeTruthy();
+    expect(screen.getByText(/Failed to load insights/)).toBeTruthy();
 
     holdRequests = true;
     // A native click outside testing-library act commits the synchronous render
@@ -1080,8 +1141,9 @@ describe("Overview", () => {
     expect(screen.queryByText(/Failed to load cost summary/)).toBeNull();
     expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
     expect(screen.queryByText(/Failed to load unit cost/)).toBeNull();
+    expect(screen.queryByText(/Failed to load insights/)).toBeNull();
     expect(screen.getByText("Loading overview…")).toBeTruthy();
-    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(3);
+    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(4);
   });
 
   it("downgrades stale terminal states synchronously when currency changes", async () => {
@@ -1113,6 +1175,9 @@ describe("Overview", () => {
         if (path === "/api/v1/unit-economics/daily") {
           return Promise.resolve(fakeResponse(500, null));
         }
+        if (path === "/api/v1/insights") {
+          return Promise.resolve(fakeResponse(200, insightsBody()));
+        }
         return Promise.resolve(fakeResponse(404, null));
       }),
     );
@@ -1133,7 +1198,7 @@ describe("Overview", () => {
     expect(screen.queryByText(/Failed to load anomalies/)).toBeNull();
     expect(screen.queryByText(/Failed to load unit cost/)).toBeNull();
     expect(screen.getByText("Loading overview…")).toBeTruthy();
-    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(3);
+    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(4);
   });
 
   it("commits no stale card frame on a provider switch", async () => {
@@ -1165,6 +1230,9 @@ describe("Overview", () => {
         if (path === "/api/v1/unit-economics/daily") {
           return Promise.resolve(fakeResponse(200, unitBody()));
         }
+        if (path === "/api/v1/insights") {
+          return Promise.resolve(fakeResponse(200, insightsBody()));
+        }
         return Promise.resolve(fakeResponse(404, null));
       }),
     );
@@ -1174,6 +1242,7 @@ describe("Overview", () => {
     expect(await screen.findByText(PERIOD_TOTAL_DISPLAY)).toBeTruthy();
     expect(await screen.findByText("Flagged days")).toBeTruthy();
     expect(await screen.findByText(UNIT_COST_DISPLAY)).toBeTruthy();
+    expect(await screen.findByText("Unallocated spend")).toBeTruthy();
 
     holdRequests = true;
     // Native click OUTSIDE act commits the synchronous provider-mismatch frame;
@@ -1186,7 +1255,194 @@ describe("Overview", () => {
     expect(screen.queryByText(PERIOD_TOTAL_DISPLAY)).toBeNull();
     expect(screen.queryByText("Flagged days")).toBeNull();
     expect(screen.queryByText(UNIT_COST_DISPLAY)).toBeNull();
+    expect(screen.queryByText("Unallocated spend")).toBeNull();
     expect(screen.getByText("Loading overview…")).toBeTruthy();
-    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(3);
+    expect(document.querySelectorAll(".skeleton-card")).toHaveLength(4);
+  });
+
+  it("renders insights in the received order, not by magnitude or title", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () =>
+          fakeResponse(
+            200,
+            insightsBody([
+              insightItem({
+                type: "anomaly-digest",
+                title: "Zebra anomaly",
+                magnitude: "5",
+                evidence: [{ name: "flagCount", value: "1" }],
+              }),
+              insightItem({
+                type: "unallocated-spend",
+                title: "Alpha unallocated",
+                magnitude: "100",
+              }),
+              insightItem({
+                type: "untagged-spend",
+                title: "Middle untagged",
+                magnitude: "20",
+                dimension: "tagKey",
+                key: "environment",
+              }),
+            ]),
+          ),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText("Zebra anomaly")).toBeTruthy();
+    const panel = screen.getByText("Insights").closest("article");
+    const titles = Array.from(
+      panel!.querySelectorAll(".overview-insight-title"),
+    ).map((el) => el.textContent);
+    expect(titles).toEqual([
+      "Zebra anomaly",
+      "Alpha unallocated",
+      "Middle untagged",
+    ]);
+  });
+
+  it("renders evidence values as verbatim text nodes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () =>
+          fakeResponse(
+            200,
+            insightsBody([
+              insightItem({
+                evidence: [
+                  { name: "share", value: INSIGHT_EVIDENCE_EXACT },
+                  { name: "windowTotal", value: "500" },
+                ],
+              }),
+            ]),
+          ),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText(INSIGHT_EVIDENCE_EXACT)).toBeTruthy();
+    const node = screen.getByText(INSIGHT_EVIDENCE_EXACT);
+    expect(node.tagName.toLowerCase()).toBe("dd");
+    expect(node.getAttribute("title")).toBeNull();
+  });
+
+  it("renders the insights panel content with the healthy default harness response", async () => {
+    vi.stubGlobal("fetch", mockRoutes());
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText("Unallocated spend")).toBeTruthy();
+    expect(
+      screen.getByText("Of the window total, some amount is unallocated."),
+    ).toBeTruthy();
+    expect(screen.getByText(INSIGHT_EVIDENCE_EXACT)).toBeTruthy();
+  });
+
+  it("isolates insights 500: only the insights card degrades", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () => fakeResponse(500, null),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText(PERIOD_TOTAL_DISPLAY)).toBeTruthy();
+    expect(await screen.findByText("Flagged days")).toBeTruthy();
+    expect(await screen.findByText(UNIT_COST_DISPLAY)).toBeTruthy();
+    expect(
+      await screen.findByText(
+        /Failed to load insights: GET \/api\/v1\/insights returned 500/,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("renders a muted empty paragraph when insights is an empty array", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () => fakeResponse(200, insightsBody([])),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText("No insights for this range.")).toBeTruthy();
+    const muted = screen.getByText("No insights for this range.");
+    expect(muted.classList.contains("overview-muted")).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("No business metrics yet")).toBeNull();
+  });
+
+  it("shows a bounded-range hint when a bound is missing and no comparison types are present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () =>
+          fakeResponse(
+            200,
+            insightsBody([
+              insightItem({ type: "unallocated-spend", title: "Only unalloc" }),
+            ]),
+          ),
+      }),
+    );
+    render(<Overview range={{ start: "", end: "" }} />);
+
+    expect(
+      await screen.findByText(
+        "Choose a start and end date to include period comparisons.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("hides the bounded-range hint when the range has both bounds", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () =>
+          fakeResponse(
+            200,
+            insightsBody([
+              insightItem({ type: "unallocated-spend", title: "Only unalloc" }),
+            ]),
+          ),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText("Only unalloc")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "Choose a start and end date to include period comparisons.",
+      ),
+    ).toBeNull();
+  });
+
+  it("shows the all-providers caption when a provider filter is active, even if summary failed", async () => {
+    window.location.hash = "#provider=Amazon+Web+Services";
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        summary: () => fakeResponse(500, null),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(
+      await screen.findByText("This digest covers all providers."),
+    ).toBeTruthy();
+    expect(await screen.findByText("Unallocated spend")).toBeTruthy();
+    expect(screen.getByText(/Failed to load cost summary/)).toBeTruthy();
+  });
+
+  it("hides the all-providers caption when no provider filter is active", async () => {
+    vi.stubGlobal("fetch", mockRoutes());
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText("Unallocated spend")).toBeTruthy();
+    expect(screen.queryByText("This digest covers all providers.")).toBeNull();
   });
 });

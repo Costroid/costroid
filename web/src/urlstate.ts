@@ -11,7 +11,7 @@ const STATE_KEYS = [
   "metric",
 ] as const;
 
-const VIEWS = [
+export const VIEWS = [
   "overview",
   "costs",
   "tokens",
@@ -20,7 +20,7 @@ const VIEWS = [
   "sources",
 ] as const;
 
-const GROUPINGS = [
+export const GROUPINGS = [
   "service",
   "provider",
   "allocation",
@@ -30,8 +30,8 @@ const GROUPINGS = [
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CURRENCY = /^[A-Z]{3}$/;
 
-type View = (typeof VIEWS)[number];
-type GroupBy = (typeof GROUPINGS)[number] | "tag";
+export type View = (typeof VIEWS)[number];
+export type GroupBy = (typeof GROUPINGS)[number] | "tag";
 
 export type UrlState = {
   view?: View;

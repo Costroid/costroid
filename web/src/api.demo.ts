@@ -23,6 +23,7 @@ type DailyTokenUsage = components["schemas"]["DailyTokenUsage"];
 type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
 type BusinessMetrics = components["schemas"]["BusinessMetrics"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
+type Insights = components["schemas"]["Insights"];
 
 // These mirror ./api's shared enums. They are re-declared (not imported) so the
 // demo alias never makes this module import itself.
@@ -214,5 +215,16 @@ export function getUnitEconomicsDaily(
   return resolveProviderFixture<UnitEconomics>(
     `unit-economics.${presetOf(params.start, params.end)}`,
     provider,
+  );
+}
+
+export function getInsights(
+  params: RangeParams & {
+    currency?: string;
+  },
+  _signal?: AbortSignal,
+): Promise<Insights> {
+  return Promise.resolve(
+    fixture<Insights>(`insights.${presetOf(params.start, params.end)}`),
   );
 }

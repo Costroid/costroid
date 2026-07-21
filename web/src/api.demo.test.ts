@@ -17,6 +17,8 @@ import amazonSubaccountCosts from "./demo/fixtures/filtered/costs.last30.subacco
 import googleAnomalies from "./demo/fixtures/filtered/anomalies.full.service.google.json";
 import amazonEconomics from "./demo/fixtures/filtered/unit-economics.full.amazon-web-services.json";
 import baseEconomics from "./demo/fixtures/unit-economics.full.json";
+import insightsFull from "./demo/fixtures/insights.full.json";
+import insightsLast30 from "./demo/fixtures/insights.last30.json";
 import { DEMO_PRESETS } from "./demo/ranges";
 
 const fullServiceRange = { start: "", end: "", groupBy: "service" as const };
@@ -24,6 +26,34 @@ const fullServiceRange = { start: "", end: "", groupBy: "service" as const };
 describe("api.demo export surface", () => {
   it("matches the production transport seam", () => {
     expect(Object.keys(demoApi).sort()).toEqual(Object.keys(api).sort());
+  });
+});
+
+describe("api.demo getInsights", () => {
+  it("returns the full-precision magnitude from the captured fixture verbatim", async () => {
+    const full = DEMO_PRESETS.find((p) => p.id === "full")!;
+    const body = await demoApi.getInsights({
+      start: full.start,
+      end: full.end,
+    });
+    expect(body).toBe(insightsFull);
+    expect(body.insights[0]?.magnitude).toBe(
+      insightsFull.insights[0].magnitude,
+    );
+    expect(body.insights[0]?.magnitude).toBe("194348.36");
+    expect(body.insights[0]?.evidence[2]?.value).toBe(
+      insightsFull.insights[0].evidence[2].value,
+    );
+    expect(body.insights[0]?.evidence[2]?.value).toBe("0.201595594066514939");
+  });
+
+  it("selects the preset fixture by range", async () => {
+    const last30 = DEMO_PRESETS.find((p) => p.id === "last30")!;
+    const body = await demoApi.getInsights({
+      start: last30.start,
+      end: last30.end,
+    });
+    expect(body).toBe(insightsLast30);
   });
 });
 

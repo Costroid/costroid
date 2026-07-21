@@ -86,6 +86,23 @@ function mockFetch(demo = false) {
         }),
       );
     }
+    if (path === "/api/v1/insights") {
+      return Promise.resolve(
+        fakeResponse(200, {
+          currency: "",
+          currencies: [],
+          parameters: {
+            k: "3",
+            consistencyConstant: "1.4826",
+            windowDays: 30,
+            minObservations: 10,
+            relativeFloor: "0.1",
+            divisionScale: 18,
+          },
+          insights: [],
+        }),
+      );
+    }
     // costs/daily and any other path
     return Promise.resolve(fakeResponse(200, emptyCosts));
   });
@@ -533,6 +550,23 @@ describe("App", () => {
       if (parsed.pathname === "/api/v1/business-metrics") {
         return Promise.resolve(fakeResponse(200, { metrics: [] }));
       }
+      if (parsed.pathname === "/api/v1/insights") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: currency || "",
+            currencies: currency ? [currency] : [],
+            parameters: {
+              k: "3",
+              consistencyConstant: "1.4826",
+              windowDays: 30,
+              minObservations: 10,
+              relativeFloor: "0.1",
+              divisionScale: 18,
+            },
+            insights: [],
+          }),
+        );
+      }
       return Promise.resolve(fakeResponse(404, null));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -570,5 +604,566 @@ describe("App", () => {
     expect(window.location.hash).toBe(
       "#view=costs&groupBy=allocation&currency=USD&provider=Amazon+Web+Services&metric=requests",
     );
+  });
+
+  function insightNavFixture(
+    link: Record<string, string>,
+    title = "Nav insight",
+  ) {
+    return {
+      currency: "USD",
+      currencies: ["USD"],
+      parameters: {
+        k: "3",
+        consistencyConstant: "1.4826",
+        windowDays: 30,
+        minObservations: 10,
+        relativeFloor: "0.1",
+        divisionScale: 18,
+      },
+      insights: [
+        {
+          type: "untagged-spend",
+          title,
+          body: "Evidence body for navigation.",
+          magnitude: "42",
+          evidence: [{ name: "share", value: "0.1" }],
+          period: {},
+          link,
+        },
+      ],
+    };
+  }
+
+  function firstURL(
+    fetchMock: ReturnType<typeof vi.fn>,
+    prefix: string,
+  ): string | undefined {
+    return fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .find((url) => url.startsWith(prefix));
+  }
+
+  it("navigates an insight tag link into Costs with groupBy and tagKey on the first request", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = new URL(url, "http://x").pathname;
+      if (path === "/api/v1/meta") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            name: "costroid",
+            version: "0.1.0-test",
+            focusVersion: "1.4",
+            demo: false,
+          }),
+        );
+      }
+      if (path === "/api/v1/insights") {
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            insightNavFixture({
+              view: "costs",
+              start: "2026-01-12",
+              end: "2026-07-11",
+              groupBy: "tag",
+              tagKey: "environment",
+              currency: "USD",
+            }),
+          ),
+        );
+      }
+      if (path === "/api/v1/costs/summary") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptySummary,
+            currency: "USD",
+            currencies: ["USD"],
+            providers: ["Amazon Web Services", "Microsoft"],
+          }),
+        );
+      }
+      if (path === "/api/v1/anomalies") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: "USD",
+            parameters: {
+              k: "3",
+              consistencyConstant: "1.4826",
+              windowDays: 30,
+              minObservations: 10,
+              relativeFloor: "0.1",
+              groupBy: "service",
+              tagKey: "",
+            },
+            anomalies: [],
+          }),
+        );
+      }
+      if (path === "/api/v1/business-metrics") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            metrics: [
+              {
+                name: "requests served",
+                firstDay: "2026-01-12",
+                lastDay: "2026-07-11",
+              },
+            ],
+          }),
+        );
+      }
+      if (path === "/api/v1/unit-economics/daily") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: "USD",
+            currencies: ["USD"],
+            provider: "",
+            providers: ["Amazon Web Services"],
+            metric: "requests served",
+            period: {
+              coveredDays: 1,
+              cost: "1",
+              quantity: "1",
+              unitCost: "1",
+            },
+            days: [],
+          }),
+        );
+      }
+      if (path === "/api/v1/costs/daily") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptyCosts,
+            currency: "USD",
+            currencies: ["USD"],
+            tagKeys: ["environment"],
+          }),
+        );
+      }
+      return Promise.resolve(fakeResponse(200, emptyCosts));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    expect(await screen.findByText("Nav insight")).toBeTruthy();
+    fetchMock.mockClear();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View details for Nav insight" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Daily cost by tag environment",
+      }),
+    ).toBeTruthy();
+    expect(window.location.hash).toBe(
+      "#view=costs&start=2026-01-12&end=2026-07-11&groupBy=tag%3Aenvironment&currency=USD",
+    );
+    await waitFor(() => {
+      expect(firstURL(fetchMock, "/api/v1/costs/daily")).toBe(
+        "/api/v1/costs/daily?start=2026-01-12&end=2026-07-11&groupBy=tag&tagKey=environment&currency=USD",
+      );
+    });
+  });
+
+  it("navigates an insight metric link into unit-economics with the linked metric", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = new URL(url, "http://x").pathname;
+      if (path === "/api/v1/meta") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            name: "costroid",
+            version: "0.1.0-test",
+            focusVersion: "1.4",
+            demo: false,
+          }),
+        );
+      }
+      if (path === "/api/v1/insights") {
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            insightNavFixture(
+              {
+                view: "unit-economics",
+                start: "2026-01-12",
+                end: "2026-07-11",
+                currency: "USD",
+                metric: "requests served",
+              },
+              "Unit drift",
+            ),
+          ),
+        );
+      }
+      if (path === "/api/v1/costs/summary") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptySummary,
+            currency: "USD",
+            currencies: ["USD"],
+          }),
+        );
+      }
+      if (path === "/api/v1/anomalies") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: "USD",
+            parameters: {
+              k: "3",
+              consistencyConstant: "1.4826",
+              windowDays: 30,
+              minObservations: 10,
+              relativeFloor: "0.1",
+              groupBy: "service",
+              tagKey: "",
+            },
+            anomalies: [],
+          }),
+        );
+      }
+      if (path === "/api/v1/business-metrics") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            metrics: [
+              {
+                name: "requests served",
+                firstDay: "2026-01-12",
+                lastDay: "2026-07-11",
+              },
+              {
+                name: "active tenants",
+                firstDay: "2026-01-12",
+                lastDay: "2026-07-11",
+              },
+            ],
+          }),
+        );
+      }
+      if (path === "/api/v1/unit-economics/daily") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: "USD",
+            currencies: ["USD"],
+            provider: "",
+            providers: ["Amazon Web Services"],
+            metric: "requests served",
+            period: {
+              coveredDays: 1,
+              cost: "1",
+              quantity: "1",
+              unitCost: "1",
+            },
+            days: [],
+          }),
+        );
+      }
+      return Promise.resolve(fakeResponse(200, emptyCosts));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    expect(await screen.findByText("Unit drift")).toBeTruthy();
+    fetchMock.mockClear();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View details for Unit drift" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Unit economics" }),
+    ).toBeTruthy();
+    expect(window.location.hash).toContain("metric=requests+served");
+    expect(window.location.hash).toContain("view=unit-economics");
+    await waitFor(() => {
+      expect(firstURL(fetchMock, "/api/v1/unit-economics/daily")).toBe(
+        "/api/v1/unit-economics/daily?metric=requests%20served&start=2026-01-12&end=2026-07-11&currency=USD",
+      );
+    });
+  });
+
+  it("clears provider and groupBy when an insight link omits them", async () => {
+    window.location.hash =
+      "#provider=Amazon+Web+Services&groupBy=tag%3Aenvironment&currency=EUR";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = new URL(url, "http://x").pathname;
+      if (path === "/api/v1/meta") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            name: "costroid",
+            version: "0.1.0-test",
+            focusVersion: "1.4",
+            demo: false,
+          }),
+        );
+      }
+      if (path === "/api/v1/insights") {
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            insightNavFixture({
+              view: "costs",
+              start: "2026-06-01",
+              end: "2026-06-30",
+              currency: "USD",
+            }),
+          ),
+        );
+      }
+      if (path === "/api/v1/costs/summary") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptySummary,
+            currency: "USD",
+            currencies: ["USD", "EUR"],
+            providers: ["Amazon Web Services", "Microsoft"],
+          }),
+        );
+      }
+      if (path === "/api/v1/anomalies") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: "USD",
+            parameters: {
+              k: "3",
+              consistencyConstant: "1.4826",
+              windowDays: 30,
+              minObservations: 10,
+              relativeFloor: "0.1",
+              groupBy: "service",
+              tagKey: "",
+            },
+            anomalies: [],
+          }),
+        );
+      }
+      if (path === "/api/v1/business-metrics") {
+        return Promise.resolve(fakeResponse(200, { metrics: [] }));
+      }
+      if (path === "/api/v1/costs/daily") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptyCosts,
+            currency: "USD",
+            currencies: ["USD"],
+            tagKeys: ["environment"],
+          }),
+        );
+      }
+      return Promise.resolve(fakeResponse(200, emptyCosts));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    expect(await screen.findByText("Nav insight")).toBeTruthy();
+    // Clear mock so we can find the first costs/daily after the click only.
+    fetchMock.mockClear();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View details for Nav insight" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Daily cost by/ }),
+    ).toBeTruthy();
+    expect(window.location.hash).not.toContain("provider=");
+    expect(window.location.hash).not.toContain("groupBy=");
+    expect(window.location.hash).toContain("currency=USD");
+    await waitFor(() => {
+      const costsURL = firstURL(fetchMock, "/api/v1/costs/daily");
+      expect(costsURL).toBe(
+        "/api/v1/costs/daily?start=2026-06-01&end=2026-06-30&currency=USD",
+      );
+      expect(costsURL).not.toContain("provider=");
+      expect(costsURL).not.toContain("tagKey=");
+      expect(costsURL).not.toContain("groupBy=tag");
+    });
+  });
+
+  it("keeps the link currency on the target view's first request despite Overview reconciliation", async () => {
+    // Mounted provider is absent from the summary's providers list → Overview
+    // queues setProvider("") (and the filter write) while the insight link
+    // carries currency=USD. The suppress-write arm must keep the currency.
+    window.location.hash = "#provider=Ghost+Cloud";
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = new URL(url, "http://x").pathname;
+      if (path === "/api/v1/meta") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            name: "costroid",
+            version: "0.1.0-test",
+            focusVersion: "1.4",
+            demo: false,
+          }),
+        );
+      }
+      if (path === "/api/v1/insights") {
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            insightNavFixture({
+              view: "costs",
+              start: "2026-01-12",
+              end: "2026-07-11",
+              groupBy: "service",
+              currency: "USD",
+            }),
+          ),
+        );
+      }
+      if (path === "/api/v1/costs/summary") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptySummary,
+            currency: "USD",
+            currencies: ["USD"],
+            provider: "",
+            // Ghost Cloud is NOT listed → reconciling state.
+            providers: ["Amazon Web Services", "Microsoft"],
+          }),
+        );
+      }
+      if (path === "/api/v1/anomalies") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: "USD",
+            parameters: {
+              k: "3",
+              consistencyConstant: "1.4826",
+              windowDays: 30,
+              minObservations: 10,
+              relativeFloor: "0.1",
+              groupBy: "service",
+              tagKey: "",
+            },
+            anomalies: [],
+          }),
+        );
+      }
+      if (path === "/api/v1/business-metrics") {
+        return Promise.resolve(fakeResponse(200, { metrics: [] }));
+      }
+      if (path === "/api/v1/costs/daily") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptyCosts,
+            currency: "USD",
+            currencies: ["USD"],
+          }),
+        );
+      }
+      return Promise.resolve(fakeResponse(200, emptyCosts));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    expect(await screen.findByText("Nav insight")).toBeTruthy();
+    // Wait until summary reconciliation has had a chance to queue.
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).startsWith("/api/v1/costs/summary"),
+        ),
+      ).toBe(true),
+    );
+    fetchMock.mockClear();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View details for Nav insight" }),
+    );
+
+    await waitFor(() => {
+      expect(firstURL(fetchMock, "/api/v1/costs/daily")).toBe(
+        "/api/v1/costs/daily?start=2026-01-12&end=2026-07-11&currency=USD",
+      );
+    });
+  });
+
+  it("moves App range and the target first request when the link carries different dates", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = new URL(url, "http://x").pathname;
+      if (path === "/api/v1/meta") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            name: "costroid",
+            version: "0.1.0-test",
+            focusVersion: "1.4",
+            demo: false,
+          }),
+        );
+      }
+      if (path === "/api/v1/insights") {
+        return Promise.resolve(
+          fakeResponse(
+            200,
+            insightNavFixture({
+              view: "costs",
+              start: "2026-03-01",
+              end: "2026-03-31",
+              currency: "USD",
+            }),
+          ),
+        );
+      }
+      if (path === "/api/v1/costs/summary") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptySummary,
+            currency: "USD",
+            currencies: ["USD"],
+          }),
+        );
+      }
+      if (path === "/api/v1/anomalies") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            currency: "USD",
+            parameters: {
+              k: "3",
+              consistencyConstant: "1.4826",
+              windowDays: 30,
+              minObservations: 10,
+              relativeFloor: "0.1",
+              groupBy: "service",
+              tagKey: "",
+            },
+            anomalies: [],
+          }),
+        );
+      }
+      if (path === "/api/v1/business-metrics") {
+        return Promise.resolve(fakeResponse(200, { metrics: [] }));
+      }
+      if (path === "/api/v1/costs/daily") {
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...emptyCosts,
+            currency: "USD",
+            currencies: ["USD"],
+          }),
+        );
+      }
+      return Promise.resolve(fakeResponse(200, emptyCosts));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    expect(await screen.findByText("Showing all time")).toBeTruthy();
+    expect(await screen.findByText("Nav insight")).toBeTruthy();
+    fetchMock.mockClear();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View details for Nav insight" }),
+    );
+
+    expect(
+      await screen.findByText("Showing 2026-03-01 → 2026-03-31"),
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(firstURL(fetchMock, "/api/v1/costs/daily")).toBe(
+        "/api/v1/costs/daily?start=2026-03-01&end=2026-03-31&currency=USD",
+      );
+    });
   });
 });
