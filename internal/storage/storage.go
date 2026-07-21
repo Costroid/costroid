@@ -85,6 +85,13 @@ type Store interface {
 	// non-nil empty slice.
 	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time, provider string) ([]string, error)
 
+	// CostTotals returns, for one tenant, the summed BilledCost and EffectiveCost
+	// per BillingCurrency for rows whose ChargePeriodStart falls inside the
+	// inclusive UTC calendar-day bounds, ordered by currency ascending. A zero
+	// bound is unbounded on that side. SQL performs only SUM and GROUP BY; never
+	// division. An empty range returns a non-nil empty slice.
+	CostTotals(ctx context.Context, tenant string, start, end time.Time) ([]CostTotals, error)
+
 	// DailyCostsByService returns, for one tenant, the total BilledCost
 	// per UTC calendar day (of ChargePeriodStart) per grouping key:
 	// ServiceName by default, ServiceProviderName when GroupByProvider is
@@ -387,6 +394,14 @@ type ReplaceResult struct {
 	PreviousBilledCost decimal.Decimal
 	// NewBilledCost is the batch's total BilledCost now stored.
 	NewBilledCost decimal.Decimal
+}
+
+// CostTotals is one billing currency's summed BilledCost and EffectiveCost for
+// a query window. Both amounts are exact decimals (never float64).
+type CostTotals struct {
+	Currency  string
+	Billed    decimal.Decimal
+	Effective decimal.Decimal
 }
 
 // DailyCosts is the result of a daily-cost grouping query.

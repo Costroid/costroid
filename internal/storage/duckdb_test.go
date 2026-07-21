@@ -520,6 +520,70 @@ func TestBillingCurrenciesSortedSingleAndEmptyNonNil(t *testing.T) {
 	}
 }
 
+// TestCostTotalsPerCurrencyWindowExactOrder pins exact per-currency billed and
+// effective sums over a window that spans two currencies, excludes out-of-window
+// and other-tenant rows, and returns currencies ordered ascending. Empty windows
+// yield a non-nil empty slice.
+func TestCostTotalsPerCurrencyWindowExactOrder(t *testing.T) {
+	// Window [day1, day2]:
+	//   USD day1: billed 10.5 + 0.25 = 10.75, effective 8 + 0.1 = 8.1
+	//   EUR day2: billed 3.00,           effective 2.5
+	// Outside window (day3 USD billed 100) and other tenant must not contribute.
+	usdA := testRecord(t, "usd-a", day(1), "10.5")
+	usdA.BilledCost = decimal.RequireFromString("10.5")
+	usdA.EffectiveCost = decimal.RequireFromString("8")
+	usdB := testRecord(t, "usd-b", day(1), "0.25")
+	usdB.BilledCost = decimal.RequireFromString("0.25")
+	usdB.EffectiveCost = decimal.RequireFromString("0.1")
+	eur := testRecord(t, "eur-a", day(2), "3")
+	eur.BillingCurrency = "EUR"
+	eur.BilledCost = decimal.RequireFromString("3.00")
+	eur.EffectiveCost = decimal.RequireFromString("2.5")
+	outside := testRecord(t, "usd-out", day(3), "100")
+	outside.BilledCost = decimal.RequireFromString("100")
+	outside.EffectiveCost = decimal.RequireFromString("90")
+	otherTenant := testRecord(t, "other", day(1), "50")
+	otherTenant.BillingCurrency = "GBP"
+	otherTenant.XTenantID = "acme"
+	otherTenant.BilledCost = decimal.RequireFromString("50")
+	otherTenant.EffectiveCost = decimal.RequireFromString("40")
+	store := allocStore(t, usdA, usdB, eur, outside, otherTenant)
+
+	got, err := store.CostTotals(context.Background(), focus.DefaultTenant, day(1), day(2))
+	if err != nil {
+		t.Fatalf("CostTotals: %v", err)
+	}
+	// Hand-computed: EUR first (alpha), then USD. Outside-window 100 and GBP excluded.
+	want := []CostTotals{
+		{Currency: "EUR", Billed: decimal.RequireFromString("3"), Effective: decimal.RequireFromString("2.5")},
+		{Currency: "USD", Billed: decimal.RequireFromString("10.75"), Effective: decimal.RequireFromString("8.1")},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("CostTotals = %+v, want %d rows", got, len(want))
+	}
+	for i := range want {
+		if got[i].Currency != want[i].Currency ||
+			got[i].Billed.String() != want[i].Billed.String() ||
+			got[i].Effective.String() != want[i].Effective.String() {
+			t.Errorf("row %d = {currency:%q billed:%s effective:%s}, want {currency:%q billed:%s effective:%s}",
+				i, got[i].Currency, got[i].Billed, got[i].Effective,
+				want[i].Currency, want[i].Billed, want[i].Effective)
+		}
+	}
+
+	// Empty window: non-nil empty slice.
+	empty, err := store.CostTotals(context.Background(), focus.DefaultTenant, day(4), day(4))
+	if err != nil {
+		t.Fatalf("CostTotals(empty): %v", err)
+	}
+	if empty == nil {
+		t.Fatal("CostTotals(empty) returned nil, want non-nil empty slice")
+	}
+	if len(empty) != 0 {
+		t.Fatalf("CostTotals(empty) = %+v, want []", empty)
+	}
+}
+
 func TestProvidersSortedScopedAndEmptyNonNil(t *testing.T) {
 	aws := testRecord(t, "AWS service", day(1), "1")
 	aws.ServiceProviderName = "Amazon Web Services"

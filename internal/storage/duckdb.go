@@ -429,6 +429,53 @@ func (s *DuckDB) BillingCurrencies(ctx context.Context, tenant string, start, en
 	return result, nil
 }
 
+// CostTotals implements Store. SUM of billed_cost and effective_cost per
+// billing_currency only; no division, no statistics.
+func (s *DuckDB) CostTotals(ctx context.Context, tenant string, start, end time.Time) ([]CostTotals, error) {
+	where := "WHERE x_tenant_id = ?"
+	args := []any{tenant}
+	if !start.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) >= CAST(? AS DATE)"
+		args = append(args, start.UTC().Format(time.DateOnly))
+	}
+	if !end.IsZero() {
+		where += " AND CAST(charge_period_start AS DATE) <= CAST(? AS DATE)"
+		args = append(args, end.UTC().Format(time.DateOnly))
+	}
+
+	result := []CostTotals{}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT billing_currency, SUM(billed_cost), SUM(effective_cost)
+		 FROM cost_records `+where+`
+		 GROUP BY billing_currency
+		 ORDER BY billing_currency ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying cost totals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			currency  string
+			billed    duckdb.Decimal
+			effective duckdb.Decimal
+		)
+		// DuckDB DECIMAL columns scan as duckdb.Decimal; scanning into
+		// float64 would silently lose precision.
+		if err := rows.Scan(&currency, &billed, &effective); err != nil {
+			return nil, fmt.Errorf("scanning cost totals row: %w", err)
+		}
+		result = append(result, CostTotals{
+			Currency:  currency,
+			Billed:    decimal.NewFromBigInt(billed.Value, -int32(billed.Scale)),       //nolint:gosec // DuckDB DECIMAL scale is at most 38.
+			Effective: decimal.NewFromBigInt(effective.Value, -int32(effective.Scale)), //nolint:gosec // DuckDB DECIMAL scale is at most 38.
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("querying cost totals: %w", err)
+	}
+	return result, nil
+}
+
 // DailyCostsByService implements Store.
 func (s *DuckDB) DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency, provider string, groupBy ...CostGroupBy) (DailyCosts, error) {
 	where := "WHERE x_tenant_id = ?"
