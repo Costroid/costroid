@@ -2,7 +2,7 @@
 
 **Open-source, self-hostable, [FOCUS](https://focus.finops.org/)-native cost platform (FinOps).**
 
-Costroid ingests cost & usage data from cloud providers (AWS, Azure, Google Cloud), AI/LLM vendors (OpenAI, Anthropic), and any generic FOCUS or CSV export, normalizes everything into a single **FOCUS-conformant** data model, and gives you cost allocation, unit economics, anomaly detection, and a dashboard. It runs **entirely on your own infrastructure** — no data leaves your environment. (A natural-language / agentic query layer is planned, not yet shipped.)
+Costroid ingests cost & usage data from cloud providers (AWS, Azure, Google Cloud), AI/LLM vendors (OpenAI, Anthropic), and any generic FOCUS or CSV export, normalizes everything into a single **FOCUS-conformant** data model, and gives you cost allocation, unit economics, anomaly detection, and a dashboard. It runs **entirely on your own infrastructure**. With optional outbound features unconfigured, the core sends nothing. The natural-language `ask` command is off unless you configure a model endpoint, and you choose that endpoint. When enabled, it sends only your question, the static plan schema, and discovered provider names, tag keys, currency codes, and business-metric names. It never sends cost amounts, quantities, or store rows. Prompt and response content from AI sources is still never ingested, stored, logged, cached, or transmitted.
 
 > **FOCUS** = FinOps Open Cost and Usage Specification, an open standard from the FinOps Foundation for representing cloud/SaaS/AI cost & usage in one schema.
 

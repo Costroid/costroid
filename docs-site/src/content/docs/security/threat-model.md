@@ -14,10 +14,18 @@ does not cover.
 ## The rule
 
 The Cardinal Rule (decision D7): Costroid ingests, stores, logs, and transmits
-only cost and usage **metadata** from AI vendor cost and usage APIs. It never
-ingests, stores, logs, caches, or transmits prompt or response content. What it
-reads is limited to money amounts, currencies, day and month timestamps, model
-and workspace identifiers, and aggregate token and request counts.
+only cost and usage **metadata** from AI vendor cost and usage APIs. Prompt and
+response content from those AI sources is never ingested, stored, logged,
+cached, or transmitted. What it reads is limited to money amounts, currencies,
+day and month timestamps, model and workspace identifiers, and aggregate token
+and request counts.
+
+With optional outbound features unconfigured, the core sends nothing. The
+natural-language `ask` command is off unless the operator configures a model
+endpoint, and the operator chooses that endpoint. When enabled, it sends only
+the user's question, the static plan schema, and discovered provider names,
+tag keys, currency codes, and business-metric names. It never sends cost
+amounts, quantities, or store rows.
 
 ## Outbound alert payloads
 
