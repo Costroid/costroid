@@ -30,6 +30,10 @@ import (
 // so a retroactive FOCUS correction rewriting a past day is automatically
 // re-scored.
 func (s *Server) GetAnomalies(w http.ResponseWriter, r *http.Request, params GetAnomaliesParams) {
+	if invertedDateRange(params.Start, params.End) {
+		http.Error(w, "start date must not be after end date", http.StatusBadRequest)
+		return
+	}
 	var start, end time.Time // requested filter window; zero = unbounded on that side
 	if params.Start != nil {
 		start = params.Start.Time

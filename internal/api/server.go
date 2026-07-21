@@ -39,6 +39,10 @@ var billingCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 var providerShapeMessage = fmt.Sprintf("provider must be a non-empty string of at most %d bytes", focus.MaxFreeTextBytes)
 var tagKeyShapeMessage = fmt.Sprintf("tagKey must be a non-empty string of at most %d bytes", focus.MaxFreeTextBytes)
 
+func invertedDateRange(start, end *openapi_types.Date) bool {
+	return start != nil && end != nil && start.After(end.Time)
+}
+
 // CostStore is the slice of the storage interface the API reads from.
 type CostStore interface {
 	Providers(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
@@ -196,6 +200,10 @@ func mergeSyncHistory(entry *SyncSourceStatus, status storage.SyncStatus) {
 // strings, so this handler validates that enum explicitly. groupBy=allocation
 // reads and applies the configured query-time allocation rules per request.
 func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params GetDailyCostsParams) {
+	if invertedDateRange(params.Start, params.End) {
+		http.Error(w, "start date must not be after end date", http.StatusBadRequest)
+		return
+	}
 	var start, end time.Time // zero = unbounded
 	if params.Start != nil {
 		start = params.Start.Time
@@ -314,6 +322,10 @@ func (s *Server) GetDailyCosts(w http.ResponseWriter, r *http.Request, params Ge
 // store methods (two window queries) and the grand-total decimal loop — no new
 // store method. Money is always shopspring/decimal strings; never float64.
 func (s *Server) GetCostsSummary(w http.ResponseWriter, r *http.Request, params GetCostsSummaryParams) {
+	if invertedDateRange(params.Start, params.End) {
+		http.Error(w, "start date must not be after end date", http.StatusBadRequest)
+		return
+	}
 	var start, end time.Time // zero = unbounded
 	if params.Start != nil {
 		start = params.Start.Time
@@ -536,6 +548,10 @@ func (s *Server) loadAllocationDimension(w http.ResponseWriter) (allocation.Dime
 // decimal strings (decisions D23, D25) — never floats. Only enriched token
 // rows are returned; the store excludes money-only (null-quantity) rows.
 func (s *Server) GetDailyTokens(w http.ResponseWriter, r *http.Request, params GetDailyTokensParams) {
+	if invertedDateRange(params.Start, params.End) {
+		http.Error(w, "start date must not be after end date", http.StatusBadRequest)
+		return
+	}
 	var start, end time.Time // zero = unbounded
 	if params.Start != nil {
 		start = params.Start.Time
@@ -571,6 +587,10 @@ func (s *Server) GetDailyTokens(w http.ResponseWriter, r *http.Request, params G
 // (decisions D23, D25) — never floats. These metrics live outside the FOCUS cost
 // dataset, so they never overlap the daily-cost or daily-token views.
 func (s *Server) GetDailyUsageMetrics(w http.ResponseWriter, r *http.Request, params GetDailyUsageMetricsParams) {
+	if invertedDateRange(params.Start, params.End) {
+		http.Error(w, "start date must not be after end date", http.StatusBadRequest)
+		return
+	}
 	var start, end time.Time // zero = unbounded
 	if params.Start != nil {
 		start = params.Start.Time
@@ -623,6 +643,10 @@ func (s *Server) GetBusinessMetrics(w http.ResponseWriter, r *http.Request) {
 // quantity stay exact decimals; division happens only in Go at explicit scale
 // 18 and the result is transported as a string.
 func (s *Server) GetDailyUnitEconomics(w http.ResponseWriter, r *http.Request, params GetDailyUnitEconomicsParams) {
+	if invertedDateRange(params.Start, params.End) {
+		http.Error(w, "start date must not be after end date", http.StatusBadRequest)
+		return
+	}
 	// metric is a required query parameter (the generated binding wrapper 400s a
 	// wholly-absent metric before the handler runs); a present-but-empty
 	// "?metric=" still binds "" and is rejected here.

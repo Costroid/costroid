@@ -24,6 +24,10 @@ import (
 // pure insights package receives already-queried inputs and returns ranked
 // observations with exact decimal arithmetic.
 func (s *Server) GetInsights(w http.ResponseWriter, r *http.Request, params GetInsightsParams) {
+	if invertedDateRange(params.Start, params.End) {
+		http.Error(w, "start date must not be after end date", http.StatusBadRequest)
+		return
+	}
 	var start, end time.Time
 	if params.Start != nil {
 		start = params.Start.Time
