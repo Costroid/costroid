@@ -39,6 +39,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Costroid/costroid/internal/storage"
@@ -180,7 +181,10 @@ func LoadKey(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stating key file %s: %w", path, err)
 	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+	// Go's file Stat synthesizes 0666 on Windows; file protection there is
+	// NTFS ACLs, which this check cannot see. Skip on Windows; keep the
+	// POSIX path and error message byte-identical.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm&0o077 != 0 {
 		return nil, fmt.Errorf("credential key file %s is group- or world-accessible (mode %04o) — it must be "+
 			"readable only by you; run `chmod 600 %s`", path, perm, path)
 	}

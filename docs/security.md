@@ -137,7 +137,9 @@ loopback bind for local, single-user use — never on a network-exposed address.
 reader into both a store reader and a connector runner. It reads the encrypted
 credential vault, so the D32 credential key file must be readable by the serve
 user. Keep that key file outside the data directory, permission it narrowly,
-and never put key material in `sources.json`.
+and never put key material in `sources.json`. On Windows the POSIX permission
+check is skipped; protect the key file with NTFS ACLs instead (restrict it to
+the running user).
 
 Scheduled AWS and Azure connectors use their ambient SDK credential chains.
 Those identities must be present in the serve process environment. Short-lived

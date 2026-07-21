@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -413,7 +414,9 @@ func pathExists(path string) bool {
 }
 
 func fsyncPath(path string) error {
-	f, err := os.Open(path)
+	// O_RDWR: on Windows File.Sync is FlushFileBuffers, which needs a writable
+	// handle; read-only Open fails with access-denied. POSIX is unchanged.
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
@@ -422,6 +425,11 @@ func fsyncPath(path string) error {
 }
 
 func fsyncDir(dir string) error {
+	// Directory entries on NTFS are durable via the file handles themselves;
+	// there is no FlushFileBuffers for directory metadata from Go.
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	f, err := os.Open(dir)
 	if err != nil {
 		return err

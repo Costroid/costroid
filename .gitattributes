@@ -1,0 +1,4 @@
+# Checkouts must receive committed bytes verbatim on every platform
+# (Windows runners default to core.autocrlf=true, which would rewrite
+# text files and break byte-exact test goldens).
+* -text
