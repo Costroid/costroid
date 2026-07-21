@@ -384,6 +384,71 @@ paths:
             text/plain:
               schema:
                 type: string
+  /api/v1/insights:
+    get:
+      operationId: getInsights
+      summary: Deterministic cost insights digest
+      description: >-
+        Ranked list of deterministic, formula-transparent observations over the
+        cost data already in the store. No machine learning and no external
+        calls: every number is a hand-recomputable exact decimal string. The
+        whole response is computed inside a single resolved billing currency
+        (never mixed). Observations are ranked by magnitude descending using
+        exact decimal comparison, then type ascending, then key ascending.
+        Each observation type is suppressed (absent from the array) when its
+        condition does not hold. An empty store returns insights: [] with HTTP
+        200. The parameters object echoes every fixed constant needed to
+        recompute, including the anomaly detector constants and the division
+        scale used for derived ratios and unit costs.
+      parameters:
+        - name: start
+          in: query
+          description: >-
+            Inclusive first calendar day (UTC) of the observation window.
+            Defaults to the full range of stored data. Both start and end must
+            be provided for comparison types (top-mover, unit-cost-drift).
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          description: >-
+            Inclusive last calendar day (UTC) of the observation window.
+            Defaults to the full range of stored data. Both start and end must
+            be provided for comparison types (top-mover, unit-cost-drift).
+          schema:
+            type: string
+            format: date
+        - name: currency
+          in: query
+          description: >-
+            Optional three-letter uppercase billing currency for the digest.
+            Omit to use the alphabetically-first currency in the requested
+            window [start, end], falling back to full history when the window
+            has none.
+          schema:
+            type: string
+            pattern: ^[A-Z]{3}$
+      responses:
+        "200":
+          description: Ranked insights for the requested window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Insights"
+        "400":
+          description: >-
+            Invalid start date, end date, or currency shape.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: A store query failed while building the digest.
+          content:
+            text/plain:
+              schema:
+                type: string
   /api/v1/usage/tokens/daily:
     get:
       operationId: getDailyTokens
@@ -1042,6 +1107,235 @@ components:
           type: string
           description: The absolute difference of observed and median, as a decimal string.
           example: "26.5191"
+    Insights:
+      type: object
+      required:
+        - currency
+        - currencies
+        - parameters
+        - insights
+      properties:
+        currency:
+          type: string
+          description: >-
+            Resolved billing currency of this digest (FOCUS BillingCurrency):
+            the currency query parameter when provided, otherwise the
+            alphabetically-first currency in the requested window (falling
+            back to full history when the window has none), or "" when no
+            billing currencies exist at all.
+          example: USD
+        currencies:
+          type: array
+          description: >-
+            All billing currencies with cost rows in the requested window,
+            sorted ascending. Never null; [] when the window is empty.
+          items:
+            type: string
+          example: ["EUR", "USD"]
+        start:
+          type: string
+          format: date
+          description: Echo of the request start when provided; omitted when absent.
+        end:
+          type: string
+          format: date
+          description: Echo of the request end when provided; omitted when absent.
+        parameters:
+          $ref: "#/components/schemas/InsightParameters"
+        insights:
+          type: array
+          description: >-
+            Ranked observations, magnitude-desc then type-asc then key-asc.
+            Never null; [] when nothing qualifies.
+          items:
+            $ref: "#/components/schemas/Insight"
+    InsightParameters:
+      type: object
+      required:
+        - k
+        - consistencyConstant
+        - windowDays
+        - minObservations
+        - relativeFloor
+        - divisionScale
+      properties:
+        k:
+          type: string
+          description: >-
+            Strict-threshold multiple of the scaled MAD used by the anomaly
+            detector, as a decimal string. Same value as AnomalyParameters.k.
+          example: "3"
+        consistencyConstant:
+          type: string
+          description: >-
+            MAD-to-sigma consistency constant used by the anomaly detector, as
+            a decimal string. Same value as AnomalyParameters.consistencyConstant.
+          example: "1.4826"
+        windowDays:
+          type: integer
+          description: >-
+            Maximum trailing observed days in the anomaly baseline window.
+            Same value as AnomalyParameters.windowDays.
+          example: 30
+        minObservations:
+          type: integer
+          description: >-
+            Minimum baseline observations required to score an anomaly day.
+            Same value as AnomalyParameters.minObservations.
+          example: 10
+        relativeFloor:
+          type: string
+          description: >-
+            Fraction of the absolute median an anomaly deviation must also
+            reach, as a decimal string. Same value as
+            AnomalyParameters.relativeFloor.
+          example: "0.1"
+        divisionScale:
+          type: integer
+          description: >-
+            Fractional scale used for every DivRound in this digest (derived
+            shares, unit costs, commitment ratio). Matches the store's
+            DECIMAL(38,18) capacity.
+          example: 18
+    Insight:
+      type: object
+      required:
+        - type
+        - title
+        - body
+        - magnitude
+        - evidence
+        - period
+        - link
+      properties:
+        type:
+          type: string
+          description: >-
+            Machine identifier of the observation. One of top-mover,
+            untagged-spend, unallocated-spend, anomaly-digest, unit-cost-drift,
+            commitment-realization.
+          example: top-mover
+        title:
+          type: string
+          description: Short English headline for the observation.
+          example: Largest service cost increase
+        body:
+          type: string
+          description: >-
+            One to three English sentences stating the numbers compared and
+            the arithmetic. Formula-transparent; ASCII punctuation only.
+        magnitude:
+          type: string
+          description: >-
+            Money amount in the resolved currency used for ranking, as an
+            exact decimal string. For unit-cost-drift this is a DERIVED value
+            (absolute window cost of the unit-cost change). For other types it
+            is an exact absolute money delta or total.
+          example: "42.5"
+        dimension:
+          type: string
+          description: >-
+            What key identifies: service, tagKey, or metric. Omitted when the
+            observation has no dimension (for example unallocated-spend).
+          example: service
+        key:
+          type: string
+          description: >-
+            The specific service, tag key, metric, or allocation label this
+            observation is about. Omitted for total-scope anomaly-digest.
+          example: Amazon EC2
+        evidence:
+          type: array
+          description: >-
+            Ordered name/value pairs. Monetary and statistical values are
+            exact decimal strings. Never null; [] when empty.
+          items:
+            $ref: "#/components/schemas/InsightEvidence"
+        period:
+          $ref: "#/components/schemas/InsightPeriod"
+        link:
+          $ref: "#/components/schemas/InsightLink"
+    InsightEvidence:
+      type: object
+      required:
+        - name
+        - value
+      properties:
+        name:
+          type: string
+          description: Evidence field name (for example total, delta, share).
+          example: delta
+        value:
+          type: string
+          description: >-
+            Evidence value as a string. Money and statistics are exact
+            decimal strings; derived values (share, unit costs, ratio,
+            costOfDrift) are DivRound results at divisionScale.
+          example: "12.5"
+    InsightPeriod:
+      type: object
+      properties:
+        start:
+          type: string
+          format: date
+          description: >-
+            Request window start when the request provided start; omitted
+            otherwise (never a zero date).
+        end:
+          type: string
+          format: date
+          description: >-
+            Request window end when the request provided end; omitted
+            otherwise (never a zero date).
+        previousStart:
+          type: string
+          format: date
+          description: >-
+            Inclusive first day of the preceding comparison window. Present
+            only for comparison observation types when that window is defined.
+        previousEnd:
+          type: string
+          format: date
+          description: >-
+            Inclusive last day of the preceding comparison window. Present
+            only for comparison observation types when that window is defined.
+    InsightLink:
+      type: object
+      description: >-
+        Structured dashboard state for deep-linking. The server never assembles
+        a URL or hash fragment; the client owns encoding. Optional fields only.
+      properties:
+        view:
+          type: string
+          description: >-
+            Dashboard view name (overview, costs, tokens, usage,
+            unit-economics, sources).
+          example: costs
+        start:
+          type: string
+          description: Inclusive window start as YYYY-MM-DD when known.
+        end:
+          type: string
+          description: Inclusive window end as YYYY-MM-DD when known.
+        groupBy:
+          type: string
+          description: >-
+            Grouping dimension: service, provider, allocation, subaccount,
+            region, or tag. When tag, tagKey is also set.
+          example: service
+        tagKey:
+          type: string
+          description: FOCUS Tags key; present if and only if groupBy is tag.
+        currency:
+          type: string
+          description: Three-letter billing currency when known.
+          example: USD
+        provider:
+          type: string
+          description: Optional FOCUS ServiceProviderName filter.
+        metric:
+          type: string
+          description: Business metric name for unit-economics views.
     DailyTokenUsage:
       type: object
       required:

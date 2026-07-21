@@ -44,6 +44,7 @@ type CostStore interface {
 	Providers(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
 	TagKeys(ctx context.Context, tenant string, start, end time.Time) ([]string, error)
 	BillingCurrencies(ctx context.Context, tenant string, start, end time.Time, provider string) ([]string, error)
+	CostTotals(ctx context.Context, tenant string, start, end time.Time) ([]storage.CostTotals, error)
 	DailyCostsByService(ctx context.Context, tenant string, start, end time.Time, currency, provider string, groupBy ...storage.CostGroupBy) (storage.DailyCosts, error)
 	DailyCostsByAllocation(ctx context.Context, tenant string, start, end time.Time, dim allocation.Dimension, currency, provider string) (storage.DailyCosts, error)
 	DailyCostsByTag(ctx context.Context, tenant string, start, end time.Time, tagKey, currency, provider string) (storage.DailyCosts, error)

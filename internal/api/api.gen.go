@@ -328,6 +328,125 @@ type DailyUsageMetric struct {
 	Unit string `json:"unit"`
 }
 
+// Insight defines model for Insight.
+type Insight struct {
+	// Body One to three English sentences stating the numbers compared and the arithmetic. Formula-transparent; ASCII punctuation only.
+	Body string `json:"body"`
+
+	// Dimension What key identifies: service, tagKey, or metric. Omitted when the observation has no dimension (for example unallocated-spend).
+	Dimension *string `json:"dimension,omitempty"`
+
+	// Evidence Ordered name/value pairs. Monetary and statistical values are exact decimal strings. Never null; [] when empty.
+	Evidence []InsightEvidence `json:"evidence"`
+
+	// Key The specific service, tag key, metric, or allocation label this observation is about. Omitted for total-scope anomaly-digest.
+	Key *string `json:"key,omitempty"`
+
+	// Link Structured dashboard state for deep-linking. The server never assembles a URL or hash fragment; the client owns encoding. Optional fields only.
+	Link InsightLink `json:"link"`
+
+	// Magnitude Money amount in the resolved currency used for ranking, as an exact decimal string. For unit-cost-drift this is a DERIVED value (absolute window cost of the unit-cost change). For other types it is an exact absolute money delta or total.
+	Magnitude string        `json:"magnitude"`
+	Period    InsightPeriod `json:"period"`
+
+	// Title Short English headline for the observation.
+	Title string `json:"title"`
+
+	// Type Machine identifier of the observation. One of top-mover, untagged-spend, unallocated-spend, anomaly-digest, unit-cost-drift, commitment-realization.
+	Type string `json:"type"`
+}
+
+// InsightEvidence defines model for InsightEvidence.
+type InsightEvidence struct {
+	// Name Evidence field name (for example total, delta, share).
+	Name string `json:"name"`
+
+	// Value Evidence value as a string. Money and statistics are exact decimal strings; derived values (share, unit costs, ratio, costOfDrift) are DivRound results at divisionScale.
+	Value string `json:"value"`
+}
+
+// InsightLink Structured dashboard state for deep-linking. The server never assembles a URL or hash fragment; the client owns encoding. Optional fields only.
+type InsightLink struct {
+	// Currency Three-letter billing currency when known.
+	Currency *string `json:"currency,omitempty"`
+
+	// End Inclusive window end as YYYY-MM-DD when known.
+	End *string `json:"end,omitempty"`
+
+	// GroupBy Grouping dimension: service, provider, allocation, subaccount, region, or tag. When tag, tagKey is also set.
+	GroupBy *string `json:"groupBy,omitempty"`
+
+	// Metric Business metric name for unit-economics views.
+	Metric *string `json:"metric,omitempty"`
+
+	// Provider Optional FOCUS ServiceProviderName filter.
+	Provider *string `json:"provider,omitempty"`
+
+	// Start Inclusive window start as YYYY-MM-DD when known.
+	Start *string `json:"start,omitempty"`
+
+	// TagKey FOCUS Tags key; present if and only if groupBy is tag.
+	TagKey *string `json:"tagKey,omitempty"`
+
+	// View Dashboard view name (overview, costs, tokens, usage, unit-economics, sources).
+	View *string `json:"view,omitempty"`
+}
+
+// InsightParameters defines model for InsightParameters.
+type InsightParameters struct {
+	// ConsistencyConstant MAD-to-sigma consistency constant used by the anomaly detector, as a decimal string. Same value as AnomalyParameters.consistencyConstant.
+	ConsistencyConstant string `json:"consistencyConstant"`
+
+	// DivisionScale Fractional scale used for every DivRound in this digest (derived shares, unit costs, commitment ratio). Matches the store's DECIMAL(38,18) capacity.
+	DivisionScale int `json:"divisionScale"`
+
+	// K Strict-threshold multiple of the scaled MAD used by the anomaly detector, as a decimal string. Same value as AnomalyParameters.k.
+	K string `json:"k"`
+
+	// MinObservations Minimum baseline observations required to score an anomaly day. Same value as AnomalyParameters.minObservations.
+	MinObservations int `json:"minObservations"`
+
+	// RelativeFloor Fraction of the absolute median an anomaly deviation must also reach, as a decimal string. Same value as AnomalyParameters.relativeFloor.
+	RelativeFloor string `json:"relativeFloor"`
+
+	// WindowDays Maximum trailing observed days in the anomaly baseline window. Same value as AnomalyParameters.windowDays.
+	WindowDays int `json:"windowDays"`
+}
+
+// InsightPeriod defines model for InsightPeriod.
+type InsightPeriod struct {
+	// End Request window end when the request provided end; omitted otherwise (never a zero date).
+	End *openapi_types.Date `json:"end,omitempty"`
+
+	// PreviousEnd Inclusive last day of the preceding comparison window. Present only for comparison observation types when that window is defined.
+	PreviousEnd *openapi_types.Date `json:"previousEnd,omitempty"`
+
+	// PreviousStart Inclusive first day of the preceding comparison window. Present only for comparison observation types when that window is defined.
+	PreviousStart *openapi_types.Date `json:"previousStart,omitempty"`
+
+	// Start Request window start when the request provided start; omitted otherwise (never a zero date).
+	Start *openapi_types.Date `json:"start,omitempty"`
+}
+
+// Insights defines model for Insights.
+type Insights struct {
+	// Currencies All billing currencies with cost rows in the requested window, sorted ascending. Never null; [] when the window is empty.
+	Currencies []string `json:"currencies"`
+
+	// Currency Resolved billing currency of this digest (FOCUS BillingCurrency): the currency query parameter when provided, otherwise the alphabetically-first currency in the requested window (falling back to full history when the window has none), or "" when no billing currencies exist at all.
+	Currency string `json:"currency"`
+
+	// End Echo of the request end when provided; omitted when absent.
+	End *openapi_types.Date `json:"end,omitempty"`
+
+	// Insights Ranked observations, magnitude-desc then type-asc then key-asc. Never null; [] when nothing qualifies.
+	Insights   []Insight         `json:"insights"`
+	Parameters InsightParameters `json:"parameters"`
+
+	// Start Echo of the request start when provided; omitted when absent.
+	Start *openapi_types.Date `json:"start,omitempty"`
+}
+
 // Meta defines model for Meta.
 type Meta struct {
 	// Demo True only for the isolated, synthetic, read-only product demo.
@@ -513,6 +632,18 @@ type GetCostsSummaryParams struct {
 // GetCostsSummaryParamsGroupBy defines parameters for GetCostsSummary.
 type GetCostsSummaryParamsGroupBy string
 
+// GetInsightsParams defines parameters for GetInsights.
+type GetInsightsParams struct {
+	// Start Inclusive first calendar day (UTC) of the observation window. Defaults to the full range of stored data. Both start and end must be provided for comparison types (top-mover, unit-cost-drift).
+	Start *openapi_types.Date `form:"start,omitempty" json:"start,omitempty"`
+
+	// End Inclusive last calendar day (UTC) of the observation window. Defaults to the full range of stored data. Both start and end must be provided for comparison types (top-mover, unit-cost-drift).
+	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
+
+	// Currency Optional three-letter uppercase billing currency for the digest. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window has none.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty"`
+}
+
 // GetDailyUnitEconomicsParams defines parameters for GetDailyUnitEconomics.
 type GetDailyUnitEconomicsParams struct {
 	// Metric Exact imported business metric name.
@@ -563,6 +694,9 @@ type ServerInterface interface {
 	// Period cost summary with optional preceding-window comparison
 	// (GET /api/v1/costs/summary)
 	GetCostsSummary(w http.ResponseWriter, r *http.Request, params GetCostsSummaryParams)
+	// Deterministic cost insights digest
+	// (GET /api/v1/insights)
+	GetInsights(w http.ResponseWriter, r *http.Request, params GetInsightsParams)
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
@@ -891,6 +1025,65 @@ func (siw *ServerInterfaceWrapper) GetCostsSummary(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCostsSummary(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetInsights operation middleware
+func (siw *ServerInterfaceWrapper) GetInsights(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetInsightsParams
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "currency" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "currency", r.URL.Query(), &params.Currency, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "currency"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "currency", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetInsights(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1243,6 +1436,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/business-metrics", wrapper.GetBusinessMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/daily", wrapper.GetDailyCosts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/summary", wrapper.GetCostsSummary)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/insights", wrapper.GetInsights)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sync/status", wrapper.GetSyncStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/unit-economics/daily", wrapper.GetDailyUnitEconomics)

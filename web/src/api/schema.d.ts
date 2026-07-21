@@ -120,6 +120,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deterministic cost insights digest
+         * @description Ranked list of deterministic, formula-transparent observations over the cost data already in the store. No machine learning and no external calls: every number is a hand-recomputable exact decimal string. The whole response is computed inside a single resolved billing currency (never mixed). Observations are ranked by magnitude descending using exact decimal comparison, then type ascending, then key ascending. Each observation type is suppressed (absent from the array) when its condition does not hold. An empty store returns insights: [] with HTTP 200. The parameters object echoes every fixed constant needed to recompute, including the anomaly detector constants and the division scale used for derived ratios and unit costs.
+         */
+        get: operations["getInsights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/usage/tokens/daily": {
         parameters: {
             query?: never;
@@ -509,6 +529,161 @@ export interface components {
              */
             deviation: string;
         };
+        Insights: {
+            /**
+             * @description Resolved billing currency of this digest (FOCUS BillingCurrency): the currency query parameter when provided, otherwise the alphabetically-first currency in the requested window (falling back to full history when the window has none), or "" when no billing currencies exist at all.
+             * @example USD
+             */
+            currency: string;
+            /**
+             * @description All billing currencies with cost rows in the requested window, sorted ascending. Never null; [] when the window is empty.
+             * @example [
+             *       "EUR",
+             *       "USD"
+             *     ]
+             */
+            currencies: string[];
+            /**
+             * Format: date
+             * @description Echo of the request start when provided; omitted when absent.
+             */
+            start?: string;
+            /**
+             * Format: date
+             * @description Echo of the request end when provided; omitted when absent.
+             */
+            end?: string;
+            parameters: components["schemas"]["InsightParameters"];
+            /** @description Ranked observations, magnitude-desc then type-asc then key-asc. Never null; [] when nothing qualifies. */
+            insights: components["schemas"]["Insight"][];
+        };
+        InsightParameters: {
+            /**
+             * @description Strict-threshold multiple of the scaled MAD used by the anomaly detector, as a decimal string. Same value as AnomalyParameters.k.
+             * @example 3
+             */
+            k: string;
+            /**
+             * @description MAD-to-sigma consistency constant used by the anomaly detector, as a decimal string. Same value as AnomalyParameters.consistencyConstant.
+             * @example 1.4826
+             */
+            consistencyConstant: string;
+            /**
+             * @description Maximum trailing observed days in the anomaly baseline window. Same value as AnomalyParameters.windowDays.
+             * @example 30
+             */
+            windowDays: number;
+            /**
+             * @description Minimum baseline observations required to score an anomaly day. Same value as AnomalyParameters.minObservations.
+             * @example 10
+             */
+            minObservations: number;
+            /**
+             * @description Fraction of the absolute median an anomaly deviation must also reach, as a decimal string. Same value as AnomalyParameters.relativeFloor.
+             * @example 0.1
+             */
+            relativeFloor: string;
+            /**
+             * @description Fractional scale used for every DivRound in this digest (derived shares, unit costs, commitment ratio). Matches the store's DECIMAL(38,18) capacity.
+             * @example 18
+             */
+            divisionScale: number;
+        };
+        Insight: {
+            /**
+             * @description Machine identifier of the observation. One of top-mover, untagged-spend, unallocated-spend, anomaly-digest, unit-cost-drift, commitment-realization.
+             * @example top-mover
+             */
+            type: string;
+            /**
+             * @description Short English headline for the observation.
+             * @example Largest service cost increase
+             */
+            title: string;
+            /** @description One to three English sentences stating the numbers compared and the arithmetic. Formula-transparent; ASCII punctuation only. */
+            body: string;
+            /**
+             * @description Money amount in the resolved currency used for ranking, as an exact decimal string. For unit-cost-drift this is a DERIVED value (absolute window cost of the unit-cost change). For other types it is an exact absolute money delta or total.
+             * @example 42.5
+             */
+            magnitude: string;
+            /**
+             * @description What key identifies: service, tagKey, or metric. Omitted when the observation has no dimension (for example unallocated-spend).
+             * @example service
+             */
+            dimension?: string;
+            /**
+             * @description The specific service, tag key, metric, or allocation label this observation is about. Omitted for total-scope anomaly-digest.
+             * @example Amazon EC2
+             */
+            key?: string;
+            /** @description Ordered name/value pairs. Monetary and statistical values are exact decimal strings. Never null; [] when empty. */
+            evidence: components["schemas"]["InsightEvidence"][];
+            period: components["schemas"]["InsightPeriod"];
+            link: components["schemas"]["InsightLink"];
+        };
+        InsightEvidence: {
+            /**
+             * @description Evidence field name (for example total, delta, share).
+             * @example delta
+             */
+            name: string;
+            /**
+             * @description Evidence value as a string. Money and statistics are exact decimal strings; derived values (share, unit costs, ratio, costOfDrift) are DivRound results at divisionScale.
+             * @example 12.5
+             */
+            value: string;
+        };
+        InsightPeriod: {
+            /**
+             * Format: date
+             * @description Request window start when the request provided start; omitted otherwise (never a zero date).
+             */
+            start?: string;
+            /**
+             * Format: date
+             * @description Request window end when the request provided end; omitted otherwise (never a zero date).
+             */
+            end?: string;
+            /**
+             * Format: date
+             * @description Inclusive first day of the preceding comparison window. Present only for comparison observation types when that window is defined.
+             */
+            previousStart?: string;
+            /**
+             * Format: date
+             * @description Inclusive last day of the preceding comparison window. Present only for comparison observation types when that window is defined.
+             */
+            previousEnd?: string;
+        };
+        /** @description Structured dashboard state for deep-linking. The server never assembles a URL or hash fragment; the client owns encoding. Optional fields only. */
+        InsightLink: {
+            /**
+             * @description Dashboard view name (overview, costs, tokens, usage, unit-economics, sources).
+             * @example costs
+             */
+            view?: string;
+            /** @description Inclusive window start as YYYY-MM-DD when known. */
+            start?: string;
+            /** @description Inclusive window end as YYYY-MM-DD when known. */
+            end?: string;
+            /**
+             * @description Grouping dimension: service, provider, allocation, subaccount, region, or tag. When tag, tagKey is also set.
+             * @example service
+             */
+            groupBy?: string;
+            /** @description FOCUS Tags key; present if and only if groupBy is tag. */
+            tagKey?: string;
+            /**
+             * @description Three-letter billing currency when known.
+             * @example USD
+             */
+            currency?: string;
+            /** @description Optional FOCUS ServiceProviderName filter. */
+            provider?: string;
+            /** @description Business metric name for unit-economics views. */
+            metric?: string;
+        };
         DailyTokenUsage: {
             /**
              * Format: date
@@ -862,6 +1037,51 @@ export interface operations {
                 };
             };
             /** @description The cost query failed, including an unreadable, malformed, or invalid allocation rules file. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getInsights: {
+        parameters: {
+            query?: {
+                /** @description Inclusive first calendar day (UTC) of the observation window. Defaults to the full range of stored data. Both start and end must be provided for comparison types (top-mover, unit-cost-drift). */
+                start?: string;
+                /** @description Inclusive last calendar day (UTC) of the observation window. Defaults to the full range of stored data. Both start and end must be provided for comparison types (top-mover, unit-cost-drift). */
+                end?: string;
+                /** @description Optional three-letter uppercase billing currency for the digest. Omit to use the alphabetically-first currency in the requested window [start, end], falling back to full history when the window has none. */
+                currency?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ranked insights for the requested window. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Insights"];
+                };
+            };
+            /** @description Invalid start date, end date, or currency shape. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description A store query failed while building the digest. */
             500: {
                 headers: {
                     [name: string]: unknown;
