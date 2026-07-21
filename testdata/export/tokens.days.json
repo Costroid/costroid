@@ -1,0 +1,36 @@
+[
+  {
+    "date": "2026-05-01",
+    "services": [
+      {
+        "serviceName": "svc-a",
+        "quantity": "3"
+      },
+      {
+        "serviceName": "svc-b",
+        "quantity": "-5"
+      }
+    ],
+    "total": null
+  },
+  {
+    "date": "2026-05-02",
+    "services": [
+      {
+        "serviceName": "svc-a",
+        "quantity": "100"
+      }
+    ],
+    "total": "100"
+  },
+  {
+    "date": "2026-05-03",
+    "services": [
+      {
+        "serviceName": "svc-b",
+        "quantity": "10"
+      }
+    ],
+    "total": "10"
+  }
+]

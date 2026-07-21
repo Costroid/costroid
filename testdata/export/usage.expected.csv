@@ -1,0 +1,5 @@
+﻿Date,Service,Tier,Metric,Unit,Quantity
+2026-05-02,claude,priority,input,Tokens,100
+2026-05-01,gpt,,requests,Requests,5
+2026-05-01,gpt,,requests,Requests,5
+2026-05-02,claude,standard,output,Tokens,50

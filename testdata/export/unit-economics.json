@@ -1,0 +1,40 @@
+{
+  "metric": "requests",
+  "currency": "USD",
+  "currencies": [
+    "USD"
+  ],
+  "provider": "",
+  "providers": [
+    "AWS"
+  ],
+  "days": [
+    {
+      "date": "2026-05-01",
+      "cost": "10",
+      "quantity": "2",
+      "unitCost": "5"
+    },
+    {
+      "date": "2026-05-02"
+    },
+    {
+      "date": "2026-05-03",
+      "cost": "0",
+      "quantity": "1",
+      "unitCost": "0"
+    },
+    {
+      "date": "2026-05-04",
+      "cost": "1",
+      "quantity": "3",
+      "unitCost": "0.333333333333333333"
+    }
+  ],
+  "period": {
+    "coveredDays": 3,
+    "cost": "11",
+    "quantity": "6",
+    "unitCost": "1.833333333333333333"
+  }
+}

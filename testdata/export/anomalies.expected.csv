@@ -1,0 +1,3 @@
+﻿Date,Scope,Key,Direction,Observed,Median,MAD,Scaled MAD,Threshold,Deviation
+2026-06-18,total,,increase,31.2,4.6809,0.0013,0.00192738,0.00578214,26.5191
+2026-06-19,key,total,decrease,0.5,2.0,0.1,0.14826,0.44478,1.5

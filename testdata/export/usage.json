@@ -1,0 +1,34 @@
+[
+  {
+    "date": "2026-05-02",
+    "serviceName": "claude",
+    "serviceTier": "priority",
+    "metricName": "input",
+    "unit": "Tokens",
+    "quantity": "100"
+  },
+  {
+    "date": "2026-05-01",
+    "serviceName": "gpt",
+    "serviceTier": "",
+    "metricName": "requests",
+    "unit": "Requests",
+    "quantity": "5"
+  },
+  {
+    "date": "2026-05-01",
+    "serviceName": "gpt",
+    "serviceTier": "",
+    "metricName": "requests",
+    "unit": "Requests",
+    "quantity": "5"
+  },
+  {
+    "date": "2026-05-02",
+    "serviceName": "claude",
+    "serviceTier": "standard",
+    "metricName": "output",
+    "unit": "Tokens",
+    "quantity": "50"
+  }
+]

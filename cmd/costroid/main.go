@@ -94,6 +94,20 @@ commands:
           (stop 'costroid serve' first; needs free disk roughly the size of the
           store; the original is kept as costroid.duckdb.bak; decrypt rewrites
           the store as plaintext and requires --allow-plaintext)
+  export  one-shot offline CSV/JSON export of dashboard data (no network, no auth)
+          costroid export <resource> [--format csv|json] [--out <path>]
+                   [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+                   [--group-by service|provider|allocation|subaccount|region|tag]
+                   [--tag-key <key>] [--currency CODE] [--provider <name>]
+                   [--metric <name>] [--allocation-rules <path>]
+                   [--db-encryption-key-file <path>]
+          (resources: costs-daily, costs-summary, anomalies, tokens, usage,
+          unit-economics. Mirrors the dashboard numbers via the same HTTP
+          handler serve uses, in process. Offline only: stop 'costroid serve'
+          first. Success is silent - stdout is EXACTLY the export bytes; --out
+          writes the file and leaves stdout empty. CSV on stdout has no BOM;
+          CSV --out prepends the UTF-8 BOM for Excel. json never gets a BOM.
+          One-shot only - scheduling and delivery are deliberately out of scope.)
   ingest  ingest a cost export into the store
           local file:  costroid ingest --connector aws-focus --path <file> [--tenant default]
           live S3:     costroid ingest --connector aws-focus-s3 --bucket <b> --prefix <p>
@@ -186,6 +200,8 @@ func run(args []string) error {
 		return credentialsCmd(args[1:])
 	case "store":
 		return storeCmd(args[1:])
+	case "export":
+		return exportCmd(args[1:])
 	case "ingest":
 		return ingestCmd(args[1:])
 	default:

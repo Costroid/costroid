@@ -1,0 +1,37 @@
+{
+  "currency": "USD",
+  "parameters": {
+    "k": "3",
+    "consistencyConstant": "1.4826",
+    "windowDays": 30,
+    "minObservations": 10,
+    "relativeFloor": "0.1",
+    "groupBy": "service",
+    "tagKey": ""
+  },
+  "anomalies": [
+    {
+      "date": "2026-06-18",
+      "scope": "total",
+      "direction": "increase",
+      "observed": "31.2",
+      "median": "4.6809",
+      "mad": "0.0013",
+      "scaledMad": "0.00192738",
+      "threshold": "0.00578214",
+      "deviation": "26.5191"
+    },
+    {
+      "date": "2026-06-19",
+      "scope": "key",
+      "key": "total",
+      "direction": "decrease",
+      "observed": "0.5",
+      "median": "2.0",
+      "mad": "0.1",
+      "scaledMad": "0.14826",
+      "threshold": "0.44478",
+      "deviation": "1.5"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "currency": "USD",
+  "currencies": [
+    "USD"
+  ],
+  "provider": "",
+  "providers": [
+    "AWS"
+  ],
+  "tagKeys": [],
+  "total": "1.123456789012345678",
+  "days": [
+    {
+      "date": "2026-05-01",
+      "total": "1.123456789012345678",
+      "services": [
+        {
+          "key": "Alpha, Inc",
+          "cost": "0.5"
+        },
+        {
+          "key": "Beta \"Prime\"",
+          "cost": "0.5"
+        },
+        {
+          "key": "😀emoji",
+          "cost": "0.123456789012345678"
+        },
+        {
+          "key": "pua",
+          "cost": "0"
+        }
+      ]
+    }
+  ]
+}
