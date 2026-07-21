@@ -124,50 +124,56 @@ function fetchedURLs(): string[] {
 }
 
 describe("DailyCosts", () => {
-  it("applies hash filters to the first costs and anomaly requests from a loading frame", async () => {
-    window.location.hash =
-      "#groupBy=region&currency=USD&provider=Amazon+Web+Services&metric=requests";
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-      const params = new URL(url, "http://x").searchParams;
-      const requestedCurrency = params.get("currency") ?? "";
-      const requestedProvider = params.get("provider") ?? "";
-      if (url.startsWith("/api/v1/anomalies")) {
-        const body = anomaliesBody([], requestedCurrency);
-        body.parameters.groupBy = "region";
-        return Promise.resolve(fakeResponse(200, body));
-      }
-      return Promise.resolve(
-        fakeResponse(200, {
-          ...providerDailyBody(
-            requestedProvider,
-            ["Amazon Web Services", "Microsoft"],
-            "3",
-            "Amazon Web Services",
-          ),
-          currency: requestedCurrency,
-          currencies: ["USD", "EUR"],
-        }),
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it.each(["provider", "region"] as const)(
+    "applies hash filters to the first costs and anomaly requests from a loading frame (groupBy=%s)",
+    async (groupBy) => {
+      window.location.hash = `#groupBy=${groupBy}&currency=USD&provider=Amazon+Web+Services&metric=requests`;
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        const params = new URL(url, "http://x").searchParams;
+        const requestedCurrency = params.get("currency") ?? "";
+        const requestedProvider = params.get("provider") ?? "";
+        if (url.startsWith("/api/v1/anomalies")) {
+          const requestedGroupBy = params.get("groupBy") ?? "service";
+          return Promise.resolve(
+            fakeResponse(
+              200,
+              anomaliesBody([], requestedCurrency, requestedGroupBy),
+            ),
+          );
+        }
+        return Promise.resolve(
+          fakeResponse(200, {
+            ...providerDailyBody(
+              requestedProvider,
+              ["Amazon Web Services", "Microsoft"],
+              "3",
+              "Amazon Web Services",
+            ),
+            currency: requestedCurrency,
+            currencies: ["USD", "EUR"],
+          }),
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
 
-    render(<DailyCosts />);
+      render(<DailyCosts />);
 
-    expect(screen.getByText("Loading daily costs…")).toBeTruthy();
-    await waitFor(() => {
-      const urls = fetchedURLs();
-      expect(urls.find((url) => url.startsWith("/api/v1/costs/daily"))).toBe(
-        "/api/v1/costs/daily?groupBy=region&currency=USD&provider=Amazon%20Web%20Services",
+      expect(screen.getByText("Loading daily costs…")).toBeTruthy();
+      await waitFor(() => {
+        const urls = fetchedURLs();
+        expect(urls.find((url) => url.startsWith("/api/v1/costs/daily"))).toBe(
+          `/api/v1/costs/daily?groupBy=${groupBy}&currency=USD&provider=Amazon%20Web%20Services`,
+        );
+        expect(urls.find((url) => url.startsWith("/api/v1/anomalies"))).toBe(
+          `/api/v1/anomalies?groupBy=${groupBy}&currency=USD&provider=Amazon%20Web%20Services`,
+        );
+      });
+      expect(window.location.hash).toBe(
+        `#groupBy=${groupBy}&currency=USD&provider=Amazon+Web+Services&metric=requests`,
       );
-      expect(urls.find((url) => url.startsWith("/api/v1/anomalies"))).toBe(
-        "/api/v1/anomalies?groupBy=region&currency=USD&provider=Amazon%20Web%20Services",
-      );
-    });
-    expect(window.location.hash).toBe(
-      "#groupBy=region&currency=USD&provider=Amazon+Web+Services&metric=requests",
-    );
-  });
+    },
+  );
 
   it("renders five grouping options and threads Region while Service omits groupBy", async () => {
     const costs = providerDailyBody("", ["Amazon Web Services"], "3");
@@ -176,7 +182,11 @@ describe("DailyCosts", () => {
       vi.fn((input: RequestInfo | URL) => {
         const url = String(input);
         if (url.startsWith("/api/v1/anomalies")) {
-          return Promise.resolve(fakeResponse(200, anomaliesBody([], "USD")));
+          const groupBy =
+            new URL(url, "http://x").searchParams.get("groupBy") ?? "service";
+          return Promise.resolve(
+            fakeResponse(200, anomaliesBody([], "USD", groupBy)),
+          );
         }
         return Promise.resolve(fakeResponse(200, costs));
       }),

@@ -38,7 +38,7 @@ function summaryBody(overrides: Partial<CostsSummary> = {}): CostsSummary {
     currency: "USD",
     currencies: ["USD"],
     provider: "",
-    providers: ["Amazon Web Services"],
+    providers: ["Amazon Web Services", "Google", "Microsoft"],
     total: PERIOD_TOTAL,
     keys: [
       { key: "Amazon Web Services", total: "500000.000000000000000000" },
@@ -491,7 +491,13 @@ describe("Overview", () => {
                 ? {
                     currency: "",
                     currencies: [],
-                    days: [],
+                    // Quantities are provider-independent; real server returns
+                    // quantity-only days for an absent provider, not [].
+                    days: [
+                      { date: "2026-01-12", quantity: "100" },
+                      { date: "2026-01-13", quantity: "100" },
+                      { date: "2026-01-15", quantity: "100" },
+                    ],
                     period: { coveredDays: 0, cost: "0", quantity: "0" },
                   }
                 : {}),
@@ -622,7 +628,13 @@ describe("Overview", () => {
               currencies: ["EUR"],
               ...(requested === "USD"
                 ? {
-                    days: [],
+                    // Quantities are currency-independent; real server returns
+                    // quantity-only days for an absent currency, not [].
+                    days: [
+                      { date: "2026-01-12", quantity: "100" },
+                      { date: "2026-01-13", quantity: "100" },
+                      { date: "2026-01-15", quantity: "100" },
+                    ],
                     period: { coveredDays: 0, cost: "0", quantity: "0" },
                   }
                 : {}),
