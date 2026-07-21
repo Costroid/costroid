@@ -108,6 +108,10 @@ commands:
           writes the file and leaves stdout empty. CSV on stdout has no BOM;
           CSV --out prepends the UTF-8 BOM for Excel. json never gets a BOM.
           One-shot only - scheduling and delivery are deliberately out of scope.)
+  ask     translate one finance question into a visible plan and local answer
+          costroid ask "question"
+          (default-off: requires $COSTROID_MODEL_ENDPOINT and $COSTROID_MODEL;
+          optional endpoint credential comes from $COSTROID_MODEL_API_KEY_FILE.)
   ingest  ingest a cost export into the store
           local file:  costroid ingest --connector aws-focus --path <file> [--tenant default]
           live S3:     costroid ingest --connector aws-focus-s3 --bucket <b> --prefix <p>
@@ -202,6 +206,8 @@ func run(args []string) error {
 		return storeCmd(args[1:])
 	case "export":
 		return exportCmd(args[1:])
+	case "ask":
+		return askCmd(args[1:])
 	case "ingest":
 		return ingestCmd(args[1:])
 	default:
@@ -785,6 +791,9 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	noAuthFlag := flags.Bool("no-auth", false, "serve WITHOUT authentication — the ONLY way to run unauthenticated (not recommended on a network-exposed address)")
 	if stop, err = parseFlags(flags, args); stop || err != nil {
 		return serveSettings{}, "", stop, err
+	}
+	if _, err := resolveModelSettings(); err != nil {
+		return serveSettings{}, "", false, err
 	}
 
 	cfg.addr = resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))
