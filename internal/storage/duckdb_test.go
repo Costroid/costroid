@@ -117,7 +117,7 @@ func appliedMigrations(t *testing.T, store *DuckDB) []string {
 func TestEncryptedOpenRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	key := "slice-47-round-trip-key"
+	key := "round-trip-key"
 	record := testRecord(t, "Encrypted round-trip service", day(1), "1.2345")
 	batch := Batch{
 		Connector:      "aws-focus",
@@ -207,7 +207,7 @@ func TestEncryptedOpenSingleQuoteKeyRoundTripsAndDoesNotLeak(t *testing.T) {
 func TestEncryptedOpenErrorsAreActionableAndDoNotLeakKey(t *testing.T) {
 	ctx := context.Background()
 	encryptedDir := t.TempDir()
-	correctKey := "slice-47-correct-key-must-not-leak"
+	correctKey := "correct-key-must-not-leak"
 	store, err := Open(ctx, encryptedDir, WithEncryptionKey(correctKey))
 	if err != nil {
 		t.Fatalf("creating encrypted store: %v", err)
@@ -217,7 +217,7 @@ func TestEncryptedOpenErrorsAreActionableAndDoNotLeakKey(t *testing.T) {
 	}
 
 	t.Run("wrong key", func(t *testing.T) {
-		wrongKey := "slice-47-wrong-key-must-not-leak"
+		wrongKey := "wrong-key-must-not-leak"
 		_, err := Open(ctx, encryptedDir, WithEncryptionKey(wrongKey))
 		assertOpenError(t, err, "encrypted and the provided key is wrong", wrongKey)
 	})
@@ -268,7 +268,7 @@ func assertOpenError(t *testing.T, err error, want string, secret string) {
 
 func TestEncryptedStoreIsOpaqueOnDisk(t *testing.T) {
 	ctx := context.Background()
-	marker := "costroid-s47-opacity-9f0b13c78ad245e6817cf3950a4d62be-" +
+	marker := "costroid-opacity-9f0b13c78ad245e6817cf3950a4d62be-" +
 		"71c925e4b83640fda29c507e18f63b94-5ad01c7382ef4960b417c936e85f20d7"
 	writeMarker := func(t *testing.T, dir string, opts ...Option) {
 		t.Helper()
@@ -291,30 +291,50 @@ func TestEncryptedStoreIsOpaqueOnDisk(t *testing.T) {
 			t.Fatalf("Close: %v", err)
 		}
 	}
-	readDatabase := func(t *testing.T, dir string) []byte {
+	// Every file the store leaves behind is inspected, not just the database:
+	// the write-ahead log holds the rows until a checkpoint folds them in, and
+	// whether that checkpoint has happened by the time the handle closes is not
+	// a guarantee the store makes. Scanning the whole directory keeps the proof
+	// independent of that timing and extends it to the log itself.
+	leakingFiles := func(t *testing.T, dir string) []string {
 		t.Helper()
-		contents, err := os.ReadFile(filepath.Join(dir, DatabaseFile))
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			t.Fatalf("reading database: %v", err)
+			t.Fatalf("reading store directory: %v", err)
 		}
-		return contents
+		var leaking []string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			contents, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				t.Fatalf("reading %s: %v", entry.Name(), err)
+			}
+			if bytes.Contains(contents, []byte(marker)) {
+				leaking = append(leaking, entry.Name())
+			}
+		}
+		return leaking
 	}
 
 	encryptedDir := t.TempDir()
-	writeMarker(t, encryptedDir, WithEncryptionKey("slice-47-opacity-key"))
-	if bytes.Contains(readDatabase(t, encryptedDir), []byte(marker)) {
-		t.Fatal("distinctive service marker is visible in encrypted database bytes")
+	writeMarker(t, encryptedDir, WithEncryptionKey("opacity-proof-key"))
+	if leaking := leakingFiles(t, encryptedDir); len(leaking) > 0 {
+		t.Fatalf("distinctive service marker is visible in encrypted store files: %v", leaking)
 	}
 
+	// The control proves the marker would be plainly visible without a key, so
+	// the assertion above cannot pass merely because nothing was written.
 	plaintextDir := t.TempDir()
 	writeMarker(t, plaintextDir)
-	if !bytes.Contains(readDatabase(t, plaintextDir), []byte(marker)) {
-		t.Fatal("plaintext control does not contain the distinctive service marker")
+	if leaking := leakingFiles(t, plaintextDir); len(leaking) == 0 {
+		t.Fatal("plaintext control does not contain the distinctive service marker in any store file")
 	}
 }
 
 func TestEncryptedOpenEnablesTempFileEncryption(t *testing.T) {
-	store, err := Open(context.Background(), t.TempDir(), WithEncryptionKey("slice-47-temp-encryption-key"))
+	store, err := Open(context.Background(), t.TempDir(), WithEncryptionKey("temp-encryption-key"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -332,7 +352,7 @@ func TestEncryptedOpenEnablesTempFileEncryption(t *testing.T) {
 func TestEncryptedOpenInitializesEveryPooledConnection(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	key := "slice-47-pool-key"
+	key := "pool-key"
 	store, err := Open(ctx, dir, WithEncryptionKey(key))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -1845,7 +1865,7 @@ func TestOpenLockedByAnotherProcessIsActionable(t *testing.T) {
 
 func TestEncryptedOpenLockedByAnotherProcessIsActionable(t *testing.T) {
 	keyFile := filepath.Join(t.TempDir(), "db-encryption.key")
-	if err := os.WriteFile(keyFile, []byte("slice-47-cross-process-key"), 0o600); err != nil {
+	if err := os.WriteFile(keyFile, []byte("cross-process-key"), 0o600); err != nil {
 		t.Fatalf("writing key file: %v", err)
 	}
 	assertOpenLockedByAnotherProcessIsActionable(t, keyFile)
