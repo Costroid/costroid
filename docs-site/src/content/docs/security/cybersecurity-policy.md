@@ -44,10 +44,15 @@ does not end without at least six months of advance public notice) are in
 The security model this policy defends is documented in the
 [threat model](/security/threat-model/) and the
 [deployment security guide](/security/). Its core commitments: Costroid
-handles cost and usage metadata only and structurally never ingests, stores,
-or transmits AI prompt or response content (the Cardinal Rule); it binds to
-loopback by default; and it refuses to start serving without an explicit
-authentication decision.
+handles cost and usage metadata only, and never ingests, stores, logs, caches,
+or transmits prompt or response content from AI sources (the Cardinal Rule);
+it binds to loopback by default; and it refuses to start serving without an
+explicit authentication decision. With optional outbound features
+unconfigured, the core sends nothing. The natural-language `ask` command is
+off unless the operator configures a model endpoint. The operator chooses that
+endpoint; when enabled, the command sends only the user's question, the static
+plan schema, and discovered provider names, tag keys, currency codes, and
+business-metric names. It never sends cost amounts, quantities, or store rows.
 
 Reports about the following are out of scope as vulnerabilities:
 
@@ -75,9 +80,12 @@ than miss a real one.
   least-privilege and read-only; secrets are supplied via files or the
   environment, never on the command line, and are never logged. Stored
   connector credentials live in an encrypted local vault.
-- **Content blindness is enforced, not promised.** The Cardinal Rule is backed
-  by structural checks that run in CI; the threat model documents the
-  enforcement layers and their limits.
+- **AI-source content stays outside the data path.** Structural checks in CI
+  enforce that prompt and response content from AI sources is never ingested,
+  stored, logged, cached, or transmitted. The optional natural-language
+  command has a separate, explicit boundary: it is off until an operator
+  chooses an endpoint, and its exact outbound fields are tested. The threat
+  model documents both boundaries and their limits.
 - **Every change is gated.** Changes go through code review and a CI pipeline
   that verifies generated code is in sync, runs the linters, runs the full Go
   and web test suites, and builds the binary. Contributions carry a Developer

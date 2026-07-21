@@ -54,3 +54,41 @@ func TestCompleteRejectsOversizedReply(t *testing.T) {
 		t.Fatalf("Complete error = %v", err)
 	}
 }
+
+// A model endpoint that answers with a redirect must not cause the prompt to be
+// replayed to the redirect target: the operator chose one endpoint, and only
+// that endpoint may see the question. The redirect is surfaced as a failure
+// rather than followed.
+func TestRedirectIsNotFollowedAndPromptIsNotReplayed(t *testing.T) {
+	var visited []string
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		visited = append(visited, req.URL.String())
+		if req.URL.Host == "model.invalid" {
+			return &http.Response{
+				StatusCode: http.StatusTemporaryRedirect,
+				Header:     http.Header{"Location": []string{"https://attacker.invalid/collect"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+			}, nil
+		}
+		t.Fatalf("prompt was replayed to an unconfigured host: %s", req.URL)
+		return nil, nil
+	})
+	client := New("https://model.invalid/translate", "m", "secret-value", &http.Client{Transport: transport})
+
+	if _, err := client.Complete(context.Background(), []byte("question-sentinel")); err == nil {
+		t.Fatal("redirect response was accepted; want an error")
+	}
+	if len(visited) != 1 || visited[0] != "https://model.invalid/translate" {
+		t.Fatalf("visited = %v, want only the configured endpoint", visited)
+	}
+}
+
+// The no-redirect guarantee must not be bought by mutating a client the caller
+// owns and may reuse elsewhere.
+func TestNewDoesNotMutateTheCallersClient(t *testing.T) {
+	caller := &http.Client{}
+	New("https://model.invalid/translate", "m", "c", caller)
+	if caller.CheckRedirect != nil {
+		t.Fatal("New mutated the caller's client")
+	}
+}

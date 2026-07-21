@@ -27,11 +27,21 @@ type Client struct {
 }
 
 // New returns a model client. The caller owns configuration validation.
+//
+// Redirects are never followed. The operator chooses exactly one endpoint, and
+// following a redirect would replay the prompt to a host they never chose, so
+// the redirect response is returned as-is and rejected by the status check
+// below. The copy keeps that guarantee even when the caller supplies its own
+// client, without mutating the caller's value.
 func New(endpoint, model, credential string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &Client{endpoint: endpoint, model: model, credential: credential, httpClient: httpClient}
+	noRedirect := *httpClient
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &Client{endpoint: endpoint, model: model, credential: credential, httpClient: &noRedirect}
 }
 
 type requestBody struct {

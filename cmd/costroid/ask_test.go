@@ -6,11 +6,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -241,6 +244,64 @@ func TestAskOutboundBodyMatchesGolden(t *testing.T) {
 			t.Fatalf("golden contains forbidden store value %q", forbidden)
 		}
 	}
+	assertOutboundShapeIsClosed(t, want)
+}
+
+// assertOutboundShapeIsClosed pins the outbound prompt to an exact set of
+// fields. Scanning for known store values only catches a leak whose value the
+// test already knows, so regenerating the golden around a NEW field would pass
+// silently. Asserting the key set instead fails on any added field, whatever
+// it contains.
+func assertOutboundShapeIsClosed(t *testing.T, body []byte) {
+	t.Helper()
+	var envelope struct {
+		Model    string `json:"model"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("outbound body is not JSON: %v", err)
+	}
+	assertKeys(t, "envelope", body, []string{"model", "messages"})
+	if len(envelope.Messages) != 1 {
+		t.Fatalf("messages = %d, want exactly 1", len(envelope.Messages))
+	}
+	assertKeys(t, "prompt", []byte(envelope.Messages[0].Content),
+		[]string{"instruction", "question", "schema", "values"})
+
+	var prompt struct {
+		Schema json.RawMessage `json:"schema"`
+		Values json.RawMessage `json:"values"`
+	}
+	if err := json.Unmarshal([]byte(envelope.Messages[0].Content), &prompt); err != nil {
+		t.Fatalf("prompt is not JSON: %v", err)
+	}
+	assertKeys(t, "schema", prompt.Schema,
+		[]string{"objectOnly", "endpoints", "groupBy", "dateFormat", "nullable"})
+	// The four permitted value lists, and nothing else: no amounts, no
+	// quantities, no dates, no rows.
+	assertKeys(t, "values", prompt.Values,
+		[]string{"providers", "tagKeys", "currencies", "metrics"})
+}
+
+func assertKeys(t *testing.T, what string, encoded []byte, want []string) {
+	t.Helper()
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		t.Fatalf("%s is not a JSON object: %v", what, err)
+	}
+	got := make([]string, 0, len(object))
+	for key := range object {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	expected := append([]string(nil), want...)
+	sort.Strings(expected)
+	if !slices.Equal(got, expected) {
+		t.Fatalf("%s keys = %v, want exactly %v", what, got, expected)
+	}
 }
 
 func TestAskLogsExcludeQuestionReplyPlanAndCredential(t *testing.T) {
@@ -271,11 +332,56 @@ func TestAskLogsExcludeQuestionReplyPlanAndCredential(t *testing.T) {
 	if logs.Len() == 0 {
 		t.Fatal("log capture is empty")
 	}
+	// Assert against DECODED records, not the raw buffer. The JSON handler
+	// escapes quotes inside attribute values, so a whole plan or a reply
+	// containing a quote is present in the log yet invisible to a substring
+	// scan of the encoded bytes.
+	values := decodedLogValues(t, logs.String())
+	if len(values) == 0 {
+		t.Fatal("no log values decoded")
+	}
 	for _, sensitive := range []string{"question-sentinel", "reply-sentinel", "credential-sentinel", validSummaryReply()} {
-		if strings.Contains(logs.String(), sensitive) {
-			t.Fatalf("logs contain sensitive value %q: %s", sensitive, logs.String())
+		for _, value := range values {
+			if strings.Contains(value, sensitive) {
+				t.Fatalf("logs contain sensitive value %q in %q", sensitive, value)
+			}
 		}
 	}
+}
+
+// decodedLogValues returns every string that appears anywhere in the captured
+// JSON log records, with the handler's escaping undone, so assertions see what
+// was actually logged rather than its encoded form.
+func decodedLogValues(t *testing.T, captured string) []string {
+	t.Helper()
+	var values []string
+	var walk func(any)
+	walk = func(node any) {
+		switch typed := node.(type) {
+		case string:
+			values = append(values, typed)
+		case []any:
+			for _, item := range typed {
+				walk(item)
+			}
+		case map[string]any:
+			for key, item := range typed {
+				values = append(values, key)
+				walk(item)
+			}
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(captured), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("log line is not JSON: %q: %v", line, err)
+		}
+		walk(record)
+	}
+	return values
 }
 
 func TestResolveModelSettingsRejectsMalformedAndAcceptsUnreachable(t *testing.T) {

@@ -183,3 +183,21 @@ The guarantee above is narrow and honest. These are the things it does not do.
    that prompt and response content has no modeled path into Costroid at the AI
    connector boundary. It is not a runtime classifier that inspects values and
    decides whether they look like content.
+6. **The natural-language boundary sends operator data by design, and the two
+   layers above do not cover it.** When an operator configures a model
+   endpoint, tag keys and provider names leave the machine. Tag keys are
+   authored by the deployer, not by Costroid, so a key such as
+   `cost-center-acquisition-project` carries whatever meaning the deployer put
+   in it. Only keys are sent, never tag values, and never cost amounts,
+   quantities, or store rows. Note also that the ingest chokepoint and the
+   decode-field allowlist described above are scoped to the connectors: they
+   do not gate this path. What holds it instead is a narrower thing, stated
+   plainly so it is not mistaken for the structural guarantee: the outbound
+   body is asserted field by field against a fixed expected shape, so adding
+   any new field to it fails the test suite.
+7. **The endpoint is trusted once chosen.** The request goes to the configured
+   endpoint and redirects are refused rather than followed, so a redirecting
+   endpoint cannot replay the question to a host the operator did not choose.
+   Beyond that, an operator who configures a hostile or compromised endpoint
+   has given it the question and the value lists. Costroid does not and cannot
+   validate what the endpoint does with them.
