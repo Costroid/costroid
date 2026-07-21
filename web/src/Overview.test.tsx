@@ -12,6 +12,9 @@ import {
   within,
 } from "@testing-library/react";
 import Overview from "./Overview";
+import DailyCosts from "./DailyCosts";
+import type { Range } from "./range";
+import { writeUrlState } from "./urlstate";
 import type { components } from "./api/schema";
 
 type CostsSummary = components["schemas"]["CostsSummary"];
@@ -164,6 +167,50 @@ function insightsBody(
     insights,
     ...overrides,
   };
+}
+
+const emptyDailyCosts = {
+  currency: "USD",
+  currencies: ["USD"],
+  provider: "",
+  providers: [],
+  tagKeys: [],
+  total: "0",
+  days: [],
+};
+
+// InsightNavigation stands in for the shell around the insights panel: the
+// navigate callback replaces drill-down state in the hash, moves the range,
+// and mounts the target view. Overview deliberately STAYS mounted afterwards,
+// which is the window this harness exists to expose — a summary reconciliation
+// that was already in flight when the link was clicked resolves into a still
+// mounted Overview and re-queues its currency/provider filter write.
+function InsightNavigation() {
+  const [range, setRange] = useState<Range>({ start: "", end: "" });
+  const [showTarget, setShowTarget] = useState(false);
+
+  return (
+    <>
+      <Overview
+        range={range}
+        onNavigate={(link) => {
+          writeUrlState({
+            view: "costs",
+            start: link.start,
+            end: link.end,
+            groupBy: undefined,
+            tagKey: undefined,
+            currency: link.currency,
+            provider: link.provider,
+            metric: link.metric,
+          });
+          setRange({ start: link.start ?? "", end: link.end ?? "" });
+          setShowTarget(true);
+        }}
+      />
+      {showTarget && <DailyCosts range={range} />}
+    </>
+  );
 }
 
 type RouteHandler = (url: string) => Promise<Response> | Response;
@@ -1444,5 +1491,145 @@ describe("Overview", () => {
 
     expect(await screen.findByText("Unallocated spend")).toBeTruthy();
     expect(screen.queryByText("This digest covers all providers.")).toBeNull();
+  });
+
+  it("keeps the link currency in the hash when a summary reconciliation lands after the click", async () => {
+    // The mounted provider is absent from the summary's provider list, so the
+    // summary load will snap it to "" and re-queue the currency/provider filter
+    // write. That summary is held IN FLIGHT across the click, so the write is
+    // still to come when the link sets the hash — and it must not land on top.
+    window.location.hash = "#provider=Ghost+Cloud";
+    let releaseSummary = () => {};
+    const summaryHeld = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
+    const routes = mockRoutes({
+      summary: () =>
+        summaryHeld.then(() =>
+          fakeResponse(
+            200,
+            summaryBody({
+              currency: "USD",
+              currencies: ["USD"],
+              provider: "",
+              // Ghost Cloud is absent → the load snaps provider back to "".
+              providers: ["Amazon Web Services", "Microsoft"],
+            }),
+          ),
+        ),
+      insights: () =>
+        fakeResponse(
+          200,
+          insightsBody([
+            insightItem({
+              title: "Nav insight",
+              link: {
+                view: "costs",
+                start: "2026-01-12",
+                end: "2026-07-11",
+                currency: "USD",
+              },
+            }),
+          ]),
+        ),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = new URL(String(input), "http://x").pathname;
+        if (path === "/api/v1/costs/daily") {
+          return Promise.resolve(fakeResponse(200, emptyDailyCosts));
+        }
+        return routes(input);
+      }),
+    );
+
+    render(<InsightNavigation />);
+
+    const link = await screen.findByRole("button", {
+      name: "View details for Nav insight",
+    });
+    // The reconciliation genuinely has NOT settled yet: the pre-navigation
+    // provider is still in the hash, so its filter write is still pending.
+    expect(window.location.hash).toBe("#provider=Ghost+Cloud");
+
+    fireEvent.click(link);
+    expect(window.location.hash).toContain("currency=USD");
+    expect(window.location.hash).not.toContain("provider=");
+
+    // Let the held summary resolve into the still mounted Overview and wait
+    // for its snap to land: All providers becomes the pressed selection.
+    releaseSummary();
+    const selector = await screen.findByRole("group", { name: "Provider" });
+    await waitFor(() =>
+      expect(
+        within(selector)
+          .getByRole("button", { name: "All providers" })
+          .getAttribute("aria-pressed"),
+      ).toBe("true"),
+    );
+
+    expect(window.location.hash).toContain("currency=USD");
+    expect(
+      fetchedURLs().find((url) => url.startsWith("/api/v1/costs/daily")),
+    ).toBe("/api/v1/costs/daily?start=2026-01-12&end=2026-07-11&currency=USD");
+  });
+
+  it("holds the aggregate status on loading while only insights is still in flight", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () => new Promise<Response>(() => undefined),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    // Cards 1-5 are all settled; only the insights card is still loading.
+    expect(await screen.findByText(PERIOD_TOTAL_DISPLAY)).toBeTruthy();
+    expect(await screen.findByText("Flagged days")).toBeTruthy();
+    expect(await screen.findByText(UNIT_COST_DISPLAY)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Loading overview…");
+  });
+
+  it("clears the aggregate status when only insights fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockRoutes({
+        insights: () => fakeResponse(500, null),
+      }),
+    );
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText(/Failed to load insights/)).toBeTruthy();
+    expect(await screen.findByText(PERIOD_TOTAL_DISPLAY)).toBeTruthy();
+    expect(await screen.findByText("Flagged days")).toBeTruthy();
+    expect(await screen.findByText(UNIT_COST_DISPLAY)).toBeTruthy();
+    // The error branch of the aggregate status must stay silent, not announce
+    // a load that did not fully succeed.
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("re-fetches the insights digest from another card's Retry", async () => {
+    let failAnomalies = true;
+    const fetchMock = mockRoutes({
+      anomalies: () =>
+        failAnomalies
+          ? fakeResponse(500, null)
+          : fakeResponse(200, anomaliesBody()),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const insightsCalls = () =>
+      fetchedURLs().filter((url) => url.startsWith("/api/v1/insights")).length;
+    render(<Overview range={{ start: "2026-01-12", end: "2026-07-11" }} />);
+
+    expect(await screen.findByText(/Failed to load anomalies/)).toBeTruthy();
+    await waitFor(() => expect(insightsCalls()).toBe(1));
+
+    failAnomalies = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    // The insights card shares the retry token with the other four fetches.
+    await waitFor(() => expect(insightsCalls()).toBe(2));
+    expect(await screen.findByText("Flagged days")).toBeTruthy();
   });
 });

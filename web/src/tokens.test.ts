@@ -16,6 +16,7 @@ const read = (rel: string): string =>
   readFileSync(new URL(rel, import.meta.url), "utf8");
 const baseCss = read("./tokens.css");
 const demoCss = read("./tokens.demo.css");
+const indexCss = read("./index.css");
 
 // Demo builds swap ./tokens.css for ./tokens.demo.css (vite.config.ts), so a
 // custom property defined in only one file silently collapses every var()
@@ -64,5 +65,32 @@ describe("design-token parity", () => {
     expect(Object.fromEntries(declarations(attr))).toEqual(
       Object.fromEntries(declarations(media)),
     );
+  });
+});
+
+// index.css styles everything against the token palette and defines no custom
+// property of its own, so every var() it references must exist in tokens.css.
+// A name that does not resolve is not a loud failure: the declaration silently
+// falls back (or collapses), leaving a rule that looks live but paints nothing.
+// A misspelled hover token shipped exactly that way once.
+describe("design-token references", () => {
+  const referenced = (css: string): Set<string> =>
+    new Set([...css.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]));
+  const defined = (css: string): Set<string> =>
+    new Set(css.match(/--[\w-]+(?=\s*:)/g) ?? []);
+
+  it("index.css defines no custom properties of its own", () => {
+    // Guard against vacuous success on an empty/failed read.
+    expect(indexCss.length).toBeGreaterThan(1000);
+    expect([...defined(indexCss)]).toEqual([]);
+  });
+
+  it("every token index.css references is defined in tokens.css", () => {
+    const names = referenced(indexCss);
+    expect(names.size).toBeGreaterThan(20);
+    // tokens.demo.css needs no separate pass: the parity pin above already
+    // holds the two files to the same set of names.
+    const palette = defined(baseCss);
+    expect([...names].filter((name) => !palette.has(name))).toEqual([]);
   });
 });

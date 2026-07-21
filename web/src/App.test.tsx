@@ -981,11 +981,23 @@ describe("App", () => {
     });
   });
 
-  it("keeps the link currency on the target view's first request despite Overview reconciliation", async () => {
-    // Mounted provider is absent from the summary's providers list → Overview
-    // queues setProvider("") (and the filter write) while the insight link
-    // carries currency=USD. The suppress-write arm must keep the currency.
+  it("mounts the target view with the link currency while an Overview reconciliation is still in flight", async () => {
+    // The mounted provider is absent from the summary's provider list, so
+    // Overview will snap it to "" and re-queue its filter write. Here the
+    // summary is held IN FLIGHT across the click (asserted below via the hash),
+    // so the shell's navigate is the last writer and the target view mounts
+    // from a hash that still carries the link's currency.
+    //
+    // This covers the shell composition only. It cannot pin the panel's own
+    // suppress-write arm: the shell swaps Overview out for the target view in
+    // the navigating commit, so Overview's filter effect has no frame left to
+    // run in. The arm is pinned in Overview.test.tsx, where Overview stays
+    // mounted and the late reconciliation can actually reach it.
     window.location.hash = "#provider=Ghost+Cloud";
+    let releaseSummary = () => {};
+    const summaryHeld = new Promise<void>((resolve) => {
+      releaseSummary = resolve;
+    });
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       const path = new URL(url, "http://x").pathname;
@@ -1014,7 +1026,7 @@ describe("App", () => {
         );
       }
       if (path === "/api/v1/costs/summary") {
-        return Promise.resolve(
+        return summaryHeld.then(() =>
           fakeResponse(200, {
             ...emptySummary,
             currency: "USD",
@@ -1060,7 +1072,6 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Nav insight")).toBeTruthy();
-    // Wait until summary reconciliation has had a chance to queue.
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([input]) =>
@@ -1069,15 +1080,21 @@ describe("App", () => {
       ).toBe(true),
     );
     fetchMock.mockClear();
+    // The summary is still unresolved, so the snap to All providers has NOT
+    // happened: the pre-navigation provider is still the only hash state.
+    expect(window.location.hash).toBe("#provider=Ghost+Cloud");
+
     fireEvent.click(
       screen.getByRole("button", { name: "View details for Nav insight" }),
     );
+    releaseSummary();
 
     await waitFor(() => {
       expect(firstURL(fetchMock, "/api/v1/costs/daily")).toBe(
         "/api/v1/costs/daily?start=2026-01-12&end=2026-07-11&currency=USD",
       );
     });
+    expect(window.location.hash).toContain("currency=USD");
   });
 
   it("moves App range and the target first request when the link carries different dates", async () => {

@@ -1081,7 +1081,7 @@ thead th {
 }
 
 .overview-insight-link:hover {
-  color: var(--accent-strong, var(--accent));
+  color: var(--accent-hover);
 }
 
 .overview-insight-link:focus-visible {
