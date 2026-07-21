@@ -28,21 +28,44 @@ jobs:
           - { target: darwin-arm64, runner: macos-15, experimental: false, output: costroid-darwin-arm64 }
           - { target: windows-amd64-experimental, runner: windows-latest, experimental: true, output: costroid-windows-amd64.exe }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: v2.12.5
           args: build --single-target --clean
+      - name: Smoke-run the Windows binary
+        if: matrix.target == 'windows-amd64-experimental'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$(find dist -type f -name costroid.exe -print -quit)"
+          test -n "$bin"
+          if "$bin" >usage.txt 2>&1; then
+            echo "expected a usage error exit"; exit 1
+          fi
+          grep -q "usage: costroid" usage.txt
+          export COSTROID_DATA_DIR=smoke-data
+          "$bin" ingest --connector aws-focus --path testdata/export/seed-aws-focus.csv.gz
+          "$bin" export costs-daily | grep '^2026-05-15,'
+          echo smoke-key-1 > smoke.key
+          "$bin" store encrypt --new-db-encryption-key-file smoke.key
+          if "$bin" export costs-daily >/dev/null 2>&1; then
+            echo "keyless export must fail on the encrypted store"; exit 1
+          fi
+          "$bin" export costs-daily --db-encryption-key-file smoke.key | grep '^2026-05-15,'
+          rm smoke-data/costroid.duckdb.bak
+          "$bin" store decrypt --db-encryption-key-file smoke.key --allow-plaintext
+          "$bin" export costs-daily | grep '^2026-05-15,'
       - name: Stage native binary
         shell: bash
         run: |
@@ -50,7 +73,7 @@ jobs:
           binary="$(find dist -type f \( -name costroid -o -name costroid.exe \) -print -quit)"
           test -n "$binary"
           cp "$binary" "upload/${{ matrix.output }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: upload/${{ matrix.output }}
@@ -65,8 +88,8 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: "*-*"
           path: release-input
@@ -90,7 +113,7 @@ jobs:
           else
             echo "::notice::The experimental windows-amd64 CGO link did not produce an artifact."
           fi
-      - uses: anchore/sbom-action/download-syft@v0.20.6
+      - uses: anchore/sbom-action/download-syft@v0.24.0
       - name: Generate source SBOM
         run: |
           mkdir -p release
@@ -121,10 +144,11 @@ jobs:
       packages: write      # push the image + write the cosign .sig + push attestations
       id-token: write       # mint the keyless Fulcio cert (cosign + attest)
       attestations: write   # write to GitHub's attestation store
+      artifact-metadata: write # create the artifact metadata storage record
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download the linux binaries into the build context
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: linux-*
           merge-multiple: true
@@ -168,13 +192,13 @@ jobs:
           subject-name: ${{ env.REGISTRY_IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-      - uses: anchore/sbom-action/download-syft@v0.20.6
+      - uses: anchore/sbom-action/download-syft@v0.24.0
       - name: Generate the image SBOM
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: SYFT_CHECK_FOR_APP_UPDATE=false syft "registry:${REGISTRY_IMAGE}@${DIGEST}" -o cyclonedx-json=image.cdx.json
       - name: Attest the image SBOM
-        uses: actions/attest-sbom@v4
+        uses: actions/attest@v4
         with:
           subject-name: ${{ env.REGISTRY_IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}

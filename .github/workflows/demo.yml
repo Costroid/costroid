@@ -27,10 +27,10 @@ jobs:
   build-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Reads the pnpm version from the packageManager field in package.json.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: pnpm
@@ -54,7 +54,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         run: node scripts/demo-screenshot.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: costroid-demo
           path: |
@@ -75,12 +75,12 @@ jobs:
       name: demo
       url: https://demo.costroid.com
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: costroid-demo
           path: .
       # The deploy job needs its own Node; don't rely on the runner's ambient one.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
       - name: Deploy to Cloudflare Pages (no-op if secrets absent)
