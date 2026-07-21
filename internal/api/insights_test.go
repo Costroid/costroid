@@ -35,6 +35,16 @@ type insightStore struct {
 	costTotalsErr error
 	// serviceDaily maps "start|end" (DateOnly; empty side for zero) to costs.
 	serviceDaily map[string]storage.DailyCosts
+	// dailyByCurrency, when non-nil, selects service costs by
+	// "currency|start|end" and takes precedence over historyDaily/serviceDaily.
+	// A read that drops the resolved currency misses every key and gets
+	// currencyLeak instead, so leaked reads change the numbers under assertion.
+	dailyByCurrency map[string]storage.DailyCosts
+	// currencyLeak is returned when a dailyByCurrency lookup misses.
+	currencyLeak storage.DailyCosts
+	// readCurrencies records the currency argument of every daily-cost read
+	// (service, tag, and allocation) in call order.
+	readCurrencies []string
 	// historyDaily is returned when start is zero (anomaly full-history fetch).
 	historyDaily *storage.DailyCosts
 	// tagDaily maps tag key to daily costs.
@@ -76,6 +86,7 @@ func (s *insightStore) DailyCostsByService(_ context.Context, tenant string, sta
 		s.gotGroupBy = groupBy[0]
 	}
 	s.groupByLog = append(s.groupByLog, s.gotGroupBy)
+	s.readCurrencies = append(s.readCurrencies, currency)
 	s.queryCount++
 	s.queryLog = append(s.queryLog, struct {
 		start, end time.Time
@@ -84,6 +95,14 @@ func (s *insightStore) DailyCostsByService(_ context.Context, tenant string, sta
 	}{start: start, end: end, currency: currency, provider: provider})
 	if s.dailyErr != nil {
 		return storage.DailyCosts{}, s.dailyErr
+	}
+	if s.dailyByCurrency != nil {
+		out, ok := s.dailyByCurrency[currency+"|"+insightWindowKey(start, end)]
+		if !ok {
+			out = s.currencyLeak
+		}
+		out.Currency = currency
+		return out, nil
 	}
 	if start.IsZero() && s.historyDaily != nil {
 		out := *s.historyDaily
@@ -112,6 +131,7 @@ func (s *insightStore) DailyCostsByTag(_ context.Context, tenant string, start, 
 	s.gotTenant, s.gotStart, s.gotEnd = tenant, start, end
 	s.gotCurrency = currency
 	s.tagKeyLog = append(s.tagKeyLog, tagKey)
+	s.readCurrencies = append(s.readCurrencies, currency)
 	s.tagQueryCount++
 	if s.dailyErr != nil {
 		return storage.DailyCosts{}, s.dailyErr
@@ -133,6 +153,7 @@ func (s *insightStore) DailyCostsByAllocation(_ context.Context, tenant string, 
 	s.gotCurrency = currency
 	s.gotDimension = dim
 	s.dimensionLog = append(s.dimensionLog, dim)
+	s.readCurrencies = append(s.readCurrencies, currency)
 	s.allocQueryCount++
 	if s.dailyErr != nil {
 		return storage.DailyCosts{}, s.dailyErr
@@ -227,7 +248,7 @@ func findTypeKey(ins []Insight, typ, key string) (Insight, bool) {
 	return Insight{}, false
 }
 
-// --- Criterion 7: empty store ---
+// --- Empty store ---
 
 func TestGetInsightsEmptyStore(t *testing.T) {
 	rec := getInsights(t, &fakeStore{}, "", "")
@@ -252,7 +273,7 @@ func TestGetInsightsEmptyStore(t *testing.T) {
 	}
 }
 
-// --- Criterion 2: currency semantics ---
+// --- Currency semantics ---
 
 func TestGetInsightsCurrencyDefaultAndExplicit(t *testing.T) {
 	store := &insightStore{
@@ -342,7 +363,7 @@ func TestGetInsightsCurrencyFullHistoryFallback(t *testing.T) {
 	}
 }
 
-// --- Criterion 9: parameters parity with anomalies ---
+// --- Parameters parity with anomalies ---
 
 func TestGetInsightsParametersMatchAnomalies(t *testing.T) {
 	store := anomalyFakeStore(t)
@@ -489,8 +510,12 @@ func TestGetInsightsUntaggedSpend(t *testing.T) {
 	if u.Link.GroupBy == nil || *u.Link.GroupBy != "tag" || u.Link.TagKey == nil || *u.Link.TagKey != "env" {
 		t.Fatalf("link = %+v", u.Link)
 	}
-	if !strings.Contains(u.Body, "25%") {
-		t.Fatalf("body missing 25%%: %s", u.Body)
+	// The percentage is share * 100. Pinned as a whole string: a body carrying
+	// the un-multiplied share would read "(0.25% of the window)" and still
+	// contain the loose substring "25%".
+	wantBody := "Of the window total 100, 25 is untagged for tag key env (25% of the window)."
+	if u.Body != wantBody {
+		t.Fatalf("body = %q, want %q", u.Body, wantBody)
 	}
 }
 
@@ -541,6 +566,12 @@ func TestGetInsightsUnallocatedSpend(t *testing.T) {
 	wantShare := dec(t, "30").DivRound(dec(t, "100"), storage.MaxDecimalScale).String()
 	if ev["unallocatedTotal"] != "30" || ev["windowTotal"] != "100" || ev["share"] != wantShare {
 		t.Fatalf("evidence = %v want share %s", ev, wantShare)
+	}
+	// The percentage is share * 100, pinned as a whole string: the un-multiplied
+	// share would read "(0.3% of the window)".
+	wantBody := "Of the window total 100, 30 is unallocated (30% of the window)."
+	if u.Body != wantBody {
+		t.Fatalf("body = %q, want %q", u.Body, wantBody)
 	}
 }
 
@@ -608,11 +639,15 @@ func TestGetInsightsUnallocatedSuppressedMalformedRules(t *testing.T) {
 func TestGetInsightsAnomalyDigest(t *testing.T) {
 	// Same spike series as anomalyFakeStore: flags on day 11/12.
 	base := anomalyFakeStore(t)
+	// Scoring runs on the FULL-HISTORY fetch, never on the request window. The
+	// window fetch therefore holds only June 11 and 12: two observations, far
+	// too few for the detector, so a scorer pointed at the window flags nothing.
+	windowOnly := storage.DailyCosts{Currency: "USD", Days: base.daily.Days[10:]}
 	store := &insightStore{
 		fakeStore:    &fakeStore{currencies: []string{"USD"}},
 		historyDaily: &base.daily,
 		serviceDaily: map[string]storage.DailyCosts{
-			"2026-06-11|2026-06-12": base.daily, // not used for scoring
+			"2026-06-11|2026-06-12": windowOnly,
 		},
 	}
 	got := decodeInsights(t, getInsights(t, store, "", "?start=2026-06-11&end=2026-06-12&currency=USD"))
@@ -637,6 +672,34 @@ func TestGetInsightsAnomalyDigest(t *testing.T) {
 	}
 	if a.Key != nil || a.Dimension != nil {
 		t.Fatalf("total-scope must omit key/dimension: %+v", a)
+	}
+}
+
+func TestGetInsightsAnomalyDigestExcludesFlagsOutsideWindow(t *testing.T) {
+	// The spike series flags June 11 AND June 12, three flags each (the total
+	// series plus the two service series). A window of June 12 alone must keep
+	// only that day's three flags.
+	base := anomalyFakeStore(t)
+	windowOnly := storage.DailyCosts{Currency: "USD", Days: base.daily.Days[11:]}
+	store := &insightStore{
+		fakeStore:    &fakeStore{currencies: []string{"USD"}},
+		historyDaily: &base.daily,
+		serviceDaily: map[string]storage.DailyCosts{
+			"2026-06-12|2026-06-12": windowOnly,
+		},
+	}
+	got := decodeInsights(t, getInsights(t, store, "", "?start=2026-06-12&end=2026-06-12&currency=USD"))
+	a, ok := findType(got.Insights, "anomaly-digest")
+	if !ok {
+		t.Fatalf("missing anomaly-digest: %+v", insightSummary(got.Insights))
+	}
+	ev := evidenceMap(a.Evidence)
+	// Anti-vacuity: flags DO exist, three of them, all on the in-window day.
+	if ev["flagCount"] != "3" {
+		t.Fatalf("flagCount = %s, want 3 (June 11 flags are outside the window)", ev["flagCount"])
+	}
+	if ev["date"] != "2026-06-12" {
+		t.Fatalf("date = %s, want 2026-06-12", ev["date"])
 	}
 }
 
@@ -775,7 +838,7 @@ func TestGetInsightsCommitmentSuppressedWhenEqual(t *testing.T) {
 	}
 }
 
-// --- Criterion 6 + 8: ranking and structured links ---
+// --- Ranking and structured links ---
 
 func TestGetInsightsRankingAndLinks(t *testing.T) {
 	// Seed >= 3 types with known magnitudes:
@@ -820,12 +883,16 @@ func TestGetInsightsRankingAndLinks(t *testing.T) {
 		t.Fatalf("rank2 = %s/%s, want top-mover/30", got.Insights[2].Type, got.Insights[2].Magnitude)
 	}
 
-	// Link structure (criterion 8)
+	// Link structure
 	views := map[string]bool{"overview": true, "costs": true, "tokens": true, "usage": true, "unit-economics": true, "sources": true}
 	groupBys := map[string]bool{"service": true, "provider": true, "allocation": true, "subaccount": true, "region": true, "tag": true}
 	for _, ins := range got.Insights {
 		l := ins.Link
-		if l.View != nil && !views[*l.View] {
+		// Every link names a view: guarding the membership check on presence
+		// would let a link that emits NO view pass vacuously.
+		if l.View == nil {
+			t.Errorf("link on %s carries no view", ins.Type)
+		} else if !views[*l.View] {
 			t.Errorf("view %q not in VIEWS", *l.View)
 		}
 		if l.GroupBy != nil && !groupBys[*l.GroupBy] {
@@ -857,6 +924,145 @@ func insightSummary(ins []Insight) []string {
 		out[i] = x.Type + ":" + k + ":" + x.Magnitude
 	}
 	return out
+}
+
+// --- Every daily-cost read is filtered to the resolved currency ---
+
+func TestGetInsightsPerCurrencyIsolationOnEveryRead(t *testing.T) {
+	rules := filepath.Join(t.TempDir(), "rules.json")
+	if err := os.WriteFile(rules, []byte(`{"dimensions":[{"name":"team","rules":[{"label":"Platform","match":[{"dimension":"service_name","operator":"equals","value":"EC2"}]}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	metricDay := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+	store := &insightStore{
+		fakeStore: &fakeStore{
+			currencies: []string{"EUR", "USD"},
+			tagKeys:    []string{"env"},
+			businessInfos: []storage.BusinessMetricInfo{
+				{Name: "requests", FirstDay: metricDay, LastDay: metricDay},
+			},
+		},
+		// Service costs keyed by "currency|start|end". The EUR rows would change
+		// every asserted number if a read leaked across currencies.
+		dailyByCurrency: map[string]storage.DailyCosts{
+			"USD|2026-05-10|2026-05-20": {Days: []storage.DayCosts{
+				insightDay(t, "2026-05-15", map[string]string{"EC2": "40", "S3": "5"}),
+			}},
+			"USD|2026-04-29|2026-05-09": {Days: []storage.DayCosts{
+				insightDay(t, "2026-05-01", map[string]string{"EC2": "10", "S3": "20"}),
+			}},
+			"USD||2026-05-20": {},
+			"EUR|2026-05-10|2026-05-20": {Days: []storage.DayCosts{
+				insightDay(t, "2026-05-15", map[string]string{"EC2": "4000", "S3": "500"}),
+			}},
+			"EUR|2026-04-29|2026-05-09": {Days: []storage.DayCosts{
+				insightDay(t, "2026-05-01", map[string]string{"EC2": "1000", "S3": "2000"}),
+			}},
+			"EUR||2026-05-20": {},
+		},
+		// Returned when a read asks for a currency the fixture does not carry.
+		currencyLeak: storage.DailyCosts{Days: []storage.DayCosts{
+			insightDay(t, "2026-05-15", map[string]string{"leaked-across-currencies": "999"}),
+		}},
+		tagDaily: map[string]storage.DailyCosts{
+			"env": {Days: []storage.DayCosts{
+				insightDay(t, "2026-05-15", map[string]string{"(untagged)": "25", "prod": "75"}),
+			}},
+		},
+		allocDaily: &storage.DailyCosts{Days: []storage.DayCosts{
+			insightDay(t, "2026-05-15", map[string]string{"Platform": "70", "Unallocated": "30"}),
+		}},
+	}
+	got := decodeInsights(t, getInsights(t, store, rules, "?start=2026-05-10&end=2026-05-20&currency=USD"))
+
+	// Six daily-cost reads back this digest: the current window, the preceding
+	// window, the tag bucket, the allocation bucket, the full-history scoring
+	// fetch, and the metric's preceding-window costs. Each one is filtered to
+	// the resolved currency.
+	if len(store.readCurrencies) != 6 {
+		t.Fatalf("daily-cost reads = %d %v, want 6", len(store.readCurrencies), store.readCurrencies)
+	}
+	for i, c := range store.readCurrencies {
+		if c != "USD" {
+			t.Errorf("daily-cost read %d used currency %q, want USD", i, c)
+		}
+	}
+
+	// USD-only deltas: EC2 40 - 10 = 30, S3 5 - 20 = -15.
+	inc, ok := findTypeKey(got.Insights, "top-mover", "EC2")
+	if !ok {
+		t.Fatalf("missing EC2 increase: %v", insightSummary(got.Insights))
+	}
+	if inc.Magnitude != "30" {
+		t.Fatalf("EC2 magnitude = %s, want 30 (USD only)", inc.Magnitude)
+	}
+	drop, ok := findTypeKey(got.Insights, "top-mover", "S3")
+	if !ok {
+		t.Fatalf("missing S3 decrease: %v", insightSummary(got.Insights))
+	}
+	if drop.Magnitude != "15" {
+		t.Fatalf("S3 magnitude = %s, want 15 (USD only)", drop.Magnitude)
+	}
+	for _, ins := range got.Insights {
+		if ins.Key != nil && *ins.Key == "leaked-across-currencies" {
+			t.Fatalf("a read reached the store without the resolved currency: %v", insightSummary(got.Insights))
+		}
+	}
+}
+
+// --- Dates are echoed only when the request carried them ---
+
+func TestGetInsightsOmitsDatesWhenRequestUnbounded(t *testing.T) {
+	newStore := func() *insightStore {
+		return &insightStore{
+			fakeStore:    &fakeStore{currencies: []string{"USD"}},
+			historyDaily: &storage.DailyCosts{Currency: "USD"},
+			costTotals: []storage.CostTotals{
+				{Currency: "USD", Billed: dec(t, "100"), Effective: dec(t, "80")},
+			},
+		}
+	}
+
+	rec := getInsights(t, newStore(), "", "?currency=USD")
+	got := decodeInsights(t, rec)
+	// Anti-vacuity: the response really does carry an insight, so its period and
+	// the top-level echo are both on the wire and could have shown a zero date.
+	if _, ok := findType(got.Insights, "commitment-realization"); !ok {
+		t.Fatalf("expected an insight to exercise the period: %v", insightSummary(got.Insights))
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "0001-01-01") {
+		t.Fatalf("zero date on the wire: %s", body)
+	}
+	if strings.Contains(body, `"start"`) || strings.Contains(body, `"end"`) {
+		t.Fatalf("start/end emitted for an unbounded request: %s", body)
+	}
+	if got.Start != nil || got.End != nil {
+		t.Fatalf("top-level start/end = %v/%v, want both omitted", got.Start, got.End)
+	}
+	for _, ins := range got.Insights {
+		if ins.Period.Start != nil || ins.Period.End != nil {
+			t.Fatalf("period start/end present on %s for an unbounded request: %+v", ins.Type, ins.Period)
+		}
+	}
+
+	// The other half of the rule: a bounded request DOES echo both dates.
+	boundedRec := getInsights(t, newStore(), "", "?currency=USD&start=2026-05-10&end=2026-05-20")
+	bounded := decodeInsights(t, boundedRec)
+	if bounded.Start == nil || bounded.End == nil {
+		t.Fatalf("bounded request must echo start and end: %s", boundedRec.Body.String())
+	}
+	if bounded.Start.Format(time.DateOnly) != "2026-05-10" || bounded.End.Format(time.DateOnly) != "2026-05-20" {
+		t.Fatalf("echoed window = %s..%s, want 2026-05-10..2026-05-20",
+			bounded.Start.Format(time.DateOnly), bounded.End.Format(time.DateOnly))
+	}
+	c, ok := findType(bounded.Insights, "commitment-realization")
+	if !ok {
+		t.Fatalf("missing commitment-realization: %v", insightSummary(bounded.Insights))
+	}
+	if c.Period.Start == nil || c.Period.End == nil {
+		t.Fatalf("bounded request must carry the period window: %+v", c.Period)
+	}
 }
 
 func TestGetInsightsEvidenceNeverNull(t *testing.T) {

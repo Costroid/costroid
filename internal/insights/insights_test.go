@@ -91,6 +91,24 @@ func typesOf(in []Insight) []string {
 	return out
 }
 
+func evidenceOf(in Insight) map[string]string {
+	m := make(map[string]string, len(in.Evidence))
+	for _, e := range in.Evidence {
+		m[e.Name] = e.Value
+	}
+	return m
+}
+
+func ofType(in []Insight, typ string) []Insight {
+	var out []Insight
+	for _, x := range in {
+		if x.Type == typ {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
 func TestTieBreakTypeThenKey(t *testing.T) {
 	// Two top-movers suppressed; two untagged-like via equal commitment impossible.
 	// Force two unit-cost-drift with equal costOfDrift and different keys.
@@ -281,8 +299,12 @@ func TestUntaggedShareDerived(t *testing.T) {
 	if got[0].Evidence[2].Name != "share" || got[0].Evidence[2].Value != wantShare {
 		t.Fatalf("share = %+v, want %s", got[0].Evidence[2], wantShare)
 	}
-	if !contains(got[0].Body, "25%") {
-		t.Fatalf("body missing 25%%: %s", got[0].Body)
+	// The body states the percentage as share * 100. Pinned as a whole string:
+	// a body carrying the un-multiplied share would read "(0.25% of the window)"
+	// and still contain the loose substring "25%".
+	wantBody := "Of the window total 100, 25 is untagged for tag key env (25% of the window)."
+	if got[0].Body != wantBody {
+		t.Fatalf("body = %q, want %q", got[0].Body, wantBody)
 	}
 }
 
@@ -298,5 +320,357 @@ func TestUnallocatedSuppressedWhenNotReady(t *testing.T) {
 		if g.Type == TypeUnallocatedSpend {
 			t.Fatal("unallocated present when not ready")
 		}
+	}
+}
+
+func TestUnallocatedSuppressedWhenZero(t *testing.T) {
+	base := Input{
+		Currency:              "USD",
+		AllocationReady:       true,
+		AllocationWindowTotal: d(t, "100"),
+	}
+	zero := base
+	zero.UnallocatedTotal = d(t, "0")
+	for _, g := range Compute(zero) {
+		if g.Type == TypeUnallocatedSpend {
+			t.Fatalf("unallocated present with a zero unallocated total: %+v", g)
+		}
+	}
+
+	// Anti-vacuity: the same input with a non-zero unallocated total emits.
+	nonZero := base
+	nonZero.UnallocatedTotal = d(t, "30")
+	got := Compute(nonZero)
+	if len(got) != 1 || got[0].Type != TypeUnallocatedSpend || got[0].Magnitude.String() != "30" {
+		t.Fatalf("anti-vacuity: a non-zero unallocated total must emit, got %v", typesOf(got))
+	}
+}
+
+func TestTopMoverSuppressedPerSideWithoutStrictDelta(t *testing.T) {
+	// One service whose delta is exactly zero: neither a strictly positive nor a
+	// strictly negative delta exists, so BOTH sides are suppressed.
+	in := Input{
+		Currency:         "USD",
+		WindowStart:      day(2026, 5, 10),
+		WindowEnd:        day(2026, 5, 20),
+		PreviousHasDays:  true,
+		CurrentServices:  map[string]decimal.Decimal{"EC2": d(t, "10")},
+		PreviousServices: map[string]decimal.Decimal{"EC2": d(t, "10")},
+	}
+	got := Compute(in)
+	for _, g := range got {
+		if g.Type == TypeTopMover {
+			t.Fatalf("top-mover emitted for a zero delta: %+v", g)
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("insights = %v, want none", typesOf(got))
+	}
+
+	// Anti-vacuity: raising the current total by 1 emits exactly the increase
+	// side (10 -> 11, delta 1) and still no decrease side.
+	in.CurrentServices = map[string]decimal.Decimal{"EC2": d(t, "11")}
+	got = Compute(in)
+	movers := ofType(got, TypeTopMover)
+	if len(movers) != 1 || movers[0].Magnitude.String() != "1" {
+		t.Fatalf("anti-vacuity: want one top-mover of magnitude 1, got %v", typesOf(got))
+	}
+	if evidenceOf(movers[0])["delta"] != "1" {
+		t.Fatalf("anti-vacuity delta = %v, want 1", evidenceOf(movers[0]))
+	}
+}
+
+func TestTopMoverNewServiceInNonEmptyPreviousWindow(t *testing.T) {
+	// Lambda is absent from an otherwise NON-empty previous window, so it is new:
+	// no previousTotal in evidence and delta equals the total (7 - 0 = 7).
+	// EC2's delta is zero, which keeps Lambda the only mover.
+	in := Input{
+		Currency:         "USD",
+		WindowStart:      day(2026, 5, 10),
+		WindowEnd:        day(2026, 5, 20),
+		PreviousHasDays:  true,
+		CurrentServices:  map[string]decimal.Decimal{"EC2": d(t, "10"), "Lambda": d(t, "7")},
+		PreviousServices: map[string]decimal.Decimal{"EC2": d(t, "10")},
+	}
+	got := Compute(in)
+	movers := ofType(got, TypeTopMover)
+	if len(movers) != 1 {
+		t.Fatalf("top-movers = %v, want exactly the new service", typesOf(got))
+	}
+	m := movers[0]
+	if m.Key != "Lambda" || m.Magnitude.String() != "7" {
+		t.Fatalf("mover = key %q magnitude %s, want Lambda/7", m.Key, m.Magnitude)
+	}
+	// Evidence carries total and delta only; a previousTotal pair would mean the
+	// absent service was treated as a known zero rather than as new.
+	want := []Evidence{{Name: "total", Value: "7"}, {Name: "delta", Value: "7"}}
+	if len(m.Evidence) != len(want) {
+		t.Fatalf("evidence = %+v, want %+v", m.Evidence, want)
+	}
+	for i := range want {
+		if m.Evidence[i] != want[i] {
+			t.Fatalf("evidence[%d] = %+v, want %+v", i, m.Evidence[i], want[i])
+		}
+	}
+	if !contains(m.Body, "is new in the current window") {
+		t.Fatalf("body must read as new: %s", m.Body)
+	}
+}
+
+// driftSeries builds one metric's current and previous cost and quantity streams
+// from single-day values, mirroring the unit-economics covered-days inputs.
+func driftSeries(t *testing.T, name, curCost, curQty, prevCost, prevQty string) MetricSeries {
+	t.Helper()
+	curDay, prevDay := day(2026, 5, 15), day(2026, 5, 5)
+	return MetricSeries{
+		Name: name,
+		CurrentCosts: storage.DailyCosts{Currency: "USD", Days: []storage.DayCosts{{
+			Date: curDay, Services: []storage.ServiceCost{{ServiceName: "x", Cost: d(t, curCost)}},
+		}}},
+		CurrentQuantities: []storage.DayQuantity{{Date: curDay, Quantity: d(t, curQty)}},
+		PreviousCosts: storage.DailyCosts{Currency: "USD", Days: []storage.DayCosts{{
+			Date: prevDay, Services: []storage.ServiceCost{{ServiceName: "x", Cost: d(t, prevCost)}},
+		}}},
+		PreviousQuantities: []storage.DayQuantity{{Date: prevDay, Quantity: d(t, prevQty)}},
+	}
+}
+
+// driftInput wraps metric series in a bounded window with no other observations.
+func driftInput(metrics ...MetricSeries) Input {
+	return Input{
+		Currency:    "USD",
+		WindowStart: day(2026, 5, 10),
+		WindowEnd:   day(2026, 5, 20),
+		Metrics:     metrics,
+	}
+}
+
+func TestUnitCostDriftSuppressedWhenDriftZero(t *testing.T) {
+	// steady: current 30/10 = 3, previous 15/5 = 3, drift 3 - 3 = 0 -> suppressed.
+	// moving: current 30/10 = 3, previous 10/10 = 1, drift 3 - 1 = 2 -> emitted,
+	// costOfDrift = |30 - 1 * 10| = 20 (the anti-vacuity guard: the same shape
+	// with a non-zero drift does reach the output).
+	got := Compute(driftInput(
+		driftSeries(t, "steady", "30", "10", "15", "5"),
+		driftSeries(t, "moving", "30", "10", "10", "10"),
+	))
+	drifts := ofType(got, TypeUnitCostDrift)
+	if len(drifts) != 1 {
+		t.Fatalf("unit-cost-drift = %v, want only the moving metric", typesOf(got))
+	}
+	if drifts[0].Key != "moving" || drifts[0].Magnitude.String() != "20" {
+		t.Fatalf("drift = key %q magnitude %s, want moving/20", drifts[0].Key, drifts[0].Magnitude)
+	}
+	if ev := evidenceOf(drifts[0]); ev["drift"] != "2" || ev["costOfDrift"] != "20" {
+		t.Fatalf("evidence = %v, want drift 2 and costOfDrift 20", ev)
+	}
+}
+
+func TestUnitCostDriftSkippedUnlessBothWindowsHavePositiveQuantity(t *testing.T) {
+	// A metric is skipped unless BOTH windows yield a strictly positive quantity.
+	// That gate is also what keeps the unit-cost division away from a zero
+	// divisor, so a skipped metric must never reach DivRound.
+	got := Compute(driftInput(
+		driftSeries(t, "previousQuantityZero", "30", "10", "10", "0"),
+		driftSeries(t, "currentQuantityZero", "30", "0", "10", "10"),
+		driftSeries(t, "moving", "30", "10", "10", "10"),
+	))
+	drifts := ofType(got, TypeUnitCostDrift)
+	if len(drifts) != 1 {
+		t.Fatalf("unit-cost-drift = %v, want only the metric with two positive quantities", typesOf(got))
+	}
+	// Anti-vacuity: the surviving metric is the fully-covered one, magnitude
+	// |30 - 1 * 10| = 20.
+	if drifts[0].Key != "moving" || drifts[0].Magnitude.String() != "20" {
+		t.Fatalf("drift = key %q magnitude %s, want moving/20", drifts[0].Key, drifts[0].Magnitude)
+	}
+}
+
+func TestCommitmentSuppressedWhenBilledNotPositive(t *testing.T) {
+	cases := []struct {
+		name      string
+		billed    string
+		effective string
+	}{
+		// An all-credit window: nothing was billed and credits pushed effective
+		// cost below zero. The ratio would have no divisor.
+		{name: "zero billed total", billed: "0", effective: "-50"},
+		{name: "negative billed total", billed: "-10", effective: "-40"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Compute(Input{
+				Currency: "USD", HasCommitment: true,
+				BilledTotal: d(t, tc.billed), EffectiveTotal: d(t, tc.effective),
+			})
+			for _, g := range got {
+				if g.Type == TypeCommitmentRealization {
+					t.Fatalf("commitment emitted with billed total %s: %+v", tc.billed, g)
+				}
+			}
+		})
+	}
+
+	// Anti-vacuity: the same shape with a positive billed total does emit.
+	// savings = 10 - (-40) = 50; ratio = 50 / 10 = 5.
+	got := Compute(Input{
+		Currency: "USD", HasCommitment: true,
+		BilledTotal: d(t, "10"), EffectiveTotal: d(t, "-40"),
+	})
+	if len(got) != 1 || got[0].Type != TypeCommitmentRealization || got[0].Magnitude.String() != "50" {
+		t.Fatalf("anti-vacuity: a positive billed total must emit magnitude 50, got %v", typesOf(got))
+	}
+	if ev := evidenceOf(got[0]); ev["ratio"] != "5" {
+		t.Fatalf("anti-vacuity ratio = %v, want 5", ev)
+	}
+}
+
+func TestAnomalyDigestTieBreakEarliestDate(t *testing.T) {
+	// Both flags deviate by |100 - 10| = 90 on the same scope. The earliest date
+	// wins, even though the later flag's key sorts first alphabetically.
+	in := Input{
+		Currency: "USD",
+		Flags: []anomalyscan.ScopedFlag{
+			{Flag: anomaly.Flag{
+				Date: day(2026, 6, 12), Direction: "increase",
+				Observed: d(t, "100"), Median: d(t, "10"), Threshold: d(t, "1"), Deviation: d(t, "90"),
+			}, Scope: "key", Key: "A"},
+			{Flag: anomaly.Flag{
+				Date: day(2026, 6, 11), Direction: "increase",
+				Observed: d(t, "100"), Median: d(t, "10"), Threshold: d(t, "1"), Deviation: d(t, "90"),
+			}, Scope: "key", Key: "B"},
+		},
+	}
+	got := Compute(in)
+	if len(got) != 1 || got[0].Type != TypeAnomalyDigest {
+		t.Fatalf("got %v, want one anomaly digest", typesOf(got))
+	}
+	if got[0].Key != "B" {
+		t.Fatalf("digest key = %q, want B (the earlier date)", got[0].Key)
+	}
+	if ev := evidenceOf(got[0]); ev["date"] != "2026-06-11" {
+		t.Fatalf("digest date = %v, want 2026-06-11", ev)
+	}
+}
+
+func TestAnomalyDigestTieBreakTotalScopeBeforeKeyScope(t *testing.T) {
+	// Both flags deviate by 90 on the same date, so scope decides. The scan never
+	// sets a key on a total-scope flag, which makes the scope rule and the
+	// key-ascending fallback that follows it indistinguishable on scan output;
+	// the key below is set purely to separate the two rules.
+	in := Input{
+		Currency: "USD",
+		Flags: []anomalyscan.ScopedFlag{
+			{Flag: anomaly.Flag{
+				Date: day(2026, 6, 11), Direction: "increase",
+				Observed: d(t, "100"), Median: d(t, "10"), Threshold: d(t, "1"), Deviation: d(t, "90"),
+			}, Scope: "key", Key: "A"},
+			{Flag: anomaly.Flag{
+				Date: day(2026, 6, 11), Direction: "increase",
+				Observed: d(t, "100"), Median: d(t, "10"), Threshold: d(t, "1"), Deviation: d(t, "90"),
+			}, Scope: "total", Key: "Z"},
+		},
+	}
+	got := Compute(in)
+	if len(got) != 1 || got[0].Type != TypeAnomalyDigest {
+		t.Fatalf("got %v, want one anomaly digest", typesOf(got))
+	}
+	if got[0].Key != "" || got[0].Dimension != "" {
+		t.Fatalf("total scope must win the tie and omit key/dimension: key=%q dim=%q", got[0].Key, got[0].Dimension)
+	}
+	if _, has := evidenceOf(got[0])["key"]; has {
+		t.Fatalf("total-scope evidence must omit key: %+v", got[0].Evidence)
+	}
+}
+
+func TestUntaggedTieBreakTagKeyAscending(t *testing.T) {
+	// Equal untagged totals: the alphabetically first tag key wins, even though
+	// the other one comes first in the input.
+	in := Input{
+		Currency: "USD",
+		TagSpends: []TagSpend{
+			{TagKey: "team", UntaggedTotal: d(t, "25"), WindowTotal: d(t, "100")},
+			{TagKey: "env", UntaggedTotal: d(t, "25"), WindowTotal: d(t, "100")},
+		},
+	}
+	got := Compute(in)
+	if len(got) != 1 || got[0].Type != TypeUntaggedSpend {
+		t.Fatalf("got %v, want one untagged-spend", typesOf(got))
+	}
+	if got[0].Key != "env" {
+		t.Fatalf("tie-break key = %q, want env", got[0].Key)
+	}
+}
+
+func TestTieBreakTypeAscendingBeforeKey(t *testing.T) {
+	// Equal magnitudes whose KEY order contradicts their TYPE order:
+	// "unallocated-spend" < "untagged-spend" while key "A" < "Unallocated".
+	// Type therefore has to decide first.
+	in := Input{
+		Currency:              "USD",
+		TagSpends:             []TagSpend{{TagKey: "A", UntaggedTotal: d(t, "40"), WindowTotal: d(t, "100")}},
+		AllocationReady:       true,
+		UnallocatedTotal:      d(t, "40"),
+		AllocationWindowTotal: d(t, "100"),
+	}
+	got := Compute(in)
+	untagged, unallocated := ofType(got, TypeUntaggedSpend), ofType(got, TypeUnallocatedSpend)
+	if len(got) != 2 || len(untagged) != 1 || len(unallocated) != 1 {
+		t.Fatalf("got %v, want one insight of each type", typesOf(got))
+	}
+	// Anti-vacuity, both checks independent of the resulting order: the two
+	// magnitudes really are tied, and the key order really does contradict the
+	// expected type order.
+	if !untagged[0].Magnitude.Equal(unallocated[0].Magnitude) {
+		t.Fatalf("fixture no longer ties: %v", typesOf(got))
+	}
+	if untagged[0].Key >= unallocated[0].Key {
+		t.Fatalf("fixture keys no longer contradict the type order: %v", typesOf(got))
+	}
+	if got[0].Type != TypeUnallocatedSpend || got[1].Type != TypeUntaggedSpend {
+		t.Fatalf("tie order = %v, want unallocated-spend before untagged-spend", typesOf(got))
+	}
+}
+
+func TestShareZeroDivisorGuards(t *testing.T) {
+	// A zero window total against a non-zero untagged (resp. unallocated) total is
+	// reachable when credits cancel the other buckets exactly. The share is then
+	// reported as zero rather than divided.
+	untagged := Compute(Input{
+		Currency:  "USD",
+		TagSpends: []TagSpend{{TagKey: "env", UntaggedTotal: d(t, "25"), WindowTotal: d(t, "0")}},
+	})
+	if len(untagged) != 1 || untagged[0].Type != TypeUntaggedSpend {
+		t.Fatalf("got %v, want one untagged-spend", typesOf(untagged))
+	}
+	if untagged[0].Magnitude.String() != "25" {
+		t.Fatalf("untagged magnitude = %s, want 25", untagged[0].Magnitude)
+	}
+	if ev := evidenceOf(untagged[0]); ev["share"] != "0" || ev["windowTotal"] != "0" {
+		t.Fatalf("untagged evidence = %v, want share 0 against window total 0", ev)
+	}
+	wantUntaggedBody := "Of the window total 0, 25 is untagged for tag key env (0% of the window)."
+	if untagged[0].Body != wantUntaggedBody {
+		t.Fatalf("untagged body = %q, want %q", untagged[0].Body, wantUntaggedBody)
+	}
+
+	unallocated := Compute(Input{
+		Currency:              "USD",
+		AllocationReady:       true,
+		UnallocatedTotal:      d(t, "30"),
+		AllocationWindowTotal: d(t, "0"),
+	})
+	if len(unallocated) != 1 || unallocated[0].Type != TypeUnallocatedSpend {
+		t.Fatalf("got %v, want one unallocated-spend", typesOf(unallocated))
+	}
+	if unallocated[0].Magnitude.String() != "30" {
+		t.Fatalf("unallocated magnitude = %s, want 30", unallocated[0].Magnitude)
+	}
+	if ev := evidenceOf(unallocated[0]); ev["share"] != "0" || ev["windowTotal"] != "0" {
+		t.Fatalf("unallocated evidence = %v, want share 0 against window total 0", ev)
+	}
+	wantUnallocatedBody := "Of the window total 0, 30 is unallocated (0% of the window)."
+	if unallocated[0].Body != wantUnallocatedBody {
+		t.Fatalf("unallocated body = %q, want %q", unallocated[0].Body, wantUnallocatedBody)
 	}
 }
