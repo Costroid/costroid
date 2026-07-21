@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -122,8 +123,10 @@ func TestKeyFileInitAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key file: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("key file mode = %04o, want 0600", perm)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("key file mode = %04o, want 0600", perm)
+		}
 	}
 
 	key, err := credentials.LoadKey(path)
@@ -145,14 +148,19 @@ func TestKeyFileInitAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat key dir: %v", err)
 	}
-	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
-		t.Errorf("key dir mode = %04o, want 0700", perm)
+	if runtime.GOOS != "windows" {
+		if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+			t.Errorf("key dir mode = %04o, want 0700", perm)
+		}
 	}
 }
 
 // TestLoadKeyRefusesGroupReadable proves a group/world-accessible key file
 // is refused with an actionable chmod message.
 func TestLoadKeyRefusesGroupReadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("credentials.LoadKey skips the mode check on Windows (credentials.go GOOS gate)")
+	}
 	path := initKey(t)
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatalf("chmod: %v", err)

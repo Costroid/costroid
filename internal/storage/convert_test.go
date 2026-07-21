@@ -291,33 +291,36 @@ func TestChangeEncryptionWALBearingSourceUntouchedAndRowSurvives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open scratch: %v", err)
 	}
-	// Keep the session open until after the snapshot copy.
+	// Close after setup: the abort knob below makes Close skip the shutdown
+	// checkpoint header write, so the WAL survives with zero open handles
+	// (needed on Windows where an open handle blocks the snapshot copy).
 	for _, stmt := range []string{
 		`CREATE TABLE tracked (id INTEGER PRIMARY KEY, note VARCHAR)`,
 		`INSERT INTO tracked VALUES (1, 'checkpointed')`,
 		`CHECKPOINT`,
 		`SET checkpoint_threshold='10GB'`,
 		`INSERT INTO tracked VALUES (2, 'wal-only-row')`,
+		`SET debug_checkpoint_abort='before_header'`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			_ = db.Close()
 			t.Fatalf("setup %q: %v", stmt, err)
 		}
 	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close scratch after abort knob: %v", err)
+	}
 
-	// Snapshot both files while the session is still open (WAL holds the row).
+	// Snapshot both files after Close: the abort knob left the WAL intact.
 	dataDir := t.TempDir()
 	live := filepath.Join(dataDir, DatabaseFile)
 	liveWAL := live + ".wal"
 	if err := copyFile(scratch, live); err != nil {
-		_ = db.Close()
 		t.Fatalf("copy duckdb: %v", err)
 	}
 	if err := copyFile(scratchWAL, liveWAL); err != nil {
-		_ = db.Close()
 		t.Fatalf("copy wal: %v", err)
 	}
-	_ = db.Close()
 
 	// Precondition: WAL non-empty AND the .duckdb alone does not contain the row.
 	walInfo, err := os.Stat(liveWAL)

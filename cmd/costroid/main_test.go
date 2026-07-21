@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -659,14 +660,27 @@ func TestResolveAllocationRulesPath(t *testing.T) {
 		}
 	})
 	t.Run("default is under the config dir", func(t *testing.T) {
-		cfg := t.TempDir()
-		t.Setenv("XDG_CONFIG_HOME", cfg)    // pin os.UserConfigDir()
+		cfg := setConfigDir(t)
 		t.Setenv(allocationRulesEnvVar, "") // and the env override
 		want := filepath.Join(cfg, "costroid", "allocation.json")
 		if got := resolveAllocationRulesPath(""); got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+}
+
+// setConfigDir redirects os.UserConfigDir to a temp directory for the
+// duration of the test. On Windows UserConfigDir reads AppData; elsewhere
+// it honors XDG_CONFIG_HOME.
+func setConfigDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Setenv("AppData", dir)
+	} else {
+		t.Setenv("XDG_CONFIG_HOME", dir)
+	}
+	return dir
 }
 
 // hermeticServeEnv pins every serve-related env var so ambient developer
@@ -740,8 +754,7 @@ func TestServeConfig(t *testing.T) {
 	t.Run("default under config dir warns when missing", func(t *testing.T) {
 		hermeticServeEnv(t)
 		t.Setenv(envAuthToken, "silent-token")
-		cfgDir := t.TempDir()
-		t.Setenv("XDG_CONFIG_HOME", cfgDir)
+		cfgDir := setConfigDir(t)
 		cfg, warning, stop, err := serveConfig(nil)
 		wantPath := filepath.Join(cfgDir, "costroid", "allocation.json")
 		wantWarning := "allocation rules file not found: " + wantPath + " — groupBy=allocation will return 400 until it exists"
@@ -755,6 +768,7 @@ func TestServeConfig(t *testing.T) {
 		t.Setenv(envAuthToken, "silent-token")
 		t.Setenv("HOME", "")
 		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("AppData", "")
 		cfg, warning, stop, err := serveConfig(nil)
 		want := "no allocation rules path could be resolved — groupBy=allocation will return 400 as unconfigured"
 		if err != nil || stop || cfg.allocationRulesPath != "" || warning != want {
@@ -775,6 +789,9 @@ func TestServeConfig(t *testing.T) {
 		// ErrNotExist (here ENOTDIR: the path's parent is a regular file) must
 		// still produce a startup warning and let serve start — the finding is
 		// that only ErrNotExist warned before.
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows reports a file-as-parent path as not-found; the non-ENOENT warning branch is unreachable via this setup")
+		}
 		hermeticServeEnv(t)
 		t.Setenv(envAuthToken, "silent-token")
 		regular := filepath.Join(t.TempDir(), "rules.json")
@@ -1204,9 +1221,13 @@ func TestAllocationValidateCLI(t *testing.T) {
 
 	t.Run("missing file exits non-zero", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "nope.json")
+		wantOS := "no such file"
+		if runtime.GOOS == "windows" {
+			wantOS = "cannot find the file"
+		}
 		if _, err := runCLI([]string{"allocation", "validate", "--rules", missing}, ""); err == nil {
 			t.Fatal("allocation validate (missing) = nil error, want non-zero exit")
-		} else if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "no such file") {
+		} else if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), wantOS) {
 			t.Errorf("error = %v, want missing path and actionable OS message", err)
 		}
 	})

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -1274,6 +1275,9 @@ func TestGetDailyCostsAllocationErrors(t *testing.T) {
 	})
 
 	t.Run("unreadable path is 500 from os.Open", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows reports a file-as-parent path as not-found; the 400 missing-file classification is the correct outcome there and the ENOTDIR 500 path is POSIX-only")
+		}
 		regular := writeRules(t, `{"dimensions":[{"name":"team","rules":[]}]}`)
 		unreadable := filepath.Join(regular, "child.json")
 		store, rec := get(t, unreadable)

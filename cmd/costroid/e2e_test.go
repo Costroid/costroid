@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -748,14 +749,16 @@ func TestOfflineE2EAICost(t *testing.T) {
 		t.Errorf("June should still ingest while May degraded (failure isolation):\n%s", failOut)
 	}
 
-	// A world-readable key file is refused.
-	if err := os.Chmod(keyPath, 0o644); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	negative("world-readable key file", "chmod 600",
-		"ingest", "--connector", "anthropic-cost", anthBase, "--period", "2026-05")
-	if err := os.Chmod(keyPath, 0o600); err != nil {
-		t.Fatalf("chmod back: %v", err)
+	// A world-readable key file is refused (credentials.go GOOS-gates the mode check).
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(keyPath, 0o644); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		negative("world-readable key file", "chmod 600",
+			"ingest", "--connector", "anthropic-cost", anthBase, "--period", "2026-05")
+		if err := os.Chmod(keyPath, 0o600); err != nil {
+			t.Fatalf("chmod back: %v", err)
+		}
 	}
 
 	// --- secrets-hygiene assertion over ALL captured output ---

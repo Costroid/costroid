@@ -209,8 +209,7 @@ func TestResolveSourcesPath(t *testing.T) {
 		}
 	})
 	t.Run("config directory default", func(t *testing.T) {
-		root := t.TempDir()
-		t.Setenv("XDG_CONFIG_HOME", root)
+		root := setConfigDir(t)
 		t.Setenv(sourcesEnvVar, "")
 		want := filepath.Join(root, "costroid", "sources.json")
 		if got := resolveSourcesPath(""); got != want {
