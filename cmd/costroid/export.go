@@ -23,24 +23,8 @@ import (
 	"unicode/utf16"
 
 	"github.com/Costroid/costroid/internal/api"
+	"github.com/Costroid/costroid/internal/nlquery"
 )
-
-// exportResource maps a CLI resource name to its GET path under the in-process
-// API handler (the same routes serve uses).
-type exportResource struct {
-	path string
-}
-
-var exportResources = map[string]exportResource{
-	"costs-daily":    {path: "/api/v1/costs/daily"},
-	"costs-summary":  {path: "/api/v1/costs/summary"},
-	"anomalies":      {path: "/api/v1/anomalies"},
-	"tokens":         {path: "/api/v1/usage/tokens/daily"},
-	"usage":          {path: "/api/v1/usage/metrics/daily"},
-	"unit-economics": {path: "/api/v1/unit-economics/daily"},
-}
-
-const exportResourceList = "costs-daily, costs-summary, anomalies, tokens, usage, unit-economics"
 
 const exportUsage = `usage: costroid export <resource> [flags]
 
@@ -91,9 +75,9 @@ func exportCmd(args []string) error {
 		return errors.New("missing export resource\n" + exportUsage)
 	}
 	resource := args[0]
-	spec, ok := exportResources[resource]
+	spec, ok := nlquery.Endpoints[resource]
 	if !ok {
-		return fmt.Errorf("unknown export resource %q (want %s)", resource, exportResourceList)
+		return fmt.Errorf("unknown export resource %q (want %s)", resource, nlquery.EndpointList)
 	}
 
 	flags := flag.NewFlagSet("export "+resource, flag.ContinueOnError)
@@ -152,7 +136,7 @@ func exportCmd(args []string) error {
 	rulesPath := resolveAllocationRulesPath(*allocationRulesFlag)
 	handler := api.NewHandler(version, fstest.MapFS{}, store, rulesPath)
 
-	reqURL := spec.path
+	reqURL := spec.Path
 	if enc := q.Encode(); enc != "" {
 		reqURL += "?" + enc
 	}
