@@ -100,9 +100,9 @@ the Costroid database in <dir> is in use by another process — the embedded sto
 ```
 
 Stop `costroid serve` before running `costroid ingest`,
-`costroid metrics import`, or `costroid credentials set`, then restart it when
-the command finishes. See [Getting started](/getting-started/) for the basic
-workflow.
+`costroid metrics import`, `costroid export`, or `costroid credentials set`,
+then restart it when the command finishes. See [Getting started](/getting-started/)
+for the basic workflow.
 
 Scheduled ingestion is the exception for connector refreshes: `serve --sync`
 runs connectors inside the serving process and shares the already-open store.
@@ -111,6 +111,42 @@ data directory.
 
 `costroid allocation validate` is the exception: it reads only the rules JSON
 file and does not open the store, so it can run alongside `serve`.
+
+## Exporting data
+
+Every data view in the dashboard has a Download CSV button. The download is the
+table as shown: exact wire decimal strings (never reformatted), RFC 4180
+quoting, CRLF rows, and a UTF-8 BOM so Excel opens non-ASCII keys correctly.
+
+For offline scripting, `costroid export` produces the same numbers without a
+browser or network. It reuses the HTTP handler `serve` uses, in process, with
+no authentication:
+
+```sh
+# stop serve first (single-writer store)
+costroid export costs-daily --start 2026-05-01 --end 2026-05-31
+costroid export costs-summary --group-by service
+costroid export tokens --format json
+costroid export unit-economics --metric requests --out unit.csv
+```
+
+Resources map 1:1 to API endpoints: `costs-daily`, `costs-summary`,
+`anomalies`, `tokens`, `usage`, and `unit-economics`. Grouping uses the same
+`--group-by` vocabulary as the dashboard
+(`service|provider|allocation|subaccount|region|tag`; `tag` requires
+`--tag-key`).
+
+Success is silent: stdout receives exactly the export bytes. With `--out`, the
+file receives the bytes and stdout is empty. CSV on stdout has no BOM (so
+pipes to `cut`/`awk`/`join` stay clean); CSV `--out` prepends the UTF-8 BOM
+for Excel, matching the dashboard downloads. `--format json` streams the API
+response body bytes untouched and never adds a BOM.
+
+`export` is one-shot per invocation (stdout or a single `--out` path). It is
+not a reports subsystem: there is no built-in delivery or recurring run.
+
+The current-key flag and environment variable are the same as `serve` and
+`ingest` (`--db-encryption-key-file` / `$COSTROID_DB_ENCRYPTION_KEY_FILE`).
 
 ## Running in a container
 

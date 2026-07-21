@@ -1,6 +1,6 @@
 ---
 title: CLI flags
-description: Every Costroid command and flag, including scheduled sources, serve, demo, ingest, credentials, metrics, and allocation.
+description: Every Costroid command and flag, including scheduled sources, serve, demo, store, export, ingest, credentials, metrics, and allocation.
 ---
 
 <!-- SPDX-License-Identifier: Apache-2.0 -->
@@ -8,9 +8,9 @@ description: Every Costroid command and flag, including scheduled sources, serve
 
 ## Command overview
 
-Costroid has seven top-level commands: `demo`, `serve`, `allocation`, `sources`,
-`metrics`, `credentials`, and `ingest`. Running `costroid` without a command prints this
-usage block:
+Costroid has nine top-level commands: `demo`, `serve`, `allocation`, `sources`,
+`metrics`, `credentials`, `store`, `ingest`, and `export`. Running `costroid`
+without a command prints this usage block:
 
 ```text
 usage: costroid <command> [flags]
@@ -54,6 +54,27 @@ commands:
           costroid credentials set <name>     (reads the secret from stdin)
           costroid credentials list
           costroid credentials delete <name>
+  store   convert the embedded store between at-rest encryption states offline
+          costroid store encrypt --new-db-encryption-key-file <path>
+          costroid store rekey   [--db-encryption-key-file <path>] --new-db-encryption-key-file <path>
+          costroid store decrypt [--db-encryption-key-file <path>] --allow-plaintext
+          (stop 'costroid serve' first; needs free disk roughly the size of the
+          store; the original is kept as costroid.duckdb.bak; decrypt rewrites
+          the store as plaintext and requires --allow-plaintext)
+  export  one-shot offline CSV/JSON export of dashboard data (no network, no auth)
+          costroid export <resource> [--format csv|json] [--out <path>]
+                   [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+                   [--group-by service|provider|allocation|subaccount|region|tag]
+                   [--tag-key <key>] [--currency CODE] [--provider <name>]
+                   [--metric <name>] [--allocation-rules <path>]
+                   [--db-encryption-key-file <path>]
+          (resources: costs-daily, costs-summary, anomalies, tokens, usage,
+          unit-economics. Mirrors the dashboard numbers via the same HTTP
+          handler serve uses, in process. Offline only: stop 'costroid serve'
+          first. Success is silent - stdout is EXACTLY the export bytes; --out
+          writes the file and leaves stdout empty. CSV on stdout has no BOM;
+          CSV --out prepends the UTF-8 BOM for Excel. json never gets a BOM.
+          One-shot only - scheduling and delivery are deliberately out of scope.)
   ingest  ingest a cost export into the store
           local file:  costroid ingest --connector aws-focus --path <file> [--tenant default]
           live S3:     costroid ingest --connector aws-focus-s3 --bucket <b> --prefix <p>
@@ -286,3 +307,76 @@ does not open the store, check credential slots, or contact remote sources
 
 Validation is safe alongside `serve`. It checks structure and connector fields,
 but it does not open the store, read credential slots, or contact a provider.
+
+## `costroid store`
+
+```text
+usage: costroid store <subcommand>
+
+subcommands:
+  encrypt --new-db-encryption-key-file <path>
+          adopt at-rest encryption on a plaintext store
+  rekey   [--db-encryption-key-file <path>] --new-db-encryption-key-file <path>
+          replace the at-rest encryption key on an already-encrypted store
+  decrypt [--db-encryption-key-file <path>] --allow-plaintext
+          remove at-rest encryption (writes a plaintext store; requires
+          --allow-plaintext)
+
+These commands convert the embedded store offline. Stop 'costroid serve' (and
+any other costroid process holding the store) before running them. Free disk
+roughly the size of the store is required for the copy. The original database
+is retained as costroid.duckdb.bak under the data directory until you remove
+it. decrypt rewrites the store as plaintext on disk and requires
+--allow-plaintext to proceed. The current key for rekey/decrypt resolves from
+--db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE (flag wins). The
+new key for encrypt/rekey is only --new-db-encryption-key-file (no env var)
+```
+
+| Flag | Verbatim help |
+| --- | --- |
+| `-new-db-encryption-key-file` | `NEW at-rest DATABASE-encryption key file path (distinct from --key-file, the D32 CREDENTIAL-store key; no env var - explicit per invocation)` |
+| `-db-encryption-key-file` | `at-rest DATABASE-encryption key file path (distinct from --key-file, the D32 CREDENTIAL-store key; overrides $COSTROID_DB_ENCRYPTION_KEY_FILE)` |
+| `-allow-plaintext` | `required confirmation that decrypt rewrites the store as plaintext on disk` |
+
+See [Operations](/guides/operations/#encryption-at-rest) for the encrypt/rekey/decrypt
+workflow and backup notes.
+
+## `costroid export`
+
+```text
+usage: costroid export <resource> [flags]
+
+resources:
+  costs-daily      GET /api/v1/costs/daily
+  costs-summary    GET /api/v1/costs/summary
+  anomalies        GET /api/v1/anomalies
+  tokens           GET /api/v1/usage/tokens/daily
+  usage            GET /api/v1/usage/metrics/daily
+  unit-economics   GET /api/v1/unit-economics/daily
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `-format` | `csv` or `json` (default `csv`) |
+| `-out` | write export bytes to this path instead of stdout |
+| `-start` / `-end` | inclusive date bounds `YYYY-MM-DD` |
+| `-group-by` | `service\|provider\|allocation\|subaccount\|region\|tag` |
+| `-tag-key` | FOCUS Tags key (required when `-group-by tag`) |
+| `-currency` | billing currency filter (three-letter uppercase) |
+| `-provider` | FOCUS ServiceProviderName filter |
+| `-metric` | business metric name (`unit-economics`) |
+| `-allocation-rules` | allocation rules JSON path (same precedence as serve; used when `-group-by allocation`) |
+| `-db-encryption-key-file` | at-rest DATABASE-encryption key file path (same resolution as serve) |
+
+Resource flag sets:
+
+- `costs-daily` / `costs-summary` / `anomalies`: `-start` `-end` `-group-by` `-tag-key` `-currency` `-provider`
+- `tokens` / `usage`: `-start` `-end`
+- `unit-economics`: `-metric` `-start` `-end` `-currency` `-provider`
+
+Offline only: stop `costroid serve` first (single-writer store). Success is
+silent - stdout is exactly the export bytes; `-out` writes the file and leaves
+stdout empty. CSV on stdout has no BOM; CSV `-out` prepends the UTF-8 BOM for
+Excel. `json` never gets a BOM. One-shot only - scheduling and delivery are
+deliberately out of scope. See [Exporting data](/guides/operations/#exporting-data).
+
