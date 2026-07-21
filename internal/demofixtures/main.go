@@ -170,6 +170,10 @@ func run(outDir string) error {
 		if err := capture("unit-economics."+p.id, econPath); err != nil {
 			return err
 		}
+		// Insights are range-only (no groupBy / provider); one fixture per preset.
+		if err := capture("insights."+p.id, "/api/v1/insights"+rq); err != nil {
+			return err
+		}
 	}
 
 	tagKeys, err := capturedTagKeys(filepath.Join(fixturesDir, "costs.full.service.json"))
