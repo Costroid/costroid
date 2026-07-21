@@ -752,4 +752,98 @@ describe("UnitEconomics", () => {
       "unit economics",
     );
   });
+
+  it("downloads unit economics as CSV when days are present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/business-metrics") {
+          return Promise.resolve(fakeResponse(200, metricsBody("requests")));
+        }
+        return Promise.resolve(
+          fakeResponse(200, {
+            metric: "requests",
+            currency: "USD",
+            currencies: ["USD"],
+            provider: "",
+            providers: ["Amazon Web Services"],
+            days: [
+              {
+                date: "2026-05-01",
+                cost: "10.00",
+                quantity: "5",
+                unitCost: "2.00",
+              },
+              {
+                date: "2026-05-03",
+                cost: "4.00",
+                quantity: "2",
+                unitCost: "2.00",
+              },
+            ],
+            period: {
+              coveredDays: 2,
+              cost: "14.00",
+              quantity: "7",
+              unitCost: "2.00",
+            },
+          }),
+        );
+      }),
+    );
+    class StubURL extends URL {}
+    const createURL = vi.fn((_blob: Blob) => "blob:test");
+    const revokeURL = vi.fn();
+    StubURL.createObjectURL = createURL;
+    StubURL.revokeObjectURL = revokeURL;
+    vi.stubGlobal("URL", StubURL);
+    let downloadName = "";
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadName = this.download;
+      });
+
+    render(<UnitEconomics />);
+    expect(await screen.findByText("View as table")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
+
+    expect(createURL).toHaveBeenCalledTimes(1);
+    const blob = createURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe("text/csv;charset=utf-8");
+    expect(downloadName).toBe(
+      "costroid-unit-economics-requests-USD-2026-05-01_2026-05-03.csv",
+    );
+    expect(revokeURL).toHaveBeenCalledWith("blob:test");
+    clickSpy.mockRestore();
+  });
+
+  it("hides the Download CSV button when ready with zero days", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input) === "/api/v1/business-metrics"
+            ? fakeResponse(200, metricsBody("requests"))
+            : fakeResponse(200, economicsBody("USD", ["USD"])),
+        ),
+      ),
+    );
+
+    render(<UnitEconomics />);
+    expect(await screen.findByText("View as table")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download CSV" })).toBeNull();
+  });
+
+  it("hides the Download CSV button when there are no business metrics", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, { metrics: [] }))),
+    );
+
+    render(<UnitEconomics />);
+    expect(await screen.findByText(/No business metrics yet/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download CSV" })).toBeNull();
+  });
 });

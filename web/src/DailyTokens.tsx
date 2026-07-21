@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import { getTokensDaily } from "./api";
+import { dailyTokensCsvFilename, dailyTokensToCsv, downloadCsv } from "./csv";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
 import { ErrorState, LoadingSkeleton, StatCard, ViewStatus } from "./ViewState";
@@ -39,7 +40,7 @@ type TokensState =
       params: { start: string; end: string };
     };
 
-type DayGroup = {
+export type DayGroup = {
   date: string;
   services: { serviceName: string; quantity: string }[];
   total: string | null;
@@ -377,6 +378,16 @@ function Chart({ rows }: { rows: DailyTokenUsage[] }) {
             </li>
           ))}
         </ul>
+      </div>
+      <div className="viz-table-actions">
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(dailyTokensCsvFilename(days), dailyTokensToCsv(days))
+          }
+        >
+          Download CSV
+        </button>
       </div>
       <details className="viz-table">
         <summary>View as table</summary>

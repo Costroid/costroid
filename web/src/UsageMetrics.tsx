@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import { getUsageMetricsDaily } from "./api";
+import { downloadCsv, usageMetricsCsvFilename, usageMetricsToCsv } from "./csv";
 import { EmptyIcon } from "./icons";
 import type { Range } from "./range";
 import { sumIntegerStrings } from "./viz";
@@ -237,6 +238,16 @@ function MetricsTables({ rows }: { rows: DailyUsageMetric[] }) {
             />
           ),
         )}
+      </div>
+      <div className="viz-table-actions">
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(usageMetricsCsvFilename(rows), usageMetricsToCsv(rows))
+          }
+        >
+          Download CSV
+        </button>
       </div>
       <div className="usage-metrics-list">
         {sectionTotals.map(({ section, total }) => {

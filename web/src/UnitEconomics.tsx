@@ -4,6 +4,11 @@
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import { getBusinessMetrics, getUnitEconomicsDaily } from "./api";
+import {
+  downloadCsv,
+  unitEconomicsCsvFilename,
+  unitEconomicsToCsv,
+} from "./csv";
 import { EmptyIcon } from "./icons";
 import { Money } from "./money";
 import type { Range } from "./range";
@@ -393,6 +398,21 @@ function EconomicsTable({ economics }: { economics: UnitEconomicsResponse }) {
               )}
             </svg>
           </div>
+        </div>
+      )}
+      {economics.days.length > 0 && (
+        <div className="viz-table-actions">
+          <button
+            type="button"
+            onClick={() =>
+              downloadCsv(
+                unitEconomicsCsvFilename(economics),
+                unitEconomicsToCsv(economics),
+              )
+            }
+          >
+            Download CSV
+          </button>
         </div>
       )}
       <details className="viz-table">

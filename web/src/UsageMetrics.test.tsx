@@ -5,6 +5,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -330,5 +331,66 @@ describe("UsageMetrics", () => {
     expect(
       screen.queryByRole("heading", { name: "Tokens", level: 3 }),
     ).toBeNull();
+  });
+
+  it("downloads the raw wire usage metrics as CSV", async () => {
+    const rows: DailyUsageMetric[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "gpt-4o",
+        serviceTier: "",
+        metricName: "uncached_input_tokens",
+        unit: "Tokens",
+        quantity: "100",
+      },
+      {
+        date: "2026-05-03",
+        serviceName: "OpenAI API",
+        serviceTier: "priority",
+        metricName: "web_search_num_requests",
+        unit: "Calls",
+        quantity: "42",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, rows))),
+    );
+    class StubURL extends URL {}
+    const createURL = vi.fn((_blob: Blob) => "blob:test");
+    const revokeURL = vi.fn();
+    StubURL.createObjectURL = createURL;
+    StubURL.revokeObjectURL = revokeURL;
+    vi.stubGlobal("URL", StubURL);
+    let downloadName = "";
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadName = this.download;
+      });
+
+    render(<UsageMetrics />);
+    await screen.findByRole("heading", { name: "Tokens", level: 3 });
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
+
+    expect(createURL).toHaveBeenCalledTimes(1);
+    const blob = createURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe("text/csv;charset=utf-8");
+    expect(downloadName).toBe(
+      "costroid-usage-metrics-2026-05-01_2026-05-03.csv",
+    );
+    expect(revokeURL).toHaveBeenCalledWith("blob:test");
+    clickSpy.mockRestore();
+  });
+
+  it("hides the Download CSV button when there is no usage data", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, []))),
+    );
+
+    render(<UsageMetrics />);
+    expect(await screen.findByText(/No usage metrics yet/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download CSV" })).toBeNull();
   });
 });

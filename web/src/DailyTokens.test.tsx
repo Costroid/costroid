@@ -437,4 +437,76 @@ describe("DailyTokens", () => {
     expect(screen.queryByRole("tooltip")).toBeNull();
     expect(hitTarget.getAttribute("aria-describedby")).toBeNull();
   });
+
+  it("downloads the displayed daily tokens as CSV", async () => {
+    const rows: DailyTokenUsage[] = [
+      {
+        date: "2026-05-01",
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: "1500000",
+      },
+      {
+        date: "2026-05-01",
+        serviceName: "claude-opus-4-6",
+        consumedUnit: "Tokens",
+        consumedQuantity: "2500000",
+      },
+      {
+        date: "2026-05-03",
+        serviceName: "OpenAI API",
+        consumedUnit: "Tokens",
+        consumedQuantity: "1000000",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, rows))),
+    );
+    class StubURL extends URL {}
+    const createURL = vi.fn((_blob: Blob) => "blob:test");
+    const revokeURL = vi.fn();
+    StubURL.createObjectURL = createURL;
+    StubURL.revokeObjectURL = revokeURL;
+    vi.stubGlobal("URL", StubURL);
+    let downloadName = "";
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadName = this.download;
+      });
+
+    render(<DailyTokens />);
+    await screen.findByRole("group", {
+      name: "Stacked daily token usage by service",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
+
+    expect(createURL).toHaveBeenCalledTimes(1);
+    const blob = createURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe("text/csv;charset=utf-8");
+    // jsdom Blob.text() strips the leading UTF-8 BOM; compare without it.
+    // Default .sort() is code-unit order, so OpenAI API precedes claude-*.
+    const expectedCsv =
+      "\uFEFFDate,OpenAI API,claude-opus-4-6,Total\r\n" +
+      "2026-05-01,1500000,2500000,4000000\r\n" +
+      "2026-05-03,1000000,,1000000\r\n";
+    expect(await blob.text()).toBe(expectedCsv.slice(1));
+    expect(downloadName).toBe(
+      "costroid-daily-tokens-2026-05-01_2026-05-03.csv",
+    );
+    expect(revokeURL).toHaveBeenCalledWith("blob:test");
+    clickSpy.mockRestore();
+  });
+
+  it("hides the Download CSV button when there is no token data", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(fakeResponse(200, []))),
+    );
+
+    render(<DailyTokens />);
+    expect(await screen.findByText(/No token usage yet/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download CSV" })).toBeNull();
+  });
 });
