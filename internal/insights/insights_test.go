@@ -299,12 +299,126 @@ func TestUntaggedShareDerived(t *testing.T) {
 	if got[0].Evidence[2].Name != "share" || got[0].Evidence[2].Value != wantShare {
 		t.Fatalf("share = %+v, want %s", got[0].Evidence[2], wantShare)
 	}
-	// The body states the percentage as share * 100. Pinned as a whole string:
-	// a body carrying the un-multiplied share would read "(0.25% of the window)"
-	// and still contain the loose substring "25%".
-	wantBody := "Of the window total 100, 25 is untagged for tag key env (25% of the window)."
+	// The body states the percentage as share * 100 and formats every amount for
+	// reading, while the evidence above keeps the exact share. Pinned as a whole
+	// string: a body carrying the un-multiplied share would read "(0.3% of the
+	// window)", and an unformatted body would read "total 100" rather than
+	// "total 100.00".
+	wantBody := "Of the window total 100.00, 25.00 is untagged for tag key env (25% of the window)."
 	if got[0].Body != wantBody {
 		t.Fatalf("body = %q, want %q", got[0].Body, wantBody)
+	}
+}
+
+func TestBodyRoundsWhileEvidenceStaysExact(t *testing.T) {
+	// The split the digest depends on: the sentence is readable, the evidence
+	// printed beneath it is the untouched audit trail. Both halves are pinned on
+	// the SAME insight so a change that formatted the evidence too would fail.
+	windowTotal := "964050.632653589793238462"
+	// Carries more than two decimals on purpose: an amount that already ends at
+	// two places would round to itself, leaving the magnitude assertion below
+	// unable to see display rounding leak into the wire value.
+	unallocatedTotal := "194348.364999999999999999"
+	in := Input{
+		Currency:              "USD",
+		AllocationReady:       true,
+		UnallocatedTotal:      d(t, unallocatedTotal),
+		AllocationWindowTotal: d(t, windowTotal),
+	}
+	got := Compute(in)
+	if len(got) != 1 || got[0].Type != TypeUnallocatedSpend {
+		t.Fatalf("got %v, want one unallocated-spend", typesOf(got))
+	}
+
+	wantBody := "Of the window total 964,050.63, 194,348.36 is unallocated (20.2% of the window)."
+	if got[0].Body != wantBody {
+		t.Fatalf("body = %q, want %q", got[0].Body, wantBody)
+	}
+
+	// The evidence keeps every digit, including the 18-decimal window total and
+	// the derived share the body rounded to "20.2%".
+	wantShare := d(t, unallocatedTotal).DivRound(d(t, windowTotal), storage.MaxDecimalScale).String()
+	if wantShare != "0.201595599252964521" {
+		t.Fatalf("fixture drifted: share = %s", wantShare)
+	}
+	ev := evidenceOf(got[0])
+	if ev["windowTotal"] != windowTotal {
+		t.Errorf("windowTotal evidence = %q, want the full-precision %q", ev["windowTotal"], windowTotal)
+	}
+	if ev["unallocatedTotal"] != unallocatedTotal {
+		t.Errorf("unallocatedTotal evidence = %q, want the full-precision %q", ev["unallocatedTotal"], unallocatedTotal)
+	}
+	if ev["share"] != wantShare {
+		t.Errorf("share evidence = %q, want the full-precision %q", ev["share"], wantShare)
+	}
+	// The magnitude is a wire value too: it must not pick up display rounding.
+	if got[0].Magnitude.String() != unallocatedTotal {
+		t.Errorf("magnitude = %s, want the exact %s", got[0].Magnitude, unallocatedTotal)
+	}
+}
+
+func TestDisplayMoneyExactAtEighteenDecimals(t *testing.T) {
+	// Values carrying the full division scale must round exactly and group by
+	// digit, with no float anywhere on the path: a float64 round-trip of the
+	// first case below cannot represent the operand at all.
+	cases := []struct{ in, want string }{
+		{"964050.632653589793238462", "964,050.63"},
+		{"194348.36", "194,348.36"},
+		{"0.201595594066514939", "0.20"},
+		{"0.005000000000000001", "0.01"}, // rounds up on the 18th decimal
+		{"-1234567.895000000000000001", "-1,234,567.90"},
+		{"1000", "1,000.00"},
+		{"999", "999.00"},
+		{"1234567890.129999999999999999", "1,234,567,890.13"},
+		{"0", "0.00"},
+		{"-0.001", "0.00"}, // rounds to zero without keeping a negative sign
+	}
+	for _, tc := range cases {
+		if got := displayMoney(d(t, tc.in)); got != tc.want {
+			t.Errorf("displayMoney(%s) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDisplayUnitCostKeepsSignificantDigits(t *testing.T) {
+	// Per-unit rates sit far below one currency unit. Two decimals would render
+	// the first two cases below as an identical "0.04" and the third as "0.00",
+	// producing a sentence that reports a zero movement next to the non-zero
+	// cost of that movement.
+	cases := []struct{ in, want string }{
+		{"0.040762276863408085", "0.0408"},
+		{"0.038743231197771588", "0.0387"},
+		{"-0.002019045665636497", "-0.00202"},
+		{"0.04908784029229762", "0.0491"},
+		{"-0.0081514762039273", "-0.00815"},
+		{"0.201595594066514939", "0.202"},
+		// At or above one unit the money floor of two places applies.
+		{"1.005", "1.01"},
+		{"8698.04872756203018", "8,698.05"},
+		{"0", "0.00"},
+	}
+	for _, tc := range cases {
+		if got := displayUnitCost(d(t, tc.in)); got != tc.want {
+			t.Errorf("displayUnitCost(%s) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDisplayPercentExactAtEighteenDecimals(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"0.201595594066514939", "20.2%"},
+		{"0.25", "25%"}, // a whole percentage drops the trailing ".0"
+		{"0", "0%"},
+		{"1", "100%"},
+		{"0.200020382749938528", "20%"}, // rounds to a whole percentage
+		{"0.203148883062654743", "20.3%"},
+		{"0.000499999999999999", "0%"},
+		{"-0.0815147620392730", "-8.2%"},
+	}
+	for _, tc := range cases {
+		if got := displayPercent(d(t, tc.in)); got != tc.want {
+			t.Errorf("displayPercent(%s) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -649,7 +763,7 @@ func TestShareZeroDivisorGuards(t *testing.T) {
 	if ev := evidenceOf(untagged[0]); ev["share"] != "0" || ev["windowTotal"] != "0" {
 		t.Fatalf("untagged evidence = %v, want share 0 against window total 0", ev)
 	}
-	wantUntaggedBody := "Of the window total 0, 25 is untagged for tag key env (0% of the window)."
+	wantUntaggedBody := "Of the window total 0.00, 25.00 is untagged for tag key env (0% of the window)."
 	if untagged[0].Body != wantUntaggedBody {
 		t.Fatalf("untagged body = %q, want %q", untagged[0].Body, wantUntaggedBody)
 	}
@@ -669,7 +783,7 @@ func TestShareZeroDivisorGuards(t *testing.T) {
 	if ev := evidenceOf(unallocated[0]); ev["share"] != "0" || ev["windowTotal"] != "0" {
 		t.Fatalf("unallocated evidence = %v, want share 0 against window total 0", ev)
 	}
-	wantUnallocatedBody := "Of the window total 0, 30 is unallocated (0% of the window)."
+	wantUnallocatedBody := "Of the window total 0.00, 30.00 is unallocated (0% of the window)."
 	if unallocated[0].Body != wantUnallocatedBody {
 		t.Fatalf("unallocated body = %q, want %q", unallocated[0].Body, wantUnallocatedBody)
 	}

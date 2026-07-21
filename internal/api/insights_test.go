@@ -510,10 +510,11 @@ func TestGetInsightsUntaggedSpend(t *testing.T) {
 	if u.Link.GroupBy == nil || *u.Link.GroupBy != "tag" || u.Link.TagKey == nil || *u.Link.TagKey != "env" {
 		t.Fatalf("link = %+v", u.Link)
 	}
-	// The percentage is share * 100. Pinned as a whole string: a body carrying
-	// the un-multiplied share would read "(0.25% of the window)" and still
-	// contain the loose substring "25%".
-	wantBody := "Of the window total 100, 25 is untagged for tag key env (25% of the window)."
+	// The percentage is share * 100 and the amounts are formatted for reading,
+	// while the evidence checked above stays exact. Pinned as a whole string: a
+	// body carrying the un-multiplied share would read "(0.3% of the window)",
+	// and an unformatted body would read "total 100" rather than "total 100.00".
+	wantBody := "Of the window total 100.00, 25.00 is untagged for tag key env (25% of the window)."
 	if u.Body != wantBody {
 		t.Fatalf("body = %q, want %q", u.Body, wantBody)
 	}
@@ -567,9 +568,11 @@ func TestGetInsightsUnallocatedSpend(t *testing.T) {
 	if ev["unallocatedTotal"] != "30" || ev["windowTotal"] != "100" || ev["share"] != wantShare {
 		t.Fatalf("evidence = %v want share %s", ev, wantShare)
 	}
-	// The percentage is share * 100, pinned as a whole string: the un-multiplied
-	// share would read "(0.3% of the window)".
-	wantBody := "Of the window total 100, 30 is unallocated (30% of the window)."
+	// The percentage is share * 100 and the amounts are formatted for reading,
+	// while the evidence checked above stays exact. Pinned as a whole string: the
+	// un-multiplied share would read "(0.3% of the window)", and an unformatted
+	// body would read "total 100" rather than "total 100.00".
+	wantBody := "Of the window total 100.00, 30.00 is unallocated (30% of the window)."
 	if u.Body != wantBody {
 		t.Fatalf("body = %q, want %q", u.Body, wantBody)
 	}

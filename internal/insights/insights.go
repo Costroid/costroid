@@ -13,6 +13,7 @@ package insights
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -201,6 +202,94 @@ func precedingWindow(start, end time.Time) (prevStart, prevEnd time.Time) {
 	return prevStart, prevEnd
 }
 
+// --- Display helpers (body prose only) ---
+//
+// These format numbers for human reading and are used ONLY when building an
+// Insight's Body. Evidence pair values and the Magnitude field keep the exact
+// unrounded decimal, so a reader can always check a rounded sentence against
+// the full-precision numbers printed beneath it. Both helpers stay on
+// shopspring/decimal end to end: rounding is exact decimal rounding and
+// grouping is string manipulation over the decimal's own digits, so no float
+// ever exists on this path.
+
+// displayMoney renders an amount rounded to two decimal places with the
+// integer part grouped in thousands, e.g. 964050.632653589793238462 becomes
+// "964,050.63". Two decimals are always shown, so 100 becomes "100.00".
+func displayMoney(v decimal.Decimal) string {
+	return groupedFixed(v, 2)
+}
+
+// groupedFixed renders v at an exact decimal scale with the integer part
+// grouped in thousands.
+func groupedFixed(v decimal.Decimal, scale int32) string {
+	// StringFixed rounds half away from zero at the given scale and always
+	// emits exactly that many decimal places.
+	fixed := v.StringFixed(scale)
+	sign := ""
+	if rest, negative := strings.CutPrefix(fixed, "-"); negative {
+		sign, fixed = "-", rest
+	}
+	integer, fraction, _ := strings.Cut(fixed, ".")
+	return sign + groupThousands(integer) + "." + fraction
+}
+
+// displayUnitCost renders a per-unit rate. Unit costs routinely sit far below
+// one currency unit, where the two-decimal money rule collapses two distinct
+// rates into an identical "0.04" and a real movement into "0.00" — a sentence
+// that then contradicts the cost it reports beside it. This keeps three
+// significant digits instead, with a two-decimal floor so rates at or above
+// one unit still read like money.
+func displayUnitCost(v decimal.Decimal) string {
+	return groupedFixed(v, unitCostScale(v))
+}
+
+// unitCostScale returns the scale that preserves three significant digits of v,
+// never fewer than the two places money uses. The scale is derived from the
+// decimal's own digit string, so this stays exact like the rest of the path.
+func unitCostScale(v decimal.Decimal) int32 {
+	integer, fraction, _ := strings.Cut(v.Abs().String(), ".")
+	if integer != "0" {
+		return 2
+	}
+	lead := 0
+	for lead < len(fraction) && fraction[lead] == '0' {
+		lead++
+	}
+	if lead == len(fraction) {
+		return 2 // zero has no significant digit to preserve
+	}
+	return int32(lead + 3)
+}
+
+// groupThousands inserts a comma every three digits from the right of an
+// already-extracted run of decimal digits.
+func groupThousands(digits string) string {
+	if len(digits) <= 3 {
+		return digits
+	}
+	var b strings.Builder
+	b.Grow(len(digits) + (len(digits)-1)/3)
+	lead := len(digits) % 3
+	if lead > 0 {
+		b.WriteString(digits[:lead])
+	}
+	for i := lead; i < len(digits); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(digits[i : i+3])
+	}
+	return b.String()
+}
+
+// displayPercent renders a DERIVED share as a human percentage rounded to one
+// decimal place, e.g. 0.201595594066514939 becomes "20.2%". A trailing ".0" is
+// trimmed, so a whole percentage reads "25%" rather than "25.0%".
+func displayPercent(share decimal.Decimal) string {
+	fixed := share.Mul(decimal.NewFromInt(100)).StringFixed(1)
+	return strings.TrimSuffix(fixed, ".0") + "%"
+}
+
 func topMovers(in Input, base Period, baseLink Link) []Insight {
 	if !in.PreviousHasDays {
 		return nil
@@ -266,12 +355,12 @@ func makeTopMover(row serviceDelta, increase bool, period Period, baseLink Link)
 		if row.previousDefined {
 			body = fmt.Sprintf(
 				"Service %s rose from %s to %s (delta %s) between the previous window and the current window.",
-				row.key, row.previous.String(), row.total.String(), row.delta.String(),
+				row.key, displayMoney(row.previous), displayMoney(row.total), displayMoney(row.delta),
 			)
 		} else {
 			body = fmt.Sprintf(
 				"Service %s is new in the current window with total %s (delta %s).",
-				row.key, row.total.String(), row.delta.String(),
+				row.key, displayMoney(row.total), displayMoney(row.delta),
 			)
 		}
 	} else {
@@ -279,12 +368,12 @@ func makeTopMover(row serviceDelta, increase bool, period Period, baseLink Link)
 		if row.previousDefined {
 			body = fmt.Sprintf(
 				"Service %s fell from %s to %s (delta %s) between the previous window and the current window.",
-				row.key, row.previous.String(), row.total.String(), row.delta.String(),
+				row.key, displayMoney(row.previous), displayMoney(row.total), displayMoney(row.delta),
 			)
 		} else {
 			body = fmt.Sprintf(
 				"Service %s is new in the current window with total %s (delta %s).",
-				row.key, row.total.String(), row.delta.String(),
+				row.key, displayMoney(row.total), displayMoney(row.delta),
 			)
 		}
 	}
@@ -321,7 +410,7 @@ func untaggedSpend(in Input, base Period, baseLink Link) (Insight, bool) {
 	if !best.WindowTotal.IsZero() {
 		share = best.UntaggedTotal.DivRound(best.WindowTotal, storage.MaxDecimalScale)
 	}
-	pct := share.Mul(decimal.NewFromInt(100)).String() + "%"
+	pct := displayPercent(share)
 
 	link := baseLink
 	link.GroupBy = "tag"
@@ -330,7 +419,7 @@ func untaggedSpend(in Input, base Period, baseLink Link) (Insight, bool) {
 	return Insight{
 		Type:      TypeUntaggedSpend,
 		Title:     "Untagged spend",
-		Body:      fmt.Sprintf("Of the window total %s, %s is untagged for tag key %s (%s of the window).", best.WindowTotal.String(), best.UntaggedTotal.String(), best.TagKey, pct),
+		Body:      fmt.Sprintf("Of the window total %s, %s is untagged for tag key %s (%s of the window).", displayMoney(best.WindowTotal), displayMoney(best.UntaggedTotal), best.TagKey, pct),
 		Magnitude: best.UntaggedTotal,
 		Dimension: "tagKey",
 		Key:       best.TagKey,
@@ -353,7 +442,7 @@ func unallocatedSpend(in Input, base Period, baseLink Link) (Insight, bool) {
 	if !in.AllocationWindowTotal.IsZero() {
 		share = in.UnallocatedTotal.DivRound(in.AllocationWindowTotal, storage.MaxDecimalScale)
 	}
-	pct := share.Mul(decimal.NewFromInt(100)).String() + "%"
+	pct := displayPercent(share)
 
 	link := baseLink
 	link.GroupBy = "allocation"
@@ -361,7 +450,7 @@ func unallocatedSpend(in Input, base Period, baseLink Link) (Insight, bool) {
 	return Insight{
 		Type:      TypeUnallocatedSpend,
 		Title:     "Unallocated spend",
-		Body:      fmt.Sprintf("Of the window total %s, %s is unallocated (%s of the window).", in.AllocationWindowTotal.String(), in.UnallocatedTotal.String(), pct),
+		Body:      fmt.Sprintf("Of the window total %s, %s is unallocated (%s of the window).", displayMoney(in.AllocationWindowTotal), displayMoney(in.UnallocatedTotal), pct),
 		Magnitude: in.UnallocatedTotal,
 		Key:       allocation.UnallocatedLabel,
 		Evidence: []Evidence{
@@ -404,12 +493,12 @@ func anomalyDigest(in Input, base Period, baseLink Link) (Insight, bool) {
 
 	body := fmt.Sprintf(
 		"%d anomaly flag(s) landed in the window; the largest absolute deviation is %s on %s (%s).",
-		len(in.Flags), magnitude.String(), best.Flag.Date.UTC().Format(time.DateOnly), best.Flag.Direction,
+		len(in.Flags), displayMoney(magnitude), best.Flag.Date.UTC().Format(time.DateOnly), best.Flag.Direction,
 	)
 	if best.Scope == "key" {
 		body = fmt.Sprintf(
 			"%d anomaly flag(s) landed in the window; the largest absolute deviation is %s on %s for service %s (%s).",
-			len(in.Flags), magnitude.String(), best.Flag.Date.UTC().Format(time.DateOnly), best.Key, best.Flag.Direction,
+			len(in.Flags), displayMoney(magnitude), best.Flag.Date.UTC().Format(time.DateOnly), best.Key, best.Flag.Direction,
 		)
 	}
 
@@ -487,7 +576,7 @@ func unitCostDrifts(in Input, base Period) []Insight {
 		out = append(out, Insight{
 			Type:      TypeUnitCostDrift,
 			Title:     "Unit cost drift",
-			Body:      fmt.Sprintf("Unit cost for metric %s moved from %s to %s (drift %s); the cost of that drift on current quantity is %s.", m.Name, prevUnit.String(), curUnit.String(), drift.String(), costOfDrift.String()),
+			Body:      fmt.Sprintf("Unit cost for metric %s moved from %s to %s (drift %s); the cost of that drift on current quantity is %s.", m.Name, displayUnitCost(prevUnit), displayUnitCost(curUnit), displayUnitCost(drift), displayMoney(costOfDrift)),
 			Magnitude: costOfDrift,
 			Dimension: "metric",
 			Key:       m.Name,
@@ -566,12 +655,12 @@ func commitmentRealization(in Input, base Period, baseLink Link) (Insight, bool)
 	if in.EffectiveTotal.LessThan(in.BilledTotal) {
 		body = fmt.Sprintf(
 			"Billed total %s exceeds effective total %s by %s; commitment discounts and amortization reduced effective cost below billed cost.",
-			in.BilledTotal.String(), in.EffectiveTotal.String(), savings.String(),
+			displayMoney(in.BilledTotal), displayMoney(in.EffectiveTotal), displayMoney(savings),
 		)
 	} else {
 		body = fmt.Sprintf(
 			"Effective total %s exceeds billed total %s by %s; amortized effective cost exceeds billed cost this window.",
-			in.EffectiveTotal.String(), in.BilledTotal.String(), savings.Neg().String(),
+			displayMoney(in.EffectiveTotal), displayMoney(in.BilledTotal), displayMoney(savings.Neg()),
 		)
 	}
 
