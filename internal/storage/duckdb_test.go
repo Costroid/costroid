@@ -8,14 +8,18 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1842,6 +1846,42 @@ func assertOpenLockedByAnotherProcessIsActionable(t *testing.T, keyFile string) 
 		if !strings.Contains(err.Error(), part) {
 			t.Errorf("cross-process Open error %q does not contain %q", err, part)
 		}
+	}
+}
+
+// TestIsWindowsSharingViolation checks the GOOS-gated errno classifier.
+// The Windows arm of the errno32 expectation is exercised only by the
+// Windows CI run, not locally.
+func TestIsWindowsSharingViolation(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "errno32_path_error",
+			err:  &fs.PathError{Op: "open", Path: "x", Err: syscall.Errno(32)},
+			// On POSIX errno 32 alone must never classify; on Windows it
+			// correctly does.
+			want: runtime.GOOS == "windows",
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "plain_error",
+			err:  errors.New("plain"),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isWindowsSharingViolation(tt.err); got != tt.want {
+				t.Errorf("isWindowsSharingViolation() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

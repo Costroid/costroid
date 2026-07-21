@@ -125,6 +125,9 @@ func ChangeEncryption(ctx context.Context, dataDir, currentKey, newKey string) (
 	// Header sniff for direction validation before any driver error.
 	flag, sniffErr := sniffDuckDBEncryptionFlag(livePath)
 	if sniffErr != nil {
+		if isWindowsSharingViolation(sniffErr) {
+			return EncryptionChange{}, storeInUseError(dataDir)
+		}
 		return EncryptionChange{}, sniffErr
 	}
 	switch flag {
@@ -394,10 +397,10 @@ func convertError(err error, dataDir string) error {
 	case strings.Contains(msg, "Cannot open encrypted database"):
 		return fmt.Errorf("the Costroid database in %s is encrypted; provide the key via "+
 			"--db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE", dataDir)
-	case strings.Contains(msg, "Could not set lock on file"):
-		return fmt.Errorf("the Costroid database in %s is in use by another process - "+
-			"the embedded store allows a single process at a time, so stop the other "+
-			"costroid process (e.g. `costroid serve`) before running this command", dataDir)
+	case strings.Contains(msg, "Could not set lock on file"),
+		strings.Contains(msg, "File is already open in"),
+		strings.Contains(msg, "being used by another process"):
+		return storeInUseError(dataDir)
 	default:
 		return fmt.Errorf("converting the Costroid database in %s failed", dataDir)
 	}

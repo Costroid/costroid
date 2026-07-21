@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -116,6 +118,27 @@ func openEncrypted(ctx context.Context, dataDir, path, key string) (*DuckDB, err
 	return &DuckDB{db: db}, nil
 }
 
+// storeInUseError is the actionable single-writer lock refusal. Both
+// openError and convertError emit this exact text so the message cannot
+// drift between call sites.
+func storeInUseError(dataDir string) error {
+	return fmt.Errorf("the Costroid database in %s is in use by another process - "+
+		"the embedded store allows a single process at a time, so stop the other "+
+		"costroid process (e.g. `costroid serve`) before running this command", dataDir)
+}
+
+// windowsSharingViolation is ERROR_SHARING_VIOLATION. syscall.Errno(32) is
+// EPIPE on Linux, so the GOOS guard below is load-bearing, not cosmetic.
+const windowsSharingViolation = syscall.Errno(32)
+
+func isWindowsSharingViolation(err error) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == windowsSharingViolation
+}
+
 // openError classifies embedded-database open failures into actionable
 // messages. The single-writer lock refusal must be classified on BOTH
 // open paths: duckdb-go v2 implements database/sql's DriverContext, so
@@ -123,19 +146,20 @@ func openEncrypted(ctx context.Context, dataDir, path, key string) (*DuckDB, err
 // its lock) rather than deferring to the first use; PingContext only
 // covers whatever failure sql.Open did not surface.
 func openError(err error, dataDir, path string, encrypted bool) error {
+	msg := err.Error()
 	switch {
-	case strings.Contains(err.Error(), "Wrong encryption key"):
+	case strings.Contains(msg, "Wrong encryption key"):
 		return fmt.Errorf("the Costroid database in %s is encrypted and the provided key is wrong; "+
 			"check --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE", dataDir)
-	case strings.Contains(err.Error(), "Cannot open encrypted database"):
+	case strings.Contains(msg, "Cannot open encrypted database"):
 		return fmt.Errorf("the Costroid database in %s is encrypted; provide the key via "+
 			"--db-encryption-key-file or $COSTROID_DB_ENCRYPTION_KEY_FILE", dataDir)
-	case strings.Contains(err.Error(), "is not encrypted"):
+	case strings.Contains(msg, "is not encrypted"):
 		return fmt.Errorf("the Costroid database in %s is not encrypted; convert it offline with `costroid store encrypt --new-db-encryption-key-file <path>` (stop any running costroid first), or unset --db-encryption-key-file / $COSTROID_DB_ENCRYPTION_KEY_FILE to keep it unencrypted", dataDir)
-	case strings.Contains(err.Error(), "Could not set lock on file"):
-		return fmt.Errorf("the Costroid database in %s is in use by another process - "+
-			"the embedded store allows a single process at a time, so stop the other "+
-			"costroid process (e.g. `costroid serve`) before running this command", dataDir)
+	case strings.Contains(msg, "Could not set lock on file"),
+		strings.Contains(msg, "File is already open in"),
+		strings.Contains(msg, "being used by another process"):
+		return storeInUseError(dataDir)
 	case encrypted:
 		return fmt.Errorf("opening the encrypted Costroid database in %s failed", dataDir)
 	default:
