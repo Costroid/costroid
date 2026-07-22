@@ -94,6 +94,7 @@ type Server struct {
 	version string
 	store   CostStore
 	demo    bool
+	query   queryHandler
 	// allocationRulesPath is the resolved path to the query-time allocation
 	// rules JSON, or "" when unconfigured. The handler reads it per request
 	// (the live-reload semantic); the file's presence and validity surface as
@@ -108,7 +109,10 @@ var _ ServerInterface = (*Server)(nil)
 // given store, and reading allocation rules from allocationRulesPath ("" =
 // unconfigured).
 func NewServer(version string, store CostStore, allocationRulesPath string) *Server {
-	return &Server{version: version, store: store, allocationRulesPath: allocationRulesPath}
+	return &Server{
+		version: version, store: store, allocationRulesPath: allocationRulesPath,
+		query: newQueryHandler(store, queryHandlerOptions{}),
+	}
 }
 
 // GetHealthz implements GET /healthz.
@@ -121,10 +125,11 @@ func (s *Server) GetHealthz(w http.ResponseWriter, _ *http.Request) {
 // GetMeta implements GET /api/v1/meta.
 func (s *Server) GetMeta(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, Meta{
-		Name:         serviceName,
-		Version:      s.version,
-		FocusVersion: focusVersion,
-		Demo:         s.demo,
+		Name:                           serviceName,
+		Version:                        s.version,
+		FocusVersion:                   focusVersion,
+		Demo:                           s.demo,
+		NaturalLanguageQueryConfigured: s.query.configured(),
 	})
 }
 
@@ -740,6 +745,7 @@ type handlerOptions struct {
 	readOnly bool
 	demo     bool
 	sync     SyncScheduleProvider
+	query    queryHandlerOptions
 }
 
 // WithAuth installs the authentication middleware built from cfg, gating the
@@ -766,6 +772,12 @@ func WithDemo() HandlerOption {
 // provider must return a concurrency-safe snapshot.
 func WithSyncSchedule(provider SyncScheduleProvider) HandlerOption {
 	return func(o *handlerOptions) { o.sync = provider }
+}
+
+// WithQueryModel configures the operator-selected model endpoint used by the
+// natural-language query translator.
+func WithQueryModel(settings QueryModelSettings) HandlerOption {
+	return func(o *handlerOptions) { o.query.settings = settings }
 }
 
 func readOnly(next http.Handler) http.Handler {
@@ -795,6 +807,7 @@ func NewHandler(version string, static fs.FS, store CostStore, allocationRulesPa
 	server := NewServer(version, store, allocationRulesPath)
 	server.demo = o.demo
 	server.syncSchedule = o.sync
+	server.query = newQueryHandler(store, o.query)
 	h := HandlerFromMux(server, mux)
 	if o.auth != nil {
 		h = o.auth.middleware(h)

@@ -458,8 +458,31 @@ type Meta struct {
 	// Name Service name.
 	Name string `json:"name"`
 
+	// NaturalLanguageQueryConfigured True when an operator configured the natural-language query translator.
+	NaturalLanguageQueryConfigured bool `json:"naturalLanguageQueryConfigured"`
+
 	// Version Version of the running Costroid binary.
 	Version string `json:"version"`
+}
+
+// QueryPlan defines model for QueryPlan.
+type QueryPlan struct {
+	Currency *string             `json:"currency"`
+	End      *openapi_types.Date `json:"end"`
+
+	// Endpoint Existing Costroid API resource selected by the translator.
+	Endpoint string              `json:"endpoint"`
+	GroupBy  *string             `json:"groupBy"`
+	Metric   *string             `json:"metric"`
+	Provider *string             `json:"provider"`
+	Start    *openapi_types.Date `json:"start"`
+	TagKey   *string             `json:"tagKey"`
+}
+
+// QueryRequest defines model for QueryRequest.
+type QueryRequest struct {
+	// Question Natural-language finance question, limited to 8192 UTF-8 bytes.
+	Question string `json:"question"`
 }
 
 // ServiceCost defines model for ServiceCost.
@@ -680,6 +703,9 @@ type GetDailyTokensParams struct {
 	End *openapi_types.Date `form:"end,omitempty" json:"end,omitempty"`
 }
 
+// PostQueryJSONRequestBody defines body for PostQuery for application/json ContentType.
+type PostQueryJSONRequestBody = QueryRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Statistical cost anomalies (spikes and dips)
@@ -700,6 +726,9 @@ type ServerInterface interface {
 	// Instance metadata
 	// (GET /api/v1/meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
+	// Translate a natural-language question into a validated plan
+	// (POST /api/v1/query)
+	PostQuery(w http.ResponseWriter, r *http.Request)
 	// Scheduled ingestion status
 	// (GET /api/v1/sync/status)
 	GetSyncStatus(w http.ResponseWriter, r *http.Request)
@@ -1107,6 +1136,20 @@ func (siw *ServerInterfaceWrapper) GetMeta(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// PostQuery operation middleware
+func (siw *ServerInterfaceWrapper) PostQuery(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostQuery(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSyncStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
 
@@ -1438,6 +1481,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/costs/summary", wrapper.GetCostsSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/insights", wrapper.GetInsights)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/meta", wrapper.GetMeta)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/query", wrapper.PostQuery)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sync/status", wrapper.GetSyncStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/unit-economics/daily", wrapper.GetDailyUnitEconomics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/usage/metrics/daily", wrapper.GetDailyUsageMetrics)

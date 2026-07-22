@@ -162,7 +162,7 @@ func askCommand(ctx context.Context, args []string, deps askDependencies) error 
 	}
 	defer func() { _ = store.Close() }()
 
-	values, metrics, err := discoverPromptValues(ctx, store)
+	values, metrics, err := api.DiscoverPromptValues(ctx, store)
 	if err != nil {
 		deps.logger.Error("natural-language query metadata discovery failed")
 		return err
@@ -212,30 +212,6 @@ func askCommand(ctx context.Context, args []string, deps askDependencies) error 
 	}
 	deps.logger.Info("natural-language query completed")
 	return nil
-}
-
-func discoverPromptValues(ctx context.Context, store api.CostStore) (nlquery.Values, []string, error) {
-	providers, err := store.Providers(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
-	if err != nil {
-		return nlquery.Values{}, nil, errors.New("querying provider names failed")
-	}
-	tagKeys, err := store.TagKeys(ctx, focus.DefaultTenant, time.Time{}, time.Time{})
-	if err != nil {
-		return nlquery.Values{}, nil, errors.New("querying tag keys failed")
-	}
-	currencies, err := store.BillingCurrencies(ctx, focus.DefaultTenant, time.Time{}, time.Time{}, "")
-	if err != nil {
-		return nlquery.Values{}, nil, errors.New("querying currency codes failed")
-	}
-	infos, err := store.BusinessMetricNames(ctx, focus.DefaultTenant)
-	if err != nil {
-		return nlquery.Values{}, nil, errors.New("querying business metric names failed")
-	}
-	metrics := make([]string, 0, len(infos))
-	for _, info := range infos {
-		metrics = append(metrics, info.Name)
-	}
-	return nlquery.Values{Providers: providers, TagKeys: tagKeys, Currencies: currencies, Metrics: metrics}, metrics, nil
 }
 
 func executePlan(ctx context.Context, handler http.Handler, plan nlquery.Plan) ([]byte, error) {

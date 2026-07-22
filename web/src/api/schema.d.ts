@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Translate a natural-language question into a validated plan
+         * @description Sends the question and discovered metadata to the operator-configured model endpoint, then returns one validated plan. This operation does not execute the plan or return cost data.
+         */
+        post: operations["postQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sync/status": {
         parameters: {
             query?: never;
@@ -245,6 +265,28 @@ export interface components {
              * @example false
              */
             demo: boolean;
+            /**
+             * @description True when an operator configured the natural-language query translator.
+             * @example false
+             */
+            naturalLanguageQueryConfigured: boolean;
+        };
+        QueryRequest: {
+            /** @description Natural-language finance question, limited to 8192 UTF-8 bytes. */
+            question: string;
+        };
+        QueryPlan: {
+            /** @description Existing Costroid API resource selected by the translator. */
+            endpoint: string;
+            /** Format: date */
+            start: string | null;
+            /** Format: date */
+            end: string | null;
+            groupBy: string | null;
+            tagKey: string | null;
+            currency: string | null;
+            provider: string | null;
+            metric: string | null;
         };
         SyncStatusResponse: {
             /** @description True when this serve process runs scheduled ingestion. */
@@ -861,6 +903,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Meta"];
+                };
+            };
+        };
+    };
+    postQuery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Validated plan for an existing Costroid API endpoint. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueryPlan"];
+                };
+            };
+            /** @description The request body or question is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description The request body exceeds the fixed size limit. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description The natural-language query concurrency limit is reached. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Metadata discovery, translation, or plan validation failed. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Natural-language queries are not configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
         };

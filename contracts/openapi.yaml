@@ -35,6 +35,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Meta"
+  /api/v1/query:
+    post:
+      operationId: postQuery
+      summary: Translate a natural-language question into a validated plan
+      description: >-
+        Sends the question and discovered metadata to the operator-configured
+        model endpoint, then returns one validated plan. This operation does
+        not execute the plan or return cost data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+      responses:
+        "200":
+          description: Validated plan for an existing Costroid API endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryPlan"
+        "400":
+          description: The request body or question is invalid.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "413":
+          description: The request body exceeds the fixed size limit.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "429":
+          description: The natural-language query concurrency limit is reached.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Metadata discovery, translation, or plan validation failed.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "503":
+          description: Natural-language queries are not configured.
+          content:
+            text/plain:
+              schema:
+                type: string
   /api/v1/sync/status:
     get:
       operationId: getSyncStatus
@@ -660,6 +711,7 @@ components:
         - version
         - focusVersion
         - demo
+        - naturalLanguageQueryConfigured
       properties:
         name:
           type: string
@@ -677,6 +729,57 @@ components:
           type: boolean
           description: True only for the isolated, synthetic, read-only product demo.
           example: false
+        naturalLanguageQueryConfigured:
+          type: boolean
+          description: True when an operator configured the natural-language query translator.
+          example: false
+    QueryRequest:
+      type: object
+      required:
+        - question
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          description: Natural-language finance question, limited to 8192 UTF-8 bytes.
+    QueryPlan:
+      type: object
+      required:
+        - endpoint
+        - start
+        - end
+        - groupBy
+        - tagKey
+        - currency
+        - provider
+        - metric
+      properties:
+        endpoint:
+          type: string
+          description: Existing Costroid API resource selected by the translator.
+        start:
+          type: string
+          format: date
+          nullable: true
+        end:
+          type: string
+          format: date
+          nullable: true
+        groupBy:
+          type: string
+          nullable: true
+        tagKey:
+          type: string
+          nullable: true
+        currency:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+        metric:
+          type: string
+          nullable: true
     SyncStatusResponse:
       type: object
       required:

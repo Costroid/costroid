@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -252,26 +253,42 @@ func TestExemptPaths(t *testing.T) {
 	}
 }
 
-// TestRouteGateGuard is the denylist-awareness guard (required test 6). It
-// records the routes the generated scaffolding actually registers
-// (api.gen.go's HandlerWithOptions) plus the static root, and asserts the INVARIANT that every
-// data route is under /api/ (gated) while the only non-/api/ routes are the
-// exempt allowlist. A future data endpoint registered outside /api/ that is not
-// added to the gate (auth.go's gated) and this table reddens here rather than
-// silently shipping unauthenticated.
+// TestRouteGateGuard records the routes the generated scaffolding actually
+// registers plus the static root, and asserts that every data route is under
+// /api/ while the only non-/api/ routes are the exempt allowlist. The exact
+// method set is a codegen-drift detector, not a security guard: gated is based
+// only on path prefixes and readOnly applies independently of route lookup.
 func TestRouteGateGuard(t *testing.T) {
 	exempt := map[string]bool{"/healthz": true, "/": true}
+	wantMethods := map[string]string{
+		"/":                            "",
+		"/healthz":                     http.MethodGet,
+		"/api/v1/anomalies":            http.MethodGet,
+		"/api/v1/business-metrics":     http.MethodGet,
+		"/api/v1/costs/daily":          http.MethodGet,
+		"/api/v1/costs/summary":        http.MethodGet,
+		"/api/v1/insights":             http.MethodGet,
+		"/api/v1/meta":                 http.MethodGet,
+		"/api/v1/query":                http.MethodPost,
+		"/api/v1/sync/status":          http.MethodGet,
+		"/api/v1/unit-economics/daily": http.MethodGet,
+		"/api/v1/usage/metrics/daily":  http.MethodGet,
+		"/api/v1/usage/tokens/daily":   http.MethodGet,
+	}
 	mux := &recordingMux{}
 	_ = HandlerWithOptions(NewServer("test", nil, ""), StdHTTPServerOptions{BaseRouter: mux})
-	routes := []string{"/"} // NewHandler's static route, outside generated scaffolding.
+	methods := map[string]string{"/": ""} // NewHandler's static route is outside generated scaffolding.
 	for _, pattern := range mux.patterns {
-		_, route, ok := strings.Cut(pattern, " ")
+		method, route, ok := strings.Cut(pattern, " ")
 		if !ok {
 			t.Fatalf("generated route pattern %q has no method prefix", pattern)
 		}
-		routes = append(routes, route)
+		methods[route] = method
 	}
-	for _, r := range routes {
+	if !reflect.DeepEqual(methods, wantMethods) {
+		t.Fatalf("registered method set = %v, want %v", methods, wantMethods)
+	}
+	for r := range methods {
 		isGated := gated(r)
 		if exempt[r] {
 			if isGated {
