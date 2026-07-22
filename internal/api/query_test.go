@@ -486,6 +486,34 @@ func TestQueryConfigurationControlsOutboundCalls(t *testing.T) {
 	}
 }
 
+func TestQueryConfigurationReportedByMeta(t *testing.T) {
+	transport := queryRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("meta request reached the model transport")
+		return nil, nil
+	})
+	for _, tc := range []struct {
+		name     string
+		settings QueryModelSettings
+		want     bool
+	}{
+		{name: "unconfigured"},
+		{name: "configured", settings: querySettings(), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := newQueryTestHandler(newQueryRecordingStore(), tc.settings, transport, nil, nil)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/meta", nil))
+			var meta Meta
+			if err := json.Unmarshal(recorder.Body.Bytes(), &meta); err != nil {
+				t.Fatal(err)
+			}
+			if meta.NaturalLanguageQueryConfigured != tc.want {
+				t.Fatalf("naturalLanguageQueryConfigured = %v, want %v", meta.NaturalLanguageQueryConfigured, tc.want)
+			}
+		})
+	}
+}
+
 func queryAssertJSONKeys(t *testing.T, name string, encoded []byte, want []string) {
 	t.Helper()
 	var object map[string]json.RawMessage

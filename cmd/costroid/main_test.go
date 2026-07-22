@@ -698,6 +698,10 @@ func hermeticServeEnv(t *testing.T) {
 	t.Setenv(envAuthTokenFile, "")
 	t.Setenv(envAuthTrustedHeader, "")
 	t.Setenv(envAuthTrustedProxies, "")
+	t.Setenv(envModelEndpoint, "")
+	t.Setenv(envModelName, "")
+	t.Setenv(envModelCredentialFile, "")
+	t.Setenv(envModelTimeout, "")
 }
 
 // TestServeConfig exercises serve's real FlagSet without opening the store or
@@ -978,6 +982,51 @@ func TestServeConfigNoAuthWarning(t *testing.T) {
 		}
 		if !strings.Contains(warning, "WITHOUT AUTHENTICATION") || !strings.Contains(warning, "network-exposed") {
 			t.Errorf("warning = %q, want the escalated network-exposed warning", warning)
+		}
+	})
+}
+
+func TestServeConfigRejectsExposedUnauthenticatedQueryModel(t *testing.T) {
+	configureModel := func(t *testing.T) {
+		t.Helper()
+		t.Setenv(envModelEndpoint, "https://model.example.invalid/v1/chat/completions")
+		t.Setenv(envModelName, "local-model")
+		t.Setenv(envModelTimeout, "45s")
+	}
+
+	t.Run("all conditions are rejected", func(t *testing.T) {
+		hermeticServeEnv(t)
+		configureModel(t)
+		_, _, _, err := serveConfig([]string{"--no-auth", "--addr", "0.0.0.0:8080"})
+		if err == nil || !strings.Contains(err.Error(), "require authentication on a network-exposed address") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("loopback bind starts", func(t *testing.T) {
+		hermeticServeEnv(t)
+		configureModel(t)
+		cfg, _, stop, err := serveConfig([]string{"--no-auth", "--addr", "127.0.0.1:8080"})
+		if err != nil || stop || !cfg.model.configured() || cfg.model.timeout != 45*time.Second {
+			t.Fatalf("stop = %v, configured = %v, timeout = %s, error = %v", stop, cfg.model.configured(), cfg.model.timeout, err)
+		}
+	})
+
+	t.Run("authenticated public bind starts", func(t *testing.T) {
+		hermeticServeEnv(t)
+		configureModel(t)
+		t.Setenv(envAuthToken, "silent-token")
+		cfg, _, stop, err := serveConfig([]string{"--addr", "0.0.0.0:8080"})
+		if err != nil || stop || cfg.authModeName != "bearer" || !cfg.model.configured() {
+			t.Fatalf("stop = %v, auth mode = %q, configured = %v, error = %v", stop, cfg.authModeName, cfg.model.configured(), err)
+		}
+	})
+
+	t.Run("unconfigured public bind starts", func(t *testing.T) {
+		hermeticServeEnv(t)
+		cfg, _, stop, err := serveConfig([]string{"--no-auth", "--addr", "0.0.0.0:8080"})
+		if err != nil || stop || cfg.model.configured() {
+			t.Fatalf("stop = %v, configured = %v, error = %v", stop, cfg.model.configured(), err)
 		}
 	})
 }

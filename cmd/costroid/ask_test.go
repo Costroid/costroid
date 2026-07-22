@@ -394,6 +394,7 @@ func decodedLogValues(t *testing.T, captured string) []string {
 }
 
 func TestResolveModelSettingsRejectsMalformedAndAcceptsUnreachable(t *testing.T) {
+	t.Setenv("COSTROID_ADDR", "127.0.0.1:8080")
 	t.Setenv(envModelName, "local-model")
 	t.Setenv(envModelCredentialFile, "")
 	t.Setenv(envModelEndpoint, "://malformed")

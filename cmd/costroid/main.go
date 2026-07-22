@@ -754,6 +754,7 @@ type serveSettings struct {
 	addr                string
 	allocationRulesPath string
 	dbEncryptionKeyFile string
+	model               modelSettings
 	sync                bool
 	sources             sourcesConfig
 
@@ -792,10 +793,6 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 	if stop, err = parseFlags(flags, args); stop || err != nil {
 		return serveSettings{}, "", stop, err
 	}
-	if _, err := resolveModelSettings(); err != nil {
-		return serveSettings{}, "", false, err
-	}
-
 	cfg.addr = resolveAddr(*addrFlag, os.Getenv("COSTROID_ADDR"))
 	cfg.dbEncryptionKeyFile = *dbEncryptionKeyFileFlag
 
@@ -831,6 +828,14 @@ func serveConfig(args []string) (cfg serveSettings, warning string, stop bool, e
 		cfg.authModeName = "forward-auth"
 	default:
 		cfg.authModeName = "disabled" // --no-auth
+	}
+
+	cfg.model, err = resolveModelSettings()
+	if err != nil {
+		return serveSettings{}, "", false, err
+	}
+	if cfg.model.configured() && cfg.noAuth && !isLoopbackAddr(cfg.addr) {
+		return serveSettings{}, "", false, errors.New("natural-language queries require authentication on a network-exposed address: configure bearer or forward-auth, bind to loopback, or remove the model configuration")
 	}
 
 	cfg.allocationRulesPath = resolveAllocationRulesPath(*allocationRulesFlag)
@@ -1031,7 +1036,10 @@ func serve(args []string) error {
 		_ = store.Close()
 	}()
 
-	handlerOptions := authOptions(cfg)
+	handlerOptions := append(authOptions(cfg), api.WithQueryModel(api.QueryModelSettings{
+		Endpoint: cfg.model.endpoint, Model: cfg.model.model,
+		Credential: cfg.model.credential, Timeout: cfg.model.timeout,
+	}))
 	if cfg.sync {
 		logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 		// Resolve alert channel secrets from the D32 vault BEFORE constructing
