@@ -86,10 +86,17 @@ than miss a real one.
   command has a separate, explicit boundary: it is off until an operator
   chooses an endpoint, and its exact outbound fields are tested. The threat
   model documents both boundaries and their limits.
-- **Every change is gated.** Changes go through code review and a CI pipeline
-  that verifies generated code is in sync, runs the linters, runs the full Go
-  and web test suites, and builds the binary. Contributions carry a Developer
-  Certificate of Origin sign-off, enforced by a DCO check.
+- **Every change is checked by CI.** Every push to `main` runs a pipeline that
+  verifies generated code is in sync, runs the linters, runs the full Go and
+  web test suites, builds the binary, and runs the Windows suite. Contributions
+  arriving as pull requests are additionally checked for a Developer
+  Certificate of Origin sign-off. Stated precisely, because the distinction
+  matters to anyone relying on this page: the project is at present maintained
+  by a single author who commits directly to `main`, so these pipelines are
+  detectors that report on what has landed, not gates that block a merge, and
+  external code review is not part of the current process. Making them
+  blocking, via required status checks, is planned and will be described here
+  once it is true rather than before.
 - **Known-vulnerability scanning.** Every CI run scans the Go module graph for
   reachable known vulnerabilities with `govulncheck`; a reachable finding
   fails the build.

@@ -163,10 +163,19 @@ manual ingest.
 When an `alerts` block is configured, `serve --sync` also POSTs sync-failure
 notifications to the operator-configured webhook or Slack endpoints. There is no
 default or built-in destination: alerting is off unless you configure it, and it
-sends only to the endpoints you name. Alert payloads carry operational metadata
-only (source, connector, tenant, outcome, run counts, timestamps, and the same
-error text shown by `GET /api/v1/sync/status`), never a cost amount, a
-credential, or AI prompt or response content. Channel secrets (a webhook bearer
+sends only to the endpoints you name. Sync-failure payloads carry operational
+metadata only (source, connector, tenant, outcome, run counts, timestamps, and
+the same error text shown by `GET /api/v1/sync/status`).
+
+Anomaly alerts, when enabled, travel the same channels and **do carry cost
+figures**: the flagged service or scope, the currency and date, the direction of
+the change, and the observed value, median, deviation, and threshold as exact
+decimal strings. That is the point of the alert, and it means the destination
+you configure receives per-service daily cost information. Choose it with the
+same care you would apply to the dashboard itself.
+
+No alert of either kind ever carries a credential, or AI prompt or response
+content. Channel secrets (a webhook bearer
 token, a Slack incoming-webhook URL) live in the D32 vault and are referenced by
 slot name, never inline in `sources.json`.
 

@@ -10,17 +10,18 @@ Costroid ingests cost & usage data from cloud providers (AWS, Azure, Google Clou
 
 ## Status
 
-**v0.1.0 is released and self-hostable today.** Download a prebuilt binary and run `costroid demo` for an instant dashboard, or point it at your own billing data. Costroid is still **pre-1.0**, so its APIs, schema, and dashboard layout may still change between releases.
+**v0.3.0 is released and self-hostable today.** Download a prebuilt binary and run `costroid demo` for an instant dashboard, or point it at your own billing data. Costroid is still **pre-1.0**, so its APIs, schema, and dashboard layout may still change between releases.
 
-What ships in v0.1.0:
+What ships in v0.3.0:
 
-- **Six ingest connectors** — AWS FOCUS (local file, and live from S3 with incremental sync), Azure Cost Management FOCUS (live from Blob Storage, incremental), OpenAI and Anthropic cost & usage, and a generic FOCUS/CSV importer.
-- **A four-view dashboard** over the embedded store, with **cost allocation** (query-time rules), **unit economics** (cost per business metric), and **automatic anomaly detection**.
+- **Seven ingest connectors** — AWS FOCUS (local file, and live from S3 with incremental sync), Azure Cost Management FOCUS (live from Blob Storage, incremental), Google Cloud's FOCUS BigQuery export (Preview, incremental — see the [setup section](#google-cloud-focus-bigquery-setup-preview) below), OpenAI and Anthropic cost & usage, and a generic FOCUS/CSV importer.
+- **A six-view dashboard** over the embedded store — overview, costs, tokens, usage, unit economics, and sources — with **cost allocation** (query-time rules), **unit economics** (cost per business metric), and **automatic anomaly detection**.
+- **A deterministic insights digest** — plain-language observations computed from your own data, each printed with the evidence behind it so every claim can be recomputed by hand. No model is involved.
 - **Signed releases** — keyless-signed checksums, GitHub build-provenance attestations, and a CycloneDX 1.6 source SBOM (see [`SECURITY.md`](./SECURITY.md)).
 
-Newer on `main` (build from source; ships in the next release):
+Newer on `main` (build from source; not yet in a tagged release):
 
-- A seventh connector: **Google Cloud's FOCUS BigQuery export** (Preview, incremental sync) — see the [setup section](#google-cloud-focus-bigquery-setup-preview) below.
+- **`costroid ask`** — ask a question in plain language and have it resolved into a query the product already answers. It is off unless you configure a model endpoint of your own, and it is described in full under [Natural-language queries](#natural-language-queries) below.
 
 ---
 
@@ -46,9 +47,9 @@ Sources ──▶ Ingestion ──▶ FOCUS engine ──▶ Storage ──▶ A
 ```
 
 - **Backend (Go):** ingestion, FOCUS engine (schema + version-aware transforms + validation), storage, allocation, unit economics, anomaly detection, and the API. Ships as a single self-contained binary.
-- **Frontend (TypeScript/React):** the four-view dashboard, embedded in the binary and consuming the API.
+- **Frontend (TypeScript/React):** the six-view dashboard, embedded in the binary and consuming the API.
 - **Storage:** DuckDB + Parquet embedded by default (zero-ops, local). A ClickHouse scale-out backend behind the storage interface is planned.
-- **Agent (planned):** an optional natural-language / MCP query layer over the API — not yet shipped.
+- **Natural-language queries:** an optional translator, in the same binary, that turns a question into a validated call to the API above. Off unless you configure a model endpoint of your own.
 
 For the design rules, invariants, and coding conventions, see **[`AGENTS.md`](./AGENTS.md)** — it is the source of truth for anyone (human or agent) working in this repo.
 
@@ -96,7 +97,7 @@ costroid ingest --connector azure-focus --account-url https://<account>.blob.cor
   --container <container> --prefix <directory>/<export-name>
 
 # live from Google's FOCUS BigQuery linked export (Preview; incremental sync;
-# on `main` only — not in the v0.1.0 binaries)
+# included in the released binaries since v0.2.0)
 costroid ingest --connector gcp-focus-bq --dataset-project <host-project> \
   --dataset gcp_billing_immutable_<BILLING_ACCOUNT_ID>_<LOCATION> \
   --table gcp_billing_export_focus_<BILLING_ACCOUNT_ID> --location <LOCATION>
@@ -112,7 +113,7 @@ refresh. Manual `costroid ingest` still requires stopping `serve`. See the
 [scheduled-ingestion guide](./docs-site/src/content/docs/guides/operations.md#scheduled-ingestion)
 and check `GET /api/v1/sync/status` for the latest result of each source.
 
-The connectors are `aws-focus`, `aws-focus-s3`, `azure-focus`, `gcp-focus-bq` (on `main` since v0.1.0), `anthropic-cost`, `openai-cost`, and `focus-csv`; run `costroid ingest -h` for the full flag reference. For the AI vendors, first store the Admin API key in the encrypted credential store (`costroid credentials set <slot>`), then `costroid ingest --connector openai-cost` (or `anthropic-cost`). Manage stored provider credentials with the `costroid credentials` subcommands (`init`, `set`, `list`, `delete`).
+The connectors are `aws-focus`, `aws-focus-s3`, `azure-focus`, `gcp-focus-bq`, `anthropic-cost`, `openai-cost`, and `focus-csv`; run `costroid ingest -h` for the full flag reference. For the AI vendors, first store the Admin API key in the encrypted credential store (`costroid credentials set <slot>`), then `costroid ingest --connector openai-cost` (or `anthropic-cost`). Manage stored provider credentials with the `costroid credentials` subcommands (`init`, `set`, `list`, `delete`).
 
 **Cost allocation, unit economics, and anomaly detection** are available in the dashboard and the API — allocation rules are applied at query time (validate a rules file with `costroid allocation validate`), and business metrics for unit economics are loaded with `costroid metrics import`.
 
@@ -165,11 +166,49 @@ Then run `./bin/costroid demo` or `./bin/costroid serve --no-auth` as above. A s
 
 ---
 
+## Natural-language queries
+
+`costroid ask` lets you put a question in your own words and have Costroid
+resolve it into a query it already knows how to answer.
+
+```bash
+export COSTROID_MODEL_ENDPOINT=http://localhost:11434/v1/chat/completions
+export COSTROID_MODEL=<the model your endpoint serves>
+
+costroid ask "what did we spend on AWS last month"
+```
+
+It prints the resolved plan first, then the answer, so you can see which
+question was actually answered before you trust the number.
+
+How it works, and why it is built this way:
+
+- **The model never writes a query.** It translates your question into a
+  structured plan naming one existing API endpoint and its parameters. The plan
+  is validated against the same vocabulary the API enforces, then executed by
+  the code that already serves the dashboard. There is no second query path.
+- **The model never sees a number.** It receives your question, a fixed schema,
+  and the names it needs to resolve proper nouns: provider names, tag keys,
+  currency codes, and business-metric names. No cost amounts, no quantities, no
+  rows are sent.
+- **It is off until you turn it on.** With no endpoint configured, nothing
+  leaves the machine and no outbound connection is made at all. There is no
+  default endpoint and no telemetry.
+- **You choose the endpoint.** Any OpenAI-compatible endpoint works, including
+  one running on your own machine. Redirects are refused, so a configured
+  endpoint cannot pass your question on to a host you did not choose.
+
+A model running locally typically answers in one to two minutes;
+`COSTROID_MODEL_TIMEOUT` adjusts the bound. `costroid ask --help` documents the
+full configuration.
+
+---
+
 ## Security & data sovereignty
 
 Costroid is built to keep your billing data yours (see [`SECURITY.md`](./SECURITY.md) and [`docs/security.md`](docs/security.md)):
 
-- **Self-hosted** — runs entirely on your infrastructure; `serve` binds loopback by default and refuses to start until you choose an authentication mode.
+- **Self-hosted** — runs on your infrastructure; `serve` binds loopback by default and refuses to start until you choose an authentication mode. Nothing is sent anywhere unless you configure an optional outbound feature yourself.
 - **Content-blind** — records cost & usage counts and categorical dimensions only, never your AI prompt or response content.
 - **Least-privilege credentials** — stored provider credentials are AES-256-GCM encrypted at rest, entered via stdin, and never logged.
 - **Signed releases** — keyless-signed checksums, GitHub build-provenance attestations, and a CycloneDX 1.6 source SBOM.
