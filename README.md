@@ -187,10 +187,17 @@ curl -X POST http://localhost:8080/api/v1/query \
   -d '{"question":"what did we spend on AWS last month"}'
 ```
 
+The `curl` call above assumes `serve --no-auth`; against a token-authenticated
+server, add `-H "Authorization: Bearer $TOKEN"` as for any other API call.
+
 The HTTP request body accepts only `question`; endpoint, model, and credential
-always come from the server's configuration. The caller executes the returned
-plan against the same API endpoints the dashboard uses, so every cost still
-comes from those handlers as an exact decimal string.
+always come from the server's configuration. The plan's `endpoint` names one of
+`costs-daily`, `costs-summary`, `anomalies`, `tokens`, `usage` or
+`unit-economics`, which map to `/api/v1/costs/daily`, `/api/v1/costs/summary`,
+`/api/v1/anomalies`, `/api/v1/usage/tokens/daily`, `/api/v1/usage/metrics/daily`
+and `/api/v1/unit-economics/daily`. The caller executes the plan against those
+endpoints — the same ones the dashboard uses — so every cost still comes from
+those handlers as an exact decimal string.
 
 How it works, and why it is built this way:
 
@@ -213,9 +220,10 @@ How it works, and why it is built this way:
   one running on your own machine. Redirects are refused, so a configured
   endpoint cannot pass your question on to a host you did not choose.
 
-A model running locally typically answers in one to two minutes;
-`COSTROID_MODEL_TIMEOUT` adjusts the bound. `costroid ask --help` documents the
-full configuration.
+Answer times vary widely by model and machine, from a few seconds to a couple of
+minutes; `COSTROID_MODEL_TIMEOUT` adjusts the bound. Running `costroid ask` with
+no argument prints the full configuration — it has no flags, so any argument you
+pass is treated as the question.
 
 ---
 

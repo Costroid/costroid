@@ -111,7 +111,7 @@ var _ ServerInterface = (*Server)(nil)
 func NewServer(version string, store CostStore, allocationRulesPath string) *Server {
 	return &Server{
 		version: version, store: store, allocationRulesPath: allocationRulesPath,
-		query: newQueryHandler(store, queryHandlerOptions{}),
+		query: newQueryHandler(queryHandlerOptions{}),
 	}
 }
 
@@ -807,7 +807,7 @@ func NewHandler(version string, static fs.FS, store CostStore, allocationRulesPa
 	server := NewServer(version, store, allocationRulesPath)
 	server.demo = o.demo
 	server.syncSchedule = o.sync
-	server.query = newQueryHandler(store, o.query)
+	server.query = newQueryHandler(o.query)
 	h := HandlerFromMux(server, mux)
 	if o.auth != nil {
 		h = o.auth.middleware(h)

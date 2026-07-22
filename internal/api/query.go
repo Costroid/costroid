@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -42,8 +43,10 @@ type queryHandlerOptions struct {
 	now        func() time.Time
 }
 
+// queryHandler holds only the per-request settings; the store is reached
+// through the Server, so this deliberately does not keep a second reference to
+// it that a later change could leave stale.
 type queryHandler struct {
-	store      CostStore
 	settings   QueryModelSettings
 	httpClient *http.Client
 	logger     *slog.Logger
@@ -51,18 +54,21 @@ type queryHandler struct {
 	slots      chan struct{}
 }
 
-func newQueryHandler(store CostStore, opts queryHandlerOptions) queryHandler {
+func newQueryHandler(opts queryHandlerOptions) queryHandler {
 	if opts.httpClient == nil {
 		opts.httpClient = &http.Client{}
 	}
 	if opts.logger == nil {
-		opts.logger = slog.Default()
+		// Structured JSON to stderr, matching AccessLog: every other line a
+		// serve process writes is JSON, and slog.Default() (which nothing in
+		// this binary replaces) would make these the only plain-text ones.
+		opts.logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	}
 	if opts.now == nil {
 		opts.now = time.Now
 	}
 	return queryHandler{
-		store: store, settings: opts.settings, httpClient: opts.httpClient,
+		settings: opts.settings, httpClient: opts.httpClient,
 		logger: opts.logger, now: opts.now, slots: make(chan struct{}, QueryConcurrencyLimit),
 	}
 }

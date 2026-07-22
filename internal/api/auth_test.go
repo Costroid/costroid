@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -260,30 +261,36 @@ func TestExemptPaths(t *testing.T) {
 // only on path prefixes and readOnly applies independently of route lookup.
 func TestRouteGateGuard(t *testing.T) {
 	exempt := map[string]bool{"/healthz": true, "/": true}
-	wantMethods := map[string]string{
-		"/":                            "",
-		"/healthz":                     http.MethodGet,
-		"/api/v1/anomalies":            http.MethodGet,
-		"/api/v1/business-metrics":     http.MethodGet,
-		"/api/v1/costs/daily":          http.MethodGet,
-		"/api/v1/costs/summary":        http.MethodGet,
-		"/api/v1/insights":             http.MethodGet,
-		"/api/v1/meta":                 http.MethodGet,
-		"/api/v1/query":                http.MethodPost,
-		"/api/v1/sync/status":          http.MethodGet,
-		"/api/v1/unit-economics/daily": http.MethodGet,
-		"/api/v1/usage/metrics/daily":  http.MethodGet,
-		"/api/v1/usage/tokens/daily":   http.MethodGet,
+	wantMethods := map[string][]string{
+		"/":                            {""},
+		"/healthz":                     {http.MethodGet},
+		"/api/v1/anomalies":            {http.MethodGet},
+		"/api/v1/business-metrics":     {http.MethodGet},
+		"/api/v1/costs/daily":          {http.MethodGet},
+		"/api/v1/costs/summary":        {http.MethodGet},
+		"/api/v1/insights":             {http.MethodGet},
+		"/api/v1/meta":                 {http.MethodGet},
+		"/api/v1/query":                {http.MethodPost},
+		"/api/v1/sync/status":          {http.MethodGet},
+		"/api/v1/unit-economics/daily": {http.MethodGet},
+		"/api/v1/usage/metrics/daily":  {http.MethodGet},
+		"/api/v1/usage/tokens/daily":   {http.MethodGet},
 	}
 	mux := &recordingMux{}
 	_ = HandlerWithOptions(NewServer("test", nil, ""), StdHTTPServerOptions{BaseRouter: mux})
-	methods := map[string]string{"/": ""} // NewHandler's static route is outside generated scaffolding.
+	// Accumulate per path rather than overwrite: a second method registered on
+	// an existing path is exactly the drift this guard exists to catch, and a
+	// map[path]method would silently keep only the last one.
+	methods := map[string][]string{"/": {""}} // NewHandler's static route is outside generated scaffolding.
 	for _, pattern := range mux.patterns {
 		method, route, ok := strings.Cut(pattern, " ")
 		if !ok {
 			t.Fatalf("generated route pattern %q has no method prefix", pattern)
 		}
-		methods[route] = method
+		methods[route] = append(methods[route], method)
+	}
+	for _, registered := range methods {
+		sort.Strings(registered)
 	}
 	if !reflect.DeepEqual(methods, wantMethods) {
 		t.Fatalf("registered method set = %v, want %v", methods, wantMethods)

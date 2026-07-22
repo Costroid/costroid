@@ -184,7 +184,8 @@ func TestQueryReturnsValidatedPlanFromMetadataOnly(t *testing.T) {
 	store := newQueryRecordingStore()
 	question := "summarize the recent invoice window"
 	var outboundBody []byte
-	var outboundAuth string
+	var outboundAuth, outboundURL string
+	var outboundDeadline time.Duration
 	transport := queryRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		var err error
 		outboundBody, err = io.ReadAll(request.Body)
@@ -192,6 +193,10 @@ func TestQueryReturnsValidatedPlanFromMetadataOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		outboundAuth = request.Header.Get("Authorization")
+		outboundURL = request.URL.String()
+		if deadline, ok := request.Context().Deadline(); ok {
+			outboundDeadline = time.Until(deadline)
+		}
 		return queryModelEnvelope(queryValidPlan()), nil
 	})
 	now := func() time.Time { return time.Date(2026, 7, 17, 23, 59, 0, 0, time.FixedZone("offset", -7*60*60)) }
@@ -208,8 +213,19 @@ func TestQueryReturnsValidatedPlanFromMetadataOnly(t *testing.T) {
 		t.Fatalf("plan = %+v", plan)
 	}
 
+	// The destination is as load-bearing as the payload: a handler that sent
+	// this exact body to another host would satisfy every other assertion here.
+	if outboundURL != querySettings().Endpoint {
+		t.Fatalf("outbound URL = %q, want %q", outboundURL, querySettings().Endpoint)
+	}
 	if outboundAuth != "Bearer header-credential" {
 		t.Fatalf("authorization = %q", outboundAuth)
+	}
+	// The operator's timeout is the only bound on how long a stalled endpoint
+	// may hold one of the fixed outbound slots; r.Context() covers only client
+	// disconnects. http.Client.Timeout surfaces as a deadline on the request.
+	if outboundDeadline <= 0 || outboundDeadline > querySettings().Timeout {
+		t.Fatalf("outbound deadline = %v, want a positive value at most %v", outboundDeadline, querySettings().Timeout)
 	}
 	queryAssertJSONKeys(t, "model request", outboundBody, []string{"model", "messages", "response_format"})
 	var envelope struct {
@@ -269,9 +285,13 @@ func TestQueryRejectsInvalidPlan(t *testing.T) {
 }
 
 func TestQueryRequestGuards(t *testing.T) {
+	// Record rather than t.Fatal: this runs on the subtest's goroutine, and
+	// FailNow on the parent aborts the whole table at the first offending row,
+	// hiding every guard after it.
+	var outbound atomic.Int32
 	transport := queryRoundTripFunc(func(*http.Request) (*http.Response, error) {
-		t.Fatal("request guard allowed an outbound call")
-		return nil, nil
+		outbound.Add(1)
+		return queryModelEnvelope(queryValidPlan()), nil
 	})
 	handler := newQueryTestHandler(newQueryRecordingStore(), querySettings(), transport, nil, nil)
 	tests := []struct {
@@ -298,9 +318,12 @@ func TestQueryRequestGuards(t *testing.T) {
 			request.Header.Set("Content-Type", tc.contentType)
 			handler.ServeHTTP(recorder, request)
 			if recorder.Code != tc.wantStatus || recorder.Body.String() != tc.wantBody {
-				t.Fatalf("status = %d, body = %q, want %d and %q", recorder.Code, recorder.Body.String(), tc.wantStatus, tc.wantBody)
+				t.Errorf("status = %d, body = %q, want %d and %q", recorder.Code, recorder.Body.String(), tc.wantStatus, tc.wantBody)
 			}
 		})
+	}
+	if got := outbound.Load(); got != 0 {
+		t.Fatalf("request guards allowed %d outbound call(s); none may reach the model", got)
 	}
 }
 
@@ -361,6 +384,92 @@ func TestQueryConcurrencyLimit(t *testing.T) {
 	}
 }
 
+// TestQueryResponseMatchesContract binds the 200 body to the published
+// contract. PostQuery writes nlquery.Plan, while the generated QueryPlan is
+// what the API reference documents; nothing else in the repository references
+// the generated type, so without this the two can drift apart silently.
+func TestQueryResponseMatchesContract(t *testing.T) {
+	// Dates populated deliberately: the documented type spells start and end as
+	// a date format, so a null-only plan would leave that half unchecked.
+	dated := `{"endpoint":"costs-summary","start":"2026-06-01","end":"2026-06-30","groupBy":"service",` +
+		`"tagKey":null,"currency":"EUR","provider":"NorthCloud","metric":null}`
+	transport := queryRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return queryModelEnvelope(dated), nil
+	})
+	handler := newQueryTestHandler(newQueryRecordingStore(), querySettings(), transport, nil, nil)
+	recorder := queryRequest(handler, `{"question":"show the trend"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	var documented QueryPlan
+	decoder := json.NewDecoder(bytes.NewReader(recorder.Body.Bytes()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&documented); err != nil {
+		t.Fatalf("response does not decode into the documented QueryPlan: %v", err)
+	}
+	// Decoding tolerates a documented field the response omits, so compare the
+	// key sets in both directions.
+	queryAssertJSONKeys(t, "response", recorder.Body.Bytes(),
+		[]string{"endpoint", "start", "end", "groupBy", "tagKey", "currency", "provider", "metric"})
+	queryAssertJSONKeys(t, "documented plan", mustJSON(t, documented),
+		[]string{"endpoint", "start", "end", "groupBy", "tagKey", "currency", "provider", "metric"})
+}
+
+// TestQueryDefaultLoggerIsStructured pins what a real serve process emits.
+// Every test above injects a logger, so none of them can see the fallback; a
+// serve binary installs no logger for this handler and nothing calls
+// slog.SetDefault, so the fallback is what actually ships.
+func TestQueryDefaultLoggerIsStructured(t *testing.T) {
+	handler := newQueryHandler(queryHandlerOptions{})
+	if _, ok := handler.logger.Handler().(*slog.JSONHandler); !ok {
+		t.Fatalf("default log handler = %T, want *slog.JSONHandler to match the access log", handler.logger.Handler())
+	}
+}
+
+// TestQuerySlotReleasedOnFailurePaths pins the release, which the cap test
+// cannot: it drives every post-acquire failure path through ONE handler and
+// then requires a further request to succeed. A release that fired only on the
+// success path would wedge the endpoint at 429 for the life of the process.
+func TestQuerySlotReleasedOnFailurePaths(t *testing.T) {
+	failures := []struct {
+		name  string
+		reply string
+		err   error
+	}{
+		{name: "transport error", err: errors.New("dial tcp 127.0.0.1:43129: connection refused")},
+		{name: "unparseable reply", reply: "not a plan"},
+		{name: "invalid endpoint", reply: `{"endpoint":"unknown-resource","start":null,"end":null,"groupBy":null,"tagKey":null,"currency":null,"provider":null,"metric":null}`},
+		{name: "unsupported group by", reply: `{"endpoint":"usage","start":null,"end":null,"groupBy":"service","tagKey":null,"currency":null,"provider":null,"metric":null}`},
+	}
+	if len(failures) < QueryConcurrencyLimit {
+		t.Fatalf("need at least %d failures to exhaust the cap, have %d", QueryConcurrencyLimit, len(failures))
+	}
+	var next int
+	transport := queryRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		if next >= len(failures) {
+			return queryModelEnvelope(queryValidPlan()), nil
+		}
+		failure := failures[next]
+		next++
+		if failure.err != nil {
+			return nil, failure.err
+		}
+		return queryModelEnvelope(failure.reply), nil
+	})
+	handler := newQueryTestHandler(newQueryRecordingStore(), querySettings(), transport, nil, nil)
+	for _, failure := range failures {
+		recorder := queryRequest(handler, `{"question":"show the trend"}`)
+		if recorder.Code != http.StatusInternalServerError {
+			t.Fatalf("%s: status = %d, want 500", failure.name, recorder.Code)
+		}
+	}
+	recorder := queryRequest(handler, `{"question":"show the trend"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("after %d failures: status = %d, body = %q, want 200 (a slot leaked)",
+			len(failures), recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestQueryClientCancellation(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan error, 1)
@@ -405,7 +514,11 @@ func TestQueryLogsExcludeSensitiveValues(t *testing.T) {
 	settings := querySettings()
 	settings.Credential = "credential-sensitive-marker"
 	validReply := `{"endpoint":"costs-summary","start":null,"end":null,"groupBy":"service","tagKey":null,"currency":null,"provider":"plan-sensitive-marker","metric":null}`
-	replies := []string{validReply, "reply-sensitive-marker"}
+	invalidPlanReply := `{"endpoint":"usage","start":null,"end":null,"groupBy":"service","tagKey":null,"currency":null,"provider":null,"metric":null}`
+	// The last entry drives the transport-failure path, the only log statement
+	// on a request-scoped path that interpolates a value rather than writing a
+	// constant. Without it the scan below runs over attribute-free lines only.
+	replies := []string{validReply, "reply-sensitive-marker", invalidPlanReply, ""}
 	var mu sync.Mutex
 	transport := queryRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Header.Get("Authorization") != "Bearer credential-sensitive-marker" {
@@ -415,6 +528,9 @@ func TestQueryLogsExcludeSensitiveValues(t *testing.T) {
 		defer mu.Unlock()
 		reply := replies[0]
 		replies = replies[1:]
+		if reply == "" {
+			return nil, errors.New("dial tcp 127.0.0.1:43129: connection refused")
+		}
 		return queryModelEnvelope(reply), nil
 	})
 	var logs bytes.Buffer
@@ -428,8 +544,21 @@ func TestQueryLogsExcludeSensitiveValues(t *testing.T) {
 	if failure.Code != http.StatusInternalServerError || failure.Body.String() != "model reply parsing failed\n" {
 		t.Fatalf("failure status = %d, body = %q", failure.Code, failure.Body.String())
 	}
+	invalid := queryRequest(handler, `{"question":"`+question+`"}`)
+	if invalid.Code != http.StatusInternalServerError || invalid.Body.String() != "model reply validation failed\n" {
+		t.Fatalf("invalid-plan status = %d, body = %q", invalid.Code, invalid.Body.String())
+	}
+	transportFailure := queryRequest(handler, `{"question":"`+question+`"}`)
+	if transportFailure.Code != http.StatusInternalServerError || transportFailure.Body.String() != "model request failed\n" {
+		t.Fatalf("transport-failure status = %d, body = %q", transportFailure.Code, transportFailure.Body.String())
+	}
 	if logs.Len() == 0 {
 		t.Fatal("log capture is empty")
+	}
+	// Anti-vacuity: the scan must run over a line that interpolates a value,
+	// not only over constant messages.
+	if !strings.Contains(logs.String(), "127.0.0.1:43129") {
+		t.Fatalf("log capture holds no interpolated attribute: %q", logs.String())
 	}
 	values := queryDecodedLogValues(t, logs.String())
 	for _, sensitive := range []string{question, "reply-sensitive-marker", "plan-sensitive-marker", "credential-sensitive-marker", validReply} {
@@ -438,8 +567,10 @@ func TestQueryLogsExcludeSensitiveValues(t *testing.T) {
 				t.Fatalf("logs contain sensitive value %q in %q", sensitive, value)
 			}
 		}
-		if strings.Contains(failure.Body.String(), sensitive) {
-			t.Fatalf("error body contains sensitive value %q", sensitive)
+		for _, body := range []string{failure.Body.String(), invalid.Body.String(), transportFailure.Body.String()} {
+			if strings.Contains(body, sensitive) {
+				t.Fatalf("error body %q contains sensitive value %q", body, sensitive)
+			}
 		}
 	}
 }
