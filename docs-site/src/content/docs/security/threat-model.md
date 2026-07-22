@@ -21,12 +21,15 @@ day and month timestamps, model and workspace identifiers, and aggregate token
 and request counts.
 
 With optional outbound features unconfigured, the core sends nothing. The
-natural-language `ask` command is off unless the operator configures a model
-endpoint, and the operator chooses that endpoint. When enabled, it sends only
-the user's question, this machine's current date, the static plan schema,
-and discovered provider names,
-tag keys, currency codes, and business-metric names. It never sends cost
-amounts, quantities, or store rows.
+natural-language `costroid ask` command and `POST /api/v1/query` endpoint are
+off unless the operator configures a model endpoint, and the operator chooses
+that endpoint. When enabled, both paths send only the user's question, this
+machine's current date, the static plan schema, and discovered provider names,
+tag keys, currency codes, and business-metric names. They never send cost
+amounts, quantities, or store rows. The HTTP endpoint returns a validated plan
+only and does not execute it. It exists so callers can translate through the
+store already opened by `serve`, since the embedded store is single-writer and
+a separate `costroid ask` process cannot open it at the same time.
 
 ## Outbound alert payloads
 
@@ -185,7 +188,8 @@ The guarantee above is narrow and honest. These are the things it does not do.
    connector boundary. It is not a runtime classifier that inspects values and
    decides whether they look like content.
 6. **The natural-language boundary sends operator data by design, and the two
-   layers above do not cover it.** When an operator configures a model
+   layers above do not cover it.** Both `costroid ask` and
+   `POST /api/v1/query` use this boundary. When an operator configures a model
    endpoint, tag keys and provider names leave the machine. Tag keys are
    authored by the deployer, not by Costroid, so a key such as
    `cost-center-acquisition-project` carries whatever meaning the deployer put
@@ -202,3 +206,12 @@ The guarantee above is narrow and honest. These are the things it does not do.
    Beyond that, an operator who configures a hostile or compromised endpoint
    has given it the question and the value lists. Costroid does not and cannot
    validate what the endpoint does with them.
+8. **CSRF protection is not built.** Costroid authentication is header-based
+   and has no cookie session, so a cross-site POST cannot forge the required
+   `Authorization` header. A forward-auth proxy may instead inject identity
+   from its own session. That deployment-shaped residual applies to every
+   Costroid route today and is not addressed specially for the query endpoint.
+
+The HTTP path adds two egress bounds. At most four model calls may be in flight
+per server; excess requests receive HTTP 429. A configured model also prevents
+`serve` from starting with authentication disabled on a non-loopback bind.

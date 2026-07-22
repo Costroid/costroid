@@ -2,7 +2,7 @@
 
 **Open-source, self-hostable, [FOCUS](https://focus.finops.org/)-native cost platform (FinOps).**
 
-Costroid ingests cost & usage data from cloud providers (AWS, Azure, Google Cloud), AI/LLM vendors (OpenAI, Anthropic), and any generic FOCUS or CSV export, normalizes everything into a single **FOCUS-conformant** data model, and gives you cost allocation, unit economics, anomaly detection, and a dashboard. It runs **entirely on your own infrastructure**. With optional outbound features unconfigured, the core sends nothing. The natural-language `ask` command is off unless you configure a model endpoint, and you choose that endpoint. When enabled, it sends only your question, this machine's current date, the static plan schema, and discovered provider names, tag keys, currency codes, and business-metric names. It never sends cost amounts, quantities, or store rows. Prompt and response content from AI sources is still never ingested, stored, logged, cached, or transmitted.
+Costroid ingests cost & usage data from cloud providers (AWS, Azure, Google Cloud), AI/LLM vendors (OpenAI, Anthropic), and any generic FOCUS or CSV export, normalizes everything into a single **FOCUS-conformant** data model, and gives you cost allocation, unit economics, anomaly detection, and a dashboard. It runs **entirely on your own infrastructure**. With optional outbound features unconfigured, the core sends nothing. The natural-language paths, `costroid ask` and `POST /api/v1/query`, are off unless you configure a model endpoint, and you choose that endpoint. When enabled, they send only your question, this machine's current date, the static plan schema, and discovered provider names, tag keys, currency codes, and business-metric names. They never send cost amounts, quantities, or store rows. Prompt and response content from AI sources is still never ingested, stored, logged, cached, or transmitted.
 
 > **FOCUS** = FinOps Open Cost and Usage Specification, an open standard from the FinOps Foundation for representing cloud/SaaS/AI cost & usage in one schema.
 
@@ -21,7 +21,7 @@ What ships in v0.3.0:
 
 Newer on `main` (build from source; not yet in a tagged release):
 
-- **`costroid ask`** — ask a question in plain language and have it resolved into a query the product already answers. It is off unless you configure a model endpoint of your own, and it is described in full under [Natural-language queries](#natural-language-queries) below.
+- **Natural-language queries**: use `costroid ask` for a terminal answer or `POST /api/v1/query` for a validated plan on the already-open `serve` store. Both are off unless you configure a model endpoint of your own, and both are described under [Natural-language queries](#natural-language-queries) below.
 
 ---
 
@@ -168,18 +168,29 @@ Then run `./bin/costroid demo` or `./bin/costroid serve --no-auth` as above. A s
 
 ## Natural-language queries
 
-`costroid ask` lets you put a question in your own words and have Costroid
-resolve it into a query it already knows how to answer.
+Costroid has two ways to translate a question into a query it already knows
+how to answer. `costroid ask` prints a validated plan and executes it for a
+terminal answer. `POST /api/v1/query` returns the validated plan as JSON and
+does not execute it or return cost data. The HTTP form exists because the
+embedded store is single-writer: while `serve` has the store open, a separate
+`costroid ask` process cannot open it, but the endpoint can reuse the store
+that `serve` already owns.
 
 ```bash
 export COSTROID_MODEL_ENDPOINT=http://localhost:11434/v1/chat/completions
 export COSTROID_MODEL=<the model your endpoint serves>
 
 costroid ask "what did we spend on AWS last month"
+
+curl -X POST http://localhost:8080/api/v1/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"what did we spend on AWS last month"}'
 ```
 
-It prints the resolved plan first, then the answer, so you can see which
-question was actually answered before you trust the number.
+The HTTP request body accepts only `question`; endpoint, model, and credential
+always come from the server's configuration. The caller executes the returned
+plan against the same API endpoints the dashboard uses, so every cost still
+comes from those handlers as an exact decimal string.
 
 How it works, and why it is built this way:
 
@@ -195,6 +206,9 @@ How it works, and why it is built this way:
 - **It is off until you turn it on.** With no endpoint configured, nothing
   leaves the machine and no outbound connection is made at all. There is no
   default endpoint and no telemetry.
+- **Outbound work is bounded.** One server permits at most four model calls in
+  flight and rejects excess requests with HTTP 429. If the translator is
+  configured, `serve` also refuses an unauthenticated non-loopback bind.
 - **You choose the endpoint.** Any OpenAI-compatible endpoint works, including
   one running on your own machine. Redirects are refused, so a configured
   endpoint cannot pass your question on to a host you did not choose.

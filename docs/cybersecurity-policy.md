@@ -47,11 +47,13 @@ handles cost and usage metadata only, and never ingests, stores, logs, caches,
 or transmits prompt or response content from AI sources (the Cardinal Rule);
 it binds to loopback by default; and it refuses to start serving without an
 explicit authentication decision. With optional outbound features
-unconfigured, the core sends nothing. The natural-language `ask` command is
-off unless the operator configures a model endpoint. The operator chooses that
-endpoint; when enabled, the command sends only the user's question, this machine's
-current date, the static plan schema, and discovered provider names, tag keys,
-currency codes, and business-metric names. It never sends cost amounts, quantities, or store rows.
+unconfigured, the core sends nothing. The natural-language `costroid ask`
+command and `POST /api/v1/query` endpoint are off unless the operator
+configures a model endpoint. The operator chooses that endpoint; when enabled,
+both paths send only the user's question, this machine's current date, the
+static plan schema, and discovered provider names, tag keys, currency codes,
+and business-metric names. They never send cost amounts, quantities, or store
+rows. The HTTP endpoint returns a validated plan only and does not execute it.
 
 Reports about the following are out of scope as vulnerabilities:
 
@@ -82,9 +84,9 @@ than miss a real one.
 - **AI-source content stays outside the data path.** Structural checks in CI
   enforce that prompt and response content from AI sources is never ingested,
   stored, logged, cached, or transmitted. The optional natural-language
-  command has a separate, explicit boundary: it is off until an operator
-  chooses an endpoint, and its exact outbound fields are tested. The threat
-  model documents both boundaries and their limits.
+  command and HTTP endpoint have a separate, explicit boundary: they are off
+  until an operator chooses an endpoint, and their shared outbound fields are
+  tested exactly. The threat model documents both boundaries and their limits.
 - **Every change is checked by CI.** Every push to `main` runs a pipeline that
   verifies generated code is in sync, runs the linters, runs the full Go and
   web test suites, builds the binary, and runs the Windows suite. Contributions
