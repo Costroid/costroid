@@ -87,6 +87,7 @@ export default function App() {
   const [view, setView] = useState<View>(
     () => readUrlState().view ?? "overview",
   );
+  const [navigationKey, setNavigationKey] = useState(0);
   const [range, setRange] = useState<Range>(() => {
     const urlState = readUrlState();
     return { start: urlState.start ?? "", end: urlState.end ?? "" };
@@ -141,6 +142,7 @@ export default function App() {
     const grouping = narrowGroupBy(link.groupBy);
     if (!grouping.ok) return;
 
+    setNavigationKey((current) => current + 1);
     writeUrlState({
       view: nextView,
       start: link.start,
@@ -252,7 +254,12 @@ export default function App() {
           </div>
         </nav>
       </div>
-      <div className="view-panel" id="view-panel" tabIndex={-1}>
+      <div
+        className="view-panel"
+        id="view-panel"
+        key={navigationKey}
+        tabIndex={-1}
+      >
         {view === "overview" && (
           <Overview range={range} onNavigate={onNavigate} />
         )}
