@@ -34,7 +34,7 @@ Open-source, self-hostable, **FOCUS-native** cost platform (FinOps). It ingests 
 ## Stack & shape
 
 - **Go** (latest stable) — the backend core: ingestion, FOCUS engine, analytics, allocation, pricing, reconciliation, API. Ships as a single self-contained binary (self-host friendly; see decisions.md D22). Standard `cmd/ internal/ pkg/` layout.
-- **TypeScript** (Node LTS, pnpm) — a React-based dashboard and an optional agentic/MCP service. These consume the Go API and hold no separate source of truth.
+- **TypeScript** (Node LTS, pnpm) — a React-based dashboard. It consumes the Go API and holds no separate source of truth. The optional natural-language layer is **not** a TypeScript service: it runs inside the Go binary and MCP was dropped (D95 supersedes D12; D2's stack line is amended here to match).
 - **Storage:** **DuckDB + Parquet embedded** is the default (zero-ops, local). **ClickHouse** is an optional scale-out backend behind a storage interface — swappable, never required.
 - Keep these concerns cleanly separated: ingestion (per-source connectors behind a stable, documented interface), FOCUS engine (schema + versioned transforms + validation), storage, allocation, pricing / Price Sheet, reconciliation, API, web, agent. **Propose the concrete file layout as you scaffold** — don't over-plan it up front.
 - Define shared API/data contracts **once** (e.g. OpenAPI or protobuf) and generate Go + TS types from it. Don't hand-maintain duplicate types across languages.

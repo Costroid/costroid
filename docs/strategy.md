@@ -76,9 +76,12 @@ As of mid-2026 this exact combination exists nowhere. The parts exist separately
 - Per-SaaS-vendor connector scrapers — unbounded long tail; ship hyperscalers + AI
   vendors + a **generic FOCUS/CSV import** instead.
 - MCP/agent layer as *headline* differentiator — official per-provider billing MCP
-  servers already exist and every vendor ships agents. The defensible version: **MCP
-  over the normalized cross-provider FOCUS store** (the data layer is the moat, the
-  agent is the door). Matches D12 (optional, modular).
+  servers already exist and every vendor ships agents. The defensible version is a
+  natural-language layer **over the normalized cross-provider FOCUS store** (the
+  data layer is the moat, the query surface is the door). D95 supersedes D12 and
+  drops MCP: the layer runs in the Go binary, optional and off by default, and it
+  translates a question into a call to the existing API rather than exposing a
+  tool surface to someone else's client.
 - Relicensing later (BSL/SSPL) — the 2024–25 fork record (OpenTofu, Valkey) says
   stay Apache-2.0 (D14) with a buyer-based open-core boundary (D9).
 - Betting that SaaS/AI vendors will emit FOCUS natively — no evidence they will.
