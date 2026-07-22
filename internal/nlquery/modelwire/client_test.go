@@ -5,6 +5,7 @@ package modelwire
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -29,7 +30,7 @@ func TestCompleteRequestAndReply(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := `{"model":"local-model","messages":[{"role":"user","content":"{\"question\":\"cost?\"}"}]}`
+		want := `{"model":"local-model","messages":[{"role":"user","content":"{\"question\":\"cost?\"}"}],"response_format":{"type":"json_object"}}`
 		if string(body) != want {
 			t.Fatalf("body = %s, want %s", body, want)
 		}
@@ -90,5 +91,37 @@ func TestNewDoesNotMutateTheCallersClient(t *testing.T) {
 	New("https://model.invalid/translate", "m", "c", caller)
 	if caller.CheckRedirect != nil {
 		t.Fatal("New mutated the caller's client")
+	}
+}
+
+// Instruction-tuned models wrap replies in a markdown fence unless asked for a
+// bare object, and the strict parser rejects a fenced reply rather than peeling
+// it. Asking for the shape up front is what keeps the parser strict, so the
+// request must carry the ask.
+func TestRequestAsksForABareJSONObject(t *testing.T) {
+	var sent map[string]any
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(body, &sent); err != nil {
+			t.Fatalf("request body is not JSON: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"{}"}}]}`)),
+		}, nil
+	})
+	client := New("https://model.invalid/translate", "m", "", &http.Client{Transport: transport})
+	if _, err := client.Complete(context.Background(), []byte(`{"question":"cost?"}`)); err != nil {
+		t.Fatal(err)
+	}
+	format, ok := sent["response_format"].(map[string]any)
+	if !ok {
+		t.Fatalf("request carried no response_format: %v", sent)
+	}
+	if format["type"] != "json_object" {
+		t.Fatalf("response_format type = %v, want json_object", format["type"])
 	}
 }

@@ -264,7 +264,9 @@ func assertOutboundShapeIsClosed(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("outbound body is not JSON: %v", err)
 	}
-	assertKeys(t, "envelope", body, []string{"model", "messages"})
+	// response_format asks the endpoint for a bare JSON object; it carries no
+	// operator data, which is why it is permitted here.
+	assertKeys(t, "envelope", body, []string{"model", "messages", "response_format"})
 	if len(envelope.Messages) != 1 {
 		t.Fatalf("messages = %d, want exactly 1", len(envelope.Messages))
 	}
@@ -402,5 +404,39 @@ func TestResolveModelSettingsRejectsMalformedAndAcceptsUnreachable(t *testing.T)
 	}
 	if _, _, stop, err := serveConfig([]string{"--no-auth"}); stop || err != nil {
 		t.Fatalf("serve valid unreachable endpoint: stop = %v, err = %v", stop, err)
+	}
+}
+
+// A model on the operator's own hardware answers in tens of seconds, so the
+// bound has to be theirs to set. The default has to suit that case too, since
+// a bound tuned for a hosted endpoint would reject the self-hosted one this
+// feature exists for.
+func TestModelTimeoutIsConfigurableAndDefaultsForLocalModels(t *testing.T) {
+	configuredAsk(t)
+	settings, err := resolveModelSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.timeout != defaultModelTimeout {
+		t.Fatalf("default timeout = %s, want %s", settings.timeout, defaultModelTimeout)
+	}
+	if defaultModelTimeout < 60*time.Second {
+		t.Fatalf("default timeout %s is too short for a self-hosted model", defaultModelTimeout)
+	}
+
+	t.Setenv(envModelTimeout, "5m")
+	settings, err = resolveModelSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.timeout != 5*time.Minute {
+		t.Fatalf("configured timeout = %s, want 5m", settings.timeout)
+	}
+
+	for _, bad := range []string{"soon", "0s", "-30s", "30"} {
+		t.Setenv(envModelTimeout, bad)
+		if _, err := resolveModelSettings(); err == nil {
+			t.Fatalf("timeout %q was accepted; want a rejection", bad)
+		}
 	}
 }

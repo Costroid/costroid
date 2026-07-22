@@ -45,9 +45,21 @@ func New(endpoint, model, credential string, httpClient *http.Client) *Client {
 }
 
 type requestBody struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
+	Model    string         `json:"model"`
+	Messages []message      `json:"messages"`
+	Format   responseFormat `json:"response_format"`
 }
+
+// responseFormat asks the endpoint for a bare JSON object. Instruction-tuned
+// models otherwise tend to wrap a reply in a markdown fence, which the strict
+// parser rejects, and rightly so: relaxing the parser to peel an envelope is
+// the salvage step this design forbids. Asking for the shape up front fixes
+// that at the source and leaves the parser exactly as strict as it was.
+type responseFormat struct {
+	Type string `json:"type"`
+}
+
+const jsonObjectFormat = "json_object"
 
 type message struct {
 	Role    string `json:"role"`
@@ -63,7 +75,7 @@ type responseBody struct {
 // Complete posts prompt and returns the first reply. Errors identify only the
 // failure class and never include endpoint paths, credentials, or body content.
 func (c *Client) Complete(ctx context.Context, prompt []byte) ([]byte, error) {
-	body, err := json.Marshal(requestBody{Model: c.model, Messages: []message{{Role: "user", Content: string(prompt)}}})
+	body, err := json.Marshal(requestBody{Model: c.model, Messages: []message{{Role: "user", Content: string(prompt)}}, Format: responseFormat{Type: jsonObjectFormat}})
 	if err != nil {
 		return nil, errors.New("encoding model request failed")
 	}

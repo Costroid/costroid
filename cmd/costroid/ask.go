@@ -30,7 +30,19 @@ const (
 	envModelEndpoint       = "COSTROID_MODEL_ENDPOINT"
 	envModelName           = "COSTROID_MODEL"
 	envModelCredentialFile = "COSTROID_MODEL_API_KEY_FILE"
+	envModelTimeout        = "COSTROID_MODEL_TIMEOUT"
 )
+
+// defaultModelTimeout suits a model running on the operator's own hardware,
+// which is the deployment this feature exists for. A self-hosted model of
+// useful size answers in a minute or two rather than the second or two a
+// hosted endpoint takes, so a bound tuned for the hosted case would reject the
+// sovereign one outright. The margin above the observed steady-state cost is
+// deliberate: the first request after an endpoint loads a model is markedly
+// slower than the ones after it, and a default that fails only on first use
+// reads as a broken feature. Operators who point at a fast endpoint, or at a
+// slower machine, set COSTROID_MODEL_TIMEOUT.
+const defaultModelTimeout = 180 * time.Second
 
 const askUsage = `usage: costroid ask <question>
 
@@ -40,12 +52,16 @@ against the local store through the same API handler used by serve and export.
 This feature is off unless COSTROID_MODEL_ENDPOINT and COSTROID_MODEL are set.
 COSTROID_MODEL_API_KEY_FILE optionally names a file containing the endpoint
 credential. There is no credential value flag. The question, reply, plan, and
-credential are never logged.`
+credential are never logged.
+
+COSTROID_MODEL_TIMEOUT bounds one request, as a duration such as 90s or 5m.
+It defaults to 180s, which suits a model running on your own hardware.`
 
 type modelSettings struct {
 	endpoint   string
 	model      string
 	credential string
+	timeout    time.Duration
 }
 
 func (s modelSettings) configured() bool { return s.endpoint != "" }
@@ -78,7 +94,15 @@ func resolveModelSettings() (modelSettings, error) {
 			return modelSettings{}, errors.New("model credential file is empty")
 		}
 	}
-	return modelSettings{endpoint: endpoint, model: model, credential: credential}, nil
+	timeout := defaultModelTimeout
+	if raw := os.Getenv(envModelTimeout); raw != "" {
+		parsedTimeout, err := time.ParseDuration(raw)
+		if err != nil || parsedTimeout <= 0 {
+			return modelSettings{}, errors.New("COSTROID_MODEL_TIMEOUT must be a positive duration such as 90s or 5m")
+		}
+		timeout = parsedTimeout
+	}
+	return modelSettings{endpoint: endpoint, model: model, credential: credential, timeout: timeout}, nil
 }
 
 type askStore interface {
@@ -97,7 +121,7 @@ func defaultAskDependencies() askDependencies {
 	return askDependencies{
 		out:        os.Stdout,
 		logger:     slog.New(slog.NewJSONHandler(os.Stderr, nil)),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{},
 		openStore: func(ctx context.Context) (askStore, error) {
 			return openStore(ctx, "")
 		},
@@ -146,7 +170,11 @@ func askCommand(ctx context.Context, args []string, deps askDependencies) error 
 		deps.logger.Error("natural-language query prompt encoding failed")
 		return errors.New("encoding translation prompt failed")
 	}
-	client := modelwire.New(settings.endpoint, settings.model, settings.credential, deps.httpClient)
+	// The timeout is applied to a copy so the injected client, which tests
+	// share across cases, is never mutated.
+	timed := *deps.httpClient
+	timed.Timeout = settings.timeout
+	client := modelwire.New(settings.endpoint, settings.model, settings.credential, &timed)
 	reply, err := client.Complete(ctx, prompt)
 	if err != nil {
 		deps.logger.Error("natural-language query model request failed")
