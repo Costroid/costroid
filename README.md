@@ -169,12 +169,15 @@ Then run `./bin/costroid demo` or `./bin/costroid serve --no-auth` as above. A s
 ## Natural-language queries
 
 Costroid has two ways to translate a question into a query it already knows
-how to answer. `costroid ask` prints a validated plan and executes it for a
-terminal answer. `POST /api/v1/query` returns the validated plan as JSON and
-does not execute it or return cost data. The HTTP form exists because the
-embedded store is single-writer: while `serve` has the store open, a separate
-`costroid ask` process cannot open it, but the endpoint can reuse the store
-that `serve` already owns.
+how to answer. When the translator is configured, the dashboard shows an ask
+row between the date range and view navigation. It sends the question to
+`POST /api/v1/query`, applies the validated plan to the existing dashboard
+views, and shows an interpretation caption naming the filters that view uses.
+It never renders the plan as JSON. `costroid ask` provides the terminal form,
+printing the validated plan and executing it for an answer. The HTTP form
+exists because the embedded store is single-writer: while `serve` has the
+store open, a separate `costroid ask` process cannot open it, but the endpoint
+can reuse the store that `serve` already owns.
 
 ```bash
 export COSTROID_MODEL_ENDPOINT=http://localhost:11434/v1/chat/completions
@@ -198,6 +201,12 @@ always come from the server's configuration. The plan's `endpoint` names one of
 and `/api/v1/unit-economics/daily`. The caller executes the plan against those
 endpoints — the same ones the dashboard uses — so every cost still comes from
 those handlers as an exact decimal string.
+
+The ask row is absent when the translator is not configured, including in the
+static demo, which has no inference backend. The browser submits the question
+as JSON in a POST body. It does not put the question in the URL, browser
+history, local or session storage, document title, or console output, and it
+keeps no question history.
 
 How it works, and why it is built this way:
 

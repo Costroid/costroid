@@ -68,6 +68,29 @@ Open [http://localhost:8080](http://localhost:8080). When `COSTROID_ADDR` is uns
 Use `--no-auth` only with a loopback bind for local, single-user access. Both `:8080` and `0.0.0.0:8080` listen on all interfaces. Before using either public bind, configure one of the authentication modes and a TLS-terminating reverse proxy described in [Security & deployment](/security/).
 :::
 
+## Ask from the dashboard
+
+Set the model endpoint and model name before starting `serve` to enable the
+dashboard question row:
+
+```sh
+export COSTROID_MODEL_ENDPOINT=http://localhost:11434/v1/chat/completions
+export COSTROID_MODEL=<the model your endpoint serves>
+costroid serve --no-auth
+```
+
+The question row appears between the date range and view navigation. A
+question is translated into a validated plan, then the dashboard moves to the
+existing Costs, Tokens, Usage, or Unit economics view that applies it. The
+interpretation caption names the dates, grouping, currency, provider, tag key,
+or metric that the resolved view uses. The dashboard does not display plan
+JSON.
+
+The row is absent when the translator is not configured and in the static
+demo, which has no inference backend. The browser sends the question in a POST
+body and does not place it in the URL, browser history, local or session
+storage, document title, or console output. It keeps no question history.
+
 ## Run with a container
 
 Each release publishes prebuilt multi-architecture images (`linux/amd64` and `linux/arm64`) to the GitHub Container Registry at `ghcr.io/costroid/costroid`. The default command runs the demo, so this needs no data or configuration:
