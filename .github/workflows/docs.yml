@@ -24,7 +24,22 @@ jobs:
       - run: pnpm -C docs-site build   # package build script runs `astro check && astro build`
       - name: Cardinal-Rule publish guard (no strategy/pricing/program content in built output)
         run: |
-          PATTERN='monetiz|monetis|\bpricing\b|paywall|freemium|upsell|per-seat|per seat|subscription pricing|subscription tier|subscription plan|subscription model|subscription fee|subscription-based|saas subscription|recurring subscription|go-to-market|competitor|competitive landscape|revenue model|revenue share|recurring revenue|revenue target|funding|investor|investment round|venture capital|\bbigg\b|1812|iş ?fikri|is ?fikri|open-core|open core|proprietary module|commercial tier|commercial license|paid tier|paid plan|enterprise tier|enterprise plan|enterprise edition|docs/strategy|docs/decisions|strategy\.md|decisions\.md'
+          # Commercial vocabulary is listed in the clear: these are ordinary
+          # words and naming them discloses nothing. The remaining terms are
+          # encoded, because a guard whose job is to keep certain words out of
+          # the published site should not itself publish those words in a form
+          # that a code search will find. Encoding is not secrecy and is not
+          # claimed to be; it removes the terms from casual discovery, which is
+          # the exposure that matters here. Sourcing them from a repository
+          # secret is the durable fix and is tracked separately.
+          GENERIC='monetiz|monetis|\bpricing\b|paywall|freemium|upsell|per-seat|per seat|subscription pricing|subscription tier|subscription plan|subscription model|subscription fee|subscription-based|saas subscription|recurring subscription|go-to-market|competitor|competitive landscape|revenue model|revenue share|recurring revenue|revenue target|funding|investor|investment round|venture capital|open-core|open core|proprietary module|commercial tier|commercial license|paid tier|paid plan|enterprise tier|enterprise plan|enterprise edition|docs/strategy|docs/decisions|strategy\.md|decisions\.md'
+          RESERVED="$(printf '%s' 'XGJiaWdnXGJ8MTgxMnxpxZ8gP2Zpa3JpfGlzID9maWtyaQ==' | base64 -d)"
+          # Fail closed: an empty decode would silently drop half the guard, and
+          # an empty alternative in the pattern would match every line instead.
+          if [ -z "$RESERVED" ]; then
+            echo "::error::Guard term list failed to decode; refusing to run a weakened check"; exit 1
+          fi
+          PATTERN="$GENERIC|$RESERVED"
           if grep -rIiEn "$PATTERN" docs-site/dist; then
             echo "::error::Forbidden strategy/pricing/program term found in built docs output"; exit 1
           fi
