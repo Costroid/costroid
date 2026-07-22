@@ -49,6 +49,7 @@ function mockFetch(demo = false) {
           version: "0.1.0-test",
           focusVersion: "1.4",
           demo,
+          naturalLanguageQueryConfigured: false,
         }),
       );
     }
@@ -124,6 +125,7 @@ describe("App", () => {
     expect(screen.getByText("0.1.0-test")).toBeTruthy();
     expect(screen.getByText("1.4")).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith("/api/v1/meta", expect.anything());
+    expect(screen.queryByLabelText("Ask a question")).toBeNull();
   });
 
   it("renders no synthetic-data banner, even in demo mode", async () => {
@@ -505,6 +507,7 @@ describe("App", () => {
             version: "0.1.0-test",
             focusVersion: "1.4",
             demo: false,
+            naturalLanguageQueryConfigured: false,
           }),
         );
       }
@@ -655,6 +658,7 @@ describe("App", () => {
             version: "0.1.0-test",
             focusVersion: "1.4",
             demo: false,
+            naturalLanguageQueryConfigured: false,
           }),
         );
       }
@@ -778,6 +782,7 @@ describe("App", () => {
             version: "0.1.0-test",
             focusVersion: "1.4",
             demo: false,
+            naturalLanguageQueryConfigured: false,
           }),
         );
       }
@@ -896,6 +901,7 @@ describe("App", () => {
             version: "0.1.0-test",
             focusVersion: "1.4",
             demo: false,
+            naturalLanguageQueryConfigured: false,
           }),
         );
       }
@@ -1008,6 +1014,7 @@ describe("App", () => {
             version: "0.1.0-test",
             focusVersion: "1.4",
             demo: false,
+            naturalLanguageQueryConfigured: false,
           }),
         );
       }
@@ -1108,6 +1115,7 @@ describe("App", () => {
             version: "0.1.0-test",
             focusVersion: "1.4",
             demo: false,
+            naturalLanguageQueryConfigured: false,
           }),
         );
       }

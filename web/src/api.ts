@@ -22,6 +22,7 @@ type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
 type BusinessMetrics = components["schemas"]["BusinessMetrics"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
 type Insights = components["schemas"]["Insights"];
+type QueryPlan = components["schemas"]["QueryPlan"];
 
 // CostGroupBy is the shared grouping enum for the costs and anomalies endpoints.
 export type CostGroupBy =
@@ -37,6 +38,25 @@ export async function getMeta(signal?: AbortSignal): Promise<Meta> {
     throw new Error(`GET /api/v1/meta returned ${res.status}`);
   }
   return (await res.json()) as Meta;
+}
+
+export async function postQuery(
+  question: string,
+  signal?: AbortSignal,
+): Promise<QueryPlan> {
+  const res = await fetch("/api/v1/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+    signal,
+  });
+  if (!res.ok) {
+    throw Object.assign(
+      new Error(`POST /api/v1/query returned ${res.status}`),
+      { status: res.status },
+    );
+  }
+  return (await res.json()) as QueryPlan;
 }
 
 export async function getSyncStatus(

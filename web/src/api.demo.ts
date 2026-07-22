@@ -24,6 +24,7 @@ type DailyUsageMetric = components["schemas"]["DailyUsageMetric"];
 type BusinessMetrics = components["schemas"]["BusinessMetrics"];
 type UnitEconomics = components["schemas"]["UnitEconomics"];
 type Insights = components["schemas"]["Insights"];
+type QueryPlan = components["schemas"]["QueryPlan"];
 
 // These mirror ./api's shared enums. They are re-declared (not imported) so the
 // demo alias never makes this module import itself.
@@ -108,6 +109,22 @@ function presetOf(start: string, end: string): DemoPresetId {
 
 export function getMeta(_signal?: AbortSignal): Promise<Meta> {
   return Promise.resolve(fixture<Meta>("meta"));
+}
+
+export function postQuery(
+  _question: string,
+  _signal?: AbortSignal,
+): Promise<QueryPlan> {
+  return Promise.resolve({
+    endpoint: "costs-daily",
+    start: null,
+    end: null,
+    groupBy: null,
+    tagKey: null,
+    currency: null,
+    provider: null,
+    metric: null,
+  });
 }
 
 export function getSyncStatus(

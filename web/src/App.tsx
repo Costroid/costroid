@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import type { components } from "./api/schema";
 import { getMeta } from "./api";
+import AskQuestion from "./AskQuestion";
 import { DEMO_PRESETS } from "./demo/ranges";
 import DateRangeControl from "./DateRangeControl";
 import DailyCosts from "./DailyCosts";
@@ -88,6 +89,7 @@ export default function App() {
     () => readUrlState().view ?? "overview",
   );
   const [navigationKey, setNavigationKey] = useState(0);
+  const [askAnnouncement, setAskAnnouncement] = useState("");
   const [range, setRange] = useState<Range>(() => {
     const urlState = readUrlState();
     return { start: urlState.start ?? "", end: urlState.end ?? "" };
@@ -134,13 +136,13 @@ export default function App() {
     return () => controller.abort();
   }, []);
 
-  // Programmatic deep link from the Overview insights panel. Replaces drill-down
-  // state (explicit undefined clears keys the link omits) rather than merging.
-  function onNavigate(link: InsightLink) {
+  // Programmatic navigation from insights and question plans. Replaces
+  // drill-down state (explicit undefined clears omitted keys) rather than merging.
+  function onNavigate(link: InsightLink): boolean {
     const nextView = narrowView(link.view);
-    if (nextView === undefined) return;
+    if (nextView === undefined) return false;
     const grouping = narrowGroupBy(link.groupBy);
-    if (!grouping.ok) return;
+    if (!grouping.ok) return false;
 
     setNavigationKey((current) => current + 1);
     writeUrlState({
@@ -158,6 +160,7 @@ export default function App() {
       end: link.end ?? "",
     });
     setView(nextView);
+    return true;
   }
 
   return (
@@ -235,6 +238,15 @@ export default function App() {
             {rangeIndicator(range)}
           </p>
         </div>
+        <div className="ask-row-slot">
+          {state.status === "ready" &&
+            state.meta.naturalLanguageQueryConfigured && (
+              <AskQuestion
+                onNavigate={onNavigate}
+                onAnnouncement={setAskAnnouncement}
+              />
+            )}
+        </div>
         <nav aria-label="Dashboard views">
           <div className="view-nav">
             {VIEWS.map((v) => {
@@ -254,6 +266,14 @@ export default function App() {
           </div>
         </nav>
       </div>
+      <p
+        aria-label="Question status"
+        aria-live="polite"
+        className="sr-only"
+        role="status"
+      >
+        {askAnnouncement}
+      </p>
       <div
         className="view-panel"
         id="view-panel"

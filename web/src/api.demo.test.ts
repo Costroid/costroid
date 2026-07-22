@@ -27,6 +27,28 @@ describe("api.demo export surface", () => {
   it("matches the production transport seam", () => {
     expect(Object.keys(demoApi).sort()).toEqual(Object.keys(api).sort());
   });
+
+  it("matches the production postQuery call shape without fetching", async () => {
+    const sameSignature: typeof api.postQuery = demoApi.postQuery;
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const controller = new AbortController();
+
+    expect(demoApi.postQuery.length).toBe(api.postQuery.length);
+    expect(demoApi.postQuery.length).toBe(2);
+    const plan = await sameSignature("Which costs changed?", controller.signal);
+
+    expect(plan).toEqual({
+      endpoint: "costs-daily",
+      start: null,
+      end: null,
+      groupBy: null,
+      tagKey: null,
+      currency: null,
+      provider: null,
+      metric: null,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("api.demo getInsights", () => {
