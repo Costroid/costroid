@@ -276,8 +276,11 @@ export interface components {
             question: string;
         };
         QueryPlan: {
-            /** @description Existing Costroid API resource selected by the translator. */
-            endpoint: string;
+            /**
+             * @description Existing Costroid API resource selected by the translator.
+             * @enum {string}
+             */
+            endpoint: "costs-daily" | "costs-summary" | "anomalies" | "tokens" | "usage" | "unit-economics";
             /** Format: date */
             start: string | null;
             /** Format: date */

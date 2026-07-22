@@ -757,6 +757,13 @@ components:
         endpoint:
           type: string
           description: Existing Costroid API resource selected by the translator.
+          enum:
+            - costs-daily
+            - costs-summary
+            - anomalies
+            - tokens
+            - usage
+            - unit-economics
         start:
           type: string
           format: date

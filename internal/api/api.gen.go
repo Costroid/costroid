@@ -15,6 +15,36 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for QueryPlanEndpoint.
+const (
+	QueryPlanEndpointAnomalies     QueryPlanEndpoint = "anomalies"
+	QueryPlanEndpointCostsDaily    QueryPlanEndpoint = "costs-daily"
+	QueryPlanEndpointCostsSummary  QueryPlanEndpoint = "costs-summary"
+	QueryPlanEndpointTokens        QueryPlanEndpoint = "tokens"
+	QueryPlanEndpointUnitEconomics QueryPlanEndpoint = "unit-economics"
+	QueryPlanEndpointUsage         QueryPlanEndpoint = "usage"
+)
+
+// Valid indicates whether the value is a known member of the QueryPlanEndpoint enum.
+func (e QueryPlanEndpoint) Valid() bool {
+	switch e {
+	case QueryPlanEndpointAnomalies:
+		return true
+	case QueryPlanEndpointCostsDaily:
+		return true
+	case QueryPlanEndpointCostsSummary:
+		return true
+	case QueryPlanEndpointTokens:
+		return true
+	case QueryPlanEndpointUnitEconomics:
+		return true
+	case QueryPlanEndpointUsage:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SyncLastRunOutcome.
 const (
 	Error   SyncLastRunOutcome = "error"
@@ -471,13 +501,16 @@ type QueryPlan struct {
 	End      *openapi_types.Date `json:"end"`
 
 	// Endpoint Existing Costroid API resource selected by the translator.
-	Endpoint string              `json:"endpoint"`
+	Endpoint QueryPlanEndpoint   `json:"endpoint"`
 	GroupBy  *string             `json:"groupBy"`
 	Metric   *string             `json:"metric"`
 	Provider *string             `json:"provider"`
 	Start    *openapi_types.Date `json:"start"`
 	TagKey   *string             `json:"tagKey"`
 }
+
+// QueryPlanEndpoint Existing Costroid API resource selected by the translator.
+type QueryPlanEndpoint string
 
 // QueryRequest defines model for QueryRequest.
 type QueryRequest struct {
