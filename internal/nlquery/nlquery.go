@@ -56,6 +56,7 @@ type Values struct {
 type promptDocument struct {
 	Instruction string       `json:"instruction"`
 	Question    string       `json:"question"`
+	Today       string       `json:"today"`
 	Schema      promptSchema `json:"schema"`
 	Values      Values       `json:"values"`
 }
@@ -69,8 +70,19 @@ type promptSchema struct {
 }
 
 // BuildPrompt returns a deterministic JSON prompt containing only the user's
-// question, the static plan schema, and the supplied permitted value lists.
-func BuildPrompt(question string, values Values) ([]byte, error) {
+// question, the current date, the static plan schema, and the supplied
+// permitted value lists.
+//
+// today is supplied by the caller rather than read here, both to keep this
+// package free of ambient state and because the date is load-bearing: a
+// question phrased as "last month" or "the last 90 days" can only be resolved
+// against a known today. Some endpoints inject the date into their own chat
+// template and some do not, so relying on that would make the resolved window
+// depend on which endpoint an operator happened to configure, and a wrong
+// window is the worst failure this feature has: it produces a confident answer
+// over the wrong period rather than an error. Supplying it makes the window a
+// function of this machine's clock and nothing else.
+func BuildPrompt(question, today string, values Values) ([]byte, error) {
 	endpoints := make([]string, 0, len(Endpoints))
 	for name := range Endpoints {
 		endpoints = append(endpoints, name)
@@ -81,8 +93,9 @@ func BuildPrompt(question string, values Values) ([]byte, error) {
 	values.Currencies = sortedCopy(values.Currencies)
 	values.Metrics = sortedCopy(values.Metrics)
 	doc := promptDocument{
-		Instruction: "Translate the question into exactly one JSON object matching the schema. Use null for every parameter that is not needed. Return JSON only.",
+		Instruction: "Translate the question into exactly one JSON object matching the schema. Resolve any relative date in the question against today. Every value is a single string or null, never an array or an object. Use null for every parameter that is not needed. Return JSON only.",
 		Question:    question,
+		Today:       today,
 		Schema: promptSchema{
 			ObjectOnly: true,
 			Endpoints:  endpoints,

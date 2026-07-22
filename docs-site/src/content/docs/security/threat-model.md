@@ -23,7 +23,8 @@ and request counts.
 With optional outbound features unconfigured, the core sends nothing. The
 natural-language `ask` command is off unless the operator configures a model
 endpoint, and the operator chooses that endpoint. When enabled, it sends only
-the user's question, the static plan schema, and discovered provider names,
+the user's question, this machine's current date, the static plan schema,
+and discovered provider names,
 tag keys, currency codes, and business-metric names. It never sends cost
 amounts, quantities, or store rows.
 

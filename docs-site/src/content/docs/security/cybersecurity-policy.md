@@ -50,9 +50,9 @@ it binds to loopback by default; and it refuses to start serving without an
 explicit authentication decision. With optional outbound features
 unconfigured, the core sends nothing. The natural-language `ask` command is
 off unless the operator configures a model endpoint. The operator chooses that
-endpoint; when enabled, the command sends only the user's question, the static
-plan schema, and discovered provider names, tag keys, currency codes, and
-business-metric names. It never sends cost amounts, quantities, or store rows.
+endpoint; when enabled, the command sends only the user's question, this machine's
+current date, the static plan schema, and discovered provider names, tag keys,
+currency codes, and business-metric names. It never sends cost amounts, quantities, or store rows.
 
 Reports about the following are out of scope as vulnerabilities:
 

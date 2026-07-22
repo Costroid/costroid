@@ -100,6 +100,9 @@ func askDeps(store *askFakeStore, out, logs *bytes.Buffer, transport http.RoundT
 		logger:     slog.New(slog.NewJSONHandler(logs, nil)),
 		httpClient: &http.Client{Transport: transport},
 		openStore:  func(context.Context) (askStore, error) { return store, nil },
+		// A fixed clock: the prompt carries today's date, so a moving one
+		// would make the golden fixture unreproducible.
+		now: func() time.Time { return time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC) },
 	}
 }
 
@@ -184,6 +187,7 @@ func TestAskAnswerMatchesJSONExport(t *testing.T) {
 		openStore: func(ctx context.Context) (askStore, error) {
 			return openStore(ctx, "")
 		},
+		now: func() time.Time { return time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC) },
 	}
 	if err := askCommand(context.Background(), []string{"total by service"}, deps); err != nil {
 		t.Fatal(err)
@@ -270,8 +274,11 @@ func assertOutboundShapeIsClosed(t *testing.T, body []byte) {
 	if len(envelope.Messages) != 1 {
 		t.Fatalf("messages = %d, want exactly 1", len(envelope.Messages))
 	}
+	// "today" carries this machine's date, which is ambient rather than
+	// anything read from the operator's store; it is permitted so that a
+	// relative date in the question resolves against a known day.
 	assertKeys(t, "prompt", []byte(envelope.Messages[0].Content),
-		[]string{"instruction", "question", "schema", "values"})
+		[]string{"instruction", "question", "today", "schema", "values"})
 
 	var prompt struct {
 		Schema json.RawMessage `json:"schema"`

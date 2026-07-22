@@ -115,6 +115,7 @@ type askDependencies struct {
 	logger     *slog.Logger
 	httpClient *http.Client
 	openStore  func(context.Context) (askStore, error)
+	now        func() time.Time
 }
 
 func defaultAskDependencies() askDependencies {
@@ -122,6 +123,7 @@ func defaultAskDependencies() askDependencies {
 		out:        os.Stdout,
 		logger:     slog.New(slog.NewJSONHandler(os.Stderr, nil)),
 		httpClient: &http.Client{},
+		now:        time.Now,
 		openStore: func(ctx context.Context) (askStore, error) {
 			return openStore(ctx, "")
 		},
@@ -165,7 +167,9 @@ func askCommand(ctx context.Context, args []string, deps askDependencies) error 
 		deps.logger.Error("natural-language query metadata discovery failed")
 		return err
 	}
-	prompt, err := nlquery.BuildPrompt(question, values)
+	// The clock is read here, at the edge, so the translator stays pure and a
+	// test can pin a date.
+	prompt, err := nlquery.BuildPrompt(question, deps.now().UTC().Format(time.DateOnly), values)
 	if err != nil {
 		deps.logger.Error("natural-language query prompt encoding failed")
 		return errors.New("encoding translation prompt failed")

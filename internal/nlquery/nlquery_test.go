@@ -4,6 +4,8 @@
 package nlquery
 
 import (
+	"bytes"
+	"encoding/json"
 	"os/exec"
 	"strings"
 	"testing"
@@ -55,5 +57,40 @@ func TestPurePackageDependencyBoundary(t *testing.T) {
 				t.Fatalf("pure package transitively imports %s", forbidden)
 			}
 		}
+	}
+}
+
+// A question phrased in relative terms can only be resolved against a known
+// today. Some endpoints inject the date into their own template and some do
+// not, so the prompt has to carry it: otherwise the window a question resolves
+// to depends on which endpoint the operator configured, and the failure is
+// silent, a confident answer over the wrong period rather than an error.
+func TestPromptCarriesTheSuppliedDate(t *testing.T) {
+	prompt, err := BuildPrompt("spend last month", "2026-03-14", Values{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Today       string `json:"today"`
+		Instruction string `json:"instruction"`
+	}
+	if err := json.Unmarshal(prompt, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Today != "2026-03-14" {
+		t.Fatalf("today = %q, want the supplied date 2026-03-14", doc.Today)
+	}
+	// The date is only useful if the model is told to use it.
+	if !strings.Contains(doc.Instruction, "today") {
+		t.Fatalf("instruction does not mention today: %q", doc.Instruction)
+	}
+
+	// A different date must reach the prompt, so the field cannot be a constant.
+	other, err := BuildPrompt("spend last month", "1999-12-31", Values{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(prompt, other) {
+		t.Fatal("prompt is identical for two different dates")
 	}
 }
