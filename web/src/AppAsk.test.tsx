@@ -50,7 +50,10 @@ function plan(endpoint: QueryPlan["endpoint"]): QueryPlan {
   };
 }
 
-function appFetch(plans: Array<QueryPlan | Record<string, unknown>>) {
+function appFetch(
+  plans: Array<QueryPlan | Record<string, unknown>>,
+  configured = true,
+) {
   const queue = [...plans];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -66,7 +69,7 @@ function appFetch(plans: Array<QueryPlan | Record<string, unknown>>) {
           version: "0.1.0-test",
           focusVersion: "1.4",
           demo: false,
-          naturalLanguageQueryConfigured: true,
+          naturalLanguageQueryConfigured: configured,
         }),
       );
     }
@@ -322,9 +325,9 @@ it("keeps one live region mounted while idle, translating, and resolved", async 
   const liveRegion = screen.getByRole("status", { name: "Question status" });
   expect(liveRegion.textContent).toBe("");
   const input = await screen.findByLabelText("Ask a question");
-  await waitFor(() =>
-    expect(liveRegion.textContent).toBe("Ready for a question."),
-  );
+  // Idle stays silent, as the sibling range control does: the region is
+  // mounted so later changes are announced, not to greet the reader.
+  expect(liveRegion.textContent).toBe("");
 
   fireEvent.change(input, { target: { value: "Show tokens" } });
   fireEvent.click(screen.getByRole("button", { name: "Ask" }));
@@ -335,10 +338,43 @@ it("keeps one live region mounted while idle, translating, and resolved", async 
   });
   await waitFor(() =>
     expect(liveRegion.textContent).toBe(
-      "Interpreted as: tokens for 2026-06-01 to 2026-06-30.",
+      "Your question was read as: tokens for 2026-06-01 to 2026-06-30.",
     ),
   );
   expect(screen.getByRole("status", { name: "Question status" })).toBe(
     liveRegion,
   );
+});
+
+it("leaves no reserved band in the toolbar when the translator is unconfigured", async () => {
+  // The default self-hosted instance and the published demo both run
+  // unconfigured, so an always-rendered slot would add an empty band to the
+  // toolbar of every deployment that never gets to use the feature.
+  vi.stubGlobal("fetch", appFetch([], false));
+  const { container } = render(<App />);
+  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+  expect(screen.queryByLabelText("Ask a question")).toBeNull();
+  expect(container.querySelector(".ask-row-slot")).toBeNull();
+});
+
+it("returns focus to the panel that now holds the answer", async () => {
+  // The remount destroys the panel node, so a reader focused there via the skip
+  // link would otherwise be dropped onto the document body.
+  vi.stubGlobal("fetch", appFetch([plan("tokens")]));
+  render(<App />);
+  const input = await screen.findByLabelText("Ask a question");
+  const panel = document.getElementById("view-panel");
+  panel?.focus();
+  expect(document.activeElement).toBe(panel);
+
+  fireEvent.change(input, { target: { value: "Show tokens" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+  await waitFor(() =>
+    expect(
+      screen.getAllByText(/^Your question was read as:/).length,
+    ).toBeGreaterThan(0),
+  );
+  expect(document.activeElement).toBe(document.getElementById("view-panel"));
+  expect(document.activeElement).not.toBe(document.body);
 });

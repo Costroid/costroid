@@ -36,10 +36,22 @@ function response(status: number, body: unknown): Response {
 
 function renderAsk(onNavigate = vi.fn(() => true)) {
   const onAnnouncement = vi.fn();
-  render(
-    <AskQuestion onNavigate={onNavigate} onAnnouncement={onAnnouncement} />,
+  const view = render(
+    <AskQuestion
+      onNavigate={onNavigate}
+      onAnnouncement={onAnnouncement}
+      dismissToken={0}
+    />,
   );
-  return { onNavigate, onAnnouncement };
+  const dismiss = () =>
+    view.rerender(
+      <AskQuestion
+        onNavigate={onNavigate}
+        onAnnouncement={onAnnouncement}
+        dismissToken={1}
+      />,
+    );
+  return { onNavigate, onAnnouncement, dismiss };
 }
 
 function enterAndSubmit(question = "What did AWS cost?") {
@@ -136,7 +148,7 @@ describe("AskQuestion plan handling", () => {
 
     expect(
       await screen.findByText(
-        "Interpreted as: costs for 2026-06-01 to 2026-06-30, grouped by service, provider AWS.",
+        "Your question was read as: costs for 2026-06-01 to 2026-06-30, grouped by service, provider AWS.",
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -160,7 +172,7 @@ describe("AskQuestion plan handling", () => {
     enterAndSubmit();
 
     const caption = await screen.findByText(
-      "Interpreted as: tokens for 2026-06-01 to 2026-06-30.",
+      "Your question was read as: tokens for 2026-06-01 to 2026-06-30.",
     );
     expect(caption.textContent).not.toContain("provider");
     expect(onNavigate).toHaveBeenCalledWith({
@@ -239,7 +251,11 @@ describe("AskQuestion status messages", () => {
       "Natural-language questions are not configured on this instance.",
       false,
     ],
-    [401, "Your session has ended. Reload the page to continue.", false],
+    [
+      401,
+      "The server rejected the request. If a proxy signs you in to Costroid, sign in again and reload the page.",
+      false,
+    ],
   ] as const)(
     "maps HTTP %i to its exact message and retry posture",
     async (status, message, retry) => {
@@ -278,4 +294,40 @@ describe("AskQuestion status messages", () => {
     ).toBeTruthy();
     expect(screen.queryByText(body)).toBeNull();
   });
+});
+
+it("does not blame the question when the request never reached the handler", async () => {
+  // A rejected fetch and a 502 both mean the translator was never asked, so
+  // neither may advise the reader to rephrase a question the server never saw.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+  );
+  renderAsk();
+  enterAndSubmit();
+  expect(
+    await screen.findByText(
+      "Could not reach the server. Check that it is still running, then try again.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText(
+      "Could not turn that question into a dashboard view. Try naming a provider, a date range, or how to group the costs.",
+    ),
+  ).toBeNull();
+});
+
+it("stops asserting an answer once the reader navigates away from it", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(response(200, basePlan))),
+  );
+  const { dismiss } = renderAsk();
+  enterAndSubmit();
+  const caption = await screen.findByText(/^Your question was read as:/);
+  expect(caption).toBeTruthy();
+  dismiss();
+  await waitFor(() =>
+    expect(screen.queryByText(/^Your question was read as:/)).toBeNull(),
+  );
 });

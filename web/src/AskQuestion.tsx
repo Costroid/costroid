@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The Costroid Authors
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { components } from "./api/schema";
 import { postQuery } from "./api";
 
@@ -22,7 +22,13 @@ const TRANSLATION_ERROR =
   "Could not turn that question into a dashboard view. Try naming a provider, a date range, or how to group the costs.";
 const UNCONFIGURED_ERROR =
   "Natural-language questions are not configured on this instance.";
-const SESSION_ERROR = "Your session has ended. Reload the page to continue.";
+// Costroid holds no session of its own: authentication is header-based and the
+// dashboard sends no credential. A 401 here means the proxy in front of it
+// stopped accepting the request, which is the only topology that reaches this.
+const REJECTED_ERROR =
+  "The server rejected the request. If a proxy signs you in to Costroid, sign in again and reload the page.";
+const UNREACHABLE_ERROR =
+  "Could not reach the server. Check that it is still running, then try again.";
 const LENGTH_ERROR =
   "That question is too long. Questions are limited to 8192 bytes.";
 
@@ -75,7 +81,11 @@ function describe(
   if (fields.metric && link.metric) {
     details.push(`metric ${link.metric}`);
   }
-  return `Interpreted as: ${[opening, ...details].join(", ")}.`;
+  // Deliberately phrased as a reading of the QUESTION, not a description of the
+  // chart. A view silently substitutes a currency, provider or tag key that the
+  // requested window does not contain, so a sentence claiming to describe what
+  // is displayed would be false in exactly the case a reader most needs it.
+  return `Your question was read as: ${[opening, ...details].join(", ")}.`;
 }
 
 function resolvePlan(plan: QueryPlan): Result | undefined {
@@ -104,11 +114,11 @@ function resolvePlan(plan: QueryPlan): Result | undefined {
     };
     return {
       link,
-      caption: describe("costs", link, {
-        grouping: true,
-        currency: true,
-        provider: true,
-      }),
+      caption: describe(
+        plan.endpoint === "anomalies" ? "costs with anomaly markers" : "costs",
+        link,
+        { grouping: true, currency: true, provider: true },
+      ),
     };
   }
 
@@ -167,26 +177,41 @@ function messageFor(status: number | undefined): {
     return { message: UNCONFIGURED_ERROR, retry: false };
   }
   if (status === 401) {
-    return { message: SESSION_ERROR, retry: false };
+    return { message: REJECTED_ERROR, retry: false };
   }
-  return { message: TRANSLATION_ERROR, retry: true };
+  if (status === 500) {
+    return { message: TRANSLATION_ERROR, retry: true };
+  }
+  // No status at all means the request never completed, and every other status
+  // came from something between us and the handler. Neither is a failed
+  // translation, so neither may advise the reader to rephrase the question.
+  return { message: UNREACHABLE_ERROR, retry: true };
 }
 
 export default function AskQuestion({
   onNavigate,
   onAnnouncement,
+  dismissToken,
 }: {
   onNavigate: (link: InsightLink) => boolean;
   onAnnouncement: (message: string) => void;
+  dismissToken: number;
 }) {
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState(false);
   const [caption, setCaption] = useState("");
   const [error, setError] = useState<{ message: string; retry: boolean }>();
 
+  const shown = useRef(dismissToken);
   useEffect(() => {
-    onAnnouncement("Ready for a question.");
-  }, [onAnnouncement]);
+    // The caption describes one answer. Once the reader changes the view or the
+    // range themselves, it no longer describes what is on screen, so it must go
+    // rather than keep asserting a window they have left.
+    if (shown.current !== dismissToken) {
+      shown.current = dismissToken;
+      setCaption("");
+    }
+  }, [dismissToken]);
 
   async function submit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();

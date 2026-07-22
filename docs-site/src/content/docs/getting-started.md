@@ -82,9 +82,11 @@ costroid serve --no-auth
 The question row appears between the date range and view navigation. A
 question is translated into a validated plan, then the dashboard moves to the
 existing Costs, Tokens, Usage, or Unit economics view that applies it. The
-interpretation caption names the dates, grouping, currency, provider, tag key,
-or metric that the resolved view uses. The dashboard does not display plan
-JSON.
+caption reads the question back as it was understood: the dates, grouping,
+currency, provider, tag key, or metric the plan asked for. It describes the
+question rather than the chart, because a view falls back to a currency,
+provider, or tag key the selected window actually contains. The dashboard does
+not display plan JSON.
 
 The row is absent when the translator is not configured and in the static
 demo, which has no inference backend. The browser sends the question in a POST

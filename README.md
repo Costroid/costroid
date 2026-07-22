@@ -168,12 +168,15 @@ Then run `./bin/costroid demo` or `./bin/costroid serve --no-auth` as above. A s
 
 ## Natural-language queries
 
-Costroid has two ways to translate a question into a query it already knows
+Costroid has three ways to translate a question into a query it already knows
 how to answer. When the translator is configured, the dashboard shows an ask
 row between the date range and view navigation. It sends the question to
 `POST /api/v1/query`, applies the validated plan to the existing dashboard
-views, and shows an interpretation caption naming the filters that view uses.
-It never renders the plan as JSON. `costroid ask` provides the terminal form,
+views, and shows a caption reading the question back to you, so you can see
+how it was understood before you trust the number. That caption describes the
+question, not the chart: a view falls back to a currency or provider the
+selected window actually contains, so the two can differ. It never renders the
+plan as JSON. `costroid ask` provides the terminal form,
 printing the validated plan and executing it for an answer. The HTTP form
 exists because the embedded store is single-writer: while `serve` has the
 store open, a separate `costroid ask` process cannot open it, but the endpoint

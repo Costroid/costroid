@@ -89,6 +89,10 @@ export default function App() {
     () => readUrlState().view ?? "overview",
   );
   const [navigationKey, setNavigationKey] = useState(0);
+  // Bumped by the view nav and the range control, never by onNavigate: it tells
+  // the ask surface that the reader has moved on from the answer it described.
+  const [interactionKey, setInteractionKey] = useState(0);
+  const [movedByNavigation, setMovedByNavigation] = useState(false);
   const [askAnnouncement, setAskAnnouncement] = useState("");
   const [range, setRange] = useState<Range>(() => {
     const urlState = readUrlState();
@@ -160,8 +164,18 @@ export default function App() {
       end: link.end ?? "",
     });
     setView(nextView);
+    setMovedByNavigation(true);
     return true;
   }
+
+  // The remount destroys the panel node, so a reader who was focused there (the
+  // skip link puts them there) would be dropped to the document body. Put them
+  // back on the panel that now holds the answer.
+  useEffect(() => {
+    if (!movedByNavigation) return;
+    setMovedByNavigation(false);
+    document.getElementById("view-panel")?.focus();
+  }, [movedByNavigation, navigationKey]);
 
   return (
     <main className="app-shell">
@@ -227,7 +241,10 @@ export default function App() {
         <div className="range-bar">
           <DateRangeControl
             range={range}
-            onChange={setRange}
+            onChange={(next) => {
+              setInteractionKey((current) => current + 1);
+              setRange(next);
+            }}
             presets={
               state.status === "ready" && state.meta.demo
                 ? DEMO_PRESETS
@@ -238,15 +255,16 @@ export default function App() {
             {rangeIndicator(range)}
           </p>
         </div>
-        <div className="ask-row-slot">
-          {state.status === "ready" &&
-            state.meta.naturalLanguageQueryConfigured && (
+        {state.status === "ready" &&
+          state.meta.naturalLanguageQueryConfigured && (
+            <div className="ask-row-slot">
               <AskQuestion
                 onNavigate={onNavigate}
                 onAnnouncement={setAskAnnouncement}
+                dismissToken={interactionKey}
               />
-            )}
-        </div>
+            </div>
+          )}
         <nav aria-label="Dashboard views">
           <div className="view-nav">
             {VIEWS.map((v) => {
@@ -256,7 +274,10 @@ export default function App() {
                   key={v.id}
                   type="button"
                   aria-current={view === v.id ? "page" : undefined}
-                  onClick={() => setView(v.id)}
+                  onClick={() => {
+                    setInteractionKey((current) => current + 1);
+                    setView(v.id);
+                  }}
                 >
                   <ViewIcon size={17} />
                   <span>{v.label}</span>
