@@ -121,11 +121,36 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("costroid")).toBeTruthy();
-    expect(screen.getByText("0.1.0-test")).toBeTruthy();
+    expect(await screen.findByText("0.1.0-test")).toBeTruthy();
     expect(screen.getByText("1.4")).toBeTruthy();
+    // The instance name is deliberately not surfaced: it names the machine, not
+    // anything the reader can act on, and every other chip here is a version.
+    expect(screen.queryByText("costroid")).toBeNull();
     expect(fetch).toHaveBeenCalledWith("/api/v1/meta", expect.anything());
     expect(screen.queryByLabelText("Ask a question")).toBeNull();
+  });
+
+  it("places the instance footer after the view panel", async () => {
+    vi.stubGlobal("fetch", mockFetch());
+
+    render(<App />);
+
+    const version = await screen.findByText("0.1.0-test");
+    const panel = document.getElementById("view-panel");
+    expect(panel).toBeTruthy();
+    // Document order, not CSS order: reordering visually with `order` would
+    // leave a keyboard reader tabbing from the toolbar to the bottom of the
+    // page and back, so the move has to be a real one in the markup.
+    expect(
+      panel!.compareDocumentPosition(version) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Anti-vacuity: the same expression is falsy read the other way round, so
+    // the assertion above is discriminating rather than always-true.
+    expect(
+      version.compareDocumentPosition(panel!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(0);
   });
 
   it("renders no synthetic-data banner, even in demo mode", async () => {
@@ -133,7 +158,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("costroid")).toBeTruthy();
+    expect(await screen.findByText("0.1.0-test")).toBeTruthy();
     expect(screen.queryByText(/DEMO/)).toBeNull();
   });
 

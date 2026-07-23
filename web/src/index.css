@@ -86,31 +86,20 @@ summary:focus-visible {
     var(--space-8);
 }
 
-.app-header {
+.app-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-5);
-  padding-bottom: var(--space-6);
-  border-bottom: 1px solid var(--border-soft);
-  margin-bottom: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-soft);
+  margin-top: var(--space-6);
 }
 
 .brand {
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-}
-
-.brand-mark {
-  display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  place-items: center;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--on-accent);
-  box-shadow: var(--shadow-sm);
 }
 
 .brand h1 {
@@ -127,7 +116,7 @@ summary:focus-visible {
   font-size: var(--text-xs);
 }
 
-.header-tools {
+.footer-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -144,7 +133,7 @@ summary:focus-visible {
 }
 
 /* Device / Dark / Light. Same pill language as instance-meta; sized so the
-   header height does not change (baseline lock for the demo poster). */
+   footer height does not change (baseline lock for the demo poster). */
 .theme-switch {
   display: inline-flex;
   gap: 2px;
@@ -952,14 +941,14 @@ thead th {
     padding: var(--space-4) var(--space-3) var(--space-7);
   }
 
-  .app-header,
+  .app-footer,
   .range-bar,
   .view-heading {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .header-tools,
+  .footer-tools,
   .instance-meta {
     justify-content: flex-start;
   }

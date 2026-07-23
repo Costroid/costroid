@@ -10,7 +10,6 @@ import DateRangeControl from "./DateRangeControl";
 import DailyCosts from "./DailyCosts";
 import DailyTokens from "./DailyTokens";
 import {
-  BrandIcon,
   CostsIcon,
   OverviewIcon,
   SourcesIcon,
@@ -191,52 +190,6 @@ export default function App() {
       >
         Skip to content
       </a>
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark">
-            <BrandIcon size={22} />
-          </span>
-          <div>
-            <h1>Costroid</h1>
-            <p className="brand-subtitle">FOCUS-native cost intelligence</p>
-          </div>
-        </div>
-        <div className="header-tools">
-          {state.status === "loading" && (
-            <div className="instance-meta" role="status">
-              <div>
-                <span>Instance</span>
-                <strong>Loading…</strong>
-              </div>
-            </div>
-          )}
-          {state.status === "error" && (
-            <div className="instance-meta" role="alert">
-              <div>
-                <WarningIcon size={14} />
-                <span>Failed to load instance metadata: {state.message}</span>
-              </div>
-            </div>
-          )}
-          {state.status === "ready" && (
-            <dl className="instance-meta">
-              <div>
-                <dt>Name</dt>
-                <dd>{state.meta.name}</dd>
-              </div>
-              <div>
-                <dt>Version</dt>
-                <dd>{state.meta.version}</dd>
-              </div>
-              <div>
-                <dt>FOCUS</dt>
-                <dd>{state.meta.focusVersion}</dd>
-              </div>
-            </dl>
-          )}
-          <ThemeSwitch />
-        </div>
-      </header>
       <div className="toolbar">
         <div className="range-bar">
           <DateRangeControl
@@ -310,6 +263,43 @@ export default function App() {
         {view === "unit-economics" && <UnitEconomics range={range} />}
         {view === "sources" && <Sources />}
       </div>
+      <footer className="app-footer">
+        <div className="brand">
+          <h1>Costroid</h1>
+          <p className="brand-subtitle">FOCUS-native cost intelligence</p>
+        </div>
+        <div className="footer-tools">
+          {state.status === "loading" && (
+            <div className="instance-meta" role="status">
+              <div>
+                <span>Instance</span>
+                <strong>Loading…</strong>
+              </div>
+            </div>
+          )}
+          {state.status === "error" && (
+            <div className="instance-meta" role="alert">
+              <div>
+                <WarningIcon size={14} />
+                <span>Failed to load instance metadata: {state.message}</span>
+              </div>
+            </div>
+          )}
+          {state.status === "ready" && (
+            <dl className="instance-meta">
+              <div>
+                <dt>Version</dt>
+                <dd>{state.meta.version}</dd>
+              </div>
+              <div>
+                <dt>FOCUS</dt>
+                <dd>{state.meta.focusVersion}</dd>
+              </div>
+            </dl>
+          )}
+          <ThemeSwitch />
+        </div>
+      </footer>
     </main>
   );
 }

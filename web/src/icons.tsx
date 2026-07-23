@@ -25,15 +25,6 @@ function Icon({ size = 18, children, ...props }: IconProps) {
   );
 }
 
-export function BrandIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M5 7.5 12 3l7 4.5v9L12 21l-7-4.5z" />
-      <path d="m8.5 10 3.5-2 3.5 2v4L12 16l-3.5-2z" />
-    </Icon>
-  );
-}
-
 export function OverviewIcon(props: IconProps) {
   // Lucide-derived "layout-dashboard" stroke paths (ISC).
   return (
