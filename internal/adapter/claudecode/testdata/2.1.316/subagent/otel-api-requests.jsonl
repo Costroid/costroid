@@ -1,0 +1,4 @@
+{"request_id":"req_fixture_0002","input_tokens":2,"output_tokens":84,"cache_read_tokens":2679,"cache_creation_5m_tokens":0,"cache_creation_1h_tokens":3608}
+{"request_id":"req_fixture_0003","input_tokens":2,"output_tokens":4,"cache_read_tokens":0,"cache_creation_5m_tokens":3495,"cache_creation_1h_tokens":0}
+{"request_id":"req_fixture_0004","input_tokens":2,"output_tokens":60,"cache_read_tokens":6287,"cache_creation_5m_tokens":0,"cache_creation_1h_tokens":352}
+{"request_id":"req_fixture_0005","input_tokens":2,"output_tokens":124,"cache_read_tokens":6639,"cache_creation_5m_tokens":0,"cache_creation_1h_tokens":490}
