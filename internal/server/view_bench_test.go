@@ -6,7 +6,6 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -102,12 +101,7 @@ type viewBench struct {
 	max   int64
 }
 
-var (
-	benchSetup sync.Once
-	benchState viewBench
-)
-
-func setupViewBench(b *testing.B) {
+func setupViewBench(b *testing.B) viewBench {
 	b.Helper()
 	db := storetest.New(b)
 	a := db.Tenant(b, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}}, digest(acmeKey))
@@ -126,13 +120,12 @@ func setupViewBench(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Logf("seeded %d + %d rows in %s", benchRows, benchOtherRows, time.Since(started).Round(time.Second))
-	benchState.paths = benchPathsFrom(b, owner, a)
-	benchState.max = heaviestPull(b, owner, a)
 	ledger, err := store.Open(ctx, db.AppURL)
 	if err != nil {
 		b.Fatal(err)
 	}
-	benchState.world = newWorld(b, ledger)
+	b.Cleanup(ledger.Close)
+	return viewBench{world: newWorld(b, ledger), paths: benchPathsFrom(b, owner, a), max: heaviestPull(b, owner, a)}
 }
 
 func heaviestPull(b *testing.B, conn *pgx.Conn, tenant store.TenantID) int64 {
@@ -151,23 +144,17 @@ func heaviestPull(b *testing.B, conn *pgx.Conn, tenant store.TenantID) int64 {
 	return heaviest
 }
 
-func percentile(sorted []time.Duration, p float64) time.Duration {
-	index := int(float64(len(sorted)-1)*p + 0.5)
-	return sorted[index]
+func percentile(sorted []time.Duration, percent int) time.Duration {
+	return sorted[((len(sorted)-1)*percent+50)/100]
 }
 
 // BenchmarkPullRequestView measures GET /v1/pulls/{pr} over HTTP, with key
 // authentication and row level security, on one million rows of one tenant.
 // It fails past the 200 ms bar, so a green run is the measurement holding.
 func BenchmarkPullRequestView(b *testing.B) {
-	benchSetup.Do(func() { setupViewBench(b) })
-	state := &benchState
-	if state.world == nil {
-		b.Skip("setup did not finish")
-	}
+	state := setupViewBench(b)
 	random := rand.New(rand.NewPCG(1, 2))
-	samples := make([]time.Duration, 0, b.N)
-	b.ResetTimer()
+	var samples []time.Duration
 	for b.Loop() {
 		path := state.paths[random.IntN(len(state.paths))]
 		started := time.Now()
@@ -179,13 +166,11 @@ func BenchmarkPullRequestView(b *testing.B) {
 	}
 	b.StopTimer()
 	slices.Sort(samples)
-	p50, p99 := percentile(samples, 0.50), percentile(samples, 0.99)
-	b.ReportMetric(float64(p50.Microseconds())/1000, "p50-ms")
-	b.ReportMetric(float64(p99.Microseconds())/1000, "p99-ms")
-	if len(samples) > 1 {
-		fmt.Printf("per-PR view: %d requests over %d rows, heaviest pull request %d rows: p50 %s, p99 %s, max %s\n",
-			len(samples), benchRows, state.max, p50, p99, samples[len(samples)-1])
-	}
+	p50, p99 := percentile(samples, 50), percentile(samples, 99)
+	b.ReportMetric(p50.Seconds()*1000, "p50-ms")
+	b.ReportMetric(p99.Seconds()*1000, "p99-ms")
+	fmt.Printf("per-PR view: %d requests over %d rows, heaviest pull request %d rows: p50 %s, p99 %s, max %s\n",
+		len(samples), benchRows, state.max, p50, p99, samples[len(samples)-1])
 	if p99 >= benchTarget {
 		b.Fatalf("p99 %s is at or over %s", p99, benchTarget)
 	}

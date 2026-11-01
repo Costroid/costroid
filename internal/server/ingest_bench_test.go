@@ -41,5 +41,6 @@ func BenchmarkIngestRows(b *testing.B) {
 		w.rows(token, body).want(b, http.StatusOK)
 		written += time.Since(started)
 	}
-	b.ReportMetric(float64(batch*ingestBatchRows)/written.Seconds(), "rows/s")
+	perBatch := written / time.Duration(batch)
+	b.ReportMetric(ingestBatchRows/perBatch.Seconds(), "rows/s")
 }

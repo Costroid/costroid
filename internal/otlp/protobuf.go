@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"strconv"
 )
 
@@ -253,11 +252,50 @@ func protoScalar(message []byte) (string, bool, error) {
 		case f.number == fieldAnyInt && f.wire == wireVarint:
 			text, scalar = strconv.FormatInt(int64(f.bits), 10), true
 		case f.number == fieldAnyDouble && f.wire == wireFixed64:
-			text, scalar = strconv.FormatFloat(math.Float64frombits(f.bits), 'f', -1, 64), true
+			text, scalar = integralDouble(f.bits)
 		}
 		return nil
 	})
 	return text, scalar, err
+}
+
+// IEEE 754 binary64 layout.
+const (
+	doubleFractionBits = 52
+	doubleExponentBias = 1023
+	doubleExponentMask = 0x7ff
+	maxDoubleExponent  = 62
+)
+
+// integralDouble reads a double that holds a whole number from its bits, since
+// the only doubles this edge reads are token counts. Anything else is not
+// scalar here and is dropped as such.
+func integralDouble(bits uint64) (string, bool) {
+	fraction := bits & (1<<doubleFractionBits - 1)
+	biased := bits >> doubleFractionBits & doubleExponentMask
+	if biased == 0 && fraction == 0 {
+		return "0", true
+	}
+	exponent := int(biased) - doubleExponentBias
+	if exponent < 0 || exponent > maxDoubleExponent {
+		return "", false
+	}
+	mantissa := fraction | 1<<doubleFractionBits
+	var whole uint64
+	if exponent >= doubleFractionBits {
+		whole = mantissa << (exponent - doubleFractionBits)
+	} else {
+		shift := doubleFractionBits - exponent
+		if mantissa&(1<<shift-1) != 0 {
+			return "", false
+		}
+		whole = mantissa >> shift
+	}
+	text := strconv.FormatUint(whole, 10)
+	if bits>>63 != 0 {
+		text = "-" + text
+	}
+	return text, true
 }
 
 func (c *collector) protoSpan(message []byte, shared attributes) (record, error) {

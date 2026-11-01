@@ -164,20 +164,16 @@ func (d *reader) int(keys ...string) int64 {
 	return value
 }
 
-// parseCount accepts digits, and the integral doubles a JavaScript exporter
-// writes.
+// parseCount accepts digits, and the integral double a JavaScript exporter can
+// write, such as 40.0. A count stays exact text: no float is involved.
 func parseCount(text string) (int64, error) {
-	value, err := strconv.ParseInt(text, 10, 64)
+	whole, fraction, _ := strings.Cut(text, ".")
+	if strings.Trim(fraction, "0") != "" {
+		return 0, strconv.ErrSyntax
+	}
+	value, err := strconv.ParseInt(whole, 10, 64)
 	if err != nil {
-		var whole float64
-		whole, err = strconv.ParseFloat(text, 64)
-		if err != nil {
-			return 0, err
-		}
-		if whole != float64(int64(whole)) {
-			return 0, strconv.ErrSyntax
-		}
-		value = int64(whole)
+		return 0, err
 	}
 	if value < 0 || value > MaxTokens {
 		return 0, strconv.ErrRange

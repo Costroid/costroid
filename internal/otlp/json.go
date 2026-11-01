@@ -18,7 +18,7 @@ type jsonValue struct {
 	String *string         `json:"stringValue"`
 	Bool   *bool           `json:"boolValue"`
 	Int    json.RawMessage `json:"intValue"`
-	Double *float64        `json:"doubleValue"`
+	Double json.RawMessage `json:"doubleValue"`
 	Array  json.RawMessage `json:"arrayValue"`
 	Map    json.RawMessage `json:"kvlistValue"`
 	Bytes  json.RawMessage `json:"bytesValue"`
@@ -32,8 +32,8 @@ func (v jsonValue) scalar() (string, bool) {
 		return strconv.FormatBool(*v.Bool), true
 	case len(v.Int) > 0:
 		return string(bytes.Trim(v.Int, `"`)), true
-	case v.Double != nil:
-		return strconv.FormatFloat(*v.Double, 'f', -1, 64), true
+	case len(v.Double) > 0:
+		return string(bytes.Trim(v.Double, `"`)), true
 	}
 	return "", false
 }

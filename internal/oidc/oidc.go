@@ -125,10 +125,25 @@ type header struct {
 
 // registered holds the claims every issuer shares.
 type registered struct {
-	Issuer    string   `json:"iss"`
-	Audience  audience `json:"aud"`
-	Expires   *float64 `json:"exp"`
-	NotBefore *float64 `json:"nbf"`
+	Issuer    string       `json:"iss"`
+	Audience  audience     `json:"aud"`
+	Expires   *numericDate `json:"exp"`
+	NotBefore *numericDate `json:"nbf"`
+}
+
+// numericDate is a JWT NumericDate in whole seconds. A fractional part is
+// allowed by the JWT specification and cut.
+type numericDate int64
+
+// UnmarshalJSON reads the number's text, so no float is involved.
+func (d *numericDate) UnmarshalJSON(data []byte) error {
+	whole, _, _ := strings.Cut(string(data), ".")
+	seconds, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil {
+		return err
+	}
+	*d = numericDate(seconds)
+	return nil
 }
 
 // audience reads aud as one string or a list.
@@ -229,17 +244,13 @@ func (v *Verifier) checkRegistered(claims registered) error {
 	if claims.Expires == nil {
 		return fmt.Errorf("%w: no exp", ErrExpired)
 	}
-	if !now.Add(-clockSkew).Before(unix(*claims.Expires)) {
+	if !now.Add(-clockSkew).Before(time.Unix(int64(*claims.Expires), 0)) {
 		return ErrExpired
 	}
-	if claims.NotBefore != nil && now.Add(clockSkew).Before(unix(*claims.NotBefore)) {
+	if claims.NotBefore != nil && now.Add(clockSkew).Before(time.Unix(int64(*claims.NotBefore), 0)) {
 		return ErrNotYetValid
 	}
 	return nil
-}
-
-func unix(seconds float64) time.Time {
-	return time.Unix(int64(seconds), 0)
 }
 
 // Value patterns for what the claims must look like. They match the tag

@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +14,15 @@ import (
 
 const sentinel = "SENTINEL-CONTENT-7f3a"
 
+// double is a JSON double's text, or a protobuf double's bits in pbKV.
+type double string
+
+// The bits of 7.0 and 40.5, from IEEE 754 binary64.
+const (
+	bitsSeven      = 0x401C000000000000
+	bitsFortyPoint = 0x4044400000000000
+)
+
 // attr builds one OTLP/JSON attribute.
 func attr(key string, v any) map[string]any {
 	value := map[string]any{}
@@ -23,8 +31,8 @@ func attr(key string, v any) map[string]any {
 		value["stringValue"] = typed
 	case int:
 		value["intValue"] = fmt.Sprint(typed)
-	case float64:
-		value["doubleValue"] = typed
+	case double:
+		value["doubleValue"] = json.Number(typed)
 	case []string:
 		value["arrayValue"] = map[string]any{"values": typed}
 	}
@@ -309,7 +317,7 @@ func TestImpossibleCountsAreRejectedNotClamped(t *testing.T) {
 		"negative":                       {keyInput: "-5", keyOutput: 1},
 		"not a number":                   {keyInput: "many", keyOutput: 1},
 		"past the bound":                 {keyInput: "9000000000000000", keyOutput: 1},
-		"fractional":                     {keyInput: 10.5, keyOutput: 1},
+		"fractional":                     {keyInput: double("10.5"), keyOutput: 1},
 	}
 	for name, span := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -337,7 +345,7 @@ func TestAnUnknownProviderIsRejectedNeverPricedAtZero(t *testing.T) {
 }
 
 func TestAJavaScriptDoubleCountReads(t *testing.T) {
-	usage := parseSpan(t, nil, map[string]any{"gen_ai.response.model": "gpt-5.5", keyInput: 40.0, keyOutput: 2.0})
+	usage := parseSpan(t, nil, map[string]any{"gen_ai.response.model": "gpt-5.5", keyInput: double("40.0"), keyOutput: double("2")})
 	assertClasses(t, usage.Counts, map[focus.TokenClass]int64{focus.InputUncached: 40, focus.Output: 2})
 }
 
@@ -375,7 +383,7 @@ func TestContentFieldsAreDroppedAndCountedByName(t *testing.T) {
 		"body", "request_body", "response_body",
 	}
 	other := []string{"gen_ai.prompt.0.content", "gen_ai.completion.0.content", "llm.input_messages.0.text", "codex.prompt", "cursor.conversation.content"}
-	span := map[string]any{"gen_ai.response.model": "gpt-5.5", keyInput: 1, keyOutput: 1, "cost_usd": 99.0}
+	span := map[string]any{"gen_ai.response.model": "gpt-5.5", keyInput: 1, keyOutput: 1, "cost_usd": double("99.5")}
 	for _, key := range append(append([]string{}, named...), other...) {
 		span[key] = sentinel
 	}
@@ -497,8 +505,8 @@ func pbKV(key string, v any) []byte {
 		any2 = pbString(fieldAnyString, typed)
 	case int:
 		any2 = pbVarint(fieldAnyInt, uint64(typed))
-	case float64:
-		any2 = pbFixed(fieldAnyDouble, math.Float64bits(typed))
+	case uint64:
+		any2 = pbFixed(fieldAnyDouble, typed)
 	case bool:
 		any2 = pbVarint(fieldAnyBool, 1)
 	}
@@ -516,7 +524,7 @@ func pbSpanRequest() []byte {
 		pbFixed(fieldSpanStart, 1793534400000000000), pbFixed(fieldSpanEnd, 1793534402000000000),
 		pbBytes(fieldSpanAttributes, pbKV("gen_ai.response.model", "gpt-5.5")),
 		pbBytes(fieldSpanAttributes, pbKV(keyInput, 100)),
-		pbBytes(fieldSpanAttributes, pbKV(keyOutput, 7.0)),
+		pbBytes(fieldSpanAttributes, pbKV(keyOutput, uint64(bitsSeven))),
 		pbBytes(fieldSpanAttributes, pbKV("gen_ai.input.messages", sentinel)),
 		pbBytes(fieldSpanEvents, pbBytes(fieldEventAttributes, pbKV("gen_ai.output.messages", sentinel))),
 		pbBytes(fieldSpanLinks, pbBytes(fieldLinkAttributes, pbKV("prompt", sentinel))),
@@ -577,6 +585,25 @@ func TestProtobufLogsDecodeClaudeCode(t *testing.T) {
 	}
 	if batch.Drops[DropEmail] != 1 || batch.Drops[DropLogBody] != 0 {
 		t.Fatalf("%+v", batch.Drops)
+	}
+}
+
+func TestIntegralDoublesReadExactly(t *testing.T) {
+	for bits, want := range map[uint64]string{
+		0:                  "0",
+		bitsSeven:          "7",
+		0x3FF0000000000000: "1",
+		0x4340000000000000: "9007199254740992",
+		0xC000000000000000: "-2",
+	} {
+		if got, ok := integralDouble(bits); !ok || got != want {
+			t.Errorf("%#x: got %q, %t", bits, got, ok)
+		}
+	}
+	for _, bits := range []uint64{bitsFortyPoint, 0x3FE0000000000000, 0x7FF0000000000000, 0x7FF8000000000000} {
+		if got, ok := integralDouble(bits); ok {
+			t.Errorf("%#x read as %q", bits, got)
+		}
 	}
 }
 
