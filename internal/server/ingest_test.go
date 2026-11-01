@@ -66,7 +66,7 @@ func total(records []store.Record) decimal.Decimal {
 
 func TestIdentityComesFromTheTokenNeverThePayload(t *testing.T) {
 	w, ledger := memoryWorld(t)
-	w.rows(w.token(), lines(t, row("req-1", focus.Output, 100))).want(t, http.StatusOK)
+	w.rows(w.token(), lines(t, credentialed(row("req-1", focus.Output, 100)))).want(t, http.StatusOK)
 	record := ledger.only(t, tenantA)
 	got := record.Row.Tags
 	for key, want := range map[string]string{
@@ -110,7 +110,7 @@ func TestRowsWhoseJoinKeysDisagreeWithTheTokenAreRejected(t *testing.T) {
 // request's head, acmeHead, is a different commit.
 func TestAHeadThatDiffersFromTheMergeCommitIsAcceptedAsAClaim(t *testing.T) {
 	w, ledger := memoryWorld(t)
-	w.rows(w.token(), lines(t, row("req-1", focus.Output, 100))).want(t, http.StatusOK)
+	w.rows(w.token(), lines(t, credentialed(row("req-1", focus.Output, 100)))).want(t, http.StatusOK)
 	record := ledger.only(t, tenantA)
 	if got := record.Row.Tags[store.TagCommitSHA]; got != acmeHead {
 		t.Errorf("commit_sha %q, want the stated head", got)
@@ -454,14 +454,51 @@ func TestATokenThatCannotProveAPullRequestLeavesTheRowWindowed(t *testing.T) {
 	}
 }
 
-func TestExactNeedsASessionToFilterTheProviderReportBy(t *testing.T) {
+func TestExactNeedsACredentialAndNoSession(t *testing.T) {
 	w, ledger := memoryWorld(t)
-	r := row("req-1", focus.Output, 100)
+	r := credentialed(row("req-1", focus.Output, 100))
 	delete(tags(r), focus.TagSessionID)
 	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
-	if got := ledger.only(t, tenantA).Row.Tags[focus.TagAttributionGrade]; got != "windowed" {
+	if got := ledger.only(t, tenantA).Row.Tags[focus.TagAttributionGrade]; got != "exact" {
 		t.Fatalf("grade %s", got)
 	}
+}
+
+func TestAClaudeCodeSessionIDNeverEarnsExact(t *testing.T) {
+	const session = "00000000-0000-4000-8000-000000000002"
+	cases := map[string]func(r map[string]any){
+		"a session and no credential":    func(map[string]any) {},
+		"a session stated as credential": func(r map[string]any) { r["SubAccountId"] = session },
+	}
+	for name, state := range cases {
+		t.Run(name, func(t *testing.T) {
+			w, ledger := memoryWorld(t)
+			r := row("req-1", focus.Output, 100)
+			tags(r)[focus.TagSessionID] = session
+			state(r)
+			w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+			got := ledger.only(t, tenantA).Row.Tags
+			if got[focus.TagAttributionGrade] != "windowed" || got[focus.TagSessionID] != session {
+				t.Fatalf("%v", got)
+			}
+		})
+	}
+	t.Run("telemetry with every vcs and cicd key", func(t *testing.T) {
+		w, ledger := memoryWorld(t)
+		body := goldenLogs(t, map[string]string{
+			"service.name":            "claude-code",
+			"vcs.repository.url.full": "https://github.com/Acme/Widgets.git",
+			"vcs.change.id":           acmePull,
+			"vcs.ref.head.revision":   acmeSHA,
+			"cicd.pipeline.run.id":    acmeRun,
+		})
+		w.send(http.MethodPost, "/otlp/v1/logs", w.token(), "application/json", body).want(t, http.StatusOK)
+		for _, record := range ledger.stored(t, tenantA) {
+			if record.Row.Tags[focus.TagAttributionGrade] != "windowed" || record.Row.Tags[focus.TagSessionID] != session {
+				t.Fatalf("%v", record.Row.Tags)
+			}
+		}
+	})
 }
 
 // rowVersions holds one row of each published version. Version 0.1 has no
@@ -747,6 +784,8 @@ func TestTelemetryJoinKeysAreCheckedAgainstTheToken(t *testing.T) {
 	}
 }
 
+// A row from telemetry states no credential, so a join this complete still
+// stops at windowed.
 func TestTelemetryJoinKeysThatAgreePass(t *testing.T) {
 	w, ledger := memoryWorld(t)
 	body := goldenLogs(t, map[string]string{
@@ -758,7 +797,7 @@ func TestTelemetryJoinKeysThatAgreePass(t *testing.T) {
 	})
 	w.send(http.MethodPost, "/otlp/v1/logs", w.token(), "application/json", body).want(t, http.StatusOK)
 	for _, record := range ledger.stored(t, tenantA) {
-		if record.Row.Tags[focus.TagAttributionGrade] != "exact" || record.Row.Tags[focus.TagCostSource] != "otlp" {
+		if record.Row.Tags[focus.TagAttributionGrade] != "windowed" || record.Row.Tags[focus.TagCostSource] != "otlp" {
 			t.Fatalf("%v", record.Row.Tags)
 		}
 	}

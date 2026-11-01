@@ -233,6 +233,12 @@ func row(id string, class focus.TokenClass, tokens int) map[string]any {
 	}
 }
 
+// credentialed states the credential a provider's report can be filtered by.
+func credentialed(r map[string]any) map[string]any {
+	r["SubAccountId"] = "apikey_01ExampleCi"
+	return r
+}
+
 func tags(r map[string]any) map[string]any {
 	value, _ := r["Tags"].(map[string]any)
 	return value

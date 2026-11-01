@@ -53,6 +53,8 @@ What the runs showed:
 - The subagent's writes were five-minute and the main thread's were one-hour, on one subscription. The lifetime is per request, so the rule that assigns an unreported lifetime is a last resort. `costroid/assumed_ttl` sits on the class that took those tokens.
 - The pinned catalog equals Claude Code's own `total_cost_usd` on all three runs: 0.00060589, 0.001619725 and 0.0007324 USD. The rows never read that field.
 
+A Claude Code `session.id` joins a row and never earns `exact`. Anthropic's usage `session_id` is a Managed Agents id, null outside a managed session ([usage analytics](https://platform.claude.com/docs/en/api/beta/organization/analytics/usage.md), retrieved 2026-11-01), so it cannot filter Anthropic's report. `exact` rests on the credential in `SubAccountId`.
+
 `apiKeySource` was `none` on these runs. Costroid reads `none`, an absent value and any unknown value as a subscription. The API-key values in the code are unverified by a recording.
 
 ## Codex

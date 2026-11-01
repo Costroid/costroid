@@ -108,7 +108,8 @@ func joinKeyRefusal(key string) *refusal {
 // join applies the token to a charge. Keys come from the token. A stated key
 // that disagrees rejects the batch, and a stated pull request the token cannot
 // confirm is discarded, which leaves the row windowed. A row with no head to
-// name stays windowed too, because the tag contract's exact row names one.
+// name stays windowed too, because the tag contract's exact row names one, and
+// so does a row with no credential, because the row contract's exact row does.
 func (s *Server) join(c *charge, who caller) (joinResult, error) {
 	if who.identity == nil {
 		return s.joinUnverified(c, who)
@@ -135,10 +136,17 @@ func (s *Server) join(c *charge, who caller) (joinResult, error) {
 		grade: gradeWindowed, identity: identityToken,
 		attempt: id.RunAttempt, actor: id.Actor, event: id.Event,
 	}
-	if id.PullRequest != "" && head != "" && c.session != "" && !c.weakJoin {
+	if id.PullRequest != "" && head != "" && c.namesCredential() && !c.weakJoin {
 		result.grade = gradeExact
 	}
 	return result, nil
+}
+
+// namesCredential reports whether a row states what a provider's report can be
+// filtered by. A session id is a join for the row and never that: Anthropic's
+// usage session_id is a Managed Agents id, not a Claude Code session.
+func (c *charge) namesCredential() bool {
+	return c.credential != "" && c.credential != c.session
 }
 
 // headOf decides a verified row's head. A token that proves the head is the

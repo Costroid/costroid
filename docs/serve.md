@@ -69,11 +69,11 @@ A stated head that differs from the token's `sha` on a `pull_request` run is exp
 
 `head_basis = 'stated'` is the seam for an SCM check. No token names a pull request's head, so the join cannot disprove a stated one. A later check reads those rows and reports a head the pull request never had as its own issue. A row with `head_basis = 'stated'` and `commit_sha` equal to `token_commit_sha` on a `pull_request` run names the merge commit, which is a wrapper stating `GITHUB_SHA`. A wrapper states `github.event.pull_request.head.sha`.
 
-| Credential                                                                    | `run_identity`   | `attribution_grade` | Counts toward a budget |
-| ----------------------------------------------------------------------------- | ---------------- | ------------------- | ---------------------- |
-| CI token that names a pull request, on a row with a session id and a head     | `token_verified` | `exact`             | Yes                    |
-| CI token, otherwise                                                           | `token_verified` | `windowed`          | Yes                    |
-| Ingest key                                                                    | `unverified`     | `unattributed`      | Never                  |
+| Credential                                                                         | `run_identity`   | `attribution_grade` | Counts toward a budget |
+| ---------------------------------------------------------------------------------- | ---------------- | ------------------- | ---------------------- |
+| CI token that names a pull request, on a row with a `SubAccountId` and a head      | `token_verified` | `exact`             | Yes                    |
+| CI token, otherwise                                                                | `token_verified` | `windowed`          | Yes                    |
+| Ingest key                                                                         | `unverified`     | `unattributed`      | Never                  |
 
 A sender may lower an `exact` row to `windowed`. It cannot raise a row. Postgres holds the last line as well: a `CHECK` refuses an unverified row with any other grade, and `budget_eligible` is a generated column.
 
@@ -81,7 +81,7 @@ A budget rule reads `budget.spend` in the per-PR answer. While no eligible row e
 
 `totals` in the same answer adds up every row of the pull request, one figure per currency and cost basis. It is a reading, so an unverified row counts, and a budget rule never reads it.
 
-`SubAccountId` is kept as the sender stated it, so a stored row can reconcile per credential. It is a claim, like every other column a sender states.
+`SubAccountId` is kept as the sender stated it, so a stored row can reconcile per credential. It is a claim, like every other column a sender states. `exact` needs one, because the grade means a provider's report can be filtered by the row's credential. A session id joins a row and never earns `exact`, so a `SubAccountId` that repeats the session id reads `windowed`. A row from OTLP states no credential, so it stops at `windowed` too.
 
 `BillingAccountId` is kept the same way, up to 512 characters, and `unknown` when a row states none. It is a stated claim that nothing verifies, and it never replaces the tenant. The per-PR view returns it as `billing_account_id` on each line, and a line never adds across two accounts.
 

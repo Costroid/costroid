@@ -77,7 +77,7 @@ func TestPostgresThePerPullRequestViewIsDerivedFromTheRows(t *testing.T) {
 	rows := int64(0)
 	for _, line := range view.Lines {
 		rows += line.Rows
-		if line.Label != "List-equivalent" || line.AttributionGrade != "exact" || line.RunIdentity != "token_verified" {
+		if line.Label != "List-equivalent" || line.AttributionGrade != "windowed" || line.RunIdentity != "token_verified" {
 			t.Fatalf("%+v", line)
 		}
 		if line.EffectiveCost != "0" {
