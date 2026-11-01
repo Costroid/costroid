@@ -109,7 +109,7 @@ func (p pullContext) settingsRef() string {
 	return p.head
 }
 
-func readLedger(path string) (comment.Ledger, comment.State, error) {
+func readReportRows(path string) (comment.Ledger, comment.State, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return comment.Ledger{}, comment.Unreadable, err
@@ -136,7 +136,7 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
-	ledger, state, err := readLedger(flags.rows)
+	ledger, state, err := readReportRows(flags.rows)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
