@@ -2,6 +2,16 @@
 
 What each agent's stream carries, as recorded on November 1, 2026. The fixtures sit beside each adapter under `testdata/<agent version>/`, and every figure below is asserted by a test.
 
+## What the budget means
+
+| Agent       | Grade              | What holds the run to the budget                                                                                                                            |
+| ----------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `agent-flag`       | Costroid passes `--max-budget-usd`. Claude Code checks its own estimate between requests, so the request that crosses the cap still runs and is still paid. |
+| Codex       | `wrapper-watchdog` | Costroid reads Codex's rollout file during the turn, prices each request as it settles and stops the process at the cap. Requests in flight can pass it.    |
+| Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a Codex version with no recorded fixture, or a file that contradicts the stream. Nothing stops the run.  |
+
+A recorded run with a 0.001 USD cap stopped mid-turn at 0.0283136 USD, 65 milliseconds after its first request settled. The tool the agent had started kept running, because Codex gives tools their own process group. A `none` run says why on every row. The recorded runs behind this table are below.
+
 ## Recorded runs
 
 | Fixture                      | Version                  | Command shape                                                     | Model              |
@@ -60,7 +70,7 @@ The rollout file is `<codex home>/sessions/<year>/<month>/<day>/rollout-<local t
 | `reasoning_output`      | `reasoning_output_tokens`                                                                       |
 | `cached_input_reported` | `cached_input_tokens`                                                                           |
 
-`cache_write_30m` is the catalog's class name. Row contract 0.1 does not list it yet, so a row carrying it fails that schema. Costroid writes it anyway, and never moves the tokens to another class.
+`cache_write_30m` is the catalog's class name. Row contract 0.2 does not list it yet, so a row carrying it fails that schema. Costroid writes it anyway, and never moves the tokens to another class.
 
 A request settles on the first of two lines. `token_usage_record` carries `usage`, `thread_token_usage` and `response_id`. `token_count` carries `last_token_usage` and `total_token_usage`. Both state the same running total, so a total that has not moved is not a new request, and a total that moved by anything but the request's own usage stops the reading.
 
@@ -90,6 +100,20 @@ What the runs showed:
 - Unverified: a Codex subagent thread may write its own rollout file, which Costroid would not read. No recorded run had one.
 - The stream names no model and no request id. Without a rollout file, the model comes from `-m`, `--model`, `-c model=` or the top-level `model` key of `config.toml`, and otherwise reads `unknown` and prices at the fallback tier.
 - A `codex.sse_event` reported a `response.completed` of 2 input tokens before the first turn, from startup. It is in neither the turn total nor the rollout file.
+
+## claude-code-action
+
+`costroid ingest-run --execution-file F` reads the file the action names in its `execution_file` output: a JSON array of every SDK message, pretty-printed, at `$RUNNER_TEMP/claude-execution-output.json` ([`execution-file.ts`](https://github.com/anthropics/claude-code-action/blob/d535f5172dec02b204866b393d6b20b9b2aaf98d/base-action/src/execution-file.ts), read 2026-11-01). The messages are the ones `claude -p` streams, so one session reads both, and the last result's `modelUsage` is the run.
+
+| Field                  | Value                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| `costroid/cost_source` | `execution_file`, or `agent_session_file` when the runner still holds session files that agree           |
+| Grain                  | One set of rows per model, unless those session files agree                                              |
+| Grade                  | `none`. Costroid did not start the run, and the file states no budget                                    |
+| Charge period          | The messages' own timestamps. With none, the file's save time back by the result's `duration_ms`         |
+| Basis                  | `measured` when `apiKeySource` names a key, otherwise `list_equivalent`                                  |
+
+The fixture is under `testdata/not-recorded/`. No run of the action made it. It is the recorded `subagent` stream, cut to the SDK's messages, with one synthetic prompt that a test holds out of every row. Rows come to USD 0.001619725, the recorded total.
 
 ## Stdin
 

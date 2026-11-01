@@ -1,0 +1,6 @@
+# The chart's other shape: your own Postgres, named by a Secret you manage.
+postgres:
+  enabled: false
+existingSecret: costroid-connections
+bindings:
+  - github.com:example

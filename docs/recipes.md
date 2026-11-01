@@ -15,6 +15,7 @@ Set these on the repository:
 | Secret   | `ANTHROPIC_API_KEY` | The provider key                                       |
 | Variable | `COSTROID_VERSION`  | The Costroid release to install, without the leading v |
 | Variable | `COSTROID_SHA256`   | The SHA-256 of that release's `costroid-linux-amd64`   |
+| Variable | `COSTROID_CREDENTIAL` | Optional. The id of the provider key, for [reconciliation](reconcile.md) |
 
 Create a label named `costroid-agent`. A maintainer applies it to let a first contributor's branch run.
 
@@ -37,6 +38,30 @@ Set `COSTROID_VERSION` and `COSTROID_SHA256` as CI/CD variables. Set `ANTHROPIC_
 Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Merge requests from forks never run the agent.
 
 The template records the run and keeps `costroid-rows.jsonl` as an artifact. `costroid report` posts to GitHub only, so GitLab has no comment yet.
+
+## claude-code-action
+
+`claude-code-action` runs Claude Code itself, so `costroid run` cannot wrap it. Read its `execution_file` output in a later step of the same job:
+
+```yaml
+- id: claude
+  uses: anthropics/claude-code-action@<sha> # pin it, as every recipe does
+- name: Write the rows
+  if: always()
+  env:
+    EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+  run: costroid ingest-run --execution-file "$EXECUTION_FILE" --out "$RUNNER_TEMP/costroid-rows.jsonl"
+```
+
+The file holds prompts and tool output. Costroid reads usage from it and nothing else, and it never leaves the job. The rows come at one set per model, for the whole run, unless the session files are on the runner too.
+
+Costroid did not start this run, so the grade reads `none`, whatever `claude_args` passed. The file does not state a budget. The fixture behind this reader was written from the action's source, and no real file has been read yet.
+
+## What a row says about the run
+
+Inside GitHub Actions or GitLab CI, `costroid run` and `costroid ingest-run` put the repository, the pull request, the head commit and the CI run on every row. On a GitHub pull request the head comes from the event file, because `GITHUB_SHA` is the merge commit. On a GitLab merged results pipeline it comes from `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, for the same reason.
+
+These are claims. Rows read `unverified` and `unattributed` until a ledger checks them against the job's OIDC token. `costroid run` also sets `vcs.change.id`, `vcs.ref.head.revision`, `vcs.ref.base.revision`, `vcs.repository.url.full`, `cicd.pipeline.run.id` and `cicd.pipeline.task.run.id` through `OTEL_RESOURCE_ATTRIBUTES` for the agent, beside what the job already set there.
 
 ## Send rows to a ledger
 
@@ -69,7 +94,7 @@ The diff and the repository are the agent's input, and anyone who opens a pull r
 
 The recipes give the agent no write token, so its edits stay in the job's checkout until you add a step that pushes them. Adding that step makes them part of the pull request.
 
-The agent's job writes the rows, so an injected agent can forge them. The comment prints them as sent. A ledger reprices them from raw token counts and holds them to the job's identity.
+The agent's job writes the rows, so an injected agent can forge them. The comment prints them as sent, and says so: "Unverified: the agent's job wrote these figures." A tag inside the file cannot remove that sentence. A ledger reprices the rows from raw token counts and holds them to the job's identity.
 
 The guard lives in the workflow file, and `pull_request` reads that file from the branch. Someone who can push a branch can edit it there. To stop that, keep the key in an environment with required reviewers.
 

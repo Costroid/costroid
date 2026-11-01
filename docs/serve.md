@@ -79,11 +79,15 @@ A sender may lower an `exact` row to `windowed`. It cannot raise a row. Postgres
 
 A budget rule reads `budget.spend` in the per-PR answer. While no eligible row exists, `budget.evidence` is false and `budget.spend` is empty.
 
+`totals` in the same answer adds up every row of the pull request, one figure per currency and cost basis. It is a reading, so an unverified row counts, and a budget rule never reads it.
+
+`SubAccountId` is kept as the sender stated it, so a stored row can reconcile per credential. It is a claim, like every other column a sender states.
+
 ## Prices
 
 The service prices every row from its token count. It never reads a cost column, a unit price or a catalog version from a sender, and each one it sees is counted under `client_cost`.
 
-`SkuPriceId` supplies the service tier and the context tier on `POST /v1/rows`, because a row has no other column for them. They are usage facts, trusted as far as token counts are, and reconciliation checks them. An id naming another model or class is ignored. A row does not state its region, so this path prices at `global`.
+`RegionId` and `x_CostroidServiceTier` state the region and the tier on `POST /v1/rows`, in row version 0.2. `SkuPriceId` supplies the context tier, and the service tier of a version 0.1 row. They are usage facts, trusted as far as token counts are, and reconciliation checks them. An id naming another model or class is ignored. A row with no `RegionId` prices at `global`.
 
 A provider with no catalog sheet is refused. It is never stored at zero. An unknown model of a known provider falls to the sheet's non-zero fallback tier, and the row says so.
 

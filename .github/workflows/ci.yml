@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+env:
+  GO_VERSION: 1.27.3
+  STATICCHECK_VERSION: 2026.2.2
+  HELM_VERSION: v4.3.1
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Install staticcheck
+        run: go install "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION"
+      - name: Run the checks
+        run: make check
+      - name: Lint the recipes
+        run: go run ./cmd/costroid lint-recipes recipes action/action.yml
+      - name: Validate an example configuration
+        run: |
+          printf 'comment:\n  show_cost: false\n' > costroid.yml
+          go run ./cmd/costroid validate costroid.yml
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Walk the recorded run through every step
+        run: make e2e
+
+  chart:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Lint both shapes of the chart
+        run: |
+          helm lint --strict deploy/helm/costroid
+          helm lint --strict deploy/helm/costroid --values deploy/helm/costroid/ci/external-postgres-values.yaml

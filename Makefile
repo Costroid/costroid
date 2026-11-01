@@ -1,21 +1,21 @@
 VERSION ?= dev
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-.PHONY: check check-short bench-view bench-ingest fuzz build
+.PHONY: check check-short bench-view bench-ingest fuzz build image e2e e2e-bite
 
 # Runs everything, with Postgres in Docker. A missing Docker fails this target.
 check:
 	@$(GOFILES_CHECK)
-	go vet ./...
-	staticcheck ./...
+	go vet -tags e2e ./...
+	staticcheck -tags e2e ./...
 	go test -count=1 ./...
 	$(MAKE) bench-view
 
 # Runs everything that needs no Docker.
 check-short:
 	@$(GOFILES_CHECK)
-	go vet ./...
-	staticcheck ./...
+	go vet -tags e2e ./...
+	staticcheck -tags e2e ./...
 	go test -short -count=1 ./...
 
 # Prints the per-PR view's p99 on one million rows and fails past 200 ms.
@@ -42,3 +42,17 @@ fuzz:
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/costroid ./cmd/costroid
+
+IMAGE ?= ghcr.io/costroid/costroid:$(VERSION)
+
+image:
+	docker build --tag $(IMAGE) --build-arg VERSION=$(VERSION) .
+
+# Brings the Compose stack up, walks the recorded run through every step and
+# tears it down. It needs Docker, and it stays out of check.
+e2e:
+	go test -tags e2e -count=1 -timeout 15m ./e2e
+
+# Proves e2e fails, at every step that states the figure, when a price moves.
+e2e-bite:
+	./e2e/price-bite.sh

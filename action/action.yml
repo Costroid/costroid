@@ -35,6 +35,9 @@ inputs:
   billing-account:
     description: The value of BillingAccountId on every row.
     default: ""
+  credential:
+    description: The value of SubAccountId on every row. The id of the key, workspace or project, never the key.
+    default: ""
   github-token:
     description: The token that posts the check and the comment.
     default: ${{ github.token }}
@@ -66,6 +69,7 @@ runs:
         COSTROID_BUDGET_USD: ${{ inputs.budget-usd }}
         COSTROID_AGENT_KEY: ${{ inputs.api-key }}
         COSTROID_BILLING_ACCOUNT: ${{ inputs.billing-account }}
+        COSTROID_CREDENTIAL: ${{ inputs.credential }}
         COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
       run: bash "$GITHUB_ACTION_PATH/run-agent.sh"
 

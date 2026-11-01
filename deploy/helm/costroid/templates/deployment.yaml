@@ -1,0 +1,97 @@
+{{- include "costroid.check" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "costroid.name" . }}
+  labels:
+    {{- include "costroid.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "costroid.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "costroid.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: costroid
+          image: {{ include "costroid.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --addr=:8080
+            {{- range .Values.bindings }}
+            - --bind={{ . }}
+            {{- end }}
+            {{- range .Values.gitlabHosts }}
+            - --gitlab-host={{ . }}
+            {{- end }}
+          env:
+            - name: COSTROID_OIDC_AUDIENCE
+              value: {{ .Values.oidcAudience | quote }}
+            - name: COSTROID_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "costroid.secretName" . }}
+                  key: database-url
+            - name: COSTROID_MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "costroid.secretName" . }}
+                  key: migration-database-url
+            - name: COSTROID_PSEUDONYM_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "costroid.secretName" . }}
+                  key: pseudonym-key
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

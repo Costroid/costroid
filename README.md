@@ -1,24 +1,20 @@
 # Costroid
 
-Costroid runs a coding agent under a budget and records what the run cost, per token class, as FOCUS rows.
+Costroid is the cost check for pull requests. It runs a coding agent under a budget, records what the run cost per token class as FOCUS rows, and posts the figure on the pull request.
 
 ## Why it exists
 
 An agent's own cost field is an estimate, and a budget flag can be weaker than it sounds. Costroid prices the agent's token counts against a pinned, dated catalog, and it writes down how the budget was enforced. A grade is never shown as stronger than it is.
 
-This is the first slice. It covers `costroid run` for Claude Code and Codex. The pull request check comes later.
-
 ## Install
 
-```sh
-go install github.com/Costroid/costroid/cmd/costroid@latest
-```
-
-Or build the static binary from a checkout, with Go 1.27 or later:
+The first release will be `1.0.0-alpha.1`. Until it ships, build from a checkout, with Go 1.27 or later:
 
 ```sh
 make build
 ```
+
+To keep rows in your own ledger, [`docs/install.md`](docs/install.md) has the container, Compose and Helm shapes.
 
 ## First command
 
@@ -42,34 +38,19 @@ costroid: warning: BillingAccountId reads unknown: pass --billing-account or set
 {"ChargeDescription":"claude-haiku-5-5 input_uncached tokens; agent-flag: client-side estimate, can pass the cap","ConsumedQuantity":"2","ListCost":"0.0000002","ListUnitPrice":"0.1","SkuMeter":"input_uncached","SkuPriceId":"anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached"}
 ```
 
-That row is shortened. A full row has every column of the [row contract](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.1), and every amount is a decimal string.
+That row is shortened. A full row has every column of the [row contract](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.2), and every amount is a decimal string.
 
-## What the budget means
+## Next
 
-| Agent       | Grade              | What holds the run to the budget                                                                                                                            |
-| ----------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | `agent-flag`       | Costroid passes `--max-budget-usd`. Claude Code checks its own estimate between requests, so the request that crosses the cap still runs and is still paid. |
-| Codex       | `wrapper-watchdog` | Costroid reads Codex's rollout file during the turn, prices each request as it settles and stops the process at the cap. Requests in flight can pass it.    |
-| Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a Codex version with no recorded fixture, or a file that contradicts the stream. Nothing stops the run.  |
-
-A recorded run with a 0.001 USD cap stopped mid-turn at 0.0283136 USD, 65 milliseconds after its first request settled. The tool the agent had started kept running, because Codex gives tools their own process group. A `none` run says why on every row. [`docs/adapters.md`](docs/adapters.md) has the recorded runs behind this table.
-
-## Exit codes
-
-| Code            | Meaning                                            |
-| --------------- | -------------------------------------------------- |
-| The agent's own | The run finished, or the agent stopped itself      |
-| 124             | Costroid stopped the agent at the cap              |
-| 125             | Costroid could not run the agent or record the run |
-
-## Check
-
-```sh
-make check
-```
-
-It runs `gofmt -l`, `go vet`, `staticcheck` and `go test ./...`.
+| Task                                      | Page                                             |
+| ----------------------------------------- | ------------------------------------------------ |
+| Run an agent on a pull request            | [`docs/recipes.md`](docs/recipes.md)             |
+| Read the comment                          | [`docs/comment-example.md`](docs/comment-example.md) |
+| Configure a repository                    | [`docs/configuration.md`](docs/configuration.md) |
+| Host the ledger                           | [`docs/install.md`](docs/install.md), [`docs/serve.md`](docs/serve.md) |
+| Compare a ledger with a provider's report | [`docs/reconcile.md`](docs/reconcile.md)         |
+| See what a budget grade means             | [`docs/adapters.md`](docs/adapters.md)           |
 
 ## Licence
 
-Apache-2.0.
+Apache-2.0. The CLI, the gate, the ledger schema, the plan schema, the FOCUS tag convention, the price catalog and the policy packs stay Apache-2.0 and are never relicensed. Contributions are under the [Developer Certificate of Origin](https://developercertificate.org/).

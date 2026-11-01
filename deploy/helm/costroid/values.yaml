@@ -1,0 +1,53 @@
+image:
+  repository: ghcr.io/costroid/costroid
+  # Empty means the chart's appVersion.
+  tag: ""
+  # A digest wins over the tag. Pin one in production.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# The service's migrations take an advisory lock, so replicas may start together.
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# The audience CI tokens must name. Required.
+oidcAudience: https://costroid.example
+
+# SCM owners this instance's tenant holds, as host:owner.
+bindings: []
+
+# GitLab instances whose CI tokens are trusted, besides gitlab.com.
+gitlabHosts: []
+
+# A Secret you manage, holding the three keys below. Empty means the chart makes
+# one, and keeps its values across upgrades.
+#   database-url            the application role's connection
+#   migration-database-url  the owner role's connection
+#   pseudonym-key           at least 32 bytes in base64
+existingSecret: ""
+
+# Set enabled to false to use your own Postgres, then name existingSecret. Your
+# Postgres needs version 15 or later, lz4, and the two roles docs/serve.md lists.
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: 17-alpine
+    digest: sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    pullPolicy: IfNotPresent
+  storage:
+    size: 10Gi
+    # Empty means the cluster's default class.
+    className: ""
+  resources: {}
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

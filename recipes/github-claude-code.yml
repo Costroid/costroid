@@ -53,6 +53,7 @@ jobs:
           budget-usd: "5"
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           billing-account: ${{ github.repository_owner }}
+          credential: ${{ vars.COSTROID_CREDENTIAL }}
           agent-args: |
             --bare
             --restricted

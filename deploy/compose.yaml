@@ -1,0 +1,67 @@
+# Costroid and Postgres on one host.
+#
+#   export POSTGRES_PASSWORD COSTROID_OWNER_PASSWORD COSTROID_APP_PASSWORD
+#   export COSTROID_PSEUDONYM_KEY="$(openssl rand -base64 32)"
+#   export COSTROID_OIDC_AUDIENCE=https://costroid.example
+#   export COSTROID_BIND=github.com:example
+#   docker compose -f deploy/compose.yaml up -d
+#
+# Passwords go into connection URLs, so keep them URL-safe: openssl rand -hex 32.
+#
+# Egress. The service makes one kind of outbound call: it reads the signing keys
+# of the CI issuers it trusts, token.actions.githubusercontent.com and gitlab.com
+# by default, and each --gitlab-host. A deployment that only takes ingest keys
+# makes none. It never calls costroid.com. Postgres sits on an internal network
+# with no route out. The container does not enforce an allowlist yet, so limit
+# egress at the host's firewall.
+name: costroid
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: costroid
+      COSTROID_OWNER_PASSWORD: ${COSTROID_OWNER_PASSWORD:?set COSTROID_OWNER_PASSWORD}
+      COSTROID_APP_PASSWORD: ${COSTROID_APP_PASSWORD:?set COSTROID_APP_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "--host=127.0.0.1", "--username=postgres", "--dbname=costroid"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [ledger]
+
+  costroid:
+    image: ${COSTROID_IMAGE:-ghcr.io/costroid/costroid:1.0.0-alpha.1}
+    build:
+      context: ..
+      args:
+        VERSION: ${COSTROID_VERSION:-dev}
+    restart: unless-stopped
+    command: ["serve", "--addr", ":8080", "--bind", "${COSTROID_BIND:?set COSTROID_BIND to host:owner}"]
+    environment:
+      COSTROID_DATABASE_URL: postgres://costroid_app:${COSTROID_APP_PASSWORD}@postgres/costroid
+      COSTROID_MIGRATION_DATABASE_URL: postgres://costroid_owner:${COSTROID_OWNER_PASSWORD}@postgres/costroid
+      COSTROID_OIDC_AUDIENCE: ${COSTROID_OIDC_AUDIENCE:?set COSTROID_OIDC_AUDIENCE}
+      COSTROID_PSEUDONYM_KEY: ${COSTROID_PSEUDONYM_KEY:?set COSTROID_PSEUDONYM_KEY}
+    ports:
+      - ${COSTROID_LISTEN:-127.0.0.1}:${COSTROID_PORT:-8080}:8080
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [ledger, egress]
+
+networks:
+  ledger:
+    internal: true
+  egress: {}
+
+volumes:
+  postgres-data: {}

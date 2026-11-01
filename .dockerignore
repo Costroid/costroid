@@ -1,0 +1,11 @@
+.git
+.github
+bin
+deploy
+docs
+recipes
+action
+e2e
+*.md
+**/*_test.go
+**/testdata
