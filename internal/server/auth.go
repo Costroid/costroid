@@ -15,10 +15,6 @@ import (
 	"github.com/Costroid/costroid/internal/store"
 )
 
-// ingestKeyPrefix marks a tenant ingest key, the credential of a sender with
-// no CI token. Everything else is treated as an OIDC token.
-const ingestKeyPrefix = "costroid_ik_"
-
 const pseudonymInfo = "costroid user pseudonym v1"
 
 // caller is who a request proved to be. A nil identity means the tenant is
@@ -33,7 +29,7 @@ func (s *Server) authenticate(r *http.Request) (caller, error) {
 	if !found || !strings.EqualFold(scheme, "Bearer") || token == "" {
 		return caller{}, invalidToken()
 	}
-	if strings.HasPrefix(token, ingestKeyPrefix) {
+	if strings.HasPrefix(token, store.KeyPrefix) {
 		return s.authenticateKey(r.Context(), token)
 	}
 	return s.authenticateToken(r.Context(), token)
@@ -44,8 +40,7 @@ func invalidToken() *refusal {
 }
 
 func (s *Server) authenticateKey(ctx context.Context, key string) (caller, error) {
-	sum := sha256.Sum256([]byte(key))
-	tenant, err := s.Ledger.TenantForKey(ctx, hex.EncodeToString(sum[:]))
+	tenant, err := s.Ledger.TenantForKey(ctx, store.KeyDigest(key))
 	if errors.Is(err, store.ErrNotFound) {
 		return caller{}, invalidToken()
 	}

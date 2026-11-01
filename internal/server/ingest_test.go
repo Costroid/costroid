@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,19 +25,14 @@ const (
 	tenantB = "bbbbbbbb-0000-4000-8000-000000000002"
 )
 
-func digest(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
 func memoryWorld(t *testing.T) (*world, *memoryLedger) {
 	t.Helper()
 	ledger := newMemoryLedger()
 	a, b := tenantID(t, tenantA), tenantID(t, tenantB)
 	ledger.owners["github.com:acme"] = a
 	ledger.owners["github.com:beta"] = b
-	ledger.keys[digest(acmeKey)] = a
-	ledger.keys[digest(betaKey)] = b
+	ledger.keys[store.KeyDigest(acmeKey)] = a
+	ledger.keys[store.KeyDigest(betaKey)] = b
 	return newWorld(t, ledger), ledger
 }
 

@@ -25,6 +25,8 @@ var ErrUnsafeRole = errors.New("store: unsafe application role")
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+const ownerLookup = `SELECT tenant_id::text FROM tenant_bindings WHERE owner_key = $1`
+
 // TenantID is a validated tenant identifier. It is safe to place in SET LOCAL,
 // which takes no bind parameters.
 type TenantID struct {
@@ -106,13 +108,21 @@ func setTenant(tenant TenantID) string {
 
 // lookup reads a tenant by one exact key, before any tenant is set.
 func (s *Store) lookup(ctx context.Context, key, query string) (TenantID, error) {
-	var text string
+	var tenant TenantID
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT set_config('costroid.lookup', $1, true)`, key); err != nil {
-			return fmt.Errorf("store: set lookup: %w", err)
-		}
-		return tx.QueryRow(ctx, query, key).Scan(&text)
+		var err error
+		tenant, err = resolveTenant(ctx, tx, key, query)
+		return err
 	})
+	return tenant, err
+}
+
+func resolveTenant(ctx context.Context, tx pgx.Tx, key, query string) (TenantID, error) {
+	if _, err := tx.Exec(ctx, `SELECT set_config('costroid.lookup', $1, true)`, key); err != nil {
+		return TenantID{}, fmt.Errorf("store: set lookup: %w", err)
+	}
+	var text string
+	err := tx.QueryRow(ctx, query, key).Scan(&text)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TenantID{}, ErrNotFound
 	}
@@ -124,7 +134,7 @@ func (s *Store) lookup(ctx context.Context, key, query string) (TenantID, error)
 
 // TenantForOwner resolves an SCM owner, host and name, to its tenant.
 func (s *Store) TenantForOwner(ctx context.Context, host, owner string) (TenantID, error) {
-	return s.lookup(ctx, ownerKey(host, owner), `SELECT tenant_id::text FROM tenant_bindings WHERE owner_key = $1`)
+	return s.lookup(ctx, ownerKey(host, owner), ownerLookup)
 }
 
 // TenantForKey resolves the SHA-256 of an ingest key to its tenant.

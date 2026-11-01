@@ -77,13 +77,21 @@ func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 	}
 	options.gitlabHosts = gitlab
 	for _, text := range binds {
-		host, owner, found := strings.Cut(text, ":")
-		if !found || host == "" || owner == "" {
-			return serveOptions{}, fmt.Errorf("--bind %q is not host:owner", text)
+		binding, err := parseBinding("--bind", text)
+		if err != nil {
+			return serveOptions{}, err
 		}
-		options.bindings = append(options.bindings, store.Binding{Host: host, Owner: owner})
+		options.bindings = append(options.bindings, binding)
 	}
 	return options, nil
+}
+
+func parseBinding(flagName, text string) (store.Binding, error) {
+	host, owner, found := strings.Cut(text, ":")
+	if !found || host == "" || owner == "" {
+		return store.Binding{}, fmt.Errorf("%s %q is not host:owner", flagName, text)
+	}
+	return store.Binding{Host: host, Owner: owner}, nil
 }
 
 // Main runs costroid serve until ctx ends and returns an exit code.

@@ -25,8 +25,8 @@ type ledgerWorld struct {
 func postgresWorld(t *testing.T) *ledgerWorld {
 	t.Helper()
 	db := storetest.New(t)
-	a := db.Tenant(t, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}}, digest(acmeKey))
-	b := db.Tenant(t, "beta", []store.Binding{{Host: "github.com", Owner: "beta"}}, digest(betaKey))
+	a := db.Tenant(t, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}}, store.KeyDigest(acmeKey))
+	b := db.Tenant(t, "beta", []store.Binding{{Host: "github.com", Owner: "beta"}}, store.KeyDigest(betaKey))
 	ledger, err := store.Open(context.Background(), db.AppURL)
 	if err != nil {
 		t.Fatal(err)

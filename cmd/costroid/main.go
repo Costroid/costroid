@@ -24,6 +24,8 @@ const usage = `costroid runs a coding agent under a budget and records what it c
 Usage:
   costroid run --budget-usd N --out rows.jsonl [--billing-account ID] -- <agent command>
   costroid serve
+  costroid keys create --owner host:owner
+  costroid keys revoke <id>
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -66,6 +68,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return runCommand(ctx, args[1:], stdin, stdout, stderr)
 	case "serve":
 		return server.Main(ctx, args[1:], stderr)
+	case "keys":
+		return server.KeysMain(ctx, args[1:], stdout, stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":

@@ -104,7 +104,7 @@ type viewBench struct {
 func setupViewBench(b *testing.B) viewBench {
 	b.Helper()
 	db := storetest.New(b)
-	a := db.Tenant(b, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}}, digest(acmeKey))
+	a := db.Tenant(b, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}}, store.KeyDigest(acmeKey))
 	other := db.Tenant(b, "beta", []store.Binding{{Host: "github.com", Owner: "beta"}})
 	ctx := context.Background()
 	owner, err := pgx.Connect(ctx, db.OwnerURL)
