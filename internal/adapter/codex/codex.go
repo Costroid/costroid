@@ -39,7 +39,7 @@ const (
 	costSourceStream  = "agent_stream"
 	costSourceRollout = "agent_session_file"
 
-	watchedNote = "wrapper-watchdog: priced from the rollout file during the turn and stopped at the cap, so requests in flight at the stop can pass it"
+	watchedNote = "wrapper-watchdog: priced from the rollout file during the turn, with a stop at the cap that requests in flight can pass"
 
 	ephemeralFlag = "--ephemeral"
 

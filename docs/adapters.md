@@ -13,7 +13,7 @@ What each agent's stream carries, as recorded on November 1, 2026. The fixtures 
 | `codex/.../resume`           | Codex 0.164.0-alpha.11.1 | `codex exec resume --json` on the thread above                    | `gpt-5.6-sol`      |
 | `codex/.../stopped`          | Codex 0.164.0-alpha.11.1 | `costroid run --budget-usd 0.001 -- codex exec`, one shell tool   | `gpt-5.6-sol`      |
 
-All six ran on a subscription, so their rows are `list_equivalent`. A seventh run, a one-word Codex prompt through the built binary, was a smoke test and left no fixture.
+All six ran on a subscription, so their rows are `list_equivalent`. Two one-word Codex prompts through the built binary were smoke tests and left no fixture. The later one reported 14065 input tokens on both the stream and the rollout file, and kept `wrapper-watchdog`.
 
 Fixtures are cut to an allowlist of keys. Prompts, tool output, paths, user and account ids, and rate-limit data are gone, and session, thread, request and message ids are replaced by synthetic ones. Each adapter has a test that scans its `testdata/` for those patterns.
 

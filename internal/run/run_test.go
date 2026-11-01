@@ -34,6 +34,7 @@ const (
 	fakeRollout     = "COSTROID_FAKE_ROLLOUT"
 	fakeVersion     = "COSTROID_FAKE_VERSION"
 	fakeStreamInput = "COSTROID_FAKE_STREAM_INPUT"
+	fakeNoPause     = "COSTROID_FAKE_NO_PAUSE"
 	fakeCount       = 20
 	fakeThread      = "00000000-0000-4000-8000-0000000000aa"
 	claudeData      = "../adapter/claudecode/testdata/2.1.316"
@@ -137,7 +138,9 @@ func fakeReplay(log io.Writer) {
 		rollout.WriteString(line)
 		if strings.Contains(line, `"token_count"`) {
 			fmt.Fprintln(log, "token_count")
-			time.Sleep(requestPause)
+			if os.Getenv(fakeNoPause) == "" {
+				time.Sleep(requestPause)
+			}
 		}
 	}
 	input := os.Getenv(fakeStreamInput)
@@ -334,7 +337,7 @@ func TestWatchedRowsStateTheLimitOfTheGrade(t *testing.T) {
 		if grade := tagOf(row, focus.TagEnforcementGrade); grade != "wrapper-watchdog" {
 			t.Errorf("grade %s", grade)
 		}
-		if text, _ := row["ChargeDescription"].(string); !strings.Contains(text, "requests in flight at the stop can pass it") {
+		if text, _ := row["ChargeDescription"].(string); !strings.Contains(text, "a stop at the cap that requests in flight can pass") {
 			t.Errorf("description %q", text)
 		}
 		if row["x_CostroidOvershootBound"] != nil {
@@ -379,6 +382,29 @@ func TestCodexUnderTheCapRunsToItsEndWithPerRequestRows(t *testing.T) {
 		if tagOf(row, focus.TagCostSource) != "agent_session_file" {
 			t.Errorf("source %v", row["Tags"])
 		}
+	}
+}
+
+func TestLinesWrittenAsTheAgentExitsAreStillRead(t *testing.T) {
+	t.Setenv(fakeNoPause, "1")
+	got, _ := codexRun(t, "replay", "5")
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Report.CostSource != "agent_session_file" || got.result.Enforcement.Grade != adapter.GradeWrapperWatchdog {
+		t.Errorf("%s, %+v", got.result.Report.CostSource, got.result.Enforcement)
+	}
+}
+
+func TestCapReadAfterTheAgentClosedItsOutputIsNotAStop(t *testing.T) {
+	// Past Linux's pid limit, so a stop that wrongly fires signals nobody.
+	const noProcess = 1 << 23
+	stop := newStopper(noProcess, time.Millisecond)
+	defer stop.release()
+	stop.agentDone()
+	stop.stopForBudget()
+	if stop.byBudget() {
+		t.Error("a cap read after the run reported a stop")
 	}
 }
 
