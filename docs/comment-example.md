@@ -11,7 +11,7 @@ Budget: USD 5.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 
-[Your account on costroid.com](https://costroid.com/account?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://costroid.com/docs/export)
+[Your account on costroid.com](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, copied from check run 16873409921</summary>

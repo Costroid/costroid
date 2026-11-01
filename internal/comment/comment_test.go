@@ -410,14 +410,14 @@ func TestCommentNeverScolds(t *testing.T) {
 
 func TestTwoLinksCarryEqualWeightAndTheAccountLinkNamesTheInstallation(t *testing.T) {
 	body := commentOf(t, realInput(t))
-	line := regexp.MustCompile(`(?m)^\[[^\]]+\]\(https://costroid\.com/account\?installation=github%3A58120394\) · \[[^\]]+\]\(https://costroid\.com/docs/export\)$`)
+	line := regexp.MustCompile(`(?m)^\[[^\]]+\]\(https://app\.costroid\.com/\?installation=github%3A58120394\) · \[[^\]]+\]\(https://docs\.costroid\.com/export\)$`)
 	if !line.MatchString(body) {
 		t.Errorf("no plain link pair on one line:\n%s", body)
 	}
 	for _, installation := range []string{"", "12x", "1&evil=2", "<script>"} {
 		input := realInput(t)
 		input.Installation = installation
-		if body := commentOf(t, input); !strings.Contains(body, "(https://costroid.com/account)") {
+		if body := commentOf(t, input); !strings.Contains(body, "(https://app.costroid.com/)") {
 			t.Errorf("installation %q:\n%s", installation, body)
 		}
 	}

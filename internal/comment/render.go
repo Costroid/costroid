@@ -28,8 +28,8 @@ const (
 
 	schema         = "costroid.check/0.1"
 	budgetCurrency = "USD"
-	accountURL     = "https://costroid.com/account"
-	exportURL      = "https://costroid.com/docs/export"
+	accountURL     = "https://app.costroid.com/"
+	exportURL      = "https://docs.costroid.com/export"
 )
 
 // State says what the rows file gave the report.
