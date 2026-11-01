@@ -115,7 +115,7 @@ func renderFooter(w io.Writer, result Result) {
 		fmt.Fprintf(w, "%s %s: the provider reports this credential and the ledger never names it\n", other.Source, other.Credential)
 	}
 	if misses := result.Misses(); misses > 0 {
-		fmt.Fprintf(w, "%d credential-days missed the token tolerance. Each is a defect.\n", misses)
+		fmt.Fprintf(w, "Credential days with a token miss: %d. Each is a defect.\n", misses)
 	}
 }
 
