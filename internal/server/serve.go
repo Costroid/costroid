@@ -1,0 +1,222 @@
+package server
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/oidc"
+	"github.com/Costroid/costroid/internal/store"
+)
+
+const (
+	envDatabase  = "COSTROID_DATABASE_URL"
+	envMigration = "COSTROID_MIGRATION_DATABASE_URL"
+	envAudience  = "COSTROID_OIDC_AUDIENCE"
+	envPseudonym = "COSTROID_PSEUDONYM_KEY"
+
+	minPseudonymKeyBytes = 32
+	keySetTimeout        = 10 * time.Second
+	shutdownTimeout      = 20 * time.Second
+	exitFailure          = 125
+)
+
+const serveUsage = `costroid serve runs the ingest service.
+
+Usage:
+  costroid serve [--addr :8080] [--gitlab-host host]... [--bind host:owner]...
+
+Environment:
+  COSTROID_DATABASE_URL            the application role's connection
+  COSTROID_MIGRATION_DATABASE_URL  the owner role's connection; when set,
+                                   migrations run before the service starts
+  COSTROID_OIDC_AUDIENCE           the audience CI tokens must name
+  COSTROID_PSEUDONYM_KEY           at least 32 bytes in base64, the master key
+                                   for per-tenant address pseudonyms
+
+--bind gives an SCM owner to this instance's tenant, and needs the owner role.
+`
+
+type serveOptions struct {
+	addr        string
+	gitlabHosts []string
+	bindings    []store.Binding
+}
+
+type repeated []string
+
+func (r *repeated) String() string { return strings.Join(*r, ",") }
+
+// Set appends one value.
+func (r *repeated) Set(value string) error {
+	*r = append(*r, value)
+	return nil
+}
+
+func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
+	set := flag.NewFlagSet("serve", flag.ContinueOnError)
+	set.SetOutput(stderr)
+	set.Usage = func() { fmt.Fprint(stderr, serveUsage) }
+	options := serveOptions{}
+	var gitlab, binds repeated
+	set.StringVar(&options.addr, "addr", ":8080", "the address to listen on")
+	set.Var(&gitlab, "gitlab-host", "a GitLab host whose CI tokens are trusted")
+	set.Var(&binds, "bind", "an SCM owner for this instance's tenant, host:owner")
+	if err := set.Parse(args); err != nil {
+		return serveOptions{}, err
+	}
+	options.gitlabHosts = gitlab
+	for _, text := range binds {
+		host, owner, found := strings.Cut(text, ":")
+		if !found || host == "" || owner == "" {
+			return serveOptions{}, fmt.Errorf("--bind %q is not host:owner", text)
+		}
+		options.bindings = append(options.bindings, store.Binding{Host: host, Owner: owner})
+	}
+	return options, nil
+}
+
+// Main runs costroid serve until ctx ends and returns an exit code.
+func Main(ctx context.Context, args []string, stderr io.Writer) int {
+	options, err := parseServe(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err == nil {
+		err = run(ctx, options, stderr)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		return exitFailure
+	}
+	return 0
+}
+
+func required(name string) (string, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return "", fmt.Errorf("%s is not set", name)
+	}
+	return value, nil
+}
+
+func pseudonymKey() ([]byte, error) {
+	text, err := required(envPseudonym)
+	if err != nil {
+		return nil, err
+	}
+	key, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return nil, fmt.Errorf("%s is not base64", envPseudonym)
+	}
+	if len(key) < minPseudonymKeyBytes {
+		return nil, fmt.Errorf("%s holds %d bytes, under %d", envPseudonym, len(key), minPseudonymKeyBytes)
+	}
+	return key, nil
+}
+
+func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
+	databaseURL, err := required(envDatabase)
+	if err != nil {
+		return err
+	}
+	audience, err := required(envAudience)
+	if err != nil {
+		return err
+	}
+	key, err := pseudonymKey()
+	if err != nil {
+		return err
+	}
+	pinned, err := catalog.Load()
+	if err != nil {
+		return err
+	}
+	ownerURL := os.Getenv(envMigration)
+	if ownerURL != "" {
+		if err := store.Migrate(ctx, ownerURL); err != nil {
+			return err
+		}
+	}
+	ledger, err := store.Open(ctx, databaseURL)
+	if err != nil {
+		return err
+	}
+	defer ledger.Close()
+	if err := bindOwners(ctx, ledger, ownerURL, options.bindings); err != nil {
+		return err
+	}
+	issuers := []oidc.Issuer{oidc.GitHub(), oidc.GitLab("gitlab.com")}
+	for _, host := range options.gitlabHosts {
+		issuers = append(issuers, oidc.GitLab(host))
+	}
+	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	service := New(Config{
+		Ledger:       ledger,
+		Verifier:     oidc.NewVerifier(audience, &http.Client{Timeout: keySetTimeout}, nil, issuers...),
+		Catalog:      pinned,
+		PseudonymKey: key,
+		Logger:       logger,
+	})
+	return listen(ctx, options.addr, service.Handler(), logger)
+}
+
+// bindOwners provisions the owners no tenant holds yet into one new tenant.
+func bindOwners(ctx context.Context, ledger *store.Store, ownerURL string, bindings []store.Binding) error {
+	var missing []store.Binding
+	for _, binding := range bindings {
+		_, err := ledger.TenantForOwner(ctx, binding.Host, binding.Owner)
+		if errors.Is(err, store.ErrNotFound) {
+			missing = append(missing, binding)
+		} else if err != nil {
+			return err
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if ownerURL == "" {
+		return fmt.Errorf("--bind needs %s", envMigration)
+	}
+	id, err := store.NewTenantID()
+	if err != nil {
+		return err
+	}
+	return store.Provision(ctx, ownerURL, store.Tenant{ID: id, Name: "self-hosted", Bindings: missing})
+}
+
+func listen(ctx context.Context, addr string, handler http.Handler, logger *slog.Logger) error {
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       time.Minute,
+		WriteTimeout:      time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+	done := make(chan error, 1)
+	go func() {
+		<-ctx.Done()
+		stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer cancel()
+		done <- server.Shutdown(stop)
+	}()
+	logger.Info("listening", "addr", listener.Addr().String())
+	if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve: %w", err)
+	}
+	return <-done
+}
