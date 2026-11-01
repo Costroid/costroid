@@ -37,6 +37,16 @@ type viewLine struct {
 	LastCharge       string `json:"last_charge"`
 }
 
+// basisTotal adds up one currency and one cost basis. It covers every row of
+// the pull request, verified or not, so it is a reading and never a budget's
+// evidence.
+type basisTotal struct {
+	Currency  string `json:"currency"`
+	CostBasis string `json:"cost_basis"`
+	Label     string `json:"label"`
+	ListCost  string `json:"list_cost"`
+}
+
 type currencySpend struct {
 	Currency string `json:"currency"`
 	ListCost string `json:"list_cost"`
@@ -51,10 +61,11 @@ type budgetView struct {
 }
 
 type pullRequestView struct {
-	Repository  string     `json:"repository"`
-	PullRequest string     `json:"pull_request"`
-	Budget      budgetView `json:"budget"`
-	Lines       []viewLine `json:"lines"`
+	Repository  string       `json:"repository"`
+	PullRequest string       `json:"pull_request"`
+	Totals      []basisTotal `json:"totals"`
+	Budget      budgetView   `json:"budget"`
+	Lines       []viewLine   `json:"lines"`
 }
 
 func (s *Server) pullRequest(ctx context.Context, tenant store.TenantID, repo, pr string) (pullRequestView, error) {
@@ -62,11 +73,31 @@ func (s *Server) pullRequest(ctx context.Context, tenant store.TenantID, repo, p
 	if err != nil {
 		return pullRequestView{}, err
 	}
-	view := pullRequestView{Repository: repo, PullRequest: pr, Lines: make([]viewLine, 0, len(lines)), Budget: budgetOf(lines)}
+	view := pullRequestView{Repository: repo, PullRequest: pr, Lines: make([]viewLine, 0, len(lines)), Totals: totalsOf(lines), Budget: budgetOf(lines)}
 	for i := range lines {
 		view.Lines = append(view.Lines, viewLineOf(&lines[i]))
 	}
 	return view, nil
+}
+
+// totalsOf sums list cost per currency and cost basis. Neither boundary is ever
+// crossed: a measured figure and a list-equivalent one are different claims.
+func totalsOf(lines []store.Line) []basisTotal {
+	type key struct{ currency, basis string }
+	sums := map[key]decimal.Decimal{}
+	var order []key
+	for i := range lines {
+		group := key{lines[i].Currency, lines[i].CostBasis}
+		if _, seen := sums[group]; !seen {
+			order = append(order, group)
+		}
+		sums[group] = sums[group].Add(lines[i].ListCost)
+	}
+	totals := make([]basisTotal, 0, len(order))
+	for _, group := range order {
+		totals = append(totals, basisTotal{group.currency, group.basis, labels[group.basis], sums[group].String()})
+	}
+	return totals
 }
 
 // budgetOf sums list cost per currency over eligible lines only. Informational

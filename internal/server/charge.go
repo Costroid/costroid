@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -63,6 +64,8 @@ type charge struct {
 	provider    string
 	model       string
 	serviceTier string
+	region      string
+	credential  string
 	context     int64
 	class       focus.TokenClass
 	tokens      int64
@@ -204,6 +207,9 @@ func (s *Server) price(c *charge, joined joinResult) (store.Record, error) {
 		Tokens:              c.tokens,
 		Start:               c.start,
 		End:                 c.end,
+		Credential:          c.credential,
+		Region:              c.region,
+		ServiceTier:         c.serviceTier,
 		CatalogVersion:      s.Catalog.Version(),
 		Basis:               c.basis,
 		Tags:                tagsOf(c, joined),
@@ -232,7 +238,7 @@ func (s *Server) applyPrice(priced *focus.Charge, c *charge) error {
 		Model:              c.model,
 		Class:              c.class,
 		ServiceTier:        c.serviceTier,
-		Region:             catalog.RegionGlobal,
+		Region:             cmp.Or(c.region, catalog.RegionGlobal),
 		ContextInputTokens: c.context,
 		At:                 start,
 	})
@@ -242,6 +248,9 @@ func (s *Server) applyPrice(priced *focus.Charge, c *charge) error {
 	priced.Price = &focus.Price{SkuPriceID: price.SkuPriceID, PricingUnit: price.PricingUnit, ListUnitPrice: price.ListUnitPrice}
 	if price.Fallback {
 		priced.Notes = append(priced.Notes, focus.NoteFallback)
+	}
+	if price.ResidencyMultiplier != nil {
+		priced.Notes = append(priced.Notes, focus.ResidencyNote(*price.ResidencyMultiplier, c.region))
 	}
 	return nil
 }

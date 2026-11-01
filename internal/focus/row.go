@@ -1,4 +1,4 @@
-// Package focus holds the Costroid FOCUS row, version 0.1, and its writer.
+// Package focus holds the Costroid FOCUS row, version 0.2, and its writer.
 package focus
 
 import (
@@ -14,7 +14,7 @@ const MaxScale = 12
 type TokenClass string
 
 // The classes a row can carry. CacheWrite30m and CacheWrite12h are catalog
-// classes that row version 0.1 does not yet list; they are written, never
+// classes that row version 0.2 does not yet list; they are written, never
 // dropped or moved to another class.
 const (
 	InputUncached       TokenClass = "input_uncached"
@@ -44,6 +44,10 @@ const (
 	TagAttributionGrade = "costroid/attribution_grade"
 	TagEnforcementGrade = "costroid/enforcement_grade"
 	TagRunIdentity      = "costroid/run_identity"
+	TagRepo             = "costroid/repo"
+	TagPR               = "costroid/pr"
+	TagCommitSHA        = "costroid/commit_sha"
+	TagWorkflowRunID    = "costroid/workflow_run_id"
 )
 
 // CostBasis is a value of costroid/cost_basis.
@@ -82,6 +86,8 @@ type Row struct {
 	PricingCategory     string            `json:"PricingCategory"`
 	PricingQuantity     decimal.Decimal   `json:"PricingQuantity"`
 	PricingUnit         string            `json:"PricingUnit"`
+	RegionID            *string           `json:"RegionId"`
+	RegionName          *string           `json:"RegionName"`
 	ServiceCategory     string            `json:"ServiceCategory"`
 	ServiceName         string            `json:"ServiceName"`
 	ServiceProviderName string            `json:"ServiceProviderName"`
@@ -95,6 +101,7 @@ type Row struct {
 	CatalogVersion      *string           `json:"x_CostroidCatalogVersion"`
 	OvershootBound      *decimal.Decimal  `json:"x_CostroidOvershootBound"`
 	RowID               string            `json:"x_CostroidRowId"`
+	ServiceTier         *string           `json:"x_CostroidServiceTier"`
 }
 
 // Check refuses a row the contract's arithmetic rules out. Rounding to fit is

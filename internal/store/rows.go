@@ -225,8 +225,8 @@ func (c *columns) args() []any {
 
 // Tag keys of the convention that the focus package leaves to the join.
 const (
-	TagRepo          = "costroid/repo"
-	TagPR            = "costroid/pr"
-	TagCommitSHA     = "costroid/commit_sha"
-	TagWorkflowRunID = "costroid/workflow_run_id"
+	TagRepo          = focus.TagRepo
+	TagPR            = focus.TagPR
+	TagCommitSHA     = focus.TagCommitSHA
+	TagWorkflowRunID = focus.TagWorkflowRunID
 )

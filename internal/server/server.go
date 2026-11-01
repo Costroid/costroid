@@ -19,6 +19,8 @@ const (
 	// maxBodyBytes caps a request before and after decompression.
 	maxBodyBytes = 32 << 20
 	maxRowBytes  = 64 << 10
+	// maxTextColumn is the row contract's limit on a text column.
+	maxTextColumn = 512
 )
 
 // Ledger is what the service needs from the store.

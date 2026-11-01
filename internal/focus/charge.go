@@ -20,6 +20,10 @@ const (
 
 	// InstantLayout is the row contract's form of a UTC instant.
 	InstantLayout = "2006-01-02T15:04:05Z"
+
+	// RegionGlobal is default routing, which is no distinct region, so a row
+	// served there carries a null RegionId.
+	RegionGlobal = "global"
 )
 
 // Notes more than one writer of rows puts in ChargeDescription.
@@ -27,6 +31,11 @@ const (
 	NoteInformational = "informational"
 	NoteFallback      = "priced at the catalog fallback tier: the sheet does not name this model, tier and class"
 )
+
+// ResidencyNote states a residency multiplier in ChargeDescription.
+func ResidencyNote(multiplier decimal.Decimal, region string) string {
+	return fmt.Sprintf("list price times %s for data residency in %s", multiplier, region)
+}
 
 // Price is what a row needs from a catalog answer.
 type Price struct {
@@ -46,6 +55,9 @@ type Charge struct {
 	Tokens              int64
 	Start, End          time.Time
 	Account             string
+	Credential          string
+	Region              string
+	ServiceTier         string
 	CatalogVersion      string
 	Price               *Price
 	Basis               CostBasis
@@ -79,10 +91,15 @@ func NewRow(c Charge) Row {
 		ServiceSubcategory:  "Generative AI",
 		SkuID:               fmt.Sprintf("%s/%s/%s", c.Provider, c.Model, c.Class),
 		SkuMeter:            c.Class,
+		SubAccountID:        optional(c.Credential),
 		Tags:                c.Tags,
 		CatalogVersion:      &c.CatalogVersion,
 		OvershootBound:      c.OvershootBound,
 		RowID:               c.RowID,
+		ServiceTier:         optional(c.ServiceTier),
+	}
+	if c.Region != "" && c.Region != RegionGlobal {
+		row.RegionID, row.RegionName = &c.Region, &c.Region
 	}
 	if c.Price == nil {
 		row.ConsumedUnit = informationalUnit
@@ -105,6 +122,13 @@ func NewRow(c Charge) Row {
 		row.EffectiveCost = cost
 	}
 	return row
+}
+
+func optional(text string) *string {
+	if text == "" {
+		return nil
+	}
+	return &text
 }
 
 func description(c Charge) string {

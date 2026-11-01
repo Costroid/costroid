@@ -368,17 +368,19 @@ func TestSourceNamesMatchTheCatalog(t *testing.T) {
 	}
 }
 
-// TestDescriptionNotesMatchTheWriter holds the two notes to the file that
-// writes them, because row version 0.1 has no column for either.
+// TestDescriptionNotesMatchTheWriter holds the two notes to what writes them.
+// No row version has a column for a cache lifetime, and a version 0.1 row has
+// none for a region.
 func TestDescriptionNotesMatchTheWriter(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "run", "rows.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, note := range []string{lifetimeAssumedNote, residencyNote} {
-		if !bytes.Contains(source, []byte(note)) {
-			t.Errorf("internal/run/rows.go no longer writes %q", note)
-		}
+	if !bytes.Contains(source, []byte(lifetimeAssumedNote)) {
+		t.Errorf("internal/run/rows.go no longer writes %q", lifetimeAssumedNote)
+	}
+	if note := focus.ResidencyNote(decimal.FromInt(2), "us"); !strings.Contains(note, residencyNote) {
+		t.Errorf("focus.ResidencyNote no longer writes %q: %s", residencyNote, note)
 	}
 }
 

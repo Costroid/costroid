@@ -16,7 +16,7 @@ import (
 
 // Region and tier values the sheets use for default routing.
 const (
-	RegionGlobal = "global"
+	RegionGlobal = focus.RegionGlobal
 	TierStandard = "standard"
 )
 

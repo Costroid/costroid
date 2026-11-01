@@ -70,6 +70,9 @@ func TestPostgresThePerPullRequestViewIsDerivedFromTheRows(t *testing.T) {
 	if got := view.Budget.Spend[0]; got.Currency != "USD" || got.ListCost != goldenTotal {
 		t.Fatalf("%+v", got)
 	}
+	if len(view.Totals) != 1 || view.Totals[0].ListCost != goldenTotal || view.Totals[0].Label != "List-equivalent" {
+		t.Fatalf("%+v", view.Totals)
+	}
 	rows := int64(0)
 	for _, line := range view.Lines {
 		rows += line.Rows
@@ -194,6 +197,9 @@ func TestPostgresUnattributedRowsNeverReachABudget(t *testing.T) {
 	}
 	if len(view.Lines) != 1 || view.Lines[0].BudgetEligible || view.Lines[0].AttributionGrade != "unattributed" {
 		t.Fatalf("%+v", view.Lines)
+	}
+	if len(view.Totals) != 1 || view.Totals[0].ListCost == "0" {
+		t.Fatalf("the reading left out an unverified row: %+v", view.Totals)
 	}
 
 	w.rows(w.token(), readFile(t, goldenRows)).want(t, http.StatusOK)

@@ -256,3 +256,25 @@ func TestNewRowGivesAnInformationalChargeNoCost(t *testing.T) {
 		t.Errorf("%s %s", row.ListCost, row.PricingQuantity)
 	}
 }
+
+func TestADistinctRegionFillsBothColumnsAndGlobalLeavesThemNull(t *testing.T) {
+	charge := Charge{Region: "us", ServiceTier: "batch", Credential: "apikey_01", Start: time.Unix(0, 0), End: time.Unix(1, 0)}
+	row := NewRow(charge)
+	if row.RegionID == nil || *row.RegionID != "us" || row.RegionName == nil || *row.RegionName != "us" {
+		t.Fatalf("%v %v", row.RegionID, row.RegionName)
+	}
+	if row.ServiceTier == nil || *row.ServiceTier != "batch" || row.SubAccountID == nil || *row.SubAccountID != "apikey_01" {
+		t.Fatalf("%v %v", row.ServiceTier, row.SubAccountID)
+	}
+	charge.Region = RegionGlobal
+	if row := NewRow(charge); row.RegionID != nil || row.RegionName != nil {
+		t.Fatalf("global reads %v %v", row.RegionID, row.RegionName)
+	}
+}
+
+func TestAbsentTierAndCredentialAreNull(t *testing.T) {
+	row := NewRow(Charge{Start: time.Unix(0, 0), End: time.Unix(1, 0)})
+	if row.ServiceTier != nil || row.SubAccountID != nil {
+		t.Fatalf("%v %v", row.ServiceTier, row.SubAccountID)
+	}
+}

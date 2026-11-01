@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -32,6 +33,9 @@ const (
 	columnTags      = "Tags"
 	columnOvershoot = "x_CostroidOvershootBound"
 	columnRowID     = "x_CostroidRowId"
+	columnRegion    = "RegionId"
+	columnTier      = "x_CostroidServiceTier"
+	columnAccount   = "SubAccountId"
 )
 
 // ignoredColumns are the row contract's other columns. The server computes or
@@ -40,7 +44,7 @@ var ignoredColumns = columnSet(
 	"BillingAccountId", "BillingAccountName", "BillingCurrency", "BillingPeriodEnd", "BillingPeriodStart",
 	"ChargeCategory", "ChargeClass", "ChargeDescription", "ChargeFrequency", "ConsumedUnit", "HostProviderName",
 	"InvoiceIssuerName", "PricingCategory", "PricingQuantity", "PricingUnit", "ServiceCategory", "ServiceName",
-	"ServiceProviderName", "ServiceSubcategory", "SubAccountId", "SubAccountName", "x_CostroidCatalogVersion",
+	"RegionName", "ServiceProviderName", "ServiceSubcategory", "SubAccountName", "x_CostroidCatalogVersion",
 )
 
 // costColumns are a sender's own figures. Each one seen is counted.
@@ -62,6 +66,9 @@ var (
 	overTier     = regexp.MustCompile(`^over-([0-9]{1,12})$`)
 
 	sourcePattern = regexp.MustCompile(`^[a-z0-9]+([_-][a-z0-9]+)*$`)
+
+	regionPattern = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
+	tierPattern   = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 )
 
 func invalidRow(line int, reason string) *refusal {
@@ -148,6 +155,9 @@ func parseRow(text []byte, line int, drops map[string]int64) (charge, error) {
 	if err := fields.readTags(&c, drops); err != nil {
 		return charge{}, err
 	}
+	if err := fields.readRouting(&c); err != nil {
+		return charge{}, err
+	}
 	return c, fields.readOvershoot(&c)
 }
 
@@ -157,7 +167,8 @@ func countLeftBehind(columns map[string]json.RawMessage, drops map[string]int64)
 		case costColumns[name]:
 			drops[otlp.DropClientCost]++
 		case ignoredColumns[name], name == columnSku, name == columnPrice, name == columnMeter, name == columnQuantity,
-			name == columnStart, name == columnEnd, name == columnTags, name == columnOvershoot, name == columnRowID:
+			name == columnStart, name == columnEnd, name == columnTags, name == columnOvershoot, name == columnRowID,
+			name == columnRegion, name == columnTier, name == columnAccount:
 		default:
 			drops[otlp.DropLabel(name)]++
 		}
@@ -242,6 +253,44 @@ func tierOf(priceID string, c *charge) (string, int64) {
 		}
 	}
 	return parts[3], context
+}
+
+// readRouting takes what row version 0.2 states outright: the region, the
+// service tier and the credential. Each is a usage fact, like the token count.
+// A version 0.1 row states none of them, and reads global at the SkuPriceId's
+// tier with no credential.
+func (f rowFields) readRouting(c *charge) error {
+	region, err := f.optional(columnRegion, regionPattern)
+	if err != nil {
+		return err
+	}
+	tier, err := f.optional(columnTier, tierPattern)
+	if err != nil {
+		return err
+	}
+	credential, err := f.text(columnAccount)
+	if err != nil {
+		return err
+	}
+	if utf8.RuneCountInString(credential) > maxTextColumn {
+		return invalidRow(f.line, columnAccount+" is past the contract's limit")
+	}
+	c.region, c.credential = region, credential
+	if tier != "" {
+		c.serviceTier = tier
+	}
+	return nil
+}
+
+func (f rowFields) optional(column string, pattern *regexp.Regexp) (string, error) {
+	text, err := f.text(column)
+	if err != nil || text == "" {
+		return "", err
+	}
+	if !pattern.MatchString(text) {
+		return "", invalidRow(f.line, column+" is not valid")
+	}
+	return text, nil
 }
 
 func (f rowFields) readQuantity(c *charge) error {

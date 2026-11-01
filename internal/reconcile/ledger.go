@@ -43,12 +43,14 @@ type ledgerRow struct {
 	ConsumedUnit        string            `json:"ConsumedUnit"`
 	HostProviderName    *string           `json:"HostProviderName"`
 	ListCost            string            `json:"ListCost"`
+	RegionID            *string           `json:"RegionId"`
 	ServiceProviderName string            `json:"ServiceProviderName"`
 	SkuMeter            focus.TokenClass  `json:"SkuMeter"`
 	SkuPriceID          string            `json:"SkuPriceId"`
 	SubAccountID        *string           `json:"SubAccountId"`
 	Tags                map[string]string `json:"Tags"`
 	RowID               string            `json:"x_CostroidRowId"`
+	ServiceTier         *string           `json:"x_CostroidServiceTier"`
 }
 
 // Ledger is the rows of one range, totalled per credential per day.
@@ -171,9 +173,13 @@ func (g *ledgerGroup) addMeasured(row ledgerRow, tokens decimal.Decimal) {
 	record.Tokens[row.SkuMeter] = record.Tokens[row.SkuMeter].Add(tokens)
 }
 
-// tier reads the tier from provider:model:region:tier:context:class. A
-// fallback row names none, and it was priced at no tier.
+// tier reads the row's own column. A version 0.1 row has none, so it reads the
+// tier from provider:model:region:tier:context:class, and a fallback row names
+// none there: it was priced at no tier.
 func (r ledgerRow) tier() string {
+	if r.ServiceTier != nil {
+		return *r.ServiceTier
+	}
 	fields := strings.Split(r.SkuPriceID, ":")
 	if len(fields) != skuPriceFields {
 		return catalog.TierStandard
@@ -181,8 +187,12 @@ func (r ledgerRow) tier() string {
 	return fields[skuPriceTier]
 }
 
-// region reads the region a residency multiplier was applied for.
+// region reads RegionId. A version 0.1 row has no such column, and states the
+// region a residency multiplier was applied for in its description.
 func (r ledgerRow) region() string {
+	if r.RegionID != nil {
+		return *r.RegionID
+	}
 	_, rest, found := strings.Cut(r.ChargeDescription, residencyNote)
 	if !found {
 		return catalog.RegionGlobal

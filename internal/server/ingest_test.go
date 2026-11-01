@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1041,5 +1042,93 @@ func TestALargeBatchStoresAllOrNothingOnOneBadRow(t *testing.T) {
 	}
 	if len(ledger.rows) != 0 && len(ledger.stored(t, tenantA)) != 0 {
 		t.Fatal("rows stored from a refused batch")
+	}
+}
+
+func TestAStatedRegionIsPricedAsTheCLIPricesIt(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	r := row("req-us", focus.InputUncached, 1000000)
+	r["SkuId"] = "anthropic/claude-haiku-5-5/input_uncached"
+	r["SkuPriceId"] = "anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached"
+	r["RegionId"] = "us"
+	r["RegionName"] = "us"
+	tags(r)[focus.TagModel] = "claude-haiku-5-5"
+	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+	got := ledger.only(t, tenantA).Row
+	// The sheet's 0.10 per million tokens, times its multiplier of 1.1 for us.
+	if got.ListCost.Cmp(decimal.MustParse("0.11")) != 0 {
+		t.Fatalf("list cost %s", got.ListCost)
+	}
+	if got.RegionID == nil || *got.RegionID != "us" || !strings.Contains(got.ChargeDescription, "for data residency in us") {
+		t.Fatalf("%v %q", got.RegionID, got.ChargeDescription)
+	}
+}
+
+func TestARowWithNoRegionPricesAtGlobalAndStatesNone(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	w.rows(w.token(), lines(t, row("req-1", focus.Output, 100))).want(t, http.StatusOK)
+	if got := ledger.only(t, tenantA).Row; got.RegionID != nil || got.RegionName != nil {
+		t.Fatalf("%v %v", got.RegionID, got.RegionName)
+	}
+}
+
+func TestATierColumnBeatsTheTierInThePriceID(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	r := row("req-1", focus.InputUncached, 1000000)
+	r["SkuId"] = "anthropic/claude-haiku-5-5/input_uncached"
+	r["SkuPriceId"] = "anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached"
+	r["x_CostroidServiceTier"] = "batch"
+	tags(r)[focus.TagModel] = "claude-haiku-5-5"
+	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+	got := ledger.only(t, tenantA).Row
+	if got.ServiceTier == nil || *got.ServiceTier != "batch" || !strings.Contains(got.SkuPriceID, ":batch:") {
+		t.Fatalf("%v %s", got.ServiceTier, got.SkuPriceID)
+	}
+}
+
+func TestACredentialIsKeptSoAStoredRowCanReconcile(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	r := row("req-1", focus.Output, 100)
+	r["SubAccountId"] = "apikey_01ExampleCi"
+	got := w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+	if strings.Contains(string(got.body), "SubAccountId") {
+		t.Fatalf("counted as a drop: %s", got.body)
+	}
+	if id := ledger.only(t, tenantA).Row.SubAccountID; id == nil || *id != "apikey_01ExampleCi" {
+		t.Fatalf("%v", id)
+	}
+}
+
+func TestRoutingColumnsThatAreNotValidRefuseTheRow(t *testing.T) {
+	for column, value := range map[string]any{
+		"RegionId":              "us; drop",
+		"x_CostroidServiceTier": "Batch Tier",
+		"SubAccountId":          strings.Repeat("a", 513),
+	} {
+		w, ledger := memoryWorld(t)
+		r := row("req-1", focus.Output, 100)
+		r[column] = value
+		got := w.rows(w.token(), lines(t, r)).want(t, http.StatusUnprocessableEntity)
+		if got.code(t) != codeInvalidRow || len(ledger.rows) != 0 {
+			t.Errorf("%s: %s", column, got.body)
+		}
+	}
+}
+
+func TestTheViewTotalsPerCurrencyAndBasisAndNeverAcrossThem(t *testing.T) {
+	lines := []store.Line{
+		{Currency: "EUR", CostBasis: "measured", ListCost: decimal.MustParse("1.5")},
+		{Currency: "USD", CostBasis: "list_equivalent", ListCost: decimal.MustParse("0.25")},
+		{Currency: "USD", CostBasis: "list_equivalent", ListCost: decimal.MustParse("0.25")},
+		{Currency: "USD", CostBasis: "measured", ListCost: decimal.MustParse("2")},
+	}
+	got := totalsOf(lines)
+	want := []basisTotal{
+		{"EUR", "measured", "Measured", "1.5"},
+		{"USD", "list_equivalent", "List-equivalent", "0.5"},
+		{"USD", "measured", "Measured", "2"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("%+v", got)
 	}
 }
