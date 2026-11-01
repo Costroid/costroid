@@ -1,0 +1,235 @@
+package reconcile
+
+import (
+	"cmp"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focus"
+)
+
+const (
+	tokensUnit = "Tokens"
+	currency   = "USD"
+
+	// Notes the wrapper writes into ChargeDescription. Row version 0.1 has no
+	// column for either fact.
+	lifetimeAssumedNote = "cache lifetime assumed"
+	residencyNote       = "for data residency in "
+
+	skuPriceFields = 6
+	skuPriceTier   = 3
+)
+
+// sources maps a row's ServiceProviderName to its report.
+var sources = map[string]string{
+	"Anthropic": SourceAnthropic,
+	"OpenAI":    SourceOpenAI,
+}
+
+// ledgerRow is the part of a row reconciliation reads.
+type ledgerRow struct {
+	BillingCurrency     string            `json:"BillingCurrency"`
+	ChargeDescription   string            `json:"ChargeDescription"`
+	ChargePeriodStart   time.Time         `json:"ChargePeriodStart"`
+	ConsumedQuantity    string            `json:"ConsumedQuantity"`
+	ConsumedUnit        string            `json:"ConsumedUnit"`
+	HostProviderName    *string           `json:"HostProviderName"`
+	ListCost            string            `json:"ListCost"`
+	ServiceProviderName string            `json:"ServiceProviderName"`
+	SkuMeter            focus.TokenClass  `json:"SkuMeter"`
+	SkuPriceID          string            `json:"SkuPriceId"`
+	SubAccountID        *string           `json:"SubAccountId"`
+	Tags                map[string]string `json:"Tags"`
+	RowID               string            `json:"x_CostroidRowId"`
+}
+
+// Ledger is the rows of one range, totalled per credential per day.
+type Ledger struct {
+	groups map[Key]*ledgerGroup
+	// Repeats counts rows whose id was already read. A file concatenated
+	// from two runs counts each request once.
+	Repeats int
+	// Uncredentialed counts rows that name no credential and were given none.
+	Uncredentialed int
+}
+
+type ledgerGroup struct {
+	tokens          map[focus.TokenClass]decimal.Decimal
+	list            decimal.Decimal
+	billed          bool
+	assumedLifetime bool
+	measured        map[recordKey]*Usage
+}
+
+type recordKey struct {
+	model, tier, region string
+}
+
+// ReadLedger totals the JSON-line rows charged inside the range. Rows that are
+// not token rows from a reconciled provider are left out. A row whose
+// SubAccountId is null is read as fallbackCredential when one is given.
+func ReadLedger(rows io.Reader, within Range, fallbackCredential string) (*Ledger, error) {
+	ledger := &Ledger{groups: map[Key]*ledgerGroup{}}
+	seen := map[string]bool{}
+	decoder := json.NewDecoder(rows)
+	for number := 1; ; number++ {
+		var row ledgerRow
+		err := decoder.Decode(&row)
+		if errors.Is(err, io.EOF) {
+			return ledger, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reconcile: read row %d: %w", number, err)
+		}
+		if !row.inScope(within) {
+			continue
+		}
+		if row.RowID == "" {
+			return nil, fmt.Errorf("reconcile: read row %d: no x_CostroidRowId", number)
+		}
+		if seen[row.RowID] {
+			ledger.Repeats++
+			continue
+		}
+		seen[row.RowID] = true
+		if err := ledger.add(row, fallbackCredential); err != nil {
+			return nil, fmt.Errorf("reconcile: read row %d: %w", number, err)
+		}
+	}
+}
+
+func (r ledgerRow) inScope(within Range) bool {
+	source, known := sources[r.ServiceProviderName]
+	if !known || r.SkuMeter.Informational() || r.ConsumedUnit != tokensUnit {
+		return false
+	}
+	// A provider's model served by a cloud is billed by the cloud, and its
+	// tokens are not on the provider's report.
+	if r.HostProviderName != nil && sources[*r.HostProviderName] != source {
+		return false
+	}
+	basis := focus.CostBasis(r.Tags[focus.TagCostBasis])
+	if basis != focus.Measured && basis != focus.ListEquivalent {
+		return false
+	}
+	return within.holds(r.ChargePeriodStart.UTC().Format(dayLayout))
+}
+
+func (l *Ledger) add(row ledgerRow, fallbackCredential string) error {
+	credential := fallbackCredential
+	if row.SubAccountID != nil {
+		credential = *row.SubAccountID
+	}
+	if credential == "" {
+		l.Uncredentialed++
+		return nil
+	}
+	if row.BillingCurrency != currency {
+		return fmt.Errorf("currency %q: list prices are in USD and currencies never mix", row.BillingCurrency)
+	}
+	tokens, err := decimal.Parse(row.ConsumedQuantity)
+	if err != nil {
+		return fmt.Errorf("ConsumedQuantity: %w", err)
+	}
+	list, err := decimal.Parse(row.ListCost)
+	if err != nil {
+		return fmt.Errorf("ListCost: %w", err)
+	}
+	key := Key{sources[row.ServiceProviderName], credential, row.ChargePeriodStart.UTC().Format(dayLayout)}
+	group := l.groups[key]
+	if group == nil {
+		group = &ledgerGroup{tokens: map[focus.TokenClass]decimal.Decimal{}, measured: map[recordKey]*Usage{}}
+		l.groups[key] = group
+	}
+	group.tokens[row.SkuMeter] = group.tokens[row.SkuMeter].Add(tokens)
+	if strings.Contains(row.ChargeDescription, lifetimeAssumedNote) {
+		group.assumedLifetime = true
+	}
+	if focus.CostBasis(row.Tags[focus.TagCostBasis]) == focus.Measured {
+		group.billed = true
+		group.list = group.list.Add(list)
+		group.addMeasured(row, tokens)
+	}
+	return nil
+}
+
+func (g *ledgerGroup) addMeasured(row ledgerRow, tokens decimal.Decimal) {
+	key := recordKey{row.Tags[focus.TagModel], row.tier(), row.region()}
+	record := g.measured[key]
+	if record == nil {
+		record = &Usage{Model: key.model, Tier: key.tier, Region: key.region, Tokens: map[focus.TokenClass]decimal.Decimal{}}
+		g.measured[key] = record
+	}
+	record.Tokens[row.SkuMeter] = record.Tokens[row.SkuMeter].Add(tokens)
+}
+
+// tier reads the tier from provider:model:region:tier:context:class. A
+// fallback row names none, and it was priced at no tier.
+func (r ledgerRow) tier() string {
+	fields := strings.Split(r.SkuPriceID, ":")
+	if len(fields) != skuPriceFields {
+		return catalog.TierStandard
+	}
+	return fields[skuPriceTier]
+}
+
+// region reads the region a residency multiplier was applied for.
+func (r ledgerRow) region() string {
+	_, rest, found := strings.Cut(r.ChargeDescription, residencyNote)
+	if !found {
+		return catalog.RegionGlobal
+	}
+	region, _, _ := strings.Cut(rest, ";")
+	return region
+}
+
+func (g *ledgerGroup) records() []Usage {
+	records := make([]Usage, 0, len(g.measured))
+	for _, record := range g.measured {
+		records = append(records, *record)
+	}
+	slices.SortFunc(records, func(a, b Usage) int {
+		return cmp.Or(cmp.Compare(a.Model, b.Model), cmp.Compare(a.Tier, b.Tier), cmp.Compare(a.Region, b.Region))
+	})
+	return records
+}
+
+// group answers for a day the ledger holds nothing on with an empty group, so
+// a provider's traffic on it reads as a miss.
+func (l *Ledger) group(key Key) *ledgerGroup {
+	if group := l.groups[key]; group != nil {
+		return group
+	}
+	return &ledgerGroup{tokens: map[focus.TokenClass]decimal.Decimal{}, measured: map[recordKey]*Usage{}, billed: true}
+}
+
+// Sources lists the reports this ledger needs, in order.
+func (l *Ledger) Sources() []string {
+	var names []string
+	for key := range l.groups {
+		if !slices.Contains(names, key.Source) {
+			names = append(names, key.Source)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+func (l *Ledger) credentials(source string) []string {
+	var names []string
+	for key := range l.groups {
+		if key.Source == source && !slices.Contains(names, key.Credential) {
+			names = append(names, key.Credential)
+		}
+	}
+	slices.Sort(names)
+	return names
+}

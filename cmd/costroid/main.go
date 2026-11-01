@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/reconcile"
 	"github.com/Costroid/costroid/internal/run"
 )
 
@@ -22,6 +24,7 @@ const usage = `costroid runs a coding agent under a budget and records what it c
 
 Usage:
   costroid run --budget-usd N --out rows.jsonl [--billing-account ID] -- <agent command>
+  costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE]
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -29,10 +32,26 @@ The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 --billing-account fills BillingAccountId on every row. Without it, the
 COSTROID_BILLING_ACCOUNT variable does. With neither, the rows read unknown.
 
-Exit codes:
+Reconcile compares rows with the provider's usage and cost reports, per
+credential per UTC day. Tokens must match within 1% by class. List-price dollars
+are compared within 10%, and the residual is split into named causes.
+
+It runs where the admin key lives, and it reads the key from
+ANTHROPIC_ADMIN_KEY or OPENAI_ADMIN_KEY. The key never leaves the process.
+
+A row's credential is its SubAccountId. --credential names one for rows where
+that is null. --out keeps one row per source, credential and day, and a rerun
+replaces it. Rerun through the eighth day after month end, when restating stops.
+
+Exit codes of run:
   the agent's own   the run finished, or the agent stopped itself
   124               costroid stopped the agent at the cap
   125               costroid could not run the agent or record the run
+
+Exit codes of reconcile:
+  0                 no token miss
+  1                 a token miss, which is a defect
+  125               costroid could not read the rows or a report
 `
 
 const (
@@ -62,6 +81,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	switch args[0] {
 	case "run":
 		return runCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "reconcile":
+		return reconcileCommand(ctx, args[1:], os.Getenv, reconcile.NewClient(), time.Now, stdout, stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":

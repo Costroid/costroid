@@ -1,0 +1,39 @@
+{
+  "data": [
+    {
+      "starting_at": "2026-10-14T00:00:00Z",
+      "ending_at": "2026-10-15T00:00:00Z",
+      "group": {
+        "product": null,
+        "model": null,
+        "context_window": null,
+        "inference_geo": null,
+        "speed": null,
+        "slack_channel_id": null,
+        "claude_tag_category": null,
+        "claude_tag_user_id": null,
+        "rbac_group_id": null,
+        "workspace_id": null,
+        "service_tier": null,
+        "user_profile_id": null,
+        "agent_id": null,
+        "environment_id": null,
+        "deployment_id": null,
+        "session_id": null,
+        "actor": null,
+        "actor_type": null,
+        "api_key_id": "apikey_01ExampleCi",
+        "cost_type": "tokens"
+      },
+      "cost": {
+        "currency": "USD",
+        "amount": "46.000000",
+        "list_amount": "46.000000",
+        "requests": null
+      }
+    }
+  ],
+  "has_more": false,
+  "next_page": null,
+  "data_refreshed_at": "2026-10-15T08:00:00Z"
+}
