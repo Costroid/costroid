@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/reconcile"
 )
 
@@ -32,6 +33,8 @@ type reconcileFlags struct {
 	credential string
 	out        string
 	days       reconcile.Range
+	reports    string
+	asOf       time.Time
 }
 
 func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
@@ -43,6 +46,8 @@ func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
 	to := set.String("to", "", "the last UTC day, YYYY-MM-DD")
 	credential := set.String("credential", "", "the credential of rows whose SubAccountId is null")
 	out := set.String("out", "", "the file reconciliation rows are kept in, one per source, credential and day")
+	reports := set.String("reports", "", "a directory of saved provider reports, read in place of the provider")
+	asOf := set.String("as-of", "", "when the saved reports were saved, as a UTC instant")
 	if err := set.Parse(args); err != nil {
 		return reconcileFlags{}, err
 	}
@@ -53,7 +58,27 @@ func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
 	if err != nil {
 		return reconcileFlags{}, err
 	}
-	return reconcileFlags{rows: *rows, credential: *credential, out: *out, days: days}, nil
+	flags := reconcileFlags{rows: *rows, credential: *credential, out: *out, days: days, reports: *reports}
+	if (*reports == "") != (*asOf == "") {
+		return reconcileFlags{}, errors.New("--reports and --as-of go together")
+	}
+	if *asOf != "" {
+		if flags.asOf, err = time.Parse(focus.InstantLayout, *asOf); err != nil {
+			return reconcileFlags{}, errors.New("--as-of must read like 2026-11-04T00:00:00Z")
+		}
+	}
+	return flags, nil
+}
+
+// fromSavedReports swaps the provider for a directory. A saved report is read
+// as of the instant it was saved, because that is what decides which days it
+// could have finished.
+func fromSavedReports(flags reconcileFlags, getenv func(string) string, client reconcile.Doer, now clock) (func(string) string, reconcile.Doer, clock) {
+	if flags.reports == "" {
+		return getenv, client, now
+	}
+	noKey := func(string) string { return savedReportsHoldNoKey }
+	return noKey, &savedReports{directory: flags.reports}, func() time.Time { return flags.asOf }
 }
 
 func reconcileCommand(ctx context.Context, args []string, getenv func(string) string, client reconcile.Doer, now clock, stdout, stderr io.Writer) int {
@@ -81,6 +106,7 @@ func reconcileCommand(ctx context.Context, args []string, getenv func(string) st
 }
 
 func reconcileRows(ctx context.Context, flags reconcileFlags, getenv func(string) string, client reconcile.Doer, now clock, stderr io.Writer) (reconcile.Result, error) {
+	getenv, client, now = fromSavedReports(flags, getenv, client, now)
 	ledger, err := readLedger(flags)
 	if err != nil {
 		return reconcile.Result{}, err

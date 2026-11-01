@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	name     = "claude-code"
+	// Name is the costroid/agent tag.
+	Name     = "claude-code"
 	provider = "anthropic"
 
 	// SourceStream marks usage read from the result object alone.
@@ -51,7 +52,7 @@ type Agent struct {
 
 // Name returns the costroid/agent tag.
 func (Agent) Name() string {
-	return name
+	return Name
 }
 
 // Plan adds the stream flags and the budget flag.

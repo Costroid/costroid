@@ -3,7 +3,6 @@ package main
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/scm"
@@ -70,27 +70,12 @@ type pullContext struct {
 // the test merge commit, and the check belongs on the head.
 func readPullContext() (pullContext, error) {
 	pull := pullContext{head: os.Getenv("GITHUB_SHA")}
-	path := os.Getenv("GITHUB_EVENT_PATH")
-	if path == "" {
+	event, err := cicontext.ReadEvent(os.Getenv("GITHUB_EVENT_PATH"))
+	if errors.Is(err, cicontext.ErrNoEventFile) {
 		return pull, nil
 	}
-	data, err := os.ReadFile(path)
 	if err != nil {
-		return pull, fmt.Errorf("read the event file: %w", err)
-	}
-	var event struct {
-		PullRequest *struct {
-			Number int `json:"number"`
-			Head   struct {
-				SHA string `json:"sha"`
-			} `json:"head"`
-			Base struct {
-				SHA string `json:"sha"`
-			} `json:"base"`
-		} `json:"pull_request"`
-	}
-	if err := json.Unmarshal(data, &event); err != nil {
-		return pull, fmt.Errorf("parse the event file: %w", err)
+		return pull, err
 	}
 	if event.PullRequest != nil {
 		pull.pullRequest = event.PullRequest.Number

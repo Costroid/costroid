@@ -26,10 +26,14 @@ const (
 	// Conclusion is the check's conclusion until a policy decides one.
 	Conclusion = "neutral"
 
-	schema         = "costroid.check/0.1"
-	budgetCurrency = "USD"
-	accountURL     = "https://app.costroid.com/"
-	exportURL      = "https://docs.costroid.com/export"
+	schema = "costroid.check/0.1"
+	// artifactIdentity is what a figure read from a rows file can claim. The
+	// agent's job wrote the file, tags included, so a row that reads
+	// token_verified proves nothing here and the label does not depend on it.
+	artifactIdentity = "unverified"
+	budgetCurrency   = "USD"
+	accountURL       = "https://app.costroid.com/"
+	exportURL        = "https://docs.costroid.com/export"
 )
 
 // State says what the rows file gave the report.
@@ -103,6 +107,7 @@ type Block struct {
 	HeadSHA        string        `json:"head_sha"`
 	Amounts        string        `json:"amounts"`
 	Rows           int           `json:"rows"`
+	RunIdentity    string        `json:"run_identity"`
 	Figures        []BlockFigure `json:"figures"`
 	FiguresOmitted int           `json:"figures_omitted"`
 	Budget         *BlockAmount  `json:"budget"`
@@ -179,6 +184,7 @@ func (i Input) block() (string, error) {
 		HeadSHA:        i.HeadSHA,
 		Amounts:        "withheld",
 		Rows:           i.Ledger.Rows,
+		RunIdentity:    artifactIdentity,
 		Figures:        make([]BlockFigure, 0, len(i.Ledger.Figures)),
 		FiguresOmitted: i.Ledger.FiguresOmitted,
 		Data: BlockData{

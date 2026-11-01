@@ -7,6 +7,8 @@
 | --- | --- | --- | --- |
 | USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
 
+Unverified: the agent's job wrote these figures.
+
 Budget: USD 5.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
@@ -25,6 +27,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
   "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
   "amounts": "shown",
   "rows": 19,
+  "run_identity": "unverified",
   "figures": [
     {
       "currency": "USD",

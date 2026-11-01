@@ -65,6 +65,9 @@ func replayClaude(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv(replayStream, stream)
+	for _, variable := range []string{"GITHUB_ACTIONS", "GITLAB_CI", credentialVariable} {
+		t.Setenv(variable, "")
+	}
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
 	self, err := os.Executable()
 	if err != nil {
@@ -159,7 +162,7 @@ func TestBillingAccountComesFromTheFlagThenTheVariableAndWarnsOnlyWhenAbsent(t *
 
 func TestBillingAccountPastTheContractsLimitIsRefused(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "rows.jsonl")
-	code, _, stderr := execute(t, "run", "--budget-usd", "1", "--out", out, "--billing-account", strings.Repeat("a", maxBillingAccount+1), "--", "claude", "-p", "x")
+	code, _, stderr := execute(t, "run", "--budget-usd", "1", "--out", out, "--billing-account", strings.Repeat("a", maxAccount+1), "--", "claude", "-p", "x")
 	if code != exitFailure || !strings.Contains(stderr, "--billing-account") {
 		t.Errorf("exit %d, %q", code, stderr)
 	}

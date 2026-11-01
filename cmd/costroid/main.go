@@ -9,11 +9,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/reconcile"
@@ -24,13 +26,15 @@ import (
 const usage = `costroid runs a coding agent under a budget and records what it cost.
 
 Usage:
-  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] -- <agent command>
+  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] -- <agent command>
+  costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
+  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID]
+  costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE] [--reports DIR --as-of T]
+  costroid validate [costroid.yml]
+  costroid lint-recipes <paths>
   costroid serve
   costroid keys create --owner host:owner
   costroid keys revoke <id>
-  costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE]
-  costroid lint-recipes <paths>
-  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID]
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -38,24 +42,40 @@ The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 --billing-account fills BillingAccountId on every row. Without it, the
 COSTROID_BILLING_ACCOUNT variable does. With neither, the rows read unknown.
 
-Reconcile compares rows with the provider's usage and cost reports, per
+--credential fills SubAccountId: the id of the key, workspace or project the run
+spends on, never the key itself. Without it, COSTROID_CREDENTIAL does. With
+neither, the column is null and reconcile asks for one.
+
+Inside GitHub Actions or GitLab CI, run and ingest-run state the repository, the
+pull request, the head commit and the CI run on every row, and run sets the
+vcs.* and cicd.* attributes through OTEL_RESOURCE_ATTRIBUTES for the agent. These
+are claims. Rows stay unverified and unattributed until a ledger checks them
+against the job's OIDC token.
+
+ingest-run writes the rows of a claude-code-action run from the action's
+execution_file output, after the action ended. No budget held that run, so the
+grade reads none.
+
+report posts one check run and one sticky comment from CI, with the GITHUB_TOKEN
+and GITHUB_* variables of the job. It exits 0 whatever GitHub answers, so a
+failed post never fails the job. --budget-usd restates the run's budget, which
+rows do not record. --installation-id puts the GitHub App installation on the
+account link; COSTROID_INSTALLATION_ID does the same.
+
+reconcile compares rows with the provider's usage and cost reports, per
 credential per UTC day. Tokens must match within 1% by class. List-price dollars
 are compared within 10%, and the residual is split into named causes.
 
 It runs where the admin key lives, and it reads the key from
 ANTHROPIC_ADMIN_KEY or OPENAI_ADMIN_KEY. The key never leaves the process.
+--reports reads saved report files from a directory instead, and needs no key;
+--as-of states when they were saved. docs/reconcile.md names the files.
 
 A row's credential is its SubAccountId. --credential names one for rows where
 that is null. --out keeps one row per source, credential and day, and a rerun
 replaces it. Rerun through the eighth day after month end, when restating stops.
 
 Exit codes of run:
-costroid report posts one check run and one sticky comment from CI, with the
-GITHUB_TOKEN and GITHUB_* variables of the job. It exits 0 whatever GitHub
-answers, so a failed post never fails the job. --budget-usd restates the run's
-budget, which rows do not record. --installation-id puts the GitHub App
-installation on the account link; COSTROID_INSTALLATION_ID does the same.
-Exit codes:
   the agent's own   the run finished, or the agent stopped itself
   124               costroid stopped the agent at the cap
   125               costroid could not run the agent or record the run
@@ -64,8 +84,9 @@ Exit codes of reconcile:
   0                 no token miss
   1                 a token miss, which is a defect
   125               costroid could not read the rows or a report
-lint-recipes exits 0 when every recipe passes, 1 when one is rejected and 125
-when it cannot read them.
+
+validate and lint-recipes exit 0 when every file passes, 1 when one is rejected
+and 125 when they cannot read it.
 `
 
 const (
@@ -73,8 +94,12 @@ const (
 	exitFailure    = 125
 
 	billingAccountVariable = "COSTROID_BILLING_ACCOUNT"
-	// maxBillingAccount is the row contract's limit on a text column.
-	maxBillingAccount = 512
+	credentialVariable     = "COSTROID_CREDENTIAL"
+	// maxAccount is the row contract's limit on a text column.
+	maxAccount = 512
+	// secretKeyPrefix opens every provider key this product reads. A key pasted
+	// as a credential would otherwise reach every row and every ledger.
+	secretKeyPrefix = "sk-"
 )
 
 // version is set at link time.
@@ -103,8 +128,12 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return reconcileCommand(ctx, args[1:], os.Getenv, reconcile.NewClient(), time.Now, stdout, stderr)
 	case "lint-recipes":
 		return lintRecipes(args[1:], stdout, stderr)
+	case "ingest-run":
+		return ingestRunCommand(args[1:], stderr)
 	case "report":
 		return reportCommand(ctx, args[1:], stderr)
+	case "validate":
+		return validateCommand(args[1:], stdout, stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":
@@ -125,10 +154,36 @@ func versionCommand(stdout, stderr io.Writer) int {
 	return 0
 }
 
+// accountFlags are the two columns a caller states about who a run spends on.
+type accountFlags struct {
+	billing    *string
+	credential *string
+}
+
+func addAccountFlags(set *flag.FlagSet) accountFlags {
+	return accountFlags{
+		billing:    set.String("billing-account", os.Getenv(billingAccountVariable), "the account the run is billed to"),
+		credential: set.String("credential", os.Getenv(credentialVariable), "the id of the key, workspace or project the run spends on"),
+	}
+}
+
+func (a accountFlags) check() error {
+	if utf8.RuneCountInString(*a.billing) > maxAccount {
+		return fmt.Errorf("--billing-account must be at most %d characters", maxAccount)
+	}
+	if utf8.RuneCountInString(*a.credential) > maxAccount {
+		return fmt.Errorf("--credential must be at most %d characters", maxAccount)
+	}
+	if strings.HasPrefix(*a.credential, secretKeyPrefix) {
+		return errors.New("--credential takes the key's id, never the key: this value reads like a key")
+	}
+	return nil
+}
+
 type runFlags struct {
 	budget  decimal.Decimal
 	out     string
-	account string
+	account accountFlags
 	argv    []string
 }
 
@@ -138,7 +193,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	budget := set.String("budget-usd", "", "the run's budget in USD")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
-	account := set.String("billing-account", os.Getenv(billingAccountVariable), "the account the run is billed to")
+	account := addAccountFlags(set)
 	if err := set.Parse(args); err != nil {
 		return runFlags{}, err
 	}
@@ -152,10 +207,20 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	if amount.Sign() <= 0 {
 		return runFlags{}, errors.New("--budget-usd must be above 0")
 	}
-	if utf8.RuneCountInString(*account) > maxBillingAccount {
-		return runFlags{}, fmt.Errorf("--billing-account must be at most %d characters", maxBillingAccount)
+	if err := account.check(); err != nil {
+		return runFlags{}, err
 	}
-	return runFlags{budget: amount, out: *out, account: *account, argv: set.Args()}, nil
+	return runFlags{budget: amount, out: *out, account: account, argv: set.Args()}, nil
+}
+
+// readCI never stops a run: a job whose event file cannot be read still spends
+// money, and its rows still need writing.
+func readCI(stderr io.Writer) cicontext.Context {
+	context, err := cicontext.Read(os.Getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the rows state no pull request: %v\n", err)
+	}
+	return context
 }
 
 func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -180,7 +245,9 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	result, err := run.Run(ctx, run.Options{
 		Argv:           flags.argv,
 		Budget:         flags.budget,
-		BillingAccount: flags.account,
+		BillingAccount: *flags.account.billing,
+		Credential:     *flags.account.credential,
+		CI:             readCI(stderr),
 		Rows:           rows,
 		Stdin:          stdin,
 		Stdout:         stdout,
@@ -209,9 +276,7 @@ var labels = map[focus.CostBasis]string{
 
 func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Result) {
 	report := result.Report
-	fmt.Fprintf(w, "costroid: %s, %d %s\n", result.Agent, len(report.Requests), noun(result, len(report.Requests)))
-	fmt.Fprintf(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, flags.out, catalogVersion)
-	fmt.Fprintf(w, "costroid: USD %s at list, %s\n", result.ListTotal, labels[report.CostBasis])
+	summarizeRows(w, flags.out, catalogVersion, result)
 	fmt.Fprintf(w, "costroid: budget USD %s, %s\n", flags.budget, result.Enforcement.Note)
 	if result.Stopped {
 		fmt.Fprintln(w, "costroid: stopped the agent at the cap")
@@ -219,11 +284,22 @@ func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Re
 	if over := result.ListTotal.Sub(flags.budget); over.Sign() > 0 {
 		fmt.Fprintf(w, "costroid: over budget by USD %s\n", over)
 	}
-	if flags.account == "" {
-		fmt.Fprintf(w, "costroid: warning: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
-	}
+	warnAccount(w, flags.account)
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(w, "costroid: warning: %s\n", warning)
+	}
+}
+
+func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
+	report := result.Report
+	fmt.Fprintf(w, "costroid: %s, %d %s\n", result.Agent, len(report.Requests), noun(result, len(report.Requests)))
+	fmt.Fprintf(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
+	fmt.Fprintf(w, "costroid: USD %s at list, %s\n", result.ListTotal, labels[report.CostBasis])
+}
+
+func warnAccount(w io.Writer, account accountFlags) {
+	if *account.billing == "" {
+		fmt.Fprintf(w, "costroid: warning: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
 	}
 }
 

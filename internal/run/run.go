@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
@@ -30,11 +32,16 @@ type Options struct {
 	Budget decimal.Decimal
 	// BillingAccount fills BillingAccountId. Empty reads unknown.
 	BillingAccount string
-	Rows           io.Writer
-	Stdin          io.Reader
-	Stdout         io.Writer
-	Stderr         io.Writer
-	Catalog        *catalog.Catalog
+	// Credential fills SubAccountId. Empty reads null.
+	Credential string
+	// CI is what the CI system says about the run. Its tags are claims: the
+	// rows stay unverified and unattributed until a server checks them.
+	CI      cicontext.Context
+	Rows    io.Writer
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Catalog *catalog.Catalog
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
 	// Grace is how long a stopped agent has before SIGKILL.
@@ -78,7 +85,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	session := agent.NewSession(plan)
-	builder := rowBuilder{catalog: opts.Catalog, agent: agent.Name(), enforcement: plan.Enforcement, account: opts.BillingAccount}
+	builder := opts.builder(agent.Name(), plan.Enforcement)
 	process := opts.withDefaults()
 	result := Result{Agent: agent.Name(), Enforcement: plan.Enforcement}
 	result.AgentExit, result.Stopped, err = process.execute(ctx, plan, session, builder)
@@ -89,24 +96,46 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return result, err
 	}
-	result.Report = report
 	if report.Enforcement.Grade != "" {
 		builder.enforcement = report.Enforcement
 		result.Enforcement = report.Enforcement
 	}
+	return result, opts.record(&result, builder, report)
+}
+
+// Record writes the rows of a run that has already ended. The report's own
+// grade stands, because no process was watched.
+func Record(opts Options, agent string, report adapter.Report) (Result, error) {
+	result := Result{Agent: agent, Enforcement: report.Enforcement}
+	return result, opts.record(&result, opts.builder(agent, report.Enforcement), report)
+}
+
+func (o Options) record(result *Result, builder rowBuilder, report adapter.Report) error {
+	result.Report = report
 	rows, err := builder.rows(report)
 	if err != nil {
-		return result, err
+		return err
 	}
-	writer := focus.NewWriter(opts.Rows)
+	writer := focus.NewWriter(o.Rows)
 	for _, row := range rows {
 		if err := writer.Write(row); err != nil {
-			return result, err
+			return err
 		}
 	}
 	result.Rows = len(rows)
 	result.ListTotal = listTotal(rows)
-	return result, nil
+	return nil
+}
+
+func (o Options) builder(agent string, enforcement adapter.Enforcement) rowBuilder {
+	return rowBuilder{
+		catalog:     o.Catalog,
+		agent:       agent,
+		enforcement: enforcement,
+		account:     o.BillingAccount,
+		credential:  o.Credential,
+		ci:          o.CI,
+	}
 }
 
 func (o Options) withDefaults() Options {
@@ -123,6 +152,9 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 	command := exec.Command(plan.Argv[0], plan.Argv[1:]...)
 	command.Stdin = o.Stdin
 	command.Stderr = o.Stderr
+	if attributes := o.CI.ResourceAttributes(os.Getenv(cicontext.ResourceAttributesVariable)); attributes != "" {
+		command.Env = append(os.Environ(), cicontext.ResourceAttributesVariable+"="+attributes)
+	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := command.StdoutPipe()
 	if err != nil {

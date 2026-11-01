@@ -227,3 +227,76 @@ func TestReconcileIsOnTheHelpPage(t *testing.T) {
 		t.Errorf("exit %d:\n%s", code, stdout)
 	}
 }
+
+func saveReports(t *testing.T, usage, cost string) string {
+	t.Helper()
+	directory := t.TempDir()
+	copyInto(t, filepath.Join(reconcileSamples, usage), filepath.Join(directory, "anthropic-usage.json"))
+	copyInto(t, filepath.Join(reconcileSamples, cost), filepath.Join(directory, "anthropic-cost.json"))
+	return directory
+}
+
+func TestSavedReportsReconcileWithNoKeyAndNoClient(t *testing.T) {
+	refuses := &replayDoer{t: t, usage: "gone.json", cost: "gone.json"}
+	code, stdout, stderr := runReconcile(t, refuses, func(string) string { return "" }, "--rows", writeLedger(t, 100900),
+		"--from", "2026-10-14", "--to", "2026-10-14", "--credential", "apikey_01ExampleCi",
+		"--reports", saveReports(t, "usage.json", "cost-at-list.json"), "--as-of", "2026-10-20T12:00:00Z")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if refuses.requested != 0 {
+		t.Fatalf("%d requests reached the client", refuses.requested)
+	}
+	if !strings.Contains(stdout, "within 1%") {
+		t.Fatalf("stdout: %s", stdout)
+	}
+}
+
+func TestSavedReportsStillMissAMovedCount(t *testing.T) {
+	code, stdout, _ := runReconcile(t, &replayDoer{t: t}, environment, "--rows", writeLedger(t, 101200),
+		"--from", "2026-10-14", "--to", "2026-10-14", "--credential", "apikey_01ExampleCi",
+		"--reports", saveReports(t, "usage.json", "cost-at-list.json"), "--as-of", "2026-10-20T12:00:00Z")
+	if code != exitTokensMiss {
+		t.Fatalf("exit %d: %s", code, stdout)
+	}
+}
+
+func TestSavedReportsAreReadAsOfTheirOwnInstant(t *testing.T) {
+	code, stdout, stderr := runReconcile(t, &replayDoer{t: t}, environment, "--rows", writeLedger(t, 100000),
+		"--from", "2026-10-14", "--to", "2026-10-14", "--credential", "apikey_01ExampleCi",
+		"--reports", saveReports(t, "usage.json", "cost-at-list.json"), "--as-of", "2026-10-14T12:00:00Z")
+	if code != 0 || strings.Contains(stdout, "within 1%") || !strings.Contains(stdout, "pending") {
+		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
+	}
+}
+
+func TestReportsAndAsOfGoTogether(t *testing.T) {
+	rows := writeLedger(t, 100000)
+	base := []string{"--rows", rows, "--from", "2026-10-14", "--to", "2026-10-14"}
+	for _, extra := range [][]string{{"--reports", "x"}, {"--as-of", "2026-10-20T12:00:00Z"}, {"--reports", "x", "--as-of", "yesterday"}} {
+		if code, _, _ := runReconcile(t, &replayDoer{t: t}, environment, append(base, extra...)...); code != exitFailure {
+			t.Errorf("%v exited %d", extra, code)
+		}
+	}
+}
+
+func TestASavedReportAnswersOneRequestSoARangeCannotCountItTwice(t *testing.T) {
+	reports := &savedReports{directory: saveReports(t, "usage.json", "cost-at-list.json")}
+	first, err := http.NewRequest(http.MethodGet, "https://api.anthropic.com/v1/organizations/analytics/usage", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reports.Do(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reports.Do(first); err == nil {
+		t.Fatal("a second request read the file again")
+	}
+	other, err := http.NewRequest(http.MethodGet, "https://example.test/elsewhere", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reports.Do(other); err == nil {
+		t.Fatal("an unknown path was answered")
+	}
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/costroid.schema.json",
+  "title": "costroid.yml",
+  "description": "The repository's one Costroid configuration file. Every key is optional, and a repository with no file gets the defaults. The server reads this file from the pull request's base commit, never its head.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "comment": {
+      "description": "The sticky comment on a pull request.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "show_cost": {
+          "description": "Whether a public repository's comment prints amounts. Off, it shows the verdict and the grades, and the rows and the check run's machine block keep the amounts. A private repository always prints them.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "policy_pack": {
+      "description": "The policy pack this repository is held to. Reserved: this release reads no pack.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "budget_owner": {
+      "description": "Who answers for this repository's budget, as an SCM login or team. Reserved: this release reads no owner.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "assumptions": {
+      "description": "Assumption defaults for static estimates. Reserved: this release makes no estimate, so the keys inside are not defined yet.",
+      "type": "object"
+    },
+    "catalog": {
+      "description": "The price catalog version to pin. Reserved: this release uses the catalog it embeds.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "agents": {
+      "description": "The agents that run in CI. Reserved: the workflow decides this today.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+        "maxLength": 64
+      },
+      "uniqueItems": true
+    }
+  }
+}

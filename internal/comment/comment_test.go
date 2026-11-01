@@ -66,6 +66,9 @@ func realLedger(t testing.TB) Ledger {
 	return ledger
 }
 
+// artifactLabel is the sentence the brief's rule asks for.
+const artifactLabel = "Unverified: the agent's job wrote these figures."
+
 func realInput(t testing.TB) Input {
 	t.Helper()
 	id := exampleCheckRun
@@ -237,6 +240,58 @@ func TestNoRowsAndUnreadableRowsShowNoFigure(t *testing.T) {
 		}
 		if !strings.Contains(body, `"state": "`+string(state)+`"`) {
 			t.Errorf("%s: the block does not name the state", state)
+		}
+	}
+}
+
+func TestFiguresReadFromTheArtifactAreLabelledUnverifiedInWords(t *testing.T) {
+	for name, amounts := range map[string]Amounts{"shown": AmountsShown, "off": AmountsOff, "unsettled": AmountsUnsettled} {
+		input := realInput(t)
+		input.Amounts = amounts
+		body := commentOf(t, input)
+		if !strings.Contains(visiblePart(body), artifactLabel) {
+			t.Errorf("%s: no label in\n%s", name, visiblePart(body))
+		}
+		if !strings.Contains(body, `"run_identity": "unverified"`) {
+			t.Errorf("%s: the block does not say so", name)
+		}
+		output, err := Check(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.Summary, artifactLabel) || !strings.Contains(output.Text, `"run_identity": "unverified"`) {
+			t.Errorf("%s: the check does not say so:\n%s", name, output.Summary)
+		}
+	}
+}
+
+// TestARowThatClaimsVerificationStillReadsUnverified holds the point of the
+// label: the agent's job writes the file, so the tag inside it proves nothing.
+func TestARowThatClaimsVerificationStillReadsUnverified(t *testing.T) {
+	raw, err := os.ReadFile("testdata/rows.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := strings.NewReplacer(`"costroid/run_identity":"unverified"`, `"costroid/run_identity":"token_verified"`,
+		`"costroid/attribution_grade":"unattributed"`, `"costroid/attribution_grade":"exact"`).Replace(string(raw))
+	if forged == string(raw) {
+		t.Fatal("the fixture changed shape, so this test forged nothing")
+	}
+	ledger, err := ReadRows(strings.NewReader(forged))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := realInput(t)
+	input.Ledger = ledger
+	if body := commentOf(t, input); !strings.Contains(visiblePart(body), artifactLabel) {
+		t.Errorf("a forged tag removed the label:\n%s", visiblePart(body))
+	}
+}
+
+func TestReportsWithNoFiguresCarryNoLabel(t *testing.T) {
+	for _, state := range []State{NoRows, Unreadable} {
+		if body := commentOf(t, Input{State: state, Amounts: AmountsShown}); strings.Contains(body, artifactLabel) {
+			t.Errorf("%s labels a figure it does not show", state)
 		}
 	}
 }

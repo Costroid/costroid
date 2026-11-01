@@ -24,6 +24,7 @@ import (
 	catalogdata "github.com/Costroid/costroid/catalog"
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
@@ -177,6 +178,10 @@ func fakeClaude() {
 	}
 	defer logFile.Close()
 	fmt.Fprintln(logFile, strings.Join(os.Args[1:], "\n"))
+	attributes := os.Getenv(cicontext.ResourceAttributesVariable)
+	if err := os.WriteFile(os.Getenv(fakeLog)+".otel", []byte(attributes), 0o644); err != nil {
+		os.Exit(98)
+	}
 	data, err := os.ReadFile(os.Getenv("COSTROID_FAKE_STREAM"))
 	if err != nil {
 		os.Exit(97)
@@ -217,28 +222,39 @@ type outcome struct {
 
 func runAgent(t *testing.T, argv []string, budget string, c *catalog.Catalog) outcome {
 	t.Helper()
+	return runAgentIn(t, cicontext.Context{}, argv, budget, c)
+}
+
+func runAgentIn(t *testing.T, ci cicontext.Context, argv []string, budget string, c *catalog.Catalog) outcome {
+	t.Helper()
 	var rows, stdout, stderr bytes.Buffer
 	result, err := Run(context.Background(), Options{
 		Argv:    argv,
 		Budget:  decimal.MustParse(budget),
 		Rows:    &rows,
+		CI:      ci,
 		Stdin:   strings.NewReader(""),
 		Stdout:  &stdout,
 		Stderr:  &stderr,
 		Catalog: c,
 		Grace:   200 * time.Millisecond,
 	})
-	got := outcome{result: result, stdout: stdout.String(), stderr: stderr.String(), err: err}
-	scanner := bufio.NewScanner(&rows)
+	return outcome{result: result, stdout: stdout.String(), stderr: stderr.String(), err: err, rows: parseRows(t, rows.Bytes())}
+}
+
+func parseRows(t *testing.T, data []byte) []map[string]any {
+	t.Helper()
+	var parsed []map[string]any
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(nil, 1<<20)
 	for scanner.Scan() {
 		var row map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
 			t.Fatal(err)
 		}
-		got.rows = append(got.rows, row)
+		parsed = append(parsed, row)
 	}
-	return got
+	return parsed
 }
 
 func tagOf(row map[string]any, key string) string {
@@ -546,6 +562,11 @@ func TestBillingAccountFillsTheColumnAndUnknownIsTheDefault(t *testing.T) {
 // claudeRun replays a scenario through the whole wrapper.
 func claudeRun(t *testing.T, scenario, sessionID string, c *catalog.Catalog) (outcome, string) {
 	t.Helper()
+	return claudeRunWith(t, scenario, sessionID, c, cicontext.Context{})
+}
+
+func claudeRunWith(t *testing.T, scenario, sessionID string, c *catalog.Catalog, ci cicontext.Context) (outcome, string) {
+	t.Helper()
 	config := t.TempDir()
 	project := filepath.Join(config, "projects", "-work")
 	if err := os.MkdirAll(filepath.Join(project, sessionID, "subagents"), 0o755); err != nil {
@@ -577,7 +598,7 @@ func claudeRun(t *testing.T, scenario, sessionID string, c *catalog.Catalog) (ou
 	t.Setenv(fakeLog, log)
 	t.Setenv("COSTROID_FAKE_STREAM", filepath.Join(mustAbs(t, source), "stream.jsonl"))
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
-	return runAgent(t, []string{agentNamed(t, "claude"), "-p", "work"}, "5", c), log
+	return runAgentIn(t, ci, []string{agentNamed(t, "claude"), "-p", "work"}, "5", c), log
 }
 
 func mustAbs(t *testing.T, path string) string {
@@ -863,5 +884,111 @@ func TestAgentThatFailsToStartReportsTheCommand(t *testing.T) {
 	got := runAgent(t, []string{filepath.Join(t.TempDir(), "codex"), "exec", "work"}, "1", pinned(t))
 	if got.err == nil {
 		t.Error("a missing binary reported nothing")
+	}
+}
+
+func TestCredentialFillsSubAccountIdOnEveryRowAndRowsStayUnverified(t *testing.T) {
+	var rows bytes.Buffer
+	_, err := Record(Options{
+		Credential: "apikey_01ExampleCi",
+		CI:         cicontext.Context{Repository: "github.com/acme/widgets", PullRequest: "7", Head: strings.Repeat("a", 40), Run: "1234"},
+		Rows:       &rows,
+		Catalog:    pinned(t),
+	}, "claude-code", recordedReport())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := parseRows(t, rows.Bytes())
+	if len(parsed) == 0 {
+		t.Fatal("no rows")
+	}
+	for _, row := range parsed {
+		if row["SubAccountId"] != "apikey_01ExampleCi" {
+			t.Errorf("SubAccountId %v", row["SubAccountId"])
+		}
+		for tag, want := range map[string]string{
+			focus.TagRepo: "github.com/acme/widgets", focus.TagPR: "7", focus.TagCommitSHA: strings.Repeat("a", 40), focus.TagWorkflowRunID: "1234",
+			focus.TagRunIdentity: "unverified", focus.TagAttributionGrade: "unattributed",
+		} {
+			if got := tagOf(row, tag); got != want {
+				t.Errorf("%s reads %q", tag, got)
+			}
+		}
+	}
+}
+
+func TestRowsOutsideCIStateNoJoinKeys(t *testing.T) {
+	var rows bytes.Buffer
+	if _, err := Record(Options{Rows: &rows, Catalog: pinned(t)}, "claude-code", recordedReport()); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range parseRows(t, rows.Bytes()) {
+		if row["SubAccountId"] != nil {
+			t.Errorf("SubAccountId %v", row["SubAccountId"])
+		}
+		for _, tag := range []string{focus.TagRepo, focus.TagPR, focus.TagCommitSHA, focus.TagWorkflowRunID} {
+			if got := tagOf(row, tag); got != "" {
+				t.Errorf("%s reads %q", tag, got)
+			}
+		}
+	}
+}
+
+func TestRecordKeepsTheReportsOwnGrade(t *testing.T) {
+	report := recordedReport()
+	report.Enforcement = adapter.Enforcement{Grade: adapter.GradeNone, Note: "none: not started by costroid"}
+	var rows bytes.Buffer
+	result, err := Record(Options{Rows: &rows, Catalog: pinned(t)}, "claude-code", report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Enforcement.Grade != adapter.GradeNone || result.Rows == 0 {
+		t.Fatalf("%+v", result)
+	}
+	for _, row := range parseRows(t, rows.Bytes()) {
+		if grade := tagOf(row, focus.TagEnforcementGrade); grade != "none" {
+			t.Errorf("grade %s", grade)
+		}
+	}
+}
+
+func TestAResidencyRequestStatesItsRegionAndTier(t *testing.T) {
+	report := recordedReport()
+	report.Requests[0].Region = "us"
+	report.Requests[0].ServiceTier = "standard"
+	var rows bytes.Buffer
+	if _, err := Record(Options{Rows: &rows, Catalog: pinned(t)}, "claude-code", report); err != nil {
+		t.Fatal(err)
+	}
+	row := parseRows(t, rows.Bytes())[0]
+	if row["RegionId"] != "us" || row["RegionName"] != "us" || row["x_CostroidServiceTier"] != "standard" {
+		t.Fatalf("%v %v %v", row["RegionId"], row["RegionName"], row["x_CostroidServiceTier"])
+	}
+}
+
+func TestTheAgentInheritsTheJoinKeysThroughItsResourceAttributes(t *testing.T) {
+	t.Setenv(cicontext.ResourceAttributesVariable, "service.name=ci")
+	got, log := claudeRunWith(t, "subagent", subagentSession, pinned(t), cicontext.Context{PullRequest: "7", Run: "1234"})
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	const want = "service.name=ci,cicd.pipeline.run.id=1234,vcs.change.id=7"
+	data, err := os.ReadFile(log + ".otel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("the agent read %q", data)
+	}
+}
+
+func recordedReport() adapter.Report {
+	at := time.Date(2026, 11, 1, 11, 15, 0, 0, time.UTC)
+	return adapter.Report{
+		SessionID: subagentSession, AgentVersion: "2.1.316", CostBasis: focus.ListEquivalent, CostSource: "agent_stream",
+		Requests: []adapter.Request{{
+			ID: "req_1", Provider: "anthropic", Model: "claude-haiku-5-5", Start: at, End: at.Add(time.Second),
+			Grain: adapter.PerRequest, Tokens: adapter.Tokens{Output: 1000},
+		}},
 	}
 }

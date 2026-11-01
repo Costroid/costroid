@@ -2,10 +2,12 @@ package run
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
@@ -28,6 +30,8 @@ type rowBuilder struct {
 	agent       string
 	enforcement adapter.Enforcement
 	account     string
+	credential  string
+	ci          cicontext.Context
 }
 
 func (b rowBuilder) rows(report adapter.Report) ([]focus.Row, error) {
@@ -59,6 +63,9 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		Start:               request.Start,
 		End:                 request.End,
 		Account:             b.account,
+		Credential:          b.credential,
+		Region:              request.Region,
+		ServiceTier:         request.ServiceTier,
 		CatalogVersion:      b.catalog.Version(),
 		Basis:               report.CostBasis,
 		Tags:                b.tags(report, request),
@@ -92,7 +99,7 @@ func priceNotes(price catalog.Price, request adapter.Request) []string {
 		notes = append(notes, focus.NoteFallback)
 	}
 	if price.ResidencyMultiplier != nil {
-		notes = append(notes, fmt.Sprintf("list price times %s for data residency in %s", price.ResidencyMultiplier, request.Region))
+		notes = append(notes, focus.ResidencyNote(*price.ResidencyMultiplier, request.Region))
 	}
 	if request.Grain != adapter.PerRequest {
 		notes = append(notes, fmt.Sprintf("one %s's total, so the lowest context tier applies", request.Grain))
@@ -119,6 +126,7 @@ func (b rowBuilder) tags(report adapter.Report, request adapter.Request) map[str
 	if versionTagPattern.MatchString(report.AgentVersion) {
 		tags[focus.TagAgentVersion] = report.AgentVersion
 	}
+	maps.Copy(tags, b.ci.Tags())
 	return tags
 }
 
