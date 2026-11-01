@@ -57,14 +57,35 @@ type Context struct {
 	Task          string
 }
 
-// Read finds the CI system from its own variables. An error means the system
+// System names a CI system.
+type System int
+
+// The zero value means no system was found.
+const (
+	NoSystem System = iota
+	GitHubActions
+	GitLabCI
+)
+
+// Detect finds the CI system from its own variables.
+func Detect(getenv func(string) string) System {
+	switch {
+	case getenv("GITHUB_ACTIONS") == "true":
+		return GitHubActions
+	case getenv("GITLAB_CI") == "true":
+		return GitLabCI
+	}
+	return NoSystem
+}
+
+// Read reads the run from the CI system's variables. An error means the system
 // was found and its event could not be read: the Context still holds what the
 // variables said, without a head that might name a merge commit.
 func Read(getenv func(string) string) (Context, error) {
-	switch {
-	case getenv("GITHUB_ACTIONS") == "true":
+	switch Detect(getenv) {
+	case GitHubActions:
 		return readGitHub(getenv)
-	case getenv("GITLAB_CI") == "true":
+	case GitLabCI:
 		return readGitLab(getenv), nil
 	}
 	return Context{}, nil

@@ -135,9 +135,18 @@ func (g *GitHub) do(ctx context.Context, method, path string, in, out any) error
 	return send(ctx, g.client, method, g.api, path, "Bearer "+token, in, out)
 }
 
-// send makes one request. Its errors name the method and the path, never the
-// credential.
+// send makes one request to GitHub.
 func send(ctx context.Context, client *http.Client, method, root, path, authorization string, in, out any) error {
+	return exchange(ctx, client, method, root, path, map[string]string{
+		"Authorization":        authorization,
+		"Accept":               "application/vnd.github+json",
+		"X-GitHub-Api-Version": apiVersion,
+	}, in, out)
+}
+
+// exchange makes one request with the host's own headers. Its errors name the
+// method and the path, never the credential.
+func exchange(ctx context.Context, client *http.Client, method, root, path string, headers map[string]string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		encoded, err := json.Marshal(in)
@@ -150,9 +159,9 @@ func send(ctx context.Context, client *http.Client, method, root, path, authoriz
 	if err != nil {
 		return fmt.Errorf("scm: build %s %s: %w", method, path, err)
 	}
-	request.Header.Set("Authorization", authorization)
-	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("X-GitHub-Api-Version", apiVersion)
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
 	request.Header.Set("User-Agent", "costroid")
 	if in != nil {
 		request.Header.Set("Content-Type", "application/json")
@@ -281,7 +290,11 @@ func (g *GitHub) ReadFile(ctx context.Context, path, ref string) ([]byte, error)
 	if file.Type != "file" || file.Encoding != "base64" {
 		return nil, fmt.Errorf("scm: %s at %s is not a readable file", path, ref)
 	}
-	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(file.Content, "\n", ""))
+	return decodeFile(path, file.Content)
+}
+
+func decodeFile(path, encoded string) ([]byte, error) {
+	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(encoded, "\n", ""))
 	if err != nil {
 		return nil, fmt.Errorf("scm: decode %s: %w", path, err)
 	}

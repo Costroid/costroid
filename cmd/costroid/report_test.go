@@ -28,6 +28,8 @@ func reportEnvironment(t *testing.T, event string) *scmtest.Stub {
 	if err := os.WriteFile(path, []byte(event), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITLAB_CI", "")
 	t.Setenv("GITHUB_TOKEN", stub.Token)
 	t.Setenv("GITHUB_API_URL", stub.Server.URL)
 	t.Setenv("GITHUB_REPOSITORY", "example/widgets")

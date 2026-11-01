@@ -467,6 +467,15 @@ func TestCommentNeverScolds(t *testing.T) {
 	}
 }
 
+func TestAccountLinkNamesTheGitLabProject(t *testing.T) {
+	input := realInput(t)
+	input.Installation, input.AccountHost = "4242", AccountGitLab
+	body := commentOf(t, input)
+	if !strings.Contains(body, "(https://app.costroid.com/?installation=gitlab%3A4242)") {
+		t.Errorf("no link in\n%s", body)
+	}
+}
+
 func TestTwoLinksCarryEqualWeightAndTheAccountLinkNamesTheInstallation(t *testing.T) {
 	body := commentOf(t, realInput(t))
 	line := regexp.MustCompile(`(?m)^\[[^\]]+\]\(https://app\.costroid\.com/\?installation=github%3A58120394\) · \[[^\]]+\]\(https://docs\.costroid\.com/export\)$`)

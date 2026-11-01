@@ -37,7 +37,44 @@ Set `COSTROID_VERSION` and `COSTROID_SHA256` as CI/CD variables, and `COSTROID_C
 
 Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Merge requests from forks never run the agent.
 
-The template records the run and keeps `costroid-rows.jsonl` as an artifact. `costroid report` posts to GitHub only, so GitLab has no comment yet.
+The template records the run and keeps `costroid-rows.jsonl` as an artifact. The `costroid:report` job then posts one sticky note on the merge request, the same comment a GitHub pull request gets.
+
+This adapter has run against a stub built from GitLab's documentation, never a real GitLab instance. Treat it as untested until a run on your instance posts its note.
+
+### Give the report a token
+
+The job token cannot post. It reads a merge request's notes and cannot create one, and it has no access to commit statuses ([job token access](https://docs.gitlab.com/ci/jobs/ci_job_token/), read November 1, 2026). Create a project access token:
+
+| Setting | Value    | Why                                                                                                                                    |
+| ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Role    | Reporter | Enough to [comment on a merge request and read the code](https://docs.gitlab.com/user/permissions/) (read November 1, 2026)            |
+| Scope   | `api`    | The only [project token scope](https://docs.gitlab.com/security/tokens/access_token_scopes/) that can write through the API (read November 1, 2026) |
+
+Store it as the CI/CD variable `COSTROID_GITLAB_TOKEN`, masked, with the environment scope `costroid-report`. Only the job in that environment receives it, so the agent's job never sees it.
+
+Leave it unprotected. A protected variable reaches a merge request pipeline only when [both branches are protected](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/) (read November 1, 2026), so an ordinary branch would get no note. On Premium or Ultimate, [protect the environment](https://docs.gitlab.com/ci/environments/protected_environments/) too (read November 1, 2026). Without the variable, the job does not run.
+
+[Project access tokens](https://docs.gitlab.com/user/project/settings/project_access_tokens/) need Premium or Ultimate on GitLab.com and any license on a self-managed instance (read November 1, 2026). On GitLab.com Free, use a token of a dedicated account with the Reporter role. From GitLab 19.2, [fine-grained personal access tokens](https://docs.gitlab.com/auth/tokens/fine_grained_access_tokens_rest/) list narrower permissions for these endpoints (read November 1, 2026), and Costroid has not tried one.
+
+Each project access token is [its own bot user](https://docs.gitlab.com/user/project/settings/project_access_tokens/) (read November 1, 2026). The report edits only its own user's note, so a replacement token under a new bot user starts a second note on a merge request that has one.
+
+Masking hides the token from job logs, and it does not hide it from the pipeline file. Someone who can push a branch can name `costroid-report` in their branch's `.gitlab-ci.yml` and read the token ([variable security](https://docs.gitlab.com/ci/variables/), read November 1, 2026). A protected environment stops that for anyone not allowed to deploy to it.
+
+The job reaches the instance at `CI_API_V4_URL`, on gitlab.com or self-managed. The address must be HTTPS. The job reads `costroid.yml` at `CI_MERGE_REQUEST_DIFF_BASE_SHA`, and the project's visibility from the API, where internal counts as private. The comment's account link names `gitlab:<project-id>` and never the instance's hostname.
+
+A [resource group](https://docs.gitlab.com/ci/resource_groups/) runs one report at a time in a project (read November 1, 2026), so two pipelines cannot each post a first note.
+
+### No check on GitLab
+
+GitHub's check run has no direct equal, and the report posts none. A [commit status](https://docs.gitlab.com/api/commits/) has no neutral state (read November 1, 2026), and creating one [needs the Developer role](https://docs.gitlab.com/user/permissions/) (read November 1, 2026), which is more than the note needs. The comment says the check run was not posted, and its machine block names no check. `allow_failure` keeps the job from failing a pipeline.
+
+### Forks
+
+A fork's merge request runs [in the fork](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/), with the fork's configuration and variables (read November 1, 2026). There the rules drop the agent's job and the report's job. Nothing reads your variables, no agent runs and no note posts. `costroid report` refuses such a pipeline as well.
+
+A parent project member can [run that pipeline in the parent project](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/), and then [all variables become available](https://docs.gitlab.com/ci/variables/) to it (read November 1, 2026). The rules drop both jobs if the configuration is yours. The fork's own `.gitlab-ci.yml` can change that, so it could reach `COSTROID_GITLAB_TOKEN`. To close this, set the project's `ci_allow_fork_pipelines_to_run_in_parent_project` to false through the API.
+
+Inside your own project, `costroid:report` holds the token, the rows artifact and nothing else. [`GIT_STRATEGY: empty`](https://docs.gitlab.com/ci/runners/configure_runners/) leaves no code on disk (read November 1, 2026), and the job has no provider key and no id token. The agent's job wrote the rows, so the comment states `unattributed` for every row it reads from them.
 
 ## claude-code-action
 
@@ -79,6 +116,8 @@ Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ing
 | Content flags off                                                           | Prompts, responses, tool input and API bodies stay out of telemetry                 |
 | The prompt is a literal in the recipe                                       | No comment, title or description reaches the agent, Costroid's own comment included |
 | No agent on a fork's pull request; a label before a first contributor's run | A stranger's pull request cannot spend your budget                                  |
+| GitLab's note token in `costroid:report` alone                              | The job that reads the pull request's content can never write to it                 |
+| `costroid:report` holds no code, no provider key and no id token            | The job with write access runs nothing the pull request wrote                       |
 
 `costroid lint-recipes <paths>` rejects a file that breaks one of these, and exits 1. `make check` lints every file in `recipes/` and `action/action.yml`.
 

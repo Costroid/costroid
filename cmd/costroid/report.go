@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
@@ -20,6 +21,7 @@ import (
 const (
 	configFile           = "costroid.yml"
 	installationVariable = "COSTROID_INSTALLATION_ID"
+	gitLabTokenVariable  = "COSTROID_GITLAB_TOKEN"
 	// reportTimeout bounds every request of one report together, so a stalled
 	// host costs the job half a minute at most.
 	reportTimeout = 30 * time.Second
@@ -28,6 +30,9 @@ const (
 )
 
 var headPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// errNoCISystem is why a report outside a supported CI system refuses to run.
+var errNoCISystem = errors.New("report refused: neither GitHub Actions nor GitLab CI was detected")
 
 type reportFlags struct {
 	rows         string
@@ -41,7 +46,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	budget := set.String("budget-usd", "", "the budget the run was given, in USD")
-	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id")
+	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id; GitLab uses the project id")
 	if err := set.Parse(args); err != nil {
 		return reportFlags{}, err
 	}
@@ -110,8 +115,32 @@ func readReportRows(path string) (comment.Ledger, comment.State, error) {
 	return ledger, comment.Reported, nil
 }
 
-// reportCommand exits 0 once its flags parse. A report is never why a job
-// fails, so every failure below ends as a line on stderr.
+// reportTarget is where a report goes and what it says about itself there.
+type reportTarget struct {
+	host         scm.Reporter
+	pull         pullContext
+	installation string
+	accountHost  string
+}
+
+// targetFromEnvironment selects the adapter. A job on a known CI system gets an
+// error when it lacks what a post needs, and that error ends as a line on
+// stderr.
+func targetFromEnvironment(system cicontext.System, flags reportFlags, stderr io.Writer) (reportTarget, error) {
+	if system == cicontext.GitLabCI {
+		return gitLabTarget()
+	}
+	pull, err := readPullContext()
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
+	host, err := hostFromEnvironment(pull)
+	return reportTarget{host: host, pull: pull, installation: flags.installation}, err
+}
+
+// reportCommand exits 0 once its flags parse and a CI system is found. A report
+// is never why a job fails, so every failure after that ends as a line on
+// stderr. Outside CI there is no job to protect, so it refuses and says why.
 func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 	flags, err := parseReport(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
@@ -121,19 +150,21 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
+	system := cicontext.Detect(os.Getenv)
+	if system == cicontext.NoSystem {
+		fmt.Fprintf(stderr, "costroid: %v\n", errNoCISystem)
+		return exitFailure
+	}
 	ledger, state, err := readReportRows(flags.rows)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
-	pull, err := readPullContext()
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-	}
-	host, err := hostFromEnvironment(pull)
+	target, err := targetFromEnvironment(system, flags, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
 		return 0
 	}
+	host, pull := target.host, target.pull
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input := comment.Input{
@@ -141,7 +172,8 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 		State:        state,
 		HeadSHA:      pull.head,
 		Budget:       flags.budget,
-		Installation: flags.installation,
+		Installation: target.installation,
+		AccountHost:  target.accountHost,
 	}
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
@@ -151,7 +183,7 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 	return 0
 }
 
-func hostFromEnvironment(pull pullContext) (scm.Host, error) {
+func hostFromEnvironment(pull pullContext) (scm.Reporter, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return nil, errors.New("GITHUB_TOKEN is not set")
@@ -166,8 +198,48 @@ func hostFromEnvironment(pull pullContext) (scm.Host, error) {
 	})
 }
 
+// gitLabTarget reads a merge request pipeline. The project is the merge
+// request's, and a fork's pipeline is refused here as well as in the recipe's
+// rules, so a fork's merge request never gets a post.
+func gitLabTarget() (reportTarget, error) {
+	run, err := cicontext.Read(os.Getenv)
+	if err != nil {
+		return reportTarget{}, err
+	}
+	token := os.Getenv(gitLabTokenVariable)
+	project := os.Getenv("CI_MERGE_REQUEST_PROJECT_ID")
+	switch {
+	case token == "":
+		return reportTarget{}, errors.New(gitLabTokenVariable + " is not set")
+	case run.PullRequest == "":
+		return reportTarget{}, errors.New("no merge request: CI_MERGE_REQUEST_IID names none")
+	case run.Head == "":
+		return reportTarget{}, errors.New("no head commit: CI_COMMIT_SHA names none")
+	case os.Getenv("CI_MERGE_REQUEST_SOURCE_PROJECT_ID") != project || os.Getenv("CI_PROJECT_ID") != project:
+		return reportTarget{}, errors.New("this pipeline is for a fork's merge request")
+	}
+	number, err := strconv.Atoi(run.PullRequest)
+	if err != nil {
+		return reportTarget{}, fmt.Errorf("merge request: %w", err)
+	}
+	host, err := scm.NewGitLab(scm.GitLabOptions{
+		API:     os.Getenv("CI_API_V4_URL"),
+		Project: project,
+		Tokens:  scm.StaticToken(token),
+	})
+	if err != nil {
+		return reportTarget{}, err
+	}
+	return reportTarget{
+		host:         host,
+		pull:         pullContext{head: run.Head, base: run.Base, pullRequest: number},
+		installation: project,
+		accountHost:  comment.AccountGitLab,
+	}, nil
+}
+
 // postCheck runs before the comment, because the comment names its id.
-func postCheck(ctx context.Context, host scm.Host, input comment.Input, stderr io.Writer) *int64 {
+func postCheck(ctx context.Context, host scm.Reporter, input comment.Input, stderr io.Writer) *int64 {
 	output, err := comment.Check(input)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
@@ -193,7 +265,7 @@ func postCheck(ctx context.Context, host scm.Host, input comment.Input, stderr i
 // resolveAmounts applies decision L19. When the setting or the visibility
 // cannot be read, a repository not known to be private withholds amounts. It
 // spends part of the report's time at most, so the check still posts.
-func resolveAmounts(ctx context.Context, host scm.Host, ref string, stderr io.Writer) comment.Amounts {
+func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr io.Writer) comment.Amounts {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
 	config, err := readConfig(ctx, host, ref)
@@ -216,7 +288,7 @@ func resolveAmounts(ctx context.Context, host scm.Host, ref string, stderr io.Wr
 	return comment.AmountsOff
 }
 
-func readConfig(ctx context.Context, host scm.Host, ref string) (comment.Config, error) {
+func readConfig(ctx context.Context, host scm.Reporter, ref string) (comment.Config, error) {
 	if !headPattern.MatchString(ref) {
 		return comment.Config{}, errors.New("no commit to read it from")
 	}
@@ -230,7 +302,7 @@ func readConfig(ctx context.Context, host scm.Host, ref string) (comment.Config,
 	return comment.ParseConfig(data)
 }
 
-func postComment(ctx context.Context, host scm.Host, input comment.Input, pullRequest int, stderr io.Writer) {
+func postComment(ctx context.Context, host scm.Reporter, input comment.Input, pullRequest int, stderr io.Writer) {
 	body, err := comment.Comment(input)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: comment not posted: %v\n", err)

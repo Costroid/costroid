@@ -1,4 +1,5 @@
-// Package scmtest is a stub GitHub API for tests. It never reaches the network.
+// Package scmtest holds stub GitHub and GitLab APIs for tests. They never reach
+// the network.
 package scmtest
 
 import (

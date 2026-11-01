@@ -7,6 +7,7 @@ package comment
 
 import (
 	"bytes"
+	"cmp"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -82,6 +83,12 @@ var basisLabels = map[string]string{
 
 var installationPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 
+// The hosts an account link can name.
+const (
+	AccountGitHub = "github"
+	AccountGitLab = "gitlab"
+)
+
 // Input is everything a render reads.
 type Input struct {
 	Ledger  Ledger
@@ -91,7 +98,11 @@ type Input struct {
 	// Rows record the enforcement grade and do not record the budget.
 	Budget *decimal.Decimal
 	// Installation is the SCM installation id, empty when no App is installed.
+	// On GitLab it is the project id.
 	Installation string
+	// AccountHost is the host the installation id belongs to, GitHub when
+	// empty. It is a name, never an instance's address.
+	AccountHost string
 	// CheckRunID names the posted check, nil when the post failed.
 	CheckRunID *int64
 	Amounts    Amounts
@@ -273,7 +284,7 @@ func (i Input) view() view {
 		ModelsOmitted:  i.Ledger.ModelsOmitted,
 		Catalogs:       spans(i.Ledger.Catalogs),
 		Rows:           i.Ledger.Rows,
-		AccountURL:     accountLink(i.Installation),
+		AccountURL:     accountLink(i.AccountHost, i.Installation),
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
 	}
@@ -302,11 +313,11 @@ func spans(names []Data) string {
 
 // accountLink carries the installation id when there is one. A malformed id is
 // dropped, and the link still opens the account.
-func accountLink(installation string) string {
+func accountLink(host, installation string) string {
 	if !installationPattern.MatchString(installation) {
 		return accountURL
 	}
-	return accountURL + "?" + url.Values{"installation": {"github:" + installation}}.Encode()
+	return accountURL + "?" + url.Values{"installation": {cmp.Or(host, AccountGitHub) + ":" + installation}}.Encode()
 }
 
 //go:embed comment.tmpl
