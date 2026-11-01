@@ -1,10 +1,8 @@
 // Package oidc verifies CI OIDC ID tokens and reads a run's identity from them.
 //
-// Only RS256 is accepted. The claim names and issuer endpoints below come from
-// GitHub's and GitLab's documentation as remembered on 2026-11-01. They are
-// unverified: the brief that wrote this package had no web access.
-// https://docs.github.com/en/actions/reference/security/oidc
-// https://docs.gitlab.com/ci/secrets/id_token_authentication/
+// Only RS256 is accepted, the one algorithm both issuers' discovery documents
+// list. docs/serve.md cites the source and retrieval date of every claim name,
+// issuer URL and key set path below.
 package oidc
 
 import (
@@ -83,16 +81,21 @@ func GitLab(host string) Issuer {
 // Identity is a run as the token states it. Repository is lower case, host and
 // path, the form of the costroid/repo tag. PullRequest is empty unless the
 // token itself names one.
+//
+// CommitSHA is the commit the token verifies. It is the head of the ref only
+// when CommitIsHead says so: on GitHub's pull_request event it is a merge
+// commit, and on a GitLab merged results pipeline a temporary one.
 type Identity struct {
-	Host        string
-	Owner       string
-	Repository  string
-	RunID       string
-	RunAttempt  string
-	CommitSHA   string
-	Actor       string
-	Event       string
-	PullRequest string
+	Host         string
+	Owner        string
+	Repository   string
+	RunID        string
+	RunAttempt   string
+	CommitSHA    string
+	CommitIsHead bool
+	Actor        string
+	Event        string
+	PullRequest  string
 }
 
 // Verifier checks tokens against a set of issuers and one audience.
@@ -260,9 +263,12 @@ var (
 	hostName   = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 	commitSHA  = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 	runID      = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
-	githubPull = regexp.MustCompile(`^refs/pull/([1-9][0-9]{0,19})/(merge|head)$`)
-	gitlabPull = regexp.MustCompile(`^refs/merge-requests/([1-9][0-9]{0,19})/(head|merge|train)$`)
+	githubPull = regexp.MustCompile(`^refs/pull/([1-9][0-9]{0,19})/merge$`)
 )
+
+// eventPush is both systems' name for a run a push started, the one event
+// whose token states the head of its ref.
+const eventPush = "push"
 
 type githubClaims struct {
 	Repository string `json:"repository"`
@@ -280,7 +286,6 @@ type gitlabClaims struct {
 	SHA            string `json:"sha"`
 	UserLogin      string `json:"user_login"`
 	PipelineSource string `json:"pipeline_source"`
-	Ref            string `json:"ref_path"`
 }
 
 func readIdentity(issuer Issuer, payload string) (Identity, error) {
@@ -295,7 +300,9 @@ func readIdentity(issuer Issuer, payload string) (Identity, error) {
 		path = c.Repository
 		identity.RunID, identity.RunAttempt = c.RunID, c.RunAttempt
 		identity.CommitSHA, identity.Actor, identity.Event = c.SHA, c.Actor, c.EventName
-		identity.PullRequest = pullNumber(githubPull, c.Ref)
+		if match := githubPull.FindStringSubmatch(c.Ref); match != nil {
+			identity.PullRequest = match[1]
+		}
 	case GitLabCI:
 		var c gitlabClaims
 		if err := decodeSegment(payload, &c); err != nil {
@@ -304,7 +311,6 @@ func readIdentity(issuer Issuer, payload string) (Identity, error) {
 		path = c.ProjectPath
 		identity.RunID = c.PipelineID
 		identity.CommitSHA, identity.Actor, identity.Event = c.SHA, c.UserLogin, c.PipelineSource
-		identity.PullRequest = pullNumber(gitlabPull, c.Ref)
 	default:
 		return Identity{}, fmt.Errorf("%w: issuer kind %d", ErrIssuer, issuer.Kind)
 	}
@@ -313,6 +319,7 @@ func readIdentity(issuer Issuer, payload string) (Identity, error) {
 		return Identity{}, fmt.Errorf("%w: repository", ErrClaims)
 	}
 	identity.Repository = identity.Host + "/" + path
+	identity.CommitIsHead = identity.Event == eventPush
 	identity.Owner, _, _ = strings.Cut(path, "/")
 	if !runID.MatchString(identity.RunID) {
 		return Identity{}, fmt.Errorf("%w: run id", ErrClaims)
@@ -326,12 +333,4 @@ func readIdentity(issuer Issuer, payload string) (Identity, error) {
 		}
 	}
 	return identity, nil
-}
-
-func pullNumber(pattern *regexp.Regexp, ref string) string {
-	match := pattern.FindStringSubmatch(ref)
-	if match == nil {
-		return ""
-	}
-	return match[1]
 }

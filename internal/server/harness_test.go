@@ -28,6 +28,7 @@ const (
 	acmeRepo   = "github.com/acme/widgets"
 	acmeRun    = "16873409921"
 	acmeSHA    = "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d"
+	acmeHead   = "1d4e7a90c3b25f8866a0e4d17c92b35fa8e6d071"
 	acmePull   = "1423"
 	goldenRows = "testdata/claude-code-2.1.316-subagent.rows.jsonl"
 	goldenOTLP = "../adapter/claudecode/testdata/2.1.316/subagent/otel-api-requests.jsonl"
@@ -226,7 +227,7 @@ func row(id string, class focus.TokenClass, tokens int) map[string]any {
 		"Tags": map[string]any{
 			focus.TagAgent: "claude-code", focus.TagModel: "claude-opus-5-5", focus.TagCostSource: "agent_stream",
 			focus.TagCostBasis: "measured", focus.TagAttributionGrade: "unattributed", focus.TagEnforcementGrade: "agent-flag",
-			focus.TagRunIdentity: "unverified", focus.TagSessionID: "session-1",
+			focus.TagRunIdentity: "unverified", focus.TagSessionID: "session-1", store.TagCommitSHA: acmeHead,
 		},
 		"x_CostroidRowId": focus.RowIdentity(id, class),
 	}
@@ -247,6 +248,21 @@ func lines(t testing.TB, rows ...map[string]any) []byte {
 		}
 	}
 	return buffer.Bytes()
+}
+
+// statingHead adds to recorded rows the head a wrapper would state.
+func statingHead(t testing.TB, body []byte) []byte {
+	t.Helper()
+	var rows []map[string]any
+	for line := range bytes.Lines(body) {
+		var r map[string]any
+		if err := json.Unmarshal(line, &r); err != nil {
+			t.Fatal(err)
+		}
+		tags(r)[store.TagCommitSHA] = acmeHead
+		rows = append(rows, r)
+	}
+	return lines(t, rows...)
 }
 
 func clone(r map[string]any) map[string]any {

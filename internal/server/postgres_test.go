@@ -62,7 +62,7 @@ func (w *ledgerWorld) count(t *testing.T) int {
 
 func TestPostgresThePerPullRequestViewIsDerivedFromTheRows(t *testing.T) {
 	w := postgresWorld(t)
-	w.rows(w.token(), readFile(t, goldenRows)).want(t, http.StatusOK)
+	w.rows(w.token(), statingHead(t, readFile(t, goldenRows))).want(t, http.StatusOK)
 	view := w.view(t, w.token(), acmeRepo, acmePull)
 	if !view.Budget.Evidence || len(view.Budget.Spend) != 1 {
 		t.Fatalf("%+v", view.Budget)
@@ -82,6 +82,26 @@ func TestPostgresThePerPullRequestViewIsDerivedFromTheRows(t *testing.T) {
 	}
 	if rows != 19 {
 		t.Fatalf("%d rows", rows)
+	}
+}
+
+func TestPostgresTheMergeCommitAndTheStatedHeadKeepTheirOwnColumns(t *testing.T) {
+	w := postgresWorld(t)
+	w.rows(w.token(), lines(t, row("req-1", focus.Output, 100))).want(t, http.StatusOK)
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, w.db.SuperURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var head, token, basis, tag string
+	err = conn.QueryRow(ctx, `SELECT commit_sha, token_commit_sha, head_basis, document->'Tags'->>'costroid/commit_sha' FROM focus_rows`).
+		Scan(&head, &token, &basis, &tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head != acmeHead || tag != acmeHead || token != acmeSHA || basis != store.HeadStated {
+		t.Fatalf("head %s, tag %s, token %s, basis %s", head, tag, token, basis)
 	}
 }
 

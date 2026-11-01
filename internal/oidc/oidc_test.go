@@ -77,14 +77,15 @@ func TestVerifyReadsAGitLabRunFromTheToken(t *testing.T) {
 	claims["pipeline_id"] = "991"
 	claims["user_login"] = "gl-dev"
 	claims["pipeline_source"] = "merge_request_event"
-	claims["ref_path"] = "refs/merge-requests/77/head"
+	claims["ref"] = "feature-branch-1"
+	claims["ref_path"] = "refs/heads/feature-branch-1"
 	got, err := s.verifier(GitLabCI).Verify(context.Background(), s.Token(claims))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Identity{
 		Host: "github.com", Owner: "acme", Repository: "github.com/acme/platform/widgets", RunID: "991",
-		CommitSHA: testSHA, Actor: "gl-dev", Event: "merge_request_event", PullRequest: "77",
+		CommitSHA: testSHA, Actor: "gl-dev", Event: "merge_request_event",
 	}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
@@ -101,6 +102,72 @@ func TestAPushTokenNamesNoPullRequest(t *testing.T) {
 	}
 	if got.PullRequest != "" {
 		t.Fatalf("pull request %q from a branch ref", got.PullRequest)
+	}
+}
+
+func TestOnlyAPushProvesTheHead(t *testing.T) {
+	s := newStubIssuer(t)
+	cases := []struct {
+		kind  Kind
+		claim string
+		event string
+		want  bool
+	}{
+		{GitHubActions, "event_name", "push", true},
+		{GitHubActions, "event_name", "pull_request", false},
+		{GitHubActions, "event_name", "pull_request_target", false},
+		{GitHubActions, "event_name", "issue_comment", false},
+		{GitHubActions, "event_name", "workflow_dispatch", false},
+		{GitHubActions, "event_name", "dynamic", false},
+		{GitLabCI, "pipeline_source", "push", true},
+		{GitLabCI, "pipeline_source", "merge_request_event", false},
+		{GitLabCI, "pipeline_source", "web", false},
+	}
+	for _, tc := range cases {
+		claims := s.claims()
+		claims["project_path"], claims["pipeline_id"] = "acme/widgets", "991"
+		claims[tc.claim] = tc.event
+		got, err := s.verifier(tc.kind).Verify(context.Background(), s.Token(claims))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.CommitIsHead != tc.want {
+			t.Errorf("%s = %s: CommitIsHead %t", tc.claim, tc.event, got.CommitIsHead)
+		}
+	}
+}
+
+func TestOnlyAMergeRefNamesAGitHubPullRequest(t *testing.T) {
+	s := newStubIssuer(t)
+	for ref, want := range map[string]string{
+		"refs/pull/1423/merge": "1423",
+		"refs/pull/1423/head":  "",
+		"refs/heads/1423":      "",
+	} {
+		claims := s.claims()
+		claims["ref"] = ref
+		got, err := s.verifier(GitHubActions).Verify(context.Background(), s.Token(claims))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.PullRequest != want {
+			t.Errorf("%s: pull request %q", ref, got.PullRequest)
+		}
+	}
+}
+
+func TestAGitLabTokenNeverNamesAMergeRequest(t *testing.T) {
+	s := newStubIssuer(t)
+	claims := s.claims()
+	delete(claims, "repository")
+	claims["project_path"], claims["pipeline_id"] = "acme/widgets", "991"
+	claims["ref_path"] = "refs/merge-requests/77/head"
+	got, err := s.verifier(GitLabCI).Verify(context.Background(), s.Token(claims))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PullRequest != "" {
+		t.Fatalf("pull request %q from ref_path", got.PullRequest)
 	}
 }
 
@@ -252,7 +319,7 @@ func FuzzVerify(f *testing.F) {
 
 func FuzzReadIdentity(f *testing.F) {
 	f.Add(`{"repository":"a/b","run_id":"1","sha":"9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d","ref":"refs/pull/1/merge"}`)
-	f.Add(`{"project_path":"a/b/c","pipeline_id":"1","ref_path":"refs/merge-requests/3/head"}`)
+	f.Add(`{"project_path":"a/b/c","pipeline_id":"1","ref_path":"refs/heads/main"}`)
 	f.Fuzz(func(t *testing.T, payload string) {
 		segment := base64.RawURLEncoding.EncodeToString([]byte(payload))
 		for _, issuer := range []Issuer{GitHub(), GitLab("gitlab.com")} {

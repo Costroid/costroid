@@ -75,14 +75,14 @@ func TestIdentityComesFromTheTokenNeverThePayload(t *testing.T) {
 	record := ledger.only(t, tenantA)
 	got := record.Row.Tags
 	for key, want := range map[string]string{
-		store.TagRepo: acmeRepo, store.TagPR: acmePull, store.TagCommitSHA: acmeSHA, store.TagWorkflowRunID: acmeRun,
+		store.TagRepo: acmeRepo, store.TagPR: acmePull, store.TagWorkflowRunID: acmeRun,
 		focus.TagRunIdentity: "token_verified", focus.TagAttributionGrade: "exact",
 	} {
 		if got[key] != want {
 			t.Errorf("%s = %q, want %q", key, got[key], want)
 		}
 	}
-	if record.Actor != "octo-dev" || record.Event != "pull_request" || record.RunAttempt != "1" {
+	if record.Actor != "octo-dev" || record.Event != "pull_request" || record.RunAttempt != "1" || record.TokenCommitSHA != acmeSHA {
 		t.Errorf("%+v", record)
 	}
 }
@@ -91,7 +91,6 @@ func TestRowsWhoseJoinKeysDisagreeWithTheTokenAreRejected(t *testing.T) {
 	cases := map[string]struct{ tag, value string }{
 		"repository":   {store.TagRepo, "github.com/acme/other"},
 		"owner":        {store.TagRepo, "github.com/beta/widgets"},
-		"commit":       {store.TagCommitSHA, strings.Repeat("a", 40)},
 		"run":          {store.TagWorkflowRunID, "1"},
 		"pull request": {store.TagPR, "999"},
 	}
@@ -109,6 +108,97 @@ func TestRowsWhoseJoinKeysDisagreeWithTheTokenAreRejected(t *testing.T) {
 				t.Fatalf("%d rows stored from a rejected batch", len(rows))
 			}
 		})
+	}
+}
+
+// The fixtures' pull_request token states acmeSHA, a merge commit. Its pull
+// request's head, acmeHead, is a different commit.
+func TestAHeadThatDiffersFromTheMergeCommitIsAcceptedAsAClaim(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	w.rows(w.token(), lines(t, row("req-1", focus.Output, 100))).want(t, http.StatusOK)
+	record := ledger.only(t, tenantA)
+	if got := record.Row.Tags[store.TagCommitSHA]; got != acmeHead {
+		t.Errorf("commit_sha %q, want the stated head", got)
+	}
+	if record.TokenCommitSHA != acmeSHA || record.HeadBasis != store.HeadStated {
+		t.Errorf("token commit %q, basis %q", record.TokenCommitSHA, record.HeadBasis)
+	}
+	if got := record.Row.Tags[focus.TagAttributionGrade]; got != "exact" {
+		t.Errorf("grade %s", got)
+	}
+}
+
+func TestAPullRequestRunStatingNoHeadNeverWritesTheMergeCommitAsOne(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	r := row("req-1", focus.Output, 100)
+	delete(tags(r), store.TagCommitSHA)
+	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+	record := ledger.only(t, tenantA)
+	if got, present := record.Row.Tags[store.TagCommitSHA]; present {
+		t.Errorf("commit_sha %q on a row that stated no head", got)
+	}
+	if record.TokenCommitSHA != acmeSHA || record.HeadBasis != "" {
+		t.Errorf("token commit %q, basis %q", record.TokenCommitSHA, record.HeadBasis)
+	}
+	if got := record.Row.Tags[focus.TagAttributionGrade]; got != "windowed" {
+		t.Errorf("grade %s, and an exact row must name a head", got)
+	}
+}
+
+func TestAHeadThatIsNotACommitIsRefused(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	r := row("req-1", focus.Output, 100)
+	tags(r)[store.TagCommitSHA] = "not-a-commit"
+	got := w.rows(w.token(), lines(t, r)).want(t, http.StatusForbidden)
+	if got.code(t) != codeJoinKey {
+		t.Fatalf("code %s", got.code(t))
+	}
+	if len(ledger.stored(t, tenantA)) != 0 {
+		t.Fatal("rows stored")
+	}
+}
+
+func pushToken(w *world) string {
+	claims := w.claims()
+	claims["event_name"], claims["ref"] = "push", "refs/heads/main"
+	return w.issuer.Token(claims)
+}
+
+func TestAPushTokenIsTheAuthorityOverTheHead(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	got := w.rows(pushToken(w), lines(t, row("req-1", focus.Output, 100))).want(t, http.StatusForbidden)
+	if got.code(t) != codeJoinKey {
+		t.Fatalf("code %s", got.code(t))
+	}
+	if len(ledger.stored(t, tenantA)) != 0 {
+		t.Fatal("rows stored from a rejected batch")
+	}
+}
+
+func TestAPushTokenWritesItsCommitAsTheHead(t *testing.T) {
+	for name, stated := range map[string]string{"stated": acmeSHA, "not stated": ""} {
+		t.Run(name, func(t *testing.T) {
+			w, ledger := memoryWorld(t)
+			r := row("req-1", focus.Output, 100)
+			tags(r)[store.TagCommitSHA] = stated
+			if stated == "" {
+				delete(tags(r), store.TagCommitSHA)
+			}
+			w.rows(pushToken(w), lines(t, r)).want(t, http.StatusOK)
+			record := ledger.only(t, tenantA)
+			if record.Row.Tags[store.TagCommitSHA] != acmeSHA || record.TokenCommitSHA != acmeSHA || record.HeadBasis != store.HeadFromToken {
+				t.Errorf("%+v", record)
+			}
+		})
+	}
+}
+
+func TestAHeadStatedUnderAnIngestKeyIsAClaimWithNoTokenCommit(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	w.rows(acmeKey, lines(t, row("req-1", focus.Output, 100))).want(t, http.StatusOK)
+	record := ledger.only(t, tenantA)
+	if record.Row.Tags[store.TagCommitSHA] != acmeHead || record.HeadBasis != store.HeadStated || record.TokenCommitSHA != "" {
+		t.Errorf("%+v", record)
 	}
 }
 
@@ -358,6 +448,7 @@ func TestATokenThatCannotProveAPullRequestLeavesTheRowWindowed(t *testing.T) {
 	claims["event_name"] = "push"
 	r := row("req-1", focus.Output, 100)
 	tags(r)[store.TagPR] = "777"
+	tags(r)[store.TagCommitSHA] = acmeSHA
 	w.rows(w.issuer.Token(claims), lines(t, r)).want(t, http.StatusOK)
 	got := ledger.only(t, tenantA).Row.Tags
 	if got[focus.TagAttributionGrade] != "windowed" || got[focus.TagRunIdentity] != "token_verified" {
@@ -536,7 +627,6 @@ func TestTelemetryJoinKeysAreCheckedAgainstTheToken(t *testing.T) {
 	cases := map[string]map[string]string{
 		"repository":   {"vcs.repository.url.full": "https://github.com/acme/other"},
 		"pull request": {"vcs.change.id": "999"},
-		"commit":       {"vcs.ref.head.revision": strings.Repeat("a", 40)},
 		"run":          {"cicd.pipeline.run.id": "1"},
 	}
 	for name, resource := range cases {
@@ -565,6 +655,17 @@ func TestTelemetryJoinKeysThatAgreePass(t *testing.T) {
 	for _, record := range ledger.stored(t, tenantA) {
 		if record.Row.Tags[focus.TagAttributionGrade] != "exact" || record.Row.Tags[focus.TagCostSource] != "otlp" {
 			t.Fatalf("%v", record.Row.Tags)
+		}
+	}
+}
+
+func TestTelemetryCarriesTheStatedHeadBesideTheTokensCommit(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	body := goldenLogs(t, map[string]string{"service.name": "claude-code", "vcs.ref.head.revision": strings.ToUpper(acmeHead)})
+	w.send(http.MethodPost, "/otlp/v1/logs", w.token(), "application/json", body).want(t, http.StatusOK)
+	for _, record := range ledger.stored(t, tenantA) {
+		if record.Row.Tags[store.TagCommitSHA] != acmeHead || record.TokenCommitSHA != acmeSHA || record.HeadBasis != store.HeadStated {
+			t.Fatalf("%+v", record)
 		}
 	}
 }

@@ -485,6 +485,46 @@ func TestTheDatabaseRefusesAnUnverifiedRowClaimingAGrade(t *testing.T) {
 	}
 }
 
+func TestTheDatabaseRefusesAHeadBasisThatContradictsTheColumns(t *testing.T) {
+	db := storetest.New(t)
+	a, _ := tenants(t, db)
+	s := open(t, db)
+	commit, other := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	verified := func(id int, mutate func(*store.Record)) store.Record {
+		r := record(rowID(id), "1", "windowed", "token_verified")
+		r.Row.Tags[store.TagCommitSHA] = commit
+		mutate(&r)
+		return r
+	}
+	cases := map[string]struct {
+		record     store.Record
+		constraint string
+	}{
+		"an unknown basis": {verified(1, func(r *store.Record) { r.HeadBasis = "guessed" }), "head_basis_known"},
+		"a token head that is not the token's commit": {
+			verified(2, func(r *store.Record) { r.HeadBasis, r.TokenCommitSHA = store.HeadFromToken, other }),
+			"head_from_token_is_the_token_commit",
+		},
+		"an unverified row holding a token commit": {
+			func() store.Record {
+				r := record(rowID(3), "1", "unattributed", "unverified")
+				r.TokenCommitSHA = commit
+				return r
+			}(),
+			"unverified_has_no_token_commit",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := s.Ingest(context.Background(), a, batch(tc.record))
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.ConstraintName != tc.constraint {
+				t.Fatalf("err = %v, want constraint %s", err, tc.constraint)
+			}
+		})
+	}
+}
+
 func TestBudgetEligibilityIsDerivedByTheDatabase(t *testing.T) {
 	db := storetest.New(t)
 	s := open(t, db)

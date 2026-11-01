@@ -10,6 +10,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/store"
 )
 
@@ -85,9 +86,12 @@ type charge struct {
 // joinResult is what the join decided for one row.
 type joinResult struct {
 	repo, pr, sha, run string
-	grade, identity    string
-	attempt            string
-	actor, event       string
+	// tokenSHA is the commit the token verifies. sha is the head, which is
+	// the same commit only when headBasis is store.HeadFromToken.
+	tokenSHA, headBasis string
+	grade, identity     string
+	attempt             string
+	actor, event        string
 }
 
 func joinKeyRefusal(key string) *refusal {
@@ -96,7 +100,8 @@ func joinKeyRefusal(key string) *refusal {
 
 // join applies the token to a charge. Keys come from the token. A stated key
 // that disagrees rejects the batch, and a stated pull request the token cannot
-// confirm is discarded, which leaves the row windowed.
+// confirm is discarded, which leaves the row windowed. A row with no head to
+// name stays windowed too, because the tag contract's exact row names one.
 func (s *Server) join(c *charge, who caller) (joinResult, error) {
 	if who.identity == nil {
 		return s.joinUnverified(c, who)
@@ -104,7 +109,6 @@ func (s *Server) join(c *charge, who caller) (joinResult, error) {
 	id := who.identity
 	for _, pair := range []struct{ key, stated, token string }{
 		{"repository", c.repo, id.Repository},
-		{"commit", c.sha, id.CommitSHA},
 		{"run", c.run, id.RunID},
 	} {
 		if pair.stated != "" && pair.stated != pair.token {
@@ -114,15 +118,47 @@ func (s *Server) join(c *charge, who caller) (joinResult, error) {
 	if c.pr != "" && id.PullRequest != "" && c.pr != id.PullRequest {
 		return joinResult{}, joinKeyRefusal("pull request")
 	}
+	head, basis, err := headOf(c, id)
+	if err != nil {
+		return joinResult{}, err
+	}
 	result := joinResult{
-		repo: id.Repository, pr: id.PullRequest, sha: id.CommitSHA, run: id.RunID,
+		repo: id.Repository, pr: id.PullRequest, sha: head, run: id.RunID,
+		tokenSHA: id.CommitSHA, headBasis: basis,
 		grade: gradeWindowed, identity: identityToken,
 		attempt: id.RunAttempt, actor: id.Actor, event: id.Event,
 	}
-	if id.PullRequest != "" && c.session != "" && !c.weakJoin {
+	if id.PullRequest != "" && head != "" && c.session != "" && !c.weakJoin {
 		result.grade = gradeExact
 	}
 	return result, nil
+}
+
+// headOf decides a verified row's head. A token that proves the head is the
+// authority over it. Any other token says nothing about the head, so a stated
+// head that differs from the token's commit is not a disagreement.
+func headOf(c *charge, id *oidc.Identity) (string, string, error) {
+	if !id.CommitIsHead {
+		return statedHead(c.sha)
+	}
+	if c.sha != "" && c.sha != id.CommitSHA {
+		return "", "", joinKeyRefusal("commit")
+	}
+	return id.CommitSHA, store.HeadFromToken, nil
+}
+
+// statedHead keeps a sender's head as a claim. Every such row carries
+// store.HeadStated, and that is the seam for a later SCM check: it reads those
+// rows and reports a head the pull request never had as its own issue. The
+// join cannot tell, because no token names a pull request's head.
+func statedHead(sha string) (string, string, error) {
+	if sha == "" {
+		return "", "", nil
+	}
+	if !shaTag.MatchString(sha) {
+		return "", "", joinKeyRefusal("commit")
+	}
+	return sha, store.HeadStated, nil
 }
 
 // joinUnverified keeps a sender's stated keys only as claims. The row is
@@ -136,7 +172,7 @@ func (s *Server) joinUnverified(c *charge, who caller) (joinResult, error) {
 		result.pr = c.pr
 	}
 	if shaTag.MatchString(c.sha) {
-		result.sha = c.sha
+		result.sha, result.headBasis = c.sha, store.HeadStated
 	}
 	if runTag.MatchString(c.run) {
 		result.run = c.run
@@ -182,7 +218,10 @@ func (s *Server) price(c *charge, joined joinResult) (store.Record, error) {
 	if err := row.Check(); err != nil {
 		return store.Record{}, fmt.Errorf("server: priced row: %w", err)
 	}
-	return store.Record{Row: row, RunAttempt: joined.attempt, Actor: joined.actor, Event: joined.event}, nil
+	return store.Record{
+		Row: row, RunAttempt: joined.attempt, Actor: joined.actor, Event: joined.event,
+		TokenCommitSHA: joined.tokenSHA, HeadBasis: joined.headBasis,
+	}, nil
 }
 
 func (s *Server) applyPrice(priced *focus.Charge, c *charge) error {

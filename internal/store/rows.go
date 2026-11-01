@@ -20,7 +20,18 @@ type Record struct {
 	// Actor is an SCM login or a per-tenant pseudonym, never an address.
 	Actor string
 	Event string
+	// TokenCommitSHA is the commit the CI token verifies, empty without one.
+	TokenCommitSHA string
+	// HeadBasis says where costroid/commit_sha came from, empty when the row
+	// has none.
+	HeadBasis string
 }
+
+// Values of HeadBasis.
+const (
+	HeadFromToken = "token"
+	HeadStated    = "stated"
+)
 
 // Batch is one ingest request's writes.
 type Batch struct {
@@ -41,6 +52,7 @@ type columns struct {
 	ids, currencies, categories, meters, units, quantities, listCosts, effectiveCosts []string
 	starts, ends, bases, sources, grades, enforcement, identities                     []string
 	agents, models, repos, prs, shas, runs, attempts, actors, events, catalogs, docs  []string
+	tokenCommits, headBases                                                           []string
 }
 
 const insertRows = `
@@ -49,19 +61,20 @@ INSERT INTO focus_rows (
 	consumed_quantity, list_cost, effective_cost, charge_period_start, charge_period_end,
 	cost_basis, cost_source, attribution_grade, enforcement_grade, run_identity,
 	agent, model, repo, pr, commit_sha, workflow_run_id, run_attempt, actor, event,
-	catalog_version, document)
+	catalog_version, document, token_commit_sha, head_basis)
 SELECT costroid_tenant(), id, currency, category, meter, unit,
 	quantity::numeric, list::numeric, effective::numeric, start::timestamptz, stop::timestamptz,
 	basis, source, grade, enforcement, identity,
 	NULLIF(agent, ''), NULLIF(model, ''), NULLIF(repo, ''), NULLIF(pr, ''), NULLIF(sha, ''),
 	NULLIF(run, ''), NULLIF(attempt, ''), NULLIF(actor, ''), NULLIF(event, ''),
-	NULLIF(catalog, ''), doc::jsonb
+	NULLIF(catalog, ''), doc::jsonb, NULLIF(token_commit, ''), NULLIF(head_basis, '')
 FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[],
 	$9::text[], $10::text[], $11::text[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[],
 	$17::text[], $18::text[], $19::text[], $20::text[], $21::text[], $22::text[], $23::text[], $24::text[],
-	$25::text[], $26::text[])
+	$25::text[], $26::text[], $27::text[], $28::text[])
 	AS t(id, currency, category, meter, unit, quantity, list, effective, start, stop, basis, source, grade,
-	     enforcement, identity, agent, model, repo, pr, sha, run, attempt, actor, event, catalog, doc)
+	     enforcement, identity, agent, model, repo, pr, sha, run, attempt, actor, event, catalog, doc,
+	     token_commit, head_basis)
 ON CONFLICT (tenant_id, row_id) DO NOTHING`
 
 const addDrops = `
@@ -157,6 +170,8 @@ func (c *columns) add(record *Record) error {
 	c.events = append(c.events, record.Event)
 	c.catalogs = append(c.catalogs, catalogVersion)
 	c.docs = append(c.docs, string(doc))
+	c.tokenCommits = append(c.tokenCommits, record.TokenCommitSHA)
+	c.headBases = append(c.headBases, record.HeadBasis)
 	return nil
 }
 
@@ -165,6 +180,7 @@ func (c *columns) args() []any {
 		c.ids, c.currencies, c.categories, c.meters, c.units, c.quantities, c.listCosts, c.effectiveCosts,
 		c.starts, c.ends, c.bases, c.sources, c.grades, c.enforcement, c.identities,
 		c.agents, c.models, c.repos, c.prs, c.shas, c.runs, c.attempts, c.actors, c.events, c.catalogs, c.docs,
+		c.tokenCommits, c.headBases,
 	}
 }
 
