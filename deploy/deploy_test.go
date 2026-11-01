@@ -127,10 +127,13 @@ func TestReleaseRefusesTheTagAnOldInstallFetches(t *testing.T) {
 
 func TestReleaseSignsAndWritesAnSPDXSBOM(t *testing.T) {
 	workflow := string(read(t, filepath.Join(workflows, "release.yml")))
-	for _, want := range []string{"cosign sign-blob --yes", "cosign sign --yes", "format: spdx-json", "cosign attest --yes --type spdxjson"} {
+	for _, want := range []string{"cosign sign-blob --yes", "cosign sign --yes", "cosign attest --yes --type spdxjson"} {
 		if !strings.Contains(workflow, want) {
 			t.Errorf("release.yml has no %q", want)
 		}
+	}
+	if sboms := strings.Count(workflow, "format: spdx-json"); sboms != 2 {
+		t.Errorf("%d SPDX SBOMs, want one for the binaries and one for the image", sboms)
 	}
 }
 

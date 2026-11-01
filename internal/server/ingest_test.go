@@ -1091,7 +1091,11 @@ func TestACredentialIsKeptSoAStoredRowCanReconcile(t *testing.T) {
 	r := row("req-1", focus.Output, 100)
 	r["SubAccountId"] = "apikey_01ExampleCi"
 	got := w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
-	if strings.Contains(string(got.body), "SubAccountId") {
+	var receipt ingestAnswer
+	if err := json.Unmarshal(got.body, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Dropped[otlp.DropLabel("SubAccountId")] != 0 {
 		t.Fatalf("counted as a drop: %s", got.body)
 	}
 	if id := ledger.only(t, tenantA).Row.SubAccountID; id == nil || *id != "apikey_01ExampleCi" {

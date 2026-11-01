@@ -87,8 +87,15 @@ func TestExecutionFileLeavesEveryContentFieldBehind(t *testing.T) {
 	}
 }
 
-func TestExecutionFileThatIsNotAnArrayIsRefused(t *testing.T) {
-	for _, body := range []string{`{"type":"result"}`, ``, `[{"type":"result"`} {
+func TestExecutionFileThatIsNotAnArrayIsRefusedAndNamed(t *testing.T) {
+	_, err := Agent{ConfigDir: t.TempDir()}.ReadExecutionFile(strings.NewReader(`{"type":"result"}`), recorded)
+	if err == nil || !strings.Contains(err.Error(), "not a JSON array") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestExecutionFileThatDoesNotParseIsRefused(t *testing.T) {
+	for _, body := range []string{``, `[{"type":"result"`} {
 		if _, err := (Agent{ConfigDir: t.TempDir()}).ReadExecutionFile(strings.NewReader(body), recorded); err == nil {
 			t.Errorf("%q was read", body)
 		}

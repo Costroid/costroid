@@ -489,6 +489,28 @@ func TestALedgerPricedAtTheServedRegionLeavesNoResidency(t *testing.T) {
 	wantCauses(t, got)
 }
 
+func TestRowVersionTwoStatesItsRegionAndTierInColumns(t *testing.T) {
+	line := `{"RegionId":"us","SkuPriceId":"anthropic:example:global:standard:all:output","x_CostroidServiceTier":"batch"}`
+	var parsed ledgerRow
+	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.region() != "us" || parsed.tier() != "batch" {
+		t.Fatalf("region %s, tier %s", parsed.region(), parsed.tier())
+	}
+}
+
+func TestRowVersionOneStillReadsTheDescriptionAndThePriceID(t *testing.T) {
+	line := `{"ChargeDescription":"x; list price times 1.1 for data residency in eu; y","SkuPriceId":"anthropic:example:global:priority:all:output"}`
+	var parsed ledgerRow
+	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.region() != "eu" || parsed.tier() != "priority" {
+		t.Fatalf("region %s, tier %s", parsed.region(), parsed.tier())
+	}
+}
+
 func TestSharedKeyIsTrafficTheLedgerNeverSaw(t *testing.T) {
 	got := only(t, pass(t, readRows(t, anthropicRows(), ""), anthropicReplay(t, "usage-shared.json", "cost-shared.json"), settledNow))
 	if got.State != TokensMiss {
