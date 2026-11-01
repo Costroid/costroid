@@ -15,12 +15,14 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/server"
 )
 
 const usage = `costroid runs a coding agent under a budget and records what it cost.
 
 Usage:
   costroid run --budget-usd N --out rows.jsonl -- <agent command>
+  costroid serve
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -54,6 +56,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	switch args[0] {
 	case "run":
 		return runCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "serve":
+		return server.Main(ctx, args[1:], stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":
