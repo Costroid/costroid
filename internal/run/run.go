@@ -121,7 +121,7 @@ func (o Options) withDefaults() Options {
 
 func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter.Session, builder rowBuilder) (int, bool, error) {
 	command := exec.Command(plan.Argv[0], plan.Argv[1:]...)
-	command.Stdin = childStdin(o.Stdin)
+	command.Stdin = o.Stdin
 	command.Stderr = o.Stderr
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := command.StdoutPipe()

@@ -93,7 +93,7 @@ What the runs showed:
 
 ## Stdin
 
-Costroid gives an agent no stdin when its own is a pipe that shows no data and stays open for 100 milliseconds. Such a pipe would hold an agent that reads stdin: `claude -p` waits three seconds and warns. A terminal, a file, a closed pipe and a pipe holding data pass through. A producer slower than 100 milliseconds loses its data to the agent, so pipe data before the run starts.
+Costroid passes its stdin to the agent unchanged. When that stdin is a pipe with no data, `claude -p` waits three seconds and prints a warning. The warning is Claude Code's. A caller who wants it gone redirects `< /dev/null`.
 
 ## The fixture questions
 

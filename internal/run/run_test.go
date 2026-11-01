@@ -492,20 +492,22 @@ func TestRolloutThatDisagreesWithTheStreamYieldsToIt(t *testing.T) {
 	assertUnwatched(t, got, "total differs from the stream's")
 }
 
-func TestIdlePipeGivesTheAgentEndOfFileAtOnce(t *testing.T) {
+func TestSlowStdinProducerReachesTheAgentUnchanged(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	defer writer.Close()
 	log := filepath.Join(t.TempDir(), "stdin")
 	t.Setenv(fakeMode, "stdin")
 	t.Setenv(fakeLog, log)
 	t.Setenv("CODEX_HOME", t.TempDir())
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	_, err = Run(ctx, Options{
+	go func() {
+		defer writer.Close()
+		time.Sleep(requestPause)
+		fmt.Fprint(writer, "prompt")
+	}()
+	_, err = Run(context.Background(), Options{
 		Argv:    []string{agentNamed(t, "codex"), "exec", "work"},
 		Budget:  decimal.MustParse("1"),
 		Rows:    io.Discard,
@@ -517,57 +519,8 @@ func TestIdlePipeGivesTheAgentEndOfFileAtOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ctx.Err() != nil {
-		t.Error("the agent was still waiting on stdin")
-	}
-	if progress := logged(t, log); len(progress) != 2 || progress[0] != "0" {
-		t.Errorf("progress %v", progress)
-	}
-}
-
-func TestChildStdinKeepsDataFilesAndOtherReaders(t *testing.T) {
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	if childStdin(reader) != nil {
-		t.Error("an idle pipe reached the agent")
-	}
-	if _, err := writer.WriteString("prompt"); err != nil {
-		t.Fatal(err)
-	}
-	if childStdin(reader) != io.Reader(reader) {
-		t.Error("a pipe with data did not reach the agent")
-	}
-	writer.Close()
-	file := filepath.Join(t.TempDir(), "prompt")
-	if err := os.WriteFile(file, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	regular, err := os.Open(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer regular.Close()
-	if childStdin(regular) != io.Reader(regular) {
-		t.Error("a file did not reach the agent")
-	}
-	other := strings.NewReader("")
-	if childStdin(other) != io.Reader(other) {
-		t.Error("a plain reader did not reach the agent")
-	}
-}
-
-func TestClosedPipeReachesTheAgentAsEndOfFile(t *testing.T) {
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	writer.Close()
-	if childStdin(reader) != io.Reader(reader) {
-		t.Error("a closed pipe did not reach the agent")
+	if progress := logged(t, log); len(progress) != 2 || progress[0] != "6" {
+		t.Errorf("progress %v, want the agent to read all 6 bytes", progress)
 	}
 }
 
