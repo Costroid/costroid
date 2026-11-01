@@ -467,6 +467,15 @@ func TestCommentNeverScolds(t *testing.T) {
 	}
 }
 
+func TestAccountLinkNamesTheGitLabProject(t *testing.T) {
+	input := realInput(t)
+	input.Installation, input.AccountHost = "4242", AccountGitLab
+	body := commentOf(t, input)
+	if !strings.Contains(body, "(https://app.costroid.com/?installation=gitlab%3A4242)") {
+		t.Errorf("no link in\n%s", body)
+	}
+}
+
 func TestTwoLinksCarryEqualWeightAndTheAccountLinkNamesTheInstallation(t *testing.T) {
 	body := commentOf(t, realInput(t))
 	line := regexp.MustCompile(`(?m)^\[[^\]]+\]\(https://app\.costroid\.com/\?installation=github%3A58120394\) · \[[^\]]+\]\(https://docs\.costroid\.com/export\)$`)
@@ -618,6 +627,17 @@ func BenchmarkReadRowsAndRender(b *testing.B) {
 		input.Ledger = ledger
 		if _, err := Comment(input); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestGitLabCopyNeverNamesACheckRun(t *testing.T) {
+	input := realInput(t)
+	input.AccountHost, input.CheckRunID = AccountGitLab, nil
+	for _, amounts := range []Amounts{AmountsOff, AmountsUnsettled} {
+		input.Amounts = amounts
+		if body := commentOf(t, input); strings.Contains(body, "check run") {
+			t.Fatalf("a GitLab note names a check run:\n%s", body)
 		}
 	}
 }

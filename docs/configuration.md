@@ -1,6 +1,6 @@
 # Configure a repository
 
-`costroid.yml` sits at the repository's root. Every key is optional, and a repository with no file gets the defaults. The check reads it from the pull request's base commit, so a pull request cannot change its own setting.
+`costroid.yml` sits at the repository's root. Every key is optional, and a repository with no file gets the defaults. The report reads it from the pull request's base commit, or a GitLab merge request's, so a change cannot alter its own setting.
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Costroid/costroid/main/costroid.schema.json
@@ -10,7 +10,7 @@ comment:
 
 | Key                 | Default | What it does                                                                                                                                               |
 | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `comment.show_cost` | `true`  | Off, a public repository's comment shows the verdict and the grades, without amounts. The rows and the check run's machine block keep them. A private repository always prints them |
+| `comment.show_cost` | `true`  | Off, a public repository's comment shows the verdict and the grades, without amounts. The rows and the check run's machine block keep them. A private repository always prints them, and a GitLab project set to internal counts as private |
 
 The schema also names `policy_pack`, `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them.
 

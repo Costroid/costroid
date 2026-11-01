@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
 
@@ -28,6 +29,8 @@ func reportEnvironment(t *testing.T, event string) *scmtest.Stub {
 	if err := os.WriteFile(path, []byte(event), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITLAB_CI", "")
 	t.Setenv("GITHUB_TOKEN", stub.Token)
 	t.Setenv("GITHUB_API_URL", stub.Server.URL)
 	t.Setenv("GITHUB_REPOSITORY", "example/widgets")
@@ -318,4 +321,19 @@ func TestAPullRequestEventWithoutABaseCommitDoesNotReadTheHeadsConfig(t *testing
 	stub.SetPrivate(false)
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
 	assertWithheld(t, stub)
+}
+
+func TestReportRowsRefuseALink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.jsonl")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "costroid-rows.jsonl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, state, err := readReportRows(link); err == nil || state != comment.Unreadable {
+		t.Fatalf("state %q, error %v", state, err)
+	}
 }

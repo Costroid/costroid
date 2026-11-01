@@ -31,6 +31,8 @@ const (
 	RuleAgentVersion       = "agent-version"
 	RuleAgentContentFlags  = "agent-content-flags"
 	RuleAgentPromptInput   = "agent-prompt-input"
+	RuleAgentNoteToken     = "agent-note-token"
+	RuleReportJob          = "report-job"
 	RuleExpressionInScript = "expression-in-script"
 )
 

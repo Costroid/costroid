@@ -15,6 +15,9 @@ import (
 )
 
 const (
+	reportEnvironment = "  environment:\n    name: costroid-report\n    action: access\n"
+	reportForkGuard   = "    - if: $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID\n      when: never\n"
+
 	recipesDir   = "../../recipes"
 	actionDir    = "../../action"
 	recipesDoc   = "../../docs/recipes.md"
@@ -81,6 +84,18 @@ func TestEveryRuleBitesAShippedRecipe(t *testing.T) {
 		{"forks", "    - if: $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID\n      when: never\n", "", RuleAgentGuard},
 		{"flags", `OTEL_LOG_USER_PROMPTS: "0"`, `OTEL_LOG_USER_PROMPTS: "1"`, RuleAgentContentFlags},
 		{"codex flag", "otel.log_user_prompt=false", "otel.log_user_prompt=true", RuleAgentContentFlags},
+		{"note token for every job", "  COSTROID_AGENT: claude\n", "  COSTROID_AGENT: claude\n  COSTROID_GITLAB_TOKEN: $STORED\n", RuleAgentNoteToken},
+		{"note token on the agent", "    GIT_DEPTH: \"0\"\n", "    GIT_DEPTH: \"0\"\n    NOTE: $COSTROID_GITLAB_TOKEN\n", RuleAgentNoteToken},
+		{"id_tokens on the report", reportEnvironment, reportEnvironment + "  id_tokens:\n    TOKEN:\n      aud: x\n", RuleReportJob},
+		{"a checkout in the report", "    GIT_STRATEGY: empty\n", "    GIT_STRATEGY: fetch\n", RuleReportJob},
+		{"no strategy in the report", "  variables:\n    GIT_STRATEGY: empty\n", "", RuleReportJob},
+		{"forks reach the report", reportForkGuard + "    - if: $COSTROID_GITLAB_TOKEN\n", "    - if: $COSTROID_GITLAB_TOKEN\n", RuleReportJob},
+		{"the agent's environment", "    name: costroid-report\n", "    name: costroid-agent\n", RuleReportJob},
+		{"no environment", reportEnvironment, "", RuleReportJob},
+		{"a provider key in the report", "    GIT_STRATEGY: empty\n", "    GIT_STRATEGY: empty\n    ANTHROPIC_API_KEY: $KEY\n", RuleReportJob},
+		{"a cache in the report", reportEnvironment, reportEnvironment + "  cache:\n    paths:\n      - .cache\n", RuleReportJob},
+		{"the rows without needs", "    GIT_STRATEGY: empty\n  needs:\n    - job: costroid:claude\n      optional: true\n    - job: costroid:codex\n      optional: true\n", "    GIT_STRATEGY: empty\n", RuleReportJob},
+		{"the agent in the report", "    - touch costroid-rows.jsonl\n", "    - touch costroid-rows.jsonl\n    - claude -p hello\n", RuleReportJob},
 	} {
 		t.Run("gitlab/"+change.name, func(t *testing.T) {
 			expectRule(t, source, change)
@@ -425,6 +440,72 @@ func TestGitLabJobsRunTheAgentUnderTheBudget(t *testing.T) {
 				t.Fatal("the agent ran below its floor")
 			}
 		})
+	}
+}
+
+func TestGitLabReportJobPostsTheRowsItWasHanded(t *testing.T) {
+	s := newShell(t)
+	s.stubAgents()
+	code, output := s.gitlabScript("costroid:report", "COSTROID_BUDGET_USD=5")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, output)
+	}
+	want := "report\n--rows\ncostroid-rows.jsonl\n--budget-usd\n5\n"
+	if got := read(t, filepath.Join(s.root, "argv")); got != want {
+		t.Fatalf("argv:\n%s\nwant:\n%s", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(s.root, "costroid-rows.jsonl")); err != nil {
+		t.Fatalf("a run with no rows must still report: %v", err)
+	}
+}
+
+func gitLabJob(t *testing.T, job string) *yaml.Node {
+	t.Helper()
+	documents, err := parse([]byte(read(t, filepath.Join(recipesDir, "gitlab-ci.yml"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := field(documents[0], job)
+	if node == nil {
+		t.Fatalf("no job %s", job)
+	}
+	return node
+}
+
+// The report keeps ingest's trigger and order, and adds the fork guard. Its last
+// rule names its own variable, because a comment needs no ledger.
+func TestGitLabReportRunsWhenIngestRuns(t *testing.T) {
+	ingest, report := gitLabJob(t, "costroid:ingest"), gitLabJob(t, "costroid:report")
+	ingestRules, reportRules := sequence(field(ingest, "rules")), sequence(field(report, "rules"))
+	if len(ingestRules) != 2 || len(reportRules) != 3 {
+		t.Fatalf("%d and %d rules", len(ingestRules), len(reportRules))
+	}
+	if ingestFirst, reportFirst := scalarField(ingestRules[0], "if"), scalarField(reportRules[0], "if"); ingestFirst != reportFirst {
+		t.Errorf("the first rule differs: %q, %q", ingestFirst, reportFirst)
+	}
+	if got := scalarField(reportRules[1], "if"); !strings.Contains(got, gitLabForkGuard) || scalarField(reportRules[1], "when") != "never" {
+		t.Errorf("the fork rule reads %q", got)
+	}
+	if got := scalarField(reportRules[2], "when"); got != scalarField(ingestRules[1], "when") {
+		t.Errorf("the last rule's when reads %q", got)
+	}
+	if text(field(report, "needs")) != text(field(ingest, "needs")) || scalarField(report, "stage") != scalarField(ingest, "stage") {
+		t.Error("the report does not follow the agent as ingest does")
+	}
+}
+
+func TestGitLabDocsStateTheAdapterIsUntestedAndCiteTheToken(t *testing.T) {
+	doc := read(t, recipesDoc)
+	for _, want := range []string{
+		"has run against a stub",
+		"never a real GitLab",
+		"https://docs.gitlab.com/ci/jobs/ci_job_token/",
+		"https://docs.gitlab.com/user/permissions/",
+		gitLabNoteToken,
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/recipes.md does not state %q", want)
+		}
 	}
 }
 

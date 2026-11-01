@@ -1,5 +1,5 @@
-// Package scm reaches a source-code host through one interface. GitHub is the
-// one adapter so far.
+// Package scm reaches a source-code host through one interface. GitHub and
+// GitLab are the adapters so far.
 package scm
 
 import (
@@ -12,6 +12,9 @@ import (
 
 // ErrNotFound reports a file or an object the host does not have.
 var ErrNotFound = errors.New("scm: not found")
+
+// ErrNoCheck reports a host where the adapter posts no check.
+var ErrNoCheck = errors.New("scm: this host takes no check from this token")
 
 // Visibility is who can read a repository.
 type Visibility int
@@ -40,8 +43,9 @@ type PullRequest struct {
 	Author  string
 }
 
-// Host is one repository on one source-code host.
-type Host interface {
+// Reporter is what a report needs from one repository on one source-code host.
+type Reporter interface {
+	// PostCheck returns the check's id. A host without one answers ErrNoCheck.
 	PostCheck(ctx context.Context, check CheckRun) (int64, error)
 	// UpsertComment edits the host's own comment that opens with marker, or
 	// creates it when there is none.
@@ -49,6 +53,11 @@ type Host interface {
 	// ReadFile reads a file at a ref. A missing file is ErrNotFound.
 	ReadFile(ctx context.Context, path, ref string) ([]byte, error)
 	Visibility(ctx context.Context) (Visibility, error)
+}
+
+// Host is one repository a person can approve a change on.
+type Host interface {
+	Reporter
 	PullRequest(ctx context.Context, number int) (PullRequest, error)
 	// CanWrite reports whether login holds a write role on the repository.
 	CanWrite(ctx context.Context, login string) (bool, error)

@@ -103,3 +103,30 @@ costroid:ingest:
         curl --fail --silent --show-error --proto '=https' --header @- \
           --header 'Content-Type: application/x-ndjson' \
           --data-binary @costroid-rows.jsonl "$COSTROID_INGEST_URL"
+
+costroid:report:
+  extends: .costroid-install
+  stage: deploy
+  allow_failure: true
+  timeout: 5 minutes
+  resource_group: costroid-report
+  environment:
+    name: costroid-report
+    action: access
+  variables:
+    GIT_STRATEGY: empty
+  needs:
+    - job: costroid:claude
+      optional: true
+    - job: costroid:codex
+      optional: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "merge_request_event"
+      when: never
+    - if: $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID
+      when: never
+    - if: $COSTROID_GITLAB_TOKEN
+      when: always
+  script:
+    - touch costroid-rows.jsonl
+    - costroid report --rows costroid-rows.jsonl --budget-usd "$COSTROID_BUDGET_USD"

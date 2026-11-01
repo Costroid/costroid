@@ -57,11 +57,14 @@ ingest-run writes the rows of a claude-code-action run from the action's
 execution_file output, after the action ended. No budget held that run, so the
 grade reads none.
 
-report posts one check run and one sticky comment from CI, with the GITHUB_TOKEN
-and GITHUB_* variables of the job. It exits 0 whatever GitHub answers, so a
-failed post never fails the job. --budget-usd restates the run's budget, which
-rows do not record. --installation-id puts the GitHub App installation on the
-account link; COSTROID_INSTALLATION_ID does the same.
+report posts from CI, and selects the host from the job's variables. On GitHub
+Actions it posts one check run and one sticky comment, with GITHUB_TOKEN and the
+GITHUB_* variables. On GitLab CI it posts one sticky merge request note, with
+COSTROID_GITLAB_TOKEN and the CI_* variables, and no check. It exits 0 whatever
+the host answers, so a failed post never fails the job. Outside both it refuses
+and exits 125. --budget-usd restates the run's budget, which rows do not record.
+--installation-id puts the GitHub App installation on the account link;
+COSTROID_INSTALLATION_ID does the same. GitLab's link names the project id.
 
 reconcile compares rows with the provider's usage and cost reports, per
 credential per UTC day. Tokens must match within 1% by class. List-price dollars

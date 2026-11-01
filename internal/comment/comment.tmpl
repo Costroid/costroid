@@ -28,9 +28,9 @@ Unverified: the agent's job wrote these figures.
 {{if .ShowAmounts -}}
 Budget: {{if .Budget}}{{.Budget}}{{else}}not recorded on these rows{{end}}.
 {{- else if .AmountsOff -}}
-Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
+Amounts are off on this public repository (`comment.show_cost: false`). {{if .CheckRuns}}The rows and the check run's machine block carry them.{{else}}The rows carry them.{{end}}
 {{- else -}}
-Amounts are withheld, because `comment.show_cost` or the repository's visibility could not be read. The rows and the check run's machine block carry them.
+Amounts are withheld, because `comment.show_cost` or the repository's visibility could not be read. {{if .CheckRuns}}The rows and the check run's machine block carry them.{{else}}The rows carry them.{{end}}
 {{- end}}
 
 {{if .Agents}}Agents: {{.Agents}}. {{end}}{{if .Models}}Models: {{.Models}}{{if .ModelsOmitted}} and {{.ModelsOmitted}} more{{end}}. {{end}}{{.Rows}} {{if eq .Rows 1}}row{{else}}rows{{end}}{{if .Catalogs}}, catalog {{.Catalogs}}{{end}}.
@@ -46,7 +46,7 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 [Your account on costroid.com]({{.AccountURL}}) · [Export to your FinOps platform or warehouse]({{.ExportURL}})
 
 <details>
-<summary>{{if .CheckRunID}}Machine block, copied from check run {{.CheckRunID}}{{else}}Machine block, the check run was not posted{{end}}</summary>
+<summary>{{if .CheckRunID}}Machine block, copied from check run {{.CheckRunID}}{{else if .CheckRuns}}Machine block, the check run was not posted{{else}}Machine block{{end}}</summary>
 
 {{.Block}}
 

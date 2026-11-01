@@ -168,3 +168,21 @@ func TestResourceAttributeValuesAreEscaped(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestDetectNamesTheSystemAndPrefersGitHub(t *testing.T) {
+	cases := []struct {
+		variables map[string]string
+		want      System
+	}{
+		{map[string]string{}, NoSystem},
+		{map[string]string{"GITHUB_ACTIONS": "1", "GITLAB_CI": "1"}, NoSystem},
+		{map[string]string{"GITHUB_ACTIONS": "true"}, GitHubActions},
+		{map[string]string{"GITLAB_CI": "true"}, GitLabCI},
+		{map[string]string{"GITHUB_ACTIONS": "true", "GITLAB_CI": "true"}, GitHubActions},
+	}
+	for _, c := range cases {
+		if got := Detect(func(name string) string { return c.variables[name] }); got != c.want {
+			t.Errorf("%v: got %v", c.variables, got)
+		}
+	}
+}
