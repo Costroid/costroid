@@ -457,6 +457,24 @@ func TestResidencyIsTheServedRegionPricedThroughTheCatalog(t *testing.T) {
 	wantCauses(t, got, cause(CauseResidency, "0.081"))
 }
 
+// Priority Tier tokens carry no cost on the report: the commitment pays for
+// them elsewhere. The whole list figure is therefore the tier's.
+func TestPriorityTierTokensCostNothingOnTheReport(t *testing.T) {
+	got := only(t, pass(t, readRows(t, anthropicRows(), ""), anthropicReplay(t, "usage-priority.json", "cost-priority.json"), settledNow))
+	wantDollars(t, got, "0.81", "0", "-0.81", "0", Outside)
+	wantCauses(t, got, cause(CauseTier, "-0.81"))
+}
+
+func TestFastModeIsATierOnTheSheetAndASpeedOnTheReport(t *testing.T) {
+	fast, standard := "fast", "standard"
+	if got := (anthropicGroup{ServiceTier: &standard, Speed: &fast}).tier(); got != fast {
+		t.Errorf("tier %s, want fast", got)
+	}
+	if got := (anthropicGroup{}).tier(); got != catalog.TierStandard {
+		t.Errorf("a row with no tier reads %s", got)
+	}
+}
+
 func TestALedgerPricedAtTheServedRegionLeavesNoResidency(t *testing.T) {
 	multiplied := []string{"0.22", "0.055", "0.066", "0.55"}
 	rows := anthropicRows()
