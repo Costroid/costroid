@@ -283,8 +283,12 @@ func TestARowThatClaimsVerificationStillReadsUnverified(t *testing.T) {
 	}
 	input := realInput(t)
 	input.Ledger = ledger
-	if body := commentOf(t, input); !strings.Contains(visiblePart(body), artifactLabel) {
+	body := commentOf(t, input)
+	if !strings.Contains(visiblePart(body), artifactLabel) {
 		t.Errorf("a forged tag removed the label:\n%s", visiblePart(body))
+	}
+	if strings.Contains(body, "exact") {
+		t.Errorf("a forged grade reached the comment:\n%s", body)
 	}
 }
 

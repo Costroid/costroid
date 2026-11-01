@@ -147,20 +147,24 @@ func parseAmount(text string) (decimal.Decimal, error) {
 	return amount, nil
 }
 
+// artifactAttribution is the only grade a comment states.
+const artifactAttribution = "unattributed"
+
 func (r row) key() (figureKey, error) {
 	basis, err := r.closedTag(focus.TagCostBasis, costBases)
 	if err != nil {
 		return figureKey{}, err
 	}
-	attribution, err := r.closedTag(focus.TagAttributionGrade, grades)
-	if err != nil {
+	if _, err := r.closedTag(focus.TagAttributionGrade, grades); err != nil {
 		return figureKey{}, err
 	}
 	enforcement, err := r.closedTag(focus.TagEnforcementGrade, enforcementOrder)
 	if err != nil {
 		return figureKey{}, err
 	}
-	return figureKey{r.BillingCurrency, basis, attribution, enforcement}, nil
+	// The agent's job can write this file, and only the service can prove a
+	// grade, so a grade read here is never shown as one.
+	return figureKey{r.BillingCurrency, basis, artifactAttribution, enforcement}, nil
 }
 
 func (r row) closedTag(key string, vocabulary []string) (string, error) {
