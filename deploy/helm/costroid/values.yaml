@@ -24,6 +24,10 @@ bindings: []
 # GitLab instances whose CI tokens are trusted, besides gitlab.com.
 gitlabHosts: []
 
+# Exact hosts the service may call. Empty refuses every outbound call. For OIDC
+# ingest, add token.actions.githubusercontent.com, gitlab.com and each gitlabHost.
+egressAllow: []
+
 # A Secret you manage, holding the three keys below. Empty means the chart makes
 # one, and keeps its values across upgrades.
 #   database-url            the application role's connection

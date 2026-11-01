@@ -52,6 +52,9 @@ type GitHubOptions struct {
 	// Repository is owner/name.
 	Repository string
 	Tokens     TokenSource
+	// Client makes the requests, under this package's timeout and redirect
+	// rule. Required, so that a service can pass one bound by its allowlist.
+	Client *http.Client
 	// Limits and Installation apply the App's write limits. A token from CI
 	// has neither.
 	Limits       *Limiter
@@ -81,23 +84,30 @@ func NewGitHub(options GitHubOptions) (*GitHub, error) {
 	if err := checkRoot(root); err != nil {
 		return nil, err
 	}
+	if options.Client == nil {
+		return nil, errNoClient
+	}
 	return &GitHub{
 		api:          strings.TrimRight(root, "/"),
 		repository:   options.Repository,
 		tokens:       options.Tokens,
 		limits:       options.Limits,
 		installation: options.Installation,
-		client:       newClient(),
+		client:       bounded(options.Client),
 	}, nil
 }
 
-func newClient() *http.Client {
-	return &http.Client{
-		Timeout: requestTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+var errNoClient = errors.New("scm: no HTTP client")
+
+// bounded copies a caller's client under this package's rules: a timeout, and
+// a redirect that comes back as an answer, so a token never follows one.
+func bounded(client *http.Client) *http.Client {
+	copied := *client
+	copied.Timeout = requestTimeout
+	copied.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
+	return &copied
 }
 
 func checkRoot(root string) error {

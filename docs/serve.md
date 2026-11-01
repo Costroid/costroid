@@ -20,7 +20,7 @@ export COSTROID_PSEUDONYM_KEY="$(openssl rand -base64 32)"
 costroid serve --addr :8080 --bind github.com:example
 ```
 
-`--bind` gives an SCM owner to this instance's tenant. `--gitlab-host` trusts one more GitLab instance. GitHub Actions and gitlab.com are trusted by default.
+`--bind` gives an SCM owner to this instance's tenant. `--gitlab-host` trusts one more GitLab instance. GitHub Actions and gitlab.com are trusted by default, and their keys still need their hosts on the egress allowlist. [`docs/install.md`](install.md) has the list and its report.
 
 Migrations run forward only. The service refuses a migration edited after it was applied, and a database ahead of the binary.
 
@@ -37,7 +37,7 @@ Migrations run forward only. The service refuses a migration edited after it was
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to `https://<host>/otlp`.
 
-Every path but `/healthz` takes a bearer: a CI OIDC ID token, or a tenant ingest key that starts `costroid_ik_`. An absent or invalid bearer answers one `AUTH_TOKEN_INVALID`, and the answer does not say which.
+Every path but `/healthz` takes a bearer: a CI OIDC ID token, or a tenant ingest key that starts `costroid_ik_`. An absent or invalid bearer answers one `AUTH_TOKEN_INVALID`, and the answer does not say which. A token whose issuer's host is off the egress allowlist cannot be checked, so it answers `503` with `EGRESS_REFUSED`.
 
 ## Ingest keys
 
@@ -82,6 +82,8 @@ A budget rule reads `budget.spend` in the per-PR answer. While no eligible row e
 `totals` in the same answer adds up every row of the pull request, one figure per currency and cost basis. It is a reading, so an unverified row counts, and a budget rule never reads it.
 
 `SubAccountId` is kept as the sender stated it, so a stored row can reconcile per credential. It is a claim, like every other column a sender states.
+
+`BillingAccountId` is kept the same way, up to 512 characters, and `unknown` when a row states none. It is a stated claim that nothing verifies, and it never replaces the tenant. The per-PR view returns it as `billing_account_id` on each line, and a line never adds across two accounts.
 
 ## Prices
 
@@ -153,6 +155,8 @@ Telemetry does not say how a run is billed, so an OTLP row is `list_equivalent` 
 ## Tenants
 
 Every table carries row level security with `FORCE`. The service names a tenant with `SET LOCAL` in each transaction, and no statement carries a tenant predicate of its own. The application role can insert rows and read them. It cannot update or delete them.
+
+`egress_counters` is the deployment's own table and has no tenant column. Its policy admits every role, and the application role reads, inserts and updates it. It cannot delete from it.
 
 ## Checks
 

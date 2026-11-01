@@ -11,10 +11,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/egress"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/store"
 )
@@ -24,9 +26,11 @@ const (
 	envMigration = "COSTROID_MIGRATION_DATABASE_URL"
 	envAudience  = "COSTROID_OIDC_AUDIENCE"
 	envPseudonym = "COSTROID_PSEUDONYM_KEY"
+	envEgress    = "COSTROID_EGRESS_ALLOW"
 
 	minPseudonymKeyBytes = 32
 	keySetTimeout        = 10 * time.Second
+	egressFlushInterval  = 5 * time.Second
 	shutdownTimeout      = 20 * time.Second
 	exitFailure          = 125
 )
@@ -35,6 +39,7 @@ const serveUsage = `costroid serve runs the ingest service.
 
 Usage:
   costroid serve [--addr :8080] [--gitlab-host host]... [--bind host:owner]...
+                 [--egress-allow host]...
 
 Environment:
   COSTROID_DATABASE_URL            the application role's connection
@@ -43,14 +48,22 @@ Environment:
   COSTROID_OIDC_AUDIENCE           the audience CI tokens must name
   COSTROID_PSEUDONYM_KEY           at least 32 bytes in base64, the master key
                                    for per-tenant address pseudonyms
+  COSTROID_EGRESS_ALLOW            hosts for the egress allowlist, comma-separated
 
 --bind gives an SCM owner to this instance's tenant, and needs the owner role.
+
+--egress-allow adds one exact host to the egress allowlist, and adds to
+COSTROID_EGRESS_ALLOW. The list starts empty, and an empty list refuses every
+outbound call. OIDC ingest needs each issuer's host on it, the default issuers
+included. Without one, a token from that issuer answers EGRESS_REFUSED. costroid
+egress report prints what was attempted.
 `
 
 type serveOptions struct {
 	addr        string
 	gitlabHosts []string
 	bindings    []store.Binding
+	egressAllow []string
 }
 
 type repeated []string
@@ -68,10 +81,11 @@ func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, serveUsage) }
 	options := serveOptions{}
-	var gitlab, binds repeated
+	var gitlab, binds, allow repeated
 	set.StringVar(&options.addr, "addr", ":8080", "the address to listen on")
 	set.Var(&gitlab, "gitlab-host", "a GitLab host whose CI tokens are trusted")
 	set.Var(&binds, "bind", "an SCM owner for this instance's tenant, host:owner")
+	set.Var(&allow, "egress-allow", "an exact host the service may call")
 	if err := set.Parse(args); err != nil {
 		return serveOptions{}, err
 	}
@@ -82,6 +96,11 @@ func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 			return serveOptions{}, err
 		}
 		options.bindings = append(options.bindings, binding)
+	}
+	var err error
+	options.egressAllow, err = egress.ParseList(allow, os.Getenv(envEgress))
+	if err != nil {
+		return serveOptions{}, err
 	}
 	return options, nil
 }
@@ -164,19 +183,51 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	if err := bindOwners(ctx, ledger, ownerURL, options.bindings); err != nil {
 		return err
 	}
-	issuers := []oidc.Issuer{oidc.GitHub(), oidc.GitLab("gitlab.com")}
-	for _, host := range options.gitlabHosts {
-		issuers = append(issuers, oidc.GitLab(host))
-	}
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	counters := egress.NewCounters(ledger, time.Now, logger)
+	gate := egress.New(options.egressAllow, counters)
+	issuers := issuersOf(options)
+	logAllowlist(logger, gate, issuers)
 	service := New(Config{
 		Ledger:       ledger,
-		Verifier:     oidc.NewVerifier(audience, &http.Client{Timeout: keySetTimeout}, nil, issuers...),
+		Verifier:     oidc.NewVerifier(audience, gate.Client(keySetTimeout), nil, issuers...),
 		Catalog:      pinned,
 		PseudonymKey: key,
 		Logger:       logger,
 	})
-	return listen(ctx, options.addr, service.Handler(), logger)
+	background, stop := context.WithCancel(ctx)
+	flushed := make(chan struct{})
+	go func() {
+		defer close(flushed)
+		counters.Run(background, egressFlushInterval)
+	}()
+	err = listen(ctx, options.addr, service.Handler(), logger)
+	stop()
+	<-flushed
+	return err
+}
+
+func issuersOf(options serveOptions) []oidc.Issuer {
+	issuers := []oidc.Issuer{oidc.GitHub(), oidc.GitLab("gitlab.com")}
+	for _, host := range options.gitlabHosts {
+		issuers = append(issuers, oidc.GitLab(host))
+	}
+	return issuers
+}
+
+// logAllowlist states the list once, and names each trusted issuer whose keys
+// it cannot reach, so a refusal at the first token is no surprise.
+func logAllowlist(logger *slog.Logger, gate *egress.Gate, issuers []oidc.Issuer) {
+	logger.Info("egress allowlist", "hosts", gate.Hosts())
+	seen := make([]string, 0, len(issuers))
+	for _, issuer := range issuers {
+		host := issuer.KeySetHost()
+		if gate.Allows(host) || slices.Contains(seen, host) {
+			continue
+		}
+		seen = append(seen, host)
+		logger.Warn("egress allowlist does not cover this issuer", "issuer", issuer.URL, "host", host, "add", egress.Flag)
+	}
 }
 
 // bindOwners provisions the owners no tenant holds yet into one new tenant.

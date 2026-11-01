@@ -206,7 +206,7 @@ func TestTheAdapterGoesThroughTheLimiterBeforeTheHost(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	host, err := scm.NewGitHub(scm.GitHubOptions{API: stub.Server.URL, Repository: "example/widgets", Tokens: scm.StaticToken(stub.Token), Limits: limiter, Installation: 9})
+	host, err := scm.NewGitHub(scm.GitHubOptions{API: stub.Server.URL, Repository: "example/widgets", Tokens: scm.StaticToken(stub.Token), Limits: limiter, Installation: 9, Client: http.DefaultClient})
 	if err != nil {
 		t.Fatal(err)
 	}

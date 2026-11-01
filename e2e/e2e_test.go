@@ -9,6 +9,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,7 +49,11 @@ const (
 	reportDay  = "2026-11-01"
 	savedAt    = "2026-11-04T00:00:00Z"
 
+	issuerHost = "token.actions.githubusercontent.com"
+
 	serviceWait = 90 * time.Second
+	// reportWait is longer than the service's five seconds between writes.
+	reportWait = 30 * time.Second
 )
 
 // stack is one Compose project, torn down with the test.
@@ -71,6 +76,7 @@ func compose(t *testing.T) *stack {
 			"COSTROID_PSEUDONYM_KEY=ZTJlLXBzZXVkb255bS1rZXktb2YtdGhpcnR5LXR3by1ieXRlcw==",
 			"COSTROID_OIDC_AUDIENCE=https://costroid.example", "COSTROID_BIND="+owner,
 			"COSTROID_IMAGE=costroid-e2e:local", "COSTROID_VERSION=e2e", "COSTROID_PORT="+strconv.Itoa(port),
+			"COSTROID_EGRESS_ALLOW=",
 		),
 	}
 	t.Cleanup(s.down)
@@ -273,6 +279,7 @@ func TestThePathFromARecordedRunToTheCommentHoldsOneFigure(t *testing.T) {
 	readView(t, services, key)
 	postReport(t, job)
 	reconcileRows(t, job)
+	refuseAnIssuerOffTheList(t, services)
 }
 
 func runAgent(t *testing.T, job *workspace) {
@@ -391,6 +398,67 @@ func postReport(t *testing.T, job *workspace) {
 	if want := "Unverified: the agent's job wrote these figures."; !strings.Contains(body, want) {
 		t.Errorf("comment: no label in:\n%s", body)
 	}
+}
+
+// issuerToken names GitHub's issuer and is not signed by it. The service reads
+// the issuer before it checks a signature, so the list stops the token first.
+func issuerToken() string {
+	encode := base64.RawURLEncoding.EncodeToString
+	return encode([]byte(`{"alg":"RS256","kid":"e2e"}`)) + "." +
+		encode([]byte(`{"iss":"https://`+issuerHost+`"}`)) + "." + encode([]byte("unsigned"))
+}
+
+// refuseAnIssuerOffTheList walks the stack's empty allowlist: the service names
+// the issuer at start, refuses its token by type and reports the attempt.
+func refuseAnIssuerOffTheList(t *testing.T, services *stack) {
+	t.Helper()
+	logs, err := services.docker(nil, "logs", "--no-color", "costroid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(logs, []byte("egress allowlist does not cover this issuer")) || !bytes.Contains(logs, []byte(issuerHost)) {
+		t.Errorf("the service did not name the issuer at start:\n%s", logs)
+	}
+	status, body := services.request(http.MethodPost, "/v1/rows", issuerToken(), nil)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("a token off the list: %d %s", status, body)
+	}
+	for _, want := range []string{"EGRESS_REFUSED", issuerHost, "--egress-allow"} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Errorf("the refusal lacks %q: %s", want, body)
+		}
+	}
+	services.awaitRefusal()
+}
+
+func (s *stack) awaitRefusal() {
+	s.t.Helper()
+	deadline := time.Now().Add(reportWait)
+	var last []byte
+	for time.Now().Before(deadline) {
+		var report bytes.Buffer
+		if out, err := s.docker(&report, "exec", "--no-TTY", "costroid", "/usr/local/bin/costroid", "egress", "report", "--json"); err != nil {
+			s.t.Fatalf("egress report: %v\n%s", err, out)
+		}
+		var answer struct {
+			Counters []struct {
+				Host    string `json:"host"`
+				Outcome string `json:"outcome"`
+				Count   int64  `json:"count"`
+			} `json:"counters"`
+		}
+		if err := json.Unmarshal(report.Bytes(), &answer); err != nil {
+			s.t.Fatalf("egress report: %v: %s", err, report.Bytes())
+		}
+		for _, counter := range answer.Counters {
+			if counter.Host == issuerHost && counter.Outcome == "refused" && counter.Count == 1 {
+				return
+			}
+		}
+		last = report.Bytes()
+		time.Sleep(time.Second)
+	}
+	s.t.Errorf("the report never showed the refusal: %s", last)
 }
 
 func reconcileRows(t *testing.T, job *workspace) {

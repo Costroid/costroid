@@ -21,7 +21,7 @@ const (
 
 func adapter(t *testing.T, stub *scmtest.Stub) *scm.GitHub {
 	t.Helper()
-	host, err := scm.NewGitHub(scm.GitHubOptions{API: stub.Server.URL, Repository: "example/widgets", Tokens: scm.StaticToken(stub.Token)})
+	host, err := scm.NewGitHub(scm.GitHubOptions{API: stub.Server.URL, Repository: "example/widgets", Tokens: scm.StaticToken(stub.Token), Client: http.DefaultClient})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestRetryAfterIsCarried(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer server.Close()
-	host, err := scm.NewGitHub(scm.GitHubOptions{API: server.URL, Repository: "example/widgets", Tokens: scm.StaticToken("t")})
+	host, err := scm.NewGitHub(scm.GitHubOptions{API: server.URL, Repository: "example/widgets", Tokens: scm.StaticToken("t"), Client: http.DefaultClient})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestARedirectIsNotFollowed(t *testing.T) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	defer server.Close()
-	host, err := scm.NewGitHub(scm.GitHubOptions{API: server.URL, Repository: "example/widgets", Tokens: scm.StaticToken("t")})
+	host, err := scm.NewGitHub(scm.GitHubOptions{API: server.URL, Repository: "example/widgets", Tokens: scm.StaticToken("t"), Client: http.DefaultClient})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,16 +173,23 @@ func TestTheTokenNeverTravelsOverPlainHTTPToAnotherHost(t *testing.T) {
 		"http://127.0.0.1:9":     true,
 		"":                       true,
 	} {
-		_, err := scm.NewGitHub(scm.GitHubOptions{API: api, Repository: "example/widgets", Tokens: scm.StaticToken("t")})
+		_, err := scm.NewGitHub(scm.GitHubOptions{API: api, Repository: "example/widgets", Tokens: scm.StaticToken("t"), Client: http.DefaultClient})
 		if (err == nil) != allowed {
 			t.Errorf("%q: err = %v", api, err)
 		}
 	}
 }
 
+func TestTheAdapterNeedsAClient(t *testing.T) {
+	_, err := scm.NewGitHub(scm.GitHubOptions{Repository: "example/widgets", Tokens: scm.StaticToken("t")})
+	if err == nil {
+		t.Fatal("an adapter with no client was built")
+	}
+}
+
 func TestAMalformedRepositoryIsRefused(t *testing.T) {
 	for _, repository := range []string{"", "one", "a/b/c", "a/../../b c", "a/b?x=1"} {
-		if _, err := scm.NewGitHub(scm.GitHubOptions{Repository: repository, Tokens: scm.StaticToken("t")}); err == nil {
+		if _, err := scm.NewGitHub(scm.GitHubOptions{Repository: repository, Tokens: scm.StaticToken("t"), Client: http.DefaultClient}); err == nil {
 			t.Errorf("%q was accepted", repository)
 		}
 	}

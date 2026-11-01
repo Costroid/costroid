@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,6 +57,16 @@ type Issuer struct {
 	JWKSURL string
 	// Host is the SCM host its repositories live on.
 	Host string
+}
+
+// KeySetHost is the host the issuer's signing keys are read from, the one an
+// egress allowlist must hold. GitHub's is not Host.
+func (i Issuer) KeySetHost() string {
+	parsed, err := url.Parse(i.JWKSURL)
+	if err != nil {
+		return i.JWKSURL
+	}
+	return parsed.Hostname()
 }
 
 // GitHub is github.com's Actions issuer.
@@ -105,12 +116,9 @@ type Verifier struct {
 	issuers  map[string]*issuerKeys
 }
 
-// NewVerifier returns a Verifier. A nil client means http.DefaultClient, and a
-// nil clock means time.Now.
+// NewVerifier returns a Verifier that reads key sets through client. A nil
+// clock means time.Now.
 func NewVerifier(audience string, client *http.Client, now func() time.Time, issuers ...Issuer) *Verifier {
-	if client == nil {
-		client = http.DefaultClient
-	}
 	if now == nil {
 		now = time.Now
 	}

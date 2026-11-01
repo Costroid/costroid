@@ -103,6 +103,7 @@ const (
 	codeMalformed    = "BODY_MALFORMED"
 	codeWrongRepo    = "REPOSITORY_FORBIDDEN"
 	codeBadQuery     = "QUERY_INVALID"
+	codeEgress       = "EGRESS_REFUSED"
 	codeInternal     = "INTERNAL"
 )
 

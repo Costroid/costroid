@@ -42,6 +42,8 @@ spec:
           env:
             - name: COSTROID_OIDC_AUDIENCE
               value: {{ .Values.oidcAudience | quote }}
+            - name: COSTROID_EGRESS_ALLOW
+              value: {{ join "," .Values.egressAllow | quote }}
             - name: COSTROID_DATABASE_URL
               valueFrom:
                 secretKeyRef:

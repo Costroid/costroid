@@ -19,6 +19,9 @@ const (
 	composed   = "compose.yaml"
 	chart      = "helm/costroid"
 	workflows  = "../.github/workflows"
+	install    = "../docs/install.md"
+
+	egressVariable = "COSTROID_EGRESS_ALLOW"
 )
 
 var pinned = regexp.MustCompile(`@sha256:[0-9a-f]{64}\b`)
@@ -73,6 +76,56 @@ func TestComposeAndTheChartCreateTheSameRoles(t *testing.T) {
 func TestComposeStatesTheEgressNote(t *testing.T) {
 	if !bytes.Contains(read(t, composed), []byte("Egress.")) {
 		t.Error("compose.yaml has no egress note")
+	}
+}
+
+func TestTheEgressListIsPresentAndEmptyInComposeAndTheChart(t *testing.T) {
+	var file struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(read(t, composed), &file); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := file.Services["costroid"].Environment[egressVariable]; !ok || got != "${"+egressVariable+":-}" {
+		t.Errorf("compose reads %q, present %t", got, ok)
+	}
+	var values struct {
+		EgressAllow *[]string `yaml:"egressAllow"`
+	}
+	if err := yaml.Unmarshal(read(t, filepath.Join(chart, "values.yaml")), &values); err != nil {
+		t.Fatal(err)
+	}
+	if values.EgressAllow == nil || len(*values.EgressAllow) != 0 {
+		t.Errorf("the chart's egressAllow reads %v", values.EgressAllow)
+	}
+	deployment := read(t, filepath.Join(chart, "templates/deployment.yaml"))
+	if !regexp.MustCompile(`- name: ` + egressVariable + `\n\s+value: \{\{ join "," \.Values\.egressAllow \| quote \}\}`).Match(deployment) {
+		t.Error("the chart does not pass egressAllow to the service")
+	}
+}
+
+func TestEachFileSaysWhatOIDCIngestNeedsOnTheList(t *testing.T) {
+	for _, path := range []string{composed, filepath.Join(chart, "values.yaml"), install} {
+		text := read(t, path)
+		for _, want := range []string{"token.actions.githubusercontent.com", "gitlab.com"} {
+			if !bytes.Contains(text, []byte(want)) {
+				t.Errorf("%s does not name %s", path, want)
+			}
+		}
+	}
+}
+
+func TestTheDocsCallTheFirewallTheStrongerControl(t *testing.T) {
+	for _, path := range []string{composed, install} {
+		text := strings.Join(strings.Fields(strings.ReplaceAll(string(read(t, path)), "#", "")), " ")
+		if !strings.Contains(text, "does not hold against code running in the process") || !strings.Contains(text, "the stronger control") {
+			t.Errorf("%s dropped the sentence on the stronger control", path)
+		}
+		if strings.Contains(text, "does not enforce") || strings.Contains(text, "no egress report") {
+			t.Errorf("%s still says enforcement does not exist", path)
+		}
 	}
 }
 

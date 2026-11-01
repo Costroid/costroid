@@ -2,6 +2,8 @@
 
 `costroid reconcile` compares rows with a provider's usage and cost reports, per credential per UTC day. Tokens must match within 1% by class, and a miss is a defect. List-price dollars are compared within 10%, and the residual is split into named causes.
 
+It runs in your CI, where the admin key lives, not in the service's container, so the service's egress allowlist does not bind it.
+
 ## Name the credential
 
 A row's credential is its `SubAccountId`. Set it when the run happens, to the id of the key, workspace or project the run spends on:

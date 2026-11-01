@@ -190,6 +190,16 @@ func TestRunRefusesAMissingOrZeroBudget(t *testing.T) {
 	}
 }
 
+func TestTheEgressCommandIsDispatched(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := dispatch(context.Background(), []string{"egress", "--help"}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "costroid egress report [--json]") {
+		t.Fatalf("stderr %q", stderr.String())
+	}
+}
+
 func TestUnknownCommandExitsAsAFailure(t *testing.T) {
 	if code, _, stderr := execute(t, "diff"); code != exitFailure || !strings.Contains(stderr, "diff") {
 		t.Errorf("exit %d, %q", code, stderr)

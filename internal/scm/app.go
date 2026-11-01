@@ -57,6 +57,8 @@ type AppTokens struct {
 	Installation int64
 	Signer       Signer
 	Now          func() time.Time
+	// Client is as in GitHubOptions.
+	Client *http.Client
 
 	mu      sync.Mutex
 	token   string
@@ -87,7 +89,10 @@ func (a *AppTokens) Token(ctx context.Context) (string, error) {
 	if err := checkRoot(root); err != nil {
 		return "", err
 	}
-	if err := send(ctx, newClient(), http.MethodPost, root, path, "Bearer "+assertion, request, &answer); err != nil {
+	if a.Client == nil {
+		return "", errNoClient
+	}
+	if err := send(ctx, bounded(a.Client), http.MethodPost, root, path, "Bearer "+assertion, request, &answer); err != nil {
 		return "", err
 	}
 	a.token, a.expires = answer.Token, answer.ExpiresAt

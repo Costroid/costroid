@@ -117,7 +117,7 @@ func TestInstallationTokensAreMintedWithMinimumPermissionsAndHeldUntilNearExpiry
 		}
 	}))
 	defer server.Close()
-	tokens := &scm.AppTokens{API: server.URL, AppID: "1", Installation: 58, Signer: generateSigner(t), Now: clock.now}
+	tokens := &scm.AppTokens{API: server.URL, AppID: "1", Installation: 58, Signer: generateSigner(t), Now: clock.now, Client: http.DefaultClient}
 	for range 3 {
 		token, err := tokens.Token(context.Background())
 		if err != nil {
@@ -149,7 +149,7 @@ func TestInstallationTokensAreMintedWithMinimumPermissionsAndHeldUntilNearExpiry
 }
 
 func TestInstallationTokensRefuseAPlainHTTPHost(t *testing.T) {
-	tokens := &scm.AppTokens{API: "http://github.example", AppID: "1", Installation: 58, Signer: generateSigner(t), Now: time.Now}
+	tokens := &scm.AppTokens{API: "http://github.example", AppID: "1", Installation: 58, Signer: generateSigner(t), Now: time.Now, Client: http.DefaultClient}
 	if _, err := tokens.Token(context.Background()); err == nil {
 		t.Error("a signed token was sent over plain HTTP")
 	}

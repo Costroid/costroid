@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"time"
@@ -151,6 +152,8 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 	return 0
 }
 
+// hostFromEnvironment runs in the customer's CI, outside the service's egress
+// allowlist, so its client is a plain one.
 func hostFromEnvironment(pull pullContext) (scm.Host, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
@@ -163,6 +166,7 @@ func hostFromEnvironment(pull pullContext) (scm.Host, error) {
 		API:        os.Getenv("GITHUB_API_URL"),
 		Repository: os.Getenv("GITHUB_REPOSITORY"),
 		Tokens:     scm.StaticToken(token),
+		Client:     &http.Client{},
 	})
 }
 

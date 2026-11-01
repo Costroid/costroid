@@ -35,6 +35,7 @@ Usage:
   costroid serve
   costroid keys create --owner host:owner
   costroid keys revoke <id>
+  costroid egress report [--json]
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -124,6 +125,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return server.Main(ctx, args[1:], stderr)
 	case "keys":
 		return server.KeysMain(ctx, args[1:], stdout, stderr)
+	case "egress":
+		return server.EgressMain(ctx, args[1:], stdout, stderr)
 	case "reconcile":
 		return reconcileCommand(ctx, args[1:], os.Getenv, reconcile.NewClient(), time.Now, stdout, stderr)
 	case "lint-recipes":

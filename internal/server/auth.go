@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/egress"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/store"
 )
@@ -39,6 +40,13 @@ func invalidToken() *refusal {
 	return refuse(http.StatusUnauthorized, codeAuth, "The token is absent, expired or not valid for this service.")
 }
 
+// offTheList names a host the operator configured, or one a listed host
+// redirected to. A sender supplies neither.
+func offTheList(host string) *refusal {
+	return refuse(http.StatusServiceUnavailable, codeEgress,
+		"The egress allowlist does not hold "+host+", where this token's issuer keeps its signing keys. The operator adds it with "+egress.Flag+".")
+}
+
 func (s *Server) authenticateKey(ctx context.Context, key string) (caller, error) {
 	tenant, err := s.Ledger.TenantForKey(ctx, store.KeyDigest(key))
 	if errors.Is(err, store.ErrNotFound) {
@@ -52,6 +60,11 @@ func (s *Server) authenticateKey(ctx context.Context, key string) (caller, error
 
 func (s *Server) authenticateToken(ctx context.Context, token string) (caller, error) {
 	identity, err := s.Verifier.Verify(ctx, token)
+	var blocked *egress.RefusedError
+	if errors.As(err, &blocked) {
+		s.Logger.Warn("issuer off the egress allowlist", "host", blocked.Host)
+		return caller{}, offTheList(blocked.Host)
+	}
 	if err != nil {
 		s.Logger.Info("token refused", "reason", refusalReason(err))
 		return caller{}, invalidToken()
