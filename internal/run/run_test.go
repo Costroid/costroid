@@ -851,43 +851,6 @@ func TestCacheWrite30mIsWrittenUnderTheCatalogClass(t *testing.T) {
 	}
 }
 
-func TestChargePeriodIsWholeSecondsAndEndsAfterItStarts(t *testing.T) {
-	base := time.Date(2026, 11, 1, 11, 15, 12, 0, time.UTC)
-	cases := []struct {
-		start, end time.Time
-		seconds    time.Duration
-	}{
-		{base.Add(814 * time.Millisecond), base.Add(2363 * time.Millisecond), 3 * time.Second},
-		{base, base, time.Second},
-		{base, base.Add(2 * time.Second), 2 * time.Second},
-	}
-	for _, tc := range cases {
-		first, last := chargePeriod(tc.start, tc.end)
-		if !first.Equal(base) || last.Sub(first) != tc.seconds {
-			t.Errorf("%s to %s", first, last)
-		}
-	}
-}
-
-func TestBillingPeriodCrossesTheYear(t *testing.T) {
-	first, last := billingPeriod(time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC))
-	if first.Format(instantLayout) != "2026-12-01T00:00:00Z" || last.Format(instantLayout) != "2027-01-01T00:00:00Z" {
-		t.Errorf("%s to %s", first, last)
-	}
-}
-
-func TestRowIDIsStableAndSeparatesClasses(t *testing.T) {
-	// sha256 of the text req:output, computed outside this package.
-	const want = "8ffecdf34ee2f4b71af971bb3720fa114774e9c270450353ad019926c5f1326c"
-	output := rowID("req", focus.Output)
-	if output == rowID("req", focus.CacheRead) || output == rowID("other", focus.Output) {
-		t.Error("row ids do not follow the request and class")
-	}
-	if output != want {
-		t.Errorf("row id %s", output)
-	}
-}
-
 func TestUnknownAgentIsRefusedByName(t *testing.T) {
 	_, err := AgentFor([]string{"/usr/bin/aider"})
 	if err == nil || !strings.Contains(err.Error(), "aider") {

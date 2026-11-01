@@ -1,13 +1,8 @@
 package run
 
 import (
-	"cmp"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"regexp"
-	"strings"
-	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
@@ -16,16 +11,6 @@ import (
 )
 
 const (
-	currency = "USD"
-
-	// unknownAccount fills BillingAccountId, which FOCUS makes mandatory,
-	// when the run was given no account. An agent's stream names none.
-	unknownAccount = "unknown"
-
-	informationalUnit = "Informational Tokens"
-	tokensPerMillion  = 6
-	instantLayout     = "2006-01-02T15:04:05Z"
-
 	attributionGrade = "unattributed"
 	runIdentity      = "unverified"
 )
@@ -64,40 +49,24 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 	if err != nil {
 		return focus.Row{}, err
 	}
-	start, end := chargePeriod(request.Start, request.End)
-	periodStart, periodEnd := billingPeriod(start)
-	version := b.catalog.Version()
-	row := focus.Row{
-		BillingAccountID:    cmp.Or(b.account, unknownAccount),
-		BillingCurrency:     currency,
-		BillingPeriodEnd:    periodEnd.Format(instantLayout),
-		BillingPeriodStart:  periodStart.Format(instantLayout),
-		ChargeCategory:      "Usage",
-		ChargeFrequency:     "Usage-Based",
-		ChargePeriodEnd:     end.Format(instantLayout),
-		ChargePeriodStart:   start.Format(instantLayout),
-		ConsumedQuantity:    decimal.FromInt(count.Tokens),
-		HostProviderName:    &provider,
-		InvoiceIssuerName:   provider,
-		PricingCategory:     "Standard",
-		ServiceCategory:     "AI and Machine Learning",
-		ServiceName:         provider + " API",
+	charge := focus.Charge{
+		RowID:               focus.RowIdentity(request.ID, count.Class),
+		Provider:            request.Provider,
 		ServiceProviderName: provider,
-		ServiceSubcategory:  "Generative AI",
-		SkuID:               fmt.Sprintf("%s/%s/%s", request.Provider, request.Model, count.Class),
-		SkuMeter:            count.Class,
+		Model:               request.Model,
+		Class:               count.Class,
+		Tokens:              count.Tokens,
+		Start:               request.Start,
+		End:                 request.End,
+		Account:             b.account,
+		CatalogVersion:      b.catalog.Version(),
+		Basis:               report.CostBasis,
 		Tags:                b.tags(report, request),
-		CatalogVersion:      &version,
-		RowID:               rowID(request.ID, count.Class),
 	}
-	notes := []string{}
 	if count.Class.Informational() {
-		row.ConsumedUnit = informationalUnit
-		row.PricingUnit = informationalUnit
-		row.PricingQuantity = row.ConsumedQuantity
-		row.SkuPriceID = row.SkuID + "/informational"
-		notes = append(notes, "informational")
+		charge.Notes = []string{focus.NoteInformational}
 	} else {
+		start, _ := focus.ChargePeriod(request.Start, request.End)
 		price, err := b.catalog.Lookup(catalog.Query{
 			Provider:           request.Provider,
 			Model:              request.Model,
@@ -110,33 +79,17 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		if err != nil {
 			return focus.Row{}, err
 		}
-		applyPrice(&row, price, count.Tokens, report.CostBasis)
-		notes = append(notes, priceNotes(price, request)...)
+		charge.Price = &focus.Price{SkuPriceID: price.SkuPriceID, PricingUnit: price.PricingUnit, ListUnitPrice: price.ListUnitPrice}
+		charge.Notes = priceNotes(price, request)
 	}
-	row.ChargeDescription = description(request.Model, count.Class, append(notes, b.enforcement.Note))
-	return row, nil
-}
-
-func applyPrice(row *focus.Row, price catalog.Price, tokens int64, basis focus.CostBasis) {
-	quantity := decimal.FromInt(tokens).DivPow10(tokensPerMillion)
-	cost := price.ListUnitPrice.Mul(quantity)
-	row.ConsumedUnit = "Tokens"
-	row.PricingUnit = price.PricingUnit
-	row.PricingQuantity = quantity
-	row.SkuPriceID = price.SkuPriceID
-	row.ListUnitPrice = price.ListUnitPrice
-	row.ListCost = cost
-	row.ContractedUnitPrice = price.ListUnitPrice
-	row.ContractedCost = cost
-	if basis == focus.Measured {
-		row.EffectiveCost = cost
-	}
+	charge.Notes = append(charge.Notes, b.enforcement.Note)
+	return focus.NewRow(charge), nil
 }
 
 func priceNotes(price catalog.Price, request adapter.Request) []string {
 	var notes []string
 	if price.Fallback {
-		notes = append(notes, "priced at the catalog fallback tier: the sheet does not name this model, tier and class")
+		notes = append(notes, focus.NoteFallback)
 	}
 	if price.ResidencyMultiplier != nil {
 		notes = append(notes, fmt.Sprintf("list price times %s for data residency in %s", price.ResidencyMultiplier, request.Region))
@@ -148,11 +101,6 @@ func priceNotes(price catalog.Price, request adapter.Request) []string {
 		notes = append(notes, "cache lifetime assumed")
 	}
 	return notes
-}
-
-func description(model string, class focus.TokenClass, notes []string) string {
-	head := fmt.Sprintf("%s %s tokens", model, class)
-	return strings.Join(append([]string{head}, notes...), "; ")
 }
 
 func (b rowBuilder) tags(report adapter.Report, request adapter.Request) map[string]string {
@@ -172,27 +120,6 @@ func (b rowBuilder) tags(report adapter.Report, request adapter.Request) map[str
 		tags[focus.TagAgentVersion] = report.AgentVersion
 	}
 	return tags
-}
-
-// chargePeriod widens a span to whole UTC seconds. The end is exclusive, so a
-// span inside one second still ends after it starts.
-func chargePeriod(start, end time.Time) (time.Time, time.Time) {
-	first := start.UTC().Truncate(time.Second)
-	last := end.UTC().Truncate(time.Second)
-	if last.Before(end.UTC()) || !last.After(first) {
-		last = last.Add(time.Second)
-	}
-	return first, last
-}
-
-func billingPeriod(at time.Time) (time.Time, time.Time) {
-	first := time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
-	return first, first.AddDate(0, 1, 0)
-}
-
-func rowID(requestID string, class focus.TokenClass) string {
-	sum := sha256.Sum256([]byte(requestID + ":" + string(class)))
-	return hex.EncodeToString(sum[:])
 }
 
 func listTotal(rows []focus.Row) decimal.Decimal {

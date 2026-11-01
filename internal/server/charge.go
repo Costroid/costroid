@@ -1,12 +1,10 @@
 package server
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"regexp"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
@@ -16,13 +14,6 @@ import (
 )
 
 const (
-	currency          = "USD"
-	unknownAccount    = "unknown"
-	unitTokens        = "Tokens"
-	unitInformational = "Informational Tokens"
-	tokensPerMillion  = 6
-	instantLayout     = "2006-01-02T15:04:05Z"
-
 	gradeExact      = "exact"
 	gradeWindowed   = "windowed"
 	gradeNone       = "unattributed"
@@ -167,58 +158,35 @@ func (s *Server) price(c *charge, joined joinResult) (store.Record, error) {
 	if err != nil {
 		return store.Record{}, refuse(http.StatusUnprocessableEntity, codeUnknownPrice, "The catalog has no sheet for this row's provider.")
 	}
-	start, end := chargePeriod(c.start, c.end)
-	periodStart, periodEnd := billingPeriod(start)
-	version := s.Catalog.Version()
-	sku := fmt.Sprintf("%s/%s/%s", c.provider, c.model, c.class)
-	row := focus.Row{
-		BillingAccountID:    unknownAccount,
-		BillingCurrency:     currency,
-		BillingPeriodEnd:    periodEnd.Format(instantLayout),
-		BillingPeriodStart:  periodStart.Format(instantLayout),
-		ChargeCategory:      "Usage",
-		ChargeFrequency:     "Usage-Based",
-		ChargePeriodEnd:     end.Format(instantLayout),
-		ChargePeriodStart:   start.Format(instantLayout),
-		ConsumedQuantity:    decimal.FromInt(c.tokens),
-		HostProviderName:    &provider,
-		InvoiceIssuerName:   provider,
-		PricingCategory:     "Standard",
-		ServiceCategory:     "AI and Machine Learning",
-		ServiceName:         provider + " API",
-		ServiceProviderName: provider,
-		ServiceSubcategory:  "Generative AI",
-		SkuID:               sku,
-		SkuMeter:            c.class,
-		Tags:                tagsOf(c, joined),
-		CatalogVersion:      &version,
-		OvershootBound:      overshootOf(c, joined),
+	priced := focus.Charge{
 		RowID:               c.rowID,
+		Provider:            c.provider,
+		ServiceProviderName: provider,
+		Model:               c.model,
+		Class:               c.class,
+		Tokens:              c.tokens,
+		Start:               c.start,
+		End:                 c.end,
+		CatalogVersion:      s.Catalog.Version(),
+		Basis:               c.basis,
+		Tags:                tagsOf(c, joined),
+		Notes:               slices.Clone(c.notes),
+		OvershootBound:      overshootOf(c, joined),
 	}
-	notes := append([]string{}, c.notes...)
 	if c.class.Informational() {
-		row.ConsumedUnit = unitInformational
-		row.PricingUnit = unitInformational
-		row.PricingQuantity = row.ConsumedQuantity
-		row.SkuPriceID = sku + "/informational"
-		notes = append(notes, "informational")
-	} else {
-		fallback, err := s.applyPrice(&row, c, start)
-		if err != nil {
-			return store.Record{}, err
-		}
-		if fallback {
-			notes = append(notes, "priced at the catalog fallback tier: the sheet does not name this model, tier and class")
-		}
+		priced.Notes = append(priced.Notes, focus.NoteInformational)
+	} else if err := s.applyPrice(&priced, c); err != nil {
+		return store.Record{}, err
 	}
-	row.ChargeDescription = strings.Join(append([]string{fmt.Sprintf("%s %s tokens", c.model, c.class)}, notes...), "; ")
+	row := focus.NewRow(priced)
 	if err := row.Check(); err != nil {
 		return store.Record{}, fmt.Errorf("server: priced row: %w", err)
 	}
 	return store.Record{Row: row, RunAttempt: joined.attempt, Actor: joined.actor, Event: joined.event}, nil
 }
 
-func (s *Server) applyPrice(row *focus.Row, c *charge, at time.Time) (bool, error) {
+func (s *Server) applyPrice(priced *focus.Charge, c *charge) error {
+	start, _ := focus.ChargePeriod(c.start, c.end)
 	price, err := s.Catalog.Lookup(catalog.Query{
 		Provider:           c.provider,
 		Model:              c.model,
@@ -226,25 +194,16 @@ func (s *Server) applyPrice(row *focus.Row, c *charge, at time.Time) (bool, erro
 		ServiceTier:        c.serviceTier,
 		Region:             catalog.RegionGlobal,
 		ContextInputTokens: c.context,
-		At:                 at,
+		At:                 start,
 	})
 	if err != nil {
-		return false, refuse(http.StatusUnprocessableEntity, codeUnknownPrice, "The catalog has no price or fallback for this row.")
+		return refuse(http.StatusUnprocessableEntity, codeUnknownPrice, "The catalog has no price or fallback for this row.")
 	}
-	quantity := decimal.FromInt(c.tokens).DivPow10(tokensPerMillion)
-	cost := price.ListUnitPrice.Mul(quantity)
-	row.ConsumedUnit = unitTokens
-	row.PricingUnit = price.PricingUnit
-	row.PricingQuantity = quantity
-	row.SkuPriceID = price.SkuPriceID
-	row.ListUnitPrice = price.ListUnitPrice
-	row.ListCost = cost
-	row.ContractedUnitPrice = price.ListUnitPrice
-	row.ContractedCost = cost
-	if c.basis == focus.Measured {
-		row.EffectiveCost = cost
+	priced.Price = &focus.Price{SkuPriceID: price.SkuPriceID, PricingUnit: price.PricingUnit, ListUnitPrice: price.ListUnitPrice}
+	if price.Fallback {
+		priced.Notes = append(priced.Notes, focus.NoteFallback)
 	}
-	return price.Fallback, nil
+	return nil
 }
 
 func tagsOf(c *charge, joined joinResult) map[string]string {
@@ -289,28 +248,6 @@ func overshootOf(c *charge, joined joinResult) *decimal.Decimal {
 		return c.overshoot
 	}
 	return nil
-}
-
-// rowIdentity is the row contract's id: SHA-256 of the provider's request id
-// and the token class. Both paths arrive at the same id for the same request.
-func rowIdentity(requestID string, class focus.TokenClass) string {
-	sum := sha256.Sum256([]byte(requestID + ":" + string(class)))
-	return hex.EncodeToString(sum[:])
-}
-
-// chargePeriod widens a span to whole UTC seconds, end exclusive.
-func chargePeriod(start, end time.Time) (time.Time, time.Time) {
-	first := start.UTC().Truncate(time.Second)
-	last := end.UTC().Truncate(time.Second)
-	if last.Before(end.UTC()) || !last.After(first) {
-		last = last.Add(time.Second)
-	}
-	return first, last
-}
-
-func billingPeriod(at time.Time) (time.Time, time.Time) {
-	first := time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
-	return first, first.AddDate(0, 1, 0)
 }
 
 // write checks every charge's join, prices it and stores the batch. One bad

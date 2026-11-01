@@ -228,7 +228,7 @@ func row(id string, class focus.TokenClass, tokens int) map[string]any {
 			focus.TagCostBasis: "measured", focus.TagAttributionGrade: "unattributed", focus.TagEnforcementGrade: "agent-flag",
 			focus.TagRunIdentity: "unverified", focus.TagSessionID: "session-1",
 		},
-		"x_CostroidRowId": rowIdentity(id, class),
+		"x_CostroidRowId": focus.RowIdentity(id, class),
 	}
 }
 

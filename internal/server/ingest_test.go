@@ -400,7 +400,7 @@ func TestAGatewayGradeNeedsItsBound(t *testing.T) {
 	tags(r)[focus.TagEnforcementGrade] = "gateway-precheck"
 	r["x_CostroidOvershootBound"] = "4.5"
 	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
-	stored := ledger.rows[tenantID(t, tenantA)][rowIdentity("req-2", focus.Output)]
+	stored := ledger.rows[tenantID(t, tenantA)][focus.RowIdentity("req-2", focus.Output)]
 	if stored.Row.OvershootBound == nil || stored.Row.OvershootBound.String() != "4.5" {
 		t.Fatalf("%+v", stored.Row)
 	}

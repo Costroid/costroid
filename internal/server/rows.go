@@ -247,7 +247,7 @@ func (f rowFields) instant(column string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	at, err := time.Parse(instantLayout, text)
+	at, err := time.Parse(focus.InstantLayout, text)
 	if err != nil {
 		return time.Time{}, invalidRow(f.line, column+" is not a UTC instant")
 	}

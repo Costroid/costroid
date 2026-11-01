@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/otlp"
 )
 
@@ -127,7 +128,7 @@ func chargeOf(usage *otlp.Usage, count otlp.Count, batchDrops map[string]int64, 
 		end = start
 	}
 	return charge{
-		rowID:        rowIdentity(usage.ID, count.Class),
+		rowID:        focus.RowIdentity(usage.ID, count.Class),
 		provider:     usage.Provider,
 		model:        usage.Model,
 		serviceTier:  usage.ServiceTier,
