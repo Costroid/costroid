@@ -22,6 +22,7 @@ const usage = `costroid runs a coding agent under a budget and records what it c
 
 Usage:
   costroid run --budget-usd N --out rows.jsonl [--billing-account ID] -- <agent command>
+  costroid lint-recipes <paths>
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -33,6 +34,9 @@ Exit codes:
   the agent's own   the run finished, or the agent stopped itself
   124               costroid stopped the agent at the cap
   125               costroid could not run the agent or record the run
+
+lint-recipes exits 0 when every recipe passes, 1 when one is rejected and 125
+when it cannot read them.
 `
 
 const (
@@ -62,6 +66,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	switch args[0] {
 	case "run":
 		return runCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "lint-recipes":
+		return lintRecipes(args[1:], stdout, stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":
