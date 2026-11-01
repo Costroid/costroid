@@ -33,7 +33,7 @@ The recipe installs Codex 0.164.0-alpha.11.1, the one version with a recorded fi
 
 Copy [`recipes/gitlab-ci.yml`](../recipes/gitlab-ci.yml) into your repository and `include` it as a local file.
 
-Set `COSTROID_VERSION` and `COSTROID_SHA256` as CI/CD variables. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
+Set `COSTROID_VERSION` and `COSTROID_SHA256` as CI/CD variables, and `COSTROID_CREDENTIAL` if you reconcile. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
 
 Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Merge requests from forks never run the agent.
 
