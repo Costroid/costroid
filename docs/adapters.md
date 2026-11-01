@@ -1,6 +1,6 @@
 # Adapters
 
-What each agent's stream carries, as recorded on November 1, 2026. These runs overrule the November 2026 adapter research where they differ. The fixtures sit beside each adapter under `testdata/<agent version>/`, and every figure below is asserted by a test.
+What each agent's stream carries, as recorded on November 1, 2026. The fixtures sit beside each adapter under `testdata/<agent version>/`, and every figure below is asserted by a test.
 
 ## Recorded runs
 
@@ -11,8 +11,9 @@ What each agent's stream carries, as recorded on November 1, 2026. These runs ov
 | `claudecode/.../budget-stop` | Claude Code 2.1.316      | `claude -p --max-budget-usd 0.0001`                               | `claude-haiku-5-5` |
 | `codex/.../exec`             | Codex 0.164.0-alpha.11.1 | `codex exec --json`, one shell command, OTLP to a local sink      | `gpt-5.6-sol`      |
 | `codex/.../resume`           | Codex 0.164.0-alpha.11.1 | `codex exec resume --json` on the thread above                    | `gpt-5.6-sol`      |
+| `codex/.../stopped`          | Codex 0.164.0-alpha.11.1 | `costroid run --budget-usd 0.001 -- codex exec`, one shell tool   | `gpt-5.6-sol`      |
 
-All five ran on a subscription, so their rows are `list_equivalent`. A sixth run, a one-word Codex prompt through the built binary, was a smoke test and left no fixture.
+All six ran on a subscription, so their rows are `list_equivalent`. A seventh run, a one-word Codex prompt through the built binary, was a smoke test and left no fixture.
 
 Fixtures are cut to an allowlist of keys. Prompts, tool output, paths, user and account ids, and rate-limit data are gone, and session, thread, request and message ids are replaced by synthetic ones. Each adapter has a test that scans its `testdata/` for those patterns.
 
@@ -46,7 +47,11 @@ What the runs showed:
 
 ## Codex
 
-| Canonical class         | `turn.completed.usage` field                                                                    |
+Costroid reads two sources. The rollout file gives per-request rows and the budget stop. The stream checks the file, and it is the record when the file cannot be read.
+
+The rollout file is `<codex home>/sessions/<year>/<month>/<day>/rollout-<local time>-<thread>.jsonl`. Its format is undocumented, so the versions Costroid reads are pinned to the ones with a recorded fixture: `0.164.0-alpha.11.1`. The version comes from the file's `session_meta` line.
+
+| Canonical class         | Rollout usage field and `turn.completed.usage` field                                            |
 | ----------------------- | ----------------------------------------------------------------------------------------------- |
 | `input_uncached`        | `input_tokens` − `cached_input_tokens` − `cache_write_input_tokens`                             |
 | `cache_read`            | `cached_input_tokens`                                                                           |
@@ -57,14 +62,38 @@ What the runs showed:
 
 `cache_write_30m` is the catalog's class name. Row contract 0.1 does not list it yet, so a row carrying it fails that schema. Costroid writes it anyway, and never moves the tokens to another class.
 
+A request settles on the first of two lines. `token_usage_record` carries `usage`, `thread_token_usage` and `response_id`. `token_count` carries `last_token_usage` and `total_token_usage`. Both state the same running total, so a total that has not moved is not a new request, and a total that moved by anything but the request's own usage stops the reading.
+
+Rows from the file are one per request. Their id is `response_id`, or `<thread>:request:<n>` when only a `token_count` was seen. Their context tier comes from that request's `input_tokens`, their model from the last `turn_context`, and their `costroid/cost_source` is `agent_session_file`.
+
+The grade is decided when the run ends:
+
+| What happened                                          | Grade              | Rows                                 |
+| ------------------------------------------------------ | ------------------ | ------------------------------------ |
+| The file was read, and its total equals the stream's   | `wrapper-watchdog` | One per request                      |
+| The file was read, and the run ended inside a turn     | `wrapper-watchdog` | One per request, with a warning      |
+| `--ephemeral`, which the help says persists no session | `none`             | One per turn, stream                 |
+| No file appeared for the thread                        | `none`             | One per turn, stream                 |
+| The file names a version with no fixture               | `none`             | One per turn, stream                 |
+| The file contradicts itself or the stream              | `none`             | One per turn, stream, if it reported |
+
+A `none` run is never stopped, and every row says why. A turn row takes the lowest context tier and says so, because a sum cannot select a per-request tier. A request above 272000 input tokens is under-priced at that grain. Its id is `<thread>:turn:<n>`.
+
 What the runs showed:
 
-- `turn.completed.usage` is the thread's running total. The resumed turn reported 52174 input tokens, which is 33907 from the first run plus its own 18267. `costroid run` refuses `codex exec resume` for that reason: the stream gives no way to subtract the earlier spend.
-- One `codex exec` prompt is one turn. The first run made two model requests, 16888 and 17019 input tokens, and `turn.completed` arrived once, last. The watchdog therefore cannot stop a one-prompt run partway. Multi-turn behaviour was tested with a fake agent only.
-- The stream names no model and no request id. The model comes from `-m`, `--model`, `-c model=` or the top-level `model` key of `config.toml`, and otherwise reads `unknown` and prices at the fallback tier. A row's id is `<thread>:turn:<n>`.
-- A turn's sum cannot select a per-request context tier, so turn rows take the lowest tier and say so. A request above 272000 input tokens is under-priced at this grain.
-- The rollout file carries finer data than the stream: `token_count` events with `last_token_usage` during a turn, and `token_usage_record` lines with a `response_id`. The format is undocumented, and this slice does not read it.
-- A `codex.sse_event` reported a `response.completed` of 2 input tokens before the first turn, from startup. It is not in the turn total.
+- `turn.completed.usage` is the thread's running total. The resumed turn reported 52174 input tokens, which is 33907 from the first run plus its own 18267. `costroid run` refuses `codex exec resume` for that reason.
+- One `codex exec` prompt is one turn. The first run made two model requests, 16888 and 17019 input tokens, and `turn.completed` arrived once, last. The stream cannot stop a one-prompt run partway, which is why the watchdog reads the file.
+- `token_count` waits for tools. In the `stopped` recording, a 20-second `sleep` was running when the `token_usage_record` of its request landed, and no `token_count` was written. Watching `token_count` alone would have stopped that run 20 seconds later.
+- The stopped run ended 65 milliseconds after that record, at 0.0283136 USD, under a 0.001 USD cap. The first request always completes, because usage is reported after it.
+- A stop can leave a request uncounted. If a model request is in flight, Codex is killed before it reports usage, so its tokens reach no row. The run says so in a warning.
+- A stop does not reach a running tool. Codex starts tool commands in their own process group, so the `sleep` outlived the agent and ended on its own. A tool spends no model tokens, and it can still change files.
+- Unverified: a Codex subagent thread may write its own rollout file, which Costroid would not read. No recorded run had one.
+- The stream names no model and no request id. Without a rollout file, the model comes from `-m`, `--model`, `-c model=` or the top-level `model` key of `config.toml`, and otherwise reads `unknown` and prices at the fallback tier.
+- A `codex.sse_event` reported a `response.completed` of 2 input tokens before the first turn, from startup. It is in neither the turn total nor the rollout file.
+
+## Stdin
+
+Costroid gives an agent no stdin when its own is a pipe that shows no data and stays open for 100 milliseconds. Such a pipe would hold an agent that reads stdin: `claude -p` waits three seconds and warns. A terminal, a file, a closed pipe and a pipe holding data pass through. A producer slower than 100 milliseconds loses its data to the agent, so pipe data before the run starts.
 
 ## The fixture questions
 
@@ -74,7 +103,7 @@ What the runs showed:
 4. Cursor's usage event grain and `cloudAgentId`: not settled. No Cursor run was in scope.
 5. OpenCode's `step_finish` on 1.19.5 and 2.2.5: not settled. No OpenCode run was in scope.
 
-## Corrections to the research
+## Recorded facts easy to get wrong
 
 - `modelUsage` has a lifetime split on 2.1.316, in `cacheCreationEphemeral5mInputTokens` and `cacheCreationEphemeral1hInputTokens`.
 - Stream assistant messages carry `request_id`.

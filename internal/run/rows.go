@@ -1,6 +1,7 @@
 package run
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -17,8 +18,8 @@ import (
 const (
 	currency = "USD"
 
-	// unknownAccount fills BillingAccountId, which FOCUS makes mandatory.
-	// An agent's stream names no account.
+	// unknownAccount fills BillingAccountId, which FOCUS makes mandatory,
+	// when the run was given no account. An agent's stream names none.
 	unknownAccount = "unknown"
 
 	informationalUnit = "Informational Tokens"
@@ -41,6 +42,7 @@ type rowBuilder struct {
 	catalog     *catalog.Catalog
 	agent       string
 	enforcement adapter.Enforcement
+	account     string
 }
 
 func (b rowBuilder) rows(report adapter.Report) ([]focus.Row, error) {
@@ -66,7 +68,7 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 	periodStart, periodEnd := billingPeriod(start)
 	version := b.catalog.Version()
 	row := focus.Row{
-		BillingAccountID:    unknownAccount,
+		BillingAccountID:    cmp.Or(b.account, unknownAccount),
 		BillingCurrency:     currency,
 		BillingPeriodEnd:    periodEnd.Format(instantLayout),
 		BillingPeriodStart:  periodStart.Format(instantLayout),

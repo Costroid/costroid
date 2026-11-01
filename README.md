@@ -33,6 +33,7 @@ costroid: claude-code, 4 requests
 costroid: 19 rows in rows.jsonl, catalog 0.1.0
 costroid: USD 0.001619725 at list, List-equivalent, not billed
 costroid: budget USD 5, agent-flag: client-side estimate, can pass the cap
+costroid: warning: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT
 ```
 
 `rows.jsonl` holds one FOCUS row per request per token class:
@@ -48,9 +49,10 @@ That row is shortened. A full row has every column of the [row contract](https:/
 | Agent       | Grade              | What holds the run to the budget                                                                                                                            |
 | ----------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude Code | `agent-flag`       | Costroid passes `--max-budget-usd`. Claude Code checks its own estimate between requests, so the request that crosses the cap still runs and is still paid. |
-| Codex       | `wrapper-watchdog` | Costroid prices `codex exec --json` and stops the process at the cap. Usage arrives at turn end, so overshoot is bounded by one turn.                       |
+| Codex       | `wrapper-watchdog` | Costroid reads Codex's rollout file during the turn, prices each request as it settles and stops the process at the cap. Requests in flight can pass it.    |
+| Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a Codex version with no recorded fixture, or a file that contradicts the stream. Nothing stops the run.  |
 
-One `codex exec` prompt is one turn, however many model requests it makes. A one-prompt run is priced when it ends, so the watchdog cannot stop it partway. [`docs/adapters.md`](docs/adapters.md) has the recorded runs behind both rows.
+A recorded run with a 0.001 USD cap stopped mid-turn at 0.0283136 USD, 65 milliseconds after its first request settled. The tool the agent had started kept running, because Codex gives tools their own process group. A `none` run says why on every row. [`docs/adapters.md`](docs/adapters.md) has the recorded runs behind this table.
 
 ## Exit codes
 

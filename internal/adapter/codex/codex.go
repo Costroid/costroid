@@ -1,8 +1,10 @@
 // Package codex reads `codex exec --json` runs.
 //
 // The stream reports usage once, at turn.completed, as a running total for the
-// thread. It names neither the model nor a request id, so the model comes from
-// the command or the Codex config, and a row's id stands in for a request id.
+// thread, and one prompt is one turn. So the budget is watched in the rollout
+// file Codex writes during the turn, which also gives per-request rows. The
+// stream stays as the check on the file and as the record when it cannot be
+// read.
 package codex
 
 import (
@@ -17,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
@@ -33,9 +36,12 @@ const (
 	// a model. It prices at the catalog's fallback tier.
 	UnknownModel = "unknown"
 
-	costSource = "agent_stream"
+	costSourceStream  = "agent_stream"
+	costSourceRollout = "agent_session_file"
 
-	enforcementNote = "wrapper-watchdog: usage arrives at turn end, so overshoot is bounded by one turn, and one codex exec prompt is one turn"
+	watchedNote = "wrapper-watchdog: priced from the rollout file during the turn and stopped at the cap, so requests in flight at the stop can pass it"
+
+	ephemeralFlag = "--ephemeral"
 
 	versionTimeout = 10 * time.Second
 )
@@ -53,7 +59,8 @@ func (Agent) Name() string {
 	return name
 }
 
-// Plan adds --json. Codex has no budget flag, so the wrapper watches the stream.
+// Plan adds --json. Codex has no budget flag, so the wrapper watches the
+// rollout file, and a run that writes none has nothing holding it to the budget.
 func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	subcommand := slices.Index(argv, "exec")
 	if subcommand < 1 {
@@ -66,15 +73,23 @@ func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	if !slices.Contains(argv, "--json") {
 		planned = slices.Insert(planned, subcommand+1, "--json")
 	}
-	return adapter.Plan{
-		Argv:        planned,
-		Enforcement: adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog, Note: enforcementNote, Watchdog: true},
-	}, nil
+	enforcement := adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog, Note: watchedNote, Watchdog: true}
+	if slices.Contains(argv, ephemeralFlag) {
+		enforcement = unwatched(ephemeralFlag + " writes no rollout file")
+	}
+	return adapter.Plan{Argv: planned, Enforcement: enforcement}, nil
+}
+
+// unwatched is the grade of a run nothing could watch, and why.
+func unwatched(why string) adapter.Enforcement {
+	return adapter.Enforcement{Grade: adapter.GradeNone, Note: "none: the budget was not enforced: " + why}
 }
 
 // NewSession starts reading a run of the planned command.
 func (Agent) NewSession(plan adapter.Plan) adapter.Session {
 	return &Session{
+		planned:   plan.Enforcement,
+		home:      homeDir(),
 		model:     modelOf(plan.Argv),
 		costBasis: costBasisOf(os.Getenv("CODEX_API_KEY")),
 		version:   versionOf(plan.Argv),
@@ -105,7 +120,7 @@ func modelOf(argv []string) string {
 	if model := modelFromArgs(argv); model != "" {
 		return model
 	}
-	if model := modelFromConfig(configPath()); model != "" {
+	if model := modelFromConfig(filepath.Join(homeDir(), "config.toml")); model != "" {
 		return model
 	}
 	return UnknownModel
@@ -131,15 +146,16 @@ func modelFromArgs(argv []string) string {
 	return ""
 }
 
-func configPath() string {
+// homeDir is where Codex keeps its config and rollout files.
+func homeDir() string {
 	if dir := os.Getenv("CODEX_HOME"); dir != "" {
-		return filepath.Join(dir, "config.toml")
+		return dir
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".codex", "config.toml")
+	return filepath.Join(home, ".codex")
 }
 
 // modelFromConfig reads the top-level model key, which sits above any table.
@@ -205,16 +221,23 @@ type streamLine struct {
 	Message  string `json:"message"`
 }
 
-// Session reads one Codex run.
+// Session reads one Codex run. Feed and Tail run on separate goroutines, so
+// the lock covers everything below it.
 type Session struct {
+	planned   adapter.Enforcement
+	home      string
+	costBasis focus.CostBasis
+
+	mu        sync.Mutex
 	model     string
 	version   string
-	costBasis focus.CostBasis
 	threadID  string
 	turnStart time.Time
+	turnOpen  bool
 	total     usage
-	requests  []adapter.Request
+	turns     []adapter.Request
 	warnings  []string
+	log       rolloutLog
 }
 
 // Feed reads one stdout line.
@@ -223,12 +246,15 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 	if err := json.Unmarshal(line, &parsed); err != nil {
 		return fmt.Errorf("codex: stream line is not JSON: %w", err)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	switch parsed.Type {
 	case "thread.started":
 		s.threadID = parsed.ThreadID
 		s.turnStart = at
 	case "turn.started":
 		s.turnStart = at
+		s.turnOpen = true
 	case "turn.completed":
 		return s.completeTurn(parsed.Usage, at)
 	case "turn.failed", "error":
@@ -243,8 +269,9 @@ func (s *Session) completeTurn(total usage, at time.Time) error {
 		return err
 	}
 	s.total = total
-	s.requests = append(s.requests, adapter.Request{
-		ID:          s.threadID + ":turn:" + strconv.Itoa(len(s.requests)+1),
+	s.turnOpen = false
+	s.turns = append(s.turns, adapter.Request{
+		ID:          s.threadID + ":turn:" + strconv.Itoa(len(s.turns)+1),
 		Provider:    provider,
 		Model:       s.model,
 		Start:       s.turnStart,
@@ -257,27 +284,54 @@ func (s *Session) completeTurn(total usage, at time.Time) error {
 	return nil
 }
 
-// Finished lists the turns the stream has completed.
-func (s *Session) Finished() []adapter.Request {
-	return s.requests
-}
-
-// Finish returns the run's usage. A run with no completed turn reported
-// nothing, and whatever it spent is not on the stream.
+// Finish returns the run's usage and the grade it earned. Per-request rows
+// from the rollout file stand unless the stream's total contradicts them. A
+// run with neither source reported nothing, and whatever it spent is unknown.
 func (s *Session) Finish() (adapter.Report, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.threadID == "" {
 		return adapter.Report{}, fmt.Errorf("codex: the stream held no thread.started event")
 	}
-	warnings := s.warnings
-	if len(s.requests) == 0 {
-		warnings = append(warnings, "no turn completed, so the stream reported no usage")
-	}
-	return adapter.Report{
+	s.judgeRollout()
+	report := adapter.Report{
 		SessionID:    s.threadID,
 		AgentVersion: s.version,
 		CostBasis:    s.costBasis,
-		CostSource:   costSource,
-		Requests:     s.requests,
-		Warnings:     warnings,
-	}, nil
+		CostSource:   costSourceStream,
+		Requests:     s.turns,
+		Warnings:     s.warnings,
+		Enforcement:  s.earned(),
+	}
+	if len(s.log.requests) > 0 && (s.log.problem == "" || len(s.turns) == 0) {
+		report.CostSource = costSourceRollout
+		report.Requests = s.log.requests
+		if s.turnOpen || len(s.turns) == 0 {
+			report.Warnings = append(report.Warnings, "the run ended inside a turn: the rows stop at the last request the rollout file settled, and a request in flight is not counted")
+		}
+	}
+	if len(report.Requests) == 0 {
+		report.Warnings = append(report.Warnings, "no turn completed, so neither the stream nor a rollout file reported usage")
+	}
+	return report, nil
+}
+
+// judgeRollout decides whether the file held the run. The totals are compared
+// only when the stream closed its last turn, because a stopped turn has no
+// stream total to compare.
+func (s *Session) judgeRollout() {
+	switch {
+	case !s.planned.Watchdog:
+	case !s.log.opened:
+		s.log.refuse("no rollout file appeared for this thread")
+	case !s.turnOpen && len(s.turns) > 0 && s.log.settled != s.total:
+		s.log.refuse("the rollout file's total differs from the stream's")
+	}
+}
+
+func (s *Session) earned() adapter.Enforcement {
+	if s.planned.Watchdog && s.log.problem != "" {
+		return unwatched(s.log.problem)
+	}
+	return s.planned
 }

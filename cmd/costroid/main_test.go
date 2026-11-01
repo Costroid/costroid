@@ -124,6 +124,47 @@ func TestSummarySaysWhenAnAgentFlagRunPassedTheBudget(t *testing.T) {
 	}
 }
 
+func TestBillingAccountComesFromTheFlagThenTheVariableAndWarnsOnlyWhenAbsent(t *testing.T) {
+	const warning = "BillingAccountId reads unknown"
+	cases := []struct {
+		name, variable string
+		args           []string
+		want           string
+		warned         bool
+	}{
+		{name: "neither", want: "unknown", warned: true},
+		{name: "variable", variable: "org-variable", want: "org-variable"},
+		{name: "flag", args: []string{"--billing-account", "org-flag"}, want: "org-flag"},
+		{name: "flag over variable", variable: "org-variable", args: []string{"--billing-account", "org-flag"}, want: "org-flag"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			claude := replayClaude(t)
+			t.Setenv(billingAccountVariable, tc.variable)
+			out := filepath.Join(t.TempDir(), "rows.jsonl")
+			args := append([]string{"run", "--budget-usd", "5", "--out", out}, tc.args...)
+			code, _, stderr := execute(t, append(args, "--", claude, "-p", "work")...)
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if account := firstRow(t, out)["BillingAccountId"]; account != tc.want {
+				t.Errorf("account %v", account)
+			}
+			if strings.Contains(stderr, warning) != tc.warned {
+				t.Errorf("stderr: %s", stderr)
+			}
+		})
+	}
+}
+
+func TestBillingAccountPastTheContractsLimitIsRefused(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "rows.jsonl")
+	code, _, stderr := execute(t, "run", "--budget-usd", "1", "--out", out, "--billing-account", strings.Repeat("a", maxBillingAccount+1), "--", "claude", "-p", "x")
+	if code != exitFailure || !strings.Contains(stderr, "--billing-account") {
+		t.Errorf("exit %d, %q", code, stderr)
+	}
+}
+
 func TestVersionNamesTheBinaryAndTheCatalog(t *testing.T) {
 	code, stdout, _ := execute(t, "version")
 	if code != 0 || !regexp.MustCompile(`^costroid \S+, catalog 0\.1\.0\n$`).MatchString(stdout) {

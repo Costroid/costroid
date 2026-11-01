@@ -2,6 +2,7 @@
 package adapter
 
 import (
+	"context"
 	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
@@ -33,6 +34,7 @@ type Enforcement struct {
 const (
 	GradeAgentFlag       = "agent-flag"
 	GradeWrapperWatchdog = "wrapper-watchdog"
+	GradeNone            = "none"
 )
 
 // Tokens holds the canonical classes. Billed classes are disjoint; the two
@@ -117,6 +119,9 @@ type Report struct {
 	CostSource   string
 	Requests     []Request
 	Warnings     []string
+	// Enforcement is the grade the run earned, when it differs from what the
+	// plan could promise. Empty means the plan's grade held.
+	Enforcement Enforcement
 }
 
 // Plan is how one agent command runs under a budget.
@@ -129,10 +134,15 @@ type Plan struct {
 type Session interface {
 	// Feed reads one line of the agent's stdout, seen at the given time.
 	Feed(line []byte, at time.Time) error
-	// Finished lists the usage the stream has settled so far.
-	Finished() []Request
 	// Finish reads whatever the agent left behind and returns the run's usage.
 	Finish() (Report, error)
+}
+
+// Tailer is a Session that watches a file the agent writes during a run.
+type Tailer interface {
+	// Tail follows the file until ctx ends. It calls settled with the run's
+	// requests so far each time a new one settles while the agent is working.
+	Tail(ctx context.Context, settled func([]Request))
 }
 
 // Agent is one supported agent.

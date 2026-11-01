@@ -1,0 +1,16 @@
+{"timestamp":"2026-11-01T11:47:33.753Z","type":"session_meta","payload":{"id":"00000000-0000-4000-8000-000000000005","cli_version":"0.164.0-alpha.11.1"}}
+{"timestamp":"2026-11-01T11:47:33.753Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-11-01T11:47:34.687Z","type":"response_item","payload":{"type":"additional_tools"}}
+{"timestamp":"2026-11-01T11:47:34.687Z","type":"response_item","payload":{"type":"message"}}
+{"timestamp":"2026-11-01T11:47:34.688Z","type":"response_item","payload":{"type":"message"}}
+{"timestamp":"2026-11-01T11:47:34.688Z","type":"response_item","payload":{"type":"message"}}
+{"timestamp":"2026-11-01T11:47:34.688Z","type":"response_item","payload":{"type":"message"}}
+{"timestamp":"2026-11-01T11:47:34.688Z","type":"response_item","payload":{"type":"message"}}
+{"timestamp":"2026-11-01T11:47:34.696Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}
+{"timestamp":"2026-11-01T11:47:34.696Z","type":"event_msg","payload":{"type":"thread_settings_applied"}}
+{"timestamp":"2026-11-01T11:47:34.706Z","type":"response_item","payload":{"type":"message"}}
+{"timestamp":"2026-11-01T11:47:34.709Z","type":"event_msg","payload":{"type":"item_completed"}}
+{"timestamp":"2026-11-01T11:47:36.149Z","type":"event_msg","payload":{"type":"item_completed"}}
+{"timestamp":"2026-11-01T11:47:36.153Z","type":"response_item","payload":{"type":"message"}}
+{"timestamp":"2026-11-01T11:47:36.323Z","type":"response_item","payload":{"type":"custom_tool_call"}}
+{"timestamp":"2026-11-01T11:47:36.362Z","type":"token_usage_record","payload":{"response_id":"response-1","thread_id":"00000000-0000-4000-8000-000000000005","turn_id":"turn-1","usage":{"input_tokens":16896,"cached_input_tokens":11264,"cache_write_input_tokens":0,"output_tokens":64,"reasoning_output_tokens":0,"total_tokens":16960},"turn_token_usage":{"input_tokens":16896,"cached_input_tokens":11264,"cache_write_input_tokens":0,"output_tokens":64,"reasoning_output_tokens":0,"total_tokens":16960},"thread_token_usage":{"input_tokens":16896,"cached_input_tokens":11264,"cache_write_input_tokens":0,"output_tokens":64,"reasoning_output_tokens":0,"total_tokens":16960}}}

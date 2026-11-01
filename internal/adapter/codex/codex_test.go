@@ -23,6 +23,15 @@ func replaySession(model string) *Session {
 	return &Session{model: model, costBasis: focus.ListEquivalent}
 }
 
+func watchedSession(home string) *Session {
+	return &Session{
+		model:     "gpt-5.6-sol",
+		costBasis: focus.ListEquivalent,
+		home:      home,
+		planned:   adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog, Note: watchedNote, Watchdog: true},
+	}
+}
+
 func replay(t *testing.T, scenario string) *Session {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", version, scenario, "stream.jsonl"))
@@ -36,6 +45,15 @@ func replay(t *testing.T, scenario string) *Session {
 		}
 	}
 	return session
+}
+
+func turns(t *testing.T, session *Session) []adapter.Request {
+	t.Helper()
+	report, err := session.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report.Requests
 }
 
 func TestInputIncludesCachedTokensAndCacheWrites(t *testing.T) {
@@ -82,7 +100,7 @@ func TestAbsentCacheWriteFieldReadsAsZero(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := session.Finished()[0].Tokens; got.InputUncached != 60 || got.CacheWrite30m != 0 {
+	if got := turns(t, session)[0].Tokens; got.InputUncached != 60 || got.CacheWrite30m != 0 {
 		t.Errorf("%+v", got)
 	}
 }
@@ -105,7 +123,7 @@ func TestTurnCompletedIsARunningTotalSoTurnsAreDifferences(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	second := session.Finished()[1]
+	second := turns(t, session)[1]
 	if second.Tokens.InputUncached != 70 || second.Tokens.CacheRead != 80 || second.Tokens.Output != 20 {
 		t.Errorf("%+v", second.Tokens)
 	}
@@ -132,8 +150,8 @@ func TestResumeRepeatsEarlierSpendOnTheStream(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	resumed := replay(t, "resume").Finished()[0].Tokens
-	exec := replay(t, "exec").Finished()[0].Tokens
+	resumed := turns(t, replay(t, "resume"))[0].Tokens
+	exec := turns(t, replay(t, "exec"))[0].Tokens
 	streamInput := resumed.InputUncached + resumed.CacheRead
 	if streamInput != last.Total.Input {
 		t.Errorf("resume reported %d, the rollout's thread total is %d", streamInput, last.Total.Input)
@@ -154,7 +172,20 @@ func TestPlanAddsJSONAndTheWatchdogGradeWithItsLimit(t *testing.T) {
 	if plan.Enforcement.Grade != adapter.GradeWrapperWatchdog || !plan.Enforcement.Watchdog {
 		t.Errorf("%+v", plan.Enforcement)
 	}
-	if !strings.Contains(plan.Enforcement.Note, "overshoot is bounded by one turn") {
+	if !strings.Contains(plan.Enforcement.Note, "in flight") {
+		t.Errorf("note %q", plan.Enforcement.Note)
+	}
+}
+
+func TestEphemeralPlanHasNothingToWatchAndSaysSo(t *testing.T) {
+	plan, err := Agent{}.Plan([]string{"codex", "exec", "--ephemeral", "hello"}, decimal.MustParse("5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Enforcement.Grade != adapter.GradeNone || plan.Enforcement.Watchdog {
+		t.Errorf("%+v", plan.Enforcement)
+	}
+	if !strings.Contains(plan.Enforcement.Note, "--ephemeral writes no rollout file") {
 		t.Errorf("note %q", plan.Enforcement.Note)
 	}
 }

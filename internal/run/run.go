@@ -26,13 +26,15 @@ const defaultGrace = 5 * time.Second
 
 // Options describes one run.
 type Options struct {
-	Argv    []string
-	Budget  decimal.Decimal
-	Rows    io.Writer
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Catalog *catalog.Catalog
+	Argv   []string
+	Budget decimal.Decimal
+	// BillingAccount fills BillingAccountId. Empty reads unknown.
+	BillingAccount string
+	Rows           io.Writer
+	Stdin          io.Reader
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Catalog        *catalog.Catalog
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
 	// Grace is how long a stopped agent has before SIGKILL.
@@ -64,8 +66,8 @@ func AgentFor(argv []string) (adapter.Agent, error) {
 	return nil, fmt.Errorf("run: no adapter for %q: costroid runs claude and codex", filepath.Base(argv[0]))
 }
 
-// Run starts the agent, reads its stream, stops it at the cap when the grade
-// is a watchdog, and writes the rows.
+// Run starts the agent, reads its stream, stops it at the cap when the plan
+// watches the run, and writes the rows at the grade the run earned.
 func Run(ctx context.Context, opts Options) (Result, error) {
 	agent, err := AgentFor(opts.Argv)
 	if err != nil {
@@ -76,7 +78,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	session := agent.NewSession(plan)
-	builder := rowBuilder{catalog: opts.Catalog, agent: agent.Name(), enforcement: plan.Enforcement}
+	builder := rowBuilder{catalog: opts.Catalog, agent: agent.Name(), enforcement: plan.Enforcement, account: opts.BillingAccount}
 	process := opts.withDefaults()
 	result := Result{Agent: agent.Name(), Enforcement: plan.Enforcement}
 	result.AgentExit, result.Stopped, err = process.execute(ctx, plan, session, builder)
@@ -88,6 +90,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return result, err
 	}
 	result.Report = report
+	if report.Enforcement.Grade != "" {
+		builder.enforcement = report.Enforcement
+		result.Enforcement = report.Enforcement
+	}
 	rows, err := builder.rows(report)
 	if err != nil {
 		return result, err
@@ -115,7 +121,7 @@ func (o Options) withDefaults() Options {
 
 func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter.Session, builder rowBuilder) (int, bool, error) {
 	command := exec.Command(plan.Argv[0], plan.Argv[1:]...)
-	command.Stdin = o.Stdin
+	command.Stdin = childStdin(o.Stdin)
 	command.Stderr = o.Stderr
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := command.StdoutPipe()
@@ -130,8 +136,11 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 	watch := context.AfterFunc(ctx, stop.stop)
 	defer watch()
 
-	readErr := o.read(stdout, plan, session, builder, stop)
+	finishTail := o.tail(plan, session, builder, stop)
+	readErr := o.read(stdout, session)
+	stop.agentDone()
 	waitErr := command.Wait()
+	finishTail()
 	if readErr != nil {
 		return 0, stop.byBudget(), readErr
 	}
@@ -152,9 +161,8 @@ func exitCode(command *exec.Cmd) int {
 
 // read copies the agent's stdout through and feeds the session. Lines are read
 // whole, because a stream line can be longer than any fixed buffer.
-func (o Options) read(stdout io.Reader, plan adapter.Plan, session adapter.Session, builder rowBuilder, stop *stopper) error {
+func (o Options) read(stdout io.Reader, session adapter.Session) error {
 	reader := bufio.NewReader(stdout)
-	unreadable := 0
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
@@ -162,11 +170,7 @@ func (o Options) read(stdout io.Reader, plan adapter.Plan, session adapter.Sessi
 				return fmt.Errorf("run: copy the agent's stdout: %w", writeErr)
 			}
 			if feedErr := session.Feed(bytes.TrimSpace(line), o.Now()); feedErr != nil {
-				unreadable++
 				fmt.Fprintf(o.Stderr, "costroid: unreadable stream line: %v\n", feedErr)
-			}
-			if plan.Enforcement.Watchdog {
-				o.checkCap(session, builder, stop)
 			}
 		}
 		if errors.Is(err, io.EOF) {
@@ -178,14 +182,29 @@ func (o Options) read(stdout io.Reader, plan adapter.Plan, session adapter.Sessi
 	}
 }
 
-func (o Options) checkCap(session adapter.Session, builder rowBuilder, stop *stopper) {
-	finished := session.Finished()
-	if len(finished) == 0 {
-		return
+// tail watches the agent's own file while the plan asks for it. The function
+// it returns ends the watch and waits for its last read.
+func (o Options) tail(plan adapter.Plan, session adapter.Session, builder rowBuilder, stop *stopper) func() {
+	tailer, ok := session.(adapter.Tailer)
+	if !ok || !plan.Enforcement.Watchdog {
+		return func() {}
 	}
-	rows, err := builder.rows(adapter.Report{Requests: finished})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tailer.Tail(ctx, func(requests []adapter.Request) { o.checkCap(requests, builder, stop) })
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func (o Options) checkCap(requests []adapter.Request, builder rowBuilder, stop *stopper) {
+	rows, err := builder.rows(adapter.Report{Requests: requests})
 	if err != nil {
-		fmt.Fprintf(o.Stderr, "costroid: price the stream: %v\n", err)
+		fmt.Fprintf(o.Stderr, "costroid: price the run: %v\n", err)
 		return
 	}
 	if listTotal(rows).Cmp(o.Budget) >= 0 {
@@ -200,6 +219,7 @@ type stopper struct {
 	once   sync.Once
 	mu     sync.Mutex
 	budget bool
+	ended  bool
 	timer  *time.Timer
 }
 
@@ -207,8 +227,20 @@ func newStopper(pid int, grace time.Duration) *stopper {
 	return &stopper{pid: pid, grace: grace}
 }
 
+// agentDone marks the agent's output closed. A cap read after this has no run
+// left to stop, and must not be reported as a stop.
+func (s *stopper) agentDone() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ended = true
+}
+
 func (s *stopper) stopForBudget() {
 	s.mu.Lock()
+	if s.ended {
+		s.mu.Unlock()
+		return
+	}
 	s.budget = true
 	s.mu.Unlock()
 	s.stop()

@@ -196,11 +196,6 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 	return nil
 }
 
-// Finished is empty: this agent enforces its own budget.
-func (s *Session) Finished() []adapter.Request {
-	return nil
-}
-
 // Finish returns per-request usage when the session files agree with the
 // result, and per-model usage otherwise.
 func (s *Session) Finish() (adapter.Report, error) {

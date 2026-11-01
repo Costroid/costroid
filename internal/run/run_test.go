@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/signal"
@@ -26,13 +29,20 @@ import (
 )
 
 const (
-	fakeMode    = "COSTROID_FAKE_AGENT"
-	fakeLog     = "COSTROID_FAKE_LOG"
-	fakeTurns   = 200
-	claudeData  = "../adapter/claudecode/testdata/2.1.316"
-	turnPause   = 20 * time.Millisecond
-	turnInput   = 1000000
-	stubbornEnv = "stubborn"
+	fakeMode        = "COSTROID_FAKE_AGENT"
+	fakeLog         = "COSTROID_FAKE_LOG"
+	fakeRollout     = "COSTROID_FAKE_ROLLOUT"
+	fakeVersion     = "COSTROID_FAKE_VERSION"
+	fakeStreamInput = "COSTROID_FAKE_STREAM_INPUT"
+	fakeCount       = 20
+	fakeThread      = "00000000-0000-4000-8000-0000000000aa"
+	claudeData      = "../adapter/claudecode/testdata/2.1.316"
+	codexData       = "../adapter/codex/testdata/0.164.0-alpha.11.1"
+	recordedCodex   = "0.164.0-alpha.11.1"
+	recordedThread  = "00000000-0000-4000-8000-000000000004"
+	requestPause    = 200 * time.Millisecond
+	requestInput    = 250000
+	stubbornEnv     = "stubborn"
 )
 
 // TestMain turns the test binary into the fake agent when the harness runs it
@@ -56,11 +66,11 @@ func fakeAgent(mode string) {
 	}
 }
 
-// fakeCodex emits one cumulative turn at a time, as a running thread would,
-// and logs each turn it reaches so a test can see how far it got.
+// fakeCodex stands in for `codex exec`. Each mode logs how far it got, so a
+// test can see where the run stopped.
 func fakeCodex(mode string) {
 	if slices.Contains(os.Args[1:], "--version") {
-		fmt.Println("codex-cli 0.164.0-alpha.11.1")
+		fmt.Println("codex-cli " + recordedCodex)
 		return
 	}
 	if mode == stubbornEnv {
@@ -71,13 +81,89 @@ func fakeCodex(mode string) {
 		os.Exit(98)
 	}
 	defer logFile.Close()
-	fmt.Println(`{"type":"thread.started","thread_id":"fake-thread"}`)
-	for turn := 1; turn <= fakeTurns; turn++ {
-		fmt.Fprintln(logFile, turn)
-		fmt.Println(`{"type":"turn.started"}`)
-		fmt.Printf(`{"type":"turn.completed","usage":{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":0}}`+"\n", turn*turnInput)
-		time.Sleep(turnPause)
+	switch mode {
+	case "stream":
+		fakeStreamOnly(logFile)
+	case "replay":
+		fakeReplay(logFile)
+	case "stdin":
+		data, err := io.ReadAll(os.Stdin)
+		fmt.Fprintf(logFile, "%d %v\n", len(data), err)
+		fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
+	default:
+		fakeRequests(logFile)
 	}
+}
+
+// fakeStreamOnly writes no rollout file, as an ephemeral run does.
+func fakeStreamOnly(log io.Writer) {
+	fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
+	for turn := 1; turn <= fakeCount; turn++ {
+		fmt.Fprintln(log, turn)
+		fmt.Println(`{"type":"turn.started"}`)
+		fmt.Printf(`{"type":"turn.completed","usage":{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":0}}`+"\n", turn*requestInput)
+	}
+}
+
+func openFakeRollout(thread string) *os.File {
+	directory := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", "2026", "11", "01")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		os.Exit(96)
+	}
+	file, err := os.Create(filepath.Join(directory, "rollout-2026-11-01T14-17-09-"+thread+".jsonl"))
+	if err != nil {
+		os.Exit(96)
+	}
+	return file
+}
+
+// fakeReplay writes a recorded rollout line by line while one turn is open,
+// pausing after each usage line so the tail can see it. The turn's closing
+// event comes last, as on a real run.
+func fakeReplay(log io.Writer) {
+	data, err := os.ReadFile(os.Getenv(fakeRollout))
+	if err != nil {
+		os.Exit(97)
+	}
+	rollout := openFakeRollout(fakeThread)
+	defer rollout.Close()
+	fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
+	fmt.Println(`{"type":"turn.started"}`)
+	for _, line := range strings.SplitAfter(string(data), "\n") {
+		line = strings.ReplaceAll(line, recordedThread, fakeThread)
+		if version := os.Getenv(fakeVersion); version != "" {
+			line = strings.ReplaceAll(line, recordedCodex, version)
+		}
+		rollout.WriteString(line)
+		if strings.Contains(line, `"token_count"`) {
+			fmt.Fprintln(log, "token_count")
+			time.Sleep(requestPause)
+		}
+	}
+	input := os.Getenv(fakeStreamInput)
+	if input == "" {
+		input = "33907"
+	}
+	fmt.Fprintln(log, "turn.completed")
+	fmt.Printf(`{"type":"turn.completed","usage":{"input_tokens":%s,"cached_input_tokens":28032,"output_tokens":111}}`+"\n", input)
+}
+
+// fakeRequests makes many model requests inside one turn, the way one prompt
+// does, and reports usage on the stream only when the turn closes.
+func fakeRequests(log io.Writer) {
+	rollout := openFakeRollout(fakeThread)
+	defer rollout.Close()
+	fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
+	fmt.Println(`{"type":"turn.started"}`)
+	fmt.Fprintf(rollout, `{"timestamp":"2026-11-01T11:17:09.000Z","type":"session_meta","payload":{"id":%q,"cli_version":%q}}`+"\n", fakeThread, recordedCodex)
+	fmt.Fprintln(rollout, `{"timestamp":"2026-11-01T11:17:09.000Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}`)
+	for request := 1; request <= fakeCount; request++ {
+		fmt.Fprintln(log, request)
+		fmt.Fprintf(rollout, `{"timestamp":"2026-11-01T11:17:10.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%d},"last_token_usage":{"input_tokens":%d}}}}`+"\n", request*requestInput, requestInput)
+		time.Sleep(requestPause)
+	}
+	fmt.Fprintln(log, "turn.completed")
+	fmt.Printf(`{"type":"turn.completed","usage":{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":0}}`+"\n", fakeCount*requestInput)
 }
 
 // fakeClaude records its argv and replays a recorded run, session files included.
@@ -167,56 +253,80 @@ func logged(t *testing.T, path string) []string {
 	return strings.Fields(string(data))
 }
 
-func TestWatchdogStopsCodexMidRunAtTheCap(t *testing.T) {
-	log := filepath.Join(t.TempDir(), "turns")
-	t.Setenv(fakeMode, "turns")
+// codexRun runs a fake Codex in a mode and returns its outcome and its log.
+func codexRun(t *testing.T, mode, budget string, extra ...string) (outcome, string) {
+	t.Helper()
+	log := filepath.Join(t.TempDir(), "progress")
+	t.Setenv(fakeMode, mode)
 	t.Setenv(fakeLog, log)
+	t.Setenv(fakeRollout, mustAbs(t, filepath.Join(codexData, "exec", "rollout.jsonl")))
 	t.Setenv("CODEX_HOME", t.TempDir())
-	got := runAgent(t, []string{agentNamed(t, "codex"), "exec", "-m", "gpt-5.6-sol", "work"}, "10", pinned(t))
+	argv := append([]string{agentNamed(t, "codex"), "exec", "-m", "gpt-5.6-sol"}, extra...)
+	return runAgent(t, append(argv, "work"), budget, pinned(t)), log
+}
+
+func TestRunStopsBeforeItsFinalTurnEventWhenTheRolloutCrossesTheCap(t *testing.T) {
+	got, log := codexRun(t, "replay", "0.02")
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if !got.result.Stopped || got.result.AgentExit != 128+int(syscall.SIGTERM) {
+		t.Fatalf("stopped %v, exit %d", got.result.Stopped, got.result.AgentExit)
+	}
+	if strings.Contains(got.stdout, "turn.completed") {
+		t.Error("the turn closed: the stop came after the agent had finished")
+	}
+	if progress := logged(t, log); len(progress) != 1 {
+		t.Errorf("progress %v, want the run stopped after its first of two token_count events", progress)
+	}
+	// Request one of the recording, from the sheet's gpt-5.6-sol rows per million:
+	// 5624 × 4.00 + 11264 × 0.40 + 106 × 20.00.
+	if err := checkListTotal(got.result.ListTotal, "0.0291216"); err != nil {
+		t.Error(err)
+	}
+	if len(got.result.Report.Warnings) != 1 || !strings.Contains(got.result.Report.Warnings[0], "request in flight is not counted") {
+		t.Errorf("warnings %v", got.result.Report.Warnings)
+	}
+	for _, row := range got.rows {
+		if grade := tagOf(row, focus.TagEnforcementGrade); grade != "wrapper-watchdog" {
+			t.Errorf("grade %s", grade)
+		}
+	}
+}
+
+func TestWatchdogStopsARunOfManyRequestsInsideOneTurn(t *testing.T) {
+	got, log := codexRun(t, "requests", "2")
 	if got.err != nil {
 		t.Fatal(got.err)
 	}
 	if !got.result.Stopped {
 		t.Fatal("the run was not stopped")
 	}
-	// 4.00 USD per million uncached input: the third million reaches 12 USD,
-	// past the 10 USD cap, so three turns are the first the watchdog can see.
-	if len(got.rows) != 3 {
-		t.Errorf("%d rows, want one for each of three turns", len(got.rows))
+	// 250000 uncached input tokens at 4.00 USD per million is 1 USD a request.
+	if got.result.ListTotal.Cmp(decimal.MustParse("2")) < 0 || got.result.ListTotal.Cmp(decimal.MustParse("4")) > 0 {
+		t.Errorf("list total %s", got.result.ListTotal)
 	}
-	if turns := logged(t, log); len(turns) >= fakeTurns {
-		t.Errorf("the agent ran all %d turns", len(turns))
-	}
-	if got.result.ListTotal.String() != "12" {
-		t.Errorf("list total %s, want 12: the overshoot is the last turn", got.result.ListTotal)
-	}
-	if got.result.AgentExit != 128+int(syscall.SIGTERM) {
-		t.Errorf("agent exit %d", got.result.AgentExit)
+	if progress := logged(t, log); len(progress) >= fakeCount {
+		t.Errorf("the agent ran all %d requests", len(progress))
 	}
 }
 
 func TestWatchdogKillsAnAgentThatIgnoresTheStop(t *testing.T) {
-	t.Setenv(fakeMode, stubbornEnv)
-	t.Setenv(fakeLog, filepath.Join(t.TempDir(), "turns"))
-	t.Setenv("CODEX_HOME", t.TempDir())
 	started := time.Now()
-	got := runAgent(t, []string{agentNamed(t, "codex"), "exec", "-m", "gpt-5.6-sol", "work"}, "4", pinned(t))
+	got, _ := codexRun(t, stubbornEnv, "1")
 	if got.err != nil {
 		t.Fatal(got.err)
 	}
 	if !got.result.Stopped || got.result.AgentExit != 128+int(syscall.SIGKILL) {
 		t.Errorf("stopped %v, exit %d", got.result.Stopped, got.result.AgentExit)
 	}
-	if elapsed := time.Since(started); elapsed > fakeTurns*turnPause/2 {
+	if elapsed := time.Since(started); elapsed > fakeCount*requestPause/2 {
 		t.Errorf("the stop took %s", elapsed)
 	}
 }
 
-func TestCodexRowsNeverClaimAStrongerGradeThanTheWatchdog(t *testing.T) {
-	t.Setenv(fakeMode, "turns")
-	t.Setenv(fakeLog, filepath.Join(t.TempDir(), "turns"))
-	t.Setenv("CODEX_HOME", t.TempDir())
-	got := runAgent(t, []string{agentNamed(t, "codex"), "exec", "-m", "gpt-5.6-sol", "work"}, "1", pinned(t))
+func TestWatchedRowsStateTheLimitOfTheGrade(t *testing.T) {
+	got, _ := codexRun(t, "requests", "1")
 	if got.err != nil || len(got.rows) == 0 {
 		t.Fatalf("%v, %d rows", got.err, len(got.rows))
 	}
@@ -224,7 +334,7 @@ func TestCodexRowsNeverClaimAStrongerGradeThanTheWatchdog(t *testing.T) {
 		if grade := tagOf(row, focus.TagEnforcementGrade); grade != "wrapper-watchdog" {
 			t.Errorf("grade %s", grade)
 		}
-		if text, _ := row["ChargeDescription"].(string); !strings.Contains(text, "overshoot is bounded by one turn") {
+		if text, _ := row["ChargeDescription"].(string); !strings.Contains(text, "requests in flight at the stop can pass it") {
 			t.Errorf("description %q", text)
 		}
 		if row["x_CostroidOvershootBound"] != nil {
@@ -236,17 +346,221 @@ func TestCodexRowsNeverClaimAStrongerGradeThanTheWatchdog(t *testing.T) {
 	}
 }
 
-func TestCodexUnderTheCapRunsToItsEnd(t *testing.T) {
-	log := filepath.Join(t.TempDir(), "turns")
-	t.Setenv(fakeMode, "turns")
-	t.Setenv(fakeLog, log)
-	t.Setenv("CODEX_HOME", t.TempDir())
-	got := runAgent(t, []string{agentNamed(t, "codex"), "exec", "-m", "gpt-5.6-sol", "work"}, "100000", pinned(t))
+func TestCodexUnderTheCapRunsToItsEndWithPerRequestRows(t *testing.T) {
+	got, log := codexRun(t, "replay", "5")
 	if got.err != nil {
 		t.Fatal(got.err)
 	}
-	if got.result.Stopped || got.result.AgentExit != 0 || len(logged(t, log)) != fakeTurns {
+	if got.result.Stopped || got.result.AgentExit != 0 {
 		t.Errorf("stopped %v, exit %d", got.result.Stopped, got.result.AgentExit)
+	}
+	if progress := logged(t, log); progress[len(progress)-1] != "turn.completed" {
+		t.Errorf("progress %v", progress)
+	}
+	if got.result.Report.CostSource != "agent_session_file" || len(got.result.Report.Requests) != 2 {
+		t.Fatalf("%+v", got.result.Report)
+	}
+	if len(got.rows) != 8 {
+		t.Errorf("%d rows, want four classes for each of two requests", len(got.rows))
+	}
+	// The recording at list, from the sheet's gpt-5.6-sol rows per million:
+	// 5875 × 4.00 + 28032 × 0.40 + 111 × 20.00.
+	if err := checkListTotal(got.result.ListTotal, "0.0369328"); err != nil {
+		t.Error(err)
+	}
+	first := sha256.Sum256([]byte("response-1:input_uncached"))
+	if got.rows[0]["x_CostroidRowId"] != hex.EncodeToString(first[:]) {
+		t.Errorf("row id %v", got.rows[0]["x_CostroidRowId"])
+	}
+	for _, row := range got.rows {
+		if text, _ := row["ChargeDescription"].(string); strings.Contains(text, "lowest context tier") {
+			t.Errorf("a per-request row carries the turn caveat: %q", text)
+		}
+		if tagOf(row, focus.TagCostSource) != "agent_session_file" {
+			t.Errorf("source %v", row["Tags"])
+		}
+	}
+}
+
+func TestPerRequestRowsTakeTheRequestsContextTier(t *testing.T) {
+	got, _ := codexRun(t, "requests", "1")
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if id := got.rows[0]["SkuPriceId"]; id != "openai:gpt-5.6-sol:global:standard:to-272000:input_uncached" {
+		t.Errorf("a 250000 token request priced at %v", id)
+	}
+	builder := rowBuilder{catalog: pinned(t), agent: "codex", enforcement: adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog}}
+	rows, err := builder.rows(adapter.Report{CostBasis: focus.ListEquivalent, CostSource: "agent_session_file", Requests: []adapter.Request{{
+		ID: "response-1", Provider: "openai", Model: "gpt-5.6-sol", Grain: adapter.PerRequest,
+		ServiceTier: catalog.TierStandard, Region: catalog.RegionGlobal, ContextInputTokens: 272001,
+		Start: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 11, 1, 0, 0, 1, 0, time.UTC),
+		Tokens: adapter.Tokens{InputUncached: 272001},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].SkuPriceID != "openai:gpt-5.6-sol:global:standard:over-272000:input_uncached" {
+		t.Errorf("a 272001 token request priced at %s", rows[0].SkuPriceID)
+	}
+}
+
+// assertUnwatched checks a run nothing watched: it ran to its end, and its
+// rows are turn grain, grade none, and say why.
+func assertUnwatched(t *testing.T, got outcome, why string) {
+	t.Helper()
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Stopped {
+		t.Error("an unwatched run reported a stop")
+	}
+	if got.result.Enforcement.Grade != adapter.GradeNone || !strings.Contains(got.result.Enforcement.Note, why) {
+		t.Errorf("%+v", got.result.Enforcement)
+	}
+	if len(got.rows) == 0 {
+		t.Fatal("no rows")
+	}
+	for _, row := range got.rows {
+		text, _ := row["ChargeDescription"].(string)
+		if tagOf(row, focus.TagEnforcementGrade) != "none" || !strings.Contains(text, why) {
+			t.Errorf("%s: %q", tagOf(row, focus.TagEnforcementGrade), text)
+		}
+		if tagOf(row, focus.TagCostSource) != "agent_stream" {
+			t.Errorf("source %v", row["Tags"])
+		}
+		if row["ListCost"] != "0" && !strings.Contains(text, "lowest context tier") {
+			t.Errorf("a priced turn row lost its caveat: %q", text)
+		}
+	}
+}
+
+func TestRunWithNoRolloutFileRecordsNoneAndSaysWhy(t *testing.T) {
+	got, log := codexRun(t, "stream", "0.000001")
+	assertUnwatched(t, got, "no rollout file appeared")
+	if progress := logged(t, log); len(progress) != fakeCount {
+		t.Errorf("progress %v: an unwatched run is not stopped", progress)
+	}
+}
+
+func TestEphemeralRunRecordsNoneAndIsNotStopped(t *testing.T) {
+	got, _ := codexRun(t, "stream", "0.000001", "--ephemeral")
+	assertUnwatched(t, got, "--ephemeral writes no rollout file")
+}
+
+func TestUnrecordedCodexVersionRecordsNoneAndNamesTheVersion(t *testing.T) {
+	t.Setenv(fakeVersion, "9.9.9")
+	got, log := codexRun(t, "replay", "0.000001")
+	assertUnwatched(t, got, `no recorded fixture covers Codex "9.9.9"`)
+	if progress := logged(t, log); progress[len(progress)-1] != "turn.completed" {
+		t.Errorf("progress %v", progress)
+	}
+	if got.result.Report.AgentVersion != "9.9.9" {
+		t.Errorf("version %s", got.result.Report.AgentVersion)
+	}
+}
+
+func TestRolloutThatDisagreesWithTheStreamYieldsToIt(t *testing.T) {
+	t.Setenv(fakeStreamInput, "33908")
+	got, _ := codexRun(t, "replay", "5")
+	assertUnwatched(t, got, "total differs from the stream's")
+}
+
+func TestIdlePipeGivesTheAgentEndOfFileAtOnce(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	log := filepath.Join(t.TempDir(), "stdin")
+	t.Setenv(fakeMode, "stdin")
+	t.Setenv(fakeLog, log)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_, err = Run(ctx, Options{
+		Argv:    []string{agentNamed(t, "codex"), "exec", "work"},
+		Budget:  decimal.MustParse("1"),
+		Rows:    io.Discard,
+		Stdin:   reader,
+		Stdout:  io.Discard,
+		Stderr:  io.Discard,
+		Catalog: pinned(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() != nil {
+		t.Error("the agent was still waiting on stdin")
+	}
+	if progress := logged(t, log); len(progress) != 2 || progress[0] != "0" {
+		t.Errorf("progress %v", progress)
+	}
+}
+
+func TestChildStdinKeepsDataFilesAndOtherReaders(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if childStdin(reader) != nil {
+		t.Error("an idle pipe reached the agent")
+	}
+	if _, err := writer.WriteString("prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if childStdin(reader) != io.Reader(reader) {
+		t.Error("a pipe with data did not reach the agent")
+	}
+	writer.Close()
+	file := filepath.Join(t.TempDir(), "prompt")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	regular, err := os.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer regular.Close()
+	if childStdin(regular) != io.Reader(regular) {
+		t.Error("a file did not reach the agent")
+	}
+	other := strings.NewReader("")
+	if childStdin(other) != io.Reader(other) {
+		t.Error("a plain reader did not reach the agent")
+	}
+}
+
+func TestClosedPipeReachesTheAgentAsEndOfFile(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	writer.Close()
+	if childStdin(reader) != io.Reader(reader) {
+		t.Error("a closed pipe did not reach the agent")
+	}
+}
+
+func TestBillingAccountFillsTheColumnAndUnknownIsTheDefault(t *testing.T) {
+	report := adapter.Report{CostBasis: focus.ListEquivalent, CostSource: "agent_stream", Requests: []adapter.Request{{
+		ID: "t:turn:1", Provider: "openai", Model: "gpt-5.6-sol", Grain: adapter.PerTurn,
+		ServiceTier: catalog.TierStandard, Region: catalog.RegionGlobal,
+		Start: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 11, 1, 0, 0, 1, 0, time.UTC),
+		Tokens: adapter.Tokens{Output: 1},
+	}}}
+	for account, want := range map[string]string{"": "unknown", "org-example": "org-example"} {
+		builder := rowBuilder{catalog: pinned(t), agent: "codex", account: account}
+		rows, err := builder.rows(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows[0].BillingAccountID != want {
+			t.Errorf("%q gave %s", account, rows[0].BillingAccountID)
+		}
 	}
 }
 
@@ -603,6 +917,7 @@ func TestUnknownAgentIsRefusedByName(t *testing.T) {
 }
 
 func TestAgentThatFailsToStartReportsTheCommand(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
 	got := runAgent(t, []string{filepath.Join(t.TempDir(), "codex"), "exec", "work"}, "1", pinned(t))
 	if got.err == nil {
 		t.Error("a missing binary reported nothing")

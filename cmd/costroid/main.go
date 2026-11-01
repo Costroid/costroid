@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -20,10 +21,13 @@ import (
 const usage = `costroid runs a coding agent under a budget and records what it cost.
 
 Usage:
-  costroid run --budget-usd N --out rows.jsonl -- <agent command>
+  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] -- <agent command>
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
+
+--billing-account fills BillingAccountId on every row. Without it, the
+COSTROID_BILLING_ACCOUNT variable does. With neither, the rows read unknown.
 
 Exit codes:
   the agent's own   the run finished, or the agent stopped itself
@@ -34,6 +38,10 @@ Exit codes:
 const (
 	exitBudgetStop = 124
 	exitFailure    = 125
+
+	billingAccountVariable = "COSTROID_BILLING_ACCOUNT"
+	// maxBillingAccount is the row contract's limit on a text column.
+	maxBillingAccount = 512
 )
 
 // version is set at link time.
@@ -75,9 +83,10 @@ func versionCommand(stdout, stderr io.Writer) int {
 }
 
 type runFlags struct {
-	budget decimal.Decimal
-	out    string
-	argv   []string
+	budget  decimal.Decimal
+	out     string
+	account string
+	argv    []string
 }
 
 func parseRun(args []string, stderr io.Writer) (runFlags, error) {
@@ -86,6 +95,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	budget := set.String("budget-usd", "", "the run's budget in USD")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
+	account := set.String("billing-account", os.Getenv(billingAccountVariable), "the account the run is billed to")
 	if err := set.Parse(args); err != nil {
 		return runFlags{}, err
 	}
@@ -99,7 +109,10 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	if amount.Sign() <= 0 {
 		return runFlags{}, errors.New("--budget-usd must be above 0")
 	}
-	return runFlags{budget: amount, out: *out, argv: set.Args()}, nil
+	if utf8.RuneCountInString(*account) > maxBillingAccount {
+		return runFlags{}, fmt.Errorf("--billing-account must be at most %d characters", maxBillingAccount)
+	}
+	return runFlags{budget: amount, out: *out, account: *account, argv: set.Args()}, nil
 }
 
 func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -122,13 +135,14 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return exitFailure
 	}
 	result, err := run.Run(ctx, run.Options{
-		Argv:    flags.argv,
-		Budget:  flags.budget,
-		Rows:    rows,
-		Stdin:   stdin,
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Catalog: pinned,
+		Argv:           flags.argv,
+		Budget:         flags.budget,
+		BillingAccount: flags.account,
+		Rows:           rows,
+		Stdin:          stdin,
+		Stdout:         stdout,
+		Stderr:         stderr,
+		Catalog:        pinned,
 	})
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)
@@ -161,6 +175,9 @@ func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Re
 	}
 	if over := result.ListTotal.Sub(flags.budget); over.Sign() > 0 {
 		fmt.Fprintf(w, "costroid: over budget by USD %s\n", over)
+	}
+	if flags.account == "" {
+		fmt.Fprintf(w, "costroid: warning: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
 	}
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(w, "costroid: warning: %s\n", warning)
