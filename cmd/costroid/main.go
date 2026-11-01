@@ -29,6 +29,7 @@ Usage:
   costroid keys create --owner host:owner
   costroid keys revoke <id>
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE]
+  costroid lint-recipes <paths>
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -56,6 +57,8 @@ Exit codes of reconcile:
   0                 no token miss
   1                 a token miss, which is a defect
   125               costroid could not read the rows or a report
+lint-recipes exits 0 when every recipe passes, 1 when one is rejected and 125
+when it cannot read them.
 `
 
 const (
@@ -91,6 +94,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return server.KeysMain(ctx, args[1:], stdout, stderr)
 	case "reconcile":
 		return reconcileCommand(ctx, args[1:], os.Getenv, reconcile.NewClient(), time.Now, stdout, stderr)
+	case "lint-recipes":
+		return lintRecipes(args[1:], stdout, stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":

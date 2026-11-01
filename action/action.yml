@@ -1,0 +1,106 @@
+name: Costroid
+description: Run a coding agent under a budget, record what it cost and report it on the pull request.
+
+inputs:
+  stage:
+    description: >-
+      run installs and runs the agent, then keeps its rows as an artifact. ingest sends those rows
+      to a ledger. report posts the check and the comment. all does run and report in one job,
+      which gives the agent's job the report's permissions, so the recipes never use it.
+    default: all
+  version:
+    description: The costroid release to install, without the leading v.
+    required: true
+  sha256:
+    description: The SHA-256 of that release's binary for this runner.
+    required: true
+  agent:
+    description: claude or codex.
+    default: claude
+  prompt:
+    description: The prompt. Never build it from pull request text or from a comment.
+    default: ""
+  agent-args:
+    description: Extra arguments for the agent, one per line.
+    default: ""
+  minimum-agent-version:
+    description: The lowest agent version this run accepts.
+    default: ""
+  budget-usd:
+    description: The run's budget in USD.
+    default: ""
+  api-key:
+    description: The provider key. It reaches the agent's step and no other.
+    default: ""
+  billing-account:
+    description: The value of BillingAccountId on every row.
+    default: ""
+  github-token:
+    description: The token that posts the check and the comment.
+    default: ${{ github.token }}
+  ingest-url:
+    description: The ledger's rows endpoint.
+    default: ""
+  ingest-audience:
+    description: The audience the ledger requires on the CI token.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install costroid
+      shell: bash
+      env:
+        COSTROID_VERSION: ${{ inputs.version }}
+        COSTROID_SHA256: ${{ inputs.sha256 }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
+
+    - name: Run the agent
+      if: inputs.stage == 'run' || inputs.stage == 'all'
+      shell: bash
+      env:
+        COSTROID_AGENT: ${{ inputs.agent }}
+        COSTROID_PROMPT: ${{ inputs.prompt }}
+        COSTROID_AGENT_ARGS: ${{ inputs.agent-args }}
+        COSTROID_MINIMUM_AGENT_VERSION: ${{ inputs.minimum-agent-version }}
+        COSTROID_BUDGET_USD: ${{ inputs.budget-usd }}
+        COSTROID_AGENT_KEY: ${{ inputs.api-key }}
+        COSTROID_BILLING_ACCOUNT: ${{ inputs.billing-account }}
+        COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
+      run: bash "$GITHUB_ACTION_PATH/run-agent.sh"
+
+    - name: Keep the rows
+      if: always() && inputs.stage == 'run'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: costroid-rows
+        path: ${{ runner.temp }}/costroid-rows.jsonl
+        if-no-files-found: warn
+        retention-days: 7
+
+    - name: Fetch the rows
+      if: inputs.stage == 'report' || inputs.stage == 'ingest'
+      continue-on-error: true
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: costroid-rows
+        path: ${{ runner.temp }}
+
+    - name: Report on the pull request
+      if: always() && (inputs.stage == 'report' || inputs.stage == 'all')
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
+      run: |
+        touch "$COSTROID_ROWS"
+        costroid report --rows "$COSTROID_ROWS"
+
+    - name: Send the rows to the ledger
+      if: inputs.stage == 'ingest'
+      shell: bash
+      env:
+        COSTROID_INGEST_URL: ${{ inputs.ingest-url }}
+        COSTROID_INGEST_AUDIENCE: ${{ inputs.ingest-audience }}
+        COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
+      run: bash "$GITHUB_ACTION_PATH/ingest.sh"
