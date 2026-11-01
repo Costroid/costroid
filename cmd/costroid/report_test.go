@@ -1,0 +1,321 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Costroid/costroid/internal/scm/scmtest"
+)
+
+const (
+	realRows   = "../../internal/comment/testdata/rows.jsonl"
+	realTotal  = "0.001619725"
+	headCommit = "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d"
+	baseCommit = "1111111111111111111111111111111111111111"
+	mergeSHA   = "2222222222222222222222222222222222222222"
+)
+
+// reportEnvironment points the job's variables at a stub. The rows path is
+// absolute because some tests move the working directory.
+func reportEnvironment(t *testing.T, event string) *scmtest.Stub {
+	t.Helper()
+	stub := scmtest.New(t)
+	path := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(path, []byte(event), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_TOKEN", stub.Token)
+	t.Setenv("GITHUB_API_URL", stub.Server.URL)
+	t.Setenv("GITHUB_REPOSITORY", "example/widgets")
+	t.Setenv("GITHUB_SHA", mergeSHA)
+	t.Setenv("GITHUB_EVENT_PATH", path)
+	t.Setenv(installationVariable, "")
+	return stub
+}
+
+func pullRequestEvent() string {
+	event, err := json.Marshal(map[string]any{"pull_request": map[string]any{
+		"number": 7,
+		"head":   map[string]string{"sha": headCommit},
+		"base":   map[string]string{"sha": baseCommit},
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return string(event)
+}
+
+func TestReportPostsOneNeutralCheckAndOneComment(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	code, _, stderr := execute(t, "report", "--rows", realRows, "--budget-usd", "5", "--installation-id", "58120394")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if len(stub.Checks) != 1 || len(stub.Comments) != 1 {
+		t.Fatalf("%d checks, %d comments: %s", len(stub.Checks), len(stub.Comments), stderr)
+	}
+	check := stub.Checks[0]
+	if check.Name != "costroid" || check.Conclusion != "neutral" {
+		t.Errorf("check = %+v", check)
+	}
+	if check.HeadSHA != headCommit {
+		t.Errorf("the check sits on %s, not the pull request's head", check.HeadSHA)
+	}
+	if !strings.Contains(check.Text, `"list_cost": "`+realTotal+`"`) {
+		t.Errorf("no block in the check:\n%s", check.Text)
+	}
+	body := stub.Comments[0].Body
+	for _, want := range []string{"USD " + realTotal, "List-equivalent, not billed", "Budget: USD 5.", "agent-flag", "installation=github%3A58120394"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("no %q in\n%s", want, body)
+		}
+	}
+	if id := `"check_run_id": ` + idOf(check); !strings.Contains(body, id) {
+		t.Errorf("no %q in\n%s", id, body)
+	}
+}
+
+func idOf(check scmtest.Check) string {
+	encoded, err := json.Marshal(check.ID)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func TestASecondReportEditsTheCommentInPlace(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	execute(t, "report", "--rows", realRows)
+	first := stub.Comments[0].Body
+	execute(t, "report", "--rows", realRows)
+	if len(stub.Comments) != 1 {
+		t.Fatalf("%d comments", len(stub.Comments))
+	}
+	if stub.Comments[0].Body == first {
+		t.Error("the comment still names the first check run")
+	}
+}
+
+func TestZeroRowsStillPostTheCheckAndTheComment(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	empty := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := execute(t, "report", "--rows", empty)
+	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].Conclusion != "neutral" || len(stub.Comments) != 1 {
+		t.Fatalf("exit %d, %+v, %+v", code, stub.Checks, stub.Comments)
+	}
+	if !strings.Contains(stub.Comments[0].Body, "No cost rows were recorded") {
+		t.Errorf("body:\n%s", stub.Comments[0].Body)
+	}
+}
+
+func TestAnUnreadableRowsFilePostsTheCheckAndShowsNoZero(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(bad, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{bad, filepath.Join(t.TempDir(), "absent.jsonl")} {
+		stub := reportEnvironment(t, pullRequestEvent())
+		code, _, stderr := execute(t, "report", "--rows", path)
+		if code != 0 || len(stub.Checks) != 1 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		if !strings.Contains(stub.Checks[0].Text, `"state": "rows_unreadable"`) || !strings.Contains(stub.Comments[0].Body, "could not be read") {
+			t.Errorf("check:\n%s\ncomment:\n%s", stub.Checks[0].Text, stub.Comments[0].Body)
+		}
+	}
+}
+
+func TestAFailedPostNeverFailsTheJob(t *testing.T) {
+	cases := map[string][]string{
+		"the check is refused":             {"POST /check-runs"},
+		"the comment is refused":           {"POST /comments"},
+		"the listing is refused":           {"GET /comments"},
+		"everything is refused":            {"POST /check-runs", "POST /comments", "GET /comments", "GET /contents", "GET /repos"},
+		"a fork's token reads and refuses": {"POST /"},
+	}
+	for name, failures := range cases {
+		t.Run(name, func(t *testing.T) {
+			stub := reportEnvironment(t, pullRequestEvent())
+			for _, failure := range failures {
+				stub.Fail[failure] = http.StatusForbidden
+			}
+			code, _, stderr := execute(t, "report", "--rows", realRows)
+			if code != 0 {
+				t.Errorf("exit %d", code)
+			}
+			if !strings.Contains(stderr, "not posted") {
+				t.Errorf("stderr = %q", stderr)
+			}
+			if strings.Contains(stderr, stub.Token) {
+				t.Errorf("the token is on stderr: %q", stderr)
+			}
+		})
+	}
+}
+
+func TestACommentRefusalLeavesTheCheckPosted(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Fail["POST /comments"] = http.StatusForbidden
+	execute(t, "report", "--rows", realRows)
+	if len(stub.Checks) != 1 {
+		t.Errorf("%d checks", len(stub.Checks))
+	}
+}
+
+func TestACheckRefusalStillPostsTheCommentAndSaysSo(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Fail["POST /check-runs"] = http.StatusForbidden
+	execute(t, "report", "--rows", realRows)
+	if len(stub.Comments) != 1 || !strings.Contains(stub.Comments[0].Body, "the check run was not posted") {
+		t.Errorf("comments = %+v", stub.Comments)
+	}
+}
+
+func TestAnUnreachableHostStillExitsZero(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Server.Close()
+	code, _, stderr := execute(t, "report", "--rows", realRows)
+	if code != 0 || !strings.Contains(stderr, "not posted") {
+		t.Errorf("exit %d: %s", code, stderr)
+	}
+}
+
+func TestAJobWithoutATokenOrARepositoryExitsZeroAndSaysSo(t *testing.T) {
+	for _, variable := range []string{"GITHUB_TOKEN", "GITHUB_REPOSITORY"} {
+		stub := reportEnvironment(t, pullRequestEvent())
+		t.Setenv(variable, "")
+		code, _, stderr := execute(t, "report", "--rows", realRows)
+		if code != 0 || !strings.Contains(stderr, "not posted") || len(stub.Requests) != 0 {
+			t.Errorf("%s: exit %d: %s, %v", variable, code, stderr, stub.Requests)
+		}
+	}
+}
+
+func TestAPushPostsTheCheckOnGitHubSHAAndNoComment(t *testing.T) {
+	stub := reportEnvironment(t, `{"ref":"refs/heads/main"}`)
+	code, _, stderr := execute(t, "report", "--rows", realRows)
+	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].HeadSHA != mergeSHA || len(stub.Comments) != 0 {
+		t.Errorf("exit %d: %s: %+v", code, stderr, stub.Checks)
+	}
+}
+
+func TestReportNeedsItsRowsFlag(t *testing.T) {
+	code, _, stderr := execute(t, "report")
+	if code != exitFailure || !strings.Contains(stderr, "--rows") {
+		t.Errorf("exit %d: %s", code, stderr)
+	}
+}
+
+func assertWithheld(t *testing.T, stub *scmtest.Stub) {
+	t.Helper()
+	if len(stub.Comments) != 1 || len(stub.Checks) != 1 {
+		t.Fatalf("%d comments, %d checks", len(stub.Comments), len(stub.Checks))
+	}
+	body := stub.Comments[0].Body
+	for _, amount := range []string{realTotal, "USD 5", `"list_cost"`, `"amount":`} {
+		if strings.Contains(body, amount) || strings.Contains(stub.Checks[0].Summary, amount) {
+			t.Errorf("%q is out in the open:\n%s\n%s", amount, body, stub.Checks[0].Summary)
+		}
+	}
+	for _, grade := range []string{"neutral", "agent-flag", "unattributed"} {
+		if !strings.Contains(body, grade) {
+			t.Errorf("no %q in\n%s", grade, body)
+		}
+	}
+	if !strings.Contains(stub.Checks[0].Text, `"list_cost": "`+realTotal+`"`) {
+		t.Errorf("the check's block lost its amounts:\n%s", stub.Checks[0].Text)
+	}
+}
+
+func assertShown(t *testing.T, stub *scmtest.Stub) {
+	t.Helper()
+	if len(stub.Comments) != 1 || !strings.Contains(stub.Comments[0].Body, "USD "+realTotal) {
+		t.Errorf("no amount in %+v", stub.Comments)
+	}
+}
+
+func TestShowCostFalseOnAPublicRepositoryWithholdsAmountsFromTheComment(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Files[configFile] = "comment:\n  show_cost: false\n"
+	stub.SetPrivate(false)
+	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
+	assertWithheld(t, stub)
+	if !strings.Contains(stub.Comments[0].Body, "Amounts are off on this public repository") {
+		t.Errorf("body:\n%s", stub.Comments[0].Body)
+	}
+}
+
+func TestShowCostFalseOnAPrivateRepositoryKeepsAmounts(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Files[configFile] = "comment:\n  show_cost: false\n"
+	stub.SetPrivate(true)
+	execute(t, "report", "--rows", realRows)
+	assertShown(t, stub)
+}
+
+func TestNoConfigOnAPublicRepositoryShowsAmounts(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.SetPrivate(false)
+	execute(t, "report", "--rows", realRows)
+	assertShown(t, stub)
+}
+
+func TestShowCostIsReadFromTheBaseCommitAndNeverTheHead(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.SetPrivate(false)
+	execute(t, "report", "--rows", realRows)
+	read := false
+	for _, line := range stub.Requests {
+		if strings.Contains(line, "/contents/") {
+			read = true
+			if !strings.Contains(line, "ref="+baseCommit) {
+				t.Errorf("read from %s", line)
+			}
+		}
+	}
+	if !read {
+		t.Errorf("costroid.yml was never read: %v", stub.Requests)
+	}
+}
+
+func TestAPublicRepositoryWhoseSettingCannotBeReadWithholdsAmounts(t *testing.T) {
+	cases := map[string]func(*scmtest.Stub){
+		"the file read fails":        func(stub *scmtest.Stub) { stub.Fail["GET /contents"] = http.StatusBadGateway },
+		"the file does not parse":    func(stub *scmtest.Stub) { stub.Files[configFile] = "comment: [" },
+		"show_cost is not a boolean": func(stub *scmtest.Stub) { stub.Files[configFile] = "comment:\n  show_cost: maybe\n" },
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			stub := reportEnvironment(t, pullRequestEvent())
+			stub.SetPrivate(false)
+			breakIt(stub)
+			execute(t, "report", "--rows", realRows, "--budget-usd", "5")
+			assertWithheld(t, stub)
+			if !strings.Contains(stub.Comments[0].Body, "could not be read") {
+				t.Errorf("body:\n%s", stub.Comments[0].Body)
+			}
+		})
+	}
+}
+
+func TestShowCostFalseWithAnUnknownVisibilityWithholdsAmounts(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Files[configFile] = "comment:\n  show_cost: false\n"
+	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
+	assertWithheld(t, stub)
+}
+
+func TestAPullRequestEventWithoutABaseCommitDoesNotReadTheHeadsConfig(t *testing.T) {
+	stub := reportEnvironment(t, `{"pull_request":{"number":7,"head":{"sha":"`+headCommit+`"}}}`)
+	stub.Files[configFile] = "comment:\n  show_cost: true\n"
+	stub.SetPrivate(false)
+	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
+	assertWithheld(t, stub)
+}

@@ -1,0 +1,52 @@
+{{- define "facts" -}}
+**Verdict: {{.Conclusion}}.** No policy ran on this change.
+
+{{if eq .State "rows_unreadable" -}}
+The rows file could not be read, so this report shows no figures.
+{{- else if eq .State "no_rows" -}}
+No cost rows were recorded for this commit.
+{{- else -}}
+{{if .ShowAmounts -}}
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+{{range .Lines -}}
+| {{.Cost}} | {{.Basis}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
+{{end}}
+{{- else -}}
+| Basis | Attribution | Enforcement |
+| --- | --- | --- |
+{{range .Lines -}}
+| {{.Basis}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
+{{end}}
+{{- end}}
+{{if .FiguresOmitted -}}
+{{.FiguresOmitted}} more lines are left out of this table.
+
+{{end -}}
+{{if .ShowAmounts -}}
+Budget: {{if .Budget}}{{.Budget}}{{else}}not recorded on these rows{{end}}.
+{{- else if .AmountsOff -}}
+Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
+{{- else -}}
+Amounts are withheld, because `comment.show_cost` or the repository's visibility could not be read. The rows and the check run's machine block carry them.
+{{- end}}
+
+{{if .Agents}}Agents: {{.Agents}}. {{end}}{{if .Models}}Models: {{.Models}}{{if .ModelsOmitted}} and {{.ModelsOmitted}} more{{end}}. {{end}}{{.Rows}} {{if eq .Rows 1}}row{{else}}rows{{end}}{{if .Catalogs}}, catalog {{.Catalogs}}{{end}}.
+{{- end}}
+{{- end -}}
+
+{{- define "comment" -}}
+{{.Marker}}
+### Costroid
+
+{{template "facts" .}}
+
+[Your account on costroid.com]({{.AccountURL}}) · [Export to your FinOps platform or warehouse]({{.ExportURL}})
+
+<details>
+<summary>{{if .CheckRunID}}Machine block, copied from check run {{.CheckRunID}}{{else}}Machine block, the check run was not posted{{end}}</summary>
+
+{{.Block}}
+
+</details>
+{{end -}}

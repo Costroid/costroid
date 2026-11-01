@@ -22,12 +22,19 @@ const usage = `costroid runs a coding agent under a budget and records what it c
 
 Usage:
   costroid run --budget-usd N --out rows.jsonl [--billing-account ID] -- <agent command>
+  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID]
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 
 --billing-account fills BillingAccountId on every row. Without it, the
 COSTROID_BILLING_ACCOUNT variable does. With neither, the rows read unknown.
+
+costroid report posts one check run and one sticky comment from CI, with the
+GITHUB_TOKEN and GITHUB_* variables of the job. It exits 0 whatever GitHub
+answers, so a failed post never fails the job. --budget-usd restates the run's
+budget, which rows do not record. --installation-id puts the GitHub App
+installation on the account link; COSTROID_INSTALLATION_ID does the same.
 
 Exit codes:
   the agent's own   the run finished, or the agent stopped itself
@@ -62,6 +69,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	switch args[0] {
 	case "run":
 		return runCommand(ctx, args[1:], stdin, stdout, stderr)
+	case "report":
+		return reportCommand(ctx, args[1:], stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":
