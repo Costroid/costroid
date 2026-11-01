@@ -191,7 +191,7 @@ func TestGitLabPostsNoStatusAndSaysNoCheckRan(t *testing.T) {
 	if len(writes) != 1 || !strings.HasPrefix(writes[0], "POST") || !strings.Contains(writes[0], "/notes") {
 		t.Errorf("writes = %v", writes)
 	}
-	if !strings.Contains(stderr, "check not posted") || !strings.Contains(stub.Notes[0].Body, "the check run was not posted") {
+	if !strings.Contains(stderr, "check not posted") || strings.Contains(stub.Notes[0].Body, "check run") {
 		t.Errorf("stderr: %s\nbody:\n%s", stderr, stub.Notes[0].Body)
 	}
 	if strings.Contains(stub.Notes[0].Body, `"check_run_id"`) {

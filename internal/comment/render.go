@@ -252,9 +252,11 @@ type figureLine struct {
 }
 
 type view struct {
-	Marker         string
-	Conclusion     string
-	State          State
+	Marker     string
+	Conclusion string
+	State      State
+	// CheckRuns is false on GitLab, which has no check run to name.
+	CheckRuns      bool
 	ShowAmounts    bool
 	AmountsOff     bool
 	Budget         string
@@ -285,6 +287,7 @@ func (i Input) view() view {
 		Catalogs:       spans(i.Ledger.Catalogs),
 		Rows:           i.Ledger.Rows,
 		AccountURL:     accountLink(i.AccountHost, i.Installation),
+		CheckRuns:      i.AccountHost != AccountGitLab,
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
 	}

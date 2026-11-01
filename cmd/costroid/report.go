@@ -100,6 +100,15 @@ func (p pullContext) settingsRef() string {
 }
 
 func readReportRows(path string) (comment.Ledger, comment.State, error) {
+	// The agent's job wrote this path, so a link could name any file on the
+	// runner.
+	info, err := os.Lstat(path)
+	if err != nil {
+		return comment.Ledger{}, comment.Unreadable, err
+	}
+	if !info.Mode().IsRegular() {
+		return comment.Ledger{}, comment.Unreadable, errors.New("the rows path is not a regular file")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return comment.Ledger{}, comment.Unreadable, err

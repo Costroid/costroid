@@ -630,3 +630,14 @@ func BenchmarkReadRowsAndRender(b *testing.B) {
 		}
 	}
 }
+
+func TestGitLabCopyNeverNamesACheckRun(t *testing.T) {
+	input := realInput(t)
+	input.AccountHost, input.CheckRunID = AccountGitLab, nil
+	for _, amounts := range []Amounts{AmountsOff, AmountsUnsettled} {
+		input.Amounts = amounts
+		if body := commentOf(t, input); strings.Contains(body, "check run") {
+			t.Fatalf("a GitLab note names a check run:\n%s", body)
+		}
+	}
+}

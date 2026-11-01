@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
 
@@ -320,4 +321,19 @@ func TestAPullRequestEventWithoutABaseCommitDoesNotReadTheHeadsConfig(t *testing
 	stub.SetPrivate(false)
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
 	assertWithheld(t, stub)
+}
+
+func TestReportRowsRefuseALink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.jsonl")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "costroid-rows.jsonl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, state, err := readReportRows(link); err == nil || state != comment.Unreadable {
+		t.Fatalf("state %q, error %v", state, err)
+	}
 }
