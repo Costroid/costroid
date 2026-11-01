@@ -30,6 +30,7 @@ Usage:
   costroid keys revoke <id>
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE]
   costroid lint-recipes <paths>
+  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID]
   costroid version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -49,6 +50,12 @@ that is null. --out keeps one row per source, credential and day, and a rerun
 replaces it. Rerun through the eighth day after month end, when restating stops.
 
 Exit codes of run:
+costroid report posts one check run and one sticky comment from CI, with the
+GITHUB_TOKEN and GITHUB_* variables of the job. It exits 0 whatever GitHub
+answers, so a failed post never fails the job. --budget-usd restates the run's
+budget, which rows do not record. --installation-id puts the GitHub App
+installation on the account link; COSTROID_INSTALLATION_ID does the same.
+Exit codes:
   the agent's own   the run finished, or the agent stopped itself
   124               costroid stopped the agent at the cap
   125               costroid could not run the agent or record the run
@@ -96,6 +103,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return reconcileCommand(ctx, args[1:], os.Getenv, reconcile.NewClient(), time.Now, stdout, stderr)
 	case "lint-recipes":
 		return lintRecipes(args[1:], stdout, stderr)
+	case "report":
+		return reportCommand(ctx, args[1:], stderr)
 	case "version":
 		return versionCommand(stdout, stderr)
 	case "help", "-h", "--help":
