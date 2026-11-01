@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -85,6 +86,41 @@ func TestPostgresThePerPullRequestViewIsDerivedFromTheRows(t *testing.T) {
 	}
 	if rows != 19 {
 		t.Fatalf("%d rows", rows)
+	}
+}
+
+func TestPostgresABillingAccountRoundTrips(t *testing.T) {
+	w := postgresWorld(t)
+	stated := row("req-1", focus.Output, 100)
+	stated["BillingAccountId"] = "acct-1"
+	silent := row("req-2", focus.Output, 100)
+	delete(silent, "BillingAccountId")
+	w.rows(w.token(), lines(t, stated, silent)).want(t, http.StatusOK)
+	view := w.view(t, w.token(), acmeRepo, acmePull)
+	var accounts []string
+	for _, line := range view.Lines {
+		accounts = append(accounts, line.BillingAccountID)
+	}
+	if !slices.Equal(accounts, []string{"acct-1", "unknown"}) {
+		t.Fatalf("the view reads %v", accounts)
+	}
+	if len(view.Totals) != 1 {
+		t.Fatalf("an account split a total: %+v", view.Totals)
+	}
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, w.db.SuperURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var column, document string
+	err = conn.QueryRow(ctx, `SELECT billing_account_id, document->>'BillingAccountId' FROM focus_rows WHERE row_id = $1`,
+		stated["x_CostroidRowId"]).Scan(&column, &document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if column != "acct-1" || document != "acct-1" {
+		t.Fatalf("stored %q and %q", column, document)
 	}
 }
 

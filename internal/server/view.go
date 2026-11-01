@@ -18,6 +18,7 @@ var labels = map[string]string{
 
 type viewLine struct {
 	Currency         string `json:"currency"`
+	BillingAccountID string `json:"billing_account_id"`
 	ServiceCategory  string `json:"service_category"`
 	Agent            string `json:"agent,omitempty"`
 	Model            string `json:"model,omitempty"`
@@ -126,6 +127,7 @@ func budgetOf(lines []store.Line) budgetView {
 func viewLineOf(line *store.Line) viewLine {
 	return viewLine{
 		Currency:         line.Currency,
+		BillingAccountID: line.BillingAccountID,
 		ServiceCategory:  line.ServiceCategory,
 		Agent:            line.Agent,
 		Model:            line.Model,

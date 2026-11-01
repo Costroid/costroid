@@ -1103,11 +1103,61 @@ func TestACredentialIsKeptSoAStoredRowCanReconcile(t *testing.T) {
 	}
 }
 
+func TestABillingAccountIsKeptAsStated(t *testing.T) {
+	for _, stated := range []string{"acct-1", "unknown", strings.Repeat("é", 512)} {
+		w, ledger := memoryWorld(t)
+		r := row("req-1", focus.Output, 100)
+		r["BillingAccountId"] = stated
+		got := w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+		var receipt ingestAnswer
+		if err := json.Unmarshal(got.body, &receipt); err != nil {
+			t.Fatal(err)
+		}
+		if receipt.Dropped[otlp.DropLabel("BillingAccountId")] != 0 {
+			t.Fatalf("counted as a drop: %s", got.body)
+		}
+		if account := ledger.only(t, tenantA).Row.BillingAccountID; account != stated {
+			t.Fatalf("reads %q, want %q", account, stated)
+		}
+	}
+}
+
+func TestARowThatStatesNoBillingAccountReadsUnknown(t *testing.T) {
+	for name, edit := range map[string]func(map[string]any){
+		"absent": func(r map[string]any) { delete(r, "BillingAccountId") },
+		"null":   func(r map[string]any) { r["BillingAccountId"] = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, ledger := memoryWorld(t)
+			r := row("req-1", focus.Output, 100)
+			edit(r)
+			w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+			if account := ledger.only(t, tenantA).Row.BillingAccountID; account != "unknown" {
+				t.Fatalf("reads %q", account)
+			}
+		})
+	}
+}
+
+func TestABillingAccountNeverChoosesTheTenant(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	r := row("req-1", focus.Output, 100)
+	r["BillingAccountId"] = tenantB
+	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+	if account := ledger.only(t, tenantA).Row.BillingAccountID; account != tenantB {
+		t.Fatalf("reads %q", account)
+	}
+	if len(ledger.rows[tenantID(t, tenantB)]) != 0 {
+		t.Fatal("the stated account moved the row to its tenant")
+	}
+}
+
 func TestRoutingColumnsThatAreNotValidRefuseTheRow(t *testing.T) {
 	for column, value := range map[string]any{
 		"RegionId":              "us; drop",
 		"x_CostroidServiceTier": "Batch Tier",
 		"SubAccountId":          strings.Repeat("a", 513),
+		"BillingAccountId":      strings.Repeat("a", 513),
 	} {
 		w, ledger := memoryWorld(t)
 		r := row("req-1", focus.Output, 100)

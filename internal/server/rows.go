@@ -36,12 +36,13 @@ const (
 	columnRegion    = "RegionId"
 	columnTier      = "x_CostroidServiceTier"
 	columnAccount   = "SubAccountId"
+	columnBilling   = "BillingAccountId"
 )
 
 // ignoredColumns are the row contract's other columns. The server computes or
 // fixes each one, so a sender's value is left behind without being a drop.
 var ignoredColumns = columnSet(
-	"BillingAccountId", "BillingAccountName", "BillingCurrency", "BillingPeriodEnd", "BillingPeriodStart",
+	"BillingAccountName", "BillingCurrency", "BillingPeriodEnd", "BillingPeriodStart",
 	"ChargeCategory", "ChargeClass", "ChargeDescription", "ChargeFrequency", "ConsumedUnit", "HostProviderName",
 	"InvoiceIssuerName", "PricingCategory", "PricingQuantity", "PricingUnit", "ServiceCategory", "ServiceName",
 	"RegionName", "ServiceProviderName", "ServiceSubcategory", "SubAccountName", "x_CostroidCatalogVersion",
@@ -168,7 +169,7 @@ func countLeftBehind(columns map[string]json.RawMessage, drops map[string]int64)
 			drops[otlp.DropClientCost]++
 		case ignoredColumns[name], name == columnSku, name == columnPrice, name == columnMeter, name == columnQuantity,
 			name == columnStart, name == columnEnd, name == columnTags, name == columnOvershoot, name == columnRowID,
-			name == columnRegion, name == columnTier, name == columnAccount:
+			name == columnRegion, name == columnTier, name == columnAccount, name == columnBilling:
 		default:
 			drops[otlp.DropLabel(name)]++
 		}
@@ -256,9 +257,10 @@ func tierOf(priceID string, c *charge) (string, int64) {
 }
 
 // readRouting takes what row version 0.2 states outright: the region, the
-// service tier and the credential. Each is a usage fact, like the token count.
-// A version 0.1 row states none of them, and reads global at the SkuPriceId's
-// tier with no credential.
+// service tier and the credential, and the billing account any row may state.
+// Each is a usage fact, like the token count. A version 0.1 row states none of
+// the first three, and reads global at the SkuPriceId's tier with no credential.
+// The account is a claim about who pays. The tenant never comes from it.
 func (f rowFields) readRouting(c *charge) error {
 	region, err := f.optional(columnRegion, regionPattern)
 	if err != nil {
@@ -268,18 +270,30 @@ func (f rowFields) readRouting(c *charge) error {
 	if err != nil {
 		return err
 	}
-	credential, err := f.text(columnAccount)
+	credential, err := f.limited(columnAccount)
 	if err != nil {
 		return err
 	}
-	if utf8.RuneCountInString(credential) > maxTextColumn {
-		return invalidRow(f.line, columnAccount+" is past the contract's limit")
+	account, err := f.limited(columnBilling)
+	if err != nil {
+		return err
 	}
-	c.region, c.credential = region, credential
+	c.region, c.credential, c.account = region, credential, account
 	if tier != "" {
 		c.serviceTier = tier
 	}
 	return nil
+}
+
+func (f rowFields) limited(column string) (string, error) {
+	text, err := f.text(column)
+	if err != nil {
+		return "", err
+	}
+	if utf8.RuneCountInString(text) > maxTextColumn {
+		return "", invalidRow(f.line, column+" is past the contract's limit")
+	}
+	return text, nil
 }
 
 func (f rowFields) optional(column string, pattern *regexp.Regexp) (string, error) {

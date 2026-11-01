@@ -66,6 +66,7 @@ type charge struct {
 	serviceTier string
 	region      string
 	credential  string
+	account     string
 	context     int64
 	class       focus.TokenClass
 	tokens      int64
@@ -207,6 +208,7 @@ func (s *Server) price(c *charge, joined joinResult) (store.Record, error) {
 		Tokens:              c.tokens,
 		Start:               c.start,
 		End:                 c.end,
+		Account:             c.account,
 		Credential:          c.credential,
 		Region:              c.region,
 		ServiceTier:         c.serviceTier,
