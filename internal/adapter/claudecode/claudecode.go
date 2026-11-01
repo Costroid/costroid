@@ -250,22 +250,22 @@ func (s *Session) perModel() []adapter.Request {
 	for _, model := range models {
 		tokens, assumed := s.totals[model].tokens(s.keyBilled())
 		requests = append(requests, adapter.Request{
-			ID:          s.sessionID + ":" + model,
-			Provider:    provider,
-			Model:       model,
-			Start:       s.first,
-			End:         s.last,
-			ServiceTier: catalog.TierStandard,
-			Region:      catalog.RegionGlobal,
-			Grain:       adapter.PerRun,
-			Tokens:      tokens,
-			AssumedTTL:  assumed,
+			ID:           s.sessionID + ":" + model,
+			Provider:     provider,
+			Model:        model,
+			Start:        s.first,
+			End:          s.last,
+			ServiceTier:  catalog.TierStandard,
+			Region:       catalog.RegionGlobal,
+			Grain:        adapter.PerRun,
+			Tokens:       tokens,
+			AssumedWrite: assumed,
 		})
 	}
 	return requests
 }
 
-func (m modelUsage) tokens(keyBilled bool) (adapter.Tokens, bool) {
+func (m modelUsage) tokens(keyBilled bool) (adapter.Tokens, focus.TokenClass) {
 	tokens := adapter.Tokens{
 		InputUncached:       m.InputTokens,
 		CacheRead:           m.CacheRead,
@@ -273,23 +273,23 @@ func (m modelUsage) tokens(keyBilled bool) (adapter.Tokens, bool) {
 		ReasoningOutput:     m.Thinking,
 		CachedInputReported: m.CacheRead,
 	}
-	var assumed bool
+	var assumed focus.TokenClass
 	tokens.CacheWrite5m, tokens.CacheWrite1h, assumed = splitWrites(m.CacheCreated, m.FiveMinute, m.OneHour, keyBilled)
 	return tokens, assumed
 }
 
 // splitWrites keeps the reported lifetimes. Tokens with no reported lifetime
 // are assigned by the matrix's rule: five minutes on an API key, one hour on a
-// subscription.
-func splitWrites(created, fiveMinute, oneHour int64, keyBilled bool) (int64, int64, bool) {
+// subscription. The class that took them comes back, empty when none did.
+func splitWrites(created, fiveMinute, oneHour int64, keyBilled bool) (int64, int64, focus.TokenClass) {
 	unsplit := created - fiveMinute - oneHour
 	switch {
 	case unsplit == 0:
-		return fiveMinute, oneHour, false
+		return fiveMinute, oneHour, ""
 	case keyBilled:
-		return fiveMinute + unsplit, oneHour, true
+		return fiveMinute + unsplit, oneHour, focus.CacheWrite5m
 	default:
-		return fiveMinute, oneHour + unsplit, true
+		return fiveMinute, oneHour + unsplit, focus.CacheWrite1h
 	}
 }
 
@@ -434,10 +434,10 @@ func (b *requestBuilder) addResponse(line sessionLine, at time.Time) {
 	request.ServiceTier = serviceTier(u)
 	request.Region = region(u.InferenceGeo)
 	request.ContextInputTokens = u.InputTokens + u.CacheRead + u.CacheCreated
-	request.Tokens, request.AssumedTTL = b.tokens(u)
+	request.Tokens, request.AssumedWrite = b.tokens(u)
 }
 
-func (b *requestBuilder) tokens(u usage) (adapter.Tokens, bool) {
+func (b *requestBuilder) tokens(u usage) (adapter.Tokens, focus.TokenClass) {
 	tokens := adapter.Tokens{
 		InputUncached:       u.InputTokens,
 		CacheRead:           u.CacheRead,
@@ -449,7 +449,7 @@ func (b *requestBuilder) tokens(u usage) (adapter.Tokens, bool) {
 	if u.CacheCreation != nil {
 		reported = *u.CacheCreation
 	}
-	var assumed bool
+	var assumed focus.TokenClass
 	tokens.CacheWrite5m, tokens.CacheWrite1h, assumed = splitWrites(u.CacheCreated, reported.FiveMinute, reported.OneHour, b.keyBilled)
 	return tokens, assumed
 }

@@ -17,6 +17,17 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 )
 
+func TestLifetimeIsTheTagValueOfACacheWriteClassOnly(t *testing.T) {
+	for class, want := range map[TokenClass]string{
+		CacheWrite5m: "5m", CacheWrite1h: "1h", CacheWrite30m: "30m", CacheWrite12h: "12h",
+		InputUncached: "", CacheRead: "", Output: "", ReasoningOutput: "", CachedInputReported: "",
+	} {
+		if got := class.Lifetime(); got != want {
+			t.Errorf("%s: %q, want %q", class, got, want)
+		}
+	}
+}
+
 func sampleRow() Row {
 	price := decimal.MustParse("0.125")
 	quantity := decimal.MustParse("0.003495")

@@ -52,6 +52,9 @@ type Usage struct {
 	ContextInputTokens int64
 	Start, End         time.Time
 	Counts             []Count
+	// AssumedWrite is the cache write class that took tokens whose lifetime the
+	// dialect did not report. Empty when it reported all.
+	AssumedWrite focus.TokenClass
 	// Notes state a limit of this dialect in words and travel on the row.
 	Notes []string
 

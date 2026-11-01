@@ -34,7 +34,7 @@ const (
 	futureSkew = 5 * time.Minute
 )
 
-// The tag convention's value patterns, version 0.1.
+// The tag convention's value patterns, version 0.2.
 var (
 	repoTag    = regexp.MustCompile(`^[a-z0-9.-]+(/[a-z0-9._~%-]+){1,8}$`)
 	prTag      = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
@@ -80,6 +80,8 @@ type charge struct {
 	overshoot    *decimal.Decimal
 	source       string
 	notes        []string
+	// assumedTTL is costroid/assumed_ttl, empty on a stated lifetime.
+	assumedTTL string
 
 	// Join keys as the sender stated them. Empty means not stated.
 	repo, pr, sha, run string
@@ -274,6 +276,7 @@ func tagsOf(c *charge, joined joinResult) map[string]string {
 		store.TagWorkflowRunID: joined.run,
 		focus.TagSessionID:     c.session,
 		focus.TagAgentVersion:  c.agentVersion,
+		focus.TagAssumedTTL:    c.assumedTTL,
 	} {
 		if value != "" {
 			tags[key] = value

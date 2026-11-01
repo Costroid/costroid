@@ -388,6 +388,7 @@ func (u *Usage) addWrites(c counts, written int64) {
 	case c.subscriptionTTL && u.CostBasis == focus.ListEquivalent:
 		class = focus.CacheWrite1h
 	}
+	u.AssumedWrite = class
 	u.mergeCount(class, rest)
 }
 

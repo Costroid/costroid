@@ -265,7 +265,7 @@ func (v *Verifier) checkRegistered(claims registered) error {
 }
 
 // Value patterns for what the claims must look like. They match the tag
-// convention, version 0.1, so a claim is always a legal tag value.
+// convention, version 0.2, so a claim is always a legal tag value.
 var (
 	repoPath   = regexp.MustCompile(`^[A-Za-z0-9._~%-]+(/[A-Za-z0-9._~%-]+){1,7}$`)
 	hostName   = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)

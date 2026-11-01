@@ -236,6 +236,7 @@ func (s *Session) request(id string, last usage, tokens adapter.Tokens, at time.
 		ContextInputTokens: last.InputTokens,
 		Grain:              adapter.PerRequest,
 		Tokens:             tokens,
+		AssumedWrite:       assumedWrite(tokens),
 	}
 }
 

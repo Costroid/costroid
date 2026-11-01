@@ -89,6 +89,38 @@ func TestCacheWritesLeaveUncachedInputAndKeepTheCatalogClass(t *testing.T) {
 	}
 }
 
+func TestACacheWriteOnTheStreamIsAssumedThirtyMinutes(t *testing.T) {
+	session := replaySession("gpt-5.6-sol")
+	lines := []string{
+		`{"type":"thread.started","thread_id":"t"}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"cache_write_input_tokens":200,"output_tokens":50}}`,
+	}
+	for _, line := range lines {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := turns(t, session)[0]; got.AssumedWrite != focus.CacheWrite30m || got.Tokens.CacheWrite30m != 200 {
+		t.Errorf("%+v", got)
+	}
+}
+
+func TestATurnWithNoCacheWriteAssumesNothing(t *testing.T) {
+	session := replaySession("gpt-5.6-sol")
+	lines := []string{
+		`{"type":"thread.started","thread_id":"t"}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50}}`,
+	}
+	for _, line := range lines {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := turns(t, session)[0].AssumedWrite; got != "" {
+		t.Errorf("assumed %s", got)
+	}
+}
+
 func TestAbsentCacheWriteFieldReadsAsZero(t *testing.T) {
 	session := replaySession("gpt-5.6-sol")
 	lines := []string{

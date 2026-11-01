@@ -68,7 +68,7 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		ServiceTier:         request.ServiceTier,
 		CatalogVersion:      b.catalog.Version(),
 		Basis:               report.CostBasis,
-		Tags:                b.tags(report, request),
+		Tags:                b.tags(report, request, count.Class),
 	}
 	if count.Class.Informational() {
 		charge.Notes = []string{focus.NoteInformational}
@@ -104,13 +104,13 @@ func priceNotes(price catalog.Price, request adapter.Request) []string {
 	if request.Grain != adapter.PerRequest {
 		notes = append(notes, fmt.Sprintf("one %s's total, so the lowest context tier applies", request.Grain))
 	}
-	if request.AssumedTTL {
+	if request.AssumedWrite != "" {
 		notes = append(notes, "cache lifetime assumed")
 	}
 	return notes
 }
 
-func (b rowBuilder) tags(report adapter.Report, request adapter.Request) map[string]string {
+func (b rowBuilder) tags(report adapter.Report, request adapter.Request, class focus.TokenClass) map[string]string {
 	tags := map[string]string{
 		focus.TagAgent:            b.agent,
 		focus.TagModel:            request.Model,
@@ -125,6 +125,9 @@ func (b rowBuilder) tags(report adapter.Report, request adapter.Request) map[str
 	}
 	if versionTagPattern.MatchString(report.AgentVersion) {
 		tags[focus.TagAgentVersion] = report.AgentVersion
+	}
+	if class == request.AssumedWrite {
+		tags[focus.TagAssumedTTL] = class.Lifetime()
 	}
 	maps.Copy(tags, b.ci.Tags())
 	return tags

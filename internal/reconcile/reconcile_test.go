@@ -42,6 +42,7 @@ type row struct {
 	basis      focus.CostBasis
 	skuPrice   string
 	note       string
+	assumedTTL string
 }
 
 var rowCounter int
@@ -57,6 +58,10 @@ func (r row) line(t *testing.T) string {
 	if r.credential != "" {
 		credential = r.credential
 	}
+	tags := map[string]string{focus.TagCostBasis: string(r.basis), focus.TagModel: r.model}
+	if r.assumedTTL != "" {
+		tags[focus.TagAssumedTTL] = r.assumedTTL
+	}
 	data, err := json.Marshal(map[string]any{
 		"BillingCurrency":     "USD",
 		"ChargeDescription":   r.model + " tokens" + r.note,
@@ -69,7 +74,7 @@ func (r row) line(t *testing.T) string {
 		"SkuMeter":            r.class,
 		"SkuPriceId":          r.skuPrice,
 		"SubAccountId":        credential,
-		"Tags":                map[string]string{focus.TagCostBasis: string(r.basis), focus.TagModel: r.model},
+		"Tags":                tags,
 		"x_CostroidRowId":     fmt.Sprintf("row-%d", rowCounter),
 	})
 	if err != nil {
@@ -369,8 +374,8 @@ func TestSourceNamesMatchTheCatalog(t *testing.T) {
 }
 
 // TestDescriptionNotesMatchTheWriter holds the two notes to what writes them.
-// No row version has a column for a cache lifetime, and a version 0.1 row has
-// none for a region.
+// A row before version 0.3 has no tag for a cache lifetime, and a version 0.1
+// row has no column for a region.
 func TestDescriptionNotesMatchTheWriter(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "run", "rows.go"))
 	if err != nil {
@@ -666,10 +671,14 @@ func TestAnAssumedLifetimeJoinsAnthropicWrites(t *testing.T) {
 	if exact.State != TokensMiss {
 		t.Errorf("a stated lifetime compares by class: state %s", exact.State)
 	}
-	rows[1].note = "; cache lifetime assumed"
-	joined := only(t, pass(t, readRows(t, rows, ""), anthropicReplay(t, "usage.json", "cost-at-list.json"), settledNow))
-	if joined.State != Matched {
-		t.Errorf("an assumed lifetime joins the writes: state %s, %+v", joined.State, joined.Tokens)
+	noted, tagged := slices.Clone(rows), slices.Clone(rows)
+	noted[1].note = "; cache lifetime assumed"
+	tagged[1].assumedTTL = "1h"
+	for name, assumed := range map[string][]row{"the note": noted, "the tag": tagged} {
+		joined := only(t, pass(t, readRows(t, assumed, ""), anthropicReplay(t, "usage.json", "cost-at-list.json"), settledNow))
+		if joined.State != Matched {
+			t.Errorf("%s joins the writes: state %s, %+v", name, joined.State, joined.Tokens)
+		}
 	}
 }
 

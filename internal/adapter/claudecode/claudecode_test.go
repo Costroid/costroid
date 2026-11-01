@@ -378,12 +378,12 @@ func TestAPIKeyRunIsMeasured(t *testing.T) {
 func TestUnreportedCacheLifetimeIsAssignedByRuleAndFlagged(t *testing.T) {
 	b := newRequestBuilder(false)
 	tokens, assumed := b.tokens(usage{CacheCreated: 10, CacheCreation: &cacheCreation{}})
-	if tokens.CacheWrite1h != 10 || !assumed {
+	if tokens.CacheWrite1h != 10 || assumed != focus.CacheWrite1h {
 		t.Errorf("subscription: %+v %v", tokens, assumed)
 	}
 	b = newRequestBuilder(true)
 	tokens, assumed = b.tokens(usage{CacheCreated: 10})
-	if tokens.CacheWrite5m != 10 || !assumed {
+	if tokens.CacheWrite5m != 10 || assumed != focus.CacheWrite5m {
 		t.Errorf("api key: %+v %v", tokens, assumed)
 	}
 }

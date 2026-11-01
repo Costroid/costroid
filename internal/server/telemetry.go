@@ -127,6 +127,10 @@ func chargeOf(usage *otlp.Usage, count otlp.Count, batchDrops map[string]int64, 
 	if end.Before(start) {
 		end = start
 	}
+	var assumedTTL string
+	if count.Class == usage.AssumedWrite {
+		assumedTTL = count.Class.Lifetime()
+	}
 	return charge{
 		rowID:        focus.RowIdentity(usage.ID, count.Class),
 		provider:     usage.Provider,
@@ -144,6 +148,7 @@ func chargeOf(usage *otlp.Usage, count otlp.Count, batchDrops map[string]int64, 
 		enforcement:  usage.EnforcementGrade,
 		source:       sourceTelemetry,
 		notes:        usage.Notes,
+		assumedTTL:   assumedTTL,
 		repo:         repoOf(usage.Repo),
 		pr:           usage.PullRequest,
 		sha:          strings.ToLower(usage.CommitSHA),

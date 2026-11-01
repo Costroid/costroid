@@ -256,8 +256,8 @@ func tierOf(priceID string, c *charge) (string, int64) {
 	return parts[3], context
 }
 
-// readRouting takes what row version 0.2 states outright: the region, the
-// service tier and the credential, and the billing account any row may state.
+// readRouting takes what row versions 0.2 and 0.3 state outright: the region,
+// the service tier and the credential, and the billing account any row may state.
 // Each is a usage fact, like the token count. A version 0.1 row states none of
 // the first three, and reads global at the SkuPriceId's tier with no credential.
 // The account is a claim about who pays. The tenant never comes from it.
@@ -392,6 +392,12 @@ func (f rowFields) applyTags(c *charge, tags map[string]string, drops map[string
 	if tags[focus.TagModel] != c.model {
 		return invalidRow(f.line, "costroid/model disagrees with SkuId")
 	}
+	if ttl, stated := tags[focus.TagAssumedTTL]; stated {
+		if ttl != c.class.Lifetime() {
+			return invalidRow(f.line, "costroid/assumed_ttl is not the lifetime of this row's class")
+		}
+		c.assumedTTL = ttl
+	}
 	c.agent = tags[focus.TagAgent]
 	if !agentTag.MatchString(c.agent) || len(c.agent) > 64 {
 		return invalidRow(f.line, "costroid/agent is not valid")
@@ -440,7 +446,7 @@ const dropInvalidTag = "invalid_tag_value"
 var definedTags = columnSet(
 	"costroid/repo", "costroid/pr", "costroid/commit_sha", "costroid/workflow_run_id", focus.TagSessionID,
 	focus.TagAgent, focus.TagAgentVersion, focus.TagModel, focus.TagCostSource, focus.TagCostBasis,
-	focus.TagAttributionGrade, focus.TagEnforcementGrade, focus.TagRunIdentity,
+	focus.TagAttributionGrade, focus.TagEnforcementGrade, focus.TagRunIdentity, focus.TagAssumedTTL,
 )
 
 func (f rowFields) readOvershoot(c *charge) error {

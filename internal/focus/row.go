@@ -1,8 +1,9 @@
-// Package focus holds the Costroid FOCUS row, version 0.2, and its writer.
+// Package focus holds the Costroid FOCUS row, version 0.3, and its writer.
 package focus
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Costroid/costroid/internal/decimal"
 )
@@ -10,12 +11,12 @@ import (
 // MaxScale is the row contract's limit on fractional digits.
 const MaxScale = 12
 
+const cacheWritePrefix = "cache_write_"
+
 // TokenClass is a value of SkuMeter.
 type TokenClass string
 
-// The classes a row can carry. CacheWrite30m and CacheWrite12h are catalog
-// classes that row version 0.2 does not yet list; they are written, never
-// dropped or moved to another class.
+// The classes a row can carry.
 const (
 	InputUncached       TokenClass = "input_uncached"
 	CacheRead           TokenClass = "cache_read"
@@ -33,7 +34,17 @@ func (c TokenClass) Informational() bool {
 	return c == ReasoningOutput || c == CachedInputReported
 }
 
-// Tag keys of the per-PR convention, version 0.1.
+// Lifetime is the value costroid/assumed_ttl takes on a row of this class, and
+// empty for a class that is not a cache write.
+func (c TokenClass) Lifetime() string {
+	lifetime, isWrite := strings.CutPrefix(string(c), cacheWritePrefix)
+	if !isWrite {
+		return ""
+	}
+	return lifetime
+}
+
+// Tag keys of the per-PR convention, version 0.2.
 const (
 	TagSessionID        = "costroid/session_id"
 	TagAgent            = "costroid/agent"
@@ -48,6 +59,7 @@ const (
 	TagPR               = "costroid/pr"
 	TagCommitSHA        = "costroid/commit_sha"
 	TagWorkflowRunID    = "costroid/workflow_run_id"
+	TagAssumedTTL       = "costroid/assumed_ttl"
 )
 
 // CostBasis is a value of costroid/cost_basis.

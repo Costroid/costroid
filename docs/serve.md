@@ -89,7 +89,9 @@ A budget rule reads `budget.spend` in the per-PR answer. While no eligible row e
 
 The service prices every row from its token count. It never reads a cost column, a unit price or a catalog version from a sender, and each one it sees is counted under `client_cost`.
 
-`RegionId` and `x_CostroidServiceTier` state the region and the tier on `POST /v1/rows`, in row version 0.2. `SkuPriceId` supplies the context tier, and the service tier of a version 0.1 row. They are usage facts, trusted as far as token counts are, and reconciliation checks them. An id naming another model or class is ignored. A row with no `RegionId` prices at `global`.
+`POST /v1/rows` accepts row versions 0.1, 0.2 and 0.3. `RegionId` and `x_CostroidServiceTier` state the region and the tier from version 0.2 on. `SkuPriceId` supplies the context tier, and the service tier of a version 0.1 row. They are usage facts, trusted as far as token counts are, and reconciliation checks them. An id naming another model or class is ignored. A row with no `RegionId` prices at `global`.
+
+A cache write prices at its own class, and `cache_write_30m` and `cache_write_12h` are classes of their own. `costroid/assumed_ttl` says a rule assigned the class. It stays on the stored row and changes no figure. A value that is not the lifetime of the row's class rejects the request.
 
 A provider with no catalog sheet is refused. It is never stored at zero. An unknown model of a known provider falls to the sheet's non-zero fallback tier, and the row says so.
 
@@ -147,6 +149,8 @@ The edge keeps an allowlist of attributes. Everything else is dropped before any
 | Copilot CLI    | `gen_ai.usage.*` on `chat` spans                                            | Yes                  | `cache_creation`; lifetime assumed |
 | Cursor         | `cursor.api.request.*_tokens` on logs                                       | No                   | `cache_creation_tokens`; lifetime assumed |
 | OpenCode V2    | `gen_ai.usage.*` on spans                                                   | Yes                  | None reported             |
+
+Where the table says the lifetime is assumed, a row that took those tokens carries `costroid/assumed_ttl`.
 
 A request's rows from OTLP and from the result stream share row ids when both carry the provider's request id, so a run sent both ways counts once.
 

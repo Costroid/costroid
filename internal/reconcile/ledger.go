@@ -19,8 +19,8 @@ const (
 	tokensUnit = "Tokens"
 	currency   = "USD"
 
-	// Notes the wrapper writes into ChargeDescription. Row version 0.1 has no
-	// column for either fact.
+	// Notes the wrapper writes into ChargeDescription. A row before version 0.3
+	// has no tag for the first, and a row of version 0.1 no column for the second.
 	lifetimeAssumedNote = "cache lifetime assumed"
 	residencyNote       = "for data residency in "
 
@@ -152,7 +152,7 @@ func (l *Ledger) add(row ledgerRow, fallbackCredential string) error {
 		l.groups[key] = group
 	}
 	group.tokens[row.SkuMeter] = group.tokens[row.SkuMeter].Add(tokens)
-	if strings.Contains(row.ChargeDescription, lifetimeAssumedNote) {
+	if row.Tags[focus.TagAssumedTTL] != "" || strings.Contains(row.ChargeDescription, lifetimeAssumedNote) {
 		group.assumedLifetime = true
 	}
 	if focus.CostBasis(row.Tags[focus.TagCostBasis]) == focus.Measured {

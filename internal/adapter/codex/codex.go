@@ -196,6 +196,15 @@ func (u usage) minus(earlier usage) usage {
 	}
 }
 
+// assumedWrite is the class a request's writes took. Codex reports one total
+// with no lifetime, so every write is assumed to be OpenAI's default.
+func assumedWrite(tokens adapter.Tokens) focus.TokenClass {
+	if tokens.CacheWrite30m == 0 {
+		return ""
+	}
+	return focus.CacheWrite30m
+}
+
 // tokens maps one turn's usage. Codex input holds cached tokens and cache
 // writes, so uncached input is what remains. Writes have no reported lifetime;
 // OpenAI's default is 30 minutes.
@@ -271,15 +280,16 @@ func (s *Session) completeTurn(total usage, at time.Time) error {
 	s.total = total
 	s.turnOpen = false
 	s.turns = append(s.turns, adapter.Request{
-		ID:          s.threadID + ":turn:" + strconv.Itoa(len(s.turns)+1),
-		Provider:    provider,
-		Model:       s.model,
-		Start:       s.turnStart,
-		End:         at,
-		ServiceTier: catalog.TierStandard,
-		Region:      catalog.RegionGlobal,
-		Grain:       adapter.PerTurn,
-		Tokens:      tokens,
+		ID:           s.threadID + ":turn:" + strconv.Itoa(len(s.turns)+1),
+		Provider:     provider,
+		Model:        s.model,
+		Start:        s.turnStart,
+		End:          at,
+		ServiceTier:  catalog.TierStandard,
+		Region:       catalog.RegionGlobal,
+		Grain:        adapter.PerTurn,
+		Tokens:       tokens,
+		AssumedWrite: assumedWrite(tokens),
 	})
 	return nil
 }

@@ -464,6 +464,116 @@ func TestExactNeedsASessionToFilterTheProviderReportBy(t *testing.T) {
 	}
 }
 
+// rowVersions holds one row of each published version. Version 0.1 has no
+// region or tier column, and 0.3 adds two classes and the assumed lifetime.
+func rowVersions() map[string]map[string]any {
+	v01 := row("req-1", focus.Output, 100)
+	v02 := row("req-2", focus.Output, 100)
+	v02["RegionId"], v02["RegionName"], v02["x_CostroidServiceTier"] = nil, nil, "standard"
+	stated := openAIRow("req-3", focus.CacheWrite12h, 1000)
+	assumed := openAIRow("req-4", focus.CacheWrite30m, 1000)
+	tags(assumed)[focus.TagAssumedTTL] = "30m"
+	return map[string]map[string]any{"0.1": v01, "0.2": v02, "0.3 stated": stated, "0.3 assumed": assumed}
+}
+
+func openAIRow(id string, class focus.TokenClass, tokens int) map[string]any {
+	r := row(id, class, tokens)
+	r["SkuId"] = "openai/gpt-5.6-sol/" + string(class)
+	r["SkuPriceId"] = "openai:gpt-5.6-sol:global:standard:to-272000:" + string(class)
+	r["RegionId"], r["RegionName"], r["x_CostroidServiceTier"] = nil, nil, "standard"
+	tags(r)[focus.TagAgent] = "codex"
+	tags(r)[focus.TagModel] = "gpt-5.6-sol"
+	return r
+}
+
+func TestEveryPublishedRowVersionIsAccepted(t *testing.T) {
+	for version, r := range rowVersions() {
+		t.Run(version, func(t *testing.T) {
+			w, ledger := memoryWorld(t)
+			w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+			got := ledger.only(t, tenantA).Row
+			if string(got.SkuMeter) != r["SkuMeter"] || got.ConsumedQuantity.String() != r["ConsumedQuantity"] {
+				t.Fatalf("%s %s", got.SkuMeter, got.ConsumedQuantity)
+			}
+			if !strings.HasSuffix(got.SkuPriceID, ":"+string(got.SkuMeter)) {
+				t.Fatalf("priced under %s", got.SkuPriceID)
+			}
+		})
+	}
+}
+
+func TestACacheWriteKeepsItsClassPriceAndAssumedLifetime(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	versions := rowVersions()
+	w.rows(w.token(), lines(t, versions["0.3 assumed"], versions["0.3 stated"])).want(t, http.StatusOK)
+	// From the sheet's gpt-5.6-sol rows per million: 1000 × 5.00 and 1000 × 10.00.
+	want := map[focus.TokenClass]struct{ list, ttl string }{
+		focus.CacheWrite30m: {"0.005", "30m"},
+		focus.CacheWrite12h: {"0.01", ""},
+	}
+	for _, record := range ledger.stored(t, tenantA) {
+		got, expected := record.Row, want[record.Row.SkuMeter]
+		if got.ListCost.String() != expected.list || got.Tags[focus.TagAssumedTTL] != expected.ttl {
+			t.Errorf("%s: list %s, tags %v", got.SkuMeter, got.ListCost, got.Tags)
+		}
+	}
+}
+
+func TestAnAssumedLifetimeThatMissesTheRowsClassIsRefused(t *testing.T) {
+	cases := map[string]struct {
+		class focus.TokenClass
+		ttl   string
+	}{
+		"a class with no lifetime": {focus.CacheRead, "5m"},
+		"another class's lifetime": {focus.CacheWrite30m, "5m"},
+		"a lifetime no class has":  {focus.CacheWrite30m, "24h"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			w, ledger := memoryWorld(t)
+			r := openAIRow("req-1", tc.class, 1000)
+			tags(r)[focus.TagAssumedTTL] = tc.ttl
+			got := w.rows(w.token(), lines(t, r)).want(t, http.StatusUnprocessableEntity)
+			if got.code(t) != codeInvalidRow {
+				t.Fatalf("code %s", got.code(t))
+			}
+			if rows := ledger.stored(t, tenantA); len(rows) != 0 {
+				t.Fatalf("%d rows stored", len(rows))
+			}
+		})
+	}
+}
+
+func TestTelemetryTagsAnAssumedLifetimeOnItsWriteClassOnly(t *testing.T) {
+	cases := map[string]struct {
+		split string
+		ttl   string
+	}{
+		"a reported split": {"1500", ""},
+		"no split":         {"0", "1h"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			w, ledger := memoryWorld(t)
+			body := claudeLogs(t, map[string]string{"service.name": "claude-code"}, map[string]string{
+				"event.name": "api_request", "model": "claude-haiku-5-5", "request_id": "req_1",
+				"input_tokens": "2", "output_tokens": "84",
+				"cache_creation_tokens": "1500", "cache_creation_1h_tokens": tc.split,
+			})
+			w.send(http.MethodPost, "/otlp/v1/logs", w.token(), "application/json", body).want(t, http.StatusOK)
+			for _, record := range ledger.stored(t, tenantA) {
+				want := ""
+				if record.Row.SkuMeter == focus.CacheWrite1h {
+					want = tc.ttl
+				}
+				if got := record.Row.Tags[focus.TagAssumedTTL]; got != want {
+					t.Errorf("%s: assumed %q, want %q", record.Row.SkuMeter, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestASendersWindowedClaimIsNeverRaised(t *testing.T) {
 	w, ledger := memoryWorld(t)
 	r := row("req-1", focus.Output, 100)

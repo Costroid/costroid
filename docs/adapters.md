@@ -50,7 +50,7 @@ What the runs showed:
 - On `error_max_budget_usd`, `usage` is zero in every field, and `modelUsage` still holds the spend.
 - The output count on a stream assistant message is a placeholder: 16 on the wire, 84 final. The session file holds the final figure.
 - A cap of 0.0001 USD ended at 0.0007324 USD. The check runs after a request, so the first request always completes. The agent then exited 1 with the tool call unexecuted.
-- The subagent's writes were five-minute and the main thread's were one-hour, on one subscription. The lifetime is per request, so the rule that assigns an unreported lifetime is a last resort, and the row says when it applied.
+- The subagent's writes were five-minute and the main thread's were one-hour, on one subscription. The lifetime is per request, so the rule that assigns an unreported lifetime is a last resort. `costroid/assumed_ttl` sits on the class that took those tokens.
 - The pinned catalog equals Claude Code's own `total_cost_usd` on all three runs: 0.00060589, 0.001619725 and 0.0007324 USD. The rows never read that field.
 
 `apiKeySource` was `none` on these runs. Costroid reads `none`, an absent value and any unknown value as a subscription. The API-key values in the code are unverified by a recording.
@@ -61,16 +61,16 @@ Costroid reads two sources. The rollout file gives per-request rows and the budg
 
 The rollout file is `<codex home>/sessions/<year>/<month>/<day>/rollout-<local time>-<thread>.jsonl`. Its format is undocumented, so the versions Costroid reads are pinned to the ones with a recorded fixture: `0.164.0-alpha.11.1`. The version comes from the file's `session_meta` line.
 
-| Canonical class         | Rollout usage field and `turn.completed.usage` field                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------------- |
-| `input_uncached`        | `input_tokens` − `cached_input_tokens` − `cache_write_input_tokens`                             |
-| `cache_read`            | `cached_input_tokens`                                                                           |
-| `cache_write_30m`       | `cache_write_input_tokens`, lifetime assumed. Absent reads as zero, and no run recorded a write |
-| `output`                | `output_tokens`                                                                                 |
-| `reasoning_output`      | `reasoning_output_tokens`                                                                       |
-| `cached_input_reported` | `cached_input_tokens`                                                                           |
+| Canonical class         | Rollout usage field and `turn.completed.usage` field                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `input_uncached`        | `input_tokens` − `cached_input_tokens` − `cache_write_input_tokens`                                         |
+| `cache_read`            | `cached_input_tokens`                                                                                       |
+| `cache_write_30m`       | `cache_write_input_tokens`, with the tag `costroid/assumed_ttl`. Absent reads as zero, and no run wrote one |
+| `output`                | `output_tokens`                                                                                             |
+| `reasoning_output`      | `reasoning_output_tokens`                                                                                   |
+| `cached_input_reported` | `cached_input_tokens`                                                                                       |
 
-`cache_write_30m` is the catalog's class name. Row contract 0.2 does not list it yet, so a row carrying it fails that schema. Costroid writes it anyway, and never moves the tokens to another class.
+Codex reports one write total with no lifetime. 30 minutes is OpenAI's default ([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching), retrieved 2026-11-01), and Codex drops `cache_write_tokens_details` ([`responses.rs`](https://github.com/openai/codex/blob/67f0994b532b8740f14b5b738af7b7b2a915b1d6/codex-rs/codex-api/src/sse/responses.rs), retrieved 2026-11-01), so a 12-hour share cannot be seen. Every write lands in `cache_write_30m` at that class's price, and the row carries `costroid/assumed_ttl: 30m`. The tokens never move to another class.
 
 A request settles on the first of two lines. `token_usage_record` carries `usage`, `thread_token_usage` and `response_id`. `token_count` carries `last_token_usage` and `total_token_usage`. Both state the same running total, so a total that has not moved is not a new request, and a total that moved by anything but the request's own usage stops the reading.
 

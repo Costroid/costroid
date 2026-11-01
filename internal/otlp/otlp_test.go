@@ -249,14 +249,29 @@ func TestClaudeCodeOwnShapeIsNotInclusive(t *testing.T) {
 	}
 }
 
+func TestCodexWritesAreAssumedThirtyMinutes(t *testing.T) {
+	usage := parseSpan(t, map[string]any{"service.name": "codex_exec"}, map[string]any{
+		"gen_ai.response.model": "gpt-5.6-sol", keyInput: 1000, keyOutput: 300, keyCacheWrite: 100,
+	})
+	if usage.AssumedWrite != focus.CacheWrite30m || classes(usage.Counts)[focus.CacheWrite30m] != 100 {
+		t.Fatalf("%+v", usage)
+	}
+}
+
+func TestAReportedSplitAssumesNothing(t *testing.T) {
+	if usage := parseClaude(t, nil); usage.AssumedWrite != "" {
+		t.Fatalf("assumed %s", usage.AssumedWrite)
+	}
+}
+
 func TestClaudeCodeWithNoLifetimeSplitAssumesOneAndSaysSo(t *testing.T) {
 	usage := parseClaude(t, map[string]any{"cache_creation_1h_tokens": "0"})
 	assertClasses(t, usage.Counts, map[focus.TokenClass]int64{
 		focus.InputUncached: 2, focus.CacheRead: 2679, focus.CacheWrite1h: 3608, focus.Output: 84,
 		focus.CachedInputReported: 2679,
 	})
-	if !slices.Contains(usage.Notes, "cache lifetime assumed") {
-		t.Fatalf("notes %v", usage.Notes)
+	if !slices.Contains(usage.Notes, "cache lifetime assumed") || usage.AssumedWrite != focus.CacheWrite1h {
+		t.Fatalf("notes %v, assumed %s", usage.Notes, usage.AssumedWrite)
 	}
 	measured := parseClaude(t, map[string]any{"cache_creation_1h_tokens": "0", "costroid.cost_basis": "measured"})
 	if classes(measured.Counts)[focus.CacheWrite5m] != 3608 {

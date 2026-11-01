@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/focus"
 )
 
 const (
@@ -34,6 +35,14 @@ func recordedRollout(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+func TestACacheWriteInTheRolloutIsAssumedThirtyMinutes(t *testing.T) {
+	const written = `{"timestamp":"2026-11-01T11:17:13.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":40,"cache_write_input_tokens":20,"output_tokens":7},"last_token_usage":{"input_tokens":100,"cached_input_tokens":40,"cache_write_input_tokens":20,"output_tokens":7}}}}`
+	requests := applied(watchedSession(""), metaLine, contextLine, written).log.requests
+	if len(requests) != 1 || requests[0].AssumedWrite != focus.CacheWrite30m || requests[0].Tokens.CacheWrite30m != 20 {
+		t.Fatalf("%+v", requests)
+	}
 }
 
 func TestRecordedRolloutGivesOneRequestPerModelCall(t *testing.T) {

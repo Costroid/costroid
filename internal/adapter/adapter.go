@@ -106,9 +106,9 @@ type Request struct {
 	ContextInputTokens int64
 	Grain              Grain
 	Tokens             Tokens
-	// AssumedTTL is set when a cache write's lifetime was not reported and a
-	// rule assigned it.
-	AssumedTTL bool
+	// AssumedWrite is the cache write class that took tokens whose lifetime the
+	// source did not report, by the adapter's rule. Empty when it reported all.
+	AssumedWrite focus.TokenClass
 }
 
 // Report is what a run's usage came to.

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -45,6 +46,7 @@ const (
 	requestPause    = 200 * time.Millisecond
 	requestInput    = 250000
 	stubbornEnv     = "stubborn"
+	cacheWriteMode  = "cache-write"
 )
 
 // TestMain turns the test binary into the fake agent when the harness runs it
@@ -86,6 +88,8 @@ func fakeCodex(mode string) {
 	switch mode {
 	case "stream":
 		fakeStreamOnly(logFile)
+	case cacheWriteMode:
+		fakeCacheWrite()
 	case "replay":
 		fakeReplay(logFile)
 	case "stdin":
@@ -105,6 +109,13 @@ func fakeStreamOnly(log io.Writer) {
 		fmt.Println(`{"type":"turn.started"}`)
 		fmt.Printf(`{"type":"turn.completed","usage":{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":0}}`+"\n", turn*requestInput)
 	}
+}
+
+// fakeCacheWrite reports one turn holding 200 written tokens in its 1000 input.
+func fakeCacheWrite() {
+	fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
+	fmt.Println(`{"type":"turn.started"}`)
+	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"cache_write_input_tokens":200,"output_tokens":50}}`)
 }
 
 func openFakeRollout(thread string) *os.File {
@@ -852,6 +863,64 @@ func TestUnknownModelRowSaysItWasPricedAtTheFallback(t *testing.T) {
 	}
 	if !strings.Contains(row.ChargeDescription, "fallback tier") {
 		t.Errorf("description %q", row.ChargeDescription)
+	}
+}
+
+func TestACodexCacheWriteReadsCacheWrite30mWithTheAssumedTag(t *testing.T) {
+	got, _ := codexRun(t, cacheWriteMode, "5", "--ephemeral")
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	tokens := map[string]string{}
+	for _, row := range got.rows {
+		meter, _ := row["SkuMeter"].(string)
+		tokens[meter], _ = row["ConsumedQuantity"].(string)
+		want := ""
+		if meter == string(focus.CacheWrite30m) {
+			want = "30m"
+		}
+		if assumed := tagOf(row, focus.TagAssumedTTL); assumed != want {
+			t.Errorf("%s: assumed %q, want %q", meter, assumed, want)
+		}
+		if meter == string(focus.CacheWrite30m) && row["SkuPriceId"] != "openai:gpt-5.6-sol:global:standard:to-272000:cache_write_30m" {
+			t.Errorf("priced under %v", row["SkuPriceId"])
+		}
+	}
+	want := map[string]string{"input_uncached": "500", "cache_read": "300", "cache_write_30m": "200", "output": "50", "cached_input_reported": "300"}
+	if !maps.Equal(tokens, want) {
+		t.Errorf("tokens %v", tokens)
+	}
+	// From the sheet's gpt-5.6-sol rows per million:
+	// 500 × 4.00 + 300 × 0.40 + 200 × 5.00 + 50 × 20.00.
+	if err := checkListTotal(got.result.ListTotal, "0.00412"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestAnAssumedTagSitsOnTheClassThatTookTheAssumption(t *testing.T) {
+	builder := rowBuilder{catalog: pinned(t), agent: "claude-code", enforcement: adapter.Enforcement{Grade: adapter.GradeAgentFlag}}
+	report := adapter.Report{CostBasis: focus.Measured, CostSource: "agent_stream", Requests: []adapter.Request{{
+		ID: "r", Provider: "anthropic", Model: "claude-haiku-5-5", Grain: adapter.PerRequest,
+		ServiceTier: catalog.TierStandard, Region: catalog.RegionGlobal,
+		Start: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 11, 1, 0, 0, 1, 0, time.UTC),
+		Tokens:       adapter.Tokens{InputUncached: 10, CacheWrite5m: 30, CacheWrite1h: 20},
+		AssumedWrite: focus.CacheWrite5m,
+	}}}
+	rows, err := builder.rows(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("%d rows", len(rows))
+	}
+	for _, row := range rows {
+		want := ""
+		if row.SkuMeter == focus.CacheWrite5m {
+			want = "5m"
+		}
+		if got := row.Tags[focus.TagAssumedTTL]; got != want {
+			t.Errorf("%s: assumed %q, want %q", row.SkuMeter, got, want)
+		}
 	}
 }
 
