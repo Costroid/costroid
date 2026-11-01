@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/fanout"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/otlp"
 )
@@ -66,31 +68,60 @@ func invalidRow(line int, reason string) *refusal {
 	return refuse(http.StatusUnprocessableEntity, codeInvalidRow, fmt.Sprintf("Line %d: %s.", line, reason))
 }
 
-// parseRows reads the JSON lines costroid run writes.
+// parseRows reads the JSON lines costroid run writes. A refusal names the
+// earliest bad line, however the work was divided.
 func parseRows(body []byte, drops map[string]int64) ([]charge, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(body))
-	scanner.Buffer(make([]byte, 0, 4096), maxRowBytes)
-	var charges []charge
-	line := 0
-	for scanner.Scan() {
-		line++
-		text := bytes.TrimSpace(scanner.Bytes())
-		if len(text) == 0 {
-			continue
-		}
-		c, err := parseRow(text, line, drops)
-		if err != nil {
-			return nil, err
-		}
-		charges = append(charges, c)
+	lines, scanErr := splitLines(body)
+	charges := make([]charge, len(lines))
+	workerDrops := make([]map[string]int64, fanout.Workers(len(lines)))
+	for worker := range workerDrops {
+		workerDrops[worker] = map[string]int64{}
 	}
-	if errors.Is(scanner.Err(), bufio.ErrTooLong) {
-		return nil, invalidRow(line+1, "the row is over the size limit")
+	err := fanout.Each(len(lines), func(worker, i int) error {
+		var err error
+		charges[i], err = parseRow(lines[i].text, lines[i].number, workerDrops[worker])
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("server: scan rows: %w", err)
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	for _, counted := range workerDrops {
+		for field, count := range counted {
+			drops[field] += count
+		}
 	}
 	return charges, nil
+}
+
+type bodyLine struct {
+	number int
+	text   []byte
+}
+
+// splitLines cuts a body into its non-blank lines. The error is for what stopped
+// the scan, and every line before it is still returned, so a bad row above an
+// oversized one is the one reported.
+func splitLines(body []byte) ([]bodyLine, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 0, 4096), maxRowBytes)
+	lines := make([]bodyLine, 0, bytes.Count(body, []byte{'\n'})+1)
+	number := 0
+	for scanner.Scan() {
+		number++
+		if text := bytes.TrimSpace(scanner.Bytes()); len(text) > 0 {
+			lines = append(lines, bodyLine{number: number, text: slices.Clone(text)})
+		}
+	}
+	if errors.Is(scanner.Err(), bufio.ErrTooLong) {
+		return lines, invalidRow(number+1, "the row is over the size limit")
+	}
+	if err := scanner.Err(); err != nil {
+		return lines, fmt.Errorf("server: scan rows: %w", err)
+	}
+	return lines, nil
 }
 
 func parseRow(text []byte, line int, drops map[string]int64) (charge, error) {

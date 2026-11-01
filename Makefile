@@ -22,9 +22,12 @@ check-short:
 bench-view:
 	go test -run '^$$' -bench '^BenchmarkPullRequestView$$' -benchtime 3000x -timeout 15m ./internal/server
 
-# Prints rows per second through POST /v1/rows, parsing and pricing included.
+INGEST_CORES ?= 8
+
+# Prints rows per second through POST /v1/rows, parsing and pricing included,
+# for one stream and for four at once, on an instance of INGEST_CORES cores.
 bench-ingest:
-	go test -run '^$$' -bench '^BenchmarkIngestRows$$' -benchtime 10x ./internal/server
+	GOMAXPROCS=$(INGEST_CORES) go test -run '^$$' -bench '^BenchmarkIngestRows(Concurrently)?$$' -benchtime 10x ./internal/server
 
 FUZZTIME ?= 30s
 

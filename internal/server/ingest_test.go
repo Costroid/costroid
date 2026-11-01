@@ -17,6 +17,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/oidc"
+	"github.com/Costroid/costroid/internal/otlp"
 	"github.com/Costroid/costroid/internal/store"
 )
 
@@ -975,4 +976,70 @@ func FuzzParseRows(f *testing.F) {
 			}
 		}
 	})
+}
+
+func manyRows(n int) []map[string]any {
+	rows := make([]map[string]any, n)
+	for i := range rows {
+		rows[i] = row(fmt.Sprintf("req-%d", i), focus.Output, 100+i)
+	}
+	return rows
+}
+
+func TestALargeBodyKeepsItsOrderAndCountsItsDropsOnce(t *testing.T) {
+	body := make([]map[string]any, 0)
+	for _, r := range manyRows(5000) {
+		r["ForeignColumn"] = "x"
+		body = append(body, r)
+	}
+	drops := map[string]int64{}
+	charges, err := parseRows(lines(t, body...), drops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range charges {
+		if charges[i].rowID != body[i]["x_CostroidRowId"] {
+			t.Fatalf("row %d out of order", i)
+		}
+	}
+	if got := drops[otlp.DropClientCost]; got != 5000*6 {
+		t.Fatalf("client_cost %d", got)
+	}
+	if got := drops[otlp.DropLabel("ForeignColumn")]; got != 5000 {
+		t.Fatalf("ForeignColumn %d", got)
+	}
+}
+
+func TestALargeBodyIsRefusedAtItsEarliestBadLine(t *testing.T) {
+	rows := manyRows(5000)
+	rows[1234]["SkuMeter"] = "nothing"
+	rows[4000]["SkuMeter"] = "nothing"
+	_, err := parseRows(lines(t, rows...), map[string]int64{})
+	var refused *refusal
+	if !errors.As(err, &refused) || !strings.Contains(refused.message, "Line 1235:") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestABadLineAboveAnOversizedOneIsTheOneReported(t *testing.T) {
+	rows := manyRows(2)
+	rows[0]["SkuMeter"] = "nothing"
+	body := append(lines(t, rows...), bytes.Repeat([]byte("x"), maxRowBytes+1)...)
+	_, err := parseRows(body, map[string]int64{})
+	var refused *refusal
+	if !errors.As(err, &refused) || !strings.Contains(refused.message, "Line 1:") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestALargeBatchStoresAllOrNothingOnOneBadRow(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	rows := manyRows(3000)
+	tags(rows[2500])[store.TagRepo] = "github.com/acme/other"
+	if got := w.rows(w.token(), lines(t, rows...)).want(t, http.StatusForbidden); got.code(t) != codeJoinKey {
+		t.Fatalf("code %s", got.code(t))
+	}
+	if len(ledger.rows) != 0 && len(ledger.stored(t, tenantA)) != 0 {
+		t.Fatal("rows stored from a refused batch")
+	}
 }

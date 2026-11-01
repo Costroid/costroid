@@ -9,6 +9,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/fanout"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/store"
@@ -293,21 +294,21 @@ func overshootOf(c *charge, joined joinResult) *decimal.Decimal {
 // row fails the whole request, so a retry is whole too.
 func (s *Server) write(r *http.Request, who caller, charges []charge, drops map[string]int64) (store.Receipt, error) {
 	now := s.Now()
-	records := make([]store.Record, 0, len(charges))
-	for i := range charges {
+	records := make([]store.Record, len(charges))
+	err := fanout.Each(len(charges), func(_, i int) error {
 		c := &charges[i]
 		if c.start.After(now.Add(futureSkew)) {
-			return store.Receipt{}, refuse(http.StatusUnprocessableEntity, codeInvalidRow, "A row's charge period starts in the future.")
+			return refuse(http.StatusUnprocessableEntity, codeInvalidRow, "A row's charge period starts in the future.")
 		}
 		joined, err := s.join(c, who)
 		if err != nil {
-			return store.Receipt{}, err
+			return err
 		}
-		record, err := s.price(c, joined)
-		if err != nil {
-			return store.Receipt{}, err
-		}
-		records = append(records, record)
+		records[i], err = s.price(c, joined)
+		return err
+	})
+	if err != nil {
+		return store.Receipt{}, err
 	}
 	return s.Ledger.Ingest(r.Context(), who.tenant, store.Batch{Records: records, Drops: drops, Day: now})
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -607,5 +608,109 @@ func TestTenantIDsMustBeCanonical(t *testing.T) {
 		if _, err := store.ParseTenantID(text); err == nil {
 			t.Errorf("%q accepted", text)
 		}
+	}
+}
+
+func TestTwoSendersOfOneBatchWriteItOnce(t *testing.T) {
+	db := storetest.New(t)
+	a, _ := tenants(t, db)
+	s := open(t, db)
+	records := make([]store.Record, 500)
+	for i := range records {
+		records[i] = record(rowID(i), "1", "exact", "token_verified")
+	}
+	const senders = 8
+	receipts := make([]store.Receipt, senders)
+	errs := make([]error, senders)
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	for i := range senders {
+		group.Go(func() {
+			<-start
+			receipts[i], errs[i] = s.Ingest(context.Background(), a, batch(records...))
+		})
+	}
+	close(start)
+	group.Wait()
+	inserted := 0
+	for i := range senders {
+		if errs[i] != nil {
+			t.Fatal(errs[i])
+		}
+		if receipts[i].Inserted+receipts[i].Duplicates != len(records) {
+			t.Fatalf("%+v", receipts[i])
+		}
+		inserted += receipts[i].Inserted
+	}
+	if inserted != len(records) {
+		t.Fatalf("%d rows inserted across the senders", inserted)
+	}
+}
+
+func TestABatchMixingNewAndStoredRowsWritesOnlyTheNew(t *testing.T) {
+	db := storetest.New(t)
+	a, _ := tenants(t, db)
+	s := open(t, db)
+	ctx := context.Background()
+	old := record(rowID(1), "1", "exact", "token_verified")
+	if _, err := s.Ingest(ctx, a, batch(old)); err != nil {
+		t.Fatal(err)
+	}
+	changed := record(rowID(1), "999", "exact", "token_verified")
+	receipt, err := s.Ingest(ctx, a, batch(changed, record(rowID(2), "2", "exact", "token_verified")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Inserted != 1 || receipt.Duplicates != 1 {
+		t.Fatalf("%+v", receipt)
+	}
+	lines, err := s.PullRequest(ctx, a, repoA, prA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 || lines[0].ListCost.String() != "3" {
+		t.Fatalf("%+v", lines)
+	}
+}
+
+func TestARowInAnotherTenantIsNoDuplicateOnTheFirstAttempt(t *testing.T) {
+	db := storetest.New(t)
+	a, b := tenants(t, db)
+	s := open(t, db)
+	ctx := context.Background()
+	if _, err := s.Ingest(ctx, b, batch(record(rowID(1), "1", "exact", "token_verified"))); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := s.Ingest(ctx, a, batch(record(rowID(1), "1", "exact", "token_verified")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Inserted != 1 {
+		t.Fatalf("%+v", receipt)
+	}
+}
+
+func TestABatchThatTakesTheSecondAttemptCountsItsDropsOnce(t *testing.T) {
+	db := storetest.New(t)
+	a, _ := tenants(t, db)
+	s := open(t, db)
+	ctx := context.Background()
+	repeat := record(rowID(1), "1", "exact", "token_verified")
+	receipt, err := s.Ingest(ctx, a, store.Batch{
+		Records: []store.Record{repeat, repeat}, Drops: map[string]int64{"gen_ai.input.messages": 3}, Day: testDay,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Inserted != 1 || receipt.Duplicates != 1 {
+		t.Fatalf("%+v", receipt)
+	}
+	conn := connect(t, db.SuperURL)
+	var count int64
+	if err := conn.QueryRow(ctx, `SELECT count FROM ingest_drops`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("counted %d", count)
 	}
 }
