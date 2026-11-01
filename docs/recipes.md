@@ -94,6 +94,18 @@ The file holds prompts and tool output. Costroid reads usage from it and nothing
 
 Costroid did not start this run, so the grade reads `none`, whatever `claude_args` passed. The file does not state a budget. The fixture behind this reader was written from the action's source, and no real file has been read yet.
 
+## Egress in the agent's job
+
+The GitHub recipes run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) in audit mode on the agent's job. It records the job's outbound calls and blocks none, so it shows what an injected agent reached and does not stop it.
+
+Read this before you keep the step (vendor's README and `action.yml` at v2.22.3, read November 1, 2026):
+
+- Telemetry goes to the vendor, and it can be turned off only in block mode.
+- The free tier covers public repositories on GitHub-hosted runners. Private repositories need a paid plan.
+- On a self-hosted runner without a subscription, the step does nothing.
+
+To drop the step, delete it. Costroid does not depend on it. GitLab's recipe has no equal, so limit a GitLab runner's egress at its network.
+
 ## What a row says about the run
 
 Inside GitHub Actions or GitLab CI, `costroid run` and `costroid ingest-run` put the repository, the pull request, the head commit and the CI run on every row. On a GitHub pull request the head comes from the event file, because `GITHUB_SHA` is the merge commit. On a GitLab merged results pipeline it comes from `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, for the same reason.
@@ -144,6 +156,7 @@ Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on Novembe
 | Action                      | Release | SHA                                        |
 | --------------------------- | ------- | ------------------------------------------ |
 | `actions/checkout`          | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `step-security/harden-runner` | v2.22.3 | `46b06cea07f9e64621fdf066ba77ac6915163d43` |
 | `actions/upload-artifact`   | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | `actions/download-artifact` | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
 
