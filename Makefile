@@ -1,7 +1,7 @@
 VERSION ?= dev
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-.PHONY: check check-short bench-view fuzz build
+.PHONY: check check-short bench-view bench-ingest fuzz build
 
 # Runs everything, with Postgres in Docker. A missing Docker fails this target.
 check:
@@ -21,6 +21,10 @@ check-short:
 # Prints the per-PR view's p99 on one million rows and fails past 200 ms.
 bench-view:
 	go test -run '^$$' -bench '^BenchmarkPullRequestView$$' -benchtime 3000x -timeout 15m ./internal/server
+
+# Prints rows per second through POST /v1/rows, parsing and pricing included.
+bench-ingest:
+	go test -run '^$$' -bench '^BenchmarkIngestRows$$' -benchtime 10x ./internal/server
 
 FUZZTIME ?= 30s
 

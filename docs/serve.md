@@ -4,7 +4,7 @@
 
 ## Run it
 
-Create two Postgres roles first. The owner role runs migrations and owns every table. The application role owns nothing and has `NOBYPASSRLS`. The service refuses to start on a superuser, a `BYPASSRLS` role or a role that owns a relation.
+The service needs Postgres 15 or later, where the `public` schema grants no `CREATE` by default. Create two roles first. The owner role runs migrations and owns every table. The application role owns nothing and has `NOBYPASSRLS`. The service refuses to start on a superuser, a `BYPASSRLS` role or a role that owns a relation.
 
 ```sql
 CREATE ROLE costroid_owner LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
@@ -90,4 +90,4 @@ Every table carries row level security with `FORCE`. The service names a tenant 
 
 ## Checks
 
-`make check` runs everything with Postgres in Docker, and fails when Docker is missing. It ends with the per-PR view's benchmark on one million rows, which prints its p99 and fails at 200 ms. `make check-short` runs without Docker. `make fuzz` runs each parser's fuzz target for `FUZZTIME`.
+`make check` runs everything with Postgres in Docker, and fails when Docker is missing. It ends with the per-PR view's benchmark on one million rows, which prints its p99 and fails at 200 ms. `make check-short` runs without Docker. `make fuzz` runs each parser's fuzz target for `FUZZTIME`. `make bench-ingest` prints the rows per second of `POST /v1/rows`.

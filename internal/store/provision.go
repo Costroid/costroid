@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -26,7 +25,7 @@ type Tenant struct {
 }
 
 // Provision writes a tenant through the owner's connection, which the service
-// never holds. A binding that already exists stays with its tenant.
+// holds only to migrate and to bind. A binding another tenant holds fails it.
 func Provision(ctx context.Context, ownerURL string, tenant Tenant) error {
 	conn, err := pgx.Connect(ctx, ownerURL)
 	if err != nil {
@@ -62,7 +61,7 @@ func Provision(ctx context.Context, ownerURL string, tenant Tenant) error {
 func NewTenantID() (TenantID, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return TenantID{}, errors.Join(errors.New("store: mint tenant id"), err)
+		return TenantID{}, fmt.Errorf("store: mint tenant id: %w", err)
 	}
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80

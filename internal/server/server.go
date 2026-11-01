@@ -92,16 +92,19 @@ func refuse(status int, code, message string) *refusal {
 
 // Refusal codes.
 const (
-	codeAuth          = "AUTH_TOKEN_INVALID"
-	codeNoTenant      = "TENANT_NOT_BOUND"
-	codeJoinKey       = "JOIN_KEY_MISMATCH"
-	codeInvalidRow    = "ROW_INVALID"
-	codeUnknownPrice  = "PROVIDER_UNKNOWN"
-	codeBodyTooLarge  = "BODY_TOO_LARGE"
-	codeMalformed     = "BODY_MALFORMED"
-	codeWrongRepo     = "REPOSITORY_FORBIDDEN"
-	codeBadQuery      = "QUERY_INVALID"
-	codeInternal      = "INTERNAL"
+	codeAuth         = "AUTH_TOKEN_INVALID"
+	codeNoTenant     = "TENANT_NOT_BOUND"
+	codeJoinKey      = "JOIN_KEY_MISMATCH"
+	codeInvalidRow   = "ROW_INVALID"
+	codeUnknownPrice = "PROVIDER_UNKNOWN"
+	codeBodyTooLarge = "BODY_TOO_LARGE"
+	codeMalformed    = "BODY_MALFORMED"
+	codeWrongRepo    = "REPOSITORY_FORBIDDEN"
+	codeBadQuery     = "QUERY_INVALID"
+	codeInternal     = "INTERNAL"
+)
+
+const (
 	contentTypeHeader = "Content-Type"
 	jsonType          = "application/json"
 )

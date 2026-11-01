@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -656,6 +658,32 @@ func TestAGzipBombIsCappedAfterInflation(t *testing.T) {
 	}
 	got := w.send(http.MethodPost, "/v1/rows", w.token(), "application/x-ndjson", buffer.Bytes(), "Content-Encoding", "gzip")
 	got.want(t, http.StatusRequestEntityTooLarge)
+}
+
+func TestAGzipBombInflatesNoFurtherThanTheCap(t *testing.T) {
+	var buffer bytes.Buffer
+	zipper := gzip.NewWriter(&buffer)
+	if _, err := zipper.Write(make([]byte, 4*maxBodyBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zipper.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/rows", &buffer)
+	request.Header.Set("Content-Encoding", "gzip")
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := readBody(httptest.NewRecorder(), request)
+	runtime.ReadMemStats(&after)
+	var typed *refusal
+	if !errors.As(err, &typed) || typed.code != codeBodyTooLarge {
+		t.Fatalf("got %v", err)
+	}
+	// io.ReadAll allocates about twice what it reads, so a read stopped at the
+	// cap stays under three caps, and the whole bomb would pass eight.
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 3*maxBodyBytes {
+		t.Fatalf("allocated %d bytes reading a body capped at %d", allocated, maxBodyBytes)
+	}
 }
 
 func TestABodyOverTheCapIsRefused(t *testing.T) {

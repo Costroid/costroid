@@ -613,7 +613,7 @@ func assertNoContent(t *testing.T, batch Batch) {
 	}
 	for _, usage := range batch.Usage {
 		for _, count := range usage.Counts {
-			if count.Tokens <= 0 || count.Tokens > 3*maxTokens {
+			if count.Tokens <= 0 || count.Tokens > 3*MaxTokens {
 				t.Fatalf("count %+v", count)
 			}
 		}

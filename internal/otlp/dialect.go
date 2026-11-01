@@ -54,9 +54,9 @@ const (
 // eventNames are the log bodies that are an event's name, not free text.
 var eventNames = set(eventClaudeRequest, "api_request", eventCursorRequest)
 
-// maxTokens bounds one class of one request, far above any model's context,
+// MaxTokens bounds one class of one request, far above any model's context,
 // so a sum of counts cannot overflow.
-const maxTokens = 1_000_000_000_000
+const MaxTokens = 1_000_000_000_000
 
 const (
 	providerAnthropic = "anthropic"
@@ -179,7 +179,7 @@ func parseCount(text string) (int64, error) {
 		}
 		value = int64(whole)
 	}
-	if value < 0 || value > maxTokens {
+	if value < 0 || value > MaxTokens {
 		return 0, strconv.ErrRange
 	}
 	return value, nil

@@ -18,9 +18,6 @@ import (
 	"github.com/Costroid/costroid/internal/otlp"
 )
 
-// maxRowTokens matches the telemetry bound on one class of one request.
-const maxRowTokens = 1_000_000_000_000
-
 // Row columns the result-stream path reads. A sender's cost columns are not
 // among them: they are never read, so they cannot change anything.
 const (
@@ -222,7 +219,7 @@ func (f rowFields) readQuantity(c *charge) error {
 		return err
 	}
 	tokens, err := strconv.ParseInt(text, 10, 64)
-	if err != nil || tokens < 0 || tokens > maxRowTokens {
+	if err != nil || tokens < 0 || tokens > otlp.MaxTokens {
 		return invalidRow(f.line, "ConsumedQuantity is not a whole token count")
 	}
 	c.tokens = tokens

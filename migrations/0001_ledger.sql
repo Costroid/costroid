@@ -33,7 +33,7 @@ CREATE TABLE ingest_keys (
 
 CREATE TABLE focus_rows (
     tenant_id           uuid NOT NULL REFERENCES tenants (id),
-    row_id              text NOT NULL CHECK (row_id ~ '^[0-9a-f]{64}$'),
+    row_id              text NOT NULL CHECK (char_length(row_id) = 64),
     billing_currency    text NOT NULL,
     service_category    text NOT NULL,
     sku_meter           text NOT NULL,
