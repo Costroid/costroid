@@ -2,11 +2,11 @@
 
 These recipes run a coding agent on a pull request under a budget and record what it cost. They use the repository's own token. They need no App, no server and no account.
 
-Each GitHub recipe pins its action to the commit of `v1.0.0-alpha.2`, a pre-release. Set the repository variables `COSTROID_VERSION` to `1.0.0-alpha.2` and `COSTROID_SHA256` to the line for `costroid-linux-amd64` in the release's `SHA256SUMS`.
+Each GitHub recipe pins its action to the commit of `v1.0.0-alpha.3`, a pre-release. Set the repository variables `COSTROID_VERSION` to `1.0.0-alpha.3` and `COSTROID_SHA256` to the line for `costroid-linux-amd64` in the release's `SHA256SUMS`.
 
 ## Claude Code
 
-Copy [`recipes/github-claude-code.yml`](../recipes/github-claude-code.yml) to `.github/workflows/costroid.yml`.
+Copy [`recipes/github-claude-code.yml`](../recipes/github-claude-code.yml) to `.github/workflows/costroid.yml`. Already on `claude-code-action`? Use [`recipes/github-claude-code-action.yml`](../recipes/github-claude-code-action.yml) instead, described below.
 
 Set these on the repository:
 
@@ -78,21 +78,11 @@ Inside your own project, `costroid:report` holds the token, the rows artifact an
 
 ## claude-code-action
 
-`claude-code-action` runs Claude Code itself, so `costroid run` cannot wrap it. Read its `execution_file` output in a later step of the same job:
+`claude-code-action` runs Claude Code itself, so `costroid run` cannot wrap it. [`recipes/github-claude-code-action.yml`](../recipes/github-claude-code-action.yml) keeps your action step and adds Costroid around it: the action's `execution_file` output goes to the action's `read` stage in the same job, and a separate job posts the comment. Put your own `prompt` and `claude_args` in the review step.
 
-```yaml
-- id: claude
-  uses: anthropics/claude-code-action@<sha> # pin it, as every recipe does
-- name: Write the rows
-  if: always()
-  env:
-    EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-  run: costroid ingest-run --execution-file "$EXECUTION_FILE" --out "$RUNNER_TEMP/costroid-rows.jsonl"
-```
+The recipe installs Claude Code 2.1.316, the version with a recorded fixture, and passes its path to the action, so the version is fixed. The file holds prompts and tool output. Costroid reads usage from it and nothing else, and it never leaves the job.
 
-The file holds prompts and tool output. Costroid reads usage from it and nothing else, and it never leaves the job. The rows come at one set per model, for the whole run, unless the session files are on the runner too.
-
-Costroid did not start this run, so the grade reads `none`, whatever `claude_args` passed. The file does not state a budget. The fixture behind this reader was written from the action's source, and no real file has been read yet.
+Costroid did not start this run, so no budget held it, and the grade reads `none`. The rows come at one set per model for the whole run, so the log reads, for example, `one run, 2 models`. A real file from version 2.1.316, read on 2026-11-04, matched the run's own total to the last digit, and is kept as a fixture with its content removed.
 
 ## What the job log shows
 
@@ -161,7 +151,8 @@ Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on Novembe
 | --------------------------- | ------- | ------------------------------------------ |
 | `actions/checkout`          | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `step-security/harden-runner` | v2.22.3 | `46b06cea07f9e64621fdf066ba77ac6915163d43` |
-| `Costroid/costroid/action` | v1.0.0-alpha.2 | `a3eafe5698de9b4803b468854d29fb8bd709f100` |
+| `Costroid/costroid/action` | v1.0.0-alpha.3 | `c8ab388e1cd410ca9a0cf327f062e0256017d94f` |
+| `anthropics/claude-code-action` | v1.0.248 | `1d6de8cb0c237e7c15e9e1bdf973826ebae490cc` |
 | `actions/upload-artifact`   | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | `actions/download-artifact` | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
 

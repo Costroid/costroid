@@ -21,7 +21,7 @@ const (
 	recipesDir   = "../../recipes"
 	actionDir    = "../../action"
 	recipesDoc   = "../../docs/recipes.md"
-	shippedFiles = 4
+	shippedFiles = 5
 	testVersion  = "1.2.3"
 )
 
@@ -62,7 +62,7 @@ func read(t *testing.T, path string) string {
 func TestEveryRuleBitesAShippedRecipe(t *testing.T) {
 	const pin = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	const lockdown = "    permissions:\n      contents: read\n"
-	for _, name := range []string{"github-claude-code.yml", "github-codex.yml"} {
+	for _, name := range []string{"github-claude-code.yml", "github-claude-code-action.yml", "github-codex.yml"} {
 		source := read(t, filepath.Join(recipesDir, name))
 		for _, change := range []edit{
 			{"target", "  pull_request:\n", "  pull_request_target:\n", RulePullRequestTarget},

@@ -21,7 +21,7 @@ func TestLintRecipesPassesTheShippedRecipes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "costroid: 4 files, 0 rejected lines") {
+	if !strings.Contains(stdout, "costroid: 5 files, 0 rejected lines") {
 		t.Fatalf("stdout: %s", stdout)
 	}
 }
