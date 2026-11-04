@@ -257,3 +257,58 @@ func TestTheGitHubRecipesPinNoReleaseOfTheirOwn(t *testing.T) {
 		}
 	}
 }
+
+// otherRelease is the commit of v1.2.2 in lsRemote, a release the action was
+// not checked out at.
+const otherRelease = "17ec021200c2e0c5dc11ac28fceb7fc834819518"
+
+func actionPath(owner, ref string) string {
+	return "GITHUB_ACTION_PATH=/home/runner/work/_actions/" + owner + "/" + ref + "/action"
+}
+
+func TestInstallWithNoPinFindsTheReleaseByTheActionsCheckoutPath(t *testing.T) {
+	for name, env := range map[string][]string{
+		"the path alone":       {"COSTROID_ACTION_REF=", actionPath("Costroid/costroid", releaseCommit)},
+		"the ref alone":        {"COSTROID_ACTION_REF=" + releaseCommit},
+		"both agreeing":        {"COSTROID_ACTION_REF=" + releaseCommit, actionPath("Costroid/costroid", releaseCommit)},
+		"the path over a ref":  {"COSTROID_ACTION_REF=" + otherRelease, actionPath("Costroid/costroid", releaseCommit)},
+		"another repository":   {"COSTROID_ACTION_REF=" + releaseCommit, actionPath("Costroid/costroid-action", otherRelease)},
+		"a tag name in a path": {"COSTROID_ACTION_REF=" + releaseCommit, actionPath("Costroid/costroid", "v1.2.2")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRelease(t)
+			code, output := r.install(env...)
+			if code != 0 || !r.installed() {
+				t.Fatalf("exit %d: %s", code, output)
+			}
+			argv := read(t, filepath.Join(r.root, "cosign-argv"))
+			for _, want := range []string{
+				"@refs/tags/v" + testVersion + "\n",
+				"--certificate-github-workflow-sha\n" + releaseCommit + "\n",
+			} {
+				if !strings.Contains(argv, want) {
+					t.Errorf("cosign argv lacks %q:\n%s", want, argv)
+				}
+			}
+		})
+	}
+}
+
+func TestInstallWithNoPinRefusesWhenNeitherThePathNorTheRefNamesACommit(t *testing.T) {
+	for name, path := range map[string]string{
+		"another repository": actionPath("Costroid/costroid-action", releaseCommit),
+		"a tag name":         actionPath("Costroid/costroid", "v"+testVersion),
+		"a local action":     "GITHUB_ACTION_PATH=/home/runner/work/app/app/action",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRelease(t)
+			code, output := r.install("COSTROID_ACTION_REF=", path)
+			if code == 0 || !strings.Contains(output, "the action's ref '' is not a commit SHA") {
+				t.Fatalf("exit %d: %s", code, output)
+			}
+			if r.fetched() != "" || r.installed() {
+				t.Fatalf("it fetched:\n%s", r.fetched())
+			}
+		})
+	}
+}

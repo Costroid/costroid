@@ -3,6 +3,8 @@
 # Given no version and no sha256, it installs the release whose tag points at
 # this action's commit, and takes the SHA-256 from that release's SHA256SUMS
 # once cosign shows the release workflow signed it at that tag and commit.
+# The commit comes from the action's checkout path, because an action called
+# from another composite action gets an empty github.action_ref.
 set -euo pipefail
 
 repository=Costroid/costroid
@@ -28,6 +30,19 @@ trap 'rm -rf "$scratch"' EXIT
 download() {
   curl --fail --silent --show-error --location --proto '=https' --output "$scratch/$1" \
     "https://github.com/Costroid/costroid/releases/download/v$version/$1"
+}
+
+# action_commit prints this action's commit. The runner checks a remote action
+# out at _actions/<owner>/<repo>/<ref>/<path>, and that path holds the commit
+# even where github.action_ref is empty or names the calling action, so it wins
+# over the ref. Any other path, such as one named by a tag, leaves the ref.
+action_commit() {
+  local path=${GITHUB_ACTION_PATH:-}
+  if [[ $path =~ /_actions/$repository/([0-9a-f]{40})/action$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo "${COSTROID_ACTION_REF:-}"
+  fi
 }
 
 # tags_at prints the tags that point at a commit. An annotated tag's own object
@@ -82,8 +97,9 @@ read_signed_sum() {
 version=${COSTROID_VERSION:-}
 sum=${COSTROID_SHA256:-}
 if [[ -z $version && -z $sum ]]; then
-  find_release "${COSTROID_ACTION_REF:-}"
-  read_signed_sum "$COSTROID_ACTION_REF"
+  commit=$(action_commit)
+  find_release "$commit"
+  read_signed_sum "$commit"
   echo "costroid: installing $version, the release at this action's commit, checked by its signature" >&2
 elif [[ -z $version || -z $sum ]]; then
   fail "set both version and sha256, or neither to install the release this action is pinned to"

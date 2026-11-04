@@ -41,7 +41,7 @@ Image signatures need cosign 3. The release workflow also attaches the image's S
 
 ## What the action checks
 
-The action pinned by its commit installs the release whose tag points at that commit. Before it trusts `SHA256SUMS`, it runs `cosign verify-blob` with the identity above for that tag and with `--certificate-github-workflow-sha` set to that commit, so the signature must come from a release built from the commit the workflow pinned. It then checks the binary against its line, and installs nothing when either check fails. cosign itself comes from `sigstore/cosign-installer`, pinned by SHA in the action as in the release workflow.
+The action pinned by its commit installs the release whose tag points at that commit. It reads the commit from the path the runner checked it out to, `_actions/Costroid/costroid/<commit>/action`, which holds it even when another action calls this one, and falls back to `github.action_ref`. Before it trusts `SHA256SUMS`, it runs `cosign verify-blob` with the identity above for that tag and with `--certificate-github-workflow-sha` set to that commit, so the signature must come from a release built from the commit the workflow pinned. It then checks the binary against its line, and installs nothing when either check fails. cosign itself comes from `sigstore/cosign-installer`, pinned by SHA in the action as in the release workflow.
 
 Passing `version` and `sha256` to the action skips the signature, and the action checks the binary against the SHA-256 you gave.
 
