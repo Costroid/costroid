@@ -2,19 +2,19 @@
 
 These recipes run a coding agent on a pull request under a budget and record what it cost. They use the repository's own token. They need no App, no server and no account.
 
-Each GitHub recipe pins its action to the commit of `v1.0.0-alpha.3`, a pre-release. Set the repository variables `COSTROID_VERSION` to `1.0.0-alpha.3` and `COSTROID_SHA256` to the line for `costroid-linux-amd64` in the release's `SHA256SUMS`.
+The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret and names no version and no checksum. [`docs/verify.md`](verify.md) says what it checks.
+
+The GitHub recipes on `main` pin the action to the zero SHA until the next release replaces that pin, so they fail at start today. [The recipes at `v1.0.0-alpha.3`](https://github.com/Costroid/costroid/tree/v1.0.0-alpha.3/recipes) run now, with the two repository variables that release needs, `COSTROID_VERSION` and `COSTROID_SHA256`.
 
 ## Claude Code
 
 Copy [`recipes/github-claude-code.yml`](../recipes/github-claude-code.yml) to `.github/workflows/costroid.yml`. Already on `claude-code-action`? Use [`recipes/github-claude-code-action.yml`](../recipes/github-claude-code-action.yml) instead, described below.
 
-Set these on the repository:
+Set the secret on the repository:
 
-| Kind     | Name                | Value                                                  |
-| -------- | ------------------- | ------------------------------------------------------ |
-| Secret   | `ANTHROPIC_API_KEY` | The provider key                                       |
-| Variable | `COSTROID_VERSION`  | The Costroid release to install, without the leading v |
-| Variable | `COSTROID_SHA256`   | The SHA-256 of that release's `costroid-linux-amd64`   |
+| Kind     | Name                  | Value                                                                    |
+| -------- | --------------------- | ------------------------------------------------------------------------ |
+| Secret   | `ANTHROPIC_API_KEY`   | The provider key                                                         |
 | Variable | `COSTROID_CREDENTIAL` | Optional. The id of the provider key, for [reconciliation](reconcile.md) |
 
 Create a label named `costroid-agent`. A maintainer applies it to let a first contributor's branch run.
@@ -23,23 +23,27 @@ The recipe installs Claude Code 2.1.316, the version Costroid's fixtures record.
 
 The agent runs with `--bare`, `--restricted` and `--strict-mcp-config`. These skip hooks and `CLAUDE.md`, ignore the repository's settings files and remove the tools that run commands. A recording with these three flags does not exist yet.
 
+Then open a test pull request. The `report` job posts the `costroid` check and the comment. [`docs/troubleshooting.md`](troubleshooting.md) explains each line of the job log, and [`docs/required-check.md`](required-check.md) makes the check required.
+
 ## Codex
 
 Copy [`recipes/github-codex.yml`](../recipes/github-codex.yml) to `.github/workflows/costroid.yml`, and set `CODEX_API_KEY` in place of `ANTHROPIC_API_KEY`. Everything else in the table above is the same.
 
 The recipe installs Codex 0.164.0-alpha.11.1, the one version with a recorded fixture. Any other version runs, and its grade reads `none`, because Costroid reads Codex's undocumented rollout file only at recorded versions.
 
+Then open a test pull request.
+
 ## GitLab CI
 
 Copy [`recipes/gitlab-ci.yml`](../recipes/gitlab-ci.yml) into your repository and `include` it as a local file.
 
-Set `COSTROID_VERSION` and `COSTROID_SHA256` as CI/CD variables, and `COSTROID_CREDENTIAL` if you reconcile. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
+Set `COSTROID_VERSION` and `COSTROID_SHA256` as CI/CD variables, and `COSTROID_CREDENTIAL` if you reconcile. The template has no action to find its release, so it needs both: `COSTROID_SHA256` is the line for `costroid-linux-amd64` in the release's `SHA256SUMS`, which [`docs/verify.md`](verify.md) checks. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
 
 Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Merge requests from forks never run the agent.
 
 The template records the run and keeps `costroid-rows.jsonl` as an artifact. The `costroid:report` job then posts one sticky note on the merge request, the same comment a GitHub pull request gets.
 
-This adapter has run against a stub built from GitLab's documentation, never a real GitLab instance. Treat it as untested until a run on your instance posts its note.
+This adapter has run against a stub built from GitLab's documentation, never a real GitLab instance. Treat it as untested until a run on your instance posts its note. Open a test merge request with the label to see it.
 
 ### Give the report a token
 
@@ -84,6 +88,8 @@ The recipe installs Claude Code 2.1.316, the version with a recorded fixture, an
 
 Costroid did not start this run, so no budget held it, and the grade reads `none`. The rows come at one set per model for the whole run, so the log reads, for example, `one run, 2 models`. A real file from version 2.1.316, read on 2026-11-04, matched the run's own total to the last digit, and is kept as a fixture with its content removed.
 
+It needs the same one secret, `ANTHROPIC_API_KEY`. Then open a test pull request.
+
 ## What the job log shows
 
 The agent's own stream holds its reasoning, its replies and what it read. A public repository's job log is public, so the action writes that stream to a file on the runner, which the job never uploads, and the log shows Costroid's own lines only. Set `show-output: true` on the run step to print the stream, on a private repository.
@@ -99,6 +105,8 @@ Read this before you keep the step (vendor's README and `action.yml` at v2.22.3,
 - On a self-hosted runner without a subscription, the step does nothing.
 
 To drop the step, delete it. Costroid does not depend on it. GitLab's recipe has no equal, so limit a GitLab runner's egress at its network.
+
+The action's install step reaches github.com, for the release's tags and files, and runs cosign to check the signature.
 
 ## What a row says about the run
 
@@ -151,9 +159,10 @@ Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on Novembe
 | --------------------------- | ------- | ------------------------------------------ |
 | `actions/checkout`          | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `step-security/harden-runner` | v2.22.3 | `46b06cea07f9e64621fdf066ba77ac6915163d43` |
-| `Costroid/costroid/action` | v1.0.0-alpha.3 | `c8ab388e1cd410ca9a0cf327f062e0256017d94f` |
+| `Costroid/costroid/action` | unreleased | `0000000000000000000000000000000000000000` |
 | `anthropics/claude-code-action` | v1.0.248 | `1d6de8cb0c237e7c15e9e1bdf973826ebae490cc` |
 | `actions/upload-artifact`   | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | `actions/download-artifact` | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
+| `sigstore/cosign-installer` | v4.1.2  | `6f9f17788090df1f26f669e9d70d6ae9567deba6` |
 
 The image in the GitLab template is `node:24-slim`, pinned by digest to the base image Costroid Platform's engine builds on.

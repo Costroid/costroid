@@ -41,7 +41,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: git diff "$BASE...$HEAD" > pull-request.diff
       - name: Run Claude Code under the budget
-        uses: Costroid/costroid/action@c8ab388e1cd410ca9a0cf327f062e0256017d94f # v1.0.0-alpha.3
+        uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
         env:
           OTEL_LOG_USER_PROMPTS: "0"
           OTEL_LOG_ASSISTANT_RESPONSES: "0"
@@ -50,8 +50,6 @@ jobs:
           OTEL_LOG_RAW_API_BODIES: "0"
         with:
           stage: run
-          version: ${{ vars.COSTROID_VERSION }}
-          sha256: ${{ vars.COSTROID_SHA256 }}
           agent: claude
           minimum-agent-version: 2.1.316
           budget-usd: "5"
@@ -75,11 +73,9 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@c8ab388e1cd410ca9a0cf327f062e0256017d94f # v1.0.0-alpha.3
+      - uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
         with:
           stage: ingest
-          version: ${{ vars.COSTROID_VERSION }}
-          sha256: ${{ vars.COSTROID_SHA256 }}
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
           ingest-audience: ${{ vars.COSTROID_INGEST_AUDIENCE }}
 
@@ -96,9 +92,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@c8ab388e1cd410ca9a0cf327f062e0256017d94f # v1.0.0-alpha.3
+      - uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
         with:
           stage: report
-          version: ${{ vars.COSTROID_VERSION }}
-          sha256: ${{ vars.COSTROID_SHA256 }}
           budget-usd: "5"

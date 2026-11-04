@@ -24,7 +24,9 @@ cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com costroid-linux-amd64
 ```
 
-In GitHub Actions, the recipes install it for you: set the repository variables `COSTROID_VERSION` to `1.0.0-alpha.3` and `COSTROID_SHA256` to the line for `costroid-linux-amd64` in `SHA256SUMS`. To build from a checkout instead, with Go 1.27 or later:
+[`docs/verify.md`](docs/verify.md) checks the image as well.
+
+From the next release, the action installs the release its own commit belongs to and checks it by its signature, so a repository sets one secret, the provider key. Until then, [`docs/recipes.md`](docs/recipes.md) says how to run the `1.0.0-alpha.3` recipes. To build from a checkout instead, with Go 1.27 or later:
 
 ```sh
 make build
