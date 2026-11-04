@@ -61,24 +61,26 @@ A Claude Code `session.id` joins a row and never earns `exact`. Anthropic's usag
 
 A hook or a plugin can start its own `claude -p`. That process writes its own session file under its own session id, and the run's result does not hold its spend. Costroid counts such a session when every rule holds:
 
-- It sits beside the main session file, in the run's project directory `<config>/projects/<directory>/`.
+- It sits in a project directory under `<config>/projects/`, the tree that holds the run's own session file.
 - No line names the run's session id, and no line is a subagent's. Those files are the run's own record.
 - Its first and last events fall inside the run's window.
-- The first working directory it states, `cwd`, is the run's. The run's comes from the stream's `init` line, then from the main session file.
+- Outside CI, it also sits beside the main session file, in the run's project directory `<config>/projects/<directory>/`, and the first working directory it states, `cwd`, is the run's. The run's comes from the stream's `init` line, then from the main session file. A developer's machine runs unrelated sessions, and these two rules keep them out.
+
+Inside CI, which Costroid reads from `GITHUB_ACTIONS` or `GITLAB_CI` set to `true`, the runner hosts one job. There a session in any project directory counts, whatever its `cwd`. That covers a plugin that starts its side calls in a temporary directory, because Claude Code files such a session under that directory's project directory.
 
 Under `costroid run`, the window opens when Costroid starts the agent and closes when the agent exits. For an execution file, it opens at the earlier of the first message and the file's save time less the result's `duration_ms`, and closes at the later of the last message and the save time.
 
-A counted session's rows carry its own `costroid/session_id`, `costroid/cost_source` `agent_session_file`, and the note `nested session: started and ended inside this run, in its working directory` in `ChargeDescription`. Its own subagents count with it. A request id the run already holds counts once. Its rows are `list_equivalent`, because its file does not state how it bills. Nothing checks them against a result object: the nested process's result went to whatever started it.
+A counted session's rows carry its own `costroid/session_id`, `costroid/cost_source` `agent_session_file`, and the note `nested session: started and ended inside this run` in `ChargeDescription`. Its own subagents count with it. A request id the run already holds counts once. Its file does not state how it bills, and a process a hook starts inherits the run's environment, so its rows take the run's basis: `measured` when the run's `apiKeySource` names a key, `list_equivalent` otherwise. Nothing checks them against a result object: the nested process's result went to whatever started it.
 
-A session that started inside the window and then wrote after the agent exited, or that states another working directory, is not counted, and a warning names it. If the run states no working directory, no nested session is counted.
+A session that started inside the window and then wrote after the agent exited is not counted, and a warning names it. Outside CI, so is one that states another working directory. If the run states no working directory, no nested session is counted outside CI.
 
 What Costroid cannot see:
 
-- A nested process that runs in another working directory. It writes to another project directory. A plugin that starts its side calls in a temporary directory is one.
+- Outside CI, a nested process that runs in another working directory. It writes to another project directory.
 - A process that writes no session file.
 - A process that outlives the agent, such as a detached job started by a `SessionEnd` hook.
 - A process that runs under another `CLAUDE_CONFIG_DIR`.
-- Which of two agents started the other. Two agents run at once in one directory and one job look like a run and its nested session, so a run that started before the other and ended after it counts the other's spend a second time. Run one agent at a time in a directory.
+- Which of two agents started the other. Two agents run at once look like a run and its nested session, so a run that started before the other and ended after it counts the other's spend a second time. Outside CI this needs one directory. Inside CI it needs one job, or one self-hosted runner that runs two jobs at once under one config directory. Run one agent at a time.
 
 No recorded run holds a nested session. The tests use `testdata/not-recorded/nested/`, written in the line shapes of the `subagent` recording. The recordings cut `cwd` because it holds a path. Claude Code 2.1.318 wrote `cwd` on its user, assistant and system lines on 2026-11-04. No recording shows `cwd` on the stream's `init` line, so that source is unverified.
 

@@ -16,7 +16,7 @@ import (
 const (
 	attributionGrade = "unattributed"
 	runIdentity      = "unverified"
-	nestedNote       = "nested session: started and ended inside this run, in its working directory"
+	nestedNote       = "nested session: started and ended inside this run"
 )
 
 // The tag convention's value patterns. A value that misses one is omitted,

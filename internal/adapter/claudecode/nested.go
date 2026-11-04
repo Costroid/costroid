@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
-	"github.com/Costroid/costroid/internal/focus"
 )
 
 // fileFacts is what one session file says about the session that wrote it.
@@ -65,14 +64,17 @@ func (s *Session) runCWD(run transcript) string {
 	return run.cwd
 }
 
-// nestedSessions reads the other sessions in the run's project directory. A
-// hook or a plugin that starts its own claude -p leaves one there, under its
-// own session id. One counts when every rule holds:
+// nestedSessions reads the other sessions a hook or a plugin left when it
+// started its own claude -p, each under its own session id. One counts when
+// every rule holds:
 //
 //   - no line names the run's session id or is a subagent's, because those
 //     lines are the run's own record;
 //   - its first and last events fall inside the run's window;
-//   - the first working directory it states is the run's.
+//   - outside CI, it sits in the run's project directory and the first
+//     working directory it states is the run's, because a developer's machine
+//     runs unrelated sessions. Inside CI the runner hosts one job, so a
+//     session in any project directory counts, whatever its directory.
 //
 // A request id the run or an earlier nested session already holds is not
 // counted again. A session that started inside the window and fails a later
@@ -81,7 +83,11 @@ func (s *Session) nestedSessions(run transcript) ([]adapter.Report, []string) {
 	if run.path == "" {
 		return nil, nil
 	}
-	files, err := filepath.Glob(filepath.Join(filepath.Dir(run.path), "*.jsonl"))
+	pattern := filepath.Join(filepath.Dir(run.path), "*.jsonl")
+	if s.oneJob {
+		pattern = filepath.Join(filepath.Dir(filepath.Dir(run.path)), "*", "*.jsonl")
+	}
+	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("find nested sessions: %v", err)}
 	}
@@ -122,7 +128,7 @@ func writtenBefore(file string, start time.Time) bool {
 // the window.
 func (s *Session) nestedSession(file, id, cwd string, counted map[string]bool) (adapter.Report, string) {
 	start, end := s.window()
-	builder := newRequestBuilder(false)
+	builder := newRequestBuilder(s.keyBilled())
 	facts, err := builder.read(file)
 	if err != nil {
 		return adapter.Report{}, fmt.Sprintf("session %s was not counted: %v", id, err)
@@ -139,15 +145,19 @@ func (s *Session) nestedSession(file, id, cwd string, counted map[string]bool) (
 		return adapter.Report{}, fmt.Sprintf("session %s was not counted: %v", id, err)
 	case last.After(end):
 		return adapter.Report{}, fmt.Sprintf("session %s started inside the run and wrote after it ended, so it was not counted", id)
+	case s.oneJob:
+		// The runner hosts this job alone, so no directory rule applies.
 	case cwd == "":
 		return adapter.Report{}, fmt.Sprintf("session %s started inside the run, which states no working directory, so it was not counted", id)
 	case facts.cwd != cwd:
 		return adapter.Report{}, fmt.Sprintf("session %s started inside the run in another working directory, so it was not counted", id)
 	}
+	// The file does not state how the session bills. It inherits the run's
+	// environment, so it takes the run's basis.
 	report := adapter.Report{
 		SessionID:    id,
 		AgentVersion: facts.version,
-		CostBasis:    focus.ListEquivalent,
+		CostBasis:    s.costBasis(),
 		CostSource:   SourceSessionFile,
 	}
 	for _, request := range builder.requests() {

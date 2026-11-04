@@ -19,6 +19,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
@@ -102,7 +103,12 @@ func outputFormat(args []string) string {
 
 // NewSession starts reading a run.
 func (a Agent) NewSession(adapter.Plan) adapter.Session {
-	return &Session{configDir: a.configDir()}
+	return a.newSession()
+}
+
+// newSession reads the CI system once: a runner inside one hosts one job.
+func (a Agent) newSession() *Session {
+	return &Session{configDir: a.configDir(), oneJob: cicontext.Detect(os.Getenv) != cicontext.NoSystem}
 }
 
 func (a Agent) configDir() string {
@@ -171,6 +177,8 @@ type Session struct {
 	first, last  time.Time
 	// ranFrom and ranTo are when the agent's process ran, when known.
 	ranFrom, ranTo time.Time
+	// oneJob is true inside a CI system, where the runner hosts this job alone.
+	oneJob bool
 }
 
 // Feed reads one stdout line. A line that is not JSON is not the agent's

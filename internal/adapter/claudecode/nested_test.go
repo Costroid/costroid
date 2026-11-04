@@ -25,10 +25,26 @@ var (
 	inside   = time.Date(2026, 11, 1, 11, 15, 15, 0, time.UTC)
 )
 
-// agentTree lays out the recorded subagent run with the working directory on
-// its main session file, as a real file states it and the recording cut.
+// outsideCI clears the variables a CI system sets, which the test may run under.
+func outsideCI(t *testing.T) {
+	t.Helper()
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("GITLAB_CI", "")
+}
+
+// insideCI sets one CI system's own variable.
+func insideCI(t *testing.T, variable string) {
+	t.Helper()
+	outsideCI(t)
+	t.Setenv(variable, "true")
+}
+
+// agentTree lays out the recorded subagent run, outside CI, with the working
+// directory on its main session file, as a real file states it and the
+// recording cut.
 func agentTree(t *testing.T) (config, project string) {
 	t.Helper()
+	outsideCI(t)
 	config = installSession(t, "subagent", runSession)
 	project = filepath.Join(config, "projects", "-work")
 	main := filepath.Join(project, runSession+".jsonl")
@@ -81,8 +97,23 @@ func (n nestedFile) writeIn(t *testing.T, project string) {
 // finishTree replays the recorded stream over the tree inside the run window.
 func finishTree(t *testing.T, config string) adapter.Report {
 	t.Helper()
+	return finishTreeBilledBy(t, config, "none")
+}
+
+// finishTreeBilledBy replays the stream with its apiKeySource replaced.
+func finishTreeBilledBy(t *testing.T, config, apiKeySource string) adapter.Report {
+	t.Helper()
 	session := Agent{ConfigDir: config}.NewSession(adapter.Plan{}).(*Session)
-	feedStream(t, session, "subagent")
+	data, err := os.ReadFile(fixture("subagent", "stream.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		line = strings.ReplaceAll(line, `"apiKeySource":"none"`, `"apiKeySource":"`+apiKeySource+`"`)
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
 	session.RunWindow(runStart, runEnd)
 	report, err := session.Finish()
 	if err != nil {
@@ -182,6 +213,7 @@ func TestSessionInAnotherWorkingDirectoryIsNamedAndNotCounted(t *testing.T) {
 }
 
 func TestARunThatStatesNoWorkingDirectoryCountsNoNestedSession(t *testing.T) {
+	outsideCI(t)
 	config := installSession(t, "subagent", runSession)
 	nestedAt(inside, inside.Add(time.Second)).writeIn(t, filepath.Join(config, "projects", "-work"))
 	report := finishTree(t, config)
@@ -192,6 +224,7 @@ func TestARunThatStatesNoWorkingDirectoryCountsNoNestedSession(t *testing.T) {
 }
 
 func TestTheStreamsWorkingDirectoryIsTheRuns(t *testing.T) {
+	outsideCI(t)
 	config := installSession(t, "subagent", runSession)
 	nestedAt(inside, inside.Add(time.Second)).writeIn(t, filepath.Join(config, "projects", "-work"))
 	session := Agent{ConfigDir: config}.NewSession(adapter.Plan{}).(*Session)
@@ -273,5 +306,69 @@ func TestAFileLastWrittenBeforeTheRunIsNotRead(t *testing.T) {
 	assertRunAlone(t, report)
 	if len(report.Warnings) != 0 {
 		t.Errorf("the stale file was read: %q", report.Warnings)
+	}
+}
+
+// sideCall is a nested session a plugin started in a temporary directory, so
+// it sits in that directory's project directory.
+func sideCall(start, end time.Time) nestedFile {
+	nested := nestedAt(start, end)
+	nested.cwd = "/var/side-call"
+	return nested
+}
+
+func (n nestedFile) writeInProjectOf(t *testing.T, config string) {
+	t.Helper()
+	n.write(t, filepath.Join(config, "projects", "-var-side-call", n.session+".jsonl"))
+}
+
+func TestInCIASessionInAnyDirectoryInsideTheRunIsCounted(t *testing.T) {
+	for _, variable := range []string{"GITHUB_ACTIONS", "GITLAB_CI"} {
+		t.Run(variable, func(t *testing.T) {
+			config, _ := agentTree(t)
+			insideCI(t, variable)
+			sideCall(inside, inside.Add(time.Second)).writeInProjectOf(t, config)
+			report := finishTree(t, config)
+			assertRunRows(t, report)
+			if len(report.Nested) != 1 || report.Nested[0].SessionID != nestedSession || len(report.Nested[0].Requests) != 1 {
+				t.Fatalf("%+v, warnings %q", report.Nested, report.Warnings)
+			}
+			if len(report.Warnings) != 0 {
+				t.Errorf("warnings %q", report.Warnings)
+			}
+		})
+	}
+}
+
+func TestOutsideCIASessionInAnotherProjectDirectoryIsNotCounted(t *testing.T) {
+	config, _ := agentTree(t)
+	sideCall(inside, inside.Add(time.Second)).writeInProjectOf(t, config)
+	report := finishTree(t, config)
+	assertRunAlone(t, report)
+	if len(report.Warnings) != 0 {
+		t.Errorf("warnings %q", report.Warnings)
+	}
+}
+
+func TestInCIASessionOutsideTheRunIsStillNotCounted(t *testing.T) {
+	config, _ := agentTree(t)
+	insideCI(t, "GITHUB_ACTIONS")
+	sideCall(runStart.Add(-time.Hour), runStart.Add(-time.Minute)).writeInProjectOf(t, config)
+	assertRunAlone(t, finishTree(t, config))
+}
+
+func TestANestedSessionTakesTheRunsBillingBasis(t *testing.T) {
+	for source, want := range map[string]focus.CostBasis{
+		"ANTHROPIC_API_KEY": focus.Measured,
+		"none":              focus.ListEquivalent,
+	} {
+		t.Run(source, func(t *testing.T) {
+			config, project := agentTree(t)
+			nestedAt(inside, inside.Add(time.Second)).writeIn(t, project)
+			report := finishTreeBilledBy(t, config, source)
+			if report.CostBasis != want || len(report.Nested) != 1 || report.Nested[0].CostBasis != want {
+				t.Fatalf("run %s, nested %+v, want %s", report.CostBasis, report.Nested, want)
+			}
+		})
 	}
 }

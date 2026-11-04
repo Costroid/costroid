@@ -63,7 +63,7 @@ func (s *executionSpan) settled(saved time.Time) (time.Time, time.Time) {
 // start this run, so it holds no budget: the grade is none, whatever flags the
 // workflow passed. The action does not state them in the file.
 func (a Agent) ReadExecutionFile(file io.Reader, saved time.Time) (adapter.Report, error) {
-	session := &Session{configDir: a.configDir()}
+	session := a.newSession()
 	span, err := feedExecutionFile(session, file, saved)
 	if err != nil {
 		return adapter.Report{}, err

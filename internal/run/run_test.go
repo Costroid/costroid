@@ -663,9 +663,15 @@ const (
 )
 
 // nestedRun replays the subagent run while a hook's claude -p, started in the
-// given working directory, leaves its own session file.
-func nestedRun(t *testing.T, cwd string) outcome {
+// given working directory, leaves its own session file. A system names the CI
+// variable the run sees as "true"; empty means outside CI.
+func nestedRun(t *testing.T, cwd, system string) outcome {
 	t.Helper()
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("GITLAB_CI", "")
+	if system != "" {
+		t.Setenv(system, "true")
+	}
 	t.Setenv(fakeNested, mustAbs(t, filepath.Join(nestedData, "session.jsonl")))
 	t.Setenv(fakeNestedCWD, cwd)
 	got, _ := claudeRun(t, "subagent", subagentSession, pinned(t))
@@ -686,13 +692,18 @@ func nestedRows(rows []map[string]any) []map[string]any {
 }
 
 func TestASessionAHookStartsInsideTheRunIsCountedUnderItsOwnID(t *testing.T) {
-	got := nestedRun(t, "/work")
+	got := nestedRun(t, "/work", "")
 	if err := checkListTotal(got.result.ListTotal, nestedList); err != nil {
 		t.Error(err)
 	}
 	nested := nestedRows(got.rows)
 	if len(nested) != 2 {
 		t.Fatalf("%d rows carry the nested session's id, want its input and output", len(nested))
+	}
+	for _, row := range nested {
+		if basis := tagOf(row, focus.TagCostBasis); basis != "list_equivalent" {
+			t.Errorf("a subscription run's nested row reads %s", basis)
+		}
 	}
 	for _, row := range got.rows {
 		description, _ := row["ChargeDescription"].(string)
@@ -704,7 +715,7 @@ func TestASessionAHookStartsInsideTheRunIsCountedUnderItsOwnID(t *testing.T) {
 }
 
 func TestASessionInAnotherWorkingDirectoryIsNotCounted(t *testing.T) {
-	got := nestedRun(t, "/elsewhere")
+	got := nestedRun(t, "/elsewhere", "")
 	if err := checkListTotal(got.result.ListTotal, subagentList); err != nil {
 		t.Error(err)
 	}
@@ -713,6 +724,16 @@ func TestASessionInAnotherWorkingDirectoryIsNotCounted(t *testing.T) {
 	}
 	if warnings := got.result.Report.Warnings; len(warnings) != 1 || !strings.Contains(warnings[0], "another working directory") {
 		t.Errorf("warnings %q", warnings)
+	}
+}
+
+func TestInCIASessionInAnotherWorkingDirectoryIsCounted(t *testing.T) {
+	got := nestedRun(t, "/elsewhere", "GITHUB_ACTIONS")
+	if err := checkListTotal(got.result.ListTotal, nestedList); err != nil {
+		t.Error(err)
+	}
+	if nested := nestedRows(got.rows); len(nested) != 2 {
+		t.Errorf("%d rows carry the nested session's id", len(nested))
 	}
 }
 
