@@ -567,3 +567,29 @@ func TestIngestWithNoRowsSendsNothing(t *testing.T) {
 		t.Fatal("it posted")
 	}
 }
+
+// The report job reads costroid.yml at the base commit. A private repository
+// answers 403 without contents: read, and comment.show_cost then goes unread.
+func TestTheGitHubReportJobsCanReadTheSettings(t *testing.T) {
+	for _, name := range []string{"github-claude-code.yml", "github-codex.yml"} {
+		var recipe struct {
+			Jobs map[string]struct {
+				Permissions map[string]string `yaml:"permissions"`
+			} `yaml:"jobs"`
+		}
+		raw, err := os.ReadFile(filepath.Join("..", "..", "recipes", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := yaml.Unmarshal(raw, &recipe); err != nil {
+			t.Fatal(err)
+		}
+		report, found := recipe.Jobs["report"]
+		if !found {
+			t.Fatalf("%s has no report job", name)
+		}
+		if report.Permissions["contents"] != "read" {
+			t.Errorf("%s: the report job's contents permission is %q, want read", name, report.Permissions["contents"])
+		}
+	}
+}

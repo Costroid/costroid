@@ -86,6 +86,9 @@ jobs:
     timeout-minutes: 5
     permissions:
       checks: write
+      # Reads costroid.yml at the base commit. Without it a private repository
+      # answers 403 and comment.show_cost cannot be read.
+      contents: read
       pull-requests: write
     steps:
       - uses: Costroid/costroid/action@a3eafe5698de9b4803b468854d29fb8bd709f100 # v1.0.0-alpha.2
