@@ -184,6 +184,22 @@ func TestGitLabAccountLinkNamesTheProjectAndNoHostname(t *testing.T) {
 	}
 }
 
+func TestGitLabNamesTheHeadCommitAndLinksThePipeline(t *testing.T) {
+	stub := gitLabEnvironment(t)
+	t.Setenv("CI_PIPELINE_URL", "https://gitlab.corp.example/platform/widgets/-/pipelines/901")
+	execute(t, "report", "--rows", realRows)
+	want := "This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://gitlab.corp.example/platform/widgets/-/pipelines/901)"
+	if len(stub.Notes) != 1 || !strings.Contains(stub.Notes[0].Body, want) {
+		t.Errorf("no %q in %+v", want, stub.Notes)
+	}
+	stub = gitLabEnvironment(t)
+	t.Setenv("CI_PIPELINE_URL", "")
+	execute(t, "report", "--rows", realRows)
+	if strings.Contains(stub.Notes[0].Body, "[CI run]") {
+		t.Errorf("a pipeline the environment does not name is linked:\n%s", stub.Notes[0].Body)
+	}
+}
+
 func TestGitLabPostsNoStatusAndSaysNoCheckRan(t *testing.T) {
 	stub := gitLabEnvironment(t)
 	_, _, stderr := execute(t, "report", "--rows", realRows)
@@ -203,7 +219,7 @@ func TestGitLabPostsNoStatusAndSaysNoCheckRan(t *testing.T) {
 func TestNoLineOfTheNoteIsAQuickAction(t *testing.T) {
 	stub := gitLabEnvironment(t)
 	rows := filepath.Join(t.TempDir(), "rows.jsonl")
-	forged := `{"BillingCurrency":"USD","ListCost":"1","Tags":{"costroid/cost_basis":"measured","costroid/attribution_grade":"exact","costroid/enforcement_grade":"none","costroid/agent":"/merge","costroid/model":"/close"},"x_CostroidCatalogVersion":"/approve"}` + "\n"
+	forged := `{"BillingCurrency":"USD","ListCost":"1","ListUnitPrice":"1","PricingQuantity":"1","PricingUnit":"1000000 Tokens","ConsumedQuantity":"1000000","SkuMeter":"output","SkuPriceId":"/unapprove","Tags":{"costroid/cost_basis":"measured","costroid/attribution_grade":"exact","costroid/enforcement_grade":"none","costroid/agent":"/merge","costroid/model":"/close"},"x_CostroidCatalogVersion":"/approve"}` + "\n"
 	if err := os.WriteFile(rows, []byte(forged), 0o644); err != nil {
 		t.Fatal(err)
 	}

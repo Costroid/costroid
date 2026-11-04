@@ -113,24 +113,53 @@ func TestZeroRowsStillPostTheCheckAndTheComment(t *testing.T) {
 	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].Conclusion != "neutral" || len(stub.Comments) != 1 {
 		t.Fatalf("exit %d, %+v, %+v", code, stub.Checks, stub.Comments)
 	}
-	if !strings.Contains(stub.Comments[0].Body, "No cost rows were recorded") {
-		t.Errorf("body:\n%s", stub.Comments[0].Body)
+	body := stub.Comments[0].Body
+	if !strings.Contains(body, "The rows file holds no rows, so this report shows no figures.") || !strings.Contains(stub.Checks[0].Text, `"reason": "empty_rows_file"`) {
+		t.Errorf("body:\n%s", body)
 	}
 }
 
-func TestAnUnreadableRowsFilePostsTheCheckAndShowsNoZero(t *testing.T) {
-	bad := filepath.Join(t.TempDir(), "rows.jsonl")
-	if err := os.WriteFile(bad, []byte("{"), 0o644); err != nil {
+func TestAnUnreadableRowsFilePostsTheCheckAndSaysWhy(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "rows.jsonl")
+	if err := os.WriteFile(bad, []byte("\n{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{bad, filepath.Join(t.TempDir(), "absent.jsonl")} {
+	cases := map[string]struct{ reason, sentence string }{
+		bad:                                {"invalid_row", "Line 2 of the rows file is not a valid row, so this report shows no figures."},
+		filepath.Join(dir, "absent.jsonl"): {"no_rows_file", "No rows file reached this report, so it shows no figures."},
+		dir:                                {"rows_path_not_a_file", "The rows path is not a regular file, so this report did not read it and shows no figures."},
+	}
+	for path, want := range cases {
 		stub := reportEnvironment(t, pullRequestEvent())
 		code, _, stderr := execute(t, "report", "--rows", path)
-		if code != 0 || len(stub.Checks) != 1 {
+		if code != 0 || len(stub.Checks) != 1 || len(stub.Comments) != 1 {
 			t.Fatalf("exit %d: %s", code, stderr)
 		}
-		if !strings.Contains(stub.Checks[0].Text, `"state": "rows_unreadable"`) || !strings.Contains(stub.Comments[0].Body, "could not be read") {
-			t.Errorf("check:\n%s\ncomment:\n%s", stub.Checks[0].Text, stub.Comments[0].Body)
+		text, body := stub.Checks[0].Text, stub.Comments[0].Body
+		if !strings.Contains(text, `"state": "rows_unreadable"`) || !strings.Contains(text, `"reason": "`+want.reason+`"`) || !strings.Contains(body, want.sentence) {
+			t.Errorf("%s:\ncheck:\n%s\ncomment:\n%s", want.reason, text, body)
+		}
+	}
+}
+
+func TestTheCommentNamesTheHeadCommitAndLinksTheWorkflowRun(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com/")
+	t.Setenv("GITHUB_RUN_ID", "19203384756")
+	execute(t, "report", "--rows", realRows)
+	want := "This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)"
+	if len(stub.Comments) != 1 || !strings.Contains(stub.Comments[0].Body, want) || !strings.Contains(stub.Checks[0].Summary, want) {
+		t.Errorf("no %q in %+v", want, stub.Comments)
+	}
+	for _, variable := range []string{"GITHUB_SERVER_URL", "GITHUB_RUN_ID"} {
+		stub := reportEnvironment(t, pullRequestEvent())
+		t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+		t.Setenv("GITHUB_RUN_ID", "19203384756")
+		t.Setenv(variable, "")
+		execute(t, "report", "--rows", realRows)
+		if body := stub.Comments[0].Body; strings.Contains(body, "[CI run]") || !strings.Contains(body, "This is one run at commit `9f2c6e1`") {
+			t.Errorf("without %s:\n%s", variable, body)
 		}
 	}
 }
@@ -333,7 +362,7 @@ func TestReportRowsRefuseALink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, state, err := readReportRows(link); err == nil || state != comment.Unreadable {
-		t.Fatalf("state %q, error %v", state, err)
+	if rows, err := readReportRows(link); err == nil || rows.state != comment.Unreadable || rows.reason != comment.NotAFile {
+		t.Fatalf("state %q, reason %q, error %v", rows.state, rows.reason, err)
 	}
 }

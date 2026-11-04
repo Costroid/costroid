@@ -1,24 +1,28 @@
 {{- define "facts" -}}
 **Verdict: {{.Conclusion}}.** No policy ran on this change.
 
-{{if eq .State "rows_unreadable" -}}
-The rows file could not be read, so this report shows no figures.
-{{- else if eq .State "no_rows" -}}
-No cost rows were recorded for this commit.
+{{.RunLine}}
+
+{{if .Why -}}
+{{.Why}}
 {{- else -}}
 {{if .ShowAmounts -}}
 | Cost | Basis | Attribution | Enforcement |
 | --- | --- | --- | --- |
 {{range .Lines -}}
-| {{.Cost}} | {{.Basis}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
+| {{.Cost}}{{.Mark}} | {{.Basis}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
 {{end}}
 {{- else -}}
 | Basis | Attribution | Enforcement |
 | --- | --- | --- |
 {{range .Lines -}}
-| {{.Basis}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
+| {{.Basis}}{{.Mark}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
 {{end}}
 {{- end}}
+{{if .Fallback -}}
+{{.Fallback}}
+
+{{end -}}
 Unverified: the agent's job wrote these figures.
 
 {{if .FiguresOmitted -}}
@@ -34,7 +38,36 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{- end}}
 
 {{if .Agents}}Agents: {{.Agents}}. {{end}}{{if .Models}}Models: {{.Models}}{{if .ModelsOmitted}} and {{.ModelsOmitted}} more{{end}}. {{end}}{{.Rows}} {{if eq .Rows 1}}row{{else}}rows{{end}}{{if .Catalogs}}, catalog {{.Catalogs}}{{end}}.
+{{- range .Traces}}
+
+{{template "trace" .}}
 {{- end}}
+{{- end}}
+{{- end -}}
+
+{{- define "trace" -}}
+<details>
+<summary>{{.Summary}}</summary>
+
+{{if .Lines -}}
+{{if .Shown -}}
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+{{range .Lines -}}
+| {{.Catalog}} | {{.Class}} | {{.PriceID}} | {{.UnitPrice}} | {{.Tokens}} | {{.Cost}} |
+{{end}}
+{{- else -}}
+| Catalog | Token class | Price id | Tokens |
+| --- | --- | --- | --- |
+{{range .Lines -}}
+| {{.Catalog}} | {{.Class}} | {{.PriceID}} | {{.Tokens}} |
+{{end}}
+{{- end}}
+{{- end}}
+{{- if .Omitted}}
+{{.Omitted}} more lines are left out of this trace.
+{{end}}
+</details>
 {{- end -}}
 
 {{- define "comment" -}}

@@ -7,10 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
@@ -100,29 +102,59 @@ func (p pullContext) settingsRef() string {
 	return p.head
 }
 
-func readReportRows(path string) (comment.Ledger, comment.State, error) {
+// rowsReading is what the rows file gave the report, and why it gave no
+// figures when it gave none.
+type rowsReading struct {
+	ledger comment.Ledger
+	state  comment.State
+	reason comment.Reason
+	line   int
+}
+
+func readReportRows(path string) (rowsReading, error) {
+	unread := rowsReading{state: comment.Unreadable, reason: comment.UnreadRowsFile}
 	// The agent's job wrote this path, so a link could name any file on the
 	// runner.
 	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return rowsReading{state: comment.Unreadable, reason: comment.NoRowsFile}, err
+	}
 	if err != nil {
-		return comment.Ledger{}, comment.Unreadable, err
+		return unread, err
 	}
 	if !info.Mode().IsRegular() {
-		return comment.Ledger{}, comment.Unreadable, errors.New("the rows path is not a regular file")
+		return rowsReading{state: comment.Unreadable, reason: comment.NotAFile}, errors.New("the rows path is not a regular file")
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return comment.Ledger{}, comment.Unreadable, err
+		return unread, err
 	}
 	defer file.Close()
 	ledger, err := comment.ReadRows(file)
+	var invalid *comment.RowError
+	if errors.As(err, &invalid) {
+		return rowsReading{state: comment.Unreadable, reason: comment.InvalidRow, line: invalid.Line}, err
+	}
 	if err != nil {
-		return comment.Ledger{}, comment.Unreadable, err
+		return unread, err
 	}
 	if ledger.Rows == 0 {
-		return ledger, comment.NoRows, nil
+		return rowsReading{ledger: ledger, state: comment.NoRows, reason: comment.EmptyRowsFile}, nil
 	}
-	return ledger, comment.Reported, nil
+	return rowsReading{ledger: ledger, state: comment.Reported}, nil
+}
+
+// runURL is the page of the CI run this report belongs to, empty when the
+// environment does not name one. The comment checks its form again.
+func runURL(system cicontext.System) string {
+	if system == cicontext.GitLabCI {
+		return os.Getenv("CI_PIPELINE_URL")
+	}
+	server, repository, run := os.Getenv("GITHUB_SERVER_URL"), os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID")
+	if server == "" || repository == "" || run == "" {
+		return ""
+	}
+	return strings.TrimRight(server, "/") + "/" + repository + "/actions/runs/" + run
 }
 
 // reportTarget is where a report goes and what it says about itself there.
@@ -165,7 +197,7 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "costroid: %v\n", errNoCISystem)
 		return exitFailure
 	}
-	ledger, state, err := readReportRows(flags.rows)
+	rows, err := readReportRows(flags.rows)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
@@ -178,12 +210,15 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input := comment.Input{
-		Ledger:       ledger,
-		State:        state,
+		Ledger:       rows.ledger,
+		State:        rows.state,
+		Reason:       rows.reason,
+		ReasonLine:   rows.line,
 		HeadSHA:      pull.head,
 		Budget:       flags.budget,
 		Installation: target.installation,
 		AccountHost:  target.accountHost,
+		RunURL:       runURL(system),
 	}
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
