@@ -63,10 +63,14 @@ That row is shortened. A full row has every column of the [row contract](https:/
 | Task                                      | Page                                             |
 | ----------------------------------------- | ------------------------------------------------ |
 | Run an agent on a pull request            | [`docs/recipes.md`](docs/recipes.md)             |
+| Make the check required                   | [`docs/required-check.md`](docs/required-check.md) |
+| Read a line of the job log                | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
 | Read the comment                          | [`docs/comment-example.md`](docs/comment-example.md) |
 | Configure a repository                    | [`docs/configuration.md`](docs/configuration.md) |
 | Host the ledger                           | [`docs/install.md`](docs/install.md), [`docs/serve.md`](docs/serve.md) |
 | Compare a ledger with a provider's report | [`docs/reconcile.md`](docs/reconcile.md)         |
+| Take the rows to a warehouse              | [`docs/export.md`](docs/export.md)               |
+| Verify a release                          | [`docs/verify.md`](docs/verify.md)               |
 | See what a budget grade means             | [`docs/adapters.md`](docs/adapters.md)           |
 
 ## Licence
