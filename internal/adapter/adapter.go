@@ -122,6 +122,10 @@ type Report struct {
 	// Enforcement is the grade the run earned, when it differs from what the
 	// plan could promise. Empty means the plan's grade held.
 	Enforcement Enforcement
+	// Nested holds the sessions of other agent processes that started and
+	// ended inside the run, each under its own session id. Their requests are
+	// never in Requests.
+	Nested []Report
 }
 
 // Plan is how one agent command runs under a budget.

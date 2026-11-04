@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
@@ -15,6 +16,7 @@ import (
 const (
 	attributionGrade = "unattributed"
 	runIdentity      = "unverified"
+	nestedNote       = "nested session: started and ended inside this run, in its working directory"
 )
 
 // The tag convention's value patterns. A value that misses one is omitted,
@@ -34,11 +36,28 @@ type rowBuilder struct {
 	ci          cicontext.Context
 }
 
+// rows prices the run's requests, then each nested session's under its own
+// session id, with a note that names it nested.
 func (b rowBuilder) rows(report adapter.Report) ([]focus.Row, error) {
+	rows, err := b.sessionRows(report, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, nested := range report.Nested {
+		more, err := b.sessionRows(nested, []string{nestedNote})
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, more...)
+	}
+	return rows, nil
+}
+
+func (b rowBuilder) sessionRows(report adapter.Report, notes []string) ([]focus.Row, error) {
 	var rows []focus.Row
 	for _, request := range report.Requests {
 		for _, count := range request.Tokens.Counts() {
-			row, err := b.row(report, request, count)
+			row, err := b.row(report, request, count, notes)
 			if err != nil {
 				return nil, err
 			}
@@ -48,7 +67,7 @@ func (b rowBuilder) rows(report adapter.Report) ([]focus.Row, error) {
 	return rows, nil
 }
 
-func (b rowBuilder) row(report adapter.Report, request adapter.Request, count adapter.Count) (focus.Row, error) {
+func (b rowBuilder) row(report adapter.Report, request adapter.Request, count adapter.Count, notes []string) (focus.Row, error) {
 	provider, err := b.catalog.ServiceProviderName(request.Provider)
 	if err != nil {
 		return focus.Row{}, err
@@ -89,7 +108,7 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		charge.Price = &focus.Price{SkuPriceID: price.SkuPriceID, PricingUnit: price.PricingUnit, ListUnitPrice: price.ListUnitPrice}
 		charge.Notes = priceNotes(price, request)
 	}
-	charge.Notes = append(charge.Notes, b.enforcement.Note)
+	charge.Notes = slices.Concat(notes, charge.Notes, []string{b.enforcement.Note})
 	return focus.NewRow(charge), nil
 }
 

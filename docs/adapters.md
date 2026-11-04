@@ -41,7 +41,7 @@ Fixtures are cut to an allowlist of keys. Prompts, tool output, paths, user and 
 
 Input excludes cache reads and cache writes. Output includes thinking, and `reasoning_output` is never added to it.
 
-Rows come from the session files, `<config>/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`. A response's content blocks are separate lines sharing a `requestId`, and they count once. The adapter uses the files only when their billed classes equal the last result's `modelUsage`, per model. Otherwise it writes one set of rows per model, marked `agent_stream`, with a warning.
+Rows come from the session files, `<config>/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`, and from any [nested session](#nested-sessions) beside them. A response's content blocks are separate lines sharing a `requestId`, and they count once. The adapter uses the files only when their billed classes equal the last result's `modelUsage`, per model. Otherwise it writes one set of rows per model, marked `agent_stream`, with a warning.
 
 What the runs showed:
 
@@ -56,6 +56,31 @@ What the runs showed:
 A Claude Code `session.id` joins a row and never earns `exact`. Anthropic's usage `session_id` is a Managed Agents id, null outside a managed session ([usage analytics](https://platform.claude.com/docs/en/api/beta/organization/analytics/usage.md), retrieved 2026-11-01), so it cannot filter Anthropic's report. `exact` rests on the credential in `SubAccountId`.
 
 `apiKeySource` was `none` on these runs. Costroid reads `none`, an absent value and any unknown value as a subscription. The API-key values in the code are unverified by a recording.
+
+### Nested sessions
+
+A hook or a plugin can start its own `claude -p`. That process writes its own session file under its own session id, and the run's result does not hold its spend. Costroid counts such a session when every rule holds:
+
+- It sits beside the main session file, in the run's project directory `<config>/projects/<directory>/`.
+- No line names the run's session id, and no line is a subagent's. Those files are the run's own record.
+- Its first and last events fall inside the run's window.
+- The first working directory it states, `cwd`, is the run's. The run's comes from the stream's `init` line, then from the main session file.
+
+Under `costroid run`, the window opens when Costroid starts the agent and closes when the agent exits. For an execution file, it opens at the earlier of the first message and the file's save time less the result's `duration_ms`, and closes at the later of the last message and the save time.
+
+A counted session's rows carry its own `costroid/session_id`, `costroid/cost_source` `agent_session_file`, and the note `nested session: started and ended inside this run, in its working directory` in `ChargeDescription`. Its own subagents count with it. A request id the run already holds counts once. Its rows are `list_equivalent`, because its file does not state how it bills. Nothing checks them against a result object: the nested process's result went to whatever started it.
+
+A session that started inside the window and then wrote after the agent exited, or that states another working directory, is not counted, and a warning names it. If the run states no working directory, no nested session is counted.
+
+What Costroid cannot see:
+
+- A nested process that runs in another working directory. It writes to another project directory. A plugin that starts its side calls in a temporary directory is one.
+- A process that writes no session file.
+- A process that outlives the agent, such as a detached job started by a `SessionEnd` hook.
+- A process that runs under another `CLAUDE_CONFIG_DIR`.
+- Which of two agents started the other. Two agents run at once in one directory and one job look like a run and its nested session, so a run that started before the other and ended after it counts the other's spend a second time. Run one agent at a time in a directory.
+
+No recorded run holds a nested session. The tests use `testdata/not-recorded/nested/`, written in the line shapes of the `subagent` recording. The recordings cut `cwd` because it holds a path. Claude Code 2.1.318 wrote `cwd` on its user, assistant and system lines on 2026-11-04. No recording shows `cwd` on the stream's `init` line, so that source is unverified.
 
 ## Codex
 
@@ -99,7 +124,8 @@ What the runs showed:
 - The stopped run ended 65 milliseconds after that record, at 0.0283136 USD, under a 0.001 USD cap. The first request always completes, because usage is reported after it.
 - A stop can leave a request uncounted. If a model request is in flight, Codex is killed before it reports usage, so its tokens reach no row. The run says so in a warning.
 - A stop does not reach a running tool. Codex starts tool commands in their own process group, so the `sleep` outlived the agent and ended on its own. A tool spends no model tokens, and it can still change files.
-- Unverified: a Codex subagent thread may write its own rollout file, which Costroid would not read. No recorded run had one.
+- A Codex subagent thread writes its own rollout file. On 2026-11-04, the rollout files Codex 0.147.0-alpha.6.5 had left on one machine held 7 subagent threads. Each `session_meta` line carried `thread_source` `subagent` and a `session_id` naming the parent thread, and each file held its own usage lines. Costroid reads only the run's own thread. No recorded 0.164.0-alpha.11.1 run had a subagent, so whether the parent's totals include that spend is unverified.
+- A separate `codex exec` that a plugin or a tool command starts has the shape of a Claude Code nested session: its own thread and its own rollout file, which Costroid does not read. Under `--ephemeral` it writes no rollout file, so no file can show it. Costroid counts no nested Codex session.
 - The stream names no model and no request id. Without a rollout file, the model comes from `-m`, `--model`, `-c model=` or the top-level `model` key of `config.toml`, and otherwise reads `unknown` and prices at the fallback tier.
 - A `codex.sse_event` reported a `response.completed` of 2 input tokens before the first turn, from startup. It is in neither the turn total nor the rollout file.
 

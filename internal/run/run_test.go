@@ -37,9 +37,12 @@ const (
 	fakeVersion     = "COSTROID_FAKE_VERSION"
 	fakeStreamInput = "COSTROID_FAKE_STREAM_INPUT"
 	fakeNoPause     = "COSTROID_FAKE_NO_PAUSE"
+	fakeNested      = "COSTROID_FAKE_NESTED"
+	fakeNestedCWD   = "COSTROID_FAKE_NESTED_CWD"
 	fakeCount       = 20
 	fakeThread      = "00000000-0000-4000-8000-0000000000aa"
 	claudeData      = "../adapter/claudecode/testdata/2.1.316"
+	nestedData      = "../adapter/claudecode/testdata/not-recorded/nested"
 	codexData       = "../adapter/codex/testdata/0.164.0-alpha.11.1"
 	recordedCodex   = "0.164.0-alpha.11.1"
 	recordedThread  = "00000000-0000-4000-8000-000000000004"
@@ -197,7 +200,30 @@ func fakeClaude() {
 	if err != nil {
 		os.Exit(97)
 	}
+	if template := os.Getenv(fakeNested); template != "" {
+		writeNestedSession(template)
+		data = bytes.Replace(data, []byte(`"subtype":"init",`), []byte(`"subtype":"init","cwd":"/work",`), -1)
+	}
 	os.Stdout.Write(data)
+}
+
+// writeNestedSession leaves the session file a hook's own claude -p would, in
+// the run's project directory, timed now. Its working directory comes from
+// the environment, and the run's reads /work.
+func writeNestedSession(template string) {
+	data, err := os.ReadFile(template)
+	if err != nil {
+		os.Exit(95)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	session := strings.NewReplacer(
+		"@session", nestedSession, "@request", "req_fixture_nested", "@start", now, "@end", now,
+		`"cwd":"/work"`, `"cwd":"`+os.Getenv(fakeNestedCWD)+`"`,
+	).Replace(string(data))
+	path := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "-work", nestedSession+".jsonl")
+	if err := os.WriteFile(path, []byte(session), 0o644); err != nil {
+		os.Exit(95)
+	}
 }
 
 // agentNamed links the test binary under an agent's name.
@@ -628,6 +654,67 @@ const (
 	// all per million tokens.
 	subagentList = "0.001619725"
 )
+
+const (
+	nestedSession = "00000000-0000-4000-8000-0000000000b1"
+	// nestedList adds the nested session's 1000 input and 200 output tokens,
+	// at 0.10 and 0.50 USD per million, to subagentList.
+	nestedList = "0.001819725"
+)
+
+// nestedRun replays the subagent run while a hook's claude -p, started in the
+// given working directory, leaves its own session file.
+func nestedRun(t *testing.T, cwd string) outcome {
+	t.Helper()
+	t.Setenv(fakeNested, mustAbs(t, filepath.Join(nestedData, "session.jsonl")))
+	t.Setenv(fakeNestedCWD, cwd)
+	got, _ := claudeRun(t, "subagent", subagentSession, pinned(t))
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	return got
+}
+
+func nestedRows(rows []map[string]any) []map[string]any {
+	var nested []map[string]any
+	for _, row := range rows {
+		if tagOf(row, focus.TagSessionID) == nestedSession {
+			nested = append(nested, row)
+		}
+	}
+	return nested
+}
+
+func TestASessionAHookStartsInsideTheRunIsCountedUnderItsOwnID(t *testing.T) {
+	got := nestedRun(t, "/work")
+	if err := checkListTotal(got.result.ListTotal, nestedList); err != nil {
+		t.Error(err)
+	}
+	nested := nestedRows(got.rows)
+	if len(nested) != 2 {
+		t.Fatalf("%d rows carry the nested session's id, want its input and output", len(nested))
+	}
+	for _, row := range got.rows {
+		description, _ := row["ChargeDescription"].(string)
+		isNested := tagOf(row, focus.TagSessionID) == nestedSession
+		if isNested != strings.Contains(description, nestedNote) {
+			t.Errorf("session %s reads %q", tagOf(row, focus.TagSessionID), description)
+		}
+	}
+}
+
+func TestASessionInAnotherWorkingDirectoryIsNotCounted(t *testing.T) {
+	got := nestedRun(t, "/elsewhere")
+	if err := checkListTotal(got.result.ListTotal, subagentList); err != nil {
+		t.Error(err)
+	}
+	if nested := nestedRows(got.rows); len(nested) != 0 {
+		t.Errorf("%d rows from a session in another directory", len(nested))
+	}
+	if warnings := got.result.Report.Warnings; len(warnings) != 1 || !strings.Contains(warnings[0], "another working directory") {
+		t.Errorf("warnings %q", warnings)
+	}
+}
 
 func TestClaudeCodeRunPassesTheBudgetAndRecordsTheFlagGrade(t *testing.T) {
 	got, log := claudeRun(t, "subagent", subagentSession, pinned(t))

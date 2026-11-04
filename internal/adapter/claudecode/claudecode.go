@@ -155,6 +155,7 @@ type streamLine struct {
 	SessionID    string                `json:"session_id"`
 	APIKeySource string                `json:"apiKeySource"`
 	Version      string                `json:"claude_code_version"`
+	CWD          string                `json:"cwd"`
 	ModelUsage   map[string]modelUsage `json:"modelUsage"`
 }
 
@@ -164,9 +165,12 @@ type Session struct {
 	sessionID    string
 	version      string
 	apiKeySource string
+	cwd          string
 	totals       map[string]modelUsage
 	sawResult    bool
 	first, last  time.Time
+	// ranFrom and ranTo are when the agent's process ran, when known.
+	ranFrom, ranTo time.Time
 }
 
 // Feed reads one stdout line. A line that is not JSON is not the agent's
@@ -184,6 +188,9 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 	case "system":
 		if parsed.Subtype == "init" {
 			s.sessionID, s.version, s.apiKeySource = parsed.SessionID, parsed.Version, parsed.APIKeySource
+			if s.cwd == "" {
+				s.cwd = parsed.CWD
+			}
 		}
 	case "result":
 		// A run can hold several results. modelUsage is cumulative, so the
@@ -198,10 +205,23 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 }
 
 // Finish returns per-request usage when the session files agree with the
-// result, and per-model usage otherwise.
+// result, and per-model usage otherwise, then the nested sessions the run's
+// project directory holds.
 func (s *Session) Finish() (adapter.Report, error) {
+	report, run, err := s.finishRun()
+	if err != nil {
+		return report, err
+	}
+	nested, warnings := s.nestedSessions(run)
+	report.Nested = nested
+	report.Warnings = append(report.Warnings, warnings...)
+	return report, nil
+}
+
+func (s *Session) finishRun() (adapter.Report, transcript, error) {
 	report := adapter.Report{SessionID: s.sessionID, AgentVersion: s.version, CostBasis: s.costBasis()}
-	requests, err := s.readSessionFiles()
+	run, err := s.readSessionFiles()
+	requests := run.requests
 	if err != nil {
 		report.Warnings = append(report.Warnings, err.Error())
 	}
@@ -214,19 +234,19 @@ func (s *Session) Finish() (adapter.Report, error) {
 	}
 	if len(requests) > 0 {
 		report.CostSource, report.Requests = SourceSessionFile, requests
-		return report, nil
+		return report, run, nil
 	}
 	if len(s.totals) == 0 {
 		if s.sawResult {
-			return report, nil
+			return report, run, nil
 		}
-		return report, fmt.Errorf("claude-code: the stream held no result object and no session file was found")
+		return report, run, fmt.Errorf("claude-code: the stream held no result object and no session file was found")
 	}
 	if err == nil && len(report.Warnings) == 0 {
 		report.Warnings = append(report.Warnings, "no session file: one set of rows per model, for the whole run")
 	}
 	report.CostSource, report.Requests = SourceStream, s.perModel()
-	return report, nil
+	return report, run, nil
 }
 
 func (s *Session) keyBilled() bool {
@@ -315,35 +335,53 @@ func agrees(requests []adapter.Request, totals map[string]modelUsage) bool {
 }
 
 type sessionLine struct {
-	Type       string `json:"type"`
-	ID         string `json:"id"`
-	RequestID  string `json:"requestId"`
-	RequestRef string `json:"requestRef"`
-	Timestamp  string `json:"timestamp"`
-	Message    struct {
+	Type        string `json:"type"`
+	SessionID   string `json:"sessionId"`
+	IsSidechain bool   `json:"isSidechain"`
+	CWD         string `json:"cwd"`
+	Version     string `json:"version"`
+	ID          string `json:"id"`
+	RequestID   string `json:"requestId"`
+	RequestRef  string `json:"requestRef"`
+	Timestamp   string `json:"timestamp"`
+	Message     struct {
 		Model string `json:"model"`
 		Usage usage  `json:"usage"`
 	} `json:"message"`
 }
 
+// transcript is what the run's own session files hold.
+type transcript struct {
+	// path is the main session file. Empty means none was found.
+	path string
+	// cwd is the working directory the main session file states first.
+	cwd      string
+	requests []adapter.Request
+}
+
 // readSessionFiles walks the main transcript and every subagent's. Each
 // content block of a response is its own line, so a requestId repeats; it
 // counts once.
-func (s *Session) readSessionFiles() ([]adapter.Request, error) {
+func (s *Session) readSessionFiles() (transcript, error) {
 	if s.configDir == "" || !sessionIDPattern.MatchString(s.sessionID) {
-		return nil, nil
+		return transcript{}, nil
 	}
 	files, err := s.sessionFiles()
-	if err != nil {
-		return nil, err
+	if err != nil || len(files) == 0 {
+		return transcript{}, err
 	}
 	builder := newRequestBuilder(s.keyBilled())
-	for _, file := range files {
-		if err := builder.read(file); err != nil {
-			return nil, err
+	var main fileFacts
+	for i, file := range files {
+		facts, err := builder.read(file)
+		if err != nil {
+			return transcript{}, err
+		}
+		if i == 0 {
+			main = facts
 		}
 	}
-	return builder.requests(), nil
+	return transcript{path: files[0], cwd: main.cwd, requests: builder.requests()}, nil
 }
 
 func (s *Session) sessionFiles() ([]string, error) {
@@ -379,10 +417,12 @@ func newRequestBuilder(keyBilled bool) *requestBuilder {
 	}
 }
 
-func (b *requestBuilder) read(path string) error {
+// read adds one file's requests and returns what the file says about itself.
+func (b *requestBuilder) read(path string) (fileFacts, error) {
+	facts := fileFacts{sessions: map[string]bool{}}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("claude-code: read session file: %w", err)
+		return facts, fmt.Errorf("claude-code: read session file: %w", err)
 	}
 	for number, line := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -390,13 +430,14 @@ func (b *requestBuilder) read(path string) error {
 		}
 		var parsed sessionLine
 		if err := json.Unmarshal([]byte(line), &parsed); err != nil {
-			return fmt.Errorf("claude-code: session file line %d: %w", number+1, err)
+			return facts, fmt.Errorf("claude-code: session file line %d: %w", number+1, err)
 		}
 		if err := b.add(parsed); err != nil {
-			return fmt.Errorf("claude-code: session file line %d: %w", number+1, err)
+			return facts, fmt.Errorf("claude-code: session file line %d: %w", number+1, err)
 		}
+		facts.observe(parsed)
 	}
-	return nil
+	return facts, nil
 }
 
 func (b *requestBuilder) add(line sessionLine) error {

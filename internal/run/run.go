@@ -59,6 +59,12 @@ type Result struct {
 	ListTotal   decimal.Decimal
 }
 
+// windowedSession is a Session that counts the sessions of other agent
+// processes, and needs to know when the agent's own process ran.
+type windowedSession interface {
+	RunWindow(start, end time.Time)
+}
+
 // AgentFor picks the adapter by the command's name.
 func AgentFor(argv []string) (adapter.Agent, error) {
 	if len(argv) == 0 {
@@ -88,9 +94,13 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	builder := opts.builder(agent.Name(), plan.Enforcement)
 	process := opts.withDefaults()
 	result := Result{Agent: agent.Name(), Enforcement: plan.Enforcement}
+	started := process.Now()
 	result.AgentExit, result.Stopped, err = process.execute(ctx, plan, session, builder)
 	if err != nil {
 		return result, err
+	}
+	if windowed, ok := session.(windowedSession); ok {
+		windowed.RunWindow(started, process.Now())
 	}
 	report, err := session.Finish()
 	if err != nil {

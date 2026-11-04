@@ -69,6 +69,7 @@ func (a Agent) ReadExecutionFile(file io.Reader, saved time.Time) (adapter.Repor
 		return adapter.Report{}, err
 	}
 	session.first, session.last = span.settled(saved)
+	session.RunWindow(span.window(saved))
 	report, err := session.Finish()
 	if err != nil {
 		return adapter.Report{}, err
@@ -78,6 +79,20 @@ func (a Agent) ReadExecutionFile(file io.Reader, saved time.Time) (adapter.Repor
 		report.CostSource = SourceExecutionFile
 	}
 	return report, nil
+}
+
+// window is when the run ran: from the earlier of its first message and the
+// save time back by the result's duration, to the later of its last message
+// and the save time.
+func (s *executionSpan) window(saved time.Time) (time.Time, time.Time) {
+	start, end := s.settled(saved)
+	if begun := saved.Add(-s.duration); begun.Before(start) {
+		start = begun
+	}
+	if saved.After(end) {
+		end = saved
+	}
+	return start, end
 }
 
 func feedExecutionFile(session *Session, file io.Reader, saved time.Time) (executionSpan, error) {
