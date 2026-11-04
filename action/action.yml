@@ -89,6 +89,7 @@ runs:
       shell: bash
       env:
         COSTROID_EXECUTION_FILE: ${{ inputs.execution-file }}
+        COSTROID_MINIMUM_AGENT_VERSION: ${{ inputs.minimum-agent-version }}
         COSTROID_BILLING_ACCOUNT: ${{ inputs.billing-account }}
         COSTROID_CREDENTIAL: ${{ inputs.credential }}
         COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
