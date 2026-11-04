@@ -1,0 +1,88 @@
+name: Costroid cost check
+description: Run a coding agent under a budget, record what it cost and report it on the pull request.
+author: Costroid
+
+branding:
+  icon: dollar-sign
+  color: green
+
+inputs:
+  stage:
+    description: >-
+      run installs and runs the agent, then keeps its rows as an artifact. read reads the
+      execution file of a claude-code-action run that already ended, then keeps its rows the same
+      way. ingest sends those rows to a ledger. report posts the check and the comment. all does
+      run and report in one job, which gives the agent's job the report's permissions, so the
+      recipes never use it.
+    default: all
+  version:
+    description: >-
+      The costroid release to install, without the leading v. Leave it and sha256 empty to
+      install the release whose tag points at this action's commit, checked by its signature.
+    default: ""
+  sha256:
+    description: The SHA-256 of that release's binary for this runner. Set it with version, or neither.
+    default: ""
+  agent:
+    description: claude or codex.
+    default: claude
+  prompt:
+    description: The prompt. Never build it from pull request text or from a comment.
+    default: ""
+  agent-args:
+    description: Extra arguments for the agent, one per line.
+    default: ""
+  minimum-agent-version:
+    description: The lowest agent version this run accepts.
+    default: ""
+  budget-usd:
+    description: The run's budget in USD.
+    default: ""
+  execution-file:
+    description: For stage read, the execution_file output of the claude-code-action step.
+    default: ""
+  show-output:
+    description: >-
+      true prints the agent's own stream, its reasoning and its replies, to the job
+      log. A public repository's log is public, so leave it false there.
+    default: "false"
+  api-key:
+    description: The provider key. It reaches the agent's step and no other.
+    default: ""
+  billing-account:
+    description: The value of BillingAccountId on every row.
+    default: ""
+  credential:
+    description: The value of SubAccountId on every row. The id of the key, workspace or project, never the key.
+    default: ""
+  github-token:
+    description: The token that posts the check and the comment.
+    default: ${{ github.token }}
+  ingest-url:
+    description: The ledger's rows endpoint.
+    default: ""
+  ingest-audience:
+    description: The audience the ledger requires on the CI token.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: Costroid/costroid/action@__RELEASE_COMMIT__ # __RELEASE_TAG__
+      with:
+        stage: ${{ inputs.stage }}
+        version: ${{ inputs.version }}
+        sha256: ${{ inputs.sha256 }}
+        agent: ${{ inputs.agent }}
+        prompt: ${{ inputs.prompt }}
+        agent-args: ${{ inputs.agent-args }}
+        minimum-agent-version: ${{ inputs.minimum-agent-version }}
+        budget-usd: ${{ inputs.budget-usd }}
+        execution-file: ${{ inputs.execution-file }}
+        show-output: ${{ inputs.show-output }}
+        api-key: ${{ inputs.api-key }}
+        billing-account: ${{ inputs.billing-account }}
+        credential: ${{ inputs.credential }}
+        github-token: ${{ inputs.github-token }}
+        ingest-url: ${{ inputs.ingest-url }}
+        ingest-audience: ${{ inputs.ingest-audience }}
