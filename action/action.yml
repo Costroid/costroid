@@ -4,9 +4,11 @@ description: Run a coding agent under a budget, record what it cost and report i
 inputs:
   stage:
     description: >-
-      run installs and runs the agent, then keeps its rows as an artifact. ingest sends those rows
-      to a ledger. report posts the check and the comment. all does run and report in one job,
-      which gives the agent's job the report's permissions, so the recipes never use it.
+      run installs and runs the agent, then keeps its rows as an artifact. read reads the
+      execution file of a claude-code-action run that already ended, then keeps its rows the same
+      way. ingest sends those rows to a ledger. report posts the check and the comment. all does
+      run and report in one job, which gives the agent's job the report's permissions, so the
+      recipes never use it.
     default: all
   version:
     description: The costroid release to install, without the leading v.
@@ -28,6 +30,9 @@ inputs:
     default: ""
   budget-usd:
     description: The run's budget in USD.
+    default: ""
+  execution-file:
+    description: For stage read, the execution_file output of the claude-code-action step.
     default: ""
   show-output:
     description: >-
@@ -79,8 +84,18 @@ runs:
         COSTROID_SHOW_OUTPUT: ${{ inputs.show-output }}
       run: bash "$GITHUB_ACTION_PATH/run-agent.sh"
 
+    - name: Read the agent's run
+      if: always() && inputs.stage == 'read'
+      shell: bash
+      env:
+        COSTROID_EXECUTION_FILE: ${{ inputs.execution-file }}
+        COSTROID_BILLING_ACCOUNT: ${{ inputs.billing-account }}
+        COSTROID_CREDENTIAL: ${{ inputs.credential }}
+        COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
+      run: bash "$GITHUB_ACTION_PATH/read-run.sh"
+
     - name: Keep the rows
-      if: always() && inputs.stage == 'run'
+      if: always() && (inputs.stage == 'run' || inputs.stage == 'read')
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: costroid-rows
