@@ -151,6 +151,12 @@ The agent's job writes the rows, so an injected agent can forge them. The commen
 
 The guard lives in the workflow file, and `pull_request` reads that file from the branch. Someone who can push a branch can edit it there. To stop that, keep the key in an environment with required reviewers.
 
+## GitHub Marketplace
+
+<!-- after the listing is published -->
+
+[`Costroid/costroid-action`](https://github.com/Costroid/costroid-action) is this action as a GitHub Marketplace listing. Its `action.yml` calls `Costroid/costroid/action` pinned to one release's commit, names that release, and passes every input through unchanged. `Costroid/costroid-action@<commit>` therefore runs the same action as the recipes' pin. Pin it to the full commit SHA of one of its tags, as with any action.
+
 ## Pins
 
 Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on November 1, 2026.
