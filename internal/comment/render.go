@@ -47,6 +47,19 @@ const (
 	Unreadable State = "rows_unreadable"
 )
 
+// Reason says why a report shows no figures. The list is closed, so a comment
+// never prints an error's text.
+type Reason string
+
+// The reasons. The zero value states only what the State says.
+const (
+	NoRowsFile     Reason = "no_rows_file"
+	EmptyRowsFile  Reason = "empty_rows_file"
+	NotAFile       Reason = "rows_path_not_a_file"
+	UnreadRowsFile Reason = "rows_file_unread"
+	InvalidRow     Reason = "invalid_row"
+)
+
 // Amounts says whether the comment carries amounts, and why not.
 type Amounts int
 
@@ -81,7 +94,17 @@ var basisLabels = map[string]string{
 	"derived":         "Derived",
 }
 
-var installationPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
+var (
+	installationPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
+	commitPattern       = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+	// runURLPattern holds no character that can end a Markdown link target.
+	runURLPattern = regexp.MustCompile(`^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+$`)
+)
+
+const (
+	shortCommitLength = 7
+	maxRunURLLength   = 512
+)
 
 // The hosts an account link can name.
 const (
@@ -106,6 +129,13 @@ type Input struct {
 	// CheckRunID names the posted check, nil when the post failed.
 	CheckRunID *int64
 	Amounts    Amounts
+	// Reason says why there are no figures, and ReasonLine names the line of
+	// an InvalidRow.
+	Reason     Reason
+	ReasonLine int
+	// RunURL is the CI run's page as the environment names it, empty when it
+	// names none. A value outside runURLPattern is dropped.
+	RunURL string
 }
 
 // Block is the machine-readable block. Strings under Data originate in the
@@ -115,6 +145,8 @@ type Block struct {
 	CheckRunID     *int64        `json:"check_run_id,omitempty"`
 	Conclusion     string        `json:"conclusion"`
 	State          State         `json:"state"`
+	Reason         Reason        `json:"reason,omitempty"`
+	ReasonLine     int           `json:"reason_line,omitempty"`
 	HeadSHA        string        `json:"head_sha"`
 	Amounts        string        `json:"amounts"`
 	Rows           int           `json:"rows"`
@@ -133,6 +165,7 @@ type BlockFigure struct {
 	AttributionGrade string `json:"attribution_grade"`
 	EnforcementGrade string `json:"enforcement_grade"`
 	Rows             int    `json:"rows"`
+	FallbackRows     int    `json:"fallback_rows"`
 }
 
 // BlockAmount is an amount with its currency.
@@ -148,6 +181,12 @@ type BlockData struct {
 	Models        []Data `json:"models"`
 	ModelsOmitted int    `json:"models_omitted"`
 	Catalogs      []Data `json:"catalog_versions"`
+	// FallbackModels and FallbackPrices name the rows priced at the catalog's
+	// fallback tier.
+	FallbackModels        []Data `json:"fallback_models"`
+	FallbackModelsOmitted int    `json:"fallback_models_omitted"`
+	FallbackPrices        []Data `json:"fallback_price_ids"`
+	FallbackPricesOmitted int    `json:"fallback_price_ids_omitted"`
 }
 
 // CheckOutput is the output of the check run.
@@ -192,6 +231,8 @@ func (i Input) block() (string, error) {
 		CheckRunID:     i.CheckRunID,
 		Conclusion:     Conclusion,
 		State:          i.State,
+		Reason:         i.Reason,
+		ReasonLine:     i.ReasonLine,
 		HeadSHA:        i.HeadSHA,
 		Amounts:        "withheld",
 		Rows:           i.Ledger.Rows,
@@ -199,10 +240,14 @@ func (i Input) block() (string, error) {
 		Figures:        make([]BlockFigure, 0, len(i.Ledger.Figures)),
 		FiguresOmitted: i.Ledger.FiguresOmitted,
 		Data: BlockData{
-			Agents:        nonNil(i.Ledger.Agents),
-			Models:        nonNil(i.Ledger.Models),
-			ModelsOmitted: i.Ledger.ModelsOmitted,
-			Catalogs:      nonNil(i.Ledger.Catalogs),
+			Agents:                nonNil(i.Ledger.Agents),
+			Models:                nonNil(i.Ledger.Models),
+			ModelsOmitted:         i.Ledger.ModelsOmitted,
+			Catalogs:              nonNil(i.Ledger.Catalogs),
+			FallbackModels:        nonNil(i.Ledger.FallbackModels),
+			FallbackModelsOmitted: i.Ledger.FallbackModelsOmitted,
+			FallbackPrices:        nonNil(i.Ledger.FallbackPrices),
+			FallbackPricesOmitted: i.Ledger.FallbackPricesOmitted,
 		},
 	}
 	shown := i.Amounts == AmountsShown
@@ -213,6 +258,7 @@ func (i Input) block() (string, error) {
 			AttributionGrade: figure.Attribution,
 			EnforcementGrade: figure.Enforcement,
 			Rows:             figure.Rows,
+			FallbackRows:     figure.FallbackRows,
 		}
 		if shown {
 			line.ListCost = figure.Cost.String()
@@ -249,12 +295,36 @@ type figureLine struct {
 	Attribution string
 	Enforcement string
 	Note        string
+	// Mark is the visible flag on a figure with a row at the fallback tier.
+	Mark string
+}
+
+// traceBlock is one figure's collapsed arithmetic.
+type traceBlock struct {
+	Shown   bool
+	Summary string
+	Lines   []traceLine
+	Omitted int
+	// Withheld says the counts are withheld and where they are kept.
+	Withheld string
+}
+
+type traceLine struct {
+	Catalog   string
+	Class     string
+	PriceID   string
+	UnitPrice string
+	Tokens    string
+	Cost      string
 }
 
 type view struct {
 	Marker     string
 	Conclusion string
-	State      State
+	// RunLine says the report is one run at one commit, and links the run.
+	RunLine string
+	// Why is the sentence for a report without figures, empty otherwise.
+	Why string
 	// CheckRuns is false on GitLab, which has no check run to name.
 	CheckRuns      bool
 	ShowAmounts    bool
@@ -262,6 +332,8 @@ type view struct {
 	Budget         string
 	Lines          []figureLine
 	FiguresOmitted int
+	Fallback       string
+	Traces         []traceBlock
 	Agents         string
 	Models         string
 	ModelsOmitted  int
@@ -273,14 +345,21 @@ type view struct {
 	Block          string
 }
 
+// fallbackMark sits in the first cell of a figure the fallback tier priced in
+// part, and the fallback sentence opens with the same words.
+const fallbackMark = ", fallback price"
+
 func (i Input) view() view {
+	shown := i.Amounts == AmountsShown
 	result := view{
 		Marker:         Marker,
 		Conclusion:     Conclusion,
-		State:          i.State,
-		ShowAmounts:    i.Amounts == AmountsShown,
+		RunLine:        runLine(i.HeadSHA, i.RunURL),
+		Why:            i.why(),
+		ShowAmounts:    shown,
 		AmountsOff:     i.Amounts == AmountsOff,
 		FiguresOmitted: i.Ledger.FiguresOmitted,
+		Fallback:       fallbackSentence(i.Ledger),
 		Agents:         spans(i.Ledger.Agents),
 		Models:         spans(i.Ledger.Models),
 		ModelsOmitted:  i.Ledger.ModelsOmitted,
@@ -294,16 +373,130 @@ func (i Input) view() view {
 	if i.Budget != nil {
 		result.Budget = budgetCurrency + " " + i.Budget.String()
 	}
-	for _, figure := range i.Ledger.Figures {
-		result.Lines = append(result.Lines, figureLine{
+	for index, figure := range i.Ledger.Figures {
+		line := figureLine{
 			Cost:        figure.Currency + " " + figure.Cost.String(),
 			Basis:       basisLabels[figure.Basis],
 			Attribution: figure.Attribution,
 			Enforcement: figure.Enforcement,
 			Note:        enforcementNotes[figure.Enforcement],
-		})
+		}
+		if figure.FallbackRows > 0 {
+			line.Mark = fallbackMark
+		}
+		result.Lines = append(result.Lines, line)
+		result.Traces = append(result.Traces, traceOf(figure, index+1, shown, result.CheckRuns))
 	}
 	return result
+}
+
+// traceOf lays out one figure's arithmetic. Withheld, it keeps only the
+// catalogs and the token classes: a count times the public catalog is the
+// amount, so counts are withheld with the amounts.
+func traceOf(figure Figure, number int, shown, checkRuns bool) traceBlock {
+	if !shown {
+		return withheldTrace(figure, number, checkRuns)
+	}
+	block := traceBlock{Shown: true, Summary: fmt.Sprintf("How %s %s was computed", figure.Currency, figure.Cost), Omitted: figure.TraceOmitted}
+	for _, trace := range figure.Trace {
+		block.Lines = append(block.Lines, traceLine{
+			Catalog:   catalogCell(trace.Catalog),
+			Class:     Data(trace.Class).Code(),
+			PriceID:   trace.PriceID.Code(),
+			UnitPrice: unitPrice(figure.Currency, trace),
+			Tokens:    trace.Tokens.String(),
+			Cost:      figure.Currency + " " + trace.Cost.String(),
+		})
+	}
+	return block
+}
+
+func withheldTrace(figure Figure, number int, checkRuns bool) traceBlock {
+	block := traceBlock{Summary: fmt.Sprintf("Token classes behind line %d", number), Withheld: "Token counts are withheld with the amounts. The rows carry them."}
+	if checkRuns {
+		block.Withheld = "Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts."
+	}
+	seen := map[traceLine]bool{}
+	for _, trace := range figure.Trace {
+		line := traceLine{Catalog: catalogCell(trace.Catalog), Class: Data(trace.Class).Code()}
+		if !seen[line] {
+			seen[line] = true
+			block.Lines = append(block.Lines, line)
+		}
+	}
+	return block
+}
+
+func catalogCell(catalog Data) string {
+	if catalog == "" {
+		return ""
+	}
+	return catalog.Code()
+}
+
+func unitPrice(currency string, trace Trace) string {
+	if trace.Class.Informational() {
+		return "informational, not priced"
+	}
+	return currency + " " + trace.UnitPrice.String() + " per " + trace.Unit
+}
+
+// runLine names the commit and links the run only when each is well formed.
+func runLine(head, link string) string {
+	line := "This is one run, not a total across runs."
+	if commitPattern.MatchString(head) {
+		line = "This is one run at commit `" + head[:shortCommitLength] + "`, not a total across runs."
+	}
+	if len(link) <= maxRunURLLength && runURLPattern.MatchString(link) {
+		line += " [CI run](" + link + ")"
+	}
+	return line
+}
+
+// why states the reason a report has no figures, from the closed list.
+func (i Input) why() string {
+	const shows = "so this report shows no figures."
+	switch {
+	case i.State == Reported:
+		return ""
+	case i.Reason == NoRowsFile:
+		return "No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none."
+	case i.Reason == NotAFile:
+		return "The rows path is not a regular file, so this report did not read it and shows no figures."
+	case i.Reason == InvalidRow && i.ReasonLine > 0:
+		return fmt.Sprintf("Line %d of the rows file is not a valid row, %s A partial total would read as a smaller cost.", i.ReasonLine, shows)
+	case i.Reason == InvalidRow:
+		return "A line of the rows file is not a valid row, " + shows + " A partial total would read as a smaller cost."
+	case i.State == NoRows:
+		return "The rows file holds no rows, " + shows + " Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."
+	}
+	return "The rows file could not be read, " + shows
+}
+
+// fallbackSentence names the models the catalog does not price and the
+// fallback prices that priced them. It is empty when no row used one.
+func fallbackSentence(ledger Ledger) string {
+	if len(ledger.FallbackModels) == 0 {
+		return ""
+	}
+	verb, object := "is", "it"
+	if len(ledger.FallbackModels)+ledger.FallbackModelsOmitted > 1 {
+		verb, object = "are", "them"
+	}
+	catalog := "the catalog"
+	if len(ledger.FallbackCatalogs) > 0 {
+		catalog = "catalog " + spans(ledger.FallbackCatalogs)
+	}
+	return fmt.Sprintf("Fallback price: %s %s not in %s for the tier and token class used, so %s priced %s.",
+		spans(ledger.FallbackModels)+more(ledger.FallbackModelsOmitted), verb, catalog,
+		spans(ledger.FallbackPrices)+more(ledger.FallbackPricesOmitted), object)
+}
+
+func more(omitted int) string {
+	if omitted == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" and %d more", omitted)
 }
 
 func spans(names []Data) string {

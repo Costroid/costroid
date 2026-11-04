@@ -2,6 +2,7 @@ package comment
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focus"
 )
 
 const (
@@ -20,23 +22,36 @@ const (
 	// docs/comment-example.md.
 	exampleCheckRun     = int64(16873409921)
 	exampleInstallation = "58120394"
+	exampleRun          = "https://github.com/example/widgets/actions/runs/19203384756"
 	// githubLimit is the longest comment or check text GitHub takes.
 	githubLimit = 65535
 )
 
 var update = flag.Bool("update", false, "rewrite docs/comment-example.md")
 
+// rowFields is one row of one million output tokens, priced at cost per
+// million, so its own arithmetic holds whatever cost says.
 type rowFields struct {
-	currency, cost, basis, attribution, enforcement, agent, model string
+	currency, cost, basis, attribution, enforcement, agent, model, priceID, description string
 }
 
 func sampleFields() rowFields {
-	return rowFields{"USD", "0.1", "measured", "exact", "wrapper-watchdog", "codex", "gpt-5.5"}
+	return rowFields{"USD", "0.1", "measured", "exact", "wrapper-watchdog", "codex", "gpt-5.5", "openai:gpt-5.5:global:standard:output", "gpt-5.5 output tokens"}
 }
 
 func (f rowFields) line() string {
-	return fmt.Sprintf(`{"BillingCurrency":%q,"ListCost":%q,"x_CostroidCatalogVersion":"0.1.0","Tags":{"costroid/cost_basis":%q,"costroid/attribution_grade":%q,"costroid/enforcement_grade":%q,"costroid/agent":%q,"costroid/model":%q,"team":7}}`,
-		f.currency, f.cost, f.basis, f.attribution, f.enforcement, f.agent, f.model)
+	return fmt.Sprintf(`{"BillingCurrency":%q,"ListCost":%q,"ListUnitPrice":%q,"PricingQuantity":"1","PricingUnit":"1000000 Tokens","ConsumedQuantity":"1000000","SkuMeter":"output","SkuPriceId":%q,"ChargeDescription":%q,"x_CostroidCatalogVersion":"0.1.0","Tags":{"costroid/cost_basis":%q,"costroid/attribution_grade":%q,"costroid/enforcement_grade":%q,"costroid/agent":%q,"costroid/model":%q,"team":7}}`,
+		f.currency, f.cost, f.cost, f.priceID, f.description, f.basis, f.attribution, f.enforcement, f.agent, f.model)
+}
+
+// fallbackFields is a row of a model the catalog does not name, priced by the
+// fallback row the way the run writes it.
+func fallbackFields() rowFields {
+	fields := sampleFields()
+	fields.model, fields.cost = "gpt-9-preview", "180"
+	fields.priceID = "openai:fallback:output"
+	fields.description = "gpt-9-preview output tokens; " + focus.NoteFallback
+	return fields
 }
 
 func ledgerOf(t testing.TB, rows ...rowFields) Ledger {
@@ -81,6 +96,7 @@ func realInput(t testing.TB) Input {
 		Installation: exampleInstallation,
 		CheckRunID:   &id,
 		Amounts:      AmountsShown,
+		RunURL:       exampleRun,
 	}
 }
 
@@ -93,9 +109,12 @@ func commentOf(t *testing.T, input Input) string {
 	return body
 }
 
+var collapsed = regexp.MustCompile(`(?s)<details>\s*<summary>(.*?)</summary>.*?</details>`)
+
+// visiblePart is what a reader sees before opening anything: every collapsed
+// block is cut to its summary.
 func visiblePart(body string) string {
-	head, _, _ := strings.Cut(body, "<details>")
-	return head
+	return collapsed.ReplaceAllString(body, "$1")
 }
 
 func TestDocsExampleIsTheRenderedCommentForARealRowsFile(t *testing.T) {
@@ -203,18 +222,25 @@ func TestUnattributedIsShownAsSuch(t *testing.T) {
 
 func TestABadRowRefusesTheWholeFile(t *testing.T) {
 	cases := map[string]string{
-		"cost as a JSON number": strings.Replace(sampleFields().line(), `"ListCost":"0.1"`, `"ListCost":0.1`, 1),
-		"negative cost":         strings.Replace(sampleFields().line(), `"0.1"`, `"-0.1"`, 1),
-		"exponent":              strings.Replace(sampleFields().line(), `"0.1"`, `"1e3"`, 1),
-		"past the scale limit":  strings.Replace(sampleFields().line(), `"0.1"`, `"0.1234567890123"`, 1),
-		"very long cost":        strings.Replace(sampleFields().line(), `"0.1"`, `"`+strings.Repeat("9", 70)+`"`, 1),
-		"not a currency":        strings.Replace(sampleFields().line(), `"USD"`, `"usd"`, 1),
-		"unknown basis":         strings.Replace(sampleFields().line(), `"measured"`, `"guessed"`, 1),
-		"unknown grade":         strings.Replace(sampleFields().line(), `"exact"`, `"perfect"`, 1),
-		"unknown enforcement":   strings.Replace(sampleFields().line(), `"wrapper-watchdog"`, `"gateway-precheck-plus"`, 1),
-		"no grade":              strings.Replace(sampleFields().line(), `"costroid/attribution_grade"`, `"other"`, 1),
-		"not JSON":              "{",
-		"a row past the cap":    `{"x":"` + strings.Repeat("a", maxRowBytes) + `"}`,
+		"cost as a JSON number":                 strings.Replace(sampleFields().line(), `"ListCost":"0.1"`, `"ListCost":0.1`, 1),
+		"negative cost":                         strings.Replace(sampleFields().line(), `"0.1"`, `"-0.1"`, 1),
+		"exponent":                              strings.Replace(sampleFields().line(), `"0.1"`, `"1e3"`, 1),
+		"past the scale limit":                  strings.Replace(sampleFields().line(), `"0.1"`, `"0.1234567890123"`, 1),
+		"very long cost":                        strings.Replace(sampleFields().line(), `"0.1"`, `"`+strings.Repeat("9", 70)+`"`, 1),
+		"not a currency":                        strings.Replace(sampleFields().line(), `"USD"`, `"usd"`, 1),
+		"unknown basis":                         strings.Replace(sampleFields().line(), `"measured"`, `"guessed"`, 1),
+		"unknown grade":                         strings.Replace(sampleFields().line(), `"exact"`, `"perfect"`, 1),
+		"unknown enforcement":                   strings.Replace(sampleFields().line(), `"wrapper-watchdog"`, `"gateway-precheck-plus"`, 1),
+		"no grade":                              strings.Replace(sampleFields().line(), `"costroid/attribution_grade"`, `"other"`, 1),
+		"not JSON":                              "{",
+		"a row past the cap":                    `{"x":"` + strings.Repeat("a", maxRowBytes) + `"}`,
+		"cost is not price times quantity":      strings.Replace(sampleFields().line(), `"ListUnitPrice":"0.1"`, `"ListUnitPrice":"0.2"`, 1),
+		"tokens are not quantity times unit":    strings.Replace(sampleFields().line(), `"ConsumedQuantity":"1000000"`, `"ConsumedQuantity":"999999"`, 1),
+		"no price":                              strings.Replace(sampleFields().line(), `"ListUnitPrice":"0.1",`, ``, 1),
+		"unknown token class":                   strings.Replace(sampleFields().line(), `"SkuMeter":"output"`, `"SkuMeter":"thinking"`, 1),
+		"a unit that is no count of tokens":     strings.Replace(sampleFields().line(), `"1000000 Tokens"`, `"1 Million Tokens"`, 1),
+		"an informational class with a cost":    strings.Replace(sampleFields().line(), `"SkuMeter":"output"`, `"SkuMeter":"reasoning_output"`, 1),
+		"an informational class priced by unit": strings.NewReplacer(`"SkuMeter":"output"`, `"SkuMeter":"reasoning_output"`, `"ListCost":"0.1","ListUnitPrice":"0.1"`, `"ListCost":"0","ListUnitPrice":"0"`).Replace(sampleFields().line()),
 	}
 	for name, line := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -225,22 +251,65 @@ func TestABadRowRefusesTheWholeFile(t *testing.T) {
 	}
 }
 
-func TestNoRowsAndUnreadableRowsShowNoFigure(t *testing.T) {
-	cases := map[State]string{
-		NoRows:     "No cost rows were recorded for this commit.",
-		Unreadable: "The rows file could not be read, so this report shows no figures.",
+func TestEveryReasonForNoFiguresIsStatedAndNoneShowsAFigure(t *testing.T) {
+	cases := []struct {
+		state    State
+		reason   Reason
+		line     int
+		sentence string
+	}{
+		{NoRows, EmptyRowsFile, 0, "The rows file holds no rows, so this report shows no figures. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."},
+		{Unreadable, NoRowsFile, 0, "No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none."},
+		{Unreadable, NotAFile, 0, "The rows path is not a regular file, so this report did not read it and shows no figures."},
+		{Unreadable, UnreadRowsFile, 0, "The rows file could not be read, so this report shows no figures."},
+		{Unreadable, InvalidRow, 3, "Line 3 of the rows file is not a valid row, so this report shows no figures. A partial total would read as a smaller cost."},
+		{NoRows, "", 0, "The rows file holds no rows, so this report shows no figures."},
+		{Unreadable, "", 0, "The rows file could not be read, so this report shows no figures."},
 	}
-	for state, sentence := range cases {
-		body := commentOf(t, Input{State: state, Amounts: AmountsShown})
-		if !strings.Contains(body, sentence) {
-			t.Errorf("%s: no sentence in\n%s", state, body)
+	for _, test := range cases {
+		input := Input{State: test.state, Reason: test.reason, ReasonLine: test.line, Amounts: AmountsShown}
+		body := commentOf(t, input)
+		output, err := Check(input)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if strings.Contains(body, "| Cost |") || strings.Contains(body, "USD") {
-			t.Errorf("%s shows a figure:\n%s", state, body)
+		for where, text := range map[string]string{"comment": visiblePart(body), "summary": output.Summary} {
+			if !strings.Contains(text, test.sentence) {
+				t.Errorf("%s %s: no sentence in the %s:\n%s", test.state, test.reason, where, text)
+			}
+			if strings.Contains(text, "No cost rows") || strings.Contains(text, "| Cost |") || strings.Contains(text, "USD") {
+				t.Errorf("%s %s: the %s shows a figure or no reason:\n%s", test.state, test.reason, where, text)
+			}
 		}
-		if !strings.Contains(body, `"state": "`+string(state)+`"`) {
-			t.Errorf("%s: the block does not name the state", state)
+		if !strings.Contains(body, `"state": "`+string(test.state)+`"`) {
+			t.Errorf("%s: the block does not name the state", test.state)
 		}
+		if test.reason != "" && !strings.Contains(output.Text, `"reason": "`+string(test.reason)+`"`) {
+			t.Errorf("%s: the block does not name the reason:\n%s", test.reason, output.Text)
+		}
+	}
+}
+
+func TestAReportWithFiguresStatesNoReason(t *testing.T) {
+	output, err := Check(realInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.Text, `"reason"`) {
+		t.Errorf("a report with figures names a reason:\n%s", output.Text)
+	}
+}
+
+func TestReadRowsNamesTheLineAtFault(t *testing.T) {
+	lines := []string{sampleFields().line(), "", sampleFields().line(), "{"}
+	_, err := ReadRows(strings.NewReader(strings.Join(lines, "\n")))
+	var invalid *RowError
+	if !errors.As(err, &invalid) || invalid.Line != 4 {
+		t.Fatalf("error %v", err)
+	}
+	_, err = ReadRows(strings.NewReader(sampleFields().line() + "\n" + strings.Repeat("a", maxRowBytes+1)))
+	if !errors.As(err, &invalid) || invalid.Line != 2 {
+		t.Fatalf("a line past the cap: error %v", err)
 	}
 }
 
@@ -292,10 +361,14 @@ func TestARowThatClaimsVerificationStillReadsUnverified(t *testing.T) {
 	}
 }
 
-func TestReportsWithNoFiguresCarryNoLabel(t *testing.T) {
+func TestReportsWithNoFiguresCarryNoLabelAndNoTrace(t *testing.T) {
 	for _, state := range []State{NoRows, Unreadable} {
-		if body := commentOf(t, Input{State: state, Amounts: AmountsShown}); strings.Contains(body, artifactLabel) {
+		body := commentOf(t, Input{State: state, Amounts: AmountsShown})
+		if strings.Contains(body, artifactLabel) {
 			t.Errorf("%s labels a figure it does not show", state)
+		}
+		if strings.Contains(body, "Tokens behind") || strings.Contains(body, "was computed") {
+			t.Errorf("%s traces a figure it does not show", state)
 		}
 	}
 }
@@ -326,21 +399,24 @@ func hostileStrings() map[string]string {
 func TestHostileStringsNeverRenderAsMarkdownOrHTML(t *testing.T) {
 	for name, hostile := range hostileStrings() {
 		t.Run(name, func(t *testing.T) {
-			fields := sampleFields()
+			fields := fallbackFields()
 			fields.model = hostile
 			fields.agent = hostile
+			fields.priceID = hostile
 			clean := sampleFields()
 			ledger, err := ReadRows(strings.NewReader(strings.ReplaceAll(jsonLine(t, fields), "\n", "") + "\n" + clean.line()))
 			if err != nil {
 				t.Fatal(err)
 			}
-			input := Input{Ledger: ledger, State: Reported, HeadSHA: sampleHead, Amounts: AmountsShown}
-			output, err := Check(input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for where, text := range map[string]string{"comment": commentOf(t, input), "summary": output.Summary, "text": output.Text} {
-				assertInert(t, where, text, hostile)
+			for _, amounts := range []Amounts{AmountsShown, AmountsOff} {
+				input := Input{Ledger: ledger, State: Reported, HeadSHA: sampleHead, Amounts: amounts, RunURL: hostile}
+				output, err := Check(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for where, text := range map[string]string{"comment": commentOf(t, input), "summary": output.Summary, "text": output.Text} {
+					assertInert(t, where, text, hostile)
+				}
 			}
 		})
 	}
@@ -356,10 +432,15 @@ func jsonLine(t *testing.T, fields rowFields) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	priceID, err := json.Marshal(fields.priceID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	line := fields
 	line.model = "MODEL"
 	line.agent = "AGENT"
-	return strings.NewReplacer(`"MODEL"`, string(model), `"AGENT"`, string(agent)).Replace(line.line())
+	line.priceID = "PRICE"
+	return strings.NewReplacer(`"MODEL"`, string(model), `"AGENT"`, string(agent), `"PRICE"`, string(priceID)).Replace(line.line())
 }
 
 func assertInert(t *testing.T, where, text, hostile string) {
@@ -442,8 +523,11 @@ func TestThousandsOfDistinctStringsStayInsideGitHubsLimit(t *testing.T) {
 	}
 }
 
-func TestVisiblePartReadsInTenSeconds(t *testing.T) {
-	const wordsInTenSeconds = 60
+// TestVisiblePartStaysShort counts every word a reader sees before opening a
+// block, summaries included. The comment held 67 such words before it named
+// its run and traced its figure.
+func TestVisiblePartStaysShort(t *testing.T) {
+	const wordsInTenSeconds = 90
 	table := strings.NewReplacer("|", " ", "---", " ")
 	words := strings.Fields(table.Replace(visiblePart(commentOf(t, realInput(t)))))
 	t.Logf("%d words", len(words))
@@ -639,5 +723,247 @@ func TestGitLabCopyNeverNamesACheckRun(t *testing.T) {
 		if body := commentOf(t, input); strings.Contains(body, "check run") {
 			t.Fatalf("a GitLab note names a check run:\n%s", body)
 		}
+	}
+}
+
+func TestTheCommentNamesOneRunAtTheShortCommitAndLinksIt(t *testing.T) {
+	cases := map[string]string{
+		"GitHub":                   exampleRun,
+		"GitHub Enterprise Server": "https://github.corp.example/platform/widgets/actions/runs/7",
+		"GitLab":                   "https://gitlab.corp.example/platform/widgets/-/pipelines/901",
+		"GitLab on a port":         "http://gitlab.internal:8080/group/sub/project/-/pipelines/12",
+	}
+	for name, link := range cases {
+		input := realInput(t)
+		input.RunURL = link
+		want := "This is one run at commit `9f2c6e1`, not a total across runs. [CI run](" + link + ")"
+		if body := visiblePart(commentOf(t, input)); !strings.Contains(body, want) {
+			t.Errorf("%s: no %q in\n%s", name, want, body)
+		}
+	}
+	input := realInput(t)
+	input.RunURL = ""
+	body := commentOf(t, input)
+	if !strings.Contains(body, "This is one run at commit `9f2c6e1`, not a total across runs.\n") || strings.Contains(body, "[CI run]") {
+		t.Errorf("a run the environment does not name is linked:\n%s", body)
+	}
+	input.HeadSHA = "not-a-commit"
+	if body := commentOf(t, input); !strings.Contains(body, "This is one run, not a total across runs.") || strings.Contains(body, "commit `") {
+		t.Errorf("a malformed head is named:\n%s", body)
+	}
+}
+
+func TestARunLinkOutsideItsFormIsDropped(t *testing.T) {
+	for _, link := range []string{
+		"javascript:alert(1)",
+		"https://github.com/a/b/actions/runs/1) [x](https://evil.example",
+		"https://github.com/a/b/actions/runs/1?token=x",
+		"https://github.com/a/b/actions/runs/1#x",
+		"https://github.com/a b/actions/runs/1",
+		"https://user@github.com/a/b/actions/runs/1",
+		"https://github.com",
+		"ftp://github.com/a/b",
+		"https://github.com/" + strings.Repeat("a", maxRunURLLength),
+	} {
+		input := realInput(t)
+		input.RunURL = link
+		if body := commentOf(t, input); strings.Contains(body, "[CI run]") {
+			t.Errorf("%q was linked:\n%s", link, visiblePart(body))
+		}
+	}
+}
+
+func TestAFallbackPricedFigureIsMarkedAndExplainedInTheOpen(t *testing.T) {
+	ledger := ledgerOf(t, fallbackFields(), sampleFields())
+	if len(ledger.Figures) != 1 || ledger.Figures[0].FallbackRows != 1 {
+		t.Fatalf("figures = %+v", ledger.Figures)
+	}
+	sentence := "Fallback price: `gpt-9-preview` is not in catalog `0.1.0` for the tier and token class used, so `openai:fallback:output` priced it."
+	marks := map[Amounts]string{AmountsShown: "| USD 180.1, fallback price |", AmountsOff: "| Measured, fallback price |"}
+	for amounts, mark := range marks {
+		input := Input{Ledger: ledger, State: Reported, HeadSHA: sampleHead, Amounts: amounts}
+		output, err := Check(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for where, text := range map[string]string{"comment": visiblePart(commentOf(t, input)), "summary": output.Summary} {
+			if !strings.Contains(text, mark) || !strings.Contains(text, sentence) {
+				t.Errorf("%d: the %s has no mark or no sentence:\n%s", amounts, where, text)
+			}
+		}
+		for _, want := range []string{`"fallback_rows": 1`, `"fallback_models": [` + "\n" + `      "gpt-9-preview"`, `"fallback_price_ids": [` + "\n" + `      "openai:fallback:output"`} {
+			if !strings.Contains(output.Text, want) {
+				t.Errorf("no %q in\n%s", want, output.Text)
+			}
+		}
+	}
+	plain := commentOf(t, Input{Ledger: ledgerOf(t, sampleFields()), State: Reported, Amounts: AmountsShown})
+	if strings.Contains(plain, "allback") && !strings.Contains(plain, `"fallback_rows": 0`) {
+		t.Errorf("a figure the catalog priced reads as fallback:\n%s", plain)
+	}
+	if strings.Contains(visiblePart(plain), "allback") {
+		t.Errorf("a figure the catalog priced reads as fallback:\n%s", visiblePart(plain))
+	}
+}
+
+func TestTheFallbackSentenceCountsEveryModel(t *testing.T) {
+	rows := []rowFields{}
+	for index := range maxNames + 2 {
+		fields := fallbackFields()
+		fields.model = fmt.Sprintf("model-%02d", index)
+		rows = append(rows, fields)
+	}
+	body := visiblePart(commentOf(t, Input{Ledger: ledgerOf(t, rows...), State: Reported, Amounts: AmountsShown}))
+	if !strings.Contains(body, "`model-09` and 2 more are not in catalog `0.1.0`") || !strings.Contains(body, "priced them.") {
+		t.Errorf("the sentence drops a count:\n%s", body)
+	}
+}
+
+var traceRow = regexp.MustCompile("(?m)^\\| `[^`]+` \\| `([a-z0-9_]+)` \\| `[^`]+` \\| (.+?) \\| ([0-9.]+) \\| ([A-Z]{3}) ([0-9.]+) \\|$")
+
+// TestTheTraceRecomputesTheFigureByHand redoes the reader's arithmetic from
+// the rendered text alone: each line's price times its tokens over the unit,
+// and the lines' sum, against the figure the table shows.
+func TestTheTraceRecomputesTheFigureByHand(t *testing.T) {
+	body := commentOf(t, realInput(t))
+	lines := traceRow.FindAllStringSubmatch(body, -1)
+	if len(lines) != 7 {
+		t.Fatalf("%d trace lines in\n%s", len(lines), body)
+	}
+	unit := regexp.MustCompile(`^USD ([0-9.]+) per ([0-9]+) Tokens$`)
+	var total decimal.Decimal
+	for _, line := range lines {
+		class, price, tokens, amount := line[1], line[2], decimal.MustParse(line[3]), decimal.MustParse(line[5])
+		if focus.TokenClass(class).Informational() {
+			if price != "informational, not priced" || amount.Sign() != 0 {
+				t.Errorf("an informational line reads %q", line[0])
+			}
+			continue
+		}
+		parts := unit.FindStringSubmatch(price)
+		if parts == nil {
+			t.Fatalf("unit price %q", price)
+		}
+		size := decimal.MustParse(parts[2])
+		if got := decimal.MustParse(parts[1]).Mul(tokens); got.Cmp(amount.Mul(size)) != 0 {
+			t.Errorf("%s: %s times %s over %s is not %s", class, parts[1], tokens, size, amount)
+		}
+		total = total.Add(amount)
+	}
+	if total.String() != realTotal || !strings.Contains(body, "<summary>How USD "+realTotal+" was computed</summary>") {
+		t.Errorf("the trace sums to %s", total)
+	}
+}
+
+func TestAWithheldTraceShowsClassesAndSaysWhereTheCountsAre(t *testing.T) {
+	sentences := map[string]string{
+		AccountGitHub: "Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.",
+		AccountGitLab: "Token counts are withheld with the amounts. The rows carry them.",
+	}
+	for host, sentence := range sentences {
+		for _, amounts := range []Amounts{AmountsOff, AmountsUnsettled} {
+			input := realInput(t)
+			input.Amounts, input.AccountHost = amounts, host
+			output, err := Check(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for where, text := range map[string]string{"comment": commentOf(t, input), "summary": output.Summary} {
+				assertNoAmount(t, text)
+				if found := regexp.MustCompile(`[A-Z]{3} [0-9]`).FindString(text); found != "" || strings.Contains(text, " per ") || strings.Contains(text, "| Tokens |") {
+					t.Errorf("%s %s: a price, an amount or a count %q in\n%s", host, where, found, text)
+				}
+				for _, want := range []string{"<summary>Token classes behind line 1</summary>", "| `0.1.0` | `cache_read` |\n", sentence} {
+					if !strings.Contains(text, want) {
+						t.Errorf("%s %s: no %q in\n%s", host, where, want, text)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestAWithheldCommentHoldsNoNumberAReaderCouldRecomputeFrom cuts a withheld
+// comment for the recorded run into words, and refuses any word that is one of
+// its token counts, unit prices or amounts, the budget included. A version
+// such as 0.1.0 or a model such as claude-haiku-5-5 is one word, not a number.
+func TestAWithheldCommentHoldsNoNumberAReaderCouldRecomputeFrom(t *testing.T) {
+	input := realInput(t)
+	secret := map[string]bool{input.Budget.String(): true}
+	for _, figure := range input.Ledger.Figures {
+		secret[figure.Cost.String()] = true
+		for _, trace := range figure.Trace {
+			secret[trace.Tokens.String()] = true
+			secret[trace.Cost.String()] = true
+			secret[trace.UnitPrice.String()] = true
+		}
+	}
+	delete(secret, "0")
+	if len(secret) < 12 {
+		t.Fatalf("only %d numbers to hide: %v", len(secret), secret)
+	}
+	word := regexp.MustCompile(`[A-Za-z0-9._:/+-]+`)
+	number := regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+	for _, amounts := range []Amounts{AmountsOff, AmountsUnsettled} {
+		input.Amounts = amounts
+		output, err := Check(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for where, text := range map[string]string{"comment": commentOf(t, input), "summary": output.Summary} {
+			for _, found := range word.FindAllString(text, -1) {
+				found = strings.TrimRight(found, ".")
+				if number.MatchString(found) && secret[found] {
+					t.Errorf("%d: the %s holds %s", amounts, where, found)
+				}
+			}
+		}
+	}
+}
+
+// TestTracesStayInsideTheirCapsAndSayWhatTheyLeaveOut fills every cap at once:
+// twenty figures, each string at its length cap and every amount near its own.
+func TestTracesStayInsideTheirCapsAndSayWhatTheyLeaveOut(t *testing.T) {
+	currencies := []string{"AAA", "BBB", "CCC", "DDD"}
+	catalog := strings.Repeat("c", maxDataLength)
+	lines := make([]string, 0, 2000)
+	for index := range 2000 {
+		fields := fallbackFields()
+		fields.currency = currencies[index%len(currencies)]
+		fields.enforcement = enforcementOrder[index/len(currencies)%len(enforcementOrder)]
+		fields.model = strings.Repeat("m", maxDataLength-8) + fmt.Sprintf("%08d", index)
+		fields.priceID = strings.Repeat("p", maxDataLength-8) + fmt.Sprintf("%08d", index)
+		fields.cost = strings.Repeat("9", 40) + ".000000000001"
+		lines = append(lines, strings.Replace(fields.line(), `"0.1.0"`, `"`+catalog+`"`, 1))
+	}
+	ledger, err := ReadRows(strings.NewReader(strings.Join(lines, "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Figures) != maxFigures || ledger.FallbackModelsOmitted == 0 || ledger.FallbackPricesOmitted == 0 {
+		t.Fatalf("%d figures, %d models and %d prices left out", len(ledger.Figures), ledger.FallbackModelsOmitted, ledger.FallbackPricesOmitted)
+	}
+	traced := 0
+	for _, figure := range ledger.Figures {
+		if len(figure.Trace) > maxTraceLines {
+			t.Errorf("a trace holds %d lines", len(figure.Trace))
+		}
+		traced += len(figure.Trace)
+	}
+	if traced != maxTraceTotal {
+		t.Errorf("the traces hold %d lines", traced)
+	}
+	input := Input{Ledger: ledger, State: Reported, HeadSHA: sampleHead, Amounts: AmountsShown, RunURL: exampleRun}
+	body := commentOf(t, input)
+	if !strings.Contains(body, "92 more lines are left out of this trace.") || !strings.Contains(body, "100 more lines are left out of this trace.") {
+		t.Errorf("the cut is not stated:\n%s", body)
+	}
+	output, err := Check(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("comment %d bytes, summary %d, text %d", len(body), len(output.Summary), len(output.Text))
+	if len(body) > githubLimit || len(output.Summary) > githubLimit || len(output.Text) > githubLimit {
+		t.Errorf("comment %d bytes, summary %d, text %d", len(body), len(output.Summary), len(output.Text))
 	}
 }
