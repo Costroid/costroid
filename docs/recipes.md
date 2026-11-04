@@ -4,7 +4,7 @@ These recipes run a coding agent on a pull request under a budget and record wha
 
 The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret and names no version and no checksum. [`docs/verify.md`](verify.md) says what it checks.
 
-The GitHub recipes on `main` pin the action to the zero SHA until the next release replaces that pin, so they fail at start today. [The recipes at `v1.0.0-alpha.3`](https://github.com/Costroid/costroid/tree/v1.0.0-alpha.3/recipes) run now, with the two repository variables that release needs, `COSTROID_VERSION` and `COSTROID_SHA256`.
+Each GitHub recipe pins the action to the commit of `v1.0.0-alpha.4`. The action installs the release at its own commit and checks it by its signature, so a repository sets one secret, the provider key. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release.
 
 ## Claude Code
 
@@ -159,7 +159,7 @@ Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on Novembe
 | --------------------------- | ------- | ------------------------------------------ |
 | `actions/checkout`          | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `step-security/harden-runner` | v2.22.3 | `46b06cea07f9e64621fdf066ba77ac6915163d43` |
-| `Costroid/costroid/action` | unreleased | `0000000000000000000000000000000000000000` |
+| `Costroid/costroid/action` | v1.0.0-alpha.4 | `9100fa7050d21b1580b10eb554039b15a4ec9a52` |
 | `anthropics/claude-code-action` | v1.0.248 | `1d6de8cb0c237e7c15e9e1bdf973826ebae490cc` |
 | `actions/upload-artifact`   | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | `actions/download-artifact` | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |

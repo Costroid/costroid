@@ -10,11 +10,11 @@ An agent's own cost field is an estimate, and a budget flag can be weaker than i
 
 ## Install
 
-`1.0.0-alpha.3` is the latest release, a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.3) and check it:
+`1.0.0-alpha.4` is the latest release, a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.4) and check it:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.3/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.3/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.4/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.4/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 ```
 
@@ -22,13 +22,13 @@ Each file is signed with cosign, keyless, by this repository's release workflow.
 
 ```sh
 cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.3 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.4 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com costroid-linux-amd64
 ```
 
 [`docs/verify.md`](docs/verify.md) checks the image as well.
 
-From the next release, the action installs the release its own commit belongs to and checks it by its signature, so a repository sets one secret, the provider key. Until then, [`docs/recipes.md`](docs/recipes.md) says how to run the `1.0.0-alpha.3` recipes. To build from a checkout instead, with Go 1.27 or later:
+In GitHub Actions, the action installs the release its own commit belongs to and checks it by its signature, so a repository sets one secret, the provider key. To build from a checkout instead, with Go 1.27 or later:
 
 ```sh
 make build
