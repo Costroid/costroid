@@ -855,22 +855,66 @@ func TestTheTraceRecomputesTheFigureByHand(t *testing.T) {
 	}
 }
 
-func TestAWithheldTraceShowsQuantitiesAndNoAmount(t *testing.T) {
+func TestAWithheldTraceShowsClassesAndSaysWhereTheCountsAre(t *testing.T) {
+	sentences := map[string]string{
+		AccountGitHub: "Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.",
+		AccountGitLab: "Token counts are withheld with the amounts. The rows carry them.",
+	}
+	for host, sentence := range sentences {
+		for _, amounts := range []Amounts{AmountsOff, AmountsUnsettled} {
+			input := realInput(t)
+			input.Amounts, input.AccountHost = amounts, host
+			output, err := Check(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for where, text := range map[string]string{"comment": commentOf(t, input), "summary": output.Summary} {
+				assertNoAmount(t, text)
+				if found := regexp.MustCompile(`[A-Z]{3} [0-9]`).FindString(text); found != "" || strings.Contains(text, " per ") || strings.Contains(text, "| Tokens |") {
+					t.Errorf("%s %s: a price, an amount or a count %q in\n%s", host, where, found, text)
+				}
+				for _, want := range []string{"<summary>Token classes behind line 1</summary>", "| `0.1.0` | `cache_read` |\n", sentence} {
+					if !strings.Contains(text, want) {
+						t.Errorf("%s %s: no %q in\n%s", host, where, want, text)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestAWithheldCommentHoldsNoNumberAReaderCouldRecomputeFrom cuts a withheld
+// comment for the recorded run into words, and refuses any word that is one of
+// its token counts, unit prices or amounts, the budget included. A version
+// such as 0.1.0 or a model such as claude-haiku-5-5 is one word, not a number.
+func TestAWithheldCommentHoldsNoNumberAReaderCouldRecomputeFrom(t *testing.T) {
+	input := realInput(t)
+	secret := map[string]bool{input.Budget.String(): true}
+	for _, figure := range input.Ledger.Figures {
+		secret[figure.Cost.String()] = true
+		for _, trace := range figure.Trace {
+			secret[trace.Tokens.String()] = true
+			secret[trace.Cost.String()] = true
+			secret[trace.UnitPrice.String()] = true
+		}
+	}
+	delete(secret, "0")
+	if len(secret) < 12 {
+		t.Fatalf("only %d numbers to hide: %v", len(secret), secret)
+	}
+	word := regexp.MustCompile(`[A-Za-z0-9._:/+-]+`)
+	number := regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 	for _, amounts := range []Amounts{AmountsOff, AmountsUnsettled} {
-		input := realInput(t)
 		input.Amounts = amounts
 		output, err := Check(input)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for where, text := range map[string]string{"comment": commentOf(t, input), "summary": output.Summary} {
-			assertNoAmount(t, text)
-			if found := regexp.MustCompile(`[A-Z]{3} [0-9]`).FindString(text); found != "" || strings.Contains(text, " per ") {
-				t.Errorf("%s: a price or an amount %q in\n%s", where, found, text)
-			}
-			for _, want := range []string{"<summary>Tokens behind line 1</summary>", "| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | 15605 |"} {
-				if !strings.Contains(text, want) {
-					t.Errorf("%s: no %q in\n%s", where, want, text)
+			for _, found := range word.FindAllString(text, -1) {
+				found = strings.TrimRight(found, ".")
+				if number.MatchString(found) && secret[found] {
+					t.Errorf("%d: the %s holds %s", amounts, where, found)
 				}
 			}
 		}

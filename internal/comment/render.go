@@ -305,6 +305,8 @@ type traceBlock struct {
 	Summary string
 	Lines   []traceLine
 	Omitted int
+	// Withheld says the counts are withheld and where they are kept.
+	Withheld string
 }
 
 type traceLine struct {
@@ -383,30 +385,53 @@ func (i Input) view() view {
 			line.Mark = fallbackMark
 		}
 		result.Lines = append(result.Lines, line)
-		result.Traces = append(result.Traces, traceOf(figure, index+1, shown))
+		result.Traces = append(result.Traces, traceOf(figure, index+1, shown, result.CheckRuns))
 	}
 	return result
 }
 
-// traceOf lays out one figure's arithmetic. Withheld, it keeps the quantities
-// and drops every price and amount.
-func traceOf(figure Figure, number int, shown bool) traceBlock {
-	block := traceBlock{Shown: shown, Summary: fmt.Sprintf("Tokens behind line %d", number), Omitted: figure.TraceOmitted}
-	if shown {
-		block.Summary = fmt.Sprintf("How %s %s was computed", figure.Currency, figure.Cost)
+// traceOf lays out one figure's arithmetic. Withheld, it keeps only the
+// catalogs and the token classes: a count times the public catalog is the
+// amount, so counts are withheld with the amounts.
+func traceOf(figure Figure, number int, shown, checkRuns bool) traceBlock {
+	if !shown {
+		return withheldTrace(figure, number, checkRuns)
 	}
+	block := traceBlock{Shown: true, Summary: fmt.Sprintf("How %s %s was computed", figure.Currency, figure.Cost), Omitted: figure.TraceOmitted}
 	for _, trace := range figure.Trace {
-		line := traceLine{Catalog: string(trace.Catalog), Class: Data(trace.Class).Code(), PriceID: trace.PriceID.Code(), Tokens: trace.Tokens.String()}
-		if trace.Catalog != "" {
-			line.Catalog = trace.Catalog.Code()
-		}
-		if shown {
-			line.UnitPrice = unitPrice(figure.Currency, trace)
-			line.Cost = figure.Currency + " " + trace.Cost.String()
-		}
-		block.Lines = append(block.Lines, line)
+		block.Lines = append(block.Lines, traceLine{
+			Catalog:   catalogCell(trace.Catalog),
+			Class:     Data(trace.Class).Code(),
+			PriceID:   trace.PriceID.Code(),
+			UnitPrice: unitPrice(figure.Currency, trace),
+			Tokens:    trace.Tokens.String(),
+			Cost:      figure.Currency + " " + trace.Cost.String(),
+		})
 	}
 	return block
+}
+
+func withheldTrace(figure Figure, number int, checkRuns bool) traceBlock {
+	block := traceBlock{Summary: fmt.Sprintf("Token classes behind line %d", number), Withheld: "Token counts are withheld with the amounts. The rows carry them."}
+	if checkRuns {
+		block.Withheld = "Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts."
+	}
+	seen := map[traceLine]bool{}
+	for _, trace := range figure.Trace {
+		line := traceLine{Catalog: catalogCell(trace.Catalog), Class: Data(trace.Class).Code()}
+		if !seen[line] {
+			seen[line] = true
+			block.Lines = append(block.Lines, line)
+		}
+	}
+	return block
+}
+
+func catalogCell(catalog Data) string {
+	if catalog == "" {
+		return ""
+	}
+	return catalog.Code()
 }
 
 func unitPrice(currency string, trace Trace) string {

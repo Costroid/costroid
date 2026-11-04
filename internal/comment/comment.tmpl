@@ -57,13 +57,15 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 | {{.Catalog}} | {{.Class}} | {{.PriceID}} | {{.UnitPrice}} | {{.Tokens}} | {{.Cost}} |
 {{end}}
 {{- else -}}
-| Catalog | Token class | Price id | Tokens |
-| --- | --- | --- | --- |
+| Catalog | Token class |
+| --- | --- |
 {{range .Lines -}}
-| {{.Catalog}} | {{.Class}} | {{.PriceID}} | {{.Tokens}} |
+| {{.Catalog}} | {{.Class}} |
+{{end}}
 {{end}}
 {{- end}}
-{{- end}}
+{{- if .Withheld}}{{.Withheld}}
+{{end}}
 {{- if .Omitted}}
 {{.Omitted}} more lines are left out of this trace.
 {{end}}
