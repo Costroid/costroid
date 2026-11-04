@@ -142,3 +142,20 @@ func TestRowsAfterAnEmptyResultAreAFileWithNothingInIt(t *testing.T) {
 		t.Fatalf("%v, %v", info, err)
 	}
 }
+
+// The first file read from a real claude-code-action run, on an API key: one
+// run, two models, and a total equal to the run's own figure to the last digit.
+func TestIngestRunReadsARecordedActionRunWithTwoModels(t *testing.T) {
+	clearCI(t)
+	out := filepath.Join(t.TempDir(), "rows.jsonl")
+	code, _, stderr := execute(t, "ingest-run", "--execution-file",
+		"../../internal/adapter/claudecode/testdata/2.1.316/execution-file/claude-execution-output.json", "--out", out)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for _, want := range []string{"claude-code, one run, 2 models", "USD 0.0516717 at list", "Measured"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("no %q in %s", want, stderr)
+		}
+	}
+}

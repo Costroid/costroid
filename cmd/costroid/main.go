@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -298,7 +299,13 @@ func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Re
 
 func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
 	report := result.Report
-	fmt.Fprintf(w, "costroid: %s, %d %s\n", result.Agent, len(report.Requests), noun(result, len(report.Requests)))
+	// A run-grain entry is one model's total for the whole run, so the count is
+	// of models, never of runs.
+	if count := len(report.Requests); count > 0 && report.Requests[0].Grain == adapter.PerRun {
+		fmt.Fprintf(w, "costroid: %s, one run, %d %s\n", result.Agent, count, plural("model", count))
+	} else {
+		fmt.Fprintf(w, "costroid: %s, %d %s\n", result.Agent, count, noun(result, count))
+	}
 	fmt.Fprintf(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
 	fmt.Fprintf(w, "costroid: USD %s at list, %s\n", result.ListTotal, labels[report.CostBasis])
 }
@@ -314,6 +321,13 @@ func noun(result run.Result, count int) string {
 	if len(result.Report.Requests) > 0 {
 		word = string(result.Report.Requests[0].Grain)
 	}
+	if count == 1 {
+		return word
+	}
+	return word + "s"
+}
+
+func plural(word string, count int) string {
 	if count == 1 {
 		return word
 	}
