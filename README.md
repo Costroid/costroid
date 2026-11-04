@@ -8,7 +8,23 @@ An agent's own cost field is an estimate, and a budget flag can be weaker than i
 
 ## Install
 
-The first release will be `1.0.0-alpha.1`. Until it ships, build from a checkout, with Go 1.27 or later:
+`1.0.0-alpha.1` is the first release, a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.1) and check it:
+
+```sh
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.1/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.1/SHA256SUMS
+grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
+```
+
+Each file is signed with cosign, keyless, by this repository's release workflow. To check a signature, with cosign 3 or later:
+
+```sh
+cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.1 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com costroid-linux-amd64
+```
+
+In GitHub Actions, the recipes install it for you: set the repository variables `COSTROID_VERSION` to `1.0.0-alpha.1` and `COSTROID_SHA256` to the line for `costroid-linux-amd64` in `SHA256SUMS`. To build from a checkout instead, with Go 1.27 or later:
 
 ```sh
 make build

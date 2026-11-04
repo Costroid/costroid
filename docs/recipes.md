@@ -2,7 +2,7 @@
 
 These recipes run a coding agent on a pull request under a budget and record what it cost. They use the repository's own token. They need no App, no server and no account.
 
-Costroid has no release yet. Each GitHub recipe pins its action to the zero SHA, so it fails at start until a release replaces that pin. The GitLab template stops at `COSTROID_VERSION`.
+Each GitHub recipe pins its action to the commit of `v1.0.0-alpha.1`, a pre-release. Set the repository variables `COSTROID_VERSION` to `1.0.0-alpha.1` and `COSTROID_SHA256` to the line for `costroid-linux-amd64` in the release's `SHA256SUMS`.
 
 ## Claude Code
 
@@ -157,6 +157,7 @@ Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on Novembe
 | --------------------------- | ------- | ------------------------------------------ |
 | `actions/checkout`          | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `step-security/harden-runner` | v2.22.3 | `46b06cea07f9e64621fdf066ba77ac6915163d43` |
+| `Costroid/costroid/action` | v1.0.0-alpha.1 | `17ec021200c2e0c5dc11ac28fceb7fc834819518` |
 | `actions/upload-artifact`   | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | `actions/download-artifact` | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
 

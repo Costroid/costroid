@@ -41,7 +41,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: git diff "$BASE...$HEAD" > pull-request.diff
       - name: Run Codex under the budget
-        uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
+        uses: Costroid/costroid/action@17ec021200c2e0c5dc11ac28fceb7fc834819518 # v1.0.0-alpha.1
         with:
           stage: run
           version: ${{ vars.COSTROID_VERSION }}
@@ -70,7 +70,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
+      - uses: Costroid/costroid/action@17ec021200c2e0c5dc11ac28fceb7fc834819518 # v1.0.0-alpha.1
         with:
           stage: ingest
           version: ${{ vars.COSTROID_VERSION }}
@@ -88,7 +88,7 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
+      - uses: Costroid/costroid/action@17ec021200c2e0c5dc11ac28fceb7fc834819518 # v1.0.0-alpha.1
         with:
           stage: report
           version: ${{ vars.COSTROID_VERSION }}
