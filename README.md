@@ -10,11 +10,11 @@ An agent's own cost field is an estimate, and a budget flag can be weaker than i
 
 ## Install
 
-`1.0.0-alpha.4` is the latest release, a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.4) and check it:
+`1.0.0-alpha.5` is the latest release, a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.5) and check it:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.4/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.4/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.5/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.5/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 ```
 
@@ -22,7 +22,7 @@ Each file is signed with cosign, keyless, by this repository's release workflow.
 
 ```sh
 cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.4 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.5 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com costroid-linux-amd64
 ```
 
