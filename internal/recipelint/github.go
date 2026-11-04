@@ -114,7 +114,7 @@ func (l *linter) uses(holder, uses *yaml.Node) {
 			l.add(uses, RuleUnpinned, "%s is pinned to the zero SHA, which names no commit", ref)
 			return
 		}
-		l.note(uses, "unreleased", "%s has no release yet, so this recipe fails at start until one is pinned", costroidAction)
+		l.note(uses, "unreleased", "%s is pinned to the zero SHA, so this recipe fails at start until a release is pinned", costroidAction)
 	}
 	if !releaseNote.MatchString(lineComment(holder, uses)) {
 		l.add(uses, RuleUnrecordedPin, "%s does not record the release its SHA came from", ref)
