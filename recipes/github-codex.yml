@@ -93,3 +93,4 @@ jobs:
           stage: report
           version: ${{ vars.COSTROID_VERSION }}
           sha256: ${{ vars.COSTROID_SHA256 }}
+          budget-usd: "5"

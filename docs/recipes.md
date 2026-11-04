@@ -94,6 +94,10 @@ The file holds prompts and tool output. Costroid reads usage from it and nothing
 
 Costroid did not start this run, so the grade reads `none`, whatever `claude_args` passed. The file does not state a budget. The fixture behind this reader was written from the action's source, and no real file has been read yet.
 
+## What the job log shows
+
+The agent's own stream holds its reasoning, its replies and what it read. A public repository's job log is public, so the action writes that stream to a file on the runner, which the job never uploads, and the log shows Costroid's own lines only. Set `show-output: true` on the run step to print the stream, on a private repository.
+
 ## Egress in the agent's job
 
 The GitHub recipes run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) in audit mode on the agent's job. It records the job's outbound calls and blocks none, so it shows what an injected agent reached and does not stop it.

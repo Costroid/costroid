@@ -40,5 +40,15 @@ while IFS= read -r line; do
   fi
 done <<<"${COSTROID_AGENT_ARGS:-}"
 
-exec costroid run --budget-usd "$COSTROID_BUDGET_USD" --out "$COSTROID_ROWS" -- \
-  "${agent[@]}" "${extra[@]}" "$COSTROID_PROMPT" </dev/null
+run=(costroid run --budget-usd "$COSTROID_BUDGET_USD" --out "$COSTROID_ROWS" -- "${agent[@]}" "${extra[@]}" "$COSTROID_PROMPT")
+if [[ ${COSTROID_SHOW_OUTPUT:-false} == true ]]; then
+  exec "${run[@]}" </dev/null
+fi
+
+# The agent's stream holds its reasoning, its replies and what it read. A public
+# repository's job log is public, so the stream goes to a file on this runner,
+# which the job never uploads. Costroid's own lines stay on stderr.
+output=${RUNNER_TEMP:-/tmp}/costroid-agent-output.jsonl
+(umask 077 && : >"$output")
+echo "costroid: the agent's output is in $output on this runner, not in this log. show-output: true prints it." >&2
+exec "${run[@]}" </dev/null >"$output"

@@ -29,6 +29,11 @@ inputs:
   budget-usd:
     description: The run's budget in USD.
     default: ""
+  show-output:
+    description: >-
+      true prints the agent's own stream, its reasoning and its replies, to the job
+      log. A public repository's log is public, so leave it false there.
+    default: "false"
   api-key:
     description: The provider key. It reaches the agent's step and no other.
     default: ""
@@ -71,6 +76,7 @@ runs:
         COSTROID_BILLING_ACCOUNT: ${{ inputs.billing-account }}
         COSTROID_CREDENTIAL: ${{ inputs.credential }}
         COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
+        COSTROID_SHOW_OUTPUT: ${{ inputs.show-output }}
       run: bash "$GITHUB_ACTION_PATH/run-agent.sh"
 
     - name: Keep the rows
@@ -96,9 +102,10 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
+        COSTROID_BUDGET_USD: ${{ inputs.budget-usd }}
       run: |
         touch "$COSTROID_ROWS"
-        costroid report --rows "$COSTROID_ROWS"
+        costroid report --rows "$COSTROID_ROWS" ${COSTROID_BUDGET_USD:+--budget-usd "$COSTROID_BUDGET_USD"}
 
     - name: Send the rows to the ledger
       if: inputs.stage == 'ingest'
