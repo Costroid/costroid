@@ -2,6 +2,8 @@
 
 Costroid is the cost check for pull requests. It runs a coding agent under a budget, records what the run cost per token class as FOCUS rows, and posts the figure on the pull request.
 
+Bring your own key and your own agent. No account, and nothing leaves your CI: the key stays in your repository's secrets, the rows stay in the job, and the ledger, if you run one, is yours.
+
 ## Why it exists
 
 An agent's own cost field is an estimate, and a budget flag can be weaker than it sounds. Costroid prices the agent's token counts against a pinned, dated catalog, and it writes down how the budget was enforced. A grade is never shown as stronger than it is.
