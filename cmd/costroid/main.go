@@ -32,6 +32,7 @@ Usage:
   costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
   costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE] [--reports DIR --as-of T]
+  costroid policy --rows rows.jsonl [--config costroid.yml] [--workflow-added T] [--at T] [--json]
   costroid validate [costroid.yml]
   costroid lint-recipes <paths>
   costroid serve
@@ -76,6 +77,13 @@ restates the run's budget, which rows do not record.
 --installation-id puts the GitHub App installation on the account link;
 COSTROID_INSTALLATION_ID does the same. GitLab's link names the project id.
 
+policy gives, offline, the verdict the check gives: it holds the rows to the
+policy keys of the costroid.yml named, which should be the base commit's.
+--workflow-added and --at state when the workflow reached the base branch and
+when the check ran, both as RFC 3339. Without --workflow-added the warn-only
+period has not ended. --json prints the verdict as the check's machine block
+carries it.
+
 reconcile compares rows with the provider's usage and cost reports, per
 credential per UTC day. Tokens must match within 1% by class. List-price dollars
 are compared within 10%, and the residual is split into named causes.
@@ -93,6 +101,11 @@ Exit codes of run:
   the agent's own   the run finished, or the agent stopped itself
   124               costroid stopped the agent at the cap
   125               costroid could not run the agent or record the run
+
+Exit codes of policy:
+  0                 success or neutral
+  1                 failure
+  125               costroid could not read the rows or the file
 
 Exit codes of reconcile:
   0                 no token miss
@@ -148,6 +161,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return ingestRunCommand(args[1:], stderr)
 	case "report":
 		return reportCommand(ctx, args[1:], stdout, stderr)
+	case "policy":
+		return policyCommand(ctx, args[1:], stdout, stderr)
 	case "validate":
 		return validateCommand(args[1:], stdout, stderr)
 	case "version":
