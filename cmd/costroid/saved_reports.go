@@ -8,18 +8,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/Costroid/costroid/internal/reconcile"
 )
 
 // savedReportsHoldNoKey fills the key a fetcher asks for. Nothing is sent.
 const savedReportsHoldNoKey = "saved-reports"
-
-// savedReportFiles names the file that answers each provider path.
-var savedReportFiles = map[string]string{
-	"/v1/organizations/analytics/usage":  "anthropic-usage.json",
-	"/v1/organizations/analytics/cost":   "anthropic-cost.json",
-	"/v1/organization/usage/completions": "openai-usage.json",
-	"/v1/organization/costs":             "openai-costs.json",
-}
 
 // savedReports answers the fetchers from a directory, so the path through
 // them is the path a live report takes. Each file is one complete response.
@@ -32,7 +26,7 @@ type savedReports struct {
 // range spans more than one provider window, and repeating the file would count
 // its records twice.
 func (s *savedReports) Do(request *http.Request) (*http.Response, error) {
-	name, known := savedReportFiles[request.URL.Path]
+	name, known := reconcile.SavedReportFiles[request.URL.Path]
 	if !known {
 		return nil, fmt.Errorf("no saved report answers %s", request.URL.Path)
 	}
