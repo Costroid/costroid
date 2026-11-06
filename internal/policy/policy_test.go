@@ -254,9 +254,22 @@ func TestWarnOnlyPeriod(t *testing.T) {
 			}
 		})
 	}
+	for start, want := range map[string]string{
+		"2026-10-30T12:00:01Z": Neutral,
+		"2026-10-30T12:00:00Z": Failure,
+	} {
+		added, err := time.Parse(time.RFC3339, start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verdict := evaluate(t, Request{Usage: over, Config: budget, Start: Start{At: added}})
+		if verdict.Conclusion != want || verdict.WarnOnly.Started != start {
+			t.Errorf("a workflow added %s, checked %s: %s, %+v", start, checkTime.Format(time.RFC3339), verdict.Conclusion, verdict.WarnOnly)
+		}
+	}
 	verdict := evaluate(t, Request{Usage: over, Config: budget, Start: Start{At: checkTime.Add(-time.Hour)}})
-	if want := checkTime.Add(-time.Hour + WarnOnlyPeriod).Format(time.RFC3339); verdict.WarnOnly.Ends != want {
-		t.Errorf("the period ends %s, want %s", verdict.WarnOnly.Ends, want)
+	if verdict.WarnOnly.Ends != "2026-11-13T11:00:00Z" {
+		t.Errorf("the period ends %s, want 7 days after its start", verdict.WarnOnly.Ends)
 	}
 }
 
