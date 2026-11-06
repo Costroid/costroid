@@ -37,7 +37,7 @@ jobs:
       - name: Install Claude Code
         run: npm install --global @anthropic-ai/claude-code@2.1.316
       - name: Install costroid
-        uses: Costroid/costroid/action@bb4d17079fc41a7c0e2b898e0caece22308b3103 # v1.0.0-alpha.7
+        uses: Costroid/costroid/action@fccfbd6a9eab4d012f4715c050f527050454a818 # v1.0.0-alpha.8
         with:
           stage: install
       - name: Check the agent's version
@@ -112,7 +112,7 @@ jobs:
       actions: read
     steps:
       - name: Install costroid
-        uses: Costroid/costroid/action@bb4d17079fc41a7c0e2b898e0caece22308b3103 # v1.0.0-alpha.7
+        uses: Costroid/costroid/action@fccfbd6a9eab4d012f4715c050f527050454a818 # v1.0.0-alpha.8
         with:
           stage: install
       - name: Register the run's key with its budget
@@ -137,7 +137,7 @@ jobs:
     permissions: {}
     steps:
       - name: Install costroid
-        uses: Costroid/costroid/action@bb4d17079fc41a7c0e2b898e0caece22308b3103 # v1.0.0-alpha.7
+        uses: Costroid/costroid/action@fccfbd6a9eab4d012f4715c050f527050454a818 # v1.0.0-alpha.8
         with:
           stage: install
       - name: Delete the run's key
@@ -154,7 +154,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@bb4d17079fc41a7c0e2b898e0caece22308b3103 # v1.0.0-alpha.7
+      - uses: Costroid/costroid/action@fccfbd6a9eab4d012f4715c050f527050454a818 # v1.0.0-alpha.8
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -173,7 +173,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@bb4d17079fc41a7c0e2b898e0caece22308b3103 # v1.0.0-alpha.7
+      - uses: Costroid/costroid/action@fccfbd6a9eab4d012f4715c050f527050454a818 # v1.0.0-alpha.8
         with:
           stage: report
           budget-usd: "5"
