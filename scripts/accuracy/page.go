@@ -22,15 +22,16 @@ const (
 )
 
 // line is one reconciliation of one credential on one day, as the page shows
-// it. A line with no failures passed. named says it passed only once the
+// it. A line with no failures passed. explained says it passed only once the
 // residual's named causes were taken out.
 type line struct {
-	day, source, agent, catalog string
-	tokens                      []tokenFigure
-	dollars                     *dollarFigure
-	failures                    []string
-	named                       bool
-	digest                      string
+	day string
+	named
+	tokens    []tokenFigure
+	dollars   *dollarFigure
+	failures  []string
+	explained bool
+	digest    string
 }
 
 func (l line) passed() bool { return len(l.failures) == 0 }
@@ -41,7 +42,7 @@ func (l line) verdict() string {
 	switch {
 	case !l.passed():
 		return strings.Join(l.failures, ", ")
-	case l.named:
+	case l.explained:
 		return "pass after named causes"
 	default:
 		return "pass"
@@ -107,7 +108,9 @@ Costroid prices an agent's run from the agent's own token counts. This page comp
 
 ## Method
 
-Each day a scheduled job in a private repository runs one small Claude Code task under ` + "`costroid run`" + `. Two days later a second job saves the provider's usage and cost reports for that day beside every row the key's runs wrote that day. The rows, the reports and the time they were saved are that day's inputs. They stay private, because the provider's report names every key of the organization.
+Each day a scheduled job in a private repository runs one small Claude Code task under ` + "`costroid run`" + `, with a budget of 0.10 USD. Two days later a second job saves the provider's usage and cost reports for that day, cut to that key's own records, beside every row the key's runs wrote that day. The rows, the reports and the time they were saved are that day's inputs. Each week they are committed to the private repository.
+
+Measured cost is what the day's rows on the key cost at list price, from Costroid's own rows. It reads on a day with no provider report as well, so the test's spend is always on the page.
 
 ` + "`go run ./scripts/accuracy -write docs/accuracy.md`" + ` re-runs ` + "`costroid reconcile`" + ` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, and the list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines both steps and each cause.
 
@@ -180,10 +183,10 @@ func renderDays(w io.Writer, lines []line) {
 		fmt.Fprintln(w, "No day has been reconciled yet.")
 		return
 	}
-	fmt.Fprintln(w, "| Day (UTC) | Source | Agent | Catalog | Tokens, ledger / provider | List USD, ledger / provider | Residual USD | Causes | Verdict | Inputs SHA-256 |")
-	fmt.Fprintln(w, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+	fmt.Fprintln(w, "| Day (UTC) | Source | Agent | Catalog | Measured cost | Tokens, ledger / provider | List USD, ledger / provider | Residual USD | Causes | Verdict | Inputs SHA-256 |")
+	fmt.Fprintln(w, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, l := range lines {
-		fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n", l.day, cell(l.source), cell(l.agent), cell(l.catalog),
+		fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n", l.day, cell(l.source), cell(l.agent), cell(l.catalog), cell(l.measured),
 			tokensCell(l.tokens), dollarsCell(l.dollars), residualCell(l.dollars), causesCell(l.dollars), l.verdict(), l.digest)
 	}
 }

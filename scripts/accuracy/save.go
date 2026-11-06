@@ -91,8 +91,9 @@ func save(ctx context.Context, opts options, outside world, stdout io.Writer) er
 	return nil
 }
 
-// saveReports fetches every report the rows need, or none of them. A missing
-// key is recorded and is not an error.
+// saveReports fetches every report the rows need, or none of them, and keeps
+// each cut to the credentials the rows name: another key's usage is never
+// written. A missing key is recorded and is not an error.
 func saveReports(ctx context.Context, opts options, days reconcile.Range, rows []byte, outside world, record *dayRecord) error {
 	ledger, err := reconcile.ReadLedger(bytes.NewReader(rows), days, opts.credential)
 	if err != nil {
@@ -121,7 +122,11 @@ func saveReports(ctx context.Context, opts options, days reconcile.Range, rows [
 		record.Reason = "the reports could not be kept"
 		return err
 	}
-	recorder := &reconcile.Recorder{Client: outside.client, Directory: directory}
+	var credentials []string
+	for _, source := range sources {
+		credentials = append(credentials, ledger.Credentials(source)...)
+	}
+	recorder := &reconcile.Recorder{Client: outside.client, Directory: directory, Credentials: credentials}
 	for _, source := range sources {
 		provider := fetchers[source](recorder, keys[source])
 		if _, err := provider.Fetch(ctx, days, ledger.Credentials(source)); err != nil {

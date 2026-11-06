@@ -52,7 +52,7 @@ costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-01 --reports
 | `openai-usage.json`    | `GET /v1/organization/usage/completions`  |
 | `openai-costs.json`    | `GET /v1/organization/costs`              |
 
-Keep each response's body exactly as the provider sent it. A range that needs a second page, or a second provider window, cannot be saved as one file.
+Keep each response's body as the provider sent it, or cut to the records of the credentials you reconcile, as `scripts/accuracy -save` keeps them. A range that needs a second page, or a second provider window, cannot be saved as one file.
 
 ## Exit codes
 

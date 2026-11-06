@@ -22,6 +22,7 @@ import (
 const (
 	syntheticNote = "hand-written for a test; no provider was called"
 	credential    = "apikey_01SyntheticTestKey"
+	otherKey      = "apikey_01SyntheticOtherKey"
 	model         = "claude-sonnet-5"
 	adminKey      = "sk-ant-admin01-synthetic-sentinel-0123456789"
 	firstDay      = "2026-11-10"
@@ -150,13 +151,24 @@ func (d day) usageReport() []byte {
         "cache_read_input_tokens": 300000,
         "output_tokens": %d
       }
+    },
+    {
+      "starting_at": "%sT00:00:00Z",
+      "ending_at": "%sT00:00:00Z",
+      "group": {"api_key_id": %q, "model": %q, "service_tier": "standard", "inference_geo": "global", "speed": "standard"},
+      "usage": {
+        "uncached_input_tokens": 7,
+        "cache_creation": {"ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 0},
+        "cache_read_input_tokens": 0,
+        "output_tokens": 7
+      }
     }
   ],
   "has_more": false,
   "next_page": null,
   "data_refreshed_at": "%sT08:00:00Z"
 }
-`, syntheticNote, d.date, d.next(), credential, model, d.outputReported, d.next()))
+`, syntheticNote, d.date, d.next(), credential, model, d.outputReported, d.date, d.next(), otherKey, model, d.next()))
 }
 
 func (d day) costReport() []byte {
@@ -168,13 +180,19 @@ func (d day) costReport() []byte {
       "ending_at": "%sT00:00:00Z",
       "group": {"api_key_id": %q, "cost_type": "tokens"},
       "cost": {"currency": "USD", "amount": %q, "list_amount": %q}
+    },
+    {
+      "starting_at": "%sT00:00:00Z",
+      "ending_at": "%sT00:00:00Z",
+      "group": {"api_key_id": %q, "cost_type": "tokens"},
+      "cost": {"currency": "USD", "amount": "0.008400", "list_amount": "0.008400"}
     }
   ],
   "has_more": false,
   "next_page": null,
   "data_refreshed_at": "%sT08:00:00Z"
 }
-`, syntheticNote, d.date, d.next(), credential, d.amountCents, d.listCents, d.next()))
+`, syntheticNote, d.date, d.next(), credential, d.amountCents, d.listCents, d.date, d.next(), otherKey, d.next()))
 }
 
 // savedAt is two days after the day, when the workflow saves its reports.
@@ -296,10 +314,10 @@ func dayLine(t *testing.T, page, date string) string {
 func verdictOf(t *testing.T, text string) string {
 	t.Helper()
 	cells := strings.Split(text, " | ")
-	if len(cells) != 10 {
+	if len(cells) != 11 {
 		t.Fatalf("a day line has %d cells: %s", len(cells), text)
 	}
-	return cells[8]
+	return cells[9]
 }
 
 func consecutiveDays(n int) []day {
@@ -324,7 +342,7 @@ func TestPassingDayPasses(t *testing.T) {
 	if verdictOf(t, text) != "pass" {
 		t.Errorf("verdict %q, want pass: %s", verdictOf(t, text), text)
 	}
-	for _, want := range []string{"output 50000 / 50000 (0.00%)", "0.81 / 0.81 (0.00%)", "claude-code 2.1.316", "| 0.1.0 |"} {
+	for _, want := range []string{"output 50000 / 50000 (0.00%)", "0.81 / 0.81 (0.00%)", "claude-code 2.1.316", "| 0.1.0 | 0.81 USD |"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the line does not state %q: %s", want, text)
 		}
@@ -489,12 +507,16 @@ func TestDayWithNoProviderReportFails(t *testing.T) {
 	if got.code != exitRefused {
 		t.Fatalf("-check exited %d on a day with no report, want %d", got.code, exitRefused)
 	}
-	if text := dayLine(t, page, firstDay); verdictOf(t, text) != failNoReport {
+	text := dayLine(t, page, firstDay)
+	if verdictOf(t, text) != failNoReport {
 		t.Errorf("verdict %q, want %q: %s", verdictOf(t, text), failNoReport, text)
+	}
+	if !strings.Contains(text, "| 0.81 USD |") {
+		t.Errorf("a day with no report hides its measured cost: %s", text)
 	}
 }
 
-func TestSaveNeverKeepsOrPrintsTheKey(t *testing.T) {
+func TestSaveKeepsNeitherTheKeyNorAnotherKeysRecords(t *testing.T) {
 	inputs := t.TempDir()
 	saved := keep(t, inputs, passingDay(firstDay))
 	if strings.Contains(saved.stdout+saved.stderr, adminKey) {
@@ -510,6 +532,9 @@ func TestSaveNeverKeepsOrPrintsTheKey(t *testing.T) {
 		}
 		if bytes.Contains(data, []byte(adminKey)) {
 			t.Errorf("%s holds the key", path)
+		}
+		if bytes.Contains(data, []byte(otherKey)) {
+			t.Errorf("%s keeps another key's records", path)
 		}
 		return nil
 	})

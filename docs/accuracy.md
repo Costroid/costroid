@@ -4,7 +4,9 @@ Costroid prices an agent's run from the agent's own token counts. This page comp
 
 ## Method
 
-Each day a scheduled job in a private repository runs one small Claude Code task under `costroid run`. Two days later a second job saves the provider's usage and cost reports for that day beside every row the key's runs wrote that day. The rows, the reports and the time they were saved are that day's inputs. They stay private, because the provider's report names every key of the organization.
+Each day a scheduled job in a private repository runs one small Claude Code task under `costroid run`, with a budget of 0.10 USD. Two days later a second job saves the provider's usage and cost reports for that day, cut to that key's own records, beside every row the key's runs wrote that day. The rows, the reports and the time they were saved are that day's inputs. Each week they are committed to the private repository.
+
+Measured cost is what the day's rows on the key cost at list price, from Costroid's own rows. It reads on a day with no provider report as well, so the test's spend is always on the page.
 
 `go run ./scripts/accuracy -write docs/accuracy.md` re-runs `costroid reconcile` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, and the list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines both steps and each cause.
 

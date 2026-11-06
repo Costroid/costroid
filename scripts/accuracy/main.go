@@ -23,7 +23,7 @@ const usage = `Usage:
   go run ./scripts/accuracy -check FILE [-days N] [-inputs DIR] [-costroid BINARY]
 
 -save keeps one UTC day's inputs in DIR: the rows, the provider's usage and
-cost reports for the credentials the rows name, and when the reports were
+cost reports cut to the credentials the rows name, and when the reports were
 saved. It reads ANTHROPIC_ADMIN_KEY and OPENAI_ADMIN_KEY. When a report's key
 is not set, it records that no provider report was saved and exits 0.
 

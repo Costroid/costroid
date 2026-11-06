@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/reconcile"
 )
@@ -204,16 +205,19 @@ func readReconciled(path string) ([]reconciledRow, error) {
 	return rows, scanner.Err()
 }
 
-// labelRow is the part of a ledger row that names who ran and what priced it.
+// labelRow is the part of a ledger row that names who ran, what priced it
+// and what it cost.
 type labelRow struct {
+	BillingCurrency     string            `json:"BillingCurrency"`
 	ChargePeriodStart   time.Time         `json:"ChargePeriodStart"`
+	ListCost            string            `json:"ListCost"`
 	ServiceProviderName string            `json:"ServiceProviderName"`
 	SubAccountID        *string           `json:"SubAccountId"`
 	Tags                map[string]string `json:"Tags"`
 	CatalogVersion      *string           `json:"x_CostroidCatalogVersion"`
 }
 
-// labels is each agent version and catalog version the day's rows name.
+// labels holds the day's rows, read for what the page names beside a figure.
 type labels struct {
 	rows []labelRow
 }
@@ -241,10 +245,18 @@ func readLabels(day keptDay) (labels, error) {
 	}
 }
 
-// of returns the agents, the catalogs and the sources of the rows that match
-// a source and credential. Empty strings match every row.
-func (l labels) of(source, credential, fallback string) (agents, catalogs, sources string) {
-	var agentNames, catalogNames, sourceNames []string
+// named is what a line says about the rows behind it: the agents, the
+// catalogs, the sources and the measured cost, each currency on its own.
+type named struct {
+	agent, catalog, source, measured string
+}
+
+// of reads the rows that match a source and credential. Empty strings match
+// every row. The measured cost is the rows' own list cost at the measured
+// basis, so it reads even on a day with no provider report.
+func (l labels) of(source, credential, fallback string) (named, error) {
+	var agents, catalogs, sources []string
+	measured := map[string]decimal.Decimal{}
 	for _, row := range l.rows {
 		rowSource := strings.ToLower(row.ServiceProviderName)
 		rowCredential := fallback
@@ -254,13 +266,30 @@ func (l labels) of(source, credential, fallback string) (agents, catalogs, sourc
 		if (source != "" && rowSource != source) || (credential != "" && rowCredential != credential) {
 			continue
 		}
-		agentNames = appendNew(agentNames, strings.TrimSpace(row.Tags[focus.TagAgent]+" "+row.Tags[focus.TagAgentVersion]))
+		agents = appendNew(agents, strings.TrimSpace(row.Tags[focus.TagAgent]+" "+row.Tags[focus.TagAgentVersion]))
 		if row.CatalogVersion != nil {
-			catalogNames = appendNew(catalogNames, *row.CatalogVersion)
+			catalogs = appendNew(catalogs, *row.CatalogVersion)
 		}
-		sourceNames = appendNew(sourceNames, rowSource)
+		sources = appendNew(sources, rowSource)
+		if focus.CostBasis(row.Tags[focus.TagCostBasis]) != focus.Measured {
+			continue
+		}
+		cost, err := decimal.Parse(row.ListCost)
+		if err != nil {
+			return named{}, fmt.Errorf("ListCost: %w", err)
+		}
+		measured[row.BillingCurrency] = measured[row.BillingCurrency].Add(cost)
 	}
-	return joined(agentNames), joined(catalogNames), joined(sourceNames)
+	return named{agent: joined(agents), catalog: joined(catalogs), source: joined(sources), measured: costs(measured)}, nil
+}
+
+// costs writes one amount per currency. Currencies are never added together.
+func costs(byCurrency map[string]decimal.Decimal) string {
+	amounts := make([]string, 0, len(byCurrency))
+	for currency, amount := range byCurrency {
+		amounts = append(amounts, amount.String()+" "+currency)
+	}
+	return joined(amounts)
 }
 
 func appendNew(names []string, name string) []string {
@@ -272,7 +301,7 @@ func appendNew(names []string, name string) []string {
 
 func joined(names []string) string {
 	if len(names) == 0 {
-		return "none"
+		return noFigure
 	}
 	slices.Sort(names)
 	return strings.Join(names, ", ")
@@ -280,38 +309,45 @@ func joined(names []string) string {
 
 // linesOf recomputes one kept day's lines.
 func linesOf(ctx context.Context, binary string, day keptDay, scratch string, stderr io.Writer) ([]line, error) {
-	names, err := readLabels(day)
+	rows, err := readLabels(day)
 	if err != nil {
 		return nil, err
 	}
-	whole := func(failure string) []line {
-		agent, catalog, source := names.of("", "", day.record.Credential)
-		if source == "none" {
+	whole := func(failure string) ([]line, error) {
+		about, err := rows.of("", "", day.record.Credential)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", day.record.Day, err)
+		}
+		if about.source == noFigure {
 			failure = failNoRows
 		}
-		return []line{{day: day.record.Day, source: source, agent: agent, catalog: catalog, digest: day.digest, failures: []string{failure}}}
+		return []line{{day: day.record.Day, named: about, digest: day.digest, failures: []string{failure}}}, nil
 	}
 	if day.record.Report == reportNone {
-		return whole(failNoReport), nil
+		return whole(failNoReport)
 	}
-	rows, err := reconcileDay(ctx, binary, day, scratch, stderr)
+	reconciled, err := reconcileDay(ctx, binary, day, scratch, stderr)
 	if errors.Is(err, errReconcileRefused) {
-		return whole(failRefused), nil
+		return whole(failRefused)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return whole(failNoReconciliation), nil
+	if len(reconciled) == 0 {
+		return whole(failNoReconciliation)
 	}
-	lines := make([]line, 0, len(rows))
-	for _, row := range rows {
-		agent, catalog, _ := names.of(row.Source, row.Credential, day.record.Credential)
+	lines := make([]line, 0, len(reconciled))
+	for _, row := range reconciled {
+		about, err := rows.of(row.Source, row.Credential, day.record.Credential)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", day.record.Day, err)
+		}
 		judged, err := judge(row)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", day.record.Day, err)
 		}
-		judged.agent, judged.catalog, judged.digest = agent, catalog, day.digest
+		about.source = row.Source
+		judged.named, judged.digest = about, day.digest
 		lines = append(lines, judged)
 	}
 	return lines, nil
@@ -333,7 +369,7 @@ const (
 // them. Dollars pass within 10%, or within 10% once the named causes are
 // taken out of the residual.
 func judge(row reconciledRow) (line, error) {
-	judged := line{day: row.Day, source: row.Source, tokens: row.Tokens, dollars: row.Dollars}
+	judged := line{day: row.Day, tokens: row.Tokens, dollars: row.Dollars}
 	switch reconcile.State(row.State) {
 	case reconcile.Pending:
 		judged.failures = append(judged.failures, failPending)
@@ -359,7 +395,7 @@ func judge(row reconciledRow) (line, error) {
 		if !explained {
 			judged.failures = append(judged.failures, failDollars)
 		}
-		judged.named = explained
+		judged.explained = explained
 	default:
 		return line{}, fmt.Errorf("unknown dollar verdict %q", row.Dollars.Verdict)
 	}
