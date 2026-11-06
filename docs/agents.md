@@ -1,18 +1,18 @@
 # Read a result from an agent
 
-Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the budget and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.2`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.2) in `Costroid/costroid-schemas`.
+Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the cap and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.3) in `Costroid/costroid-schemas`.
 
 ## Where the object is
 
-| Where                                    | What it holds                                                                                                                  |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `costroid run --json`, on stdout         | The run just finished. `conclusion` is null, because no check has concluded yet.                                               |
-| `costroid report --json`, on stdout      | The object the check run carries, byte for byte.                                                                               |
-| The `costroid` check run's `output.text` | The same object, inside one fenced `json` block. Every amount is in it.                                                        |
-| The pull request comment                 | A copy that adds `check_run_id`. On a public repository with `comment.show_cost: false` it withholds amounts and token counts. |
-| The action's `result` output             | The check run's object as one line of JSON.                                                                                    |
+| Where                                    | What it holds                                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `costroid run --json`, on stdout         | The run just finished. `conclusion` is null, because no check has concluded yet.                                                |
+| `costroid report --json`, on stdout      | The object the check run carries, byte for byte.                                                                                |
+| The `costroid` check run's `output.text` | The same object, inside one fenced `json` block. Every amount is in it, and `check_run_id` names the check run.                 |
+| The pull request comment                 | A copy that names `check_run_id`. On a public repository with `comment.show_cost: false` it withholds amounts and token counts. |
+| The action's `result` output             | The check run's object as one line of JSON.                                                                                     |
 
-Under `run --json` the agent's own stream goes to stderr, so stdout holds the object alone. `run` prints no object when it exits 125.
+Under `run --json` the agent's own stream goes to stderr, so stdout holds the object alone. `run` prints no object when it exits 125, except when another run held the agent's state directory: that run never started its agent, and its object says so.
 
 ## Read it for a head commit
 
@@ -23,7 +23,7 @@ gh api "repos/OWNER/REPO/commits/$HEAD_SHA/check-runs?check_name=costroid" \
   --jq '.check_runs | max_by(.completed_at) | .output.text | ltrimstr("```json\n") | rtrimstr("\n```") | fromjson'
 ```
 
-A commit can carry more than one `costroid` check run, one per report, so the program takes the one that completed last. A check run cannot name itself in its own text, so its id is the `id` field beside `output`, and the comment's copy names it as `check_run_id`.
+A commit can carry more than one `costroid` check run, one per report, so the program takes the one that completed last. GitHub assigns a check run its id when the report creates it, so the report writes `check_run_id` into the object with a second request. When that request fails, the object has no `check_run_id`, and the `id` field beside `output` is the same number.
 
 ## Read the figures
 
@@ -49,11 +49,11 @@ Each entry of `figures` is one currency, one basis and one pair of grades. Figur
 
 Amounts and token counts are decimal strings. `reasoning_output` and `cached_input_reported` repeat tokens that `output` and `cache_read` already count, so they are not added to them.
 
-`cost_basis` says what the amount is: `measured` from an API key's usage, `list_equivalent` for a subscription run at list price, which nobody billed. `enforcement_grade` says what held the run to its budget, and [`adapters.md`](adapters.md) defines each grade. `run_identity` reads `unverified` on every object a CI job writes, because the agent's own job wrote the rows.
+`cost_basis` says what the amount is: `measured` from an API key's usage, `list_equivalent` for a subscription run at list price, which nobody billed. `enforcement_grade` says what held the run to its cap, and [`adapters.md`](adapters.md) defines each grade. `run_identity` reads `unverified` on every object a CI job writes, because the agent's own job wrote the rows.
 
-## Read the budget
+## Read the cap
 
-`budget` is null when the report was not told the budget. Otherwise it sets the budget beside the figures in its currency:
+`cap` is the cap the run was given. It is null when the report was not told the cap. Otherwise it sets the cap beside the figures in its currency:
 
 ```json
 {
@@ -70,7 +70,9 @@ Amounts and token counts are decimal strings. `reasoning_output` and `cached_inp
 
 This is a recorded Codex run, stopped at a 0.001 USD cap after its first request settled at 0.0283136 USD. `overshoot_tokens` counts the billed tokens of the request that took the cost past the cap and of every request that ended after it. `enforcement_grade` is the weakest grade of the figures. `agent-flag` is the agent's own client-side estimate and can pass the cap; `none` means nothing held the run, and the comment then states no cap. A cap is never stated in turns.
 
-`cost` and the fields after it are null when the figures in USD span more than one basis, because no single figure compares with the budget.
+`cost` and the fields after it are null when the figures in USD span more than one basis, because no single figure compares with the cap.
+
+The cap is not the policy's budget. The policy reads its budget from `policy.run_budget_usd` in `costroid.yml`, and `policy.results` states it as `limit_usd` beside the rule `run_budget`. No rule reads the cap. Either can be present without the other, and the comment names them apart: `Cap:` for the one, `Run budget:` for the other.
 
 ## When there are no figures
 
@@ -83,6 +85,15 @@ This is a recorded Codex run, stopped at a 0.001 USD cap after its first request
 | `rows_path_not_a_file` | The rows path is not a regular file, so it was not read.                          |
 | `rows_file_unread`     | The rows file could not be read.                                                  |
 | `invalid_row`          | A line is not a valid row, and `reason_line` names it. No partial total is shown. |
+
+When the rows file holds no rows and the run said why, `run_reason` carries the run's own code:
+
+| `run_reason`     | Meaning                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| `no_usage`       | The agent ended and reported no usage.                                             |
+| `concurrent_run` | Another run held the agent's state directory, so this run never started its agent. |
+
+`run --json` sets it. `report --run-reason` restates it, because the rows file cannot carry it, and the comment then states the reason in words beside its code.
 
 ## In a workflow
 

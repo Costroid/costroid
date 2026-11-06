@@ -74,6 +74,11 @@ func (g *GitLab) PostCheck(context.Context, CheckRun) (int64, error) {
 	return 0, ErrNoCheck
 }
 
+// UpdateCheck sends nothing, because PostCheck creates no check.
+func (g *GitLab) UpdateCheck(context.Context, int64, CheckRun) error {
+	return ErrNoCheck
+}
+
 type gitLabNote struct {
 	ID     int64  `json:"id"`
 	Body   string `json:"body"`

@@ -13,6 +13,8 @@ Unverified: the agent's job wrote these figures.
 
 Cap: USD 5 (agent-flag: client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
 
+Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 
 <details>
@@ -37,7 +39,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 
 ```json
 {
-  "schema": "costroid.result/0.2",
+  "schema": "costroid.result/0.3",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",
@@ -66,7 +68,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
     }
   ],
   "figures_omitted": 0,
-  "budget": {
+  "cap": {
     "currency": "USD",
     "amount": "5",
     "enforcement_grade": "agent-flag",

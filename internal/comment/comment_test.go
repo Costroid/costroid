@@ -31,7 +31,7 @@ const (
 	githubLimit = 65535
 )
 
-var update = flag.Bool("update", false, "rewrite docs/comment-example.md")
+var update = flag.Bool("update", false, "rewrite docs/comment-example.md and the golden comments")
 
 // rowFields is one row of one million output tokens, priced at cost per
 // million, so its own arithmetic holds whatever cost says.
@@ -624,6 +624,14 @@ func TestCommentBlockIsTheCheckBlockNamingTheCheckRun(t *testing.T) {
 	}
 	if !strings.Contains(strings.ReplaceAll(body, idLine, ""), output.Text) {
 		t.Errorf("the copy differs from the check's block:\n%s\n%s", body, output.Text)
+	}
+	input.IDInCheck = true
+	named, err := Check(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, named.Text) {
+		t.Errorf("the copy differs from the block of a check that names itself:\n%s\n%s", body, named.Text)
 	}
 	input.CheckRunID = nil
 	if !strings.Contains(commentOf(t, input), "the check run was not posted") {

@@ -30,7 +30,7 @@ const usage = `costroid runs a coding agent under a budget and records what it c
 Usage:
   costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--json] -- <agent command>
   costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
-  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
+  costroid report --rows rows.jsonl [--budget-usd N] [--run-reason R] [--installation-id ID] [--json]
   costroid follow-up --rows rows.jsonl
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE] [--reports DIR --as-of T]
   costroid policy --rows rows.jsonl [--config costroid.yml] [--workflow-added T] [--at T] [--json]
@@ -58,10 +58,12 @@ are claims. Rows stay unverified and unattributed until a ledger checks them
 against the job's OIDC token.
 
 --json prints one result object on stdout when the command ends: figures per
-currency and basis, token counts by class, grades, the budget and what is left
-or over, and a reason when there are no figures. run then sends the agent's
-stream to stderr. report prints the object its check run carries, byte for
-byte. run prints none when it exits 125. docs/agents.md describes the object.
+currency and basis, token counts by class, grades, the cap and what is left or
+over, and a reason when there are no figures. run then sends the agent's
+stream to stderr, and its object says why it wrote no rows when it wrote none.
+report prints the object its check run carries, byte for byte. run prints none
+when it exits 125, unless another run held the agent's state directory.
+docs/agents.md describes the object.
 
 ingest-run writes the rows of a claude-code-action run from the action's
 execution_file output, after the action ended. No budget held that run, so the
@@ -74,7 +76,8 @@ summary withholds amounts and token counts where the comment does. On GitLab CI
 it posts one sticky merge request note, with COSTROID_GITLAB_TOKEN and the CI_*
 variables, and no check. It exits 0 whatever the host answers, so a failed post
 never fails the job. Outside both it refuses and exits 125. --budget-usd
-restates the run's budget, which rows do not record.
+restates the run's cap, which rows do not record. --run-reason restates why the
+run wrote no rows, no_usage or concurrent_run, as the run's object names it.
 --installation-id puts the GitHub App installation on the account link;
 COSTROID_INSTALLATION_ID does the same. GitLab's link names the project id.
 
@@ -308,11 +311,15 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		var refused *run.RefusedError
+		if flags.json && errors.As(err, &refused) {
+			printRunResult(stdout, stderr, flags, ci.Head, result.Reason)
+		}
 		return exitFailure
 	}
 	summarize(stderr, flags, pinned.Version(), result)
 	if flags.json {
-		printRunResult(stdout, stderr, flags, ci.Head)
+		printRunResult(stdout, stderr, flags, ci.Head, result.Reason)
 	}
 	if result.Stopped {
 		return exitBudgetStop
@@ -321,8 +328,9 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 }
 
 // printRunResult prints the result object of the rows the run wrote, read as
-// the report reads them. No check has concluded on them yet.
-func printRunResult(stdout, stderr io.Writer, flags runFlags, head string) {
+// the report reads them, with the run's reason when it wrote none. No check
+// has concluded on them yet.
+func printRunResult(stdout, stderr io.Writer, flags runFlags, head string, reason run.Reason) {
 	rows, err := readReportRows(flags.out)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
@@ -332,6 +340,7 @@ func printRunResult(stdout, stderr io.Writer, flags runFlags, head string) {
 		State:       rows.state,
 		Reason:      rows.reason,
 		ReasonLine:  rows.line,
+		RunReason:   reason,
 		HeadSHA:     head,
 		Budget:      &flags.budget,
 		Amounts:     comment.AmountsShown,

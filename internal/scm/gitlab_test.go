@@ -166,9 +166,13 @@ func TestGitLabVisibilityReadsThreeValuesAndNothingElse(t *testing.T) {
 
 func TestPostCheckSendsNothing(t *testing.T) {
 	stub := scmtest.NewGitLab(t)
-	_, err := gitLabAdapter(t, stub).PostCheck(context.Background(), scm.CheckRun{HeadSHA: sampleSHA, Completed: time.Now()})
+	host := gitLabAdapter(t, stub)
+	_, err := host.PostCheck(context.Background(), scm.CheckRun{HeadSHA: sampleSHA, Completed: time.Now()})
 	if !errors.Is(err, scm.ErrNoCheck) || len(stub.Requests) != 0 {
 		t.Errorf("err = %v, requests = %v", err, stub.Requests)
+	}
+	if err := host.UpdateCheck(context.Background(), 1, scm.CheckRun{Text: "t"}); !errors.Is(err, scm.ErrNoCheck) || len(stub.Requests) != 0 {
+		t.Errorf("update: err = %v, requests = %v", err, stub.Requests)
 	}
 }
 

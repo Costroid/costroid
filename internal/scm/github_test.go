@@ -3,6 +3,7 @@ package scm_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,6 +37,24 @@ func TestPostCheckCreatesACompletedCheckAndReturnsItsID(t *testing.T) {
 	}
 	if len(stub.Checks) != 1 || stub.Checks[0].ID != id || stub.Checks[0].Name != "costroid" || stub.Checks[0].HeadSHA != sampleSHA || stub.Checks[0].Conclusion != "neutral" {
 		t.Errorf("checks = %+v, id %d", stub.Checks, id)
+	}
+}
+
+func TestUpdateCheckRewritesTheOutputAndKeepsTheConclusion(t *testing.T) {
+	stub := scmtest.New(t)
+	host := adapter(t, stub)
+	id, err := host.PostCheck(context.Background(), scm.CheckRun{Name: "costroid", HeadSHA: sampleSHA, Conclusion: "neutral", Summary: "s", Text: "first", Completed: time.Unix(0, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := host.UpdateCheck(context.Background(), id, scm.CheckRun{Title: "Verdict: neutral", Summary: "s", Text: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.Checks) != 1 || stub.Checks[0].Text != "second" || stub.Checks[0].Conclusion != "neutral" {
+		t.Errorf("checks = %+v", stub.Checks)
+	}
+	if writes := stub.Writes(); len(writes) != 2 || writes[1] != fmt.Sprintf("PATCH /repos/example/widgets/check-runs/%d", id) {
+		t.Errorf("writes = %v", writes)
 	}
 }
 

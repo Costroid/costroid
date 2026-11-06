@@ -50,6 +50,9 @@ type PullRequest struct {
 type Reporter interface {
 	// PostCheck returns the check's id. A host without one answers ErrNoCheck.
 	PostCheck(ctx context.Context, check CheckRun) (int64, error)
+	// UpdateCheck replaces the output of check run id with check's title,
+	// summary and text. A host without checks answers ErrNoCheck.
+	UpdateCheck(ctx context.Context, id int64, check CheckRun) error
 	// UpsertComment edits the host's own comment that opens with marker, or
 	// creates it when there is none.
 	UpsertComment(ctx context.Context, pullRequest int, marker, body string) error

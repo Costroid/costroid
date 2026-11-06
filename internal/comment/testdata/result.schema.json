@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.2/result.schema.json",
-  "title": "Costroid result object, version 0.2",
-  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the budget, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.3/result.schema.json",
+  "title": "Costroid result object, version 0.3",
+  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.2"
+      "const": "costroid.result/0.3"
     },
     "check_run_id": {
-      "description": "The check run that carries this object. Absent in the check run's own block, which is written before the host assigns the id, and in what costroid run and costroid report print.",
+      "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
       "type": "integer",
       "minimum": 1
     },
@@ -37,6 +37,9 @@
       "description": "The line of the rows file that is not a valid row. Only with the reason invalid_row.",
       "type": "integer",
       "minimum": 1
+    },
+    "run_reason": {
+      "$ref": "#/$defs/runReason"
     },
     "head_sha": {
       "description": "The head commit, lower case. Empty when the environment named none.",
@@ -69,14 +72,14 @@
       "type": "integer",
       "minimum": 0
     },
-    "budget": {
-      "description": "The run's budget. Null when the report was not told it, or when amounts are withheld.",
+    "cap": {
+      "description": "The cap the run was given, as the report was told it. Null when the report was not told it, or when amounts are withheld. It is not the policy's budget: policy.results names that limit as limit_usd.",
       "oneOf": [
         {
           "type": "null"
         },
         {
-          "$ref": "#/$defs/budget"
+          "$ref": "#/$defs/cap"
         }
       ]
     },
@@ -97,7 +100,7 @@
     "run_identity",
     "figures",
     "figures_omitted",
-    "budget",
+    "cap",
     "data"
   ],
   "additionalProperties": false,
@@ -131,6 +134,11 @@
             {
               "required": [
                 "reason_line"
+              ]
+            },
+            {
+              "required": [
+                "run_reason"
               ]
             }
           ]
@@ -191,7 +199,7 @@
       },
       "else": {
         "properties": {
-          "budget": {
+          "cap": {
             "type": "null"
           },
           "figures": {
@@ -260,7 +268,7 @@
       ]
     },
     "enforcementGrade": {
-      "description": "What held the run to its budget.",
+      "description": "What held the run to its cap.",
       "enum": [
         "gateway-precheck",
         "agent-flag",
@@ -284,6 +292,13 @@
         "rows_path_not_a_file",
         "rows_file_unread",
         "invalid_row"
+      ]
+    },
+    "runReason": {
+      "description": "Why the run wrote no rows, as costroid run stated it. Present only when the run stated one. The list is closed.",
+      "enum": [
+        "no_usage",
+        "concurrent_run"
       ]
     },
     "tokenClass": {
@@ -346,8 +361,8 @@
       ],
       "additionalProperties": false
     },
-    "budget": {
-      "description": "The budget beside the one figure it holds: the figures in its currency, when they share one basis. cost and the fields after it are null when no such figure exists.",
+    "cap": {
+      "description": "The cap beside the one figure it holds: the figures in its currency, when they share one basis. cost and the fields after it are null when no such figure exists.",
       "type": "object",
       "properties": {
         "currency": {

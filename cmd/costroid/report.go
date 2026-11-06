@@ -19,6 +19,7 @@ import (
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/run"
 	"github.com/Costroid/costroid/internal/scm"
 )
 
@@ -42,6 +43,7 @@ type reportFlags struct {
 	rows         string
 	budget       *decimal.Decimal
 	installation string
+	runReason    run.Reason
 	json         bool
 }
 
@@ -50,8 +52,9 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
-	budget := set.String("budget-usd", "", "the budget the run was given, in USD")
+	budget := set.String("budget-usd", "", "the cap the run was given, in USD")
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id; GitLab uses the project id")
+	reason := set.String("run-reason", "", "why the run wrote no rows, as costroid run stated it")
 	asJSON := set.Bool("json", false, "print the result object on stdout")
 	if err := set.Parse(args); err != nil {
 		return reportFlags{}, err
@@ -59,7 +62,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	if *rows == "" {
 		return reportFlags{}, errors.New("report needs --rows")
 	}
-	flags := reportFlags{rows: *rows, installation: *installation, json: *asJSON}
+	flags := reportFlags{rows: *rows, installation: *installation, runReason: run.Reason(*reason), json: *asJSON}
 	if *budget != "" {
 		amount, err := decimal.Parse(*budget)
 		if err != nil {
@@ -209,6 +212,7 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		State:      rows.state,
 		Reason:     rows.reason,
 		ReasonLine: rows.line,
+		RunReason:  runReasonFor(rows.state, flags.runReason, stderr),
 		Budget:     flags.budget,
 		RunURL:     runURL(system),
 	}
@@ -223,6 +227,23 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	return 0
 }
 
+// runReasonFor keeps the run's reason for an empty rows file. A reason outside
+// the closed list is dropped, and so is one beside a rows file that is not
+// empty, which says more than the reason does.
+func runReasonFor(state comment.State, reason run.Reason, stderr io.Writer) run.Reason {
+	switch {
+	case reason == "":
+		return ""
+	case reason.Sentence() == "":
+		fmt.Fprintf(stderr, "costroid: warning: --run-reason %q is not a reason costroid run states, so it is dropped\n", reason)
+		return ""
+	case state != comment.NoRows:
+		fmt.Fprintf(stderr, "costroid: warning: --run-reason %s is dropped, because only an empty rows file carries one\n", reason)
+		return ""
+	}
+	return reason
+}
+
 // post posts the check and the comment, and returns the input as posted: with
 // the installation, the amounts setting, the policy's verdict and the check
 // run's id.
@@ -235,6 +256,9 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
+	if input.CheckRunID != nil {
+		input.IDInCheck = nameCheck(ctx, host, input, stderr)
+	}
 	if pull.pullRequest > 0 {
 		postComment(ctx, host, input, pull.pullRequest, stderr)
 	}
@@ -393,6 +417,22 @@ func postCheck(ctx context.Context, host scm.Reporter, input comment.Input, stde
 	}
 	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", id, input.Conclusion())
 	return &id
+}
+
+// nameCheck writes the check run's id into its own result object. GitHub
+// assigns the id when the check is created, so it takes a second request. The
+// check keeps the object it was created with when that request fails.
+func nameCheck(ctx context.Context, host scm.Reporter, input comment.Input, stderr io.Writer) bool {
+	input.IDInCheck = true
+	output, err := comment.Check(input)
+	if err == nil {
+		err = host.UpdateCheck(ctx, *input.CheckRunID, scm.CheckRun{Title: output.Title, Summary: output.Summary, Text: output.Text})
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: check run %d does not name itself: %v\n", *input.CheckRunID, err)
+		return false
+	}
+	return true
 }
 
 // resolveAmounts applies the comment.show_cost rule. When the setting or the visibility

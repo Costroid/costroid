@@ -116,6 +116,8 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/check-runs"):
 		s.postCheck(w, body)
+	case r.Method == http.MethodPatch && strings.Contains(path, "/check-runs/"):
+		s.patchCheck(w, path, body)
 	case strings.Contains(path, "/issues/comments/") && r.Method == http.MethodPatch:
 		s.patchComment(w, path, body)
 	case strings.HasSuffix(path, "/comments") && r.Method == http.MethodGet:
@@ -161,6 +163,34 @@ func (s *Stub) postCheck(w http.ResponseWriter, body []byte) {
 	s.Checks = append(s.Checks, check)
 	w.WriteHeader(http.StatusCreated)
 	s.answer(w, map[string]int64{"id": check.ID})
+}
+
+// patchCheck replaces a stored check's output, as GitHub does. The posted
+// conclusion stays.
+func (s *Stub) patchCheck(w http.ResponseWriter, path string, body []byte) {
+	id, err := strconv.ParseInt(path[strings.LastIndex(path, "/")+1:], 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	var request struct {
+		Output *struct {
+			Summary string `json:"summary"`
+			Text    string `json:"text"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil || request.Output == nil {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		return
+	}
+	for index := range s.Checks {
+		if s.Checks[index].ID == id {
+			s.Checks[index].Summary, s.Checks[index].Text = request.Output.Summary, request.Output.Text
+			s.answer(w, map[string]int64{"id": id})
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNotFound)
 }
 
 func commentBody(body []byte) string {

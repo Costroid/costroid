@@ -20,6 +20,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/run"
 )
 
 const (
@@ -28,9 +29,9 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.2 in
+	// schema names the result object's contract, result/v0.3 in
 	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.2"
+	schema = "costroid.result/0.3"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -120,8 +121,9 @@ type Input struct {
 	Ledger  Ledger
 	State   State
 	HeadSHA string
-	// Budget is the run's budget in USD, nil when the report was not told.
-	// Rows record the enforcement grade and do not record the budget.
+	// Budget is the run's cap in USD, nil when the report was not told.
+	// Rows record the enforcement grade and do not record the cap. The
+	// policy's budget is a separate amount, read from costroid.yml.
 	Budget *decimal.Decimal
 	// Installation is the SCM installation id, empty when no App is installed.
 	// On GitLab it is the project id.
@@ -131,11 +133,18 @@ type Input struct {
 	AccountHost string
 	// CheckRunID names the posted check, nil when the post failed.
 	CheckRunID *int64
-	Amounts    Amounts
+	// IDInCheck says the check run's own text names CheckRunID. The id exists
+	// only once the check is created, so the report writes it in a second
+	// request, and the result object names it once that request succeeds.
+	IDInCheck bool
+	Amounts   Amounts
 	// Reason says why there are no figures, and ReasonLine names the line of
 	// an InvalidRow.
 	Reason     Reason
 	ReasonLine int
+	// RunReason is why the run wrote no rows, as the run stated it. It is
+	// shown only when the rows file holds no rows.
+	RunReason run.Reason
 	// RunURL is the CI run's page as the environment names it, empty when it
 	// names none. A value outside runURLPattern is dropped.
 	RunURL string
@@ -167,13 +176,14 @@ type Block struct {
 	State          State         `json:"state"`
 	Reason         Reason        `json:"reason,omitempty"`
 	ReasonLine     int           `json:"reason_line,omitempty"`
+	RunReason      run.Reason    `json:"run_reason,omitempty"`
 	HeadSHA        string        `json:"head_sha"`
 	Amounts        string        `json:"amounts"`
 	Rows           int           `json:"rows"`
 	RunIdentity    string        `json:"run_identity"`
 	Figures        []BlockFigure `json:"figures"`
 	FiguresOmitted int           `json:"figures_omitted"`
-	Budget         *BlockBudget  `json:"budget"`
+	Cap            *BlockCap     `json:"cap"`
 	Data           BlockData     `json:"data"`
 	// Policy is the verdict, without its amounts when amounts are withheld.
 	Policy *policy.Verdict `json:"policy,omitempty"`
@@ -192,9 +202,9 @@ type BlockFigure struct {
 	Tokens           map[string]string `json:"tokens,omitempty"`
 }
 
-// BlockBudget is the run's budget beside the figure it holds. The fields
-// after EnforcementGrade are null when no single figure compares with it.
-type BlockBudget struct {
+// BlockCap is the run's cap beside the figure it holds. The fields after
+// EnforcementGrade are null when no single figure compares with it.
+type BlockCap struct {
 	Currency         string  `json:"currency"`
 	Amount           string  `json:"amount"`
 	EnforcementGrade *string `json:"enforcement_grade"`
@@ -242,12 +252,13 @@ func Check(input Input) (CheckOutput, error) {
 }
 
 // Result renders the result object as the check run carries it: every amount
-// in it, and no check run id, because the check cannot know its own id
-// before it is posted.
+// in it, and the check run's id once the check names it.
 func Result(input Input) (string, error) {
 	authoritative := input
 	authoritative.Amounts = AmountsShown
-	authoritative.CheckRunID = nil
+	if !input.IDInCheck {
+		authoritative.CheckRunID = nil
+	}
 	return authoritative.block()
 }
 
@@ -271,6 +282,7 @@ func (i Input) block() (string, error) {
 		State:          i.State,
 		Reason:         i.Reason,
 		ReasonLine:     i.ReasonLine,
+		RunReason:      i.runReason(),
 		HeadSHA:        i.headSHA(),
 		Amounts:        "withheld",
 		Rows:           i.Ledger.Rows,
@@ -306,7 +318,7 @@ func (i Input) block() (string, error) {
 	}
 	if shown {
 		block.Amounts = "shown"
-		block.Budget = i.capCheck().block()
+		block.Cap = i.capCheck().block()
 	}
 	block.Policy = blockVerdict(i.Verdict, shown)
 	encoded, err := json.MarshalIndent(block, "", "  ")
@@ -323,6 +335,15 @@ func (i Input) conclusion() *string {
 	}
 	conclusion := i.Conclusion()
 	return &conclusion
+}
+
+// runReason is the run's reason from the closed list, on a report whose rows
+// file holds no rows. Beside rows, or outside the list, it is dropped.
+func (i Input) runReason() run.Reason {
+	if i.State != NoRows || i.RunReason.Sentence() == "" {
+		return ""
+	}
+	return i.RunReason
 }
 
 // headSHA is the head commit when it is one, and empty otherwise.
@@ -398,6 +419,8 @@ type view struct {
 	ShowAmounts bool
 	AmountsOff  bool
 	CapLine     string
+	// LimitLines state each limit the policy checked, apart from the cap.
+	LimitLines []string
 	// Reconciliations are closed sentences, one per credential.
 	Reconciliations []string
 	Lines           []figureLine
@@ -441,7 +464,10 @@ func (i Input) view() view {
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
 	}
-	result.CapLine = i.capCheck().line()
+	result.CapLine = i.capLine()
+	if shown {
+		result.LimitLines = limitLines(i.Verdict, weakestGrade(i.Ledger.Figures))
+	}
 	result.Reconciliations = reconciliationLines(i.Reconciliations)
 	for index, figure := range i.Ledger.Figures {
 		line := figureLine{
@@ -541,6 +567,8 @@ func (i Input) why() string {
 		return fmt.Sprintf("Line %d of the rows file is not a valid row, %s A partial total would read as a smaller cost.", i.ReasonLine, shows)
 	case i.Reason == InvalidRow:
 		return "A line of the rows file is not a valid row, " + shows + " A partial total would read as a smaller cost."
+	case i.runReason() != "":
+		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s.", i.RunReason, i.RunReason.Sentence())
 	case i.State == NoRows:
 		return "The rows file holds no rows, " + shows + " Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,12 +17,14 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"go.yaml.in/yaml/v3"
 
+	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/run"
 )
 
 const (
-	// resultSchema is result/v0.2 of Costroid/costroid-schemas, copied. A
+	// resultSchema is result/v0.3 of Costroid/costroid-schemas, copied. A
 	// published version never changes in place, so the copy cannot go stale.
 	resultSchema = "../../internal/comment/testdata/result.schema.json"
 	agentsDoc    = "../../docs/agents.md"
@@ -263,7 +266,7 @@ func validateResult(t *testing.T, object string) {
 		t.Fatal(err)
 	}
 	if err := schema.Validate(instance); err != nil {
-		t.Errorf("the object breaks result/v0.2: %#v\n%s", err, object)
+		t.Errorf("the object breaks result/v0.3: %#v\n%s", err, object)
 	}
 }
 
@@ -293,14 +296,14 @@ func TestRunJSONMatchesSchema(t *testing.T) {
 			ListCost string            `json:"list_cost"`
 			Tokens   map[string]string `json:"tokens"`
 		} `json:"figures"`
-		Budget struct {
+		Cap struct {
 			Remainder string `json:"remainder"`
-		} `json:"budget"`
+		} `json:"cap"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &object); err != nil {
 		t.Fatalf("stdout is not one object: %v\n%s", err, stdout)
 	}
-	if object.Conclusion != nil || len(object.Figures) != 1 || object.Figures[0].ListCost != realTotal || object.Figures[0].Tokens["output"] != "272" || object.Budget.Remainder != "4.998380275" {
+	if object.Conclusion != nil || len(object.Figures) != 1 || object.Figures[0].ListCost != realTotal || object.Figures[0].Tokens["output"] != "272" || object.Cap.Remainder != "4.998380275" {
 		t.Errorf("object:\n%s", stdout)
 	}
 }
@@ -311,7 +314,7 @@ func TestRunJSONMatchesSchemaWhenTheRunWroteNoRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	printRunResult(&stdout, &stderr, runFlags{out: rows, budget: decimal.MustParse("5")}, "")
+	printRunResult(&stdout, &stderr, runFlags{out: rows, budget: decimal.MustParse("5")}, "", "")
 	validateResult(t, stdout.String())
 	if !strings.Contains(stdout.String(), `"reason": "empty_rows_file"`) {
 		t.Errorf("no reason in\n%s", stdout.String())
@@ -376,5 +379,146 @@ func TestAgentsDocReadsTheResultFromTheCheckRun(t *testing.T) {
 	}
 	if compactJSON(t, string(read)) != compactJSON(t, printed) {
 		t.Errorf("the page's program reads\n%s\nand report printed\n%s", read, printed)
+	}
+}
+
+// silentClaude is a Claude Code that ends with a result object and reports no
+// usage, in a config directory of its own.
+func silentClaude(t *testing.T) string {
+	t.Helper()
+	claude := replayClaude(t)
+	stream := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(stream, []byte(`{"type":"result","subtype":"success","is_error":false,"num_turns":0,"session_id":"`+sessionID+`","usage":{},"modelUsage":{}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(replayStream, stream)
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	return claude
+}
+
+// runJSON runs costroid run --json and returns its exit code, the object it
+// printed and the rows file.
+func runJSON(t *testing.T, claude string) (int, string, string) {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "rows.jsonl")
+	stderrFile, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderrFile.Close()
+	var printed bytes.Buffer
+	code := dispatch(context.Background(), []string{"run", "--budget-usd", "5", "--out", out, "--json", "--", claude, "-p", "work"}, strings.NewReader(""), &printed, stderrFile)
+	return code, printed.String(), out
+}
+
+// TestEmptyRunReasonInJSONAndComment follows each reason a run states from
+// run --json to the report: the object names it, and the comment, the check
+// run and report --json say it in words and as its code.
+func TestEmptyRunReasonInJSONAndComment(t *testing.T) {
+	cases := []struct {
+		reason   run.Reason
+		code     int
+		start    func(t *testing.T) string
+		sentence string
+	}{
+		{run.ReasonNoUsage, 0, silentClaude, "This report shows no figures. Reason `no_usage`: the agent reported no usage, so the run wrote no rows."},
+		{run.ReasonConcurrentRun, exitFailure, func(t *testing.T) string {
+			claude := silentClaude(t)
+			release, err := claudecode.Agent{}.Claim()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(release)
+			return claude
+		}, "This report shows no figures. Reason `concurrent_run`: another costroid run holds the agent's state directory, so this run did not start and wrote no rows."},
+	}
+	for _, test := range cases {
+		t.Run(string(test.reason), func(t *testing.T) {
+			code, printed, rows := runJSON(t, test.start(t))
+			if code != test.code {
+				t.Fatalf("run exit %d, want %d:\n%s", code, test.code, printed)
+			}
+			validateResult(t, printed)
+			field := `"run_reason": "` + string(test.reason) + `"`
+			if !strings.Contains(printed, field) || !strings.Contains(printed, `"reason": "empty_rows_file"`) {
+				t.Errorf("run --json lacks %s:\n%s", field, printed)
+			}
+			stub := reportEnvironment(t, pullRequestEvent())
+			code, reported, stderr := execute(t, "report", "--rows", rows, "--run-reason", string(test.reason), "--json")
+			if code != 0 || len(stub.Checks) != 1 || len(stub.Comments) != 1 {
+				t.Fatalf("report exit %d, %d checks, %d comments: %s", code, len(stub.Checks), len(stub.Comments), stderr)
+			}
+			validateResult(t, reported)
+			body := stub.Comments[0].Body
+			for where, text := range map[string]string{"report --json": reported, "the check run": stub.Checks[0].Text, "the comment": body} {
+				if !strings.Contains(text, field) {
+					t.Errorf("%s lacks %s:\n%s", where, field, text)
+				}
+			}
+			if !strings.Contains(body, test.sentence) || !strings.Contains(stub.Checks[0].Summary, test.sentence) {
+				t.Errorf("no %q in\n%s", test.sentence, body)
+			}
+		})
+	}
+}
+
+func TestReportDropsARunReasonBesideRowsOrOutsideTheList(t *testing.T) {
+	for name, args := range map[string][]string{
+		"beside rows":      {"--rows", realRows, "--run-reason", string(run.ReasonNoUsage)},
+		"outside the list": {"--rows", filepath.Join(t.TempDir(), "absent.jsonl"), "--run-reason", "agent_crashed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := reportEnvironment(t, pullRequestEvent())
+			code, printed, stderr := execute(t, append([]string{"report", "--json"}, args...)...)
+			if code != 0 || !strings.Contains(stderr, "--run-reason") {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			validateResult(t, printed)
+			if strings.Contains(printed, "run_reason") || strings.Contains(stub.Comments[0].Body, "Reason `") {
+				t.Errorf("a dropped reason is shown:\n%s", stub.Comments[0].Body)
+			}
+		})
+	}
+}
+
+// TestCheckRunCarriesItsID reads the check run's id from the check run's own
+// object, from report --json and from the step's outputs. When the update that
+// writes it fails, the check keeps the object it was created with, report
+// --json still matches it, and the comment still names the check.
+func TestCheckRunCarriesItsID(t *testing.T) {
+	for name, fail := range map[string]bool{"updated": false, "update refused": true} {
+		t.Run(name, func(t *testing.T) {
+			stub := reportEnvironment(t, pullRequestEvent())
+			if fail {
+				stub.Fail["PATCH /check-runs/"] = 500
+			}
+			outputs, _ := stepFiles(t)
+			code, printed, stderr := execute(t, "report", "--rows", realRows, "--budget-usd", "5", "--json")
+			if code != 0 || len(stub.Checks) != 1 {
+				t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+			}
+			field := fmt.Sprintf(`"check_run_id": %d,`, stub.Checks[0].ID)
+			block := checkBlock(t, stub.Checks[0].Text)
+			if printed != block+"\n" {
+				t.Errorf("report --json differs from the check run's object:\n%s\n%s", printed, block)
+			}
+			validateResult(t, printed)
+			if strings.Contains(block, field) == fail {
+				t.Errorf("the check run's object, update refused %v:\n%s", fail, block)
+			}
+			if fail != strings.Contains(stderr, "does not name itself") {
+				t.Errorf("stderr: %s", stderr)
+			}
+			if !strings.Contains(commentBlock(t, stub.Comments[0].Body), field) {
+				t.Errorf("the comment does not name the check run:\n%s", stub.Comments[0].Body)
+			}
+			got := readOutputs(t, outputs)
+			if got["check_run_id"] != strconv.FormatInt(stub.Checks[0].ID, 10) || got["result"] != compactJSON(t, block) {
+				t.Errorf("outputs %v", got)
+			}
+			if conclusion := stub.Checks[0].Conclusion; conclusion != "neutral" {
+				t.Errorf("the update moved the conclusion to %q", conclusion)
+			}
+		})
 	}
 }

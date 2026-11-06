@@ -1,6 +1,7 @@
 package comment
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reconcile"
 )
 
@@ -142,5 +144,79 @@ func TestCapLineLeavesTheReconciliationOutUntilThereIsOne(t *testing.T) {
 	}
 	if strings.Contains(body, "apikey_02Example") || strings.Contains(body, "apikey_03Example") {
 		t.Errorf("a reconciliation outside the closed form is shown:\n%s", body)
+	}
+}
+
+func TestCapLineNamesTheGradeOfACapTheReportWasNotGiven(t *testing.T) {
+	input := realInput(t)
+	input.Budget = nil
+	want := "Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it."
+	if line := capLineOf(t, input); line != want {
+		t.Errorf("cap line\n%s\nwant\n%s", line, want)
+	}
+	none := sampleFields()
+	none.enforcement = "none"
+	if line := capLineOf(t, Input{Ledger: ledgerOf(t, none), State: Reported, Amounts: AmountsShown}); line != "No cap held this run: its enforcement grade is none." {
+		t.Errorf("cap line %q", line)
+	}
+}
+
+// policyBudgetGolden is the comment on the recorded run under a USD 5 policy
+// budget, by a report that was not given the run's cap.
+var policyBudgetGolden = filepath.Join("testdata", "policy-budget-no-cap.md")
+
+// TestPolicyBudgetBesideNoCap renders the policy's budget beside every kind
+// of cap line, and holds the case of a policy budget and no cap to a golden.
+// The cap and the budget never share a name, and no line says a budget is
+// missing while the verdict checks one.
+func TestPolicyBudgetBesideNoCap(t *testing.T) {
+	golden := exampleInput(t)
+	golden.Budget = nil
+	body := commentOf(t, golden)
+	if *update {
+		if err := os.WriteFile(policyBudgetGolden, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := os.ReadFile(policyBudgetGolden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(saved) != body {
+		t.Errorf("%s is stale, rerun with -update", policyBudgetGolden)
+	}
+	if !strings.Contains(body, `"cap": null`) || !strings.Contains(body, `"limit_usd": "5"`) {
+		t.Errorf("the block does not hold the two apart:\n%s", body)
+	}
+	five := decimal.MustParse("5")
+	for _, grade := range []string{"agent-flag", "none"} {
+		for _, budget := range []*decimal.Decimal{nil, &five} {
+			for _, verdict := range []*policy.Verdict{nil, exampleInput(t).Verdict} {
+				input := golden
+				input.Budget, input.Verdict = budget, verdict
+				fields := sampleFields()
+				fields.enforcement = grade
+				input.Ledger = ledgerOf(t, fields)
+				name := fmt.Sprintf("grade %s, cap %v, policy %v", grade, budget != nil, verdict != nil)
+				assertNoContradiction(t, name, visiblePart(commentOf(t, input)), grade, verdict != nil)
+			}
+		}
+	}
+}
+
+func assertNoContradiction(t *testing.T, name, text, grade string, policyBudget bool) {
+	t.Helper()
+	budgetLine := "Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`."
+	if strings.Contains(text, budgetLine) != policyBudget {
+		t.Errorf("%s: the policy's budget line is %v:\n%s", name, !policyBudget, text)
+	}
+	if regexp.MustCompile(`(?i)budget: not|no budget|not recorded`).MatchString(text) {
+		t.Errorf("%s: a budget reads as missing:\n%s", name, text)
+	}
+	if strings.Contains(text, "never the cap") && grade == "none" {
+		t.Errorf("%s: a run nothing held is told of a cap:\n%s", name, text)
+	}
+	if regexp.MustCompile(`(?m)^Budget|^Cap: .*budget`).MatchString(text) {
+		t.Errorf("%s: the cap line names a budget:\n%s", name, text)
 	}
 }

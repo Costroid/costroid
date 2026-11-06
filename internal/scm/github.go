@@ -244,6 +244,15 @@ func (g *GitHub) PostCheck(ctx context.Context, check CheckRun) (int64, error) {
 	return created.ID, nil
 }
 
+// UpdateCheck rewrites the output of a check run this token created. The
+// conclusion stays as it was posted.
+func (g *GitHub) UpdateCheck(ctx context.Context, id int64, check CheckRun) error {
+	request := struct {
+		Output checkOutput `json:"output"`
+	}{Output: checkOutput{Title: check.Title, Summary: check.Summary, Text: check.Text}}
+	return g.do(ctx, http.MethodPatch, g.repo(fmt.Sprintf("/check-runs/%d", id)), request, nil)
+}
+
 type issueComment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`

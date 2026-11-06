@@ -6,11 +6,12 @@ import (
 	"slices"
 
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reconcile"
 )
 
-// capCheck sets the run's budget beside the figures in its currency. A budget
-// is compared with one figure only: the figures of one currency and one basis.
+// capCheck sets the run's cap beside the figures in its currency. A cap is
+// compared with one figure only: the figures of one currency and one basis.
 type capCheck struct {
 	amount decimal.Decimal
 	// grade is the weakest enforcement grade of the figures, empty with none.
@@ -26,7 +27,7 @@ type capCheck struct {
 	overshootTokens *decimal.Decimal
 }
 
-// capCheck is nil when the report was not told the budget.
+// capCheck is nil when the report was not told the cap.
 func (i Input) capCheck() *capCheck {
 	if i.Budget == nil {
 		return nil
@@ -40,7 +41,7 @@ func (i Input) capCheck() *capCheck {
 			check.basis = figure.Basis
 		}
 	}
-	// An omitted figure could be in the budget's currency, so a total of the
+	// An omitted figure could be in the cap's currency, so a total of the
 	// figures shown would be short.
 	if len(bases) != 1 || i.Ledger.FiguresOmitted > 0 {
 		return &capCheck{amount: check.amount, grade: check.grade}
@@ -70,38 +71,52 @@ func weakestGrade(figures []Figure) string {
 	return enforcementOrder[weakest]
 }
 
-func (c *capCheck) block() *BlockBudget {
+func (c *capCheck) block() *BlockCap {
 	if c == nil {
 		return nil
 	}
-	budget := &BlockBudget{Currency: budgetCurrency, Amount: c.amount.String()}
+	held := &BlockCap{Currency: budgetCurrency, Amount: c.amount.String()}
 	if c.grade != "" {
-		budget.EnforcementGrade = &c.grade
+		held.EnforcementGrade = &c.grade
 	}
 	if !c.compared {
-		return budget
+		return held
 	}
-	budget.Cost, budget.CostBasis = text(c.cost.String()), &c.basis
-	budget.Remainder, budget.Overshoot = text(c.remainder.String()), text(c.overshoot.String())
+	held.Cost, held.CostBasis = text(c.cost.String()), &c.basis
+	held.Remainder, held.Overshoot = text(c.remainder.String()), text(c.overshoot.String())
 	if c.overshootTokens != nil {
-		budget.OvershootTokens = text(c.overshootTokens.String())
+		held.OvershootTokens = text(c.overshootTokens.String())
 	}
-	return budget
+	return held
 }
 
 func text(value string) *string {
 	return &value
 }
 
-// line is the budget line of a report that shows amounts. A cap is stated in
+// capLine is the cap line of a report that shows amounts. A cap is stated in
 // USD and never in turns, beside the grade that held it, and a run nothing
-// held states no cap.
+// held states no cap. A cap the report was not told is named by its grade
+// alone, so it never reads as a missing budget.
+func (i Input) capLine() string {
+	if i.Budget != nil {
+		return i.capCheck().line()
+	}
+	switch grade := weakestGrade(i.Ledger.Figures); grade {
+	case "":
+		return ""
+	case "none":
+		return noCap
+	default:
+		return fmt.Sprintf("Cap: held by %s (%s). The rows do not record its amount, and the report was not given it.", grade, enforcementNotes[grade])
+	}
+}
+
+const noCap = "No cap held this run: its enforcement grade is none."
+
 func (c *capCheck) line() string {
-	switch {
-	case c == nil:
-		return "Budget: not recorded on these rows."
-	case c.grade == "none":
-		return "No cap held this run: its enforcement grade is none."
+	if c.grade == "none" {
+		return noCap
 	}
 	held := fmt.Sprintf("Cap: %s %s (%s: %s).", budgetCurrency, c.amount, c.grade, enforcementNotes[c.grade])
 	if !c.compared {
@@ -145,6 +160,34 @@ func reconciliationLines(reconciliations []Reconciliation) []string {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("Last reconciliation of %s: %s, %s.", last.Credential.Code(), last.Day, note))
+	}
+	return lines
+}
+
+// limitSettings name the costroid.yml key each budget rule reads.
+var limitSettings = map[string]string{
+	policy.RuleRunBudget:        "policy.run_budget_usd",
+	policy.RuleRunCostThreshold: "policy.max_run_cost_usd",
+}
+
+// limitLines state each limit the policy checked and the setting it came
+// from, so a policy's budget is never read as the run's cap. A run that a cap
+// held is told the verdict does not check that cap.
+func limitLines(verdict *policy.Verdict, grade string) []string {
+	if verdict == nil {
+		return nil
+	}
+	var lines []string
+	for _, result := range verdict.Results {
+		setting, budgetRule := limitSettings[result.Rule]
+		if !budgetRule || result.LimitUSD == "" {
+			continue
+		}
+		line := fmt.Sprintf("%s: USD %s, from `%s` in `costroid.yml`.", ruleLabels[result.Rule], result.LimitUSD, setting)
+		if grade != "none" {
+			line += fmt.Sprintf(" The verdict checks this %s, never the cap.", limitNouns[result.Rule])
+		}
+		lines = append(lines, line)
 	}
 	return lines
 }
