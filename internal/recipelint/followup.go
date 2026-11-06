@@ -2,6 +2,7 @@ package recipelint
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -34,26 +35,7 @@ var (
 
 // isFollowUp reports a workflow that a workflow_run event starts.
 func isFollowUp(on *yaml.Node) bool {
-	if on = resolve(on); on == nil {
-		return false
-	}
-	if on.Kind == yaml.ScalarNode {
-		return on.Value == followUpEvent
-	}
-	if pairs := entries(on); len(pairs) > 0 {
-		for _, item := range pairs {
-			if item.key.Value == followUpEvent {
-				return true
-			}
-		}
-		return false
-	}
-	for _, event := range sequence(on) {
-		if event.Value == followUpEvent {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(eventNames(on), followUpEvent)
 }
 
 // followUp holds every job of a follow-up to its two rules: no code from the

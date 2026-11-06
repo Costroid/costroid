@@ -300,3 +300,47 @@ func TestTheZeroSHAOnCostroidsActionIsANoteAndNeverARejection(t *testing.T) {
 		t.Fatalf("findings %v, notes %v", report.Findings, report.Notes)
 	}
 }
+
+// unguarded is goodWorkflow's agent job with no if, started by on.
+func unguarded(t *testing.T, on string) string {
+	t.Helper()
+	const onBlock = "on:\n  pull_request:\n    types: [opened, synchronize, labeled]\n"
+	const guard = "    if: >-\n      github.event.pull_request.head.repo.full_name == github.repository\n      && (contains(fromJSON('[\"OWNER\"]'), github.event.pull_request.author_association)\n      || contains(github.event.pull_request.labels.*.name, 'costroid-agent'))\n"
+	if !strings.Contains(goodWorkflow, onBlock) || !strings.Contains(goodWorkflow, guard) {
+		t.Fatal("goodWorkflow no longer holds the trigger or the guard this test removes")
+	}
+	return strings.Replace(strings.Replace(goodWorkflow, guard, "", 1), onBlock, on, 1)
+}
+
+func TestScheduledOrDispatchedAgentNeedsNoPullRequestGuard(t *testing.T) {
+	for name, on := range map[string]string{
+		"schedule":              "on:\n  schedule:\n    - cron: \"17 6 * * *\"\n",
+		"dispatch":              "on: workflow_dispatch\n",
+		"schedule and dispatch": "on:\n  schedule:\n    - cron: \"17 6 * * *\"\n  workflow_dispatch:\n",
+		"a list":                "on: [schedule, workflow_dispatch]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			report := LintBytes("x.yml", []byte(unguarded(t, on)))
+			if got := rules(report.Findings); slices.Contains(got, RuleAgentGuard) {
+				t.Fatalf("no pull request can start this workflow, yet: %v", report.Findings)
+			}
+		})
+	}
+}
+
+func TestAgentStartedByAnyOtherEventKeepsTheGuard(t *testing.T) {
+	for name, on := range map[string]string{
+		"pull_request beside a schedule": "on:\n  schedule:\n    - cron: \"17 6 * * *\"\n  pull_request:\n",
+		"pull_request_target":            "on: pull_request_target\n",
+		"issue_comment":                  "on: [workflow_dispatch, issue_comment]\n",
+		"a reusable workflow":            "on: workflow_call\n",
+		"push":                           "on: push\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			report := LintBytes("x.yml", []byte(unguarded(t, on)))
+			if got := rules(report.Findings); !slices.Contains(got, RuleAgentGuard) {
+				t.Fatalf("want %s, got %v", RuleAgentGuard, report.Findings)
+			}
+		})
+	}
+}

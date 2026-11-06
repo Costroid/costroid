@@ -3,6 +3,7 @@ package recipelint
 import (
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -24,6 +25,15 @@ var (
 	gitHubForbidden = regexp.MustCompile(`github\.event\.(comment|review|issue|discussion)\b|github\.event\.pull_request\.(title|body)\b|github\.head_ref\b|--comments\b|/comments\b`)
 )
 
+// unguardedEvents start a run that no pull request, comment or fork can start.
+// An agent workflow that only these start has no pull request to guard
+// against. Every other event, a reusable workflow's caller included, keeps
+// the guard.
+var unguardedEvents = map[string]bool{
+	"schedule":          true,
+	"workflow_dispatch": true,
+}
+
 // gitHubGuards name what a job's if must test before an agent runs: the fork,
 // the author's standing and the maintainer's label.
 var gitHubGuards = []string{
@@ -38,9 +48,40 @@ func (l *linter) workflow(root *yaml.Node) {
 		l.followUp(root)
 	}
 	workflowPermissions := field(root, "permissions")
+	guarded := needsGuard(field(root, "on"))
 	for _, item := range entries(field(root, "jobs")) {
-		l.job(root, item, workflowPermissions)
+		l.job(root, item, workflowPermissions, guarded)
 	}
+}
+
+// needsGuard reports whether a pull request could start the workflow. A
+// workflow whose events cannot be read is held to the guard.
+func needsGuard(on *yaml.Node) bool {
+	names := eventNames(on)
+	return len(names) == 0 || slices.ContainsFunc(names, func(name string) bool { return !unguardedEvents[name] })
+}
+
+// eventNames lists the events on names, written as one name, a list or a
+// mapping.
+func eventNames(on *yaml.Node) []string {
+	on = resolve(on)
+	if on == nil {
+		return nil
+	}
+	if on.Kind == yaml.ScalarNode {
+		return []string{on.Value}
+	}
+	var names []string
+	if pairs := entries(on); len(pairs) > 0 {
+		for _, item := range pairs {
+			names = append(names, item.key.Value)
+		}
+		return names
+	}
+	for _, event := range sequence(on) {
+		names = append(names, event.Value)
+	}
+	return names
 }
 
 func (l *linter) events(on *yaml.Node) {
@@ -63,7 +104,7 @@ func (l *linter) events(on *yaml.Node) {
 	}
 }
 
-func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node) {
+func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node, guarded bool) {
 	if uses := field(job.value, "uses"); uses != nil {
 		l.uses(job.value, uses)
 	}
@@ -90,7 +131,7 @@ func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node)
 		}
 		return
 	}
-	l.agentJob(root, job, agent, agentStep, granted)
+	l.agentJob(root, job, agent, agentStep, granted, guarded)
 }
 
 func (l *linter) step(step *yaml.Node) {
@@ -160,7 +201,7 @@ func grants(permissions *yaml.Node) map[string]string {
 	return granted
 }
 
-func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.Node, granted map[string]string) {
+func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.Node, granted map[string]string, guarded bool) {
 	if granted["id-token"] == "write" {
 		l.add(job.key, RuleAgentIDToken, "the agent's job must not hold id-token: write")
 	}
@@ -171,7 +212,7 @@ func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.N
 	}
 	guard := scalarField(job.value, "if")
 	for _, want := range gitHubGuards {
-		if !strings.Contains(guard, want) {
+		if guarded && !strings.Contains(guard, want) {
 			l.add(job.key, RuleAgentGuard, "the job's if must test %s", want)
 		}
 	}
