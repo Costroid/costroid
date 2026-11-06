@@ -10,7 +10,7 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 | `run_cost_threshold` | `policy.max_run_cost_usd`  | The run's cost at list, in USD, against the threshold                                                                                                                |
 | `attribution`        | none                       | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `exact` |
 
-A rule without its setting does not run. With no `costroid.yml`, only `attribution` runs. `attribution` warns and never fails.
+A rule without its setting does not run. With no `costroid.yml`, only `attribution` runs. `attribution` warns, or says nothing. It never fails and never passes.
 
 The two budget rules compare USD amounts as exact decimals. A row in another currency is never converted.
 
@@ -24,10 +24,12 @@ Who wrote the rows decides what a budget rule can conclude. A row whose run iden
 | Over the budget or threshold  | Warns during the warn-only period, then fails                              | Warns during the warn-only period, then fails                                 |
 | No rows reached the check     | Cannot pass                                                                | Cannot pass                                                                   |
 
-| Outcome of `attribution`                    | Rows the agent's job wrote | Rows a ledger checked |
-| ------------------------------------------- | -------------------------- | --------------------- |
-| An `unattributed` row where `exact` was possible | Warns                  | Warns                 |
-| Otherwise                                   | Passes                     | Passes                |
+| Outcome of `attribution`                         | Rows the agent's job wrote | Rows a ledger checked |
+| ------------------------------------------------ | -------------------------- | --------------------- |
+| An `unattributed` row where `exact` was possible | Warns                      | Warns                 |
+| Otherwise                                        | No result                  | No result             |
+
+On the Action path no rule can pass, so the check concludes `neutral` or `failure`, never `success`.
 
 The report stage reads a rows file that the agent's own job wrote. An agent that a prompt took over could write a smaller cost into that file. A figure from it can show that a run went over its budget. It can never show that a run stayed under.
 
@@ -46,32 +48,52 @@ GitHub counts `neutral` as passing: "Required status checks must have a `success
 
 ## The warn-only period
 
-For 7 days from the commit that added the Costroid workflow to the base branch, a rule that would fail warns instead, and the check concludes `neutral`. The comment names the day the period ends and the line that ends it early:
+For 7 days from the commit that added the Costroid workflow to the base branch, a rule that would fail warns instead, and the check concludes `neutral`. When the period holds a failure back, the comment says when the period ends and gives the one line that ends it early:
 
 ```yaml
 policy:
   enforce: true
 ```
 
-The report finds that commit by asking GitHub for the oldest commit on the base branch that touched the workflow file the job runs from, as `GITHUB_WORKFLOW_REF` names it. The request needs `contents: read`, which the recipes' report job already has. When the report cannot find the commit, the period has not ended and the check warns. That happens on a pull request that adds the workflow, on GitLab, and when GitHub does not answer.
+The report finds that commit by asking GitHub for the oldest commit on the base branch that touched the workflow file the job runs from, as `GITHUB_WORKFLOW_REF` names it. The request needs `contents: read`, which the recipes' report job already has. When the report cannot find the commit, it treats the period as running, and a rule that would fail warns. That happens on a pull request that adds the workflow, on GitLab, and when GitHub does not answer.
 
 The second half of the period, 20 pull requests with a measured cost, needs a reader of earlier check runs. It arrives in a later release. Until then only the 7 days count.
 
 ## Settings come from the base commit
 
-The report reads `costroid.yml` at the pull request's base commit, never at its head. A pull request that raises its own budget, or removes `policy.enforce`, does not change its own verdict. When the head's file differs from the base's, the comment says that the change applies after the merge.
+The report reads `costroid.yml` at the pull request's base commit, never at its head. A pull request that raises its own budget, or removes `policy.enforce`, does not change its own verdict. The comment says so on every pull request: a change to `costroid.yml` applies after the merge. On a push, the report reads the file at the commit it reports on.
 
 The workflow's `budget-usd` caps the run, and a pull request can change its own workflow. No rule reads it. Set `policy.run_budget_usd` to hold each run to a budget.
 
 ## What a verdict records
 
-The check run's machine block carries the verdict under `policy`. It records each rule's outcome and reason, the warn-only period, the commit the settings came from, and the SHA-256 of the pack and of the `costroid.yml` bytes it read. A missing file hashes as zero bytes, and `config_found` reads `false`.
+The check run's machine block carries the verdict under `policy`. It records each rule's outcome and reason, the warn-only period, the time of the check, the commit the settings came from, and the SHA-256 of the pack and of the `costroid.yml` bytes it read. A missing file hashes as zero bytes, and `config` reads `absent`. A file the report could not read or parse runs no rule, `config` reads `unread` or `invalid`, and the check concludes `neutral`.
+
+```json
+"policy": {
+  "conclusion": "failure",
+  "trust": "unverified",
+  "pack_sha256": "<SHA-256 of the pack>",
+  "config_sha256": "<SHA-256 of costroid.yml>",
+  "config_ref": "<base commit>",
+  "config": "found",
+  "config_from_base": true,
+  "evaluated_at": "2026-11-09T10:00:00Z",
+  "warn_only": { "active": false, "reason": "ended", "started": "2026-11-01T10:00:00Z", "ends": "2026-11-08T10:00:00Z" },
+  "results": [
+    { "rule": "run_budget", "outcome": "fail", "reason": "over_limit", "limit_usd": "0.001", "cost_usd": "0.001619725" }
+  ],
+  "joinable_rows": 0
+}
+```
+
+The comment's copy of the block drops `limit_usd` and `cost_usd` when it withholds amounts. The check run's block keeps them.
 
 ## The engine
 
 - Open Policy Agent v1.22.2, licensed Apache-2.0, pinned in `go.mod`.
 - The capabilities file, [`internal/policy/capabilities.json`](../internal/policy/capabilities.json), lists only the built-in functions the pack calls. `http.send`, `net.*`, `opa.runtime`, `time.now_ns`, `rand.*` and every other built-in that reaches a network or gives a different answer on each call are absent. A pack that calls one fails to load. `allow_net` is empty.
-- OPA compares a number of more than 15 significant digits as a `float64`. The pack therefore compares amounts with `costroid.compare_decimal`, a function in the binary that compares exact decimals.
+- OPA compares a number of more than 15 significant digits as a `float64`. The pack therefore compares amounts with `costroid.compare_decimal`, a function the binary adds beside the file, which compares exact decimals and reaches nothing.
 - The pack never reads a clock. The report passes the time in.
 
 ## Check a verdict offline
@@ -81,6 +103,6 @@ git show origin/main:costroid.yml > base.yml
 costroid policy --rows rows.jsonl --config base.yml
 ```
 
-It prints the conclusion and one line per rule. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
+It prints the conclusion, then the verdict's sentences one per line, in the comment's words. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
 
 It exits 0 on `success` or `neutral`, 1 on `failure`, and 125 when it cannot read a file.
