@@ -108,7 +108,7 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
-| `costroid: check run <id>, conclusion neutral` | The `costroid` check run was posted | None |
+| `costroid: check run <id>, conclusion <conclusion>` | The `costroid` check run was posted with the policy's conclusion: `success`, `neutral` or `failure` | None. [`docs/policy.md`](policy.md) says how each is reached |
 | `costroid: comment on pull request <number>` | The sticky comment was posted or edited | None |
 | `costroid: report needs --rows` | No rows file was named | Pass `--rows` |
 | `costroid: report refused: neither GitHub Actions nor GitLab CI was detected` | The command ran outside CI. It exits 125 | Run it in a job |
@@ -119,6 +119,9 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: check not posted: <error>` | The check run was refused. A fork's pull request gets a read-only token, so this is expected there | Give the `report` job `checks: write`, as the recipes do |
 | `costroid: comment not posted: <error>` | The comment was refused | Give the `report` job `pull-requests: write` |
 | `costroid: warning: costroid.yml: <error>` | `costroid.yml` at the base commit could not be read or parsed. A public repository's comment then withholds amounts | Give the `report` job `contents: read`, and run `costroid validate` on the file |
+| `costroid: warning: policy: read <file> at <commit>: <error>` | The policy could not read its settings at the base commit, so no rule ran and the check concludes `neutral` | Give the `report` job `contents: read` |
+| `costroid: warning: policy: GITHUB_WORKFLOW_REF names no workflow file of this repository` | The report could not tell which workflow it runs from, so the warn-only period counts as running and a rule that fails warns | Run the report from the workflow file in `.github/workflows/`, as the recipes do. `policy.enforce: true` ends the period without it |
+| `costroid: warning: policy: no base commit to read the workflow's history at` | The event names no base commit, so the warn-only period counts as running | Run the recipe on `pull_request` |
 | `costroid: warning: repository visibility: <error>` | The repository's visibility could not be read, so the comment withholds amounts | Give the `report` job `contents: read` |
 | `costroid: warning: <error>` | The event file or the rows file could not be read. The check and the comment still post and say so | Read the reason |
 
@@ -131,6 +134,9 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: warning: costroid.yml: <key> is reserved and not read yet, so it has no effect` | The schema names the key for a later release | None. [`docs/configuration.md`](configuration.md) lists the reserved keys |
 | `costroid: warning: costroid.yml: <key> is not a key Costroid reads, so it has no effect` | The key is misspelled or does not exist | Correct it. `costroid validate` names it as well |
 | `costroid: warning: costroid.yml: a key with characters outside A-Z, a-z, 0-9, _, . and - is not one Costroid reads, so it has no effect` | The same, for a key whose name the log does not print | The same |
+| `costroid: warning: policy: policy.<key> must be a quoted decimal of at most <digits> fractional digits, such as <amount>` | A budget or a threshold is not a quoted decimal of at most 12 fractional digits, such as `"5.00"`. No rule ran, and the check concludes `neutral` | Quote the amount. `costroid validate` names it as well |
+| `costroid: warning: policy: policy.enforce must be true or false` | `enforce` holds another value. No rule ran | Set it to `true` or remove it |
+| `costroid: warning: policy: costroid.yml names a policy key Costroid does not read` | A key under `policy` is misspelled or does not exist. No rule ran | Correct it. `costroid validate` names it |
 
 ## Other commands
 

@@ -1,7 +1,7 @@
 <!-- costroid:comment -->
 ### Costroid
 
-**Verdict: neutral.** No policy ran on this change.
+**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base commit's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
@@ -91,6 +91,32 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
     "fallback_models_omitted": 0,
     "fallback_price_ids": [],
     "fallback_price_ids_omitted": 0
+  },
+  "policy": {
+    "conclusion": "neutral",
+    "trust": "unverified",
+    "pack_sha256": "749c060beeef1e1d37f7412dcaa364b648738880dc3a72b6953cfc251817c1a9",
+    "config_sha256": "d3cbc6bf0befd44c89f0089e36ad6998cc03013cd13de8e31bf49846be83d364",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "2026-11-06T09:00:00Z",
+    "warn_only": {
+      "active": true,
+      "reason": "in_period",
+      "started": "2026-11-02T09:00:00Z",
+      "ends": "2026-11-09T09:00:00Z"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "unproven",
+        "reason": "unverified_rows",
+        "limit_usd": "5",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
   }
 }
 ```

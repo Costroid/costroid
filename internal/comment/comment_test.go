@@ -1,6 +1,7 @@
 package comment
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,9 +11,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 const (
@@ -23,6 +26,7 @@ const (
 	exampleCheckRun     = int64(16873409921)
 	exampleInstallation = "58120394"
 	exampleRun          = "https://github.com/example/widgets/actions/runs/19203384756"
+	exampleBase         = "1111111111111111111111111111111111111111"
 	// githubLimit is the longest comment or check text GitHub takes.
 	githubLimit = 65535
 )
@@ -100,6 +104,34 @@ func realInput(t testing.TB) Input {
 	}
 }
 
+// exampleInput is realInput with the verdict the report gives it under a USD 5
+// budget set at the base commit, at a fixed time.
+func exampleInput(t *testing.T) Input {
+	t.Helper()
+	file, err := os.Open(filepath.Join("testdata", "rows.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	usage, err := policy.ReadUsage(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdict, err := policy.Evaluate(context.Background(), policy.Request{
+		Usage:  usage,
+		Trust:  policy.Unverified,
+		Config: policy.ConfigFile{Data: []byte("policy:\n  run_budget_usd: \"5\"\n"), Found: true, Ref: exampleBase, FromBase: true},
+		Start:  policy.Start{At: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)},
+		At:     time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := realInput(t)
+	input.Verdict = &verdict
+	return input
+}
+
 func commentOf(t *testing.T, input Input) string {
 	t.Helper()
 	body, err := Comment(input)
@@ -119,7 +151,7 @@ func visiblePart(body string) string {
 
 func TestDocsExampleIsTheRenderedCommentForARealRowsFile(t *testing.T) {
 	path := filepath.Join("..", "..", "docs", "comment-example.md")
-	body := commentOf(t, realInput(t))
+	body := commentOf(t, exampleInput(t))
 	if *update {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)

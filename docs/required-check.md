@@ -1,8 +1,8 @@
 # Require the check
 
-The report job posts one check run named `costroid` on the pull request's head commit. Today it always concludes `neutral`, because no policy runs yet: a run over its budget does not fail it.
+The report job posts one check run named `costroid` on the pull request's head commit. It concludes `success`, `neutral` or `failure` from the policy that `costroid.yml` sets at the base commit. [`docs/policy.md`](policy.md) says how each is reached. With no policy set, it concludes `neutral`.
 
-GitHub counts `neutral` as passing. "Required status checks must have a `successful`, `skipped`, or `neutral` status" ([About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), read 2026-11-04). Requiring the check gates nothing yet. It makes a merge wait until the report job has posted.
+GitHub counts `neutral` as passing. "Required status checks must have a `successful`, `skipped`, or `neutral` status" ([About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), read 2026-11-04). A required check blocks a merge only when it concludes `failure`: a run over its budget or threshold after the 7-day warn-only period. Until then, requiring it makes a merge wait until the report job has posted.
 
 ## Before you require it
 
