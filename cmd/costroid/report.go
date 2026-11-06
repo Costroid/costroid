@@ -18,6 +18,8 @@ import (
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/policy/workflow"
 	"github.com/Costroid/costroid/internal/scm"
 )
 
@@ -216,21 +218,23 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
 	} else {
-		input = post(ctx, target, input, stderr)
+		input = post(ctx, target, input, policySource{system: system, rows: flags.rows}, stderr)
 	}
 	publish(input, flags.json, stdout, stderr)
 	return 0
 }
 
 // post posts the check and the comment, and returns the input as posted: with
-// the installation, the amounts setting and the check run's id.
-func post(ctx context.Context, target reportTarget, input comment.Input, stderr io.Writer) comment.Input {
+// the installation, the amounts setting, the policy's verdict and the check
+// run's id.
+func post(ctx context.Context, target reportTarget, input comment.Input, source policySource, stderr io.Writer) comment.Input {
 	host, pull := target.host, target.pull
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
+	input.Verdict = decideVerdict(ctx, host, pull, source, input.State, stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if pull.pullRequest > 0 {
 		postComment(ctx, host, input, pull.pullRequest, stderr)
@@ -378,7 +382,7 @@ func postCheck(ctx context.Context, host scm.Reporter, input comment.Input, stde
 	id, err := host.PostCheck(ctx, scm.CheckRun{
 		Name:       comment.CheckName,
 		HeadSHA:    input.HeadSHA,
-		Conclusion: comment.Conclusion,
+		Conclusion: input.Conclusion(),
 		Title:      output.Title,
 		Summary:    output.Summary,
 		Text:       output.Text,
@@ -388,7 +392,7 @@ func postCheck(ctx context.Context, host scm.Reporter, input comment.Input, stde
 		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
 		return nil
 	}
-	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", id, comment.Conclusion)
+	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", id, input.Conclusion())
 	return &id
 }
 
@@ -443,4 +447,76 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, pu
 		return
 	}
 	fmt.Fprintf(stderr, "costroid: comment on pull request %d\n", pullRequest)
+}
+
+// policySource is what the policy reads besides the host: the CI system, which
+// says where the warn-only period starts, and the rows file.
+type policySource struct {
+	system cicontext.System
+	rows   string
+}
+
+// decideVerdict evaluates the policy. The settings come from the base commit
+// and the rows from the agent's job, so the trust path is unverified. A policy
+// that cannot run leaves no verdict, and the check concludes neutral.
+func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, source policySource, state comment.State, stderr io.Writer) *policy.Verdict {
+	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
+	defer cancel()
+	usage, err := reportUsage(source.rows, state)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
+	verdict, err := policy.Evaluate(ctx, policy.Request{
+		Usage:  usage,
+		Trust:  policy.Unverified,
+		Config: policy.ReadConfig(ctx, host, pull.settingsRef(), pull.pullRequest > 0),
+		Start:  workflowStart(ctx, source.system, pull, stderr),
+		At:     time.Now(),
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+		return nil
+	}
+	if problem := verdict.ConfigProblem(); problem != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
+	}
+	return &verdict
+}
+
+// reportUsage reads the rows again for the policy. A file the comment could
+// not read gives the policy no rows either.
+func reportUsage(path string, state comment.State) (policy.Usage, error) {
+	if state != comment.Reported {
+		return policy.Usage{}, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return policy.Usage{}, err
+	}
+	defer file.Close()
+	usage, err := policy.ReadUsage(file)
+	if err != nil {
+		return policy.Usage{}, err
+	}
+	return usage, nil
+}
+
+// workflowStart reads when the workflow this job runs from reached the base
+// branch. GitLab has no check to conclude, so it is never asked.
+func workflowStart(ctx context.Context, system cicontext.System, pull pullContext, stderr io.Writer) policy.Start {
+	if system != cicontext.GitHubActions {
+		return policy.Start{}
+	}
+	repository := os.Getenv("GITHUB_REPOSITORY")
+	path, err := workflow.Path(os.Getenv("GITHUB_WORKFLOW_REF"), repository)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+		return policy.Start{}
+	}
+	github := workflow.GitHub{API: os.Getenv("GITHUB_API_URL"), Repository: repository, Token: os.Getenv("GITHUB_TOKEN"), Client: &http.Client{}}
+	start, err := github.Start(ctx, path, pull.settingsRef())
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
+	return start
 }

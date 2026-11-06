@@ -15,9 +15,11 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 const (
@@ -25,8 +27,6 @@ const (
 	Marker = "<!-- costroid:comment -->"
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
-	// Conclusion is the check's conclusion until a policy decides one.
-	Conclusion = "neutral"
 
 	// schema names the result object's contract, result/v0.1 in
 	// Costroid/costroid-schemas.
@@ -145,6 +145,17 @@ type Input struct {
 	// Reconciliations are the last reconciliation of each credential, shown
 	// under the budget when present.
 	Reconciliations []Reconciliation
+	// Verdict is the policy's, nil when no policy ran.
+	Verdict *policy.Verdict
+}
+
+// Conclusion is the check's conclusion: the verdict's, or neutral when no
+// policy ran.
+func (i Input) Conclusion() string {
+	if i.Verdict == nil {
+		return policy.Neutral
+	}
+	return i.Verdict.Conclusion
 }
 
 // Block is the result object, the machine-readable block. Strings under Data
@@ -164,6 +175,8 @@ type Block struct {
 	FiguresOmitted int           `json:"figures_omitted"`
 	Budget         *BlockBudget  `json:"budget"`
 	Data           BlockData     `json:"data"`
+	// Policy is the verdict, without its amounts when amounts are withheld.
+	Policy *policy.Verdict `json:"policy,omitempty"`
 }
 
 // BlockFigure is one Figure. ListCost and Tokens are empty when amounts are
@@ -225,7 +238,7 @@ func Check(input Input) (CheckOutput, error) {
 	if err != nil {
 		return CheckOutput{}, err
 	}
-	return CheckOutput{Title: "Verdict: " + Conclusion, Summary: summary, Text: fenced(block)}, nil
+	return CheckOutput{Title: "Verdict: " + input.Conclusion(), Summary: summary, Text: fenced(block)}, nil
 }
 
 // Result renders the result object as the check run carries it: every amount
@@ -295,6 +308,7 @@ func (i Input) block() (string, error) {
 		block.Amounts = "shown"
 		block.Budget = i.capCheck().block()
 	}
+	block.Policy = blockVerdict(i.Verdict, shown)
 	encoded, err := json.MarshalIndent(block, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("comment: encode block: %w", err)
@@ -307,7 +321,7 @@ func (i Input) conclusion() *string {
 	if i.BeforeCheck {
 		return nil
 	}
-	conclusion := Conclusion
+	conclusion := i.Conclusion()
 	return &conclusion
 }
 
@@ -373,6 +387,8 @@ type traceLine struct {
 type view struct {
 	Marker     string
 	Conclusion string
+	// VerdictLine says what the policy found, after the conclusion.
+	VerdictLine string
 	// RunLine says the report is one run at one commit, and links the run.
 	RunLine string
 	// Why is the sentence for a report without figures, empty otherwise.
@@ -407,7 +423,8 @@ func (i Input) view() view {
 	shown := i.Amounts == AmountsShown
 	result := view{
 		Marker:         Marker,
-		Conclusion:     Conclusion,
+		Conclusion:     i.Conclusion(),
+		VerdictLine:    verdictLine(i.Verdict, shown),
 		RunLine:        runLine(i.HeadSHA, i.RunURL),
 		Why:            i.why(),
 		ShowAmounts:    shown,
@@ -584,4 +601,106 @@ func render(name string, data view) (string, error) {
 		return "", fmt.Errorf("comment: render %s: %w", name, err)
 	}
 	return out.String(), nil
+}
+
+func blockVerdict(verdict *policy.Verdict, shown bool) *policy.Verdict {
+	if verdict == nil || shown {
+		return verdict
+	}
+	withheld := verdict.WithoutAmounts()
+	return &withheld
+}
+
+var ruleLabels = map[string]string{
+	policy.RuleRunBudget:        "Run budget",
+	policy.RuleRunCostThreshold: "Run cost threshold",
+	policy.RuleAttribution:      "Attribution",
+}
+
+var limitNouns = map[string]string{
+	policy.RuleRunBudget:        "budget",
+	policy.RuleRunCostThreshold: "threshold",
+}
+
+// verdictLine is built from the verdict's closed fields and its amounts, so
+// no text from the pull request reaches it.
+func verdictLine(verdict *policy.Verdict, shown bool) string {
+	if verdict == nil {
+		return "No policy ran on this change."
+	}
+	return strings.Join(VerdictSentences(*verdict, shown), " ")
+}
+
+// VerdictSentences says what the policy found, one sentence per fact, in the
+// words the comment uses. shown says whether amounts may be printed.
+func VerdictSentences(verdict policy.Verdict, shown bool) []string {
+	var sentences []string
+	switch verdict.Config {
+	case policy.ConfigInvalid:
+		sentences = append(sentences, "No rule ran: `costroid.yml` at the base commit is not valid, and `costroid validate` names the problem.")
+	case policy.ConfigUnread:
+		sentences = append(sentences, "No rule ran: `costroid.yml` at the base commit could not be read.")
+	}
+	held := false
+	for _, result := range verdict.Results {
+		sentences = append(sentences, resultSentence(result, verdict.JoinableRows, shown))
+		held = held || result.HeldByWarnOnly
+	}
+	if len(sentences) == 0 {
+		sentences = append(sentences, "No rule applied: `costroid.yml` at the base commit sets no budget and no threshold.")
+	}
+	if held {
+		sentences = append(sentences, warnOnlySentence(verdict.WarnOnly))
+	}
+	if verdict.ConfigFromBase {
+		sentences = append(sentences, "A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base commit's file.")
+	}
+	return sentences
+}
+
+func resultSentence(result policy.Result, joinable int, shown bool) string {
+	label, noun := ruleLabels[result.Rule], limitNouns[result.Rule]
+	amounts := shown && result.CostUSD != "" && result.LimitUSD != ""
+	switch result.Reason {
+	case policy.ReasonOverLimit:
+		if amounts {
+			return fmt.Sprintf("%s: USD %s is over the USD %s %s.", label, result.CostUSD, result.LimitUSD, noun)
+		}
+		return fmt.Sprintf("%s: the run is over the %s.", label, noun)
+	case policy.ReasonWithinLimit:
+		if amounts {
+			return fmt.Sprintf("%s: USD %s is within the USD %s %s.", label, result.CostUSD, result.LimitUSD, noun)
+		}
+		return fmt.Sprintf("%s: the run is within the %s.", label, noun)
+	case policy.ReasonUnverifiedRows:
+		return label + ": unverified rows cannot satisfy a budget."
+	case policy.ReasonUnattributedRows:
+		return label + ": unattributed rows cannot satisfy a budget."
+	case policy.ReasonNoRows:
+		return label + ": this check read no rows, so it cannot pass."
+	case policy.ReasonOtherCurrency:
+		return label + ": rows in another currency are never held to a USD " + noun + ", so it cannot pass."
+	}
+	rows := "rows name"
+	if joinable == 1 {
+		rows = "row names"
+	}
+	return fmt.Sprintf("%s: %d %s a credential, a pull request and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.", label, joinable, rows)
+}
+
+// enforceNow is the one line that ends the warn-only period.
+const enforceNow = "Add `enforce: true` under `policy` in `costroid.yml` to enforce now."
+
+func warnOnlySentence(period policy.WarnOnly) string {
+	switch period.Reason {
+	case policy.PeriodNotOnBase:
+		return "Warn-only: this workflow is not on the base branch yet, so a rule that fails warns. " + enforceNow
+	case policy.PeriodRunning:
+		ends, err := time.Parse(time.RFC3339, period.Ends)
+		if err == nil {
+			return fmt.Sprintf("Warn-only until %s: for %d days from the commit that added this workflow to the base branch, a rule that fails warns. %s",
+				ends.UTC().Format("2006-01-02 15:04 UTC"), int(policy.WarnOnlyPeriod.Hours()/24), enforceNow)
+		}
+	}
+	return "Warn-only: the commit that added this workflow to the base branch could not be read, so a rule that fails warns. " + enforceNow
 }

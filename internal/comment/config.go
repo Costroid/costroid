@@ -25,8 +25,9 @@ var reservedKeys = map[string]bool{
 
 // knownKeys are the keys this release reads, by the mapping that holds them.
 var knownKeys = map[string]map[string]bool{
-	"":        {"comment": true},
+	"":        {"comment": true, "policy": true},
 	"comment": {"show_cost": true},
+	"policy":  {"run_budget_usd": true, "max_run_cost_usd": true, "enforce": true},
 }
 
 // printableKey is what a key may hold to be named in the job log. A key is the
