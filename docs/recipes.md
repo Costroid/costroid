@@ -153,9 +153,7 @@ The guard lives in the workflow file, and `pull_request` reads that file from th
 
 ## GitHub Marketplace
 
-<!-- after the listing is published -->
-
-[`Costroid/costroid-action`](https://github.com/Costroid/costroid-action) holds this action for its GitHub Marketplace listing. Its `action.yml` calls `Costroid/costroid/action` pinned to one release's commit, names that release, and passes every input through unchanged. `Costroid/costroid-action@<commit>` therefore runs the same action as the recipes' pin. Pin it to the full commit SHA of one of its tags, as with any action.
+[`Costroid/costroid-action`](https://github.com/Costroid/costroid-action) holds this action for its [GitHub Marketplace listing](https://github.com/marketplace/actions/costroid-cost-check). Its `action.yml` calls `Costroid/costroid/action` pinned to one release's commit, names that release, and passes every input through unchanged. `Costroid/costroid-action@<commit>` therefore runs the same action as the recipes' pin. Pin it to the full commit SHA of one of its tags, as with any action.
 
 ## Pins
 

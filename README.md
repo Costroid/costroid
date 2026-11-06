@@ -28,7 +28,7 @@ cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
 
 [`docs/verify.md`](docs/verify.md) checks the image as well.
 
-In GitHub Actions, the action installs the release its own commit belongs to and checks it by its signature, so a repository sets one secret, the provider key. To build from a checkout instead, with Go 1.27 or later:
+In GitHub Actions, the action installs the release its own commit belongs to and checks it by its signature, so a repository sets one secret, the provider key. The same action is listed on the [GitHub Marketplace](https://github.com/marketplace/actions/costroid-cost-check) as `Costroid/costroid-action`. To build from a checkout instead, with Go 1.27 or later:
 
 ```sh
 make build
