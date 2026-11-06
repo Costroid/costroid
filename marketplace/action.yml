@@ -100,6 +100,11 @@ outputs:
   check_run_id:
     description: The id of the check run the report posted. Empty when none was posted.
     value: ${{ steps.costroid.outputs.check_run_id }}
+  conclusion:
+    description: >-
+      The check's conclusion from the policy: success, neutral or failure. docs/policy.md says
+      how each is reached.
+    value: ${{ steps.costroid.outputs.conclusion }}
   result:
     description: >-
       The result object as one line of JSON, the check run's machine block, every amount

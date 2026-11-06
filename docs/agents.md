@@ -86,4 +86,4 @@ This is a recorded Codex run, stopped at a 0.001 USD cap after its first request
 
 ## In a workflow
 
-The action sets the same figures as step outputs on the report job: `cost`, `currency`, `cost_basis`, `tokens_input_uncached`, `tokens_cache_read`, `tokens_cache_write`, `tokens_output`, `enforcement_grade`, `catalog_version`, `check_run_id` and `result`. When the figures hold more than one currency or basis, `currency` or `cost_basis` reads `multiple`, `cost` and the token outputs are empty, and `result` holds each figure.
+The action sets the same figures as step outputs on the report job: `cost`, `currency`, `cost_basis`, `tokens_input_uncached`, `tokens_cache_read`, `tokens_cache_write`, `tokens_output`, `enforcement_grade`, `catalog_version`, `check_run_id`, `conclusion` and `result`. When the figures hold more than one currency or basis, `currency` or `cost_basis` reads `multiple`, `cost` and the token outputs are empty, and `result` holds each figure.

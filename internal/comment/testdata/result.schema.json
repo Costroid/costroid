@@ -82,6 +82,9 @@
     },
     "data": {
       "$ref": "#/$defs/data"
+    },
+    "policy": {
+      "$ref": "#/$defs/policy"
     }
   },
   "required": [
@@ -506,6 +509,150 @@
         "maxLength": 128,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+_-]*$"
       }
+    },
+    "policy": {
+      "description": "The policy's verdict, present when a policy ran. docs/policy.md states each field. The comment's copy drops limit_usd and cost_usd when it withholds amounts.",
+      "type": "object",
+      "properties": {
+        "conclusion": {
+          "enum": [
+            "success",
+            "neutral",
+            "failure"
+          ]
+        },
+        "trust": {
+          "enum": [
+            "unverified",
+            "token_verified"
+          ]
+        },
+        "pack_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "config_ref": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "config": {
+          "enum": [
+            "found",
+            "absent",
+            "invalid",
+            "unread"
+          ]
+        },
+        "config_from_base": {
+          "type": "boolean"
+        },
+        "evaluated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "warn_only": {
+          "type": "object",
+          "properties": {
+            "active": {
+              "type": "boolean"
+            },
+            "reason": {
+              "enum": [
+                "in_period",
+                "ended",
+                "enforced",
+                "not_on_base",
+                "start_unknown"
+              ]
+            },
+            "started": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "ends": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "active",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "enum": [
+                  "run_budget",
+                  "run_cost_threshold",
+                  "attribution"
+                ]
+              },
+              "outcome": {
+                "enum": [
+                  "pass",
+                  "warn",
+                  "fail",
+                  "unproven"
+                ]
+              },
+              "reason": {
+                "enum": [
+                  "over_limit",
+                  "within_limit",
+                  "no_rows",
+                  "unverified_rows",
+                  "unattributed_rows",
+                  "other_currency",
+                  "joinable_rows"
+                ]
+              },
+              "held_by_warn_only": {
+                "const": true
+              },
+              "limit_usd": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "cost_usd": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              }
+            },
+            "required": [
+              "rule",
+              "outcome",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "joinable_rows": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "conclusion",
+        "trust",
+        "pack_sha256",
+        "config_sha256",
+        "config",
+        "config_from_base",
+        "evaluated_at",
+        "warn_only",
+        "results",
+        "joinable_rows"
+      ],
+      "additionalProperties": false
     }
   }
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,5 +126,44 @@ func TestAWithheldCommentStatesTheVerdictWithoutAmounts(t *testing.T) {
 	check := checkVerdict(t, stub.Checks[0].Text)
 	if check.Results[0].LimitUSD != "0.001" || check.Results[0].CostUSD != realTotal {
 		t.Errorf("the check's block lost its amounts: %+v", check.Results)
+	}
+}
+
+// TestAFailedVerdictReachesTheOutputsAndTheResult holds the conclusion to one
+// value in the check, the conclusion output, the result output and --json.
+func TestAFailedVerdictReachesTheOutputsAndTheResult(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Files[configFile] = overBudget + "  enforce: true\n"
+	outputs, _ := stepFiles(t)
+	code, stdout, stderr := execute(t, "report", "--rows", realRows, "--json")
+	if code != 0 || len(stub.Checks) != 1 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	got := readOutputs(t, outputs)
+	block := checkBlock(t, stub.Checks[0].Text)
+	if stub.Checks[0].Conclusion != policy.Failure || got["conclusion"] != policy.Failure || got["result"] != compactJSON(t, block) || stdout != block+"\n" {
+		t.Errorf("check %s, output %q, result %s", stub.Checks[0].Conclusion, got["conclusion"], got["result"])
+	}
+	if verdict := checkVerdict(t, stub.Checks[0].Text); verdict.Results[0].Outcome != policy.Fail {
+		t.Errorf("%+v", verdict)
+	}
+	validateResult(t, block)
+	validateResult(t, commentBlock(t, stub.Comments[0].Body))
+}
+
+func TestAnUnreadBaseConfigConcludesNeutralAndSaysWhy(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.SetPrivate(true)
+	stub.Files[configFile] = overBudget + "  enforce: true\n"
+	stub.Fail["GET /contents/"] = http.StatusInternalServerError
+	if code, _, stderr := execute(t, "report", "--rows", realRows); code != 0 || len(stub.Checks) != 1 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	verdict := checkVerdict(t, stub.Checks[0].Text)
+	if stub.Checks[0].Conclusion != policy.Neutral || verdict.Config != policy.ConfigUnread || len(verdict.Results) != 0 {
+		t.Errorf("posted %s with %+v", stub.Checks[0].Conclusion, verdict)
+	}
+	if want := "No rule ran, so the check concludes neutral: `costroid.yml` at the base commit could not be read"; !strings.Contains(stub.Comments[0].Body, want) {
+		t.Errorf("the comment does not say why:\n%s", stub.Comments[0].Body)
 	}
 }

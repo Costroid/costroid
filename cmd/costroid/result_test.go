@@ -101,6 +101,7 @@ func TestActionOutputsCarryTheRecordedRunsFigures(t *testing.T) {
 		"tokens_input_uncached": "8", "tokens_cache_read": "15605", "tokens_cache_write": "7945", "tokens_output": "272",
 		"enforcement_grade": "agent-flag", "catalog_version": "0.1.0",
 		"check_run_id": strconv.FormatInt(stub.Checks[0].ID, 10),
+		"conclusion":   "neutral",
 		"result":       compactJSON(t, checkBlock(t, stub.Checks[0].Text)),
 	}
 	got := readOutputs(t, outputs)

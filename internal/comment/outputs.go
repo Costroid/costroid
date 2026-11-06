@@ -20,7 +20,7 @@ const Multiple = "multiple"
 var OutputNames = []string{
 	"cost", "currency", "cost_basis",
 	"tokens_input_uncached", "tokens_cache_read", "tokens_cache_write", "tokens_output",
-	"enforcement_grade", "catalog_version", "check_run_id", "result",
+	"enforcement_grade", "catalog_version", "check_run_id", "conclusion", "result",
 }
 
 // Output is one output of the action's step.
@@ -46,6 +46,7 @@ func Outputs(input Input) ([]Output, error) {
 	if input.CheckRunID != nil {
 		values["check_run_id"] = strconv.FormatInt(*input.CheckRunID, 10)
 	}
+	values["conclusion"] = input.Conclusion()
 	values["result"] = compact.String()
 	outputs := make([]Output, len(OutputNames))
 	for index, name := range OutputNames {

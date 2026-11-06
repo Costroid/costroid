@@ -637,9 +637,9 @@ func VerdictSentences(verdict policy.Verdict, shown bool) []string {
 	var sentences []string
 	switch verdict.Config {
 	case policy.ConfigInvalid:
-		sentences = append(sentences, "No rule ran: `costroid.yml` at the base commit is not valid, and `costroid validate` names the problem.")
+		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` at the base commit is not valid, and `costroid validate` names the problem.")
 	case policy.ConfigUnread:
-		sentences = append(sentences, "No rule ran: `costroid.yml` at the base commit could not be read.")
+		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` at the base commit could not be read, and a missing input never blocks a merge.")
 	}
 	held := false
 	for _, result := range verdict.Results {

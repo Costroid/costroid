@@ -87,7 +87,7 @@ The check run's machine block carries the verdict under `policy`. It records eac
 }
 ```
 
-The comment's copy of the block drops `limit_usd` and `cost_usd` when it withholds amounts. The check run's block keeps them.
+The comment's copy of the block drops `limit_usd` and `cost_usd` when it withholds amounts. The check run's block keeps them. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
 
 ## The engine
 
