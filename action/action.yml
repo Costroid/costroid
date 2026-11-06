@@ -153,7 +153,11 @@ runs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: costroid-rows
-        path: ${{ runner.temp }}/costroid-rows.jsonl
+        # The run's result object rides with the rows, so the report can say
+        # why a run wrote none.
+        path: |
+          ${{ runner.temp }}/costroid-rows.jsonl
+          ${{ runner.temp }}/costroid-rows.run.json
         if-no-files-found: warn
         retention-days: 7
 

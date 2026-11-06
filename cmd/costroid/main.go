@@ -7,8 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -30,7 +32,7 @@ const usage = `costroid runs a coding agent under a budget and records what it c
 Usage:
   costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--json] -- <agent command>
   costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
-  costroid report --rows rows.jsonl [--budget-usd N] [--run-reason R] [--installation-id ID] [--json]
+  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
   costroid follow-up --rows rows.jsonl
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE] [--reports DIR --as-of T]
   costroid policy --rows rows.jsonl [--config costroid.yml] [--workflow-added T] [--at T] [--json]
@@ -65,6 +67,10 @@ report prints the object its check run carries, byte for byte. run prints none
 when it exits 125, unless another run held the agent's state directory.
 docs/agents.md describes the object.
 
+run writes the same object beside its rows file whether or not --json is
+given: --out rows.jsonl gives rows.run.json. report reads the run's reason for
+an empty rows file from it.
+
 ingest-run writes the rows of a claude-code-action run from the action's
 execution_file output, after the action ended. No budget held that run, so the
 grade reads none.
@@ -76,8 +82,7 @@ summary withholds amounts and token counts where the comment does. On GitLab CI
 it posts one sticky merge request note, with COSTROID_GITLAB_TOKEN and the CI_*
 variables, and no check. It exits 0 whatever the host answers, so a failed post
 never fails the job. Outside both it refuses and exits 125. --budget-usd
-restates the run's cap, which rows do not record. --run-reason restates why the
-run wrote no rows, no_usage or concurrent_run, as the run's object names it.
+restates the run's cap, which rows do not record.
 --installation-id puts the GitHub App installation on the account link;
 COSTROID_INSTALLATION_ID does the same. GitLab's link names the project id.
 
@@ -283,6 +288,11 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
+	// An object an earlier run left would give this run's rows its reason.
+	if err := os.Remove(runResultPath(flags.out)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		return exitFailure
+	}
 	rows, err := os.Create(flags.out)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
@@ -312,25 +322,63 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		var refused *run.RefusedError
-		if flags.json && errors.As(err, &refused) {
-			printRunResult(stdout, stderr, flags, ci.Head, result.Reason)
+		if errors.As(err, &refused) {
+			recordRunResult(stdout, stderr, flags, ci.Head, result.Reason)
 		}
 		return exitFailure
 	}
 	summarize(stderr, flags, pinned.Version(), result)
-	if flags.json {
-		printRunResult(stdout, stderr, flags, ci.Head, result.Reason)
-	}
+	recordRunResult(stdout, stderr, flags, ci.Head, result.Reason)
 	if result.Stopped {
 		return exitBudgetStop
 	}
 	return result.AgentExit
 }
 
-// printRunResult prints the result object of the rows the run wrote, read as
-// the report reads them, with the run's reason when it wrote none. No check
-// has concluded on them yet.
-func printRunResult(stdout, stderr io.Writer, flags runFlags, head string, reason run.Reason) {
+// runResultPath is where run writes its result object: beside the rows file,
+// named after it, so whatever carries the rows can carry the object, and two
+// rows files in one directory never share one.
+func runResultPath(rows string) string {
+	return strings.TrimSuffix(rows, filepath.Ext(rows)) + ".run.json"
+}
+
+// recordRunResult writes the result object beside the rows, where the report
+// reads the run's reason, and prints it under --json. A file that cannot be
+// written costs the report the reason and nothing else, so it is a warning.
+func recordRunResult(stdout, stderr io.Writer, flags runFlags, head string, reason run.Reason) {
+	object, err := runResult(stderr, flags, head, reason)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+		return
+	}
+	if err := writeNew(runResultPath(flags.out), object+"\n"); err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the run's result object was not written: %v\n", err)
+	}
+	if flags.json {
+		if _, err := fmt.Fprintln(stdout, object); err != nil {
+			fmt.Fprintf(stderr, "costroid: warning: %v\n", fmt.Errorf("print the result: %w", err))
+		}
+	}
+}
+
+// writeNew creates path and fails if anything is there, so a link the agent
+// left in its place is never followed.
+func writeNew(path, text string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = file.WriteString(text)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// runResult is the result object of the rows the run wrote, read as the
+// report reads them, with the run's reason when it wrote none. No check has
+// concluded on them yet.
+func runResult(stderr io.Writer, flags runFlags, head string, reason run.Reason) (string, error) {
 	rows, err := readReportRows(flags.out)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
@@ -346,9 +394,7 @@ func printRunResult(stdout, stderr io.Writer, flags runFlags, head string, reaso
 		Amounts:     comment.AmountsShown,
 		BeforeCheck: true,
 	}
-	if err := printResult(stdout, input); err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-	}
+	return comment.Result(input)
 }
 
 // labels are the accuracy labels a wrapped run can carry.

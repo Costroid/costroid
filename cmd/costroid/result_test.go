@@ -313,11 +313,14 @@ func TestRunJSONMatchesSchemaWhenTheRunWroteNoRows(t *testing.T) {
 	if err := os.WriteFile(rows, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	printRunResult(&stdout, &stderr, runFlags{out: rows, budget: decimal.MustParse("5")}, "", "")
-	validateResult(t, stdout.String())
-	if !strings.Contains(stdout.String(), `"reason": "empty_rows_file"`) {
-		t.Errorf("no reason in\n%s", stdout.String())
+	var stderr bytes.Buffer
+	object, err := runResult(&stderr, runFlags{out: rows, budget: decimal.MustParse("5")}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validateResult(t, object)
+	if !strings.Contains(object, `"reason": "empty_rows_file"`) {
+		t.Errorf("no reason in\n%s", object)
 	}
 }
 
@@ -443,8 +446,11 @@ func TestEmptyRunReasonInJSONAndComment(t *testing.T) {
 			if !strings.Contains(printed, field) || !strings.Contains(printed, `"reason": "empty_rows_file"`) {
 				t.Errorf("run --json lacks %s:\n%s", field, printed)
 			}
+			if written := readFile(t, runResultPath(rows)); written != printed {
+				t.Errorf("the object beside the rows differs from run --json:\n%s\n%s", written, printed)
+			}
 			stub := reportEnvironment(t, pullRequestEvent())
-			code, reported, stderr := execute(t, "report", "--rows", rows, "--run-reason", string(test.reason), "--json")
+			code, reported, stderr := execute(t, "report", "--rows", rows, "--json")
 			if code != 0 || len(stub.Checks) != 1 || len(stub.Comments) != 1 {
 				t.Fatalf("report exit %d, %d checks, %d comments: %s", code, len(stub.Checks), len(stub.Comments), stderr)
 			}
@@ -462,20 +468,102 @@ func TestEmptyRunReasonInJSONAndComment(t *testing.T) {
 	}
 }
 
-func TestReportDropsARunReasonBesideRowsOrOutsideTheList(t *testing.T) {
-	for name, args := range map[string][]string{
-		"beside rows":      {"--rows", realRows, "--run-reason", string(run.ReasonNoUsage)},
-		"outside the list": {"--rows", filepath.Join(t.TempDir(), "absent.jsonl"), "--run-reason", "agent_crashed"},
-	} {
+// TestReportFindsTheRunsReasonWithNoFlag runs the agent as the action does,
+// without --json, into the action's rows path. The report is given only that
+// path, and finds the reason in the object the run left beside it.
+func TestReportFindsTheRunsReasonWithNoFlag(t *testing.T) {
+	claude := silentClaude(t)
+	rows := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
+	code, printed, stderr := execute(t, "run", "--budget-usd", "5", "--out", rows, "--", claude, "-p", "work")
+	if code != 0 || strings.Contains(printed, "run_reason") {
+		t.Fatalf("exit %d, stdout %q: %s", code, printed, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(rows), "costroid-rows.run.json")); err != nil {
+		t.Fatalf("no object beside the rows: %v", err)
+	}
+	stub := reportEnvironment(t, pullRequestEvent())
+	if code, _, stderr := execute(t, "report", "--rows", rows); code != 0 || len(stub.Comments) != 1 {
+		t.Fatalf("report exit %d: %s", code, stderr)
+	}
+	body := stub.Comments[0].Body
+	if !strings.Contains(body, "Reason `no_usage`: the agent reported no usage") || !strings.Contains(commentBlock(t, body), `"run_reason": "no_usage"`) {
+		t.Errorf("the comment does not carry the run's reason:\n%s", body)
+	}
+}
+
+// TestReportIgnoresARunReasonItCannotUse gives the report objects it must not
+// take a reason from. Each warns, the report exits 0, and nothing it shows
+// names a reason.
+func TestReportIgnoresARunReasonItCannotUse(t *testing.T) {
+	directory := t.TempDir()
+	withRows := filepath.Join(directory, "with-rows.jsonl")
+	if err := os.WriteFile(withRows, []byte(readFile(t, realRows)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		rows, object string
+		link         bool
+	}{
+		"a newer reason": {rows: "empty.jsonl", object: `{"run_reason":"agent_crashed"}`},
+		"beside rows":    {rows: "with-rows.jsonl", object: `{"run_reason":"no_usage"}`},
+		"not JSON":       {rows: "broken.jsonl", object: `{"run_reason":`},
+		"a link":         {rows: "linked.jsonl", link: true},
+	}
+	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
+			rows := filepath.Join(directory, test.rows)
+			if test.rows != "with-rows.jsonl" {
+				if err := os.WriteFile(rows, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			object := runResultPath(rows)
+			if test.link {
+				target := filepath.Join(directory, "elsewhere.json")
+				if err := os.WriteFile(target, []byte(`{"run_reason":"no_usage"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, object); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(object, []byte(test.object), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			stub := reportEnvironment(t, pullRequestEvent())
-			code, printed, stderr := execute(t, append([]string{"report", "--json"}, args...)...)
-			if code != 0 || !strings.Contains(stderr, "--run-reason") {
+			code, printed, stderr := execute(t, "report", "--rows", rows, "--json")
+			if code != 0 || !strings.Contains(stderr, "ignored") {
 				t.Fatalf("exit %d: %s", code, stderr)
 			}
 			validateResult(t, printed)
 			if strings.Contains(printed, "run_reason") || strings.Contains(stub.Comments[0].Body, "Reason `") {
-				t.Errorf("a dropped reason is shown:\n%s", stub.Comments[0].Body)
+				t.Errorf("an ignored reason is shown:\n%s", stub.Comments[0].Body)
+			}
+		})
+	}
+}
+
+// TestRunRemovesAnEarlierRunsObject leaves a refused run's object beside the
+// rows path. A run that writes rows replaces it, and a run that cannot start
+// its agent removes it, so neither inherits its reason.
+func TestRunRemovesAnEarlierRunsObject(t *testing.T) {
+	claude := replayClaude(t)
+	rows := filepath.Join(t.TempDir(), "rows.jsonl")
+	stale := `{"run_reason":"concurrent_run"}`
+	for name, argv := range map[string][]string{
+		"rows written":        {claude, "-p", "work"},
+		"the agent not found": {filepath.Join(t.TempDir(), "claude"), "-p", "work"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(runResultPath(rows), []byte(stale), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			execute(t, append([]string{"run", "--budget-usd", "5", "--out", rows, "--"}, argv...)...)
+			written, err := os.ReadFile(runResultPath(rows))
+			if err == nil && strings.Contains(string(written), "run_reason") {
+				t.Errorf("the earlier run's object is still there:\n%s", written)
+			}
+			if name == "rows written" && err != nil {
+				t.Errorf("the run wrote no object: %v", err)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,7 +44,6 @@ type reportFlags struct {
 	rows         string
 	budget       *decimal.Decimal
 	installation string
-	runReason    run.Reason
 	json         bool
 }
 
@@ -54,7 +54,6 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	budget := set.String("budget-usd", "", "the cap the run was given, in USD")
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id; GitLab uses the project id")
-	reason := set.String("run-reason", "", "why the run wrote no rows, as costroid run stated it")
 	asJSON := set.Bool("json", false, "print the result object on stdout")
 	if err := set.Parse(args); err != nil {
 		return reportFlags{}, err
@@ -62,7 +61,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	if *rows == "" {
 		return reportFlags{}, errors.New("report needs --rows")
 	}
-	flags := reportFlags{rows: *rows, installation: *installation, runReason: run.Reason(*reason), json: *asJSON}
+	flags := reportFlags{rows: *rows, installation: *installation, json: *asJSON}
 	if *budget != "" {
 		amount, err := decimal.Parse(*budget)
 		if err != nil {
@@ -212,7 +211,7 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		State:      rows.state,
 		Reason:     rows.reason,
 		ReasonLine: rows.line,
-		RunReason:  runReasonFor(rows.state, flags.runReason, stderr),
+		RunReason:  runReasonFor(rows.state, readRunReason(flags.rows, stderr), stderr),
 		Budget:     flags.budget,
 		RunURL:     runURL(system),
 	}
@@ -227,18 +226,59 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	return 0
 }
 
-// runReasonFor keeps the run's reason for an empty rows file. A reason outside
-// the closed list is dropped, and so is one beside a rows file that is not
-// empty, which says more than the reason does.
+// maxRunResult bounds the run's result object the report reads. The object
+// the run writes is a few kilobytes.
+const maxRunResult = 1 << 20
+
+// readRunReason reads the reason from the result object costroid run wrote
+// beside the rows. The agent's job wrote that file, as it wrote the rows, so
+// only the reason is read, and only a value from the closed list is used. A
+// run that wrote no object, as an older release does, gives no reason.
+func readRunReason(rows string, stderr io.Writer) run.Reason {
+	path := runResultPath(rows)
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	if err == nil && !info.Mode().IsRegular() {
+		err = errors.New("not a regular file")
+	}
+	if err == nil && info.Size() > maxRunResult {
+		err = fmt.Errorf("larger than %d bytes", maxRunResult)
+	}
+	var object struct {
+		RunReason run.Reason `json:"run_reason"`
+	}
+	if err == nil {
+		err = readJSON(path, &object)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the run's result object %s is ignored: %v\n", path, err)
+		return ""
+	}
+	return object.RunReason
+}
+
+func readJSON(path string, into any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, into)
+}
+
+// runReasonFor keeps the run's reason for an empty rows file. A reason this
+// release does not know, from a newer run, is ignored, and so is one beside a
+// rows file that is not empty, which says more than the reason does.
 func runReasonFor(state comment.State, reason run.Reason, stderr io.Writer) run.Reason {
 	switch {
 	case reason == "":
 		return ""
 	case reason.Sentence() == "":
-		fmt.Fprintf(stderr, "costroid: warning: --run-reason %q is not a reason costroid run states, so it is dropped\n", reason)
+		fmt.Fprintf(stderr, "costroid: warning: the run's reason %q is not one this release knows, so it is ignored\n", reason)
 		return ""
 	case state != comment.NoRows:
-		fmt.Fprintf(stderr, "costroid: warning: --run-reason %s is dropped, because only an empty rows file carries one\n", reason)
+		fmt.Fprintf(stderr, "costroid: warning: the run's reason %s is ignored, because only an empty rows file carries one\n", reason)
 		return ""
 	}
 	return reason

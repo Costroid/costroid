@@ -4,15 +4,16 @@ Every Costroid report writes one result object: the figures of one run per curre
 
 ## Where the object is
 
-| Where                                    | What it holds                                                                                                                   |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `costroid run --json`, on stdout         | The run just finished. `conclusion` is null, because no check has concluded yet.                                                |
-| `costroid report --json`, on stdout      | The object the check run carries, byte for byte.                                                                                |
-| The `costroid` check run's `output.text` | The same object, inside one fenced `json` block. Every amount is in it, and `check_run_id` names the check run.                 |
-| The pull request comment                 | A copy that names `check_run_id`. On a public repository with `comment.show_cost: false` it withholds amounts and token counts. |
-| The action's `result` output             | The check run's object as one line of JSON.                                                                                     |
+| Where                                    | What it holds                                                                                                                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `costroid run --json`, on stdout         | The run just finished. `conclusion` is null, because no check has concluded yet.                                                                                        |
+| `<rows>.run.json`, beside the rows file  | What `run --json` prints, written whether or not `--json` is given. `--out costroid-rows.jsonl` gives `costroid-rows.run.json`, and the action's artifact carries both. |
+| `costroid report --json`, on stdout      | The object the check run carries, byte for byte.                                                                                                                        |
+| The `costroid` check run's `output.text` | The same object, inside one fenced `json` block. Every amount is in it, and `check_run_id` names the check run.                                                         |
+| The pull request comment                 | A copy that names `check_run_id`. On a public repository with `comment.show_cost: false` it withholds amounts and token counts.                                         |
+| The action's `result` output             | The check run's object as one line of JSON.                                                                                                                             |
 
-Under `run --json` the agent's own stream goes to stderr, so stdout holds the object alone. `run` prints no object when it exits 125, except when another run held the agent's state directory: that run never started its agent, and its object says so.
+Under `run --json` the agent's own stream goes to stderr, so stdout holds the object alone. `run` prints and writes no object when it exits 125, except when another run held the agent's state directory: that run never started its agent, and its object says so.
 
 ## Read it for a head commit
 
@@ -93,7 +94,7 @@ When the rows file holds no rows and the run said why, `run_reason` carries the 
 | `no_usage`       | The agent ended and reported no usage.                                             |
 | `concurrent_run` | Another run held the agent's state directory, so this run never started its agent. |
 
-`run --json` sets it. `report --run-reason` restates it, because the rows file cannot carry it, and the comment then states the reason in words beside its code.
+`run` writes it into the object beside the rows file. `report` reads it from there, with no flag, and the comment then states the reason in words beside its code. A reason the report does not know, from a newer run, is ignored with a warning.
 
 ## In a workflow
 

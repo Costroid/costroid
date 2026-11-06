@@ -62,6 +62,8 @@ variables:
     expire_in: 7 days
     paths:
       - costroid-rows.jsonl
+      # The run's result object, so the report can say why a run wrote no rows.
+      - costroid-rows.run.json
 
 costroid:claude:
   extends: .costroid-agent
@@ -79,7 +81,7 @@ costroid:claude:
       lowest=$(printf '%s\n%s\n' "$MINIMUM_AGENT_VERSION" "$(claude --version | cut -d' ' -f1)" | sort --version-sort | head -n 1)
       test "$lowest" = "$MINIMUM_AGENT_VERSION"
     - git diff "$CI_MERGE_REQUEST_DIFF_BASE_SHA...$CI_COMMIT_SHA" > pull-request.diff
-    - rm -f costroid-rows.jsonl
+    - rm -f costroid-rows.jsonl costroid-rows.run.json
     - >-
       costroid run --budget-usd "$COSTROID_BUDGET_USD" --out costroid-rows.jsonl --
       claude -p --bare --restricted --strict-mcp-config "$COSTROID_PROMPT" </dev/null
@@ -100,7 +102,7 @@ costroid:codex:
       lowest=$(printf '%s\n%s\n' "$MINIMUM_AGENT_VERSION" "$(codex --version | cut -d' ' -f2)" | sort --version-sort | head -n 1)
       test "$lowest" = "$MINIMUM_AGENT_VERSION"
     - git diff "$CI_MERGE_REQUEST_DIFF_BASE_SHA...$CI_COMMIT_SHA" > pull-request.diff
-    - rm -f costroid-rows.jsonl
+    - rm -f costroid-rows.jsonl costroid-rows.run.json
     - >-
       costroid run --budget-usd "$COSTROID_BUDGET_USD" --out costroid-rows.jsonl --
       codex exec --sandbox read-only --config otel.log_user_prompt=false "$COSTROID_PROMPT" </dev/null
