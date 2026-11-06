@@ -19,7 +19,6 @@ import (
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
-	"github.com/Costroid/costroid/internal/policy/workflow"
 	"github.com/Costroid/costroid/internal/scm"
 )
 
@@ -218,7 +217,7 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
 	} else {
-		input = post(ctx, target, input, policySource{system: system, rows: flags.rows}, stderr)
+		input = post(ctx, target, input, flags.rows, stderr)
 	}
 	publish(input, flags.json, stdout, stderr)
 	return 0
@@ -227,14 +226,14 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 // post posts the check and the comment, and returns the input as posted: with
 // the installation, the amounts setting, the policy's verdict and the check
 // run's id.
-func post(ctx context.Context, target reportTarget, input comment.Input, source policySource, stderr io.Writer) comment.Input {
+func post(ctx context.Context, target reportTarget, input comment.Input, rowsPath string, stderr io.Writer) comment.Input {
 	host, pull := target.host, target.pull
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
-	input.Verdict = decideVerdict(ctx, host, pull, source, input.State, stderr)
+	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if pull.pullRequest > 0 {
 		postComment(ctx, host, input, pull.pullRequest, stderr)
@@ -449,20 +448,13 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, pu
 	fmt.Fprintf(stderr, "costroid: comment on pull request %d\n", pullRequest)
 }
 
-// policySource is what the policy reads besides the host: the CI system, which
-// says where the warn-only period starts, and the rows file.
-type policySource struct {
-	system cicontext.System
-	rows   string
-}
-
 // decideVerdict evaluates the policy. The settings come from the base commit
 // and the rows from the agent's job, so the trust path is unverified. A policy
 // that cannot run leaves no verdict, and the check concludes neutral.
-func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, source policySource, state comment.State, stderr io.Writer) *policy.Verdict {
+func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, rowsPath string, state comment.State, stderr io.Writer) *policy.Verdict {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
-	usage, err := reportUsage(source.rows, state)
+	usage, err := reportUsage(rowsPath, state)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
@@ -470,7 +462,7 @@ func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, sou
 		Usage:  usage,
 		Trust:  policy.Unverified,
 		Config: policy.ReadConfig(ctx, host, policy.Commits{Base: pull.base, Head: pull.head, PullRequest: pull.pullRequest > 0}),
-		Start:  workflowStart(ctx, source.system, pull, stderr),
+		Start:  workflowStart(ctx, host, pull, stderr),
 		At:     time.Now(),
 	})
 	if err != nil {
@@ -502,19 +494,18 @@ func reportUsage(path string, state comment.State) (policy.Usage, error) {
 }
 
 // workflowStart reads when the workflow this job runs from reached the base
-// branch. GitLab has no check to conclude, so it is never asked.
-func workflowStart(ctx context.Context, system cicontext.System, pull pullContext, stderr io.Writer) policy.Start {
-	if system != cicontext.GitHubActions {
+// branch. A host without the history, as GitLab is here, starts no period.
+func workflowStart(ctx context.Context, host scm.Reporter, pull pullContext, stderr io.Writer) policy.Start {
+	history, ok := host.(policy.History)
+	if !ok {
 		return policy.Start{}
 	}
-	repository := os.Getenv("GITHUB_REPOSITORY")
-	path, err := workflow.Path(os.Getenv("GITHUB_WORKFLOW_REF"), repository)
+	path, err := policy.WorkflowPath(os.Getenv("GITHUB_WORKFLOW_REF"), os.Getenv("GITHUB_REPOSITORY"))
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 		return policy.Start{}
 	}
-	github := workflow.GitHub{API: os.Getenv("GITHUB_API_URL"), Repository: repository, Token: os.Getenv("GITHUB_TOKEN"), Client: &http.Client{}}
-	start, err := github.Start(ctx, path, pull.settingsRef())
+	start, err := policy.ReadStart(ctx, history, path, pull.settingsRef())
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}

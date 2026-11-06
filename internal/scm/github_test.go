@@ -194,3 +194,41 @@ func TestAMalformedRepositoryIsRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestFirstCommitIsTheOldestOnTheRef(t *testing.T) {
+	oldest := time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)
+	for _, count := range []int{1, 99, 100, 101, 250} {
+		stub := scmtest.New(t)
+		dates := make([]time.Time, count)
+		for index := range dates {
+			dates[index] = oldest.Add(time.Duration(count-1-index) * time.Hour)
+		}
+		stub.Commits[".github/workflows/costroid.yml"] = dates
+		added, err := adapter(t, stub).FirstCommit(context.Background(), ".github/workflows/costroid.yml", movedSHA)
+		if err != nil || !added.Equal(oldest) {
+			t.Errorf("%d commits: %v, %v", count, added, err)
+		}
+		if !strings.Contains(stub.Requests[0], "sha="+movedSHA) {
+			t.Errorf("request = %s", stub.Requests[0])
+		}
+	}
+}
+
+func TestFirstCommitNamesAPathNoCommitTouched(t *testing.T) {
+	stub := scmtest.New(t)
+	if _, err := adapter(t, stub).FirstCommit(context.Background(), ".github/workflows/costroid.yml", movedSHA); !errors.Is(err, scm.ErrNoCommit) {
+		t.Errorf("err = %v", err)
+	}
+	stub.Fail["GET /commits"] = http.StatusNotFound
+	if _, err := adapter(t, stub).FirstCommit(context.Background(), ".github/workflows/costroid.yml", movedSHA); err == nil || errors.Is(err, scm.ErrNoCommit) {
+		t.Errorf("a refused list read as no commit: %v", err)
+	}
+}
+
+func TestFirstCommitStopsAtAThousandCommits(t *testing.T) {
+	stub := scmtest.New(t)
+	stub.Commits[".github/workflows/costroid.yml"] = make([]time.Time, 1000)
+	if _, err := adapter(t, stub).FirstCommit(context.Background(), ".github/workflows/costroid.yml", movedSHA); err == nil || !strings.Contains(err.Error(), "more than 1000") {
+		t.Errorf("err = %v", err)
+	}
+}

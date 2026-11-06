@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Comment is a stored issue comment.
@@ -39,11 +40,14 @@ type Stub struct {
 	// Fail maps "METHOD path-prefix" to a status the stub answers instead.
 	Fail map[string]int
 
-	mu         sync.Mutex
-	Token      string
-	Comments   []Comment
-	Checks     []Check
-	Files      map[string]string
+	mu       sync.Mutex
+	Token    string
+	Comments []Comment
+	Checks   []Check
+	Files    map[string]string
+	// Commits maps a path to the dates of the commits that touched it,
+	// newest first, as the commits API lists them.
+	Commits    map[string][]time.Time
 	Private    *bool
 	Requests   []string
 	Head       string
@@ -55,7 +59,7 @@ type Stub struct {
 // New starts a stub and stops it with the test.
 func New(t *testing.T) *Stub {
 	t.Helper()
-	stub := &Stub{Token: "stub-token", Fail: map[string]int{}, Files: map[string]string{}, nextID: 1000}
+	stub := &Stub{Token: "stub-token", Fail: map[string]int{}, Files: map[string]string{}, Commits: map[string][]time.Time{}, nextID: 1000}
 	stub.Server = httptest.NewServer(stub)
 	t.Cleanup(stub.Server.Close)
 	return stub
@@ -118,6 +122,8 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.listComments(w, r)
 	case strings.HasSuffix(path, "/comments") && r.Method == http.MethodPost:
 		s.postComment(w, body)
+	case strings.HasSuffix(path, "/commits") && r.Method == http.MethodGet:
+		s.listCommits(w, r)
 	case strings.Contains(path, "/contents/"):
 		s.readFile(w, path)
 	case strings.Contains(path, "/pulls/"):
@@ -217,6 +223,26 @@ func (s *Stub) listComments(w http.ResponseWriter, r *http.Request) {
 			kind = "Bot"
 		}
 		listed = append(listed, comment{stored.ID, stored.Body, account{kind}})
+	}
+	s.answer(w, listed)
+}
+
+func (s *Stub) listCommits(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	size, err := strconv.Atoi(query.Get("per_page"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	page, err := strconv.Atoi(query.Get("page"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	dates := s.Commits[query.Get("path")]
+	listed := []map[string]any{}
+	for index := (page - 1) * size; index >= 0 && index < len(dates) && index < page*size; index++ {
+		listed = append(listed, map[string]any{"commit": map[string]any{"committer": map[string]string{"date": dates[index].Format(time.RFC3339)}}})
 	}
 	s.answer(w, listed)
 }

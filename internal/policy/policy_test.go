@@ -527,3 +527,58 @@ func evaluateRowsFile(t *testing.T, path string, read ConfigFile, start Start) V
 	}
 	return evaluate(t, Request{Usage: usage, Trust: Unverified, Config: read, Start: start})
 }
+
+func TestWorkflowPathReadsTheWorkflowRef(t *testing.T) {
+	path, err := WorkflowPath("acme/widgets/.github/workflows/costroid.yml@refs/pull/7/merge", "acme/widgets")
+	if err != nil || path != ".github/workflows/costroid.yml" {
+		t.Fatalf("%q, %v", path, err)
+	}
+	for _, ref := range []string{
+		"",
+		".github/workflows/costroid.yml@refs/heads/main",
+		"other/repo/.github/workflows/costroid.yml@refs/heads/main",
+		"acme/widgets/.github/workflows/costroid.yml",
+		"acme/widgets/.github/workflows/../../secrets.yml@refs/heads/main",
+		"acme/widgets/README.md@refs/heads/main",
+	} {
+		if _, err := WorkflowPath(ref, "acme/widgets"); err == nil {
+			t.Errorf("accepted %q", ref)
+		}
+	}
+}
+
+// history answers FirstCommit with one date or one error.
+type history struct {
+	added time.Time
+	err   error
+	asked []string
+}
+
+func (h *history) FirstCommit(_ context.Context, path, ref string) (time.Time, error) {
+	h.asked = append(h.asked, path+"@"+ref)
+	return h.added, h.err
+}
+
+func TestReadStartKeepsThePeriodRunningUnlessItKnows(t *testing.T) {
+	added := checkTime.Add(-time.Hour)
+	cases := map[string]struct {
+		history *history
+		base    string
+		want    Start
+		err     bool
+	}{
+		"a commit on the base":  {&history{added: added}, base, Start{At: added}, false},
+		"no commit on the base": {&history{err: scm.ErrNoCommit}, base, Start{NotOnBase: true}, false},
+		"a refusal":             {&history{err: errors.New("answered 403")}, base, Start{}, true},
+		"no base commit":        {&history{added: added}, "", Start{}, true},
+	}
+	for name, tc := range cases {
+		start, err := ReadStart(context.Background(), tc.history, ".github/workflows/costroid.yml", tc.base)
+		if start != tc.want || (err != nil) != tc.err {
+			t.Errorf("%s: %+v, %v", name, start, err)
+		}
+		if tc.base == "" && len(tc.history.asked) != 0 {
+			t.Errorf("%s: asked %v", name, tc.history.asked)
+		}
+	}
+}

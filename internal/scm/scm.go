@@ -13,6 +13,9 @@ import (
 // ErrNotFound reports a file or an object the host does not have.
 var ErrNotFound = errors.New("scm: not found")
 
+// ErrNoCommit reports a ref where no commit touched the path asked about.
+var ErrNoCommit = errors.New("scm: no commit on the ref touched the path")
+
 // ErrNoCheck reports a host where the adapter posts no check.
 var ErrNoCheck = errors.New("scm: this host takes no check from this token")
 

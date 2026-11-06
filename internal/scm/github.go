@@ -27,7 +27,10 @@ const (
 	commentsPerPage = 100
 	// maxCommentPages bounds the search for the sticky comment at 3,000.
 	maxCommentPages = 30
-	botAccount      = "Bot"
+	commitsPerPage  = 100
+	// maxCommitPages bounds the walk for a file's first commit at 1,000.
+	maxCommitPages = 10
+	botAccount     = "Bot"
 )
 
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
@@ -284,6 +287,41 @@ func (g *GitHub) findComment(ctx context.Context, pullRequest int, marker string
 		}
 	}
 	return 0, nil
+}
+
+type commitEntry struct {
+	Commit struct {
+		Committer struct {
+			Date time.Time `json:"date"`
+		} `json:"committer"`
+	} `json:"commit"`
+}
+
+// FirstCommit returns the committer date of the oldest commit on ref that
+// touched path. The commits API lists the newest first, so it pages to the
+// end. A ref where no commit touched path is ErrNoCommit.
+func (g *GitHub) FirstCommit(ctx context.Context, path, ref string) (time.Time, error) {
+	var oldest *commitEntry
+	for page := 1; page <= maxCommitPages; page++ {
+		query := url.Values{"sha": {ref}, "path": {path}, "per_page": {strconv.Itoa(commitsPerPage)}, "page": {strconv.Itoa(page)}}
+		var commits []commitEntry
+		if err := g.do(ctx, http.MethodGet, g.repo("/commits?"+query.Encode()), nil, &commits); err != nil {
+			return time.Time{}, err
+		}
+		if len(commits) > 0 {
+			oldest = &commits[len(commits)-1]
+		}
+		if len(commits) < commitsPerPage {
+			if oldest == nil {
+				return time.Time{}, ErrNoCommit
+			}
+			if oldest.Commit.Committer.Date.IsZero() {
+				return time.Time{}, errors.New("scm: the oldest commit states no date")
+			}
+			return oldest.Commit.Committer.Date, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("scm: more than %d commits touched %s", maxCommitPages*commitsPerPage, path)
 }
 
 // ReadFile reads one file through the contents API.
