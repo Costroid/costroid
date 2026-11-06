@@ -90,6 +90,12 @@ Costroid did not start this run, so no budget held it, and the grade reads `none
 
 It needs the same one secret, `ANTHROPIC_API_KEY`. Then open a test pull request.
 
+## A fork's pull request
+
+The agent's recipes run no agent on a fork's pull request, and the fork's token cannot post the check. [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml) posts it from your repository once the agent's workflow completes. Copy it to `.github/workflows/costroid-follow-up.yml` on the default branch. It needs no secret.
+
+[`docs/required-check.md`](required-check.md#a-forks-pull-request) says what a fork's pull request gets, and [`docs/security.md`](security.md#a-forks-pull-request) why the follow-up never meets its code.
+
 ## What the job log shows
 
 The agent's own stream holds its reasoning, its replies and what it read. A public repository's job log is public, so the action writes that stream to a file on the runner, which the job never uploads, and the log shows Costroid's own lines only. Set `show-output: true` on the run step to print the stream, on a private repository.
@@ -132,6 +138,8 @@ Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ing
 | No agent on a fork's pull request; a label before a first contributor's run | A stranger's pull request cannot spend your budget                                  |
 | GitLab's note token in `costroid:report` alone                              | The job that reads the pull request's content can never write to it                 |
 | `costroid:report` holds no code, no provider key and no id token            | The job with write access runs nothing the pull request wrote                       |
+| The follow-up checks out nothing and names no head commit in a step         | The job with your repository's token never holds a fork's code                      |
+| The follow-up reads the fork's artifact only through `costroid follow-up --rows` | A fork's workflow wrote it, so nothing in it runs                              |
 
 `costroid lint-recipes <paths>` rejects a file that breaks one of these, and exits 1. `make check` lints every file in `recipes/` and `action/action.yml`.
 
