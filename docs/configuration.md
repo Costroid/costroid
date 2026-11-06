@@ -10,7 +10,7 @@ comment:
 
 | Key                 | Default | What it does                                                                                                                                               |
 | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `comment.show_cost` | `true`  | Off, a public repository's comment shows the verdict and the grades, without amounts. The rows and the check run's machine block keep them. A private repository always prints them, and a GitLab project set to internal counts as private |
+| `comment.show_cost` | `true`  | Off, a public repository's comment and job summary show the verdict and the grades, without amounts or token counts. The rows, the check run's machine block and the action's outputs keep them. A private repository always prints them, and a GitLab project set to internal counts as private |
 
 The schema also names `policy_pack`, `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them. `costroid report` prints a warning in the job log for each reserved key it finds, and for each key it does not know, and still posts.
 

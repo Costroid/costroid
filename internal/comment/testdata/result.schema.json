@@ -1,0 +1,511 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.1/result.schema.json",
+  "title": "Costroid result object, version 0.1",
+  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the budget, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.result/0.1"
+    },
+    "check_run_id": {
+      "description": "The check run that carries this object. Absent in the check run's own block, which is written before the host assigns the id, and in what costroid run and costroid report print.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "conclusion": {
+      "description": "The check's conclusion. Null in what costroid run prints, because no check has concluded.",
+      "enum": [
+        "success",
+        "neutral",
+        "failure",
+        null
+      ]
+    },
+    "state": {
+      "description": "What the rows file gave the report.",
+      "enum": [
+        "reported",
+        "no_rows",
+        "rows_unreadable"
+      ]
+    },
+    "reason": {
+      "$ref": "#/$defs/reason"
+    },
+    "reason_line": {
+      "description": "The line of the rows file that is not a valid row. Only with the reason invalid_row.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "head_sha": {
+      "description": "The head commit, lower case. Empty when the environment named none.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}([0-9a-f]{24})?)?$"
+    },
+    "amounts": {
+      "description": "Whether this copy carries amounts and token counts. The check run's block and what both commands print always do. A comment's copy withholds them under comment.show_cost false on a public repository.",
+      "enum": [
+        "shown",
+        "withheld"
+      ]
+    },
+    "rows": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "run_identity": {
+      "$ref": "#/$defs/runIdentity"
+    },
+    "figures": {
+      "description": "One figure per currency, basis and pair of grades, the weakest enforcement grade first. No figure spans two currencies or two bases, and nothing sums across them.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/figure"
+      }
+    },
+    "figures_omitted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "budget": {
+      "description": "The run's budget. Null when the report was not told it, or when amounts are withheld.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/budget"
+        }
+      ]
+    },
+    "data": {
+      "$ref": "#/$defs/data"
+    }
+  },
+  "required": [
+    "schema",
+    "conclusion",
+    "state",
+    "head_sha",
+    "amounts",
+    "rows",
+    "run_identity",
+    "figures",
+    "figures_omitted",
+    "budget",
+    "data"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "reported"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rows": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "figures": {
+            "type": "array",
+            "minItems": 1
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "reason"
+              ]
+            },
+            {
+              "required": [
+                "reason_line"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "rows": {
+            "type": "integer",
+            "const": 0
+          },
+          "figures": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "reason_line"
+        ]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "const": "invalid_row"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "amounts": {
+            "const": "shown"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "figures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "list_cost",
+                "tokens"
+              ]
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "budget": {
+            "type": "null"
+          },
+          "figures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "list_cost"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tokens"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "description": "A non-negative decimal string. Never a JSON number and never scientific notation.",
+      "type": "string",
+      "pattern": "^[0-9]{1,26}(\\.[0-9]{1,12})?$"
+    },
+    "zero": {
+      "type": "string",
+      "pattern": "^0(\\.0{1,12})?$"
+    },
+    "nullableDecimal": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/decimal"
+        }
+      ]
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "costBasis": {
+      "description": "What the figure is. One value for each accuracy label.",
+      "enum": [
+        "measured",
+        "list_equivalent",
+        "estimate",
+        "billed",
+        "derived"
+      ]
+    },
+    "attributionGrade": {
+      "enum": [
+        "exact",
+        "windowed",
+        "unattributed"
+      ]
+    },
+    "enforcementGrade": {
+      "description": "What held the run to its budget.",
+      "enum": [
+        "gateway-precheck",
+        "agent-flag",
+        "wrapper-watchdog",
+        "provider",
+        "none"
+      ]
+    },
+    "runIdentity": {
+      "description": "Whether the run identity was verified from the CI system's token. A rows file the agent's own job wrote is unverified.",
+      "enum": [
+        "token_verified",
+        "unverified"
+      ]
+    },
+    "reason": {
+      "description": "Why the report shows no figures. The list is closed.",
+      "enum": [
+        "no_rows_file",
+        "empty_rows_file",
+        "rows_path_not_a_file",
+        "rows_file_unread",
+        "invalid_row"
+      ]
+    },
+    "tokenClass": {
+      "enum": [
+        "input_uncached",
+        "cache_read",
+        "cache_write_5m",
+        "cache_write_30m",
+        "cache_write_1h",
+        "cache_write_12h",
+        "output",
+        "reasoning_output",
+        "cached_input_reported"
+      ]
+    },
+    "figure": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "list_cost": {
+          "$ref": "#/$defs/decimal"
+        },
+        "cost_basis": {
+          "$ref": "#/$defs/costBasis"
+        },
+        "attribution_grade": {
+          "$ref": "#/$defs/attributionGrade"
+        },
+        "enforcement_grade": {
+          "$ref": "#/$defs/enforcementGrade"
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fallback_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "description": "Token counts by class, every class the figure's rows name. reasoning_output and cached_input_reported repeat tokens that output and cache_read count.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/tokenClass"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/decimal"
+          }
+        }
+      },
+      "required": [
+        "currency",
+        "cost_basis",
+        "attribution_grade",
+        "enforcement_grade",
+        "rows",
+        "fallback_rows"
+      ],
+      "additionalProperties": false
+    },
+    "budget": {
+      "description": "The budget beside the one figure it holds: the figures in its currency, when they share one basis. cost and the fields after it are null when no such figure exists.",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "const": "USD"
+        },
+        "amount": {
+          "$ref": "#/$defs/decimal"
+        },
+        "enforcement_grade": {
+          "description": "The weakest enforcement grade of the figures. Null with no figures.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/enforcementGrade"
+            }
+          ]
+        },
+        "cost": {
+          "$ref": "#/$defs/nullableDecimal"
+        },
+        "cost_basis": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/costBasis"
+            }
+          ]
+        },
+        "remainder": {
+          "description": "amount minus cost, 0 when cost is above amount.",
+          "$ref": "#/$defs/nullableDecimal"
+        },
+        "overshoot": {
+          "description": "cost minus amount, 0 when cost is within amount.",
+          "$ref": "#/$defs/nullableDecimal"
+        },
+        "overshoot_tokens": {
+          "description": "The billed tokens of the request that took cost past amount and of every request that ended after it, in the order the requests ended. Null when the rows hold too many requests to keep.",
+          "$ref": "#/$defs/nullableDecimal"
+        }
+      },
+      "required": [
+        "currency",
+        "amount",
+        "enforcement_grade",
+        "cost",
+        "cost_basis",
+        "remainder",
+        "overshoot",
+        "overshoot_tokens"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "cost": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cost_basis": {
+            "type": "null"
+          },
+          "remainder": {
+            "type": "null"
+          },
+          "overshoot": {
+            "type": "null"
+          },
+          "overshoot_tokens": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "cost_basis": {
+            "type": "string"
+          },
+          "remainder": {
+            "type": "string"
+          },
+          "overshoot": {
+            "type": "string"
+          }
+        },
+        "anyOf": [
+          {
+            "properties": {
+              "remainder": {
+                "$ref": "#/$defs/zero"
+              }
+            }
+          },
+          {
+            "properties": {
+              "overshoot": {
+                "$ref": "#/$defs/zero"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "data": {
+      "description": "Strings that originated in the pull request. Each passed an allowlist, and one that failed it reads not-shown.",
+      "type": "object",
+      "properties": {
+        "agents": {
+          "$ref": "#/$defs/names"
+        },
+        "models": {
+          "$ref": "#/$defs/names"
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "catalog_versions": {
+          "$ref": "#/$defs/names"
+        },
+        "fallback_models": {
+          "$ref": "#/$defs/names"
+        },
+        "fallback_models_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fallback_price_ids": {
+          "$ref": "#/$defs/names"
+        },
+        "fallback_price_ids_omitted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "agents",
+        "models",
+        "models_omitted",
+        "catalog_versions",
+        "fallback_models",
+        "fallback_models_omitted",
+        "fallback_price_ids",
+        "fallback_price_ids_omitted"
+      ],
+      "additionalProperties": false
+    },
+    "names": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+_-]*$"
+      }
+    }
+  }
+}

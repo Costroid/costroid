@@ -17,6 +17,7 @@ import (
 	"text/template"
 
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focus"
 )
 
 const (
@@ -27,7 +28,9 @@ const (
 	// Conclusion is the check's conclusion until a policy decides one.
 	Conclusion = "neutral"
 
-	schema = "costroid.check/0.1"
+	// schema names the result object's contract, result/v0.1 in
+	// Costroid/costroid-schemas.
+	schema = "costroid.result/0.1"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -136,14 +139,20 @@ type Input struct {
 	// RunURL is the CI run's page as the environment names it, empty when it
 	// names none. A value outside runURLPattern is dropped.
 	RunURL string
+	// BeforeCheck marks the object costroid run prints, which no check has
+	// concluded yet, so its conclusion is null.
+	BeforeCheck bool
+	// Reconciliations are the last reconciliation of each credential, shown
+	// under the budget when present.
+	Reconciliations []Reconciliation
 }
 
-// Block is the machine-readable block. Strings under Data originate in the
-// pull request.
+// Block is the result object, the machine-readable block. Strings under Data
+// originate in the pull request.
 type Block struct {
 	Schema         string        `json:"schema"`
 	CheckRunID     *int64        `json:"check_run_id,omitempty"`
-	Conclusion     string        `json:"conclusion"`
+	Conclusion     *string       `json:"conclusion"`
 	State          State         `json:"state"`
 	Reason         Reason        `json:"reason,omitempty"`
 	ReasonLine     int           `json:"reason_line,omitempty"`
@@ -153,25 +162,34 @@ type Block struct {
 	RunIdentity    string        `json:"run_identity"`
 	Figures        []BlockFigure `json:"figures"`
 	FiguresOmitted int           `json:"figures_omitted"`
-	Budget         *BlockAmount  `json:"budget"`
+	Budget         *BlockBudget  `json:"budget"`
 	Data           BlockData     `json:"data"`
 }
 
-// BlockFigure is one Figure. ListCost is empty when amounts are withheld.
+// BlockFigure is one Figure. ListCost and Tokens are empty when amounts are
+// withheld.
 type BlockFigure struct {
-	Currency         string `json:"currency"`
-	ListCost         string `json:"list_cost,omitempty"`
-	CostBasis        string `json:"cost_basis"`
-	AttributionGrade string `json:"attribution_grade"`
-	EnforcementGrade string `json:"enforcement_grade"`
-	Rows             int    `json:"rows"`
-	FallbackRows     int    `json:"fallback_rows"`
+	Currency         string            `json:"currency"`
+	ListCost         string            `json:"list_cost,omitempty"`
+	CostBasis        string            `json:"cost_basis"`
+	AttributionGrade string            `json:"attribution_grade"`
+	EnforcementGrade string            `json:"enforcement_grade"`
+	Rows             int               `json:"rows"`
+	FallbackRows     int               `json:"fallback_rows"`
+	Tokens           map[string]string `json:"tokens,omitempty"`
 }
 
-// BlockAmount is an amount with its currency.
-type BlockAmount struct {
-	Currency string `json:"currency"`
-	Amount   string `json:"amount"`
+// BlockBudget is the run's budget beside the figure it holds. The fields
+// after EnforcementGrade are null when no single figure compares with it.
+type BlockBudget struct {
+	Currency         string  `json:"currency"`
+	Amount           string  `json:"amount"`
+	EnforcementGrade *string `json:"enforcement_grade"`
+	Cost             *string `json:"cost"`
+	CostBasis        *string `json:"cost_basis"`
+	Remainder        *string `json:"remainder"`
+	Overshoot        *string `json:"overshoot"`
+	OvershootTokens  *string `json:"overshoot_tokens"`
 }
 
 // BlockData holds the strings that originated in the pull request, labelled as
@@ -196,13 +214,10 @@ type CheckOutput struct {
 	Text    string
 }
 
-// Check renders the check output. Text carries the authoritative block, with
-// every amount in it whatever the comment shows.
+// Check renders the check output. Text carries the result object, with every
+// amount in it whatever the comment shows.
 func Check(input Input) (CheckOutput, error) {
-	authoritative := input
-	authoritative.Amounts = AmountsShown
-	authoritative.CheckRunID = nil
-	block, err := authoritative.block()
+	block, err := Result(input)
 	if err != nil {
 		return CheckOutput{}, err
 	}
@@ -211,6 +226,16 @@ func Check(input Input) (CheckOutput, error) {
 		return CheckOutput{}, err
 	}
 	return CheckOutput{Title: "Verdict: " + Conclusion, Summary: summary, Text: fenced(block)}, nil
+}
+
+// Result renders the result object as the check run carries it: every amount
+// in it, and no check run id, because the check cannot know its own id
+// before it is posted.
+func Result(input Input) (string, error) {
+	authoritative := input
+	authoritative.Amounts = AmountsShown
+	authoritative.CheckRunID = nil
+	return authoritative.block()
 }
 
 // Comment renders the sticky comment. Its block is a copy of the check's that
@@ -229,11 +254,11 @@ func (i Input) block() (string, error) {
 	block := Block{
 		Schema:         schema,
 		CheckRunID:     i.CheckRunID,
-		Conclusion:     Conclusion,
+		Conclusion:     i.conclusion(),
 		State:          i.State,
 		Reason:         i.Reason,
 		ReasonLine:     i.ReasonLine,
-		HeadSHA:        i.HeadSHA,
+		HeadSHA:        i.headSHA(),
 		Amounts:        "withheld",
 		Rows:           i.Ledger.Rows,
 		RunIdentity:    artifactIdentity,
@@ -262,20 +287,44 @@ func (i Input) block() (string, error) {
 		}
 		if shown {
 			line.ListCost = figure.Cost.String()
+			line.Tokens = tokenStrings(figure.Tokens)
 		}
 		block.Figures = append(block.Figures, line)
 	}
 	if shown {
 		block.Amounts = "shown"
-		if i.Budget != nil {
-			block.Budget = &BlockAmount{Currency: budgetCurrency, Amount: i.Budget.String()}
-		}
+		block.Budget = i.capCheck().block()
 	}
 	encoded, err := json.MarshalIndent(block, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("comment: encode block: %w", err)
 	}
 	return string(encoded), nil
+}
+
+// conclusion is null on an object no check has concluded.
+func (i Input) conclusion() *string {
+	if i.BeforeCheck {
+		return nil
+	}
+	conclusion := Conclusion
+	return &conclusion
+}
+
+// headSHA is the head commit when it is one, and empty otherwise.
+func (i Input) headSHA() string {
+	if !commitPattern.MatchString(i.HeadSHA) {
+		return ""
+	}
+	return i.HeadSHA
+}
+
+func tokenStrings(tokens map[focus.TokenClass]decimal.Decimal) map[string]string {
+	counts := make(map[string]string, len(tokens))
+	for class, count := range tokens {
+		counts[string(class)] = count.String()
+	}
+	return counts
 }
 
 func nonNil(names []Data) []Data {
@@ -297,6 +346,9 @@ type figureLine struct {
 	Note        string
 	// Mark is the visible flag on a figure with a row at the fallback tier.
 	Mark string
+	// Catalogs and the token columns are the job summary's.
+	Catalogs                                     string
+	InputUncached, CacheRead, CacheWrite, Output string
 }
 
 // traceBlock is one figure's collapsed arithmetic.
@@ -326,23 +378,25 @@ type view struct {
 	// Why is the sentence for a report without figures, empty otherwise.
 	Why string
 	// CheckRuns is false on GitLab, which has no check run to name.
-	CheckRuns      bool
-	ShowAmounts    bool
-	AmountsOff     bool
-	Budget         string
-	Lines          []figureLine
-	FiguresOmitted int
-	Fallback       string
-	Traces         []traceBlock
-	Agents         string
-	Models         string
-	ModelsOmitted  int
-	Catalogs       string
-	Rows           int
-	AccountURL     string
-	ExportURL      string
-	CheckRunID     *int64
-	Block          string
+	CheckRuns   bool
+	ShowAmounts bool
+	AmountsOff  bool
+	CapLine     string
+	// Reconciliations are closed sentences, one per credential.
+	Reconciliations []string
+	Lines           []figureLine
+	FiguresOmitted  int
+	Fallback        string
+	Traces          []traceBlock
+	Agents          string
+	Models          string
+	ModelsOmitted   int
+	Catalogs        string
+	Rows            int
+	AccountURL      string
+	ExportURL       string
+	CheckRunID      *int64
+	Block           string
 }
 
 // fallbackMark sits in the first cell of a figure the fallback tier priced in
@@ -370,9 +424,8 @@ func (i Input) view() view {
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
 	}
-	if i.Budget != nil {
-		result.Budget = budgetCurrency + " " + i.Budget.String()
-	}
+	result.CapLine = i.capCheck().line()
+	result.Reconciliations = reconciliationLines(i.Reconciliations)
 	for index, figure := range i.Ledger.Figures {
 		line := figureLine{
 			Cost:        figure.Currency + " " + figure.Cost.String(),
@@ -384,6 +437,10 @@ func (i Input) view() view {
 		if figure.FallbackRows > 0 {
 			line.Mark = fallbackMark
 		}
+		line.Catalogs = spans(figure.Catalogs)
+		columns := tokenColumns(figure.Tokens)
+		line.InputUncached, line.CacheRead = columns["tokens_input_uncached"], columns["tokens_cache_read"]
+		line.CacheWrite, line.Output = columns["tokens_cache_write"], columns["tokens_output"]
 		result.Lines = append(result.Lines, line)
 		result.Traces = append(result.Traces, traceOf(figure, index+1, shown, result.CheckRuns))
 	}

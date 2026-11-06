@@ -11,7 +11,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 Unverified: the agent's job wrote these figures.
 
-Budget: USD 5.
+Cap: USD 5 (agent-flag: client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 
@@ -37,7 +37,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 
 ```json
 {
-  "schema": "costroid.check/0.1",
+  "schema": "costroid.result/0.1",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",
@@ -53,13 +53,28 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
       "attribution_grade": "unattributed",
       "enforcement_grade": "agent-flag",
       "rows": 19,
-      "fallback_rows": 0
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
     }
   ],
   "figures_omitted": 0,
   "budget": {
     "currency": "USD",
-    "amount": "5"
+    "amount": "5",
+    "enforcement_grade": "agent-flag",
+    "cost": "0.001619725",
+    "cost_basis": "list_equivalent",
+    "remainder": "4.998380275",
+    "overshoot": "0",
+    "overshoot_tokens": "0"
   },
   "data": {
     "agents": [

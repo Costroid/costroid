@@ -173,7 +173,7 @@ func TestEveryAmountSitsBesideItsCurrency(t *testing.T) {
 			t.Errorf("bare amount %q", found)
 		}
 	}
-	for _, want := range []string{"USD " + realTotal, "Budget: USD 5."} {
+	for _, want := range []string{"USD " + realTotal, "Cap: USD 5 ("} {
 		if !strings.Contains(body, want) {
 			t.Errorf("no %q in\n%s", want, body)
 		}
@@ -525,9 +525,10 @@ func TestThousandsOfDistinctStringsStayInsideGitHubsLimit(t *testing.T) {
 
 // TestVisiblePartStaysShort counts every word a reader sees before opening a
 // block, summaries included. The comment held 67 such words before it named
-// its run and traced its figure.
+// its run and traced its figure, and 86 before its budget line stated the
+// cap, the grade, the cost and what is left or over.
 func TestVisiblePartStaysShort(t *testing.T) {
-	const wordsInTenSeconds = 90
+	const wordsInTenSeconds = 110
 	table := strings.NewReplacer("|", " ", "---", " ")
 	words := strings.Fields(table.Replace(visiblePart(commentOf(t, realInput(t)))))
 	t.Logf("%d words", len(words))

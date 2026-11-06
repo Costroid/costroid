@@ -41,6 +41,7 @@ type reportFlags struct {
 	rows         string
 	budget       *decimal.Decimal
 	installation string
+	json         bool
 }
 
 func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
@@ -50,13 +51,14 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	budget := set.String("budget-usd", "", "the budget the run was given, in USD")
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id; GitLab uses the project id")
+	asJSON := set.Bool("json", false, "print the result object on stdout")
 	if err := set.Parse(args); err != nil {
 		return reportFlags{}, err
 	}
 	if *rows == "" {
 		return reportFlags{}, errors.New("report needs --rows")
 	}
-	flags := reportFlags{rows: *rows, installation: *installation}
+	flags := reportFlags{rows: *rows, installation: *installation, json: *asJSON}
 	if *budget != "" {
 		amount, err := decimal.Parse(*budget)
 		if err != nil {
@@ -183,7 +185,7 @@ func targetFromEnvironment(system cicontext.System, flags reportFlags, stderr io
 // reportCommand exits 0 once its flags parse and a CI system is found. A report
 // is never why a job fails, so every failure after that ends as a line on
 // stderr. Outside CI there is no job to protect, so it refuses and says why.
-func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
+func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags, err := parseReport(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -201,31 +203,109 @@ func reportCommand(ctx context.Context, args []string, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
+	input := comment.Input{
+		Ledger:     rows.ledger,
+		State:      rows.state,
+		Reason:     rows.reason,
+		ReasonLine: rows.line,
+		Budget:     flags.budget,
+		RunURL:     runURL(system),
+	}
 	target, err := targetFromEnvironment(system, flags, stderr)
+	input.HeadSHA = target.pull.head
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
-		return 0
+	} else {
+		input = post(ctx, target, input, stderr)
 	}
+	publish(input, flags.json, stdout, stderr)
+	return 0
+}
+
+// post posts the check and the comment, and returns the input as posted: with
+// the installation, the amounts setting and the check run's id.
+func post(ctx context.Context, target reportTarget, input comment.Input, stderr io.Writer) comment.Input {
 	host, pull := target.host, target.pull
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
-	input := comment.Input{
-		Ledger:       rows.ledger,
-		State:        rows.state,
-		Reason:       rows.reason,
-		ReasonLine:   rows.line,
-		HeadSHA:      pull.head,
-		Budget:       flags.budget,
-		Installation: target.installation,
-		AccountHost:  target.accountHost,
-		RunURL:       runURL(system),
-	}
+	input.Installation = target.installation
+	input.AccountHost = target.accountHost
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if pull.pullRequest > 0 {
 		postComment(ctx, host, input, pull.pullRequest, stderr)
 	}
-	return 0
+	return input
+}
+
+// publish hands the result to the job: the step's outputs and its summary
+// where GitHub Actions names their files, and the result object on stdout
+// under --json. A failure here is a warning, as a failed post is.
+func publish(input comment.Input, asJSON bool, stdout, stderr io.Writer) {
+	if path := os.Getenv("GITHUB_OUTPUT"); path != "" {
+		if err := writeOutputs(path, input); err != nil {
+			fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+		}
+	}
+	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
+		if err := writeSummary(path, input); err != nil {
+			fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+		}
+	}
+	if asJSON {
+		if err := printResult(stdout, input); err != nil {
+			fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+		}
+	}
+}
+
+// writeOutputs appends name=value lines. Every value is one line, so no
+// value can start another output.
+func writeOutputs(path string, input comment.Input) error {
+	outputs, err := comment.Outputs(input)
+	if err != nil {
+		return fmt.Errorf("step outputs: %w", err)
+	}
+	var lines strings.Builder
+	for _, output := range outputs {
+		lines.WriteString(output.Name + "=" + output.Value + "\n")
+	}
+	return appendTo(path, "step outputs", lines.String())
+}
+
+func writeSummary(path string, input comment.Input) error {
+	summary, err := comment.Summary(input)
+	if err != nil {
+		return fmt.Errorf("job summary: %w", err)
+	}
+	return appendTo(path, "job summary", summary)
+}
+
+func appendTo(path, what, text string) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	_, err = file.WriteString(text)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
+}
+
+// printResult prints the result object exactly as the check run carries it.
+func printResult(stdout io.Writer, input comment.Input) error {
+	result, err := comment.Result(input)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, result); err != nil {
+		return fmt.Errorf("print the result: %w", err)
+	}
+	return nil
 }
 
 // hostFromEnvironment runs in the customer's CI, outside the service's egress

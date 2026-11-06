@@ -29,6 +29,9 @@ const (
 	// informationalUnit is the PricingUnit of a class that repeats tokens a
 	// billed class counts.
 	informationalUnit = "Informational Tokens"
+	// maxRequests bounds the requests kept per currency and basis for the
+	// overshoot. Past it the overshoot in tokens is not stated.
+	maxRequests = 100000
 )
 
 var (
@@ -60,6 +63,10 @@ type Figure struct {
 	// price. TraceOmitted counts the lines left out of it.
 	Trace        []Trace
 	TraceOmitted int
+	// Tokens is every token count of the figure by class, with no cap.
+	Tokens map[focus.TokenClass]decimal.Decimal
+	// Catalogs are the catalog versions of the figure's rows.
+	Catalogs []Data
 }
 
 // Trace is the rows of one Figure that share a catalog, a token class and a
@@ -93,6 +100,8 @@ type Ledger struct {
 	FallbackPrices        []Data
 	FallbackPricesOmitted int
 	FallbackCatalogs      []Data
+	// requests holds each currency and basis's requests, for the overshoot.
+	requests map[spendKey]*requestLog
 }
 
 // RowError names the first line of a rows file that is not a valid row.
@@ -111,6 +120,8 @@ func (e *RowError) Unwrap() error {
 
 type row struct {
 	BillingCurrency   string                     `json:"BillingCurrency"`
+	ChargePeriodStart string                     `json:"ChargePeriodStart"`
+	ChargePeriodEnd   string                     `json:"ChargePeriodEnd"`
 	ListCost          string                     `json:"ListCost"`
 	ListUnitPrice     string                     `json:"ListUnitPrice"`
 	PricingQuantity   string                     `json:"PricingQuantity"`
@@ -157,13 +168,44 @@ type traceKey struct {
 }
 
 type figureTally struct {
-	figure Figure
-	traces map[traceKey]*Trace
+	figure   Figure
+	traces   map[traceKey]*Trace
+	catalogs map[Data]struct{}
+}
+
+// spendKey is what a budget is compared within: one currency, one basis.
+type spendKey struct {
+	currency, basis string
+}
+
+// requestSpend is one request's cost and its billed tokens. A class that
+// repeats another's tokens is left out of the count.
+type requestSpend struct {
+	end    string
+	cost   decimal.Decimal
+	tokens decimal.Decimal
+}
+
+// requestKey is what the rows of one request share. A row writer emits each
+// class of a request once, so a class seen again opens the next request.
+type requestKey struct {
+	start, end, session, model string
+}
+
+// requestLog keeps one currency and basis's requests in the order the rows
+// name them.
+type requestLog struct {
+	requests []requestSpend
+	current  requestKey
+	classes  map[focus.TokenClass]bool
+	// overflow says the log passed maxRequests and was dropped.
+	overflow bool
 }
 
 type tally struct {
 	rows             int
 	figures          map[figureKey]*figureTally
+	requests         map[spendKey]*requestLog
 	agents           map[Data]struct{}
 	models           map[Data]struct{}
 	catalogs         map[Data]struct{}
@@ -178,6 +220,7 @@ type tally struct {
 func ReadRows(source io.Reader) (Ledger, error) {
 	total := tally{
 		figures:          map[figureKey]*figureTally{},
+		requests:         map[spendKey]*requestLog{},
 		agents:           map[Data]struct{}{},
 		models:           map[Data]struct{}{},
 		catalogs:         map[Data]struct{}{},
@@ -225,14 +268,19 @@ func (t *tally) add(line []byte) error {
 	entry, found := t.figures[key]
 	if !found {
 		entry = &figureTally{
-			figure: Figure{Currency: key.currency, Basis: key.basis, Attribution: key.attribution, Enforcement: key.enforcement},
-			traces: map[traceKey]*Trace{},
+			figure: Figure{
+				Currency: key.currency, Basis: key.basis, Attribution: key.attribution, Enforcement: key.enforcement,
+				Tokens: map[focus.TokenClass]decimal.Decimal{},
+			},
+			traces:   map[traceKey]*Trace{},
+			catalogs: map[Data]struct{}{},
 		}
 		t.figures[key] = entry
 	}
 	entry.figure.Cost = entry.figure.Cost.Add(priced.Cost)
 	entry.figure.Rows++
 	entry.add(priced)
+	t.logRequest(spendKey{key.currency, key.basis}, parsed, priced)
 	if parsed.fallback() {
 		entry.figure.FallbackRows++
 		t.noteFallback(parsed)
@@ -251,6 +299,63 @@ func (f *figureTally) add(priced Trace) {
 	}
 	line.Tokens = line.Tokens.Add(priced.Tokens)
 	line.Cost = line.Cost.Add(priced.Cost)
+	f.figure.Tokens[priced.Class] = f.figure.Tokens[priced.Class].Add(priced.Tokens)
+	if priced.Catalog != "" {
+		f.catalogs[priced.Catalog] = struct{}{}
+	}
+}
+
+// logRequest adds a row to its request, and opens the next request when the
+// row belongs to another one.
+func (t *tally) logRequest(key spendKey, parsed row, priced Trace) {
+	log, found := t.requests[key]
+	if !found {
+		log = &requestLog{}
+		t.requests[key] = log
+	}
+	if log.overflow {
+		return
+	}
+	session, _ := parsed.tag(focus.TagSessionID)
+	model, _ := parsed.tag(focus.TagModel)
+	request := requestKey{parsed.ChargePeriodStart, parsed.ChargePeriodEnd, session, model}
+	if len(log.requests) == 0 || request != log.current || log.classes[priced.Class] {
+		if len(log.requests) == maxRequests {
+			log.requests, log.overflow = nil, true
+			return
+		}
+		log.requests = append(log.requests, requestSpend{end: parsed.ChargePeriodEnd})
+		log.current, log.classes = request, map[focus.TokenClass]bool{}
+	}
+	log.classes[priced.Class] = true
+	last := &log.requests[len(log.requests)-1]
+	last.cost = last.cost.Add(priced.Cost)
+	if !priced.Class.Informational() {
+		last.tokens = last.tokens.Add(priced.Tokens)
+	}
+}
+
+// overshootTokens counts the billed tokens of the request that took one
+// currency and basis's spend past the cap, and of every request that ended
+// after it. Requests are taken in the order they ended. The answer is false
+// when the rows hold too many requests to keep.
+func (l Ledger) overshootTokens(currency, basis string, cap decimal.Decimal) (decimal.Decimal, bool) {
+	log, found := l.requests[spendKey{currency, basis}]
+	if !found || log.overflow {
+		return decimal.Decimal{}, false
+	}
+	requests := slices.Clone(log.requests)
+	slices.SortStableFunc(requests, func(a, b requestSpend) int { return cmp.Compare(a.end, b.end) })
+	var spent, tokens decimal.Decimal
+	over := false
+	for _, request := range requests {
+		spent = spent.Add(request.cost)
+		over = over || spent.Cmp(cap) > 0
+		if over {
+			tokens = tokens.Add(request.tokens)
+		}
+	}
+	return tokens, true
 }
 
 // arithmetic reads the columns a trace shows. A row whose own arithmetic does
@@ -413,6 +518,7 @@ func (t *tally) ledger() Ledger {
 		FallbackPrices:        fallbackPrices,
 		FallbackPricesOmitted: fallbackPricesOmitted,
 		FallbackCatalogs:      fallbackCatalogs,
+		requests:              t.requests,
 	}
 }
 
@@ -420,6 +526,7 @@ func (t *tally) ledger() Ledger {
 // then price id and price.
 func (f *figureTally) withTrace() Figure {
 	figure := f.figure
+	figure.Catalogs, _ = capped(f.catalogs)
 	figure.Trace = make([]Trace, 0, len(f.traces))
 	for _, line := range f.traces {
 		figure.Trace = append(figure.Trace, *line)

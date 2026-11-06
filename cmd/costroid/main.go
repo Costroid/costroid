@@ -17,6 +17,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/reconcile"
@@ -27,9 +28,9 @@ import (
 const usage = `costroid runs a coding agent under a budget and records what it cost.
 
 Usage:
-  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] -- <agent command>
+  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--json] -- <agent command>
   costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
-  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID]
+  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE] [--reports DIR --as-of T]
   costroid validate [costroid.yml]
   costroid lint-recipes <paths>
@@ -54,16 +55,24 @@ vcs.* and cicd.* attributes through OTEL_RESOURCE_ATTRIBUTES for the agent. Thes
 are claims. Rows stay unverified and unattributed until a ledger checks them
 against the job's OIDC token.
 
+--json prints one result object on stdout when the command ends: figures per
+currency and basis, token counts by class, grades, the budget and what is left
+or over, and a reason when there are no figures. run then sends the agent's
+stream to stderr. report prints the object its check run carries, byte for
+byte. run prints none when it exits 125. docs/agents.md describes the object.
+
 ingest-run writes the rows of a claude-code-action run from the action's
 execution_file output, after the action ended. No budget held that run, so the
 grade reads none.
 
 report posts from CI, and selects the host from the job's variables. On GitHub
 Actions it posts one check run and one sticky comment, with GITHUB_TOKEN and the
-GITHUB_* variables. On GitLab CI it posts one sticky merge request note, with
-COSTROID_GITLAB_TOKEN and the CI_* variables, and no check. It exits 0 whatever
-the host answers, so a failed post never fails the job. Outside both it refuses
-and exits 125. --budget-usd restates the run's budget, which rows do not record.
+GITHUB_* variables, then writes the step's outputs and a job summary. The
+summary withholds amounts and token counts where the comment does. On GitLab CI
+it posts one sticky merge request note, with COSTROID_GITLAB_TOKEN and the CI_*
+variables, and no check. It exits 0 whatever the host answers, so a failed post
+never fails the job. Outside both it refuses and exits 125. --budget-usd
+restates the run's budget, which rows do not record.
 --installation-id puts the GitHub App installation on the account link;
 COSTROID_INSTALLATION_ID does the same. GitLab's link names the project id.
 
@@ -138,7 +147,7 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	case "ingest-run":
 		return ingestRunCommand(args[1:], stderr)
 	case "report":
-		return reportCommand(ctx, args[1:], stderr)
+		return reportCommand(ctx, args[1:], stdout, stderr)
 	case "validate":
 		return validateCommand(args[1:], stdout, stderr)
 	case "version":
@@ -192,6 +201,7 @@ type runFlags struct {
 	out     string
 	account accountFlags
 	argv    []string
+	json    bool
 }
 
 func parseRun(args []string, stderr io.Writer) (runFlags, error) {
@@ -200,6 +210,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	budget := set.String("budget-usd", "", "the run's budget in USD")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
+	asJSON := set.Bool("json", false, "print the result object on stdout, and the agent's stream on stderr")
 	account := addAccountFlags(set)
 	if err := set.Parse(args); err != nil {
 		return runFlags{}, err
@@ -217,7 +228,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	if err := account.check(); err != nil {
 		return runFlags{}, err
 	}
-	return runFlags{budget: amount, out: *out, account: account, argv: set.Args()}, nil
+	return runFlags{budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON}, nil
 }
 
 // readCI never stops a run: a job whose event file cannot be read still spends
@@ -249,15 +260,21 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
+	// Under --json stdout carries the result object alone.
+	agentOutput := stdout
+	if flags.json {
+		agentOutput = stderr
+	}
+	ci := readCI(stderr)
 	result, err := run.Run(ctx, run.Options{
 		Argv:           flags.argv,
 		Budget:         flags.budget,
 		BillingAccount: *flags.account.billing,
 		Credential:     *flags.account.credential,
-		CI:             readCI(stderr),
+		CI:             ci,
 		Rows:           rows,
 		Stdin:          stdin,
-		Stdout:         stdout,
+		Stdout:         agentOutput,
 		Stderr:         stderr,
 		Catalog:        pinned,
 	})
@@ -269,10 +286,35 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return exitFailure
 	}
 	summarize(stderr, flags, pinned.Version(), result)
+	if flags.json {
+		printRunResult(stdout, stderr, flags, ci.Head)
+	}
 	if result.Stopped {
 		return exitBudgetStop
 	}
 	return result.AgentExit
+}
+
+// printRunResult prints the result object of the rows the run wrote, read as
+// the report reads them. No check has concluded on them yet.
+func printRunResult(stdout, stderr io.Writer, flags runFlags, head string) {
+	rows, err := readReportRows(flags.out)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
+	input := comment.Input{
+		Ledger:      rows.ledger,
+		State:       rows.state,
+		Reason:      rows.reason,
+		ReasonLine:  rows.line,
+		HeadSHA:     head,
+		Budget:      &flags.budget,
+		Amounts:     comment.AmountsShown,
+		BeforeCheck: true,
+	}
+	if err := printResult(stdout, input); err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
 }
 
 // labels are the accuracy labels a wrapped run can carry.

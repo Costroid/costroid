@@ -121,7 +121,7 @@ func TestTheInputParityCheckRefusesADriftedWrapper(t *testing.T) {
 	for name, change := range map[string][2]string{
 		"a missing input":   {"  agent:\n    description: claude or codex.\n    default: claude\n", ""},
 		"another default":   {"    description: claude or codex.\n    default: claude\n", "    description: claude or codex.\n    default: codex\n"},
-		"an added input":    {"\nruns:\n", "  extra:\n    description: More.\n    default: \"\"\n\nruns:\n"},
+		"an added input":    {"\noutputs:\n", "  extra:\n    description: More.\n    default: \"\"\n\noutputs:\n"},
 		"a dropped forward": {"        agent: ${{ inputs.agent }}\n", ""},
 		"another pin":       {"@__RELEASE_COMMIT__", "@main"},
 	} {
@@ -130,6 +130,88 @@ func TestTheInputParityCheckRefusesADriftedWrapper(t *testing.T) {
 				t.Fatalf("the wrapper has no %q to change", change[0])
 			}
 			if problems := checkInputParity(t, action, strings.Replace(wrapper, change[0], change[1], 1)); len(problems) == 0 {
+				t.Fatal("the check passed a drifted wrapper")
+			}
+		})
+	}
+}
+
+// actionOutput is what a caller sees of one output, and where it comes from.
+type actionOutput struct {
+	Description, Value string
+}
+
+func actionOutputs(root *yaml.Node) (map[string]actionOutput, []string) {
+	outputs, names := map[string]actionOutput{}, []string{}
+	for _, item := range entries(field(root, "outputs")) {
+		names = append(names, item.key.Value)
+		outputs[item.key.Value] = actionOutput{
+			Description: scalarField(item.value, "description"),
+			Value:       scalarField(item.value, "value"),
+		}
+	}
+	return outputs, names
+}
+
+// checkOutputParity holds a wrapper's outputs to the action's: every output
+// under the same name and description, none added, each read from the one
+// step that calls the action.
+func checkOutputParity(t *testing.T, action, wrapper string) []string {
+	t.Helper()
+	var problems []string
+	wrapperRoot := document(t, wrapper)
+	want, names := actionOutputs(document(t, action))
+	got, _ := actionOutputs(wrapperRoot)
+	if len(names) == 0 {
+		return append(problems, "the action declares no outputs")
+	}
+	steps := sequence(field(field(wrapperRoot, "runs"), "steps"))
+	if len(steps) != 1 || scalarField(steps[0], "id") == "" {
+		return append(problems, "the wrapper's one step has no id to read outputs from")
+	}
+	id := scalarField(steps[0], "id")
+	for _, name := range names {
+		output, found := got[name]
+		switch {
+		case !found:
+			problems = append(problems, "the wrapper lacks the output "+name)
+		case output.Description != want[name].Description:
+			problems = append(problems, "the wrapper describes the output "+name+" differently")
+		case output.Value != "${{ steps."+id+".outputs."+name+" }}":
+			problems = append(problems, "the wrapper's output "+name+" is not the action's "+name)
+		}
+	}
+	for name := range got {
+		if _, found := want[name]; !found {
+			problems = append(problems, "the wrapper adds the output "+name)
+		}
+	}
+	return problems
+}
+
+func TestTheMarketplaceWrapperGivesEveryOutputOfTheAction(t *testing.T) {
+	action := read(t, filepath.Join(actionDir, "action.yml"))
+	wrapper := read(t, filepath.Join(marketplaceDir, "action.yml"))
+	if problems := checkOutputParity(t, action, wrapper); len(problems) != 0 {
+		t.Fatalf("marketplace/action.yml:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+func TestTheOutputParityCheckRefusesADriftedWrapper(t *testing.T) {
+	action := read(t, filepath.Join(actionDir, "action.yml"))
+	wrapper := read(t, filepath.Join(marketplaceDir, "action.yml"))
+	for name, change := range map[string][2]string{
+		"a missing output":      {"  tokens_output:\n    description: Output tokens. Empty when cost is.\n    value: ${{ steps.costroid.outputs.tokens_output }}\n", ""},
+		"another description":   {"    description: Output tokens. Empty when cost is.\n", "    description: Output tokens.\n"},
+		"an added output":       {"\nruns:\n", "  extra:\n    description: More.\n    value: ${{ steps.costroid.outputs.extra }}\n\nruns:\n"},
+		"a crossed value":       {"value: ${{ steps.costroid.outputs.cost }}", "value: ${{ steps.costroid.outputs.currency }}"},
+		"a step without its id": {"    - id: costroid\n      uses:", "    - uses:"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(wrapper, change[0]) {
+				t.Fatalf("the wrapper has no %q to change", change[0])
+			}
+			if problems := checkOutputParity(t, action, strings.Replace(wrapper, change[0], change[1], 1)); len(problems) == 0 {
 				t.Fatal("the check passed a drifted wrapper")
 			}
 		})

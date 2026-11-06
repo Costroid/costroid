@@ -65,10 +65,52 @@ inputs:
     description: The audience the ledger requires on the CI token.
     default: ""
 
+outputs:
+  cost:
+    description: >-
+      The run's cost as a decimal string, set by stage report or all. Empty when the figures
+      span more than one currency or basis, because those are never summed; result holds each.
+    value: ${{ steps.costroid.outputs.cost }}
+  currency:
+    description: The ISO currency code of cost, or multiple when the figures hold more than one.
+    value: ${{ steps.costroid.outputs.currency }}
+  cost_basis:
+    description: >-
+      What cost is: measured, list_equivalent, estimate, billed or derived. multiple when the
+      figures hold more than one basis.
+    value: ${{ steps.costroid.outputs.cost_basis }}
+  tokens_input_uncached:
+    description: Input tokens read without the cache. Empty when cost is.
+    value: ${{ steps.costroid.outputs.tokens_input_uncached }}
+  tokens_cache_read:
+    description: Input tokens read from the cache. Empty when cost is.
+    value: ${{ steps.costroid.outputs.tokens_cache_read }}
+  tokens_cache_write:
+    description: Input tokens written to the cache, every lifetime together. Empty when cost is.
+    value: ${{ steps.costroid.outputs.tokens_cache_write }}
+  tokens_output:
+    description: Output tokens. Empty when cost is.
+    value: ${{ steps.costroid.outputs.tokens_output }}
+  enforcement_grade:
+    description: The weakest enforcement grade of the run's figures.
+    value: ${{ steps.costroid.outputs.enforcement_grade }}
+  catalog_version:
+    description: The price catalog that priced the rows, or multiple when they name more than one.
+    value: ${{ steps.costroid.outputs.catalog_version }}
+  check_run_id:
+    description: The id of the check run the report posted. Empty when none was posted.
+    value: ${{ steps.costroid.outputs.check_run_id }}
+  result:
+    description: >-
+      The result object as one line of JSON, the check run's machine block, every amount
+      included. docs/agents.md describes it.
+    value: ${{ steps.costroid.outputs.result }}
+
 runs:
   using: composite
   steps:
-    - uses: Costroid/costroid/action@__RELEASE_COMMIT__ # __RELEASE_TAG__
+    - id: costroid
+      uses: Costroid/costroid/action@__RELEASE_COMMIT__ # __RELEASE_TAG__
       with:
         stage: ${{ inputs.stage }}
         version: ${{ inputs.version }}

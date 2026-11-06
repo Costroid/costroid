@@ -30,11 +30,15 @@ Unverified: the agent's job wrote these figures.
 
 {{end -}}
 {{if .ShowAmounts -}}
-Budget: {{if .Budget}}{{.Budget}}{{else}}not recorded on these rows{{end}}.
+{{.CapLine}}
 {{- else if .AmountsOff -}}
 Amounts are off on this public repository (`comment.show_cost: false`). {{if .CheckRuns}}The rows and the check run's machine block carry them.{{else}}The rows carry them.{{end}}
 {{- else -}}
 Amounts are withheld, because `comment.show_cost` or the repository's visibility could not be read. {{if .CheckRuns}}The rows and the check run's machine block carry them.{{else}}The rows carry them.{{end}}
+{{- end}}
+{{- range .Reconciliations}}
+
+{{.}}
 {{- end}}
 
 {{if .Agents}}Agents: {{.Agents}}. {{end}}{{if .Models}}Models: {{.Models}}{{if .ModelsOmitted}} and {{.ModelsOmitted}} more{{end}}. {{end}}{{.Rows}} {{if eq .Rows 1}}row{{else}}rows{{end}}{{if .Catalogs}}, catalog {{.Catalogs}}{{end}}.
@@ -86,4 +90,43 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{.Block}}
 
 </details>
+{{end -}}
+
+{{- define "summary" -}}
+### Costroid
+
+{{if .Why -}}
+{{.Why}}
+{{- else -}}
+{{if .ShowAmounts -}}
+| Basis | Catalog | Cost | Enforcement | Input, uncached | Cache read | Cache write | Output |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+{{range .Lines -}}
+| {{.Basis}}{{.Mark}} | {{.Catalogs}} | {{.Cost}} | {{.Enforcement}}: {{.Note}} | {{.InputUncached}} | {{.CacheRead}} | {{.CacheWrite}} | {{.Output}} |
+{{end}}
+{{- else -}}
+| Basis | Catalog | Attribution | Enforcement |
+| --- | --- | --- | --- |
+{{range .Lines -}}
+| {{.Basis}}{{.Mark}} | {{.Catalogs}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
+{{end}}
+{{- end}}
+{{if .Fallback -}}
+{{.Fallback}}
+
+{{end -}}
+Unverified: the agent's job wrote these figures.
+
+{{if .FiguresOmitted -}}
+{{.FiguresOmitted}} more lines are left out of this table.
+
+{{end -}}
+{{if .ShowAmounts -}}
+{{.CapLine}}
+{{- else if .AmountsOff -}}
+Amounts and token counts are off on this public repository (`comment.show_cost: false`). The step's outputs and the check run's machine block carry them.
+{{- else -}}
+Amounts and token counts are withheld, because `comment.show_cost` or the repository's visibility could not be read. The step's outputs and the check run's machine block carry them.
+{{- end}}
+{{- end}}
 {{end -}}

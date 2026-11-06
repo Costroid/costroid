@@ -37,6 +37,8 @@ func reportEnvironment(t *testing.T, event string) *scmtest.Stub {
 	t.Setenv("GITHUB_SHA", mergeSHA)
 	t.Setenv("GITHUB_EVENT_PATH", path)
 	t.Setenv(installationVariable, "")
+	t.Setenv("GITHUB_OUTPUT", "")
+	t.Setenv("GITHUB_STEP_SUMMARY", "")
 	return stub
 }
 
@@ -72,7 +74,7 @@ func TestReportPostsOneNeutralCheckAndOneComment(t *testing.T) {
 		t.Errorf("no block in the check:\n%s", check.Text)
 	}
 	body := stub.Comments[0].Body
-	for _, want := range []string{"USD " + realTotal, "List-equivalent, not billed", "Budget: USD 5.", "agent-flag", "installation=github%3A58120394"} {
+	for _, want := range []string{"USD " + realTotal, "List-equivalent, not billed", "Cap: USD 5 (", "agent-flag", "installation=github%3A58120394"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("no %q in\n%s", want, body)
 		}

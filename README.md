@@ -68,6 +68,7 @@ That row is shortened. A full row has every column of the [row contract](https:/
 | Make the check required                   | [`docs/required-check.md`](docs/required-check.md) |
 | Read a line of the job log                | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
 | Read the comment                          | [`docs/comment-example.md`](docs/comment-example.md) |
+| Read a result from an agent               | [`docs/agents.md`](docs/agents.md)               |
 | Configure a repository                    | [`docs/configuration.md`](docs/configuration.md) |
 | Host the ledger                           | [`docs/install.md`](docs/install.md), [`docs/serve.md`](docs/serve.md) |
 | Compare a ledger with a provider's report | [`docs/reconcile.md`](docs/reconcile.md)         |
