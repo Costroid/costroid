@@ -392,7 +392,7 @@ func postCheck(ctx context.Context, host scm.Reporter, input comment.Input, stde
 	return &id
 }
 
-// resolveAmounts applies decision L19. When the setting or the visibility
+// resolveAmounts applies the comment.show_cost rule. When the setting or the visibility
 // cannot be read, a repository not known to be private withholds amounts. It
 // spends part of the report's time at most, so the check still posts.
 func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr io.Writer) comment.Amounts {
