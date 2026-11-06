@@ -31,25 +31,29 @@ import (
 )
 
 const (
-	fakeMode        = "COSTROID_FAKE_AGENT"
-	fakeLog         = "COSTROID_FAKE_LOG"
-	fakeRollout     = "COSTROID_FAKE_ROLLOUT"
-	fakeVersion     = "COSTROID_FAKE_VERSION"
-	fakeStreamInput = "COSTROID_FAKE_STREAM_INPUT"
-	fakeNoPause     = "COSTROID_FAKE_NO_PAUSE"
-	fakeNested      = "COSTROID_FAKE_NESTED"
-	fakeNestedCWD   = "COSTROID_FAKE_NESTED_CWD"
-	fakeCount       = 20
-	fakeThread      = "00000000-0000-4000-8000-0000000000aa"
-	claudeData      = "../adapter/claudecode/testdata/2.1.316"
-	nestedData      = "../adapter/claudecode/testdata/not-recorded/nested"
-	codexData       = "../adapter/codex/testdata/0.164.0-alpha.11.1"
-	recordedCodex   = "0.164.0-alpha.11.1"
-	recordedThread  = "00000000-0000-4000-8000-000000000004"
-	requestPause    = 200 * time.Millisecond
-	requestInput    = 250000
-	stubbornEnv     = "stubborn"
-	cacheWriteMode  = "cache-write"
+	fakeMode            = "COSTROID_FAKE_AGENT"
+	fakeLog             = "COSTROID_FAKE_LOG"
+	fakeRollout         = "COSTROID_FAKE_ROLLOUT"
+	fakeVersion         = "COSTROID_FAKE_VERSION"
+	fakeStreamInput     = "COSTROID_FAKE_STREAM_INPUT"
+	fakeNoPause         = "COSTROID_FAKE_NO_PAUSE"
+	fakeNested          = "COSTROID_FAKE_NESTED"
+	fakeNestedCWD       = "COSTROID_FAKE_NESTED_CWD"
+	fakeStreamUsage     = "COSTROID_FAKE_STREAM_USAGE"
+	fakeCutAfter        = "COSTROID_FAKE_CUT_AFTER"
+	fakeSubagentRollout = "COSTROID_FAKE_SUBAGENT_ROLLOUT"
+	subagentThread      = "00000000-0000-4000-8000-0000000000c1"
+	fakeCount           = 20
+	fakeThread          = "00000000-0000-4000-8000-0000000000aa"
+	claudeData          = "../adapter/claudecode/testdata/2.1.316"
+	nestedData          = "../adapter/claudecode/testdata/not-recorded/nested"
+	codexData           = "../adapter/codex/testdata/0.164.0-alpha.11.1"
+	recordedCodex       = "0.164.0-alpha.11.1"
+	recordedThread      = "00000000-0000-4000-8000-000000000004"
+	requestPause        = 200 * time.Millisecond
+	requestInput        = 250000
+	stubbornEnv         = "stubborn"
+	cacheWriteMode      = "cache-write"
 )
 
 // TestMain turns the test binary into the fake agent when the harness runs it
@@ -95,6 +99,15 @@ func fakeCodex(mode string) {
 		fakeCacheWrite()
 	case "replay":
 		fakeReplay(logFile)
+	case "one-turn":
+		fakeOneTurn()
+	case "subagent":
+		fakeSubagent()
+		fakeReplay(logFile)
+	case "replay-wait":
+		fakeReplayThenWait()
+	case "silent":
+		fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
 	case "stdin":
 		data, err := io.ReadAll(os.Stdin)
 		fmt.Fprintf(logFile, "%d %v\n", len(data), err)
@@ -119,6 +132,14 @@ func fakeCacheWrite() {
 	fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
 	fmt.Println(`{"type":"turn.started"}`)
 	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"cache_write_input_tokens":200,"output_tokens":50}}`)
+}
+
+// fakeOneTurn reports one turn of the input the environment names, and 1000
+// output tokens, on the stream alone.
+func fakeOneTurn() {
+	fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
+	fmt.Println(`{"type":"turn.started"}`)
+	fmt.Printf(`{"type":"turn.completed","usage":{"input_tokens":%s,"cached_input_tokens":0,"output_tokens":1000}}`+"\n", os.Getenv(fakeStreamInput))
 }
 
 func openFakeRollout(thread string) *os.File {
@@ -163,7 +184,46 @@ func fakeReplay(log io.Writer) {
 		input = "33907"
 	}
 	fmt.Fprintln(log, "turn.completed")
+	if usage := os.Getenv(fakeStreamUsage); usage != "" {
+		fmt.Printf(`{"type":"turn.completed","usage":%s}`+"\n", usage)
+		return
+	}
 	fmt.Printf(`{"type":"turn.completed","usage":{"input_tokens":%s,"cached_input_tokens":28032,"output_tokens":111}}`+"\n", input)
+}
+
+// fakeSubagent leaves the rollout file of a subagent thread the run's thread
+// started.
+func fakeSubagent() {
+	data, err := os.ReadFile(os.Getenv(fakeSubagentRollout))
+	if err != nil {
+		os.Exit(97)
+	}
+	rollout := openFakeRollout(subagentThread)
+	defer rollout.Close()
+	rollout.Write(bytes.ReplaceAll(data, []byte("@parent"), []byte(fakeThread)))
+}
+
+// fakeReplayThenWait writes a recorded rollout up to the first line that holds
+// the cut, opens a turn and waits in it, the way a run waits on a tool or on a
+// model request, until it is stopped.
+func fakeReplayThenWait() {
+	data, err := os.ReadFile(os.Getenv(fakeRollout))
+	if err != nil {
+		os.Exit(97)
+	}
+	text := strings.ReplaceAll(string(data), recordedThread, fakeThread)
+	text = strings.ReplaceAll(text, "00000000-0000-4000-8000-000000000005", fakeThread)
+	if cut := os.Getenv(fakeCutAfter); cut != "" {
+		at := strings.Index(text, cut)
+		text = text[:at+strings.Index(text[at:], "\n")+1]
+	}
+	rollout := openFakeRollout(fakeThread)
+	rollout.WriteString(text)
+	rollout.Close()
+	fmt.Printf(`{"type":"thread.started","thread_id":%q}`+"\n", fakeThread)
+	fmt.Println(`{"type":"turn.started"}`)
+	time.Sleep(5 * time.Second)
+	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":0}}`)
 }
 
 // fakeRequests makes many model requests inside one turn, the way one prompt
@@ -185,7 +245,21 @@ func fakeRequests(log io.Writer) {
 }
 
 // fakeClaude records its argv and replays a recorded run, session files included.
+// It counts its starts, and while a hold file exists it waits, up to a bound,
+// before it replays.
 func fakeClaude() {
+	starts, err := os.OpenFile(os.Getenv(fakeLog)+".starts", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		os.Exit(98)
+	}
+	fmt.Fprintln(starts, os.Getpid())
+	starts.Close()
+	for wait := 0; wait < 100; wait++ {
+		if _, err := os.Stat(os.Getenv(fakeLog) + ".hold"); err != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	logFile, err := os.Create(os.Getenv(fakeLog))
 	if err != nil {
 		os.Exit(98)
@@ -508,8 +582,8 @@ func assertUnwatched(t *testing.T, got outcome, why string) {
 		if tagOf(row, focus.TagCostSource) != "agent_stream" {
 			t.Errorf("source %v", row["Tags"])
 		}
-		if row["ListCost"] != "0" && !strings.Contains(text, "lowest context tier") {
-			t.Errorf("a priced turn row lost its caveat: %q", text)
+		if row["ListCost"] != "0" && !strings.Contains(text, "one turn's input of") {
+			t.Errorf("a priced turn row does not say how far its context tier holds: %q", text)
 		}
 	}
 }
@@ -604,6 +678,14 @@ func claudeRun(t *testing.T, scenario, sessionID string, c *catalog.Catalog) (ou
 
 func claudeRunWith(t *testing.T, scenario, sessionID string, c *catalog.Catalog, ci cicontext.Context) (outcome, string) {
 	t.Helper()
+	log := installClaudeRun(t, scenario, sessionID)
+	return runAgentIn(t, ci, []string{agentNamed(t, "claude"), "-p", "work"}, "5", c), log
+}
+
+// installClaudeRun lays out a scenario's session files in a new config
+// directory, points the fake claude at its stream, and returns its log.
+func installClaudeRun(t *testing.T, scenario, sessionID string) string {
+	t.Helper()
 	config := t.TempDir()
 	project := filepath.Join(config, "projects", "-work")
 	if err := os.MkdirAll(filepath.Join(project, sessionID, "subagents"), 0o755); err != nil {
@@ -635,7 +717,7 @@ func claudeRunWith(t *testing.T, scenario, sessionID string, c *catalog.Catalog,
 	t.Setenv(fakeLog, log)
 	t.Setenv("COSTROID_FAKE_STREAM", filepath.Join(mustAbs(t, source), "stream.jsonl"))
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
-	return runAgentIn(t, ci, []string{agentNamed(t, "claude"), "-p", "work"}, "5", c), log
+	return log
 }
 
 func mustAbs(t *testing.T, path string) string {

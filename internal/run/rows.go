@@ -108,7 +108,11 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		charge.Price = &focus.Price{SkuPriceID: price.SkuPriceID, PricingUnit: price.PricingUnit, ListUnitPrice: price.ListUnitPrice}
 		charge.Notes = priceNotes(price, request)
 	}
-	charge.Notes = slices.Concat(notes, charge.Notes, []string{b.enforcement.Note})
+	var own []string
+	if request.Note != "" {
+		own = []string{request.Note}
+	}
+	charge.Notes = slices.Concat(notes, own, charge.Notes, []string{b.enforcement.Note})
 	return focus.NewRow(charge), nil
 }
 
@@ -120,8 +124,8 @@ func priceNotes(price catalog.Price, request adapter.Request) []string {
 	if price.ResidencyMultiplier != nil {
 		notes = append(notes, focus.ResidencyNote(*price.ResidencyMultiplier, request.Region))
 	}
-	if request.Grain != adapter.PerRequest {
-		notes = append(notes, fmt.Sprintf("one %s's total, so the lowest context tier applies", request.Grain))
+	if note := tierNote(price, request); note != "" {
+		notes = append(notes, note)
 	}
 	if request.AssumedWrite != "" {
 		notes = append(notes, "cache lifetime assumed")
@@ -129,11 +133,33 @@ func priceNotes(price catalog.Price, request adapter.Request) []string {
 	return notes
 }
 
+// tierNote says how far the context tier of an entry coarser than a request
+// holds. The entry's whole input bounds each request's in it: at or below the
+// matched tier's top, every request is in that tier; above a tier's floor, a
+// request may be below it, and the price is an upper bound.
+func tierNote(price catalog.Price, request adapter.Request) string {
+	switch {
+	case request.Grain == adapter.PerRequest:
+		return ""
+	case request.ContextInputTokens == 0:
+		return fmt.Sprintf("one %s's total, so the lowest context tier applies", request.Grain)
+	case price.ContextTierMin != nil:
+		return fmt.Sprintf("one %s's input of %d tokens passes the %d-token context tier boundary, and its requests' own inputs are unknown, so the tier above prices it as an upper bound", request.Grain, request.ContextInputTokens, *price.ContextTierMin)
+	case price.ContextTierMax != nil:
+		return fmt.Sprintf("one %s's input of %d tokens is within the %d-token context tier, so each of its requests is too", request.Grain, request.ContextInputTokens, *price.ContextTierMax)
+	}
+	return ""
+}
+
 func (b rowBuilder) tags(report adapter.Report, request adapter.Request, class focus.TokenClass) map[string]string {
+	source := report.CostSource
+	if request.CostSource != "" {
+		source = request.CostSource
+	}
 	tags := map[string]string{
 		focus.TagAgent:            b.agent,
 		focus.TagModel:            request.Model,
-		focus.TagCostSource:       report.CostSource,
+		focus.TagCostSource:       source,
 		focus.TagCostBasis:        string(report.CostBasis),
 		focus.TagAttributionGrade: attributionGrade,
 		focus.TagEnforcementGrade: b.enforcement.Grade,

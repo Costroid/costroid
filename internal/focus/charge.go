@@ -45,7 +45,8 @@ type Price struct {
 }
 
 // Charge holds the facts of one request's one token class. A nil Price means
-// an informational class, which never carries a cost.
+// an informational class, which never carries a cost. Its SkuPriceId takes the
+// shape of the catalog's fallback ids, provider:informational:class.
 type Charge struct {
 	RowID               string
 	Provider            string
@@ -105,7 +106,7 @@ func NewRow(c Charge) Row {
 		row.ConsumedUnit = informationalUnit
 		row.PricingUnit = informationalUnit
 		row.PricingQuantity = row.ConsumedQuantity
-		row.SkuPriceID = row.SkuID + "/informational"
+		row.SkuPriceID = fmt.Sprintf("%s:%s:%s", c.Provider, NoteInformational, c.Class)
 		return row
 	}
 	quantity := row.ConsumedQuantity.DivPow10(tokensPerMillion)

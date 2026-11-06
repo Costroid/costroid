@@ -43,6 +43,10 @@ Input excludes cache reads and cache writes. Output includes thinking, and `reas
 
 Rows come from the session files, `<config>/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`, and from any [nested session](#nested-sessions) beside them. A response's content blocks are separate lines sharing a `requestId`, and they count once. The adapter uses the files only when their billed classes equal the last result's `modelUsage`, per model. Otherwise it writes one set of rows per model, marked `agent_stream`, with a warning.
 
+One kind of model is left out of that comparison: a model the result counts that no session file line and no assistant message on the stream names. Claude Code makes such a request outside the conversation, and writes it nowhere but the result's totals. Its rows take the result's total for that model, at run grain, marked `agent_stream`, or `execution_file` from an execution file, with the note `a request outside the conversation`. That total's whole input selects the context tier, as a [Codex turn's](#codex) does. The other models' rows stay per request.
+
+Five `claude-code-action` runs on an API key, on 2026-11-04, each warned that the session files disagreed with the result. The three whose result was read counted `claude-haiku-5-5` at 1219 input and 18 output tokens, beside the `claude-opus-5-5` the workflow ran, and no message on the recorded stream named `claude-haiku-5-5`. The three `costroid run` runs of `claude -p --bare` that day read with no warning. The runner's session files were not kept, so that they lacked the request is inferred from the warning. Read with the rule above, the recorded execution file and a session file built from its own messages come to 0.0516717 USD, the run's own `total_cost_usd`, with no warning. That session file is under `testdata/not-recorded/action-session/`.
+
 What the runs showed:
 
 - The last result's `modelUsage` is the run total, subagents included. The subagent run ended on 8 input, 15605 cache read, 3495 five-minute writes, 4450 one-hour writes, 272 output and 121 thinking tokens. The rows sum to the same figures.
@@ -80,7 +84,7 @@ What Costroid cannot see:
 - A process that writes no session file.
 - A process that outlives the agent, such as a detached job started by a `SessionEnd` hook.
 - A process that runs under another `CLAUDE_CONFIG_DIR`.
-- Which of two agents started the other. Two agents run at once look like a run and its nested session, so a run that started before the other and ended after it counts the other's spend a second time. Outside CI this needs one directory. Inside CI it needs one job, or one self-hosted runner that runs two jobs at once under one config directory. Run one agent at a time.
+- Which of two agents started the other. Two agents run at once look like a run and its nested session, so a run that started before the other and ended after it would count the other's spend a second time. `costroid run` holds a lock, `costroid-run.lock` in the config directory, for as long as the agent runs. A second `costroid run` of Claude Code in that directory is refused before its agent starts, with the reason `concurrent_run`, and writes no rows. A `claude` started without Costroid takes no lock, so it still reads as a nested session.
 
 No recorded run holds a nested session. The tests use `testdata/not-recorded/nested/`, written in the line shapes of the `subagent` recording. The recordings cut `cwd` because it holds a path. Claude Code 2.1.318 wrote `cwd` on its user, assistant and system lines on 2026-11-04. No recording shows `cwd` on the stream's `init` line, so that source is unverified.
 
@@ -116,7 +120,9 @@ The grade is decided when the run ends:
 | The file names a version with no fixture               | `none`             | One per turn, stream                 |
 | The file contradicts itself or the stream              | `none`             | One per turn, stream, if it reported |
 
-A `none` run is never stopped, and every row says why. A turn row takes the lowest context tier and says so, because a sum cannot select a per-request tier. A request above 272000 input tokens is under-priced at that grain. Its id is `<thread>:turn:<n>`.
+A `none` run is never stopped, and every row says why. Its id is `<thread>:turn:<n>`.
+
+A turn row takes its context tier from the turn's whole input, which no request in the turn can pass. At or below the sheet's boundary, 272000 input tokens on the pinned OpenAI sheet, every request in the turn is in the lowest tier, so that tier is each request's own. Above it, the stream cannot say which requests passed the boundary, so the tier above prices the whole turn and the row says the figure is an upper bound. A turn of several requests that each stayed below the boundary is then priced above its bill. The boundary is read from the sheet, never from the code.
 
 What the runs showed:
 
@@ -124,9 +130,9 @@ What the runs showed:
 - One `codex exec` prompt is one turn. The first run made two model requests, 16888 and 17019 input tokens, and `turn.completed` arrived once, last. The stream cannot stop a one-prompt run partway, which is why the watchdog reads the file.
 - `token_count` waits for tools. In the `stopped` recording, a 20-second `sleep` was running when the `token_usage_record` of its request landed, and no `token_count` was written. Watching `token_count` alone would have stopped that run 20 seconds later.
 - The stopped run ended 65 milliseconds after that record, at 0.0283136 USD, under a 0.001 USD cap. The first request always completes, because usage is reported after it.
-- A stop can leave a request uncounted. If a model request is in flight, Codex is killed before it reports usage, so its tokens reach no row. The run says so in a warning.
+- A stop can leave a request uncounted. If a model request is in flight, Codex is killed before it reports usage, so its tokens reach no row. The rollout file shows when a request left: at `task_started`, and at each `function_call_output` or `custom_tool_call_output`, the tool result Codex sends as the next request. A run that ended inside a turn says how many requests were in flight and when the last left, or that the files show none. In the `stopped` recording a tool was running, so none was.
 - A stop does not reach a running tool. Codex starts tool commands in their own process group, so the `sleep` outlived the agent and ended on its own. A tool spends no model tokens, and it can still change files.
-- A Codex subagent thread writes its own rollout file. On 2026-11-04, the rollout files Codex 0.147.0-alpha.6.5 had left on one machine held 7 subagent threads. Each `session_meta` line carried `thread_source` `subagent` and a `session_id` naming the parent thread, and each file held its own usage lines. Costroid reads only the run's own thread. No recorded 0.164.0-alpha.11.1 run had a subagent, so whether the parent's totals include that spend is unverified.
+- A Codex subagent thread writes its own rollout file. On 2026-11-04, the rollout files Codex 0.147.0-alpha.6.5 had left on one machine held 7 subagent threads. Each `session_meta` line carried `thread_source` `subagent` and a `session_id` naming the parent thread, and each file held its own usage lines. Costroid reads every rollout file whose `session_meta` names the run's thread, or one of its subagent threads, that way. Each subagent request is one row, under its own `response_id`, at its own model, and it counts toward the cap. No recorded 0.164.0-alpha.11.1 run had a subagent, so the fixture under `testdata/not-recorded/subagent/` is written, and whether the stream's total includes that spend is unverified. The file reading stands when the stream's total equals the run's own file or that file plus its subagents'.
 - A separate `codex exec` that a plugin or a tool command starts has the shape of a Claude Code nested session: its own thread and its own rollout file, which Costroid does not read. Under `--ephemeral` it writes no rollout file, so no file can show it. Costroid counts no nested Codex session.
 - The stream names no model and no request id. Without a rollout file, the model comes from `-m`, `--model`, `-c model=` or the top-level `model` key of `config.toml`, and otherwise reads `unknown` and prices at the fallback tier.
 - A `codex.sse_event` reported a `response.completed` of 2 input tokens before the first turn, from startup. It is in neither the turn total nor the rollout file.
@@ -135,13 +141,13 @@ What the runs showed:
 
 `costroid ingest-run --execution-file F` reads the file the action names in its `execution_file` output: a JSON array of every SDK message, pretty-printed, at `$RUNNER_TEMP/claude-execution-output.json` ([`execution-file.ts`](https://github.com/anthropics/claude-code-action/blob/d535f5172dec02b204866b393d6b20b9b2aaf98d/base-action/src/execution-file.ts), read 2026-11-01). The messages are the ones `claude -p` streams, so one session reads both, and the last result's `modelUsage` is the run.
 
-| Field                  | Value                                                                                                    |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- |
-| `costroid/cost_source` | `execution_file`, or `agent_session_file` when the runner still holds session files that agree           |
-| Grain                  | One set of rows per model, unless those session files agree                                              |
-| Grade                  | `none`. Costroid did not start the run, and the file states no budget                                    |
-| Charge period          | The messages' own timestamps. With none, the file's save time back by the result's `duration_ms`         |
-| Basis                  | `measured` when `apiKeySource` names a key, otherwise `list_equivalent`                                  |
+| Field                  | Value                                                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `costroid/cost_source` | `execution_file`, or `agent_session_file` when the runner still holds session files that agree. A request outside the conversation reads `execution_file` either way |
+| Grain                  | One set of rows per model, unless those session files agree. Then one row per request, and one set per model for requests outside the conversation                   |
+| Grade                  | `none`. Costroid did not start the run, and the file states no budget                                                                                                |
+| Charge period          | The messages' own timestamps. With none, the file's save time back by the result's `duration_ms`                                                                     |
+| Basis                  | `measured` when `apiKeySource` names a key, otherwise `list_equivalent`                                                                                              |
 
 The fixture is under `testdata/not-recorded/`. No run of the action made it. It is the recorded `subagent` stream, cut to the SDK's messages, with one synthetic prompt that a test holds out of every row. Rows come to USD 0.001619725, the recorded total.
 
@@ -156,6 +162,17 @@ Costroid passes its stdin to the agent unchanged. When that stdin is a pipe with
 3. Copilot's `inputTokens` overlap and `copilot --output-format json`: not settled. No Copilot run was in scope.
 4. Cursor's usage event grain and `cloudAgentId`: not settled. No Cursor run was in scope.
 5. OpenCode's `step_finish` on 1.19.5 and 2.2.5: not settled. No OpenCode run was in scope.
+
+## Price ids
+
+Every row's `SkuPriceId` has one of two shapes. Both open with the provider and close with the token class, as `SkuId` does.
+
+| Shape                                                  | Rows                                                                                                                                                                                                                         |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<provider>:<model>:<region>:<tier>:<context>:<class>` | A row priced by a catalog unit price, for example `openai:gpt-5.6-sol:global:standard:to-272000:input_uncached`. `<context>` is the context tier: `all`, `to-<tokens>` or `over-<tokens>`                                    |
+| `<provider>:<kind>:<class>`                            | A row with no unit price of its own. `<kind>` is `fallback` when the catalog's fallback row priced a model, tier or class the sheet does not name, and `informational` for a class that repeats tokens a billed class counts |
+
+Releases up to `1.0.0-alpha.5` wrote an informational row's id as `<provider>/<model>/<class>/informational`.
 
 ## Recorded facts easy to get wrong
 

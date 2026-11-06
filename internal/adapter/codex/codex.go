@@ -186,6 +186,16 @@ type usage struct {
 	ReasoningOutput int64 `json:"reasoning_output_tokens"`
 }
 
+func (u usage) plus(other usage) usage {
+	return usage{
+		InputTokens:     u.InputTokens + other.InputTokens,
+		CachedInput:     u.CachedInput + other.CachedInput,
+		CacheWriteInput: u.CacheWriteInput + other.CacheWriteInput,
+		OutputTokens:    u.OutputTokens + other.OutputTokens,
+		ReasoningOutput: u.ReasoningOutput + other.ReasoningOutput,
+	}
+}
+
 func (u usage) minus(earlier usage) usage {
 	return usage{
 		InputTokens:     u.InputTokens - earlier.InputTokens,
@@ -237,16 +247,18 @@ type Session struct {
 	home      string
 	costBasis focus.CostBasis
 
-	mu        sync.Mutex
-	model     string
-	version   string
-	threadID  string
-	turnStart time.Time
-	turnOpen  bool
-	total     usage
-	turns     []adapter.Request
-	warnings  []string
-	log       rolloutLog
+	mu            sync.Mutex
+	model         string
+	version       string
+	threadID      string
+	threadStarted time.Time
+	turnStart     time.Time
+	turnOpen      bool
+	total         usage
+	turns         []adapter.Request
+	warnings      []string
+	log           rolloutLog
+	subagents     subagents
 }
 
 // Feed reads one stdout line.
@@ -260,6 +272,7 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 	switch parsed.Type {
 	case "thread.started":
 		s.threadID = parsed.ThreadID
+		s.threadStarted = at
 		s.turnStart = at
 	case "turn.started":
 		s.turnStart = at
@@ -272,30 +285,35 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 	return nil
 }
 
+// completeTurn takes one turn's usage. The turn's whole input bounds each of
+// its requests' from above, so it selects the context tier: within the lowest
+// tier, every request is in it.
 func (s *Session) completeTurn(total usage, at time.Time) error {
-	tokens, err := total.minus(s.total).tokens()
+	turn := total.minus(s.total)
+	tokens, err := turn.tokens()
 	if err != nil {
 		return err
 	}
 	s.total = total
 	s.turnOpen = false
 	s.turns = append(s.turns, adapter.Request{
-		ID:           s.threadID + ":turn:" + strconv.Itoa(len(s.turns)+1),
-		Provider:     provider,
-		Model:        s.model,
-		Start:        s.turnStart,
-		End:          at,
-		ServiceTier:  catalog.TierStandard,
-		Region:       catalog.RegionGlobal,
-		Grain:        adapter.PerTurn,
-		Tokens:       tokens,
-		AssumedWrite: assumedWrite(tokens),
+		ID:                 s.threadID + ":turn:" + strconv.Itoa(len(s.turns)+1),
+		Provider:           provider,
+		Model:              s.model,
+		Start:              s.turnStart,
+		End:                at,
+		ServiceTier:        catalog.TierStandard,
+		Region:             catalog.RegionGlobal,
+		ContextInputTokens: turn.InputTokens,
+		Grain:              adapter.PerTurn,
+		Tokens:             tokens,
+		AssumedWrite:       assumedWrite(tokens),
 	})
 	return nil
 }
 
 // Finish returns the run's usage and the grade it earned. Per-request rows
-// from the rollout file stand unless the stream's total contradicts them. A
+// from the rollout files stand unless the stream's total contradicts them. A
 // run with neither source reported nothing, and whatever it spent is unknown.
 func (s *Session) Finish() (adapter.Report, error) {
 	s.mu.Lock()
@@ -313,12 +331,13 @@ func (s *Session) Finish() (adapter.Report, error) {
 		Warnings:     s.warnings,
 		Enforcement:  s.earned(),
 	}
-	if len(s.log.requests) > 0 && (s.log.problem == "" || len(s.turns) == 0) {
+	insideATurn := s.turnOpen || len(s.turns) == 0
+	if requests := s.requests(); len(requests) > 0 && (s.log.problem == "" || len(s.turns) == 0) {
 		report.CostSource = costSourceRollout
-		report.Requests = s.log.requests
-		if s.turnOpen || len(s.turns) == 0 {
-			report.Warnings = append(report.Warnings, "the run ended inside a turn: the rows stop at the last request the rollout file settled, and a request in flight is not counted")
-		}
+		report.Requests = requests
+	}
+	if insideATurn && s.log.opened {
+		s.reportInFlight(&report)
 	}
 	if len(report.Requests) == 0 {
 		report.Warnings = append(report.Warnings, "no turn completed, so neither the stream nor a rollout file reported usage")
@@ -326,15 +345,43 @@ func (s *Session) Finish() (adapter.Report, error) {
 	return report, nil
 }
 
-// judgeRollout decides whether the file held the run. The totals are compared
+// reportInFlight says what a run that ended inside a turn lost. Codex writes a
+// request's usage only when the request completes, so a request the files show
+// sent and unsettled reached no row. Files that stopped being read cannot say.
+func (s *Session) reportInFlight(report *adapter.Report) {
+	if s.log.problem != "" {
+		if report.CostSource == costSourceRollout {
+			report.Warnings = append(report.Warnings, "the run ended inside a turn: the rows stop at the last request the rollout file settled, and a request in flight is not counted")
+		}
+		return
+	}
+	count, last := s.subagents.inFlight()
+	if !s.log.sent.IsZero() {
+		count++
+		last = later(last, s.log.sent)
+	}
+	report.Unrecorded = count
+	switch count {
+	case 0:
+		report.Warnings = append(report.Warnings, "the run ended inside a turn, and the rollout files show no model request in flight, so the rows hold every request they show sent")
+	case 1:
+		report.Warnings = append(report.Warnings, fmt.Sprintf("the run ended inside a turn with 1 model request in flight, sent at %s: Codex writes usage only when a request completes, so that request in flight is not counted and its tokens reach no row", last.UTC().Format(time.RFC3339Nano)))
+	default:
+		report.Warnings = append(report.Warnings, fmt.Sprintf("the run ended inside a turn with %d model requests in flight, the last sent at %s: Codex writes usage only when a request completes, so those requests in flight are not counted and their tokens reach no row", count, last.UTC().Format(time.RFC3339Nano)))
+	}
+}
+
+// judgeRollout decides whether the files held the run. The totals are compared
 // only when the stream closed its last turn, because a stopped turn has no
-// stream total to compare.
+// stream total to compare. Whether the stream's total holds the subagents'
+// spend is not recorded, so either sum agrees.
 func (s *Session) judgeRollout() {
+	own := s.log.settled
 	switch {
 	case !s.planned.Watchdog:
 	case !s.log.opened:
 		s.log.refuse("no rollout file appeared for this thread")
-	case !s.turnOpen && len(s.turns) > 0 && s.log.settled != s.total:
+	case !s.turnOpen && len(s.turns) > 0 && own != s.total && own.plus(s.subagents.settled()) != s.total:
 		s.log.refuse("the rollout file's total differs from the stream's")
 	}
 }

@@ -35,7 +35,13 @@ type rolloutEntry struct {
 }
 
 type sessionMeta struct {
+	ID         string `json:"id"`
 	CLIVersion string `json:"cli_version"`
+	// ThreadSource and SessionID mark a thread another started, and name that
+	// thread. ThreadSource stays raw, so a shape other than a string is no
+	// subagent rather than an error.
+	ThreadSource json.RawMessage `json:"thread_source"`
+	SessionID    string          `json:"session_id"`
 }
 
 type turnContext struct {
@@ -58,9 +64,11 @@ type tokenInfo struct {
 	Last  usage `json:"last_token_usage"`
 }
 
-// rolloutLog is what the file has said so far. A problem stops the reading,
-// and the run keeps what had settled before it.
+// rolloutLog is what one thread's file has said so far. A problem stops the
+// reading, and the run keeps what had settled before it.
 type rolloutLog struct {
+	// thread names the stand-in id of a request the file gives no id.
+	thread   string
 	opened   bool
 	version  string
 	model    string
@@ -68,7 +76,15 @@ type rolloutLog struct {
 	settled  usage
 	requests []adapter.Request
 	problem  string
+	// sent is when the file last showed input leave for the model, at the
+	// task's start or as a tool's output, with no request settled since. Zero
+	// means no request is in flight.
+	sent time.Time
 }
+
+// toolOutputs are the response items that carry a tool's result back to the
+// model, which Codex sends as the next request.
+var toolOutputs = []string{"function_call_output", "custom_tool_call_output"}
 
 func (l *rolloutLog) refuse(problem string) {
 	if l.problem == "" {
@@ -81,6 +97,7 @@ func (l *rolloutLog) refuse(problem string) {
 func (s *Session) Tail(ctx context.Context, settled func([]adapter.Request)) {
 	var file rolloutFile
 	defer file.close()
+	defer s.subagents.close()
 	ticker := time.NewTicker(tailInterval)
 	defer ticker.Stop()
 	for {
@@ -96,94 +113,143 @@ func (s *Session) Tail(ctx context.Context, settled func([]adapter.Request)) {
 	}
 }
 
-// follow reads what the file gained. It reports the requests so far, and true
-// when a new one settled and the stream has not closed the turn.
+// follow reads what the thread's file and its subagents' files gained. It
+// reports the run's requests so far, and true when a new one settled and the
+// stream has not closed the turn.
 func (s *Session) follow(file *rolloutFile) ([]adapter.Request, bool) {
-	if file.file == nil && !file.open(s.home, s.thread()) {
+	thread, since := s.threadStart()
+	if file.file == nil && !file.open(s.home, thread) {
 		return nil, false
 	}
 	lines, err := file.lines()
+	gained := s.subagents.read(s.home, thread, since)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.log.opened = true
 	if err != nil {
 		s.log.refuse("the rollout file could not be read")
 	}
-	before := len(s.log.requests)
+	before := len(s.requests())
 	for _, line := range lines {
 		s.applyRollout(line)
 	}
+	for _, read := range gained {
+		s.applySubagent(read)
+	}
+	all := s.requests()
 	working := s.turnOpen || len(s.turns) == 0
-	return slices.Clone(s.log.requests), working && len(s.log.requests) > before
+	return all, working && len(all) > before
 }
 
-func (s *Session) thread() string {
+func (s *Session) threadStart() (string, time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.threadID
+	return s.threadID, s.threadStarted
 }
 
-// applyRollout reads one line. Only the lines named here are parsed past
-// their envelope, so nothing a prompt or a tool wrote is ever decoded.
+// requests are the thread's own requests, then each subagent's.
+func (s *Session) requests() []adapter.Request {
+	all := slices.Clone(s.log.requests)
+	for _, sub := range s.subagents.files {
+		all = append(all, sub.log.requests...)
+	}
+	return all
+}
+
+// applyRollout reads one line of the thread's own file.
 func (s *Session) applyRollout(line []byte) {
-	if s.log.problem != "" {
+	s.log.thread = s.threadID
+	s.log.apply(line, s.model)
+	if s.log.version != "" {
+		s.version = s.log.version
+	}
+}
+
+// applySubagent reads what one subagent's file gained. A subagent's file that
+// cannot be read leaves its spend unknown, so the run's reading stops with it.
+func (s *Session) applySubagent(read subagentRead) {
+	log := &read.sub.log
+	if read.err != nil {
+		log.refuse("the rollout file could not be read")
+	}
+	for _, line := range read.lines {
+		log.apply(line, s.model)
+	}
+	if log.problem != "" {
+		s.log.refuse("subagent thread " + log.thread + ": " + log.problem)
+	}
+}
+
+// apply reads one line. Only the lines named here are parsed past their
+// envelope, and of a response item only its type, so nothing a prompt or a
+// tool wrote is ever decoded.
+func (l *rolloutLog) apply(line []byte, model string) {
+	if l.problem != "" {
 		return
 	}
 	var entry rolloutEntry
 	err := json.Unmarshal(line, &entry)
 	if err == nil {
-		err = s.applyEntry(entry)
+		err = l.applyEntry(entry, model)
 	}
 	if err != nil {
-		s.log.refuse("a rollout line could not be parsed")
+		l.refuse("a rollout line could not be parsed")
 	}
 }
 
-func (s *Session) applyEntry(entry rolloutEntry) error {
+func (l *rolloutLog) applyEntry(entry rolloutEntry, model string) error {
 	switch entry.Type {
 	case "session_meta":
 		var meta sessionMeta
 		if err := json.Unmarshal(entry.Payload, &meta); err != nil {
 			return err
 		}
-		s.applyMeta(meta)
+		l.applyMeta(meta)
 	case "turn_context":
 		var turn turnContext
 		if err := json.Unmarshal(entry.Payload, &turn); err != nil {
 			return err
 		}
-		s.log.model = turn.Model
+		l.model = turn.Model
 	case "token_usage_record":
 		var record usageRecord
 		if err := json.Unmarshal(entry.Payload, &record); err != nil {
 			return err
 		}
-		s.settle(record.Thread, record.Usage, record.ResponseID, entry.Timestamp)
+		l.settle(record.Thread, record.Usage, record.ResponseID, entry.Timestamp, model)
 	case "event_msg":
 		var message eventMessage
 		if err := json.Unmarshal(entry.Payload, &message); err != nil {
 			return err
 		}
-		s.applyEvent(message, entry.Timestamp)
+		l.applyEvent(message, entry.Timestamp, model)
+	case "response_item":
+		var item struct {
+			Type string `json:"type"`
+		}
+		// An item is never usage, so one that does not decode stops nothing.
+		if json.Unmarshal(entry.Payload, &item) == nil && slices.Contains(toolOutputs, item.Type) {
+			l.sent = entry.Timestamp
+		}
 	}
 	return nil
 }
 
-func (s *Session) applyMeta(meta sessionMeta) {
-	s.log.version = meta.CLIVersion
-	s.version = meta.CLIVersion
+func (l *rolloutLog) applyMeta(meta sessionMeta) {
+	l.version = meta.CLIVersion
 	if !slices.Contains(supportedVersions, meta.CLIVersion) {
-		s.log.refuse(fmt.Sprintf("no recorded fixture covers Codex %q, so its rollout file is not read", meta.CLIVersion))
+		l.refuse(fmt.Sprintf("no recorded fixture covers Codex %q, so its rollout file is not read", meta.CLIVersion))
 	}
 }
 
-func (s *Session) applyEvent(message eventMessage, at time.Time) {
+func (l *rolloutLog) applyEvent(message eventMessage, at time.Time, model string) {
 	switch message.Type {
 	case "task_started":
-		s.log.start = at
+		l.start = at
+		l.sent = at
 	case "token_count":
 		if message.Info != nil {
-			s.settle(message.Info.Total, message.Info.Last, "", at)
+			l.settle(message.Info.Total, message.Info.Last, "", at, model)
 		}
 	}
 }
@@ -191,37 +257,37 @@ func (s *Session) applyEvent(message eventMessage, at time.Time) {
 // settle takes one request. A token_usage_record and its token_count state the
 // same running total, and a token_count also repeats for rate-limit updates, so
 // only a total that moved is new. Whichever line comes first settles it.
-func (s *Session) settle(total, last usage, id string, at time.Time) {
-	if s.log.version == "" {
-		s.log.refuse("the rollout file names no Codex version")
+func (l *rolloutLog) settle(total, last usage, id string, at time.Time, model string) {
+	if l.version == "" {
+		l.refuse("the rollout file names no Codex version")
 		return
 	}
-	if total == s.log.settled {
+	if total == l.settled {
 		return
 	}
-	if total.minus(s.log.settled) != last {
-		s.log.refuse("the rollout file's running total did not move by its last request")
+	if total.minus(l.settled) != last {
+		l.refuse("the rollout file's running total did not move by its last request")
 		return
 	}
 	tokens, err := last.tokens()
 	if err != nil {
-		s.log.refuse("a rollout usage record does not add up")
+		l.refuse("a rollout usage record does not add up")
 		return
 	}
-	s.log.settled = total
-	s.log.requests = append(s.log.requests, s.request(id, last, tokens, at))
-	s.log.start = at
+	l.settled = total
+	l.requests = append(l.requests, l.request(id, last, tokens, at, model))
+	l.start = at
+	l.sent = time.Time{}
 }
 
-func (s *Session) request(id string, last usage, tokens adapter.Tokens, at time.Time) adapter.Request {
+func (l *rolloutLog) request(id string, last usage, tokens adapter.Tokens, at time.Time, model string) adapter.Request {
 	if id == "" {
-		id = s.threadID + ":request:" + strconv.Itoa(len(s.log.requests)+1)
+		id = l.thread + ":request:" + strconv.Itoa(len(l.requests)+1)
 	}
-	model := s.log.model
-	if model == "" {
-		model = s.model
+	if l.model != "" {
+		model = l.model
 	}
-	start := s.log.start
+	start := l.start
 	if start.IsZero() {
 		start = at
 	}

@@ -22,6 +22,18 @@ The action's first step installs the binary. A line here other than the first en
 | `costroid: sha256 must be 64 lowercase hex characters` | `sha256` is not a SHA-256 | Copy the line for your runner's binary from the release's `SHA256SUMS` |
 | `costroid: the binary for <version> does not match the pinned SHA-256` | The downloaded binary is not the one the checksum names | Check that `sha256` is for the binary your runner uses, `costroid-linux-amd64` or `costroid-linux-arm64`. If it is, do not install this binary, and report it |
 
+The GitLab template installs the release its `COSTROID_VERSION` names, the release the GitHub recipes pin. It downloads cosign at the version and SHA-256 that `sigstore/cosign-installer` v4.1.2 pins, checks the release's `SHA256SUMS` by its signature, and then the binary against its line. No checksum is set by hand. Each of its lines starts with `costroid:`, and each but the first ends the job with exit code 1.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `installed <version>, checked by its signature` | cosign accepted the signature on `SHA256SUMS`, and the binary matched its line | None |
+| `could not download cosign <version>` | The runner could not reach github.com | Check the runner's egress, then run the job again |
+| `cosign <version> does not match its pinned SHA-256` | The downloaded cosign is not the one the template pins | Do not run the job again on this runner until the download is explained |
+| `v<version> has no SHA256SUMS`, `v<version> has no signature for SHA256SUMS` | As in the action's table above | The same |
+| `the signature on SHA256SUMS of v<version> does not verify, so nothing was installed` | As in the action's table above | The same |
+| `v<version> has no costroid-linux-amd64` | The release has no `amd64` Linux binary, or github.com did not answer | Run the job again. If it repeats, set `COSTROID_VERSION` to another release |
+| `the binary for <version> does not match its line in the signed SHA256SUMS` | The downloaded binary is not the one the signed checksum names | Do not install this binary. Report it as [`SECURITY.md`](../SECURITY.md) says |
+
 ## Running the agent
 
 The `run` stage. A line from the action's own checks ends the step with exit code 125, before the agent starts.
@@ -40,6 +52,7 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: --budget-usd must be above 0` | The budget is zero or negative | Pass a positive amount |
 | `costroid: --credential takes the key's id, never the key: this value reads like a key` | The credential looks like a provider key | Pass the key's id from the provider's console, never the key |
 | `costroid: run: no adapter for <command>: costroid runs claude and codex` | The command after `--` is not `claude` or `codex` | Run one of those two |
+| `costroid: run refused, reason <reason>: <error>` | Costroid did not start the agent and wrote no rows. The reason `concurrent_run` means another `costroid run` of Claude Code holds the same config directory. The first run would count the second's session as nested, and the second would count it again | Run one agent at a time per config directory, or give each run its own `CLAUDE_CONFIG_DIR` |
 | `costroid: unreadable stream line: <error>` | A line of the agent's stream was not the JSON Costroid reads. The run goes on | Check that the agent runs with the flags the recipe passes |
 | `costroid: price the run: <error>` | The run's tokens could not be priced, so the run wrote no rows | Report it with the agent's version |
 | `costroid: claude-code: the stream held no result object and no session file was found` | Claude Code ended before it reported usage, and wrote no session file | Read the agent's output file on the runner, or rerun with `show-output: true` on a private repository |
@@ -60,6 +73,9 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: over budget by USD <amount>` | The run cost more than its budget. A client-side cap can be passed | None. The grade says how far the cap holds |
 | `costroid: warning: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT` | The rows name no billing account | Set `billing-account`, as the recipes do |
 | `costroid: warning: the rows state no pull request: <error>` | The CI event file could not be read, so the rows carry no pull request | Run the recipe on `pull_request` |
+| `costroid: warning: reason <reason>: <sentence>` | The run wrote no rows, and the rows file is empty. The reason `no_usage` means the agent ended and reported no usage | Read the agent's output. A run that failed before its first request reports none |
+| `costroid: warning: the run ended inside a turn with 1 model request in flight, sent at <time>: Codex writes usage only when a request completes, so that request in flight is not counted and its tokens reach no row` | Costroid stopped Codex after a tool's output went to the model and before the model's answer. The rows hold every request that completed | None. The provider still bills that request, so reconciliation shows it |
+| `costroid: warning: the run ended inside a turn, and the rollout files show no model request in flight, so the rows hold every request they show sent` | Costroid stopped Codex while a tool ran, so no model request was lost | None |
 | `costroid: warning: <warning>` | The agent's stream or files were incomplete. The rows were written, and the warning says what they lack | Read the warning. Most mean the run ended early |
 
 ## Reading a claude-code-action run

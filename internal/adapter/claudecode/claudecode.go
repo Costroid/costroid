@@ -163,6 +163,9 @@ type streamLine struct {
 	Version      string                `json:"claude_code_version"`
 	CWD          string                `json:"cwd"`
 	ModelUsage   map[string]modelUsage `json:"modelUsage"`
+	Message      struct {
+		Model string `json:"model"`
+	} `json:"message"`
 }
 
 // Session reads one Claude Code run.
@@ -174,7 +177,9 @@ type Session struct {
 	cwd          string
 	totals       map[string]modelUsage
 	sawResult    bool
-	first, last  time.Time
+	// answered names every model an assistant message on the stream came from.
+	answered    map[string]bool
+	first, last time.Time
 	// ranFrom and ranTo are when the agent's process ran, when known.
 	ranFrom, ranTo time.Time
 	// oneJob is true inside a CI system, where the runner hosts this job alone.
@@ -199,6 +204,13 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 			if s.cwd == "" {
 				s.cwd = parsed.CWD
 			}
+		}
+	case "assistant":
+		if parsed.Message.Model != "" {
+			if s.answered == nil {
+				s.answered = map[string]bool{}
+			}
+			s.answered[parsed.Message.Model] = true
 		}
 	case "result":
 		// A run can hold several results. modelUsage is cumulative, so the
@@ -233,12 +245,15 @@ func (s *Session) finishRun() (adapter.Report, transcript, error) {
 	if err != nil {
 		report.Warnings = append(report.Warnings, err.Error())
 	}
+	side := s.sideModels(requests)
 	switch {
 	case len(requests) > 0 && !s.sawResult:
 		report.Warnings = append(report.Warnings, "no result object: the session files are the only record of this run")
-	case len(requests) > 0 && !agrees(requests, s.totals):
+	case len(requests) > 0 && !agrees(requests, s.totals, side):
 		report.Warnings = append(report.Warnings, "the session files disagree with the result object; the result's per-model totals were used")
 		requests = nil
+	case len(requests) > 0:
+		requests = append(requests, s.sideRequests(side)...)
 	}
 	if len(requests) > 0 {
 		report.CostSource, report.Requests = SourceSessionFile, requests
@@ -253,7 +268,7 @@ func (s *Session) finishRun() (adapter.Report, transcript, error) {
 	if err == nil && len(report.Warnings) == 0 {
 		report.Warnings = append(report.Warnings, "no session file: one set of rows per model, for the whole run")
 	}
-	report.CostSource, report.Requests = SourceStream, s.perModel()
+	report.CostSource, report.Requests = SourceStream, s.perModel(nil)
 	return report, run, nil
 }
 
@@ -268,10 +283,45 @@ func (s *Session) costBasis() focus.CostBasis {
 	return focus.ListEquivalent
 }
 
-func (s *Session) perModel() []adapter.Request {
+// sideModels are the models the result counts that no session file line and
+// no assistant message on the stream names. Claude Code makes such requests
+// outside the conversation, and writes them nowhere but the result's totals.
+func (s *Session) sideModels(requests []adapter.Request) map[string]bool {
+	named := map[string]bool{}
+	for _, request := range requests {
+		named[request.Model] = true
+	}
+	side := map[string]bool{}
+	for model := range s.totals {
+		if !named[model] && !s.answered[model] {
+			side[model] = true
+		}
+	}
+	return side
+}
+
+// sideRequests are one entry per side model, from the result's totals. The
+// model's whole input bounds each of its requests', so it selects the context
+// tier.
+func (s *Session) sideRequests(side map[string]bool) []adapter.Request {
+	requests := s.perModel(side)
+	for i := range requests {
+		total := s.totals[requests[i].Model]
+		requests[i].ContextInputTokens = total.InputTokens + total.CacheRead + total.CacheCreated
+		requests[i].CostSource = SourceStream
+		requests[i].Note = "a request outside the conversation: the result counts it, and no session file or stream message holds it"
+	}
+	return requests
+}
+
+// perModel is one entry per model in the result's totals. A non-nil only
+// keeps the models it names.
+func (s *Session) perModel(only map[string]bool) []adapter.Request {
 	models := make([]string, 0, len(s.totals))
 	for model := range s.totals {
-		models = append(models, model)
+		if only == nil || only[model] {
+			models = append(models, model)
+		}
 	}
 	slices.Sort(models)
 	requests := make([]adapter.Request, 0, len(models))
@@ -321,18 +371,25 @@ func splitWrites(created, fiveMinute, oneHour int64, keyBilled bool) (int64, int
 	}
 }
 
-// agrees compares every billed class per model. The informational classes do
-// not decide it: thinking counts are re-tokenized and may differ by a few.
-func agrees(requests []adapter.Request, totals map[string]modelUsage) bool {
+// agrees compares every billed class per model, except the side models, which
+// no file holds. The informational classes do not decide it: thinking counts
+// are re-tokenized and may differ by a few.
+func agrees(requests []adapter.Request, totals map[string]modelUsage, side map[string]bool) bool {
 	summed := map[string]adapter.Tokens{}
 	for _, request := range requests {
 		summed[request.Model] = summed[request.Model].Add(request.Tokens)
 	}
-	if len(summed) != len(totals) {
+	if len(summed) != len(totals)-len(side) {
 		return false
 	}
 	for model, want := range totals {
-		got := summed[model]
+		if side[model] {
+			continue
+		}
+		got, ok := summed[model]
+		if !ok {
+			return false
+		}
 		if got.InputUncached != want.InputTokens || got.CacheRead != want.CacheRead ||
 			got.CacheWrite5m+got.CacheWrite1h != want.CacheCreated ||
 			got.Output != want.OutputTokens {

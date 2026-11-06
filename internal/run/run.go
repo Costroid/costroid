@@ -48,6 +48,43 @@ type Options struct {
 	Grace time.Duration
 }
 
+// Reason says why a run wrote no rows. Its values are a closed list, each
+// with one sentence, so a reader of an empty rows file can name the cause.
+type Reason string
+
+// The reasons a run writes no rows.
+const (
+	// ReasonNoUsage is a run whose agent ended and reported no usage.
+	ReasonNoUsage Reason = "no_usage"
+	// ReasonConcurrentRun is a run refused before its agent started, because
+	// another run held the agent's state directory.
+	ReasonConcurrentRun Reason = "concurrent_run"
+)
+
+var reasonSentences = map[Reason]string{
+	ReasonNoUsage:       "the agent reported no usage, so the run wrote no rows",
+	ReasonConcurrentRun: "another costroid run holds the agent's state directory, so this run did not start and wrote no rows",
+}
+
+// Sentence is the reason in words.
+func (r Reason) Sentence() string {
+	return reasonSentences[r]
+}
+
+// RefusedError is a run that never started its agent, and why.
+type RefusedError struct {
+	Reason Reason
+	Err    error
+}
+
+func (e *RefusedError) Error() string {
+	return fmt.Sprintf("run refused, reason %s: %v", e.Reason, e.Err)
+}
+
+func (e *RefusedError) Unwrap() error {
+	return e.Err
+}
+
 // Result is what the run came to.
 type Result struct {
 	Agent       string
@@ -57,6 +94,8 @@ type Result struct {
 	Report      adapter.Report
 	Rows        int
 	ListTotal   decimal.Decimal
+	// Reason is set when the run wrote no rows.
+	Reason Reason
 }
 
 // windowedSession is a Session that counts the sessions of other agent
@@ -90,6 +129,16 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	release, err := claim(agent)
+	if err != nil {
+		result := Result{Agent: agent.Name()}
+		var refused *RefusedError
+		if errors.As(err, &refused) {
+			result.Reason = refused.Reason
+		}
+		return result, err
+	}
+	defer release()
 	session := agent.NewSession(plan)
 	builder := opts.builder(agent.Name(), plan.Enforcement)
 	process := opts.withDefaults()
@@ -120,12 +169,34 @@ func Record(opts Options, agent string, report adapter.Report) (Result, error) {
 	return result, opts.record(&result, opts.builder(agent, report.Enforcement), report)
 }
 
+// claim holds the agent's state directory when the agent needs it to itself.
+// Two runs in one directory would each count the other's session as nested.
+func claim(agent adapter.Agent) (func(), error) {
+	exclusive, ok := agent.(adapter.Exclusive)
+	if !ok {
+		return func() {}, nil
+	}
+	release, err := exclusive.Claim()
+	if errors.Is(err, adapter.ErrClaimed) {
+		return nil, &RefusedError{Reason: ReasonConcurrentRun, Err: err}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("run: %w", err)
+	}
+	return release, nil
+}
+
 func (o Options) record(result *Result, builder rowBuilder, report adapter.Report) error {
-	result.Report = report
 	rows, err := builder.rows(report)
 	if err != nil {
+		result.Report = report
 		return err
 	}
+	if len(rows) == 0 {
+		result.Reason = ReasonNoUsage
+		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", ReasonNoUsage, ReasonNoUsage.Sentence()))
+	}
+	result.Report = report
 	writer := focus.NewWriter(o.Rows)
 	for _, row := range rows {
 		if err := writer.Write(row); err != nil {

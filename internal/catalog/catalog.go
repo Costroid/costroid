@@ -46,6 +46,10 @@ type Price struct {
 	Fallback            bool
 	FallbackBasis       string
 	ResidencyMultiplier *decimal.Decimal
+	// ContextTierMin and ContextTierMax are the matched row's context tier,
+	// as the sheet states it: a request's input is above the first and at or
+	// below the second. Nil means the tier is open on that side.
+	ContextTierMin, ContextTierMax *int64
 }
 
 // Catalog is one pinned release.
@@ -178,7 +182,13 @@ func (s *sheet) priced(r *row, q Query) (Price, error) {
 	if err != nil {
 		return Price{}, fmt.Errorf("catalog: %s: %w", r.SkuPriceID, err)
 	}
-	answer := Price{SkuPriceID: r.SkuPriceID, ListUnitPrice: price, PricingUnit: r.PricingUnit}
+	answer := Price{
+		SkuPriceID:     r.SkuPriceID,
+		ListUnitPrice:  price,
+		PricingUnit:    r.PricingUnit,
+		ContextTierMin: r.ContextTierMinInputTokens,
+		ContextTierMax: r.ContextTierMaxInputTokens,
+	}
 	if q.Region == "" || q.Region == RegionGlobal {
 		return answer, nil
 	}

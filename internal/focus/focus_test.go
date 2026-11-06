@@ -260,7 +260,7 @@ func TestNewRowGivesAnInformationalChargeNoCost(t *testing.T) {
 	if err := row.Check(); err != nil {
 		t.Fatal(err)
 	}
-	if row.ConsumedUnit != "Informational Tokens" || row.SkuPriceID != "anthropic/claude-opus-5-5/reasoning_output/informational" {
+	if row.ConsumedUnit != "Informational Tokens" || row.SkuPriceID != "anthropic:informational:reasoning_output" {
 		t.Errorf("%s %s", row.ConsumedUnit, row.SkuPriceID)
 	}
 	if row.ListCost.Sign() != 0 || row.PricingQuantity.Cmp(row.ConsumedQuantity) != 0 {

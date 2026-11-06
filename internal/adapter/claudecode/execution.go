@@ -78,6 +78,11 @@ func (a Agent) ReadExecutionFile(file io.Reader, saved time.Time) (adapter.Repor
 	if report.CostSource == SourceStream {
 		report.CostSource = SourceExecutionFile
 	}
+	for i := range report.Requests {
+		if report.Requests[i].CostSource == SourceStream {
+			report.Requests[i].CostSource = SourceExecutionFile
+		}
+	}
 	return report, nil
 }
 

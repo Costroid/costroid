@@ -3,6 +3,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
@@ -101,14 +102,21 @@ type Request struct {
 	Start, End  time.Time
 	ServiceTier string
 	Region      string
-	// ContextInputTokens is the request's whole input. Zero when the grain
-	// is coarser than a request, because a sum cannot select a context tier.
+	// ContextInputTokens is the request's whole input. At a coarser grain it
+	// is the whole input of every request the entry sums, which no request in
+	// it can pass, or zero when the adapter states none.
 	ContextInputTokens int64
 	Grain              Grain
 	Tokens             Tokens
 	// AssumedWrite is the cache write class that took tokens whose lifetime the
 	// source did not report, by the adapter's rule. Empty when it reported all.
 	AssumedWrite focus.TokenClass
+	// CostSource names where this entry came from when it differs from the
+	// report's. Empty means the report's.
+	CostSource string
+	// Note says in words how this entry was read, when the report's own
+	// source does not.
+	Note string
 }
 
 // Report is what a run's usage came to.
@@ -126,6 +134,9 @@ type Report struct {
 	// ended inside the run, each under its own session id. Their requests are
 	// never in Requests.
 	Nested []Report
+	// Unrecorded counts the model requests the run sent whose usage no source
+	// reported, so no row holds them. A warning says which.
+	Unrecorded int
 }
 
 // Plan is how one agent command runs under a budget.
@@ -147,6 +158,17 @@ type Tailer interface {
 	// Tail follows the file until ctx ends. It calls settled with the run's
 	// requests so far each time a new one settles while the agent is working.
 	Tail(ctx context.Context, settled func([]Request))
+}
+
+// ErrClaimed means another run holds the directory an agent keeps its state in.
+var ErrClaimed = errors.New("another costroid run holds the agent's state directory")
+
+// Exclusive is an Agent whose runs cannot share one state directory, because
+// a run reads the directory and would count another run's spend as its own.
+type Exclusive interface {
+	// Claim holds the directory for one run, and release ends the hold. It
+	// fails with ErrClaimed while another run holds it.
+	Claim() (release func(), err error)
 }
 
 // Agent is one supported agent.
