@@ -49,3 +49,20 @@ func TestTheAdminKeyIsReadWhereverAJobNamesIt(t *testing.T) {
 		t.Fatalf("admin secrets: %v", names)
 	}
 }
+
+// TestOnlyTheGatewayJobsNameTheAdminKeysEnvironment holds the shipped recipe to
+// its trust note: the admin key lives in an environment, and only the jobs that
+// mint and close keys reference it.
+func TestOnlyTheGatewayJobsNameTheAdminKeysEnvironment(t *testing.T) {
+	documents, err := parse([]byte(read(t, filepath.Join(recipesDir, gatewayRecipe))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, job := range entries(field(documents[0], "jobs")) {
+		holdsKey := strings.Contains(text(job.value), adminKeyVariable)
+		named := scalarField(job.value, "environment") == "costroid-gateway"
+		if holdsKey != named {
+			t.Errorf("job %s: holds the admin key %t, names the environment %t", job.key.Value, holdsKey, named)
+		}
+	}
+}

@@ -145,6 +145,12 @@ func (s *gatewayStack) awaitStore(want string) {
 
 // keyStatus asks the gateway, as its admin, what became of a key.
 func (s *gatewayStack) keyStatus(id string) string {
+	status, _ := s.keyInfo(id)
+	return status
+}
+
+// keyInfo reads a key's status and its spend as the gateway answered it.
+func (s *gatewayStack) keyInfo(id string) (string, string) {
 	s.t.Helper()
 	request, _ := http.NewRequest(http.MethodGet, s.url+"/key/info?key="+id, nil)
 	request.Header.Set("Authorization", "Bearer "+s.admin)
@@ -155,11 +161,14 @@ func (s *gatewayStack) keyStatus(id string) string {
 	defer response.Body.Close()
 	var answer struct {
 		Info struct {
-			Status string `json:"status"`
+			Status string      `json:"status"`
+			Spend  json.Number `json:"spend"`
 		} `json:"info"`
 	}
-	_ = json.NewDecoder(response.Body).Decode(&answer)
-	return answer.Info.Status
+	decoder := json.NewDecoder(response.Body)
+	decoder.UseNumber()
+	_ = decoder.Decode(&answer)
+	return answer.Info.Status, answer.Info.Spend.String()
 }
 
 // teamBudget reads the repository's team as the gateway holds it.
@@ -392,6 +401,14 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	if over.Cmp(decimal.MustParse(gatewayBound)) > 0 {
 		t.Errorf("the run cost USD %s, past the budget by more than the bound", total)
 	}
+	// The gateway's figure is set beside the rows' whenever the two differ, and
+	// never replaces them.
+	_, spend := stack.keyInfo(id)
+	warning := "the gateway counted USD " + spend + " on the run's key, and the rows, priced at the catalog, come to USD " + total.String()
+	if equal := decimal.MustParse(spend).Cmp(total) == 0; equal == strings.Contains(string(out), warning) {
+		t.Errorf("the gateway counted USD %s and the rows USD %s, and the run's warnings read:\n%s", spend, total, out)
+	}
+	t.Logf("the gateway counted USD %s, the rows USD %s", spend, total)
 	if strings.Contains(string(out), key) {
 		t.Error("costroid run printed the key")
 	}

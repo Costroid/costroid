@@ -20,9 +20,6 @@ const (
 	apiKeyVariable    = "ANTHROPIC_API_KEY"
 )
 
-// keyWaitInterval is how often a run asks whether its key is registered yet.
-const keyWaitInterval = 2 * time.Second
-
 // Session is one run's key on one gateway, as the agent's job holds it.
 type Session struct {
 	Client *Client
@@ -31,6 +28,13 @@ type Session struct {
 	Wait time.Duration
 	// Every is how often the store is probed while the agent runs.
 	Every time.Duration
+	// Poll is how often the key is asked for while it is awaited or while
+	// its spend settles.
+	Poll time.Duration
+	// Settle bounds the wait for the key's spend to reach the gateway's store,
+	// and Stable is how long an unchanged figure counts as settled. LiteLLM
+	// writes spend to its store in batches.
+	Settle, Stable time.Duration
 }
 
 // Expect is what the key must say about itself for the run to hold.
@@ -69,7 +73,36 @@ func (s Session) Await(ctx context.Context) (KeyInfo, error) {
 		select {
 		case <-ctx.Done():
 			return KeyInfo{}, ctx.Err()
-		case <-time.After(keyWaitInterval):
+		case <-time.After(s.Poll):
+		}
+	}
+}
+
+// Spend reads what the gateway counted on the key, in its own prices, as the
+// decimal string it answered. It waits while the figure differs from want and
+// is still moving, because the gateway stores spend after the response.
+func (s Session) Spend(ctx context.Context, want decimal.Decimal) (string, error) {
+	deadline := time.Now().Add(s.Settle)
+	last, since := "", time.Now()
+	for {
+		info, err := s.Client.Info(ctx, s.Key, "")
+		if err != nil {
+			return "", err
+		}
+		spend := info.Spend.String()
+		if counted, err := decimal.Parse(spend); err == nil && counted.Cmp(want) == 0 {
+			return spend, nil
+		}
+		if spend != last {
+			last, since = spend, time.Now()
+		}
+		if time.Since(since) >= s.Stable || time.Now().After(deadline) {
+			return spend, nil
+		}
+		select {
+		case <-ctx.Done():
+			return spend, ctx.Err()
+		case <-time.After(s.Poll):
 		}
 	}
 }

@@ -381,6 +381,9 @@ func gatewaySession(flags runFlags) (*gateway.Session, error) {
 		Key:    strings.TrimSpace(string(key)),
 		Wait:   gatewayKeyWait,
 		Every:  gatewayProbeEvery,
+		Poll:   gatewayPoll,
+		Settle: gatewaySpendSettle,
+		Stable: gatewaySpendStable,
 	}, nil
 }
 

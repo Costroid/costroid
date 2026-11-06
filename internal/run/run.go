@@ -176,7 +176,13 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		builder.enforcement = held.enforcement(storeFailure)
 		result.Enforcement = builder.enforcement
 	}
-	return result, opts.record(&result, builder, report)
+	if err := opts.record(&result, builder, report); err != nil {
+		return result, err
+	}
+	if held != nil {
+		held.compareSpend(ctx, &result)
+	}
+	return result, nil
 }
 
 // Record writes the rows of a run that has already ended. The report's own

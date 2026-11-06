@@ -63,6 +63,11 @@ const (
 	defaultParallel   = 1
 	gatewayKeyWait    = 10 * time.Minute
 	gatewayProbeEvery = 2 * time.Second
+	gatewayPoll       = 2 * time.Second
+	// LiteLLM writes spend to its store every 10 seconds by default
+	// (PROXY_BATCH_WRITE_AT in litellm/constants.py at v1.108.1).
+	gatewaySpendSettle = 30 * time.Second
+	gatewaySpendStable = 12 * time.Second
 )
 
 func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {

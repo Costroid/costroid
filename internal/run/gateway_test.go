@@ -23,7 +23,7 @@ const (
 	claimedKey     = "apikey_01SharedTeamKey"
 	providerKey    = "sk-ant-provider-key"
 	gatewayRun     = "16873409921"
-	keyInfoHolding = `{"info":{"max_budget":0.01,"expires":"2099-01-01T00:00:00+00:00","max_parallel_requests":1,"metadata":{"costroid_run_id":"16873409921","costroid_max_request_tokens":"20000"}}}`
+	keyInfoHolding = `{"info":{"spend":0.00060589,"max_budget":0.01,"expires":"2099-01-01T00:00:00+00:00","max_parallel_requests":1,"metadata":{"costroid_run_id":"16873409921","costroid_max_request_tokens":"20000"}}}`
 )
 
 // fakeGateway answers the two routes the agent's job calls: its key's own
@@ -43,7 +43,10 @@ func fakeGateway(t *testing.T, keyInfo, readiness string) *gateway.Session {
 		}
 	}))
 	t.Cleanup(server.Close)
-	return &gateway.Session{Client: gateway.NewClient(server.URL), Key: gatewayKey, Wait: time.Second, Every: 20 * time.Millisecond}
+	return &gateway.Session{
+		Client: gateway.NewClient(server.URL), Key: gatewayKey,
+		Wait: time.Second, Every: 20 * time.Millisecond, Poll: 10 * time.Millisecond, Settle: time.Second, Stable: 50 * time.Millisecond,
+	}
 }
 
 func gatewayRunWith(t *testing.T, session *gateway.Session) (outcome, string) {
@@ -97,6 +100,31 @@ func TestAGatewayKeyGradesGatewayPrecheckWithTheKeyIDAndTheBound(t *testing.T) {
 	}
 	if strings.Contains(got.stdout+got.stderr, gatewayKey) {
 		t.Error("the run printed the key")
+	}
+	if slices.ContainsFunc(got.result.Report.Warnings, func(w string) bool { return strings.Contains(w, "the gateway counted") }) {
+		t.Errorf("a gateway that counted the rows' own cost was warned about: %q", got.result.Report.Warnings)
+	}
+}
+
+// The recorded run's rows come to USD 0.00060589 at the catalog. A gateway
+// that counted less held a budget in prices lower than the rows'.
+func TestAGatewayThatCountsAnotherFigureIsNamedBesideTheRows(t *testing.T) {
+	lower := strings.Replace(keyInfoHolding, `"spend":0.00060589`, `"spend":0.0004651`, 1)
+	got, _ := gatewayRunWith(t, fakeGateway(t, lower, `{"status":"healthy","db":"connected"}`))
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	want := "the gateway counted USD 0.0004651 on the run's key, and the rows, priced at the catalog, come to USD 0.00060589"
+	if !slices.ContainsFunc(got.result.Report.Warnings, func(w string) bool { return strings.Contains(w, want) }) {
+		t.Fatalf("warnings %q", got.result.Report.Warnings)
+	}
+	if got.result.ListTotal.String() != "0.00060589" {
+		t.Errorf("the gateway's figure reached the rows: %s", got.result.ListTotal)
+	}
+	for _, row := range got.rows {
+		if cost, _ := row["ListCost"].(string); strings.Contains(cost, "0.0004651") {
+			t.Errorf("a row carries the gateway's figure: %v", row)
+		}
 	}
 }
 

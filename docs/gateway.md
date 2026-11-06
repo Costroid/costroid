@@ -40,9 +40,45 @@ The gateway checks a key's spend before each request. A request that starts unde
 
 A run reads `gateway-precheck` only when the key the gateway returns has a budget at or under the run's, an expiry, a parallel-request limit, a request size, and metadata naming the run the job belongs to. Otherwise the rows read `none` and say which fact was missing.
 
+The bound assumes the gateway has counted every request that has ended. LiteLLM counts a request's cost after it answers, so a request sent at once after the one before it can be admitted before that one is counted. On 2026-11-06, LiteLLM v1.108.1 took requests back to back on a key with a USD 0.01 budget and one request at a time, each USD 0.006 in its prices and the catalog's (its `x-litellm-response-cost` header read `0.006`). In 4 of 6 runs it admitted a third request after two had passed USD 0.01. Its refusal of the fourth read "Current cost: 0.013951" while the third was still being counted, and later refusals read "0.018000000000000002". Those runs came to USD 0.018, over the budget by USD 0.008, within the journey's bound of USD 0.01. A request that has ended and is not yet counted can therefore add to the overshoot. The bound above does not count it.
+
+## The gateway holds the budget in its own prices
+
+LiteLLM checks `max_budget` against its own count of the key's spend, priced by its own model prices. The rows are priced by the Costroid catalog. When the gateway prices a model lower than the catalog, a key lets through more catalog-priced spend than the run's budget.
+
+When the agent ends, `costroid run` reads the key's spend from `/key/info`. It waits up to 30 seconds for the figure to settle, because LiteLLM writes spend to its store every 10 seconds by default (`PROXY_BATCH_WRITE_AT` in [`litellm/constants.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/constants.py)). When the gateway's figure differs from the rows' total, the run warns and names both decimal strings:
+
+```text
+costroid: warning: the gateway counted USD <gateway's figure> on the run's key, and the rows, priced at the catalog, come to USD <rows' total>. The gateway holds the budget in its own figure, and the rows keep theirs
+```
+
+LiteLLM sums spend in binary floating point, and its counter read `0.018000000000000002` for three requests of `0.006`, so a figure equal in decimals can differ in its last digits and still warn. The gateway's figure is never written to a row.
+
+To make the two agree, give each model on the gateway the catalog's prices. A LiteLLM price is per token, and a catalog price is per million tokens, so divide by 1,000,000. For `claude-haiku-5-5` in catalog `0.1.0`:
+
+| Catalog class, up to 100,000 input tokens | Catalog price, USD per million tokens | LiteLLM field in `litellm_params`         |
+| ----------------------------------------- | ------------------------------------- | ----------------------------------------- |
+| `input_uncached`                          | 0.10                                  | `input_cost_per_token: 0.0000001`         |
+| `cache_read`                              | 0.01                                  | `cache_read_input_token_cost: 0.00000001` |
+| `cache_write_5m`                          | 0.125                                 | `cache_creation_input_token_cost: 0.000000125` |
+| `cache_write_1h`                          | 0.20                                  | `cache_creation_input_token_cost_above_1hr: 0.0000002` |
+| `output`                                  | 0.50                                  | `output_cost_per_token: 0.0000005`        |
+
+Above 100,000 input tokens the catalog's `over-100000` rows apply, and LiteLLM's fields end in `_above_100k_tokens`. LiteLLM's own price map at v1.108.1 holds the same five prices for `claude-haiku-5-5` ([`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm/blob/v1.108.1/model_prices_and_context_window.json)), so a gateway on that release agrees for this model without a setting.
+
+When the prices cannot match, lower the key's budget by the ratio. If the gateway prices a model at a fraction `r` below 1 of the catalog, mint with `--budget-usd` set to the run's budget times `r`, so the gateway refuses at the run's budget in catalog prices. For a model priced at 0.8 of the catalog and a USD 5 run, mint with USD 4.
+
+The journey once showed USD 0.013951, and that figure was not a price. The mock model is priced in [`e2e/testdata/litellm.yaml`](../e2e/testdata/litellm.yaml) at the catalog's prices, and LiteLLM charged each request USD 0.006, USD 0.001 input and USD 0.005 output by its `x-litellm-response-cost-input` and `-output` headers. USD 0.013951 was the key's counter read while the third request's cost was still being settled. LiteLLM reserves an estimate of a request's cost before it runs and settles it to the real cost after (`reserve_budget_for_request` and `reconcile_budget_reservation` in [`budget_reservation.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/proxy/spend_tracking/budget_reservation.py)). How the counter came to that exact figure was not traced.
+
 ## When the gateway's store fails
 
 LiteLLM keeps spend in a database. With `allow_requests_on_db_unavailable: true` it keeps serving while the database is down: in the e2e journey, with its database stopped, LiteLLM v1.108.1 answered the next request with HTTP 200. `costroid run` asks the gateway's public `/health/readiness` before the agent starts, every two seconds while it runs, and after it ends. If any answer names a database that is not `connected`, or the gateway does not answer, the run's rows read `none`. An outage that starts and ends between two probes is not seen.
+
+## Keep the admin key behind an environment
+
+On a pull request from a branch of the same repository, GitHub runs the workflow file from the pull request's head, with the repository's secrets. Anyone who can push a branch can change the mint job and read the admin key. That is GitHub's model for every secret a workflow can reach, not something particular to Costroid. A pull request from a fork gets no secrets: "secrets are not passed to the runner when a workflow is triggered from a forked repository" ([Using secrets in GitHub Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets), read 2026-11-06).
+
+Keep the admin key as a secret of a GitHub environment, `costroid-gateway`, and set its protection rules yourself. The recipe names that environment on the mint and close jobs, and on no other job. "Secrets stored in an environment are only available to workflow jobs that reference the environment", and with required reviewers "a job cannot access environment secrets until one of the required reviewers approves it" ([Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments), read 2026-11-06). With required reviewers, each run waits for a person you named before a key is minted. Without a protection rule, the environment only limits which jobs see the key.
 
 ## Daily caps
 

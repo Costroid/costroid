@@ -262,3 +262,33 @@ func TestDailyCapsAreCarriedAsTheTeamsAndTheUsersBudgets(t *testing.T) {
 		t.Errorf("the key is not in the team and the user: %v", fake.generated)
 	}
 }
+
+func TestSpendWaitsWhileTheGatewayStillStoresIt(t *testing.T) {
+	var reads atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reads.Add(1) < 3 {
+			w.Write([]byte(`{"info":{"spend":0.0}}`))
+			return
+		}
+		w.Write([]byte(`{"info":{"spend":0.018}}`))
+	}))
+	defer server.Close()
+	session := Session{Client: NewClient(server.URL), Key: "sk-x", Poll: time.Millisecond, Settle: time.Second, Stable: time.Second}
+	spend, err := session.Spend(context.Background(), decimal.MustParse("0.018"))
+	if err != nil || spend != "0.018" {
+		t.Fatalf("spend %q, %v", spend, err)
+	}
+}
+
+func TestSpendStopsOnAFigureThatHasSettledElsewhere(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"info":{"spend":0.018000000000000002}}`))
+	}))
+	defer server.Close()
+	session := Session{Client: NewClient(server.URL), Key: "sk-x", Poll: time.Millisecond, Settle: time.Minute, Stable: 20 * time.Millisecond}
+	start := time.Now()
+	spend, err := session.Spend(context.Background(), decimal.MustParse("0.018"))
+	if err != nil || spend != "0.018000000000000002" || time.Since(start) > 10*time.Second {
+		t.Fatalf("spend %q, %v, after %s", spend, err, time.Since(start))
+	}
+}
