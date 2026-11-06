@@ -38,7 +38,7 @@ jobs:
           path: ${{ runner.temp }}/costroid-follow-up
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      - uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
+      - uses: Costroid/costroid/action@bb4d17079fc41a7c0e2b898e0caece22308b3103 # v1.0.0-alpha.7
         with:
           stage: install
       - name: Post the check
