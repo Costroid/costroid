@@ -34,6 +34,8 @@ const (
 	RuleAgentNoteToken     = "agent-note-token"
 	RuleReportJob          = "report-job"
 	RuleExpressionInScript = "expression-in-script"
+	RuleFollowUpCode       = "follow-up-code"
+	RuleFollowUpArtifact   = "follow-up-artifact"
 )
 
 const (

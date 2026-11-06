@@ -34,6 +34,9 @@ var gitHubGuards = []string{
 
 func (l *linter) workflow(root *yaml.Node) {
 	l.events(field(root, "on"))
+	if isFollowUp(field(root, "on")) {
+		l.followUp(root)
+	}
 	workflowPermissions := field(root, "permissions")
 	for _, item := range entries(field(root, "jobs")) {
 		l.job(root, item, workflowPermissions)

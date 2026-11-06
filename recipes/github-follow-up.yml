@@ -1,0 +1,47 @@
+# Posts the costroid check on a fork's pull request once the agent's workflow
+# finishes. A fork's token cannot post it. Copy to
+# .github/workflows/costroid-follow-up.yml on the default branch, beside the
+# agent's recipe. docs/required-check.md says what a fork's pull request gets.
+name: costroid-follow-up
+
+on:
+  workflow_run:
+    # The name every agent recipe gives its workflow.
+    workflows: [costroid]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  report:
+    # A fork's pull request only. A branch of this repository gets its check
+    # from the report job of the agent's workflow.
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      # Downloads the rows the finished run kept.
+      actions: read
+      checks: write
+      # Reads costroid.yml at the default branch's commit.
+      contents: read
+    steps:
+      # The fork's workflow wrote these files. costroid reads one of them as
+      # data, and no step runs anything from them.
+      - name: Fetch the finished run's rows
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: costroid-rows
+          path: ${{ runner.temp }}/costroid-follow-up
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # unreleased
+        with:
+          stage: install
+      - name: Post the check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: costroid follow-up --rows "$RUNNER_TEMP/costroid-follow-up/costroid-rows.jsonl"

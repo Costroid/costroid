@@ -31,6 +31,7 @@ Usage:
   costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--json] -- <agent command>
   costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
   costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
+  costroid follow-up --rows rows.jsonl
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE] [--reports DIR --as-of T]
   costroid policy --rows rows.jsonl [--config costroid.yml] [--workflow-added T] [--at T] [--json]
   costroid validate [costroid.yml]
@@ -76,6 +77,13 @@ never fails the job. Outside both it refuses and exits 125. --budget-usd
 restates the run's budget, which rows do not record.
 --installation-id puts the GitHub App installation on the account link;
 COSTROID_INSTALLATION_ID does the same. GitLab's link names the project id.
+
+follow-up posts the check for a fork's pull request from a workflow_run job,
+which holds the base repository's token. It reads the finished run's rows as
+data, up to 8 MiB, and costroid.yml at the default branch's commit. It posts no
+comment, and nothing for a branch of the repository itself, whose report job
+posts the check. Like report, it exits 0 whatever the host answers, and outside
+GitHub Actions it refuses and exits 125.
 
 policy gives, offline, the verdict the check gives: it holds the rows to the
 policy keys of the costroid.yml named, which should be the base commit's.
@@ -161,6 +169,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return ingestRunCommand(args[1:], stderr)
 	case "report":
 		return reportCommand(ctx, args[1:], stdout, stderr)
+	case "follow-up":
+		return followUpCommand(ctx, args[1:], stdout, stderr)
 	case "policy":
 		return policyCommand(ctx, args[1:], stdout, stderr)
 	case "validate":
