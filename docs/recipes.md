@@ -41,7 +41,7 @@ The template pins one release in `COSTROID_VERSION`. It installs cosign at a pin
 
 Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Merge requests from forks never run the agent.
 
-The template records the run and keeps `costroid-rows.jsonl` as an artifact. The `costroid:report` job then posts one sticky note on the merge request, the same comment a GitHub pull request gets.
+The template records the run and keeps `costroid-rows.jsonl` and the run's result object, `costroid-rows.run.json`, as artifacts. The `costroid:report` job then posts one sticky note on the merge request, the same comment a GitHub pull request gets.
 
 This adapter has run against a stub built from GitLab's documentation, never a real GitLab instance. Treat it as untested until a run on your instance posts its note. Open a test merge request with the label to see it.
 

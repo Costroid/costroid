@@ -18,7 +18,7 @@ In GitHub Actions, the action's `run` and `read` stages keep the file as the art
 gh run download <run-id> --name costroid-rows
 ```
 
-The GitLab template keeps `costroid-rows.jsonl` as the agent job's artifact, also for 7 days.
+The GitLab template keeps `costroid-rows.jsonl` as the agent job's artifact, also for 7 days. Beside the rows, both keep the run's result object as `costroid-rows.run.json`, which names why a run wrote no rows.
 
 The agent's job wrote this file, so every row in it is a claim. Its rows read `unverified` and `unattributed` until a ledger checks them against the job's OIDC token.
 
