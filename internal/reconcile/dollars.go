@@ -35,7 +35,7 @@ func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens [
 		return check, []string{"every ledger row is list-equivalent, so no API bill exists to compare"}, nil
 	}
 	check.Verdict = Outside
-	if within(check.Ledger, check.Provider, dollarTolerancePercent) {
+	if within(check.Ledger, check.Provider, DollarTolerancePercent) {
 		check.Verdict = Within
 	}
 	check.Residual = check.Provider.Sub(check.Ledger)

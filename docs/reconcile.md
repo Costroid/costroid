@@ -52,6 +52,8 @@ costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-01 --reports
 | `openai-usage.json`    | `GET /v1/organization/usage/completions`  |
 | `openai-costs.json`    | `GET /v1/organization/costs`              |
 
+Keep each response's body exactly as the provider sent it. A range that needs a second page, or a second provider window, cannot be saved as one file.
+
 ## Exit codes
 
 | Code | Meaning                                  |
@@ -59,3 +61,7 @@ costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-01 --reports
 | 0    | No token miss                            |
 | 1    | A token miss, which is a defect          |
 | 125  | Costroid could not read the rows or a report |
+
+## Costroid's own figures
+
+[Accuracy](accuracy.md) runs this comparison every day on the key Costroid's own test repository spends on, from saved reports, and recomputes every line from them.

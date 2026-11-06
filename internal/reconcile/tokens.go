@@ -43,7 +43,7 @@ func compareTokens(source string, group *ledgerGroup, usage []Usage) []TokenChec
 			Ledger:   mine,
 			Provider: theirs,
 			Delta:    theirs.Sub(mine),
-			Within:   within(mine, theirs, tokenTolerancePercent),
+			Within:   within(mine, theirs, TokenTolerancePercent),
 		})
 	}
 	return checks

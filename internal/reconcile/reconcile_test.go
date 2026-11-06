@@ -283,10 +283,10 @@ func TestATokensMissIsReportedAsADefect(t *testing.T) {
 }
 
 func TestProviderZeroIsMatchedOnlyByZero(t *testing.T) {
-	if within(decimal.FromInt(1), decimal.Decimal{}, tokenTolerancePercent) {
+	if within(decimal.FromInt(1), decimal.Decimal{}, TokenTolerancePercent) {
 		t.Error("one ledger token against a provider zero passed")
 	}
-	if !within(decimal.Decimal{}, decimal.Decimal{}, tokenTolerancePercent) {
+	if !within(decimal.Decimal{}, decimal.Decimal{}, TokenTolerancePercent) {
 		t.Error("zero against zero failed")
 	}
 }
@@ -411,10 +411,10 @@ func TestAResidualInsideTenPercentWithNoNamedCauseReadsUnattributed(t *testing.T
 }
 
 func TestTheTenPercentBoundIsInclusiveAndAgainstTheProvider(t *testing.T) {
-	if !within(decimal.MustParse("1.1"), decimal.MustParse("1"), dollarTolerancePercent) {
+	if !within(decimal.MustParse("1.1"), decimal.MustParse("1"), DollarTolerancePercent) {
 		t.Error("exactly 10% was refused")
 	}
-	if within(decimal.MustParse("1.100000000001"), decimal.MustParse("1"), dollarTolerancePercent) {
+	if within(decimal.MustParse("1.100000000001"), decimal.MustParse("1"), DollarTolerancePercent) {
 		t.Error("past 10% was accepted")
 	}
 }

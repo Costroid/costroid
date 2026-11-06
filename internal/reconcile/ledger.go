@@ -233,7 +233,8 @@ func (l *Ledger) Sources() []string {
 	return names
 }
 
-func (l *Ledger) credentials(source string) []string {
+// Credentials lists the credentials the ledger names for one source, in order.
+func (l *Ledger) Credentials(source string) []string {
 	var names []string
 	for key := range l.groups {
 		if key.Source == source && !slices.Contains(names, key.Credential) {

@@ -27,8 +27,10 @@ const (
 
 // The tolerances of SPEC.md A item 8, as percentages of the provider's figure.
 const (
-	tokenTolerancePercent  = 1
-	dollarTolerancePercent = 10
+	// TokenTolerancePercent bounds each token class. A miss is a defect.
+	TokenTolerancePercent = 1
+	// DollarTolerancePercent bounds list-price dollars against the cost report.
+	DollarTolerancePercent = 10
 )
 
 // RerunDays is how many days after month end a day's figures can still move.
@@ -153,7 +155,7 @@ type Options struct {
 func Reconcile(ctx context.Context, ledger *Ledger, options Options) (Result, error) {
 	var result Result
 	for _, provider := range options.Providers {
-		credentials := ledger.credentials(provider.Name())
+		credentials := ledger.Credentials(provider.Name())
 		report, err := provider.Fetch(ctx, options.Range, credentials)
 		if err != nil {
 			return Result{}, fmt.Errorf("reconcile: %s: %w", provider.Name(), err)
