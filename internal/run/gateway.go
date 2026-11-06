@@ -72,8 +72,12 @@ func (h *heldKey) watch(ctx context.Context) func() string {
 }
 
 // overshootBound is the most a run can pass its budget by: the requests the
-// key lets run at once, each of the largest size the key states, each token at
-// the highest unit price the model's sheet holds at that context length.
+// key lets run at once, and one more, each of the largest size the key states,
+// each token at the highest unit price the model's sheet holds at that context
+// length. The one more is a request that has ended and that the gateway has not
+// counted yet: LiteLLM v1.108.1 counts a request after it answers, and in six
+// runs it had counted it before the second request after it was admitted. That
+// is an observation, so checkOvershoot holds every run to it.
 func overshootBound(prices *catalog.Catalog, grant gateway.Grant, request adapter.Request) (decimal.Decimal, error) {
 	start, _ := focus.ChargePeriod(request.Start, request.End)
 	var highest, highestFallback decimal.Decimal
@@ -104,7 +108,7 @@ func overshootBound(prices *catalog.Catalog, grant gateway.Grant, request adapte
 	if highest.Sign() == 0 {
 		highest = highestFallback
 	}
-	tokens := decimal.FromInt(grant.MaxParallel * grant.MaxRequestTokens).DivPow10(6)
+	tokens := decimal.FromInt((grant.MaxParallel + 1) * grant.MaxRequestTokens).DivPow10(6)
 	return tokens.Mul(highest), nil
 }
 
@@ -124,4 +128,24 @@ func (h *heldKey) compareSpend(ctx context.Context, result *Result) {
 	}
 	result.Report.Warnings = append(result.Report.Warnings, fmt.Sprintf(
 		"the gateway counted USD %s on the run's key, and the rows, priced at the catalog, come to USD %s. The gateway holds the budget in its own figure, and the rows keep theirs", spend, result.ListTotal))
+}
+
+// checkOvershoot holds a gateway-precheck run to the bound its rows state. When
+// the rows, priced at the catalog, pass the key's budget by more than a row's
+// bound, the grade claimed more than the run showed, and it falls to none.
+func (b rowBuilder) checkOvershoot(rows []focus.Row) (adapter.Enforcement, string) {
+	if b.held == nil || b.enforcement.Grade != adapter.GradeGatewayPrecheck {
+		return adapter.Enforcement{}, ""
+	}
+	total := listTotal(rows)
+	over := total.Sub(b.held.grant.MaxBudget)
+	for _, row := range rows {
+		if row.OvershootBound == nil || over.Cmp(*row.OvershootBound) <= 0 {
+			continue
+		}
+		reason := fmt.Sprintf("the run passed the key's budget by USD %s, more than the overshoot bound of USD %s its rows state", over, *row.OvershootBound)
+		warning := fmt.Sprintf("the rows, priced at the catalog, come to USD %s against the key's budget of USD %s: an overshoot of USD %s, above the bound of USD %s, so the rows read none", total, b.held.grant.MaxBudget, over, *row.OvershootBound)
+		return adapter.Enforcement{Grade: adapter.GradeNone, Note: "none: " + reason}, warning
+	}
+	return adapter.Enforcement{}, ""
 }

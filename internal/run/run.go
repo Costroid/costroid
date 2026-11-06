@@ -215,6 +215,14 @@ func (o Options) record(result *Result, builder rowBuilder, report adapter.Repor
 		result.Report = report
 		return err
 	}
+	if checked, warning := builder.checkOvershoot(rows); warning != "" {
+		builder.enforcement, result.Enforcement = checked, checked
+		report.Warnings = append(report.Warnings, warning)
+		if rows, err = builder.rows(report); err != nil {
+			result.Report = report
+			return err
+		}
+	}
 	if len(rows) == 0 {
 		result.Reason = ReasonNoUsage
 		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", ReasonNoUsage, ReasonNoUsage.Sentence()))

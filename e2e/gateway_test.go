@@ -29,9 +29,10 @@ const (
 	// mockUsage is what the mock upstream reports for each request: 10000 input
 	// and 10000 output tokens, USD 0.006 at claude-haiku-5-5's list prices.
 	mockUsage = `{"input_tokens":10000,"output_tokens":10000}`
-	// gatewayBound is one request of 20000 tokens at the sheet's highest
-	// claude-haiku-5-5 price, output at USD 0.50 per million tokens.
-	gatewayBound = "0.01"
+	// gatewayBound is one request in flight and one not yet counted, each of
+	// 20000 tokens at the sheet's highest claude-haiku-5-5 price, output at
+	// USD 0.50 per million tokens.
+	gatewayBound = "0.02"
 	gatewayWait  = 4 * time.Minute
 	author       = "octocat"
 	// repositoryCap is the repository's daily cap, carried as its team's budget.

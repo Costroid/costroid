@@ -81,9 +81,9 @@ func TestAGatewayKeyGradesGatewayPrecheckWithTheKeyIDAndTheBound(t *testing.T) {
 		if row["SubAccountId"] != gateway.KeyID(gatewayKey) {
 			t.Errorf("SubAccountId %v, want the key's id, never the key or a claimed credential", row["SubAccountId"])
 		}
-		// One request of 20000 tokens at claude-haiku-5-5's highest price,
-		// output at USD 0.50 per million tokens.
-		if row["x_CostroidOvershootBound"] != "0.01" {
+		// One request in flight and one not yet counted, each of 20000 tokens
+		// at claude-haiku-5-5's highest price, output at USD 0.50 per million.
+		if row["x_CostroidOvershootBound"] != "0.02" {
 			t.Errorf("bound %v", row["x_CostroidOvershootBound"])
 		}
 		if tagOf(row, "costroid/attribution_grade") != "unattributed" {
@@ -179,5 +179,52 @@ func TestAClaimedCredentialStaysAsStated(t *testing.T) {
 	row := parseRows(t, rows.Bytes())[0]
 	if row["SubAccountId"] != claimedKey || tagOf(row, "costroid/enforcement_grade") != "agent-flag" || row["x_CostroidOvershootBound"] != nil {
 		t.Fatalf("row %v", row)
+	}
+}
+
+// keyInfoWith is a holding key with another budget and largest request.
+func keyInfoWith(budget, requestTokens string) string {
+	return strings.NewReplacer(`"max_budget":0.01`, `"max_budget":`+budget, `"costroid_max_request_tokens":"20000"`, `"costroid_max_request_tokens":"`+requestTokens+`"`).Replace(keyInfoHolding)
+}
+
+// The recorded run's rows come to USD 0.00060589. On a key of USD 0.0001 that
+// is an overshoot of USD 0.00050589.
+func TestAnOvershootWithinTheBoundKeepsGatewayPrecheck(t *testing.T) {
+	got, _ := gatewayRunWith(t, fakeGateway(t, keyInfoWith("0.0001", "20000"), `{"status":"healthy","db":"connected"}`))
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	for _, row := range got.rows {
+		if tagOf(row, "costroid/enforcement_grade") != "gateway-precheck" || row["x_CostroidOvershootBound"] != "0.02" {
+			t.Fatalf("an overshoot of USD 0.00050589 under a bound of USD 0.02 reads %q, bound %v", tagOf(row, "costroid/enforcement_grade"), row["x_CostroidOvershootBound"])
+		}
+	}
+	if slices.ContainsFunc(got.result.Report.Warnings, func(w string) bool { return strings.Contains(w, "above the bound") }) {
+		t.Errorf("warnings %q", got.result.Report.Warnings)
+	}
+}
+
+// With a largest request of 100 tokens the bound is 2 × 100 × USD 0.50 per
+// million, USD 0.0001, and the run passed its key by more.
+func TestAnOvershootAboveTheBoundRecordsNone(t *testing.T) {
+	got, _ := gatewayRunWith(t, fakeGateway(t, keyInfoWith("0.0001", "100"), `{"status":"healthy","db":"connected"}`))
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	want := "an overshoot of USD 0.00050589, above the bound of USD 0.0001"
+	if !slices.ContainsFunc(got.result.Report.Warnings, func(w string) bool { return strings.Contains(w, want) }) {
+		t.Fatalf("warnings %q", got.result.Report.Warnings)
+	}
+	if got.result.Enforcement.Grade != "none" {
+		t.Errorf("the result reads %q", got.result.Enforcement.Grade)
+	}
+	for _, row := range got.rows {
+		description, _ := row["ChargeDescription"].(string)
+		if tagOf(row, "costroid/enforcement_grade") != "none" || !strings.Contains(description, "more than the overshoot bound of USD 0.0001") {
+			t.Errorf("grade %q: %s", tagOf(row, "costroid/enforcement_grade"), description)
+		}
+		if row["x_CostroidOvershootBound"] != nil {
+			t.Errorf("a none row states a bound: %v", row["x_CostroidOvershootBound"])
+		}
 	}
 }
