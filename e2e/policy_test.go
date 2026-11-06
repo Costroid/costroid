@@ -3,9 +3,6 @@
 package e2e
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -14,32 +11,6 @@ import (
 )
 
 const workflowPath = ".github/workflows/costroid.yml"
-
-// history answers GitHub's commits route for the workflow file, which the stub
-// does not serve, and hands every other request to the stub.
-type history struct {
-	stub  *scmtest.Stub
-	added time.Time
-}
-
-func (h history) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/repos/acme/widgets/commits" {
-		h.stub.ServeHTTP(w, r)
-		return
-	}
-	query := r.URL.Query()
-	if r.Header.Get("Authorization") != "Bearer "+h.stub.Token || query.Get("sha") != base || query.Get("path") != workflowPath {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	commits := []map[string]any{}
-	if query.Get("page") == "1" {
-		commits = append(commits, map[string]any{"commit": map[string]any{"committer": map[string]any{"date": h.added.Format(time.RFC3339)}}})
-	}
-	if err := json.NewEncoder(w).Encode(commits); err != nil {
-		panic(err)
-	}
-}
 
 // TestAPolicyHoldsTheRecordedRunToItsBudget reports the recorded run under a
 // budget that costroid.yml sets at the base commit. Over the budget it warns
@@ -77,15 +48,14 @@ func TestAPolicyHoldsTheRecordedRunToItsBudget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			github := scmtest.New(t)
 			github.Files["costroid.yml"] = "policy:\n  run_budget_usd: \"" + tc.budget + "\"\n"
-			server := httptest.NewServer(history{stub: github, added: time.Now().Add(-tc.added)})
-			t.Cleanup(server.Close)
-			env := append(job.env, "GITHUB_TOKEN="+github.Token, "GITHUB_API_URL="+server.URL,
+			github.Commits[workflowPath] = []time.Time{time.Now().Add(-tc.added)}
+			env := append(job.env, "GITHUB_TOKEN="+github.Token, "GITHUB_API_URL="+github.Server.URL,
 				"GITHUB_WORKFLOW_REF=acme/widgets/"+workflowPath+"@refs/pull/"+pull+"/merge")
 			code, _, stderr := job.costroid(env, "report", "--rows", job.rows, "--budget-usd", "5")
 			if code != 0 || len(github.Checks) != 1 || len(github.Comments) != 1 {
 				t.Fatalf("exit %d, %d checks, %d comments: %s", code, len(github.Checks), len(github.Comments), stderr)
 			}
-			if strings.Contains(stderr, "is not a key Costroid reads") || strings.Contains(stderr, "workflow:") {
+			if strings.Contains(stderr, "is not a key Costroid reads") || strings.Contains(stderr, "policy:") {
 				t.Errorf("the report warned:\n%s", stderr)
 			}
 			check := github.Checks[0]
