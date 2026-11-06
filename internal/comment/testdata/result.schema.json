@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.1/result.schema.json",
-  "title": "Costroid result object, version 0.1",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.2/result.schema.json",
+  "title": "Costroid result object, version 0.2",
   "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the budget, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.1"
+      "const": "costroid.result/0.2"
     },
     "check_run_id": {
       "description": "The check run that carries this object. Absent in the check run's own block, which is written before the host assigns the id, and in what costroid run and costroid report print.",
@@ -552,7 +552,7 @@
         },
         "evaluated_at": {
           "type": "string",
-          "format": "date-time"
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
         },
         "warn_only": {
           "type": "object",
@@ -571,11 +571,11 @@
             },
             "started": {
               "type": "string",
-              "format": "date-time"
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
             },
             "ends": {
               "type": "string",
-              "format": "date-time"
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
             }
           },
           "required": [

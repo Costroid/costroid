@@ -1,6 +1,6 @@
 # Read a result from an agent
 
-Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the budget and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.1`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.1) in `Costroid/costroid-schemas`.
+Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the budget and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.2`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.2) in `Costroid/costroid-schemas`.
 
 ## Where the object is
 
