@@ -22,6 +22,7 @@ import (
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/gateway"
 )
 
 const defaultGrace = 5 * time.Second
@@ -46,6 +47,8 @@ type Options struct {
 	Now func() time.Time
 	// Grace is how long a stopped agent has before SIGKILL.
 	Grace time.Duration
+	// Gateway is the run's own key on a gateway. Nil runs without one.
+	Gateway *gateway.Session
 }
 
 // Reason says why a run wrote no rows. Its values are a closed list, each
@@ -139,12 +142,22 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return result, err
 	}
 	defer release()
-	session := agent.NewSession(plan)
-	builder := opts.builder(agent.Name(), plan.Enforcement)
 	process := opts.withDefaults()
+	held, err := process.openGateway(ctx, agent)
+	if err != nil {
+		return Result{Agent: agent.Name()}, err
+	}
+	if held != nil {
+		plan.Enforcement = held.enforcement("")
+	}
+	session := agent.NewSession(plan)
+	builder := process.builder(agent.Name(), plan.Enforcement)
+	builder.held = held
 	result := Result{Agent: agent.Name(), Enforcement: plan.Enforcement}
 	started := process.Now()
-	result.AgentExit, result.Stopped, err = process.execute(ctx, plan, session, builder)
+	stopWatch := held.watch(ctx)
+	result.AgentExit, result.Stopped, err = process.execute(ctx, plan, session, builder, held)
+	storeFailure := stopWatch()
 	if err != nil {
 		return result, err
 	}
@@ -158,6 +171,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if report.Enforcement.Grade != "" {
 		builder.enforcement = report.Enforcement
 		result.Enforcement = report.Enforcement
+	}
+	if held != nil {
+		builder.enforcement = held.enforcement(storeFailure)
+		result.Enforcement = builder.enforcement
 	}
 	return result, opts.record(&result, builder, report)
 }
@@ -229,12 +246,16 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter.Session, builder rowBuilder) (int, bool, error) {
+func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter.Session, builder rowBuilder, held *heldKey) (int, bool, error) {
 	command := exec.Command(plan.Argv[0], plan.Argv[1:]...)
 	command.Stdin = o.Stdin
 	command.Stderr = o.Stderr
+	command.Env = os.Environ()
 	if attributes := o.CI.ResourceAttributes(os.Getenv(cicontext.ResourceAttributesVariable)); attributes != "" {
-		command.Env = append(os.Environ(), cicontext.ResourceAttributesVariable+"="+attributes)
+		command.Env = append(command.Env, cicontext.ResourceAttributesVariable+"="+attributes)
+	}
+	if held != nil {
+		command.Env = held.session.Env(command.Env)
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := command.StdoutPipe()

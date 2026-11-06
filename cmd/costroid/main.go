@@ -22,6 +22,7 @@ import (
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/reconcile"
 	"github.com/Costroid/costroid/internal/run"
 	"github.com/Costroid/costroid/internal/server"
@@ -30,7 +31,7 @@ import (
 const usage = `costroid runs a coding agent under a budget and records what it cost.
 
 Usage:
-  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--json] -- <agent command>
+  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--gateway URL --gateway-key-file F] [--json] -- <agent command>
   costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
   costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
   costroid follow-up --rows rows.jsonl
@@ -38,6 +39,7 @@ Usage:
   costroid policy --rows rows.jsonl [--config costroid.yml] [--workflow-added T] [--at T] [--json]
   costroid validate [costroid.yml]
   costroid lint-recipes <paths>
+  costroid gateway public-key | request | mint | close
   costroid serve
   costroid keys create --owner host:owner
   costroid keys revoke <id>
@@ -52,6 +54,17 @@ COSTROID_BILLING_ACCOUNT variable does. With neither, the rows read unknown.
 --credential fills SubAccountId: the id of the key, workspace or project the run
 spends on, never the key itself. Without it, COSTROID_CREDENTIAL does. With
 neither, the column is null and reconcile asks for one.
+
+--gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
+the run's own key, which costroid gateway request drew and costroid gateway
+mint registered. Without them, COSTROID_GATEWAY_URL and
+COSTROID_GATEWAY_KEY_FILE do. run waits for the key, reads it back, and gives the
+agent the gateway's URL and the key in place of any provider credential. The
+key's id fills SubAccountId. The rows read gateway-precheck when the key has a
+budget at or under --budget-usd, an expiry, a parallel-request limit, a largest
+request and this run's id, and when the gateway's store answered before, during
+and after the run. Otherwise they read none and say why. costroid gateway help
+describes the other steps.
 
 Inside GitHub Actions or GitLab CI, run and ingest-run state the repository, the
 pull request, the head commit and the CI run on every row, and run sets the
@@ -173,6 +186,8 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return reconcileCommand(ctx, args[1:], os.Getenv, reconcile.NewClient(), time.Now, stdout, stderr)
 	case "lint-recipes":
 		return lintRecipes(args[1:], stdout, stderr)
+	case "gateway":
+		return gatewayCommand(ctx, args[1:], stdout, stderr)
 	case "ingest-run":
 		return ingestRunCommand(args[1:], stderr)
 	case "report":
@@ -235,6 +250,8 @@ type runFlags struct {
 	account accountFlags
 	argv    []string
 	json    bool
+	// gateway and gatewayKeyFile are both set, or neither.
+	gateway, gatewayKeyFile string
 }
 
 func parseRun(args []string, stderr io.Writer) (runFlags, error) {
@@ -244,9 +261,14 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	budget := set.String("budget-usd", "", "the run's budget in USD")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
 	asJSON := set.Bool("json", false, "print the result object on stdout, and the agent's stream on stderr")
+	gatewayURL := set.String("gateway", os.Getenv(gatewayURLVar), "the LiteLLM gateway the agent runs through")
+	keyFile := set.String("gateway-key-file", os.Getenv(gatewayKeyFileVar), "the file costroid gateway request wrote the run's key to")
 	account := addAccountFlags(set)
 	if err := set.Parse(args); err != nil {
 		return runFlags{}, err
+	}
+	if (*gatewayURL == "") != (*keyFile == "") {
+		return runFlags{}, errors.New("--gateway and --gateway-key-file go together")
 	}
 	if *budget == "" || *out == "" || set.NArg() == 0 {
 		return runFlags{}, errors.New("run needs --budget-usd, --out and an agent command after --")
@@ -261,7 +283,10 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	if err := account.check(); err != nil {
 		return runFlags{}, err
 	}
-	return runFlags{budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON}, nil
+	return runFlags{
+		budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON,
+		gateway: *gatewayURL, gatewayKeyFile: *keyFile,
+	}, nil
 }
 
 // readCI never stops a run: a job whose event file cannot be read still spends
@@ -303,6 +328,11 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	if flags.json {
 		agentOutput = stderr
 	}
+	session, err := gatewaySession(flags)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		return exitFailure
+	}
 	ci := readCI(stderr)
 	result, err := run.Run(ctx, run.Options{
 		Argv:           flags.argv,
@@ -315,6 +345,7 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		Stdout:         agentOutput,
 		Stderr:         stderr,
 		Catalog:        pinned,
+		Gateway:        session,
 	})
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)
@@ -333,6 +364,24 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return exitBudgetStop
 	}
 	return result.AgentExit
+}
+
+// gatewaySession reads the run's key from its file. The key goes to the agent
+// alone, and no line costroid prints holds it.
+func gatewaySession(flags runFlags) (*gateway.Session, error) {
+	if flags.gateway == "" {
+		return nil, nil
+	}
+	key, err := os.ReadFile(flags.gatewayKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read the gateway key: %w", err)
+	}
+	return &gateway.Session{
+		Client: gateway.NewClient(flags.gateway),
+		Key:    strings.TrimSpace(string(key)),
+		Wait:   gatewayKeyWait,
+		Every:  gatewayProbeEvery,
+	}, nil
 }
 
 // runResultPath is where run writes its result object: beside the rows file,

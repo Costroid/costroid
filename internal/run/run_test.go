@@ -270,6 +270,15 @@ func fakeClaude() {
 	if err := os.WriteFile(os.Getenv(fakeLog)+".otel", []byte(attributes), 0o644); err != nil {
 		os.Exit(98)
 	}
+	var credentials []string
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "ANTHROPIC_") {
+			credentials = append(credentials, entry)
+		}
+	}
+	if err := os.WriteFile(os.Getenv(fakeLog)+".anthropic", []byte(strings.Join(credentials, "\n")), 0o644); err != nil {
+		os.Exit(98)
+	}
 	data, err := os.ReadFile(os.Getenv("COSTROID_FAKE_STREAM"))
 	if err != nil {
 		os.Exit(97)

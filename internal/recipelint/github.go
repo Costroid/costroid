@@ -217,13 +217,18 @@ func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.N
 		}
 	}
 	steps := field(job.value, "steps")
+	minimum := minimumVersionInput
+	if scalarField(step, "run") != "" {
+		minimum = minimumVersionVariable
+	}
 	l.checkAgent(agentRun{
 		node:    job.key,
 		agent:   agent,
 		text:    text(steps),
 		env:     mergeVariables(field(root, "env"), field(job.value, "env"), field(step, "env")),
-		minimum: minimumVersionInput,
+		minimum: minimum,
 	}, gitHubForbidden)
+	l.agentAdminKey(root, job)
 }
 
 // stepAgent names the agent a step starts, or nothing.

@@ -34,6 +34,9 @@ type rowBuilder struct {
 	account     string
 	credential  string
 	ci          cicontext.Context
+	// held is the run's gateway key, nil without one. Its id is the rows'
+	// credential, and its limits state the overshoot bound.
+	held *heldKey
 }
 
 // rows prices the run's requests, then each nested session's under its own
@@ -82,7 +85,7 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		Start:               request.Start,
 		End:                 request.End,
 		Account:             b.account,
-		Credential:          b.credential,
+		Credential:          b.credentialID(),
 		Region:              request.Region,
 		ServiceTier:         request.ServiceTier,
 		CatalogVersion:      b.catalog.Version(),
@@ -108,12 +111,28 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		charge.Price = &focus.Price{SkuPriceID: price.SkuPriceID, PricingUnit: price.PricingUnit, ListUnitPrice: price.ListUnitPrice}
 		charge.Notes = priceNotes(price, request)
 	}
+	if b.enforcement.Grade == adapter.GradeGatewayPrecheck && b.held != nil {
+		bound, err := overshootBound(b.catalog, b.held.grant, request)
+		if err != nil {
+			return focus.Row{}, err
+		}
+		charge.OvershootBound = &bound
+	}
 	var own []string
 	if request.Note != "" {
 		own = []string{request.Note}
 	}
 	charge.Notes = slices.Concat(notes, own, charge.Notes, []string{b.enforcement.Note})
 	return focus.NewRow(charge), nil
+}
+
+// credentialID is the gateway key's id when the run holds one: a credential the
+// wrapper drew and the gateway confirmed, in place of any the caller stated.
+func (b rowBuilder) credentialID() string {
+	if b.held != nil {
+		return b.held.grant.KeyID
+	}
+	return b.credential
 }
 
 func priceNotes(price catalog.Price, request adapter.Request) []string {

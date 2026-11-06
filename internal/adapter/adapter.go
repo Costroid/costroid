@@ -33,6 +33,7 @@ type Enforcement struct {
 
 // Enforcement grades.
 const (
+	GradeGatewayPrecheck = "gateway-precheck"
 	GradeAgentFlag       = "agent-flag"
 	GradeWrapperWatchdog = "wrapper-watchdog"
 	GradeNone            = "none"

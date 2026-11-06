@@ -1,0 +1,31 @@
+# LiteLLM and its Postgres for the gateway journey. The upstream is a mock the
+# test process serves, so no request reaches a provider.
+services:
+  litellm-db:
+    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    environment:
+      POSTGRES_PASSWORD: e2e-litellm
+      POSTGRES_DB: litellm
+    healthcheck:
+      test: ["CMD", "pg_isready", "--host=127.0.0.1", "--username=postgres", "--dbname=litellm"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.108.1@sha256:562251f032a0075a5e5a775b8f44aa9f9f1e93d16562892565f29bfa23fbf2f6
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://postgres:e2e-litellm@litellm-db:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      MOCK_UPSTREAM: ${MOCK_UPSTREAM:?set MOCK_UPSTREAM}
+      MOCK_UPSTREAM_KEY: mock-upstream
+    volumes:
+      - ./testdata/litellm.yaml:/app/config.yaml:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - 127.0.0.1:${LITELLM_PORT:?set LITELLM_PORT}:4000
+    depends_on:
+      litellm-db:
+        condition: service_healthy

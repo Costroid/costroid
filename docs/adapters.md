@@ -6,6 +6,7 @@ What each agent's stream carries, as recorded on November 1, 2026. The fixtures 
 
 | Agent       | Grade              | What holds the run to the budget                                                                                                                            |
 | ----------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `gateway-precheck` | Through a LiteLLM gateway on a key made for the run: the gateway checks the key's budget before each request. The requests in flight can pass it by the bound each row states. [`gateway.md`](gateway.md) has the design. |
 | Claude Code | `agent-flag`       | Costroid passes `--max-budget-usd`. Claude Code checks its own estimate between requests, so the request that crosses the cap still runs and is still paid. |
 | Codex       | `wrapper-watchdog` | Costroid reads Codex's rollout file during the turn, prices each request as it settles and stops the process at the cap. Requests in flight can pass it.    |
 | Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a Codex version with no recorded fixture, or a file that contradicts the stream. Nothing stops the run.  |
@@ -56,6 +57,8 @@ What the runs showed:
 - A cap of 0.0001 USD ended at 0.0007324 USD. The check runs after a request, so the first request always completes. The agent then exited 1 with the tool call unexecuted.
 - The subagent's writes were five-minute and the main thread's were one-hour, on one subscription. The lifetime is per request, so the rule that assigns an unreported lifetime is a last resort. `costroid/assumed_ttl` sits on the class that took those tokens.
 - The pinned catalog equals Claude Code's own `total_cost_usd` on all three runs: 0.00060589, 0.001619725 and 0.0007324 USD. The rows never read that field.
+
+Under `costroid run --gateway`, `SubAccountId` is the id of the key made for the run, the SHA-256 that LiteLLM's spend logs carry, and never a credential the caller states. A gateway run reads `none` when the key lacks a budget at or under the run's, an expiry, a parallel-request limit, a largest request or this run's id, or when the gateway's store did not answer before, during or after the run. The e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob` runs it against LiteLLM v1.108.1 and a mock upstream: the gateway refuses a key at USD 0.01 before the run passes it by more than the bound, no refused request reaches the upstream, the key is gone after the job, and a run whose gateway store was stopped reads `none`.
 
 A Claude Code `session.id` joins a row and never earns `exact`. Anthropic's usage `session_id` is a Managed Agents id, null outside a managed session ([usage analytics](https://platform.claude.com/docs/en/api/beta/organization/analytics/usage.md), retrieved 2026-11-01), so it cannot filter Anthropic's report. `exact` rests on the credential in `SubAccountId`.
 
