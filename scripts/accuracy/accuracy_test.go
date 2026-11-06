@@ -606,3 +606,22 @@ func TestCommittedPageIsWrittenByThisCommand(t *testing.T) {
 		}
 	}
 }
+
+// TestSaveCreatesAMissingParent keeps a day under a directory that does not
+// exist yet, as on a fresh runner, and still refuses to replace a kept day.
+func TestSaveCreatesAMissingParent(t *testing.T) {
+	inputs := filepath.Join(t.TempDir(), "inputs")
+	d := passingDay("2026-11-10")
+	keep(t, inputs, d)
+	if _, err := os.Stat(filepath.Join(inputs, d.date)); err != nil {
+		t.Fatalf("the day was not kept under a new parent: %v", err)
+	}
+	rows := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(rows, d.rows(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	again := runAccuracy(t, world{getenv: func(string) string { return "" }, client: d.provider(t), now: d.savedAt}, "-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rows)
+	if again.code == 0 {
+		t.Fatal("-save replaced a kept day")
+	}
+}

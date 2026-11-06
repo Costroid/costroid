@@ -64,6 +64,11 @@ func save(ctx context.Context, opts options, outside world, stdout io.Writer) er
 	if err != nil {
 		return err
 	}
+	// The parent may be new, as on a fresh runner. The day itself must not
+	// exist, so a kept day is never replaced.
+	if err := os.MkdirAll(filepath.Dir(opts.save), directoryMode); err != nil {
+		return fmt.Errorf("keep the day: %w", err)
+	}
 	if err := os.Mkdir(opts.save, directoryMode); err != nil {
 		return fmt.Errorf("keep the day: %w", err)
 	}
