@@ -79,13 +79,14 @@ The cap is not the policy's budget. The policy reads its budget from `policy.run
 
 `state` is `reported` when the rows gave figures. Otherwise `figures` is empty and `reason` is one of a closed list:
 
-| `reason`               | Meaning                                                                           |
-| ---------------------- | --------------------------------------------------------------------------------- |
-| `no_rows_file`         | No rows file reached the report. The agent's job log says why.                    |
-| `empty_rows_file`      | The rows file holds no rows.                                                      |
-| `rows_path_not_a_file` | The rows path is not a regular file, so it was not read.                          |
-| `rows_file_unread`     | The rows file could not be read.                                                  |
-| `invalid_row`          | A line is not a valid row, and `reason_line` names it. No partial total is shown. |
+| `reason`               | Meaning                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `no_rows_file`         | No rows file reached the report. The agent's job log says why.                                                                 |
+| `empty_rows_file`      | The rows file holds no rows.                                                                                                   |
+| `rows_path_not_a_file` | The rows path is not a regular file, so it was not read.                                                                       |
+| `rows_file_unread`     | The rows file could not be read.                                                                                               |
+| `invalid_row`          | A line is not a valid row, and `reason_line` names it. No partial total is shown.                                              |
+| `fork_no_rows`         | A fork's pull request whose workflow run left no rows file. The recipes run no agent there, and the follow-up posts its check. |
 
 When the rows file holds no rows and the run said why, `run_reason` carries the run's own code:
 

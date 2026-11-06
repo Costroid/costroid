@@ -23,11 +23,9 @@ const (
 	// wrote it, so its size is the fork's choice.
 	maxFollowUpRows = 8 << 20
 	followUpTrigger = "workflow_run"
-	// forkNoRows is the reason a fork's check shows no figures.
-	forkNoRows = "fork_no_rows"
 )
 
-const forkNoRowsSentence = "Reason: `" + forkNoRows + "`. This pull request comes from a fork, and its workflow run left no rows. " +
+const forkNoRowsSentence = "Reason: `" + string(comment.ForkNoRows) + "`. This pull request comes from a fork, and its workflow run left no rows. " +
 	"The recipes run no agent on a fork's pull request. A neutral check does not block a merge."
 
 var errNotGitHubActions = errors.New("follow-up refused: GitHub Actions was not detected")
@@ -85,6 +83,10 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	rows, err := readFollowUpRows(rowsPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
+	// Only a fork's run reaches here, so a missing rows file is a fork's.
+	if rows.reason == comment.NoRowsFile {
+		rows.reason = comment.ForkNoRows
 	}
 	input := comment.Input{
 		Ledger:     rows.ledger,
@@ -238,7 +240,7 @@ func postFollowUpCheck(ctx context.Context, host scm.Reporter, input comment.Inp
 		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
 		return nil
 	}
-	if input.Reason == comment.NoRowsFile {
+	if input.Reason == comment.ForkNoRows {
 		output.Summary += "\n\n" + forkNoRowsSentence
 	}
 	id, err := host.PostCheck(ctx, scm.CheckRun{

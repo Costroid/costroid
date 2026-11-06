@@ -62,6 +62,9 @@ const (
 	NotAFile       Reason = "rows_path_not_a_file"
 	UnreadRowsFile Reason = "rows_file_unread"
 	InvalidRow     Reason = "invalid_row"
+	// ForkNoRows is a fork's pull request whose workflow run left no rows
+	// file, as the follow-up finds it. The recipes run no agent there.
+	ForkNoRows Reason = "fork_no_rows"
 )
 
 // Amounts says whether the comment carries amounts, and why not.
@@ -559,7 +562,7 @@ func (i Input) why() string {
 	switch {
 	case i.State == Reported:
 		return ""
-	case i.Reason == NoRowsFile:
+	case i.Reason == NoRowsFile || i.Reason == ForkNoRows:
 		return "No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none."
 	case i.Reason == NotAFile:
 		return "The rows path is not a regular file, so this report did not read it and shows no figures."

@@ -291,7 +291,8 @@
         "empty_rows_file",
         "rows_path_not_a_file",
         "rows_file_unread",
-        "invalid_row"
+        "invalid_row",
+        "fork_no_rows"
       ]
     },
     "runReason": {

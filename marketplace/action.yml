@@ -13,7 +13,8 @@ inputs:
       execution file of a claude-code-action run that already ended, then keeps its rows the same
       way. ingest sends those rows to a ledger. report posts the check and the comment. all does
       run and report in one job, which gives the agent's job the report's permissions, so the
-      recipes never use it.
+      recipes never use it. install installs costroid and does nothing else, so a later step
+      can run it, as the fork follow-up recipe does.
     default: all
   version:
     description: >-

@@ -57,7 +57,7 @@ func TestForkFollowUpPostsOneNeutralCheckWithTheReason(t *testing.T) {
 	if check.Name != "costroid" || check.Conclusion != "neutral" || check.HeadSHA != headCommit {
 		t.Errorf("check = %+v", check)
 	}
-	if !strings.Contains(check.Summary, "Reason: `fork_no_rows`.") || !strings.Contains(check.Text, `"reason": "no_rows_file"`) {
+	if !strings.Contains(check.Summary, "Reason: `fork_no_rows`.") || !strings.Contains(check.Text, `"reason": "fork_no_rows"`) {
 		t.Errorf("no reason:\n%s\n%s", check.Summary, check.Text)
 	}
 	if !strings.Contains(check.Summary, "[CI run](https://github.com/example/widgets/actions/runs/19203384756)") {
@@ -151,5 +151,31 @@ func TestForkFollowUpRefusesOutsideGitHubActions(t *testing.T) {
 	}
 	if code, _, _ := execute(t, "follow-up"); code != exitFailure {
 		t.Errorf("no --rows: exit %d", code)
+	}
+}
+
+// TestForkWithNoRowsYieldsForkNoRowsInTheMachineBlock reads the reason from the
+// check run's machine block, where an agent reads it, and holds the block to
+// result/v0.3.
+func TestForkWithNoRowsYieldsForkNoRowsInTheMachineBlock(t *testing.T) {
+	stub := followUpEnvironment(t, "stranger/widgets")
+	outputs, _ := stepFiles(t)
+	if code, _, stderr := execute(t, "follow-up", "--rows", absentRows(t)); code != 0 || len(stub.Checks) != 1 {
+		t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+	}
+	block := checkBlock(t, stub.Checks[0].Text)
+	validateResult(t, block)
+	var object struct {
+		State  string `json:"state"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(block), &object); err != nil {
+		t.Fatal(err)
+	}
+	if object.State != "rows_unreadable" || object.Reason != "fork_no_rows" {
+		t.Errorf("state %q, reason %q:\n%s", object.State, object.Reason, block)
+	}
+	if result := readOutputs(t, outputs)["result"]; result != compactJSON(t, block) {
+		t.Errorf("the result output differs from the check's block:\n%s", result)
 	}
 }
