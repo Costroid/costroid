@@ -2,13 +2,13 @@
 
 Every release carries its binaries, `SHA256SUMS`, an SPDX SBOM and one Sigstore bundle per file. Costroid's release workflow signs each file with cosign, keyless, under its own GitHub Actions identity. The image is signed the same way. Releases carry no GitHub artifact attestation, so `gh attestation verify` has nothing to check.
 
-The commands below check `1.0.0-alpha.5`. Replace the version in every line for another release.
+The commands below check `1.0.0-alpha.6`. Replace the version in every line for another release.
 
 ## The checksum
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.5/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.5/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.6/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.6/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 ```
 
@@ -19,9 +19,9 @@ It prints `costroid-linux-amd64: OK`. A checksum proves the download matches `SH
 With cosign 3 or later:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.5/SHA256SUMS.sigstore.json
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.6/SHA256SUMS.sigstore.json
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.5 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.6 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 ```
 
@@ -33,7 +33,7 @@ The release notes name the image by digest. Check that digest, never a tag, beca
 
 ```sh
 cosign verify ghcr.io/costroid/costroid@sha256:<digest> \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.5 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.6 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
