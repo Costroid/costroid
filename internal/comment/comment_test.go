@@ -81,7 +81,7 @@ func realLedger(t testing.TB) Ledger {
 	return ledger
 }
 
-// artifactLabel is the sentence the brief's rule asks for.
+// artifactLabel marks figures that the agent's own job wrote.
 const artifactLabel = "Unverified: the agent's job wrote these figures."
 
 func realInput(t testing.TB) Input {
