@@ -147,18 +147,29 @@ type FileReader interface {
 	ReadFile(ctx context.Context, path, ref string) ([]byte, error)
 }
 
-// ReadConfig reads costroid.yml at ref. On a pull request ref is the base,
-// never the head, so a pull request cannot change its own verdict. A failed
-// read is kept in Unread.
-func ReadConfig(ctx context.Context, files FileReader, ref string, fromBase bool) ConfigFile {
+// Commits names what one report is about: a pull request's base and head, or
+// a push's head alone.
+type Commits struct {
+	Base, Head  string
+	PullRequest bool
+}
+
+// ReadConfig reads costroid.yml at a pull request's base, never its head, so a
+// pull request cannot change its own verdict. A push has only its head. A
+// failed read is kept in Unread.
+func ReadConfig(ctx context.Context, files FileReader, commits Commits) ConfigFile {
+	ref := commits.Head
+	if commits.PullRequest {
+		ref = commits.Base
+	}
 	if !commitPattern.MatchString(ref) {
-		return ConfigFile{FromBase: fromBase, Unread: errors.New("policy: no commit to read costroid.yml at")}
+		return ConfigFile{FromBase: commits.PullRequest, Unread: errors.New("policy: no commit to read costroid.yml at")}
 	}
 	data, found, err := readOptional(ctx, files, ref)
 	if err != nil {
-		return ConfigFile{Ref: ref, FromBase: fromBase, Unread: fmt.Errorf("policy: read %s at %s: %w", ConfigPath, ref, err)}
+		return ConfigFile{Ref: ref, FromBase: commits.PullRequest, Unread: fmt.Errorf("policy: read %s at %s: %w", ConfigPath, ref, err)}
 	}
-	return ConfigFile{Data: data, Found: found, Ref: ref, FromBase: fromBase}
+	return ConfigFile{Data: data, Found: found, Ref: ref, FromBase: commits.PullRequest}
 }
 
 func readOptional(ctx context.Context, files FileReader, ref string) ([]byte, bool, error) {

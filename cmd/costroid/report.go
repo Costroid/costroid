@@ -469,7 +469,7 @@ func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, sou
 	verdict, err := policy.Evaluate(ctx, policy.Request{
 		Usage:  usage,
 		Trust:  policy.Unverified,
-		Config: policy.ReadConfig(ctx, host, pull.settingsRef(), pull.pullRequest > 0),
+		Config: policy.ReadConfig(ctx, host, policy.Commits{Base: pull.base, Head: pull.head, PullRequest: pull.pullRequest > 0}),
 		Start:  workflowStart(ctx, source.system, pull, stderr),
 		At:     time.Now(),
 	})

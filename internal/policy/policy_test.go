@@ -166,7 +166,7 @@ func TestBaseBranchConfig(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			host := &files{held: map[string]string{base: baseFile, head: headFile}}
-			read := ReadConfig(context.Background(), host, base, true)
+			read := ReadConfig(context.Background(), host, Commits{Base: base, Head: head, PullRequest: true})
 			if !reflect.DeepEqual(host.read, []string{base}) {
 				t.Fatalf("read costroid.yml at %v", host.read)
 			}
@@ -179,9 +179,16 @@ func TestBaseBranchConfig(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a push reads its own commit", func(t *testing.T) {
+		host := &files{held: map[string]string{head: baseFile}}
+		read := ReadConfig(context.Background(), host, Commits{Head: head})
+		if !reflect.DeepEqual(host.read, []string{head}) || read.FromBase || string(read.Data) != baseFile {
+			t.Errorf("read %+v at %v", read, host.read)
+		}
+	})
 	t.Run("a base without the file reads the defaults", func(t *testing.T) {
 		host := &files{held: map[string]string{head: baseFile}}
-		verdict := evaluate(t, Request{Usage: over, Config: ReadConfig(context.Background(), host, base, true)})
+		verdict := evaluate(t, Request{Usage: over, Config: ReadConfig(context.Background(), host, Commits{Base: base, Head: head, PullRequest: true})})
 		if verdict.Config != ConfigAbsent || verdict.Conclusion != Neutral || len(verdict.Results) != 1 || verdict.Results[0].Rule != RuleAttribution {
 			t.Errorf("%+v", verdict)
 		}
@@ -197,8 +204,8 @@ func (failingFiles) ReadFile(context.Context, string, string) ([]byte, error) {
 func TestAnUnreadBaseRunsNoRule(t *testing.T) {
 	host := &files{held: map[string]string{"": "policy:\n  run_budget_usd: \"1\"\n"}}
 	for name, read := range map[string]ConfigFile{
-		"a host that fails": ReadConfig(context.Background(), failingFiles{}, base, true),
-		"no base commit":    ReadConfig(context.Background(), host, "", true),
+		"a host that fails": ReadConfig(context.Background(), failingFiles{}, Commits{Base: base, Head: head, PullRequest: true}),
+		"no base commit":    ReadConfig(context.Background(), host, Commits{Head: head, PullRequest: true}),
 	} {
 		verdict := evaluate(t, Request{Usage: usageOf(t, line{"USD", "3", "key-1", nil}), Config: read})
 		if verdict.Config != ConfigUnread || verdict.Conclusion != Neutral || len(verdict.Results) != 0 || verdict.ConfigProblem() == nil {
@@ -478,7 +485,7 @@ func TestOfflineEqualsReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, start := range []Start{{}, {NotOnBase: true}, {At: checkTime.Add(-time.Hour)}, {At: checkTime.Add(-30 * 24 * time.Hour)}} {
-		report := evaluateRowsFile(t, rowsPath, ReadConfig(context.Background(), &files{held: map[string]string{base: baseFile}}, base, true), start)
+		report := evaluateRowsFile(t, rowsPath, ReadConfig(context.Background(), &files{held: map[string]string{base: baseFile}}, Commits{Base: base, Head: head, PullRequest: true}), start)
 		offline := evaluateRowsFile(t, rowsPath, ConfigFromFile(configPath), start)
 		if report.ConfigRef != base || offline.ConfigRef != "" || !report.ConfigFromBase || offline.ConfigFromBase {
 			t.Errorf("report read %q from the base %v, offline %q", report.ConfigRef, report.ConfigFromBase, offline.ConfigRef)
