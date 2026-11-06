@@ -446,3 +446,23 @@ func TestFixturesCarryNoPathsNamesOrProviderIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestAMessageThatIsAStringIsRead feeds lines whose message is a plain string,
+// as some stream lines carry, beside an assistant line whose message names its
+// model. None of them may stop the run's reading.
+func TestAMessageThatIsAStringIsRead(t *testing.T) {
+	session := &Session{}
+	for _, line := range []string{
+		`{"type":"system","subtype":"init","session_id":"s","message":"a note from the runner"}`,
+		`{"type":"user","message":"plain text"}`,
+		`{"type":"assistant","message":"plain text"}`,
+		`{"type":"assistant","message":{"model":"claude-opus-5-5"}}`,
+	} {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatalf("%s: %v", line, err)
+		}
+	}
+	if !session.answered["claude-opus-5-5"] {
+		t.Error("the assistant line's model was not read")
+	}
+}

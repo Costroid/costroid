@@ -163,9 +163,9 @@ type streamLine struct {
 	Version      string                `json:"claude_code_version"`
 	CWD          string                `json:"cwd"`
 	ModelUsage   map[string]modelUsage `json:"modelUsage"`
-	Message      struct {
-		Model string `json:"model"`
-	} `json:"message"`
+	// Message is an object on an assistant line and can be a plain string on
+	// other lines, so it is decoded only where a model is read from it.
+	Message json.RawMessage `json:"message"`
 }
 
 // Session reads one Claude Code run.
@@ -206,11 +206,15 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 			}
 		}
 	case "assistant":
-		if parsed.Message.Model != "" {
+		var message struct {
+			Model string `json:"model"`
+		}
+		// A message that is not an object names no model; the line still counts.
+		if json.Unmarshal(parsed.Message, &message) == nil && message.Model != "" {
 			if s.answered == nil {
 				s.answered = map[string]bool{}
 			}
-			s.answered[parsed.Message.Model] = true
+			s.answered[message.Model] = true
 		}
 	case "result":
 		// A run can hold several results. modelUsage is cumulative, so the
