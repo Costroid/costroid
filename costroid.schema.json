@@ -18,6 +18,28 @@
         }
       }
     },
+    "policy": {
+      "description": "What the check holds each run to. The report reads these keys at the pull request's base commit, so a pull request cannot change its own verdict.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_budget_usd": {
+          "description": "The budget each run is held to, in USD, as a quoted decimal. A run over it warns during the warn-only period and fails after it. Rows the agent's job wrote cannot show a run under it, so on that path the rule concludes neutral at best.",
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+        },
+        "max_run_cost_usd": {
+          "description": "A ceiling on one run's cost at list, in USD, as a quoted decimal. It is held the same way as the budget.",
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+        },
+        "enforce": {
+          "description": "true ends the warn-only period now, so a rule that fails fails the check. Without it the period runs for 7 days from the commit that added the workflow to the base branch.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
     "policy_pack": {
       "description": "The policy pack this repository is held to. Reserved: this release reads no pack.",
       "type": "string",

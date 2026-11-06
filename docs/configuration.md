@@ -11,6 +11,17 @@ comment:
 | Key                 | Default | What it does                                                                                                                                               |
 | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `comment.show_cost` | `true`  | Off, a public repository's comment and job summary show the verdict and the grades, without amounts or token counts. The rows, the check run's machine block and the action's outputs keep them. A private repository always prints them, and a GitLab project set to internal counts as private |
+| `policy.run_budget_usd` | none | The budget each run is held to, in USD, as a quoted decimal such as `"5.00"`. Unset, the rule does not run |
+| `policy.max_run_cost_usd` | none | A ceiling on one run's cost at list, in USD, as a quoted decimal. Unset, the rule does not run |
+| `policy.enforce` | `false` | `true` ends the warn-only period now, so a run over a limit fails the check |
+
+Amounts are quoted, so `0.1` stays the decimal it reads as. An unquoted number is a problem. [`docs/policy.md`](policy.md) says what each rule concludes and when the warn-only period ends.
+
+```yaml
+policy:
+  run_budget_usd: "5.00"
+  max_run_cost_usd: "2.50"
+```
 
 The schema also names `policy_pack`, `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them. `costroid report` prints a warning in the job log for each reserved key it finds, and for each key it does not know, and still posts.
 
