@@ -37,7 +37,7 @@ Then open a test pull request.
 
 Copy [`recipes/gitlab-ci.yml`](../recipes/gitlab-ci.yml) into your repository and `include` it as a local file.
 
-Set `COSTROID_VERSION` and `COSTROID_SHA256` as CI/CD variables, and `COSTROID_CREDENTIAL` if you reconcile. The template has no action to find its release, so it needs both: `COSTROID_SHA256` is the line for `costroid-linux-amd64` in the release's `SHA256SUMS`, which [`docs/verify.md`](verify.md) checks. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
+The template pins one release in `COSTROID_VERSION`. It installs cosign at a pinned checksum, verifies that Costroid's release workflow signed the release's `SHA256SUMS`, and checks the binary against its line in that file, as [`docs/verify.md`](verify.md) describes. Nothing is set by hand except `COSTROID_CREDENTIAL`, if you reconcile. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
 
 Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Merge requests from forks never run the agent.
 
