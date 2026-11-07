@@ -37,6 +37,7 @@ const (
 var (
 	integrationTokenPattern = regexp.MustCompile(`^costroid_it_[A-Za-z0-9_-]{43}$`)
 	installationIDPattern   = regexp.MustCompile(`^(github|github-owner|gitlab-namespace):[1-9][0-9]{0,19}$`)
+	installationNumber      = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 	batchIDPattern          = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 	tenantIDPattern         = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	refusalCodePattern      = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
@@ -49,7 +50,8 @@ const exportHelp = `Usage:
 export sends a rows file to Costroid Platform as one batch of CSV, under the
 integration token in COSTROID_PLATFORM_TOKEN. --platform-url is the platform's
 https origin. --installation-id names the installation the rows came through:
-github:<id>, github-owner:<id> or gitlab-namespace:<id>.
+github:<id>, github-owner:<id> or gitlab-namespace:<id>. A bare number is a
+GitHub App installation and is sent as github:<id>, as report reads it.
 
 On GitHub Actions the batch id is the repository id, the run id and the run
 attempt, joined by hyphens, so sending a run's rows again restates its batch.
@@ -158,8 +160,9 @@ func parseExport(args []string, stderr io.Writer) (exportFlags, error) {
 	if *rows == "" || *address == "" || *installation == "" {
 		return exportFlags{}, errors.New("export needs --rows, --platform-url and --installation-id")
 	}
-	if !installationIDPattern.MatchString(*installation) {
-		return exportFlags{}, errors.New("--installation-id must be github:<id>, github-owner:<id> or gitlab-namespace:<id>, with the number the platform bound")
+	installationID, err := exportInstallation(*installation)
+	if err != nil {
+		return exportFlags{}, err
 	}
 	if *batch != "" && !batchIDPattern.MatchString(*batch) {
 		return exportFlags{}, errors.New("--batch-id must be 1 to 128 letters, digits, dots, hyphens or underscores")
@@ -168,7 +171,31 @@ func parseExport(args []string, stderr io.Writer) (exportFlags, error) {
 	if err != nil {
 		return exportFlags{}, err
 	}
-	return exportFlags{rows: *rows, base: base, installation: *installation, batch: *batch}, nil
+	return exportFlags{rows: *rows, base: base, installation: installationID, batch: *batch}, nil
+}
+
+// githubInstallation is the prefix of a GitHub App installation id.
+const githubInstallation = "github:"
+
+// exportInstallation reads --installation-id in the form the platform binds.
+// A bare number is a GitHub App installation, as report reads it, and is sent
+// as github:<id>.
+func exportInstallation(value string) (string, error) {
+	if installationNumber.MatchString(value) {
+		value = githubInstallation + value
+	}
+	if !installationIDPattern.MatchString(value) {
+		return "", errors.New("--installation-id must be github:<id>, a bare GitHub App installation number, github-owner:<id> or gitlab-namespace:<id>, with the number the platform bound")
+	}
+	return value, nil
+}
+
+// appInstallation reads --installation-id as report's account link names it:
+// a GitHub App installation, github:<id> or the bare number. It returns the
+// number, and false for any other form.
+func appInstallation(value string) (string, bool) {
+	number := strings.TrimPrefix(value, githubInstallation)
+	return number, installationNumber.MatchString(number)
 }
 
 // integrationBase takes an origin only, so the contract's version in the path

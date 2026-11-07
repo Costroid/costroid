@@ -53,7 +53,7 @@ The `ingest` stage sends to the platform when `platform-url` is set, and to a le
           platform-token: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
 ```
 
-`installation-id` names the installation the platform bound: `github-owner:` and the owner's number for a repository that runs only the action, or `github:` and the App installation's id where the GitHub App is installed. The recipes run the `ingest` job only when `COSTROID_INGEST_URL` is set, so to send to the platform alone, change that job's condition to `always() && needs.agent.result != 'skipped'`. The job keeps `id-token: write`.
+`installation-id` names the installation the platform bound: `github-owner:` and the owner's number for a repository that runs only the action, or `github:` and the App installation's id where the GitHub App is installed. A bare number is an App installation, and is sent as `github:<id>`. `costroid report --installation-id` takes an App installation in the same two forms and refuses any other, and its account link names it as `github:<id>`. The recipes run the `ingest` job only when `COSTROID_INGEST_URL` is set, so to send to the platform alone, change that job's condition to `always() && needs.agent.result != 'skipped'`. The job keeps `id-token: write`.
 
 On GitHub Actions the batch id is the repository id, the run id and the run attempt, joined by hyphens: `903114-16873409921-1`. Sending one run's rows again restates its batch, and the same bytes change nothing. A re-run attempt runs the agent again, so it adds a batch.
 

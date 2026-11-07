@@ -90,7 +90,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	budget := set.String("budget-usd", "", "the cap the run was given, in USD")
-	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id; GitLab uses the project id")
+	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation, github:<id> or the bare number; GitLab uses the project id")
 	agentResult := set.String("agent-result", os.Getenv(agentResultVariable), "the agent job's result: success, failure, cancelled or skipped")
 	asJSON := set.Bool("json", false, "print the result object on stdout")
 	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
@@ -103,7 +103,14 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	if *preview && *asJSON {
 		return reportFlags{}, errors.New("report takes --preview or --json, not both")
 	}
-	flags := reportFlags{rows: *rows, installation: *installation, agentResult: *agentResult, json: *asJSON, preview: *preview}
+	flags := reportFlags{rows: *rows, agentResult: *agentResult, json: *asJSON, preview: *preview}
+	if *installation != "" {
+		number, ok := appInstallation(*installation)
+		if !ok {
+			return reportFlags{}, errors.New("--installation-id must be github:<id> or the GitHub App installation's bare number")
+		}
+		flags.installation = number
+	}
 	if *budget != "" {
 		amount, err := decimal.Parse(*budget)
 		if err != nil {
