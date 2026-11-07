@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 	"time"
@@ -126,7 +127,14 @@ func setupViewBench(b *testing.B) viewBench {
 		b.Fatal(err)
 	}
 	b.Cleanup(ledger.Close)
-	return viewBench{world: newWorld(b, ledger), paths: benchPathsFrom(b, owner, a), max: heaviestPull(b, owner, a)}
+	// The view reads the gateway's spend beside the rows, as serve wires it.
+	w := newWorld(b, ledger)
+	config := w.server.Config
+	config.Spend = ledger
+	w.server = New(config)
+	w.http = httptest.NewServer(w.server.Handler())
+	b.Cleanup(w.http.Close)
+	return viewBench{world: w, paths: benchPathsFrom(b, owner, a), max: heaviestPull(b, owner, a)}
 }
 
 func heaviestPull(b *testing.B, conn *pgx.Conn, tenant store.TenantID) int64 {

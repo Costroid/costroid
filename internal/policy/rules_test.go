@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"slices"
@@ -50,8 +51,8 @@ func TestModelAllowlist(t *testing.T) {
 			t.Errorf("%+v", verdict)
 		}
 	})
-	t.Run("every model on the list passes on rows a ledger checked", func(t *testing.T) {
-		verdict := evaluate(t, Request{Usage: verifiedUsage(t, "EUR", "1", "claude-opus-5-5", "codex-mini"), Trust: TokenVerified, Config: enforced})
+	t.Run("every model on the list passes on rows a ledger checked and the gateway measured", func(t *testing.T) {
+		verdict := evaluate(t, Request{Usage: verifiedUsage(t, "EUR", "1", "claude-opus-5-5", "codex-mini"), Trust: TokenVerified, Evidence: GatewayMeasured, Config: enforced})
 		if got := result(t, verdict, RuleModelAllowlist); verdict.Conclusion != Success || got.Outcome != Pass || got.Reason != ReasonOnAllowlist {
 			t.Errorf("%+v", verdict)
 		}
@@ -99,6 +100,56 @@ func TestModelAllowlist(t *testing.T) {
 	})
 }
 
+// TestModelAllowlistNeverPassesOnAgentCounts holds token-verified rows to the
+// allowlist on both entry points. The token proves which run sent the rows,
+// and the model names on them are still the agent's job's own, so with no
+// measured or reconciled spend behind them the rule cannot pass. It can fail.
+func TestModelAllowlistNeverPassesOnAgentCounts(t *testing.T) {
+	enforced := config("policy:\n  models: [\"claude-*\"]\n  enforce: true\n")
+	onList := verifiedUsage(t, "USD", "1", "claude-opus-5-5")
+	onLedger := []LedgerLine{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 1, Model: "claude-opus-5-5", Verified: true, Attributed: true}}
+	offLedger := []LedgerLine{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 1, Model: "gpt-5.5", Verified: true, Attributed: true}}
+	ledger := func(lines []LedgerLine, evidence Evidence) Verdict {
+		t.Helper()
+		verdict, err := EvaluateLedger(context.Background(), LedgerRequest{Lines: lines, Evidence: evidence, Config: enforced, At: checkTime})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return verdict
+	}
+	for _, evidence := range []Evidence{"", AgentCounts, "gateway"} {
+		t.Run(fmt.Sprintf("evidence %q", evidence), func(t *testing.T) {
+			report := evaluate(t, Request{Usage: onList, Trust: TokenVerified, Evidence: evidence, Config: enforced})
+			served := ledger(onLedger, evidence)
+			for path, verdict := range map[string]Verdict{"the report": report, "the ledger": served} {
+				got := result(t, verdict, RuleModelAllowlist)
+				if verdict.Conclusion != Neutral || got.Outcome != Unproven || got.Reason != ReasonUnmeasuredSpend {
+					t.Errorf("%s: every model on the list, on agent counts: %+v", path, verdict)
+				}
+			}
+			if report.Evidence != "" || served.Evidence != AgentCounts {
+				t.Errorf("the report states %q and the ledger %q", report.Evidence, served.Evidence)
+			}
+			off := evaluate(t, Request{Usage: verifiedUsage(t, "USD", "1", "gpt-5.5"), Trust: TokenVerified, Evidence: evidence, Config: enforced})
+			for path, verdict := range map[string]Verdict{"the report": off, "the ledger": ledger(offLedger, evidence)} {
+				if got := result(t, verdict, RuleModelAllowlist); verdict.Conclusion != Failure || got.Outcome != Fail || got.Reason != ReasonOutsideAllowlist {
+					t.Errorf("%s: a model off the list, on agent counts: %+v", path, verdict)
+				}
+			}
+		})
+	}
+	for _, evidence := range []Evidence{GatewayMeasured, Reconciled} {
+		t.Run("evidence "+string(evidence), func(t *testing.T) {
+			report := evaluate(t, Request{Usage: onList, Trust: TokenVerified, Evidence: evidence, Config: enforced})
+			for path, verdict := range map[string]Verdict{"the report": report, "the ledger": ledger(onLedger, evidence)} {
+				if got := result(t, verdict, RuleModelAllowlist); verdict.Conclusion != Success || got.Outcome != Pass || got.Reason != ReasonOnAllowlist {
+					t.Errorf("%s: %+v", path, verdict)
+				}
+			}
+		})
+	}
+}
+
 // TestThreeTriggers holds a run to the median of earlier runs, a pull request
 // to its total, and a repository to its month, each at, over and under its
 // limit on both trust paths.
@@ -122,12 +173,13 @@ func TestThreeTriggers(t *testing.T) {
 		}
 	}
 	paths := []struct {
-		trust  Trust
-		usage  func(cost string) Usage
-		within string
+		trust    Trust
+		evidence Evidence
+		usage    func(cost string) Usage
+		within   string
 	}{
-		{Unverified, func(cost string) Usage { return usageOf(t, line{"USD", cost, "", nil}) }, Unproven},
-		{TokenVerified, func(cost string) Usage { return verifiedUsage(t, "USD", cost, "m") }, Pass},
+		{Unverified, "", func(cost string) Usage { return usageOf(t, line{"USD", cost, "", nil}) }, Unproven},
+		{TokenVerified, GatewayMeasured, func(cost string) Usage { return verifiedUsage(t, "USD", cost, "m") }, Pass},
 	}
 	for _, path := range paths {
 		for _, shape := range shapes(path.trust) {
@@ -139,7 +191,7 @@ func TestThreeTriggers(t *testing.T) {
 				{"over", "2.500000000001", Fail, shape.over},
 			} {
 				t.Run(fmt.Sprintf("%s %s on %s rows", shape.name, tc.at, path.trust), func(t *testing.T) {
-					request := Request{Usage: path.usage(tc.cost), Trust: path.trust, Config: config("policy:\n  " + shape.settings + "\n  enforce: true\n"), Baseline: shape.baseline, Lifetime: shape.lifetime}
+					request := Request{Usage: path.usage(tc.cost), Trust: path.trust, Evidence: path.evidence, Config: config("policy:\n  " + shape.settings + "\n  enforce: true\n"), Baseline: shape.baseline, Lifetime: shape.lifetime}
 					got := result(t, evaluate(t, request), shape.rule)
 					reason := tc.reason
 					if tc.outcome == Unproven {
@@ -168,7 +220,7 @@ func TestThreeTriggers(t *testing.T) {
 	t.Run("a percent of a median past twelve fractional digits compares exactly", func(t *testing.T) {
 		limits := config("policy:\n  max_increase_percent: 50\n  enforce: true\n")
 		for cost, outcome := range map[string]string{"0.000000000004": Pass, "0.000000000005": Fail} {
-			verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", cost, "m"), Trust: TokenVerified, Config: limits, Baseline: baseline("0.000000000003", TokenVerified)})
+			verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", cost, "m"), Trust: TokenVerified, Evidence: GatewayMeasured, Config: limits, Baseline: baseline("0.000000000003", TokenVerified)})
 			if got := result(t, verdict, RuleRunIncreasePercent); got.Outcome != outcome {
 				t.Errorf("USD %s against 150%% of USD 0.000000000003: %+v", cost, got)
 			}

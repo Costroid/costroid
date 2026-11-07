@@ -37,12 +37,11 @@ type Ledger interface {
 // SpendLedger keeps what costroid gateway close attests: the gateway's own
 // count of a minted key's spend, in USD. The count is the gateway's, so it
 // stands as a budget's evidence where the token counts on the rows cannot.
-// While the store does not keep it, Config.Spend is nil, no spend is measured
-// and no budget on token-verified rows passes.
 type SpendLedger interface {
-	// AttestSpend records a key's USD spend. The key is attested as minted for
-	// the run named. A key's spend is the largest figure attested for it,
-	// because a gateway's count only grows.
+	// AttestSpend records a key's USD spend. The key must be attested as
+	// minted for the run named: store.ErrAttestedElsewhere and
+	// store.ErrNotMinted say it is not. A key's spend is the largest figure
+	// attested for it, because a gateway's count only grows.
 	AttestSpend(ctx context.Context, tenant store.TenantID, key store.MintedCredential, usd decimal.Decimal) error
 	// GatewaySpend reads the pull request's measured spend. Rows counts its
 	// budget-eligible rows whose credential is a key minted for the row's own

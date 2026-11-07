@@ -4,13 +4,18 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +25,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/gateway"
+	"github.com/Costroid/costroid/internal/oidc"
+	"github.com/Costroid/costroid/internal/oidc/oidctest"
+	"github.com/Costroid/costroid/internal/server"
+	"github.com/Costroid/costroid/internal/store"
+	"github.com/Costroid/costroid/internal/store/storetest"
 )
+
+// TestMain runs Postgres for the ledger the gateway journey attests to.
+func TestMain(m *testing.M) {
+	os.Exit(storetest.Main(m))
+}
 
 const (
 	gatewayBudget        = "0.01"
@@ -95,7 +111,7 @@ type gatewayStack struct {
 
 // minterRoutes are the routes costroid gateway mint and close call, and the
 // only ones the minting key may.
-var minterRoutes = []string{"/key/generate", "/key/delete", "/team/info", "/team/new", "/team/update", "/user/info", "/user/new", "/user/update"}
+var minterRoutes = []string{"/key/generate", "/key/list", "/key/delete", "/team/info", "/team/new", "/team/update", "/user/info", "/user/new", "/user/update"}
 
 const minterUser = "costroid-minter"
 
@@ -304,9 +320,9 @@ func (j *gatewayJob) attempt(n int) []string {
 	return append(j.ci, "GITHUB_RUN_ATTEMPT="+strconv.Itoa(n))
 }
 
-// open is the agent's job drawing its key and the minting job registering it.
-// It returns the key's id.
-func (j *gatewayJob) open(attempt int) string {
+// open is the agent's job drawing its key and the minting job registering it,
+// with the minting job's extra variables. It returns the key's id.
+func (j *gatewayJob) open(attempt int, minting ...string) string {
 	j.t.Helper()
 	agentEnv := append(j.attempt(attempt), "COSTROID_GATEWAY_PUBLIC_KEY="+j.public)
 	code, stdout, stderr := j.costroid(agentEnv, "gateway", "request", "--out", j.request)
@@ -318,6 +334,7 @@ func (j *gatewayJob) open(attempt int) string {
 		j.t.Fatal("gateway request printed the key")
 	}
 	mintEnv := append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter, "COSTROID_GATEWAY_SEALING_KEY="+j.sealing)
+	mintEnv = append(mintEnv, minting...)
 	code, stdout, stderr = j.costroid(mintEnv, "gateway", "mint", "--url", j.stack.url, "--budget-usd", gatewayBudget,
 		"--lifetime-minutes", "10", "--max-request-tokens", gatewayRequestTokens,
 		"--repository-daily-cap-usd", repositoryCap, "--author-daily-cap-usd", "5",
@@ -356,15 +373,19 @@ func (j *gatewayJob) run(attempt int, extra ...string) *exec.Cmd {
 	return command
 }
 
-func (j *gatewayJob) close(attempt int) {
+// close is the closing job, with its extra variables. It returns what close
+// wrote to stderr.
+func (j *gatewayJob) close(attempt int, closing ...string) string {
 	j.t.Helper()
-	code, stdout, stderr := j.costroid(append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter), "gateway", "close", "--url", j.stack.url)
+	env := append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter)
+	code, stdout, stderr := j.costroid(append(env, closing...), "gateway", "close", "--url", j.stack.url)
 	if code != 0 || stdout != "deleted\n" {
 		j.t.Fatalf("gateway close exit %d: %s%s", code, stdout, stderr)
 	}
 	if strings.Contains(stdout+stderr, j.stack.minter) {
 		j.t.Fatal("gateway close printed the admin key")
 	}
+	return stderr
 }
 
 type agentOutcome struct {
@@ -424,8 +445,9 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	mock := startMock(t)
 	stack := composeGateway(t, mock)
 	job := newGatewayJob(t, stack)
+	ledger := startLedger(t)
 
-	id := job.open(1)
+	id := job.open(1, ledger.jobEnv(1)...)
 	key := job.key()
 	if budget, window := stack.teamBudget(); decimal.MustParse(budget).Cmp(decimal.MustParse(repositoryCap)) != 0 || window != "1d" {
 		t.Errorf("the repository's team holds USD %v per %q, want %s per 1d", budget, window, repositoryCap)
@@ -476,7 +498,7 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 		t.Error("costroid run printed the key")
 	}
 
-	job.close(1)
+	holdTheBudgetToTheClosingJobsCount(t, ledger, job, total)
 	if status := stack.keyStatus(id); status != "deleted" {
 		t.Errorf("after close the gateway reads the key as %q", status)
 	}
@@ -497,15 +519,15 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 // whoever holds the key.
 func holdTheMintersKeyToItsRoutes(t *testing.T, stack *gatewayStack) {
 	t.Helper()
-	for route, method := range map[string]string{"/key/list": http.MethodGet, "/model/new": http.MethodPost, "/config/update": http.MethodPost, "/v1/messages": http.MethodPost} {
+	for route, method := range map[string]string{"/team/list": http.MethodGet, "/model/new": http.MethodPost, "/config/update": http.MethodPost, "/v1/messages": http.MethodPost} {
 		if status, body := stack.call(stack.minter, method, route, map[string]any{}); status != http.StatusForbidden || !strings.Contains(body, "not allowed to call this route") {
 			t.Errorf("the minting key on %s %s answered %d: %.200s", method, route, status, body)
 		}
 	}
 	unlimited := "sk-e2e-unlimited-" + strconv.Itoa(os.Getpid())
 	stack.call(stack.minter, http.MethodPost, "/key/generate", map[string]any{"key": unlimited, "user_id": minterUser})
-	if status, body := stack.call(unlimited, http.MethodGet, "/key/list", nil); status != http.StatusOK {
-		t.Errorf("a key the minting key made for its own user answered %d on /key/list, and docs/gateway.md says it reaches every admin route: %.200s", status, body)
+	if status, body := stack.call(unlimited, http.MethodGet, "/team/list", nil); status != http.StatusOK {
+		t.Errorf("a key the minting key made for its own user answered %d on /team/list, and docs/gateway.md says it reaches every admin route: %.200s", status, body)
 	}
 }
 
@@ -578,4 +600,208 @@ func (s *gatewayStack) awaitStoreDown() {
 		time.Sleep(time.Second)
 	}
 	s.t.Fatal("the gateway kept reading its store as connected")
+}
+
+const (
+	ledgerAudience     = "https://costroid.example"
+	ledgerRequestToken = "e2e-id-token-request"
+	gatewayEnvironment = "costroid-gateway"
+	// gatewayPolicy holds the pull request to a budget far above the run and
+	// to the one model the mock serves.
+	gatewayPolicy = "policy:\n  pr_budget_usd: \"5\"\n  models: [\"claude-*\"]\n"
+)
+
+// gatewayLedger is costroid serve's handler on Postgres, in this process and
+// over TLS, with a CI issuer the test signs for and GitHub's ID token endpoint
+// for the jobs. The costroid binary trusts its certificate through
+// SSL_CERT_FILE, and asks the endpoint for its job's token as it asks GitHub.
+type gatewayLedger struct {
+	t        *testing.T
+	issuer   *oidctest.Issuer
+	server   *httptest.Server
+	tokens   *httptest.Server
+	certFile string
+}
+
+func startLedger(t *testing.T) *gatewayLedger {
+	t.Helper()
+	db := storetest.New(t)
+	db.Tenant(t, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}})
+	ledger, err := store.Open(context.Background(), db.AppURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ledger.Close)
+	pinned, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &gatewayLedger{t: t, issuer: oidctest.New(t)}
+	verifier := oidc.NewVerifier(ledgerAudience, l.issuer.Server.Client(), nil,
+		oidc.Issuer{Kind: oidc.GitHubActions, URL: l.issuer.URL(), JWKSURL: l.issuer.URL() + "/keys", Host: "github.com"})
+	service := server.New(server.Config{
+		Ledger: ledger, Verifier: verifier, Catalog: pinned, PseudonymKey: bytes.Repeat([]byte("k"), 32),
+		GatewayEnvironment: gatewayEnvironment, Spend: ledger, Logger: slog.New(slog.DiscardHandler),
+	})
+	l.server = httptest.NewTLSServer(service.Handler())
+	t.Cleanup(l.server.Close)
+	l.certFile = filepath.Join(t.TempDir(), "ledger.pem")
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: l.server.Certificate().Raw})
+	if err := os.WriteFile(l.certFile, certificate, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l.tokens = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if r.Header.Get("Authorization") != "Bearer "+ledgerRequestToken || query.Get("audience") != ledgerAudience {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		attempt, _ := strconv.Atoi(query.Get("attempt"))
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": l.token(attempt, gatewayEnvironment)})
+	}))
+	t.Cleanup(l.tokens.Close)
+	return l
+}
+
+// token is the CI token of one job of the run's attempt. An environment names
+// the job that holds the gateway's admin key.
+func (l *gatewayLedger) token(attempt int, environment string) string {
+	claims := map[string]any{
+		"iss": l.issuer.URL(), "aud": ledgerAudience, "exp": time.Now().Add(5 * time.Minute).Unix(),
+		"repository": "acme/widgets", "repository_owner": "acme", "run_id": runID, "run_attempt": strconv.Itoa(attempt),
+		"sha": merge, "actor": author, "event_name": "pull_request", "ref": "refs/pull/" + pull + "/merge",
+	}
+	if environment != "" {
+		claims["environment"] = environment
+	}
+	return l.issuer.Token(claims)
+}
+
+// jobEnv names the ledger to a job of the gateway's environment, as the
+// recipe's variables and id-token: write do.
+func (l *gatewayLedger) jobEnv(attempt int) []string {
+	return []string{
+		"COSTROID_INGEST_URL=" + l.server.URL + "/v1/rows", "COSTROID_INGEST_AUDIENCE=" + ledgerAudience,
+		"ACTIONS_ID_TOKEN_REQUEST_URL=" + l.tokens.URL + "/token?api-version=2.0&attempt=" + strconv.Itoa(attempt),
+		"ACTIONS_ID_TOKEN_REQUEST_TOKEN=" + ledgerRequestToken, "SSL_CERT_FILE=" + l.certFile,
+	}
+}
+
+// call sends a body under the agent's job's token of the attempt, which names
+// no environment.
+func (l *gatewayLedger) call(path string, attempt int, body []byte) []byte {
+	l.t.Helper()
+	request, err := http.NewRequest(http.MethodPost, l.server.URL+path, bytes.NewReader(body))
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+l.token(attempt, ""))
+	request.Header.Set("Content-Type", "application/json")
+	response, err := l.server.Client().Do(request)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	defer response.Body.Close()
+	data, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK {
+		l.t.Fatalf("POST %s: %d %s", path, response.StatusCode, data)
+	}
+	return data
+}
+
+type ledgerVerdict struct {
+	Budget struct {
+		Basis      string `json:"basis"`
+		Evidence   bool   `json:"evidence"`
+		GatewayUSD string `json:"gateway_usd"`
+	} `json:"budget"`
+	Policy struct {
+		Conclusion string `json:"conclusion"`
+		Trust      string `json:"trust"`
+		Evidence   string `json:"evidence"`
+		Results    []struct {
+			Rule    string `json:"rule"`
+			Outcome string `json:"outcome"`
+			Reason  string `json:"reason"`
+			CostUSD string `json:"cost_usd"`
+		} `json:"results"`
+	} `json:"policy"`
+}
+
+// verdict asks the ledger for the pull request's verdict under the gateway
+// policy, with the warn-only period over.
+func (l *gatewayLedger) verdict() (ledgerVerdict, string) {
+	l.t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"config":         base64.StdEncoding.EncodeToString([]byte(gatewayPolicy)),
+		"config_ref":     base,
+		"workflow_added": time.Now().Add(-8 * 24 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	data := l.call("/v1/pulls/"+pull+"/verdict?repo="+repository, 1, body)
+	var answer ledgerVerdict
+	if err := json.Unmarshal(data, &answer); err != nil {
+		l.t.Fatal(err)
+	}
+	return answer, string(data)
+}
+
+// outcomes reads each rule's outcome and reason.
+func (v ledgerVerdict) outcomes() map[string]string {
+	found := map[string]string{}
+	for _, result := range v.Policy.Results {
+		found[result.Rule] = result.Outcome + " " + result.Reason
+	}
+	return found
+}
+
+// holdTheBudgetToTheClosingJobsCount ingests the run's rows under the agent's
+// job's token. On their token counts alone the budget cannot pass. Once the
+// closing job has attested the gateway's count, it passes on that count, which
+// is the rows' total at the catalog's prices, the gateway's prices here.
+func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job *gatewayJob, total decimal.Decimal) {
+	t.Helper()
+	rows, err := os.ReadFile(job.rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger.call("/v1/rows", 1, rows)
+	before, data := ledger.verdict()
+	want := map[string]string{"pr_budget": "unproven unmeasured_spend", "model_allowlist": "unproven unmeasured_spend"}
+	if before.Policy.Conclusion != "neutral" || before.Policy.Trust != "token_verified" || before.Policy.Evidence != "agent_counts" ||
+		before.Budget.Basis != "agent_counts" || before.Budget.Evidence || !equalOutcomes(before.outcomes(), want) {
+		t.Fatalf("the verdict on the agent's own counts: %s", data)
+	}
+
+	stderr := job.close(1, ledger.jobEnv(1)...)
+	attested, found := strings.CutPrefix(strings.TrimSpace(stderr), "attested the gateway's count of USD ")
+	attested, ended := strings.CutSuffix(attested, " to the ledger")
+	if !found || !ended {
+		t.Fatalf("close attested nothing: %s", stderr)
+	}
+	if figure, err := decimal.Parse(attested); err != nil || !gateway.SameSpend(figure, total) {
+		t.Fatalf("close attested USD %s, and the rows come to USD %s", attested, total)
+	}
+
+	after, data := ledger.verdict()
+	want = map[string]string{"pr_budget": "pass within_limit", "model_allowlist": "pass models_on_allowlist"}
+	if after.Policy.Conclusion != "success" || after.Policy.Evidence != "gateway_measured" || after.Budget.Basis != "gateway_measured" ||
+		!after.Budget.Evidence || after.Budget.GatewayUSD != attested || !equalOutcomes(after.outcomes(), want) {
+		t.Fatalf("the verdict on the gateway's count of USD %s: %s", attested, data)
+	}
+	t.Logf("close attested USD %s: %s", attested, data)
+}
+
+func equalOutcomes(got, want map[string]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for rule, outcome := range want {
+		if got[rule] != outcome {
+			return false
+		}
+	}
+	return true
 }

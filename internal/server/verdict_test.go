@@ -164,8 +164,35 @@ func ruleOf(t *testing.T, verdict policy.Verdict, rule string) policy.Result {
 
 const prBudget = "policy:\n  pr_budget_usd: \"5\"\n"
 
+// postgresSpendWorld is the service on Postgres, keeping the gateway's spend,
+// with fixturesKey attested for acmeRun's first attempt as the memory worlds
+// hold it.
+func postgresSpendWorld(t *testing.T) *world {
+	t.Helper()
+	w := postgresWorld(t).world
+	config := w.server.Config
+	config.Spend = config.Ledger.(*store.Store)
+	w.server = New(config)
+	w.http = httptest.NewServer(w.server.Handler())
+	t.Cleanup(w.http.Close)
+	binding := gateway.Binding{Repository: acmeRepo, Run: acmeRun, Attempt: "1"}
+	if err := w.attest(w.closeToken(), gateway.AttestationFor(gateway.KeyID(fixturesKey), binding)); err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
 func TestServeSucceedsOnlyOnGatewayMeasuredSpend(t *testing.T) {
-	w := spendWorld(t, true)
+	t.Run("in memory", func(t *testing.T) {
+		serveSucceedsOnlyOnGatewayMeasuredSpend(t, func(t *testing.T) *world { return spendWorld(t, true) })
+	})
+	t.Run("on Postgres", func(t *testing.T) {
+		serveSucceedsOnlyOnGatewayMeasuredSpend(t, postgresSpendWorld)
+	})
+}
+
+func serveSucceedsOnlyOnGatewayMeasuredSpend(t *testing.T, open func(*testing.T) *world) {
+	w := open(t)
 	keyID := gateway.KeyID(fixturesKey)
 	w.rows(w.token(), lines(t, credentialed(row("req-1", focus.Output, 1000)), credentialed(row("req-1", focus.InputUncached, 4000)))).
 		want(t, http.StatusOK)
@@ -210,7 +237,7 @@ func TestServeSucceedsOnlyOnGatewayMeasuredSpend(t *testing.T) {
 	}
 
 	// One row the gateway did not count leaves the rest agent counts.
-	other := spendWorld(t, true)
+	other := open(t)
 	other.rows(other.token(), lines(t, credentialed(row("req-1", focus.Output, 1000)), row("req-2", focus.Output, 10))).want(t, http.StatusOK)
 	other.attestSpend(other.closeToken(), keyID, fixturesSpend("0.5")).want(t, http.StatusNoContent)
 	partly := other.verdict(t, other.token(), body)
@@ -242,7 +269,7 @@ func TestTokenVerifiedAgentCountsNeverPassABudget(t *testing.T) {
 			if got := ruleOf(t, verdict, policy.RuleRunBudget); got.Outcome != policy.Unproven || got.Reason != policy.ReasonNoRunRows || got.LimitUSD != "5" {
 				t.Fatalf("run_budget on a pull request's rows: %+v", got)
 			}
-			if got := ruleOf(t, verdict, policy.RuleModelAllowlist); got.Outcome != policy.Pass {
+			if got := ruleOf(t, verdict, policy.RuleModelAllowlist); got.Outcome != policy.Unproven || got.Reason != policy.ReasonUnmeasuredSpend {
 				t.Fatalf("model_allowlist: %+v", got)
 			}
 			if answer.Budget.Evidence || answer.Budget.Basis != budgetBasisAgent {
@@ -353,6 +380,7 @@ func TestASpendAttestationIsTheClosingJobsOwn(t *testing.T) {
 	w := spendWorld(t, true)
 	keyID := gateway.KeyID(fixturesKey)
 	other := gateway.KeyID("sk-another-run-key")
+	secondAttempt := w.mintToken(gatewayEnvironment, func(claims map[string]any) { claims["run_attempt"] = "2" })
 	cases := []struct {
 		name   string
 		bearer string
@@ -365,6 +393,7 @@ func TestASpendAttestationIsTheClosingJobsOwn(t *testing.T) {
 		{"a job outside the environment", w.token(), keyID, fixturesSpend("1"), http.StatusForbidden, codeAttestation},
 		{"another run", w.closeToken(), keyID, map[string]string{"repository": acmeRepo, "run_id": "1", "run_attempt": "1", "currency": "USD", "spend": "1"}, http.StatusForbidden, codeJoinKey},
 		{"a key never minted", w.closeToken(), other, fixturesSpend("1"), http.StatusConflict, codeJoinKey},
+		{"a key minted for another attempt", secondAttempt, keyID, map[string]string{"repository": acmeRepo, "run_id": acmeRun, "run_attempt": "2", "currency": "USD", "spend": "1"}, http.StatusConflict, codeJoinKey},
 		{"a key that is not an id", w.closeToken(), "sk-raw", fixturesSpend("1"), http.StatusBadRequest, codeBadQuery},
 		{"euros", w.closeToken(), keyID, map[string]string{"repository": acmeRepo, "run_id": acmeRun, "run_attempt": "1", "currency": "EUR", "spend": "1"}, http.StatusBadRequest, codeMalformed},
 		{"a negative spend", w.closeToken(), keyID, fixturesSpend("-1"), http.StatusBadRequest, codeMalformed},

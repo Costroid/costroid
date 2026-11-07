@@ -43,7 +43,7 @@ Who wrote the rows decides what a rule can conclude. A row whose run identity no
 
 | Outcome of a budget, increase or model rule | Rows the agent's job wrote (the Action path)                               | Rows a ledger checked against the job's OIDC token                            |
 | ------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`: "unverified rows cannot satisfy a budget" | A model rule passes. A budget or increase rule passes only when the gateway's attested count or a provider's report stands behind the rows' spend. On the agent's own token counts it concludes `unproven` with reason `unmeasured_spend`, and the check `neutral`. One `unattributed` row keeps any rule from passing |
+| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`: "unverified rows cannot satisfy a budget" | A budget, increase or model rule passes only when the gateway's attested count or a provider's report stands behind the rows' spend. On the agent's own token counts it concludes `unproven` with reason `unmeasured_spend`, and the check `neutral`. One `unattributed` row keeps any rule from passing |
 | Over the limit, or a model off the list     | Warns during the warn-only period, then fails                              | Warns during the warn-only period, then fails                                 |
 | No rows reached the check                   | Cannot pass                                                                | Cannot pass                                                                   |
 
@@ -58,7 +58,7 @@ On the Action path no rule can pass, so the check concludes `neutral` or `failur
 
 The report stage reads a rows file that the agent's own job wrote. An agent that a prompt took over could write a smaller cost, or another model's name, into that file. A figure from it can show that a run went over its budget or used a model off the list. It can never show that a run stayed under, or kept to the list.
 
-`costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. A token proves which run sent a row, not the token counts on it, which the agent's job wrote. So on the second column a budget needs the gateway's own count for a key minted for the run, which `costroid gateway close` attests, or a provider's report.
+`costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. A token proves which run sent a row, not the token counts or the model names on it, which the agent's job wrote. So on the second column a budget or the model allowlist needs the gateway's own count for a key minted for the run, which `costroid gateway close` attests, or a provider's report. Either can still fail on the agent's own counts.
 
 `serve` answers the second column at `POST /v1/pulls/{pr}/verdict`, over a pull request's rows in its ledger. Its answer covers the pull request, so the run rules conclude `unproven` there. [`docs/serve.md`](serve.md#the-verdict) gives the request and the answer. `costroid report` and `costroid policy` read a rows file, and do not ask `serve`.
 
@@ -84,7 +84,7 @@ policy:
 
 The report finds that commit by asking GitHub for the oldest commit on the base branch that touched the workflow file the job runs from, as `GITHUB_WORKFLOW_REF` names it. It asks at the commit it reads `costroid.yml` at. The request needs `contents: read`, which the recipes' report job already has. When the report cannot find the commit, it treats the period as running, and a rule that would fail warns. That happens on a pull request that adds the workflow, on GitLab, and when GitHub does not answer.
 
-The second half of the period, 20 pull requests with a measured cost, needs a reader of earlier check runs. It arrives in a later release. Until then only the 7 days count.
+The period also ends at the twentieth report with a Measured figure, if its 7 days have not ended it first. The report counts them from the `costroid` check runs on the pull request's commits, this run's report included, as it reads them for `pr_budget`. A check run whose object withholds its amounts, or that cannot be read, is not counted, so the 7 days still end the period. `warn_only` then reads `ended` with no `ends`. `costroid serve` takes the count in the request instead, as `measured_pull_requests`.
 
 ## Settings come from the base branch
 

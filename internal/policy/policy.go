@@ -75,9 +75,10 @@ var ruleOrder = []string{
 // runCostRules hold this run's own cost to a limit, so their results carry it.
 var runCostRules = []string{RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent}
 
-// budgetRules hold a cost to a limit. On token-verified rows they pass only
-// on measured or reconciled spend.
-var budgetRules = append(slices.Clone(runCostRules), RulePullRequestBudget, RuleMonthlyBudget)
+// measuredRules pass on token-verified rows only when measured or reconciled
+// spend stands behind them: the rules that hold a cost to a limit, and the
+// model allowlist, whose model names the agent's job stated beside its counts.
+var measuredRules = append(slices.Clone(runCostRules), RulePullRequestBudget, RuleMonthlyBudget, RuleModelAllowlist)
 
 // runRuleKeys are the settings of the rules that read one run's rows, by rule.
 var runRuleKeys = map[string]string{
@@ -112,8 +113,8 @@ const (
 	ReasonOutsideAllowlist = "model_outside_allowlist"
 	ReasonUnreadableModel  = "unreadable_model"
 	ReasonOnAllowlist      = "models_on_allowlist"
-	// ReasonUnmeasuredSpend is a budget held by token-verified rows whose
-	// spend only the agent's job counted.
+	// ReasonUnmeasuredSpend is a budget or the model allowlist held by
+	// token-verified rows whose spend only the agent's job counted.
 	ReasonUnmeasuredSpend = "unmeasured_spend"
 	// ReasonNoRunRows is a run rule asked of a ledger, whose answer covers the
 	// pull request and not one run.
@@ -147,6 +148,10 @@ type Request struct {
 	// measured cost. At WarnOnlyPullRequests the warn-only period ends. A
 	// count can only end the period early, so an unverified one is safe.
 	MeasuredPullRequests int
+	// Evidence is what stands behind the spend of token-verified rows. Only
+	// GatewayMeasured and Reconciled let a budget rule or the model allowlist
+	// pass on them. Anything else reads as AgentCounts.
+	Evidence Evidence
 }
 
 // Verdict is the pack's answer and what it was computed from.
@@ -167,8 +172,9 @@ type Verdict struct {
 	Results        []Result `json:"results"`
 	// JoinableRows counts the rows the attribution rule names.
 	JoinableRows int `json:"joinable_rows"`
-	// Evidence is what vouched for the spend of token-verified rows. A
-	// verdict on rows the agent's job wrote states none.
+	// Evidence is what vouched for the spend of token-verified rows, as a
+	// ledger states it. A verdict on rows the agent's job wrote states none,
+	// and so does one from Evaluate.
 	Evidence Evidence `json:"evidence,omitempty"`
 
 	problem error
@@ -210,18 +216,20 @@ func (v Verdict) WithoutAmounts() Verdict {
 }
 
 // Evaluate runs the default pack. Settings that cannot be read run no rule and
-// conclude neutral, and the verdict says why. The error is for a pack that
-// could not run.
+// conclude neutral, and the verdict says why. On token-verified rows a budget
+// rule or the model allowlist passes only on the evidence the request states.
+// The error is for a pack that could not run.
 func Evaluate(ctx context.Context, request Request) (Verdict, error) {
-	return evaluateScoped(ctx, request, nil)
+	return evaluateScoped(ctx, request, false)
 }
 
-// evaluateScoped runs the pack. A ledger's request, which states its evidence,
-// covers a pull request: its run rules are withheld from the pack and conclude
-// unproven, and on token-verified rows a budget passes only on measured or
-// reconciled spend.
-func evaluateScoped(ctx context.Context, request Request, ledger *Evidence) (Verdict, error) {
+// evaluateScoped runs the pack. On token-verified rows a budget rule or the
+// model allowlist passes only on measured or reconciled spend. A ledger's
+// request covers a pull request: its run rules are withheld from the pack and
+// conclude unproven, and its verdict names the evidence.
+func evaluateScoped(ctx context.Context, request Request, ledger bool) (Verdict, error) {
 	request.Trust = trusted(request.Trust)
+	evidence := measured(request.Evidence)
 	settings, problem := request.Config.settings()
 	verdict := Verdict{
 		Conclusion:     Neutral,
@@ -237,17 +245,14 @@ func evaluateScoped(ctx context.Context, request Request, ledger *Evidence) (Ver
 		JoinableRows:   request.Usage.joinable(),
 		problem:        problem,
 	}
-	if ledger != nil && request.Trust == TokenVerified {
-		verdict.Evidence = *ledger
-		if verdict.Evidence != GatewayMeasured && verdict.Evidence != Reconciled {
-			verdict.Evidence = AgentCounts
-		}
+	if ledger && request.Trust == TokenVerified {
+		verdict.Evidence = evidence
 	}
 	if problem != nil {
 		return verdict, nil
 	}
 	var withheld []Result
-	if ledger != nil {
+	if ledger {
 		settings, withheld = withoutRunRules(settings)
 	}
 	answer, err := evaluatePack(ctx, packInput(request, settings, verdict.WarnOnly.Active))
@@ -256,7 +261,7 @@ func evaluateScoped(ctx context.Context, request Request, ledger *Evidence) (Ver
 	}
 	results := append(answer.Results, withheld...)
 	conclusion := answer.Conclusion
-	if verdict.Evidence == AgentCounts && demoteUnmeasured(results) && conclusion == Success {
+	if request.Trust == TokenVerified && evidence == AgentCounts && demoteUnmeasured(results) && conclusion == Success {
 		conclusion = Neutral
 	}
 	if len(withheld) > 0 && conclusion == Success {
@@ -277,15 +282,25 @@ func endAtPullRequests(period WarnOnly, measured int) WarnOnly {
 	return WarnOnly{Reason: PeriodEnded, Started: period.Started}
 }
 
-// demoteUnmeasured turns each budget rule's pass into unproven, because the
-// token counts behind it are the agent's own. It reports whether any changed.
-// A rule that warns or fails keeps its outcome: a figure the agent's job
-// wrote can show spend over a limit, never under it.
+// measured reads stated evidence. Anything but a measured or reconciled spend
+// is the agent's own counts.
+func measured(evidence Evidence) Evidence {
+	if evidence == GatewayMeasured || evidence == Reconciled {
+		return evidence
+	}
+	return AgentCounts
+}
+
+// demoteUnmeasured turns each budget rule's and the model allowlist's pass
+// into unproven, because the token counts and model names behind it are the
+// agent's own. It reports whether any changed. A rule that warns or fails
+// keeps its outcome: what the agent's job wrote can show spend over a limit or
+// a model off the list, never the reverse.
 func demoteUnmeasured(results []Result) bool {
 	demoted := false
 	for index := range results {
 		result := &results[index]
-		if result.Outcome == Pass && slices.Contains(budgetRules, result.Rule) {
+		if result.Outcome == Pass && slices.Contains(measuredRules, result.Rule) {
 			result.Outcome, result.Reason = Unproven, ReasonUnmeasuredSpend
 			demoted = true
 		}
@@ -352,8 +367,8 @@ type LedgerRequest struct {
 // EvaluateLedger runs the default pack over a pull request's rows in a ledger.
 // The rows are token-verified only when every line is. Their spend is agent
 // counts unless the request says it was measured or reconciled, and only then
-// can a budget rule pass. The answer covers the whole pull request, so the
-// rules that read one run's rows conclude unproven.
+// can a budget rule or the model allowlist pass. The answer covers the whole
+// pull request, so the rules that read one run's rows conclude unproven.
 func EvaluateLedger(ctx context.Context, request LedgerRequest) (Verdict, error) {
 	usage := ledgerUsage(request.Lines)
 	trust := Unverified
@@ -375,7 +390,8 @@ func EvaluateLedger(ctx context.Context, request LedgerRequest) (Verdict, error)
 		At:                   request.At,
 		Lifetime:             lifetime,
 		MeasuredPullRequests: request.MeasuredPullRequests,
-	}, &request.Evidence)
+		Evidence:             request.Evidence,
+	}, true)
 }
 
 // ledgerUsage reduces a ledger's lines to what the pack reads. A line the

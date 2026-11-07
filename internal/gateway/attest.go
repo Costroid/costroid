@@ -80,17 +80,22 @@ func ActionsToken(ctx context.Context, client *http.Client, getenv func(string) 
 
 // Attest sends an attestation to the ledger under the job's OIDC token.
 func Attest(ctx context.Context, client *http.Client, credentialsURL, token string, attestation Attestation) error {
-	body, err := json.Marshal(attestation)
+	return post(ctx, client, credentialsURL, token, attestation, "the ledger's attestation")
+}
+
+// post sends a body to the ledger under the job's OIDC token.
+func post(ctx context.Context, client *http.Client, target, token string, body any, what string) error {
+	data, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("gateway: encode the attestation: %w", err)
+		return fmt.Errorf("gateway: encode %s: %w", what, err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, credentialsURL, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("gateway: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
-	return send(client, request, "the ledger's attestation", nil)
+	return send(client, request, what, nil)
 }
 
 // send names what it asked for and the status, and never the URL, which can

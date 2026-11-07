@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/gateway/gatewaytest"
@@ -26,10 +27,13 @@ const (
 	attestedAttempt = "2"
 )
 
-// attestWorld is GitHub's token endpoint and a ledger, both over TLS.
+// attestWorld is GitHub's token endpoint and a ledger, both over TLS. The
+// ledger takes any post under its credentials path and keeps the last.
 type attestWorld struct {
 	audience string
 	bearer   string
+	path     string
+	raw      []byte
 	body     gateway.Attestation
 	ledger   *httptest.Server
 	github   *httptest.Server
@@ -47,13 +51,13 @@ func newAttestWorld(t *testing.T) *attestWorld {
 		_ = json.NewEncoder(rw).Encode(map[string]string{"value": issuedToken})
 	}))
 	w.ledger = httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/ledger/v1/credentials" {
+		if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/ledger/v1/credentials") {
 			rw.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.bearer = r.Header.Get("Authorization")
-		data, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(data, &w.body)
+		w.path, w.bearer = r.URL.Path, r.Header.Get("Authorization")
+		w.raw, _ = io.ReadAll(r.Body)
+		_ = json.Unmarshal(w.raw, &w.body)
 		rw.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(w.github.Close)
@@ -75,8 +79,8 @@ func TestMintAttestsTheKeyToTheLedgerUnderTheJobsToken(t *testing.T) {
 	if w.audience != ingestAudience || w.bearer != "Bearer "+issuedToken {
 		t.Fatalf("audience %q, bearer %q", w.audience, w.bearer)
 	}
-	if w.body != gateway.AttestationFor(attestedKeyID, run) {
-		t.Fatalf("the ledger read %+v", w.body)
+	if w.path != "/ledger/v1/credentials" || w.body != gateway.AttestationFor(attestedKeyID, run) {
+		t.Fatalf("the ledger read %+v at %s", w.body, w.path)
 	}
 	if strings.Contains(stderr.String(), issuedToken) {
 		t.Fatal("mint printed the token")
@@ -477,6 +481,95 @@ func TestGatewayCloseDeletesAKeyMintedAfterItFirstLooked(t *testing.T) {
 	if _, ok := stub.Key(gatewayAlias); ok {
 		t.Fatal("the late key is still registered")
 	}
+}
+
+// TestCloseAttestsSpend closes a run's key with a ledger named. Close reads
+// what the gateway counted on the key before it deletes it, waits while the
+// figure still moves, and attests the settled figure under the job's token,
+// rounded up to the ledger's 12 fractional digits.
+func TestCloseAttestsSpend(t *testing.T) {
+	newGatewayJob(t)
+	w := newAttestWorld(t)
+	t.Setenv(ingestURLVariable, w.ledger.URL+"/ledger/v1/rows")
+	ctx := context.Background()
+	run := gateway.Binding{Repository: "github.com/acme/widgets", Run: gatewayRunID, Attempt: "1"}
+	key := "sk-a-run-key-of-sixteen-or-more"
+	opened := func(t *testing.T, spend string) (*gatewaytest.LiteLLM, gateway.Counter) {
+		t.Helper()
+		stub := gatewaytest.New(t, gatewayAdmin)
+		stub.Add(gatewaytest.Key{Key: key, Alias: gatewayAlias})
+		stub.SetSpend(gatewayAlias, spend)
+		return stub, gateway.Counter{
+			Client: gateway.NewClient(stub.URL), AdminKey: gatewayAdmin, Run: run,
+			Poll: time.Millisecond, Stable: 100 * time.Millisecond, Settle: 10 * time.Second,
+		}
+	}
+
+	stub, counter := opened(t, "0.012")
+	stub.BeforeList = func(call int) {
+		if call == 3 {
+			stub.SetSpend(gatewayAlias, "0.018000000000000002")
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if err := closeKey(ctx, counter, 0, w.ledger.Client(), &stdout, &stderr); err != nil {
+		t.Fatalf("%v: %s", err, stderr.String())
+	}
+	if _, ok := stub.Key(gatewayAlias); ok || stdout.String() != "deleted\n" {
+		t.Fatalf("the key was not deleted: %q", stdout.String())
+	}
+	var body gateway.SpendAttestation
+	if err := json.Unmarshal(w.raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	want := gateway.SpendAttestation{Repository: run.Repository, RunID: run.Run, RunAttempt: run.Attempt, Currency: "USD", Spend: "0.018000000001"}
+	if w.path != "/ledger/v1/credentials/"+gateway.KeyID(key)+"/spend" || body != want {
+		t.Fatalf("the ledger read %+v at %s, want %+v", body, w.path, want)
+	}
+	if w.audience != ingestAudience || w.bearer != "Bearer "+issuedToken {
+		t.Fatalf("audience %q, bearer %q", w.audience, w.bearer)
+	}
+	if strings.Contains(stdout.String()+stderr.String(), issuedToken) || strings.Contains(stdout.String()+stderr.String(), key) {
+		t.Fatal("close printed the token or the key")
+	}
+
+	t.Run("no ledger named reads and posts nothing", func(t *testing.T) {
+		t.Setenv(ingestURLVariable, "")
+		w.path = ""
+		stub, counter := opened(t, "0.5")
+		listed := 0
+		stub.BeforeList = func(int) { listed++ }
+		var stdout bytes.Buffer
+		if err := closeKey(ctx, counter, 0, w.ledger.Client(), &stdout, io.Discard); err != nil || stdout.String() != "deleted\n" {
+			t.Fatalf("%v, %q", err, stdout.String())
+		}
+		if listed != 0 || w.path != "" {
+			t.Fatalf("listed %d times, posted to %q", listed, w.path)
+		}
+	})
+	t.Run("a spend it cannot read still deletes the key and fails the step", func(t *testing.T) {
+		w.path = ""
+		stub, counter := opened(t, "-1")
+		var stdout bytes.Buffer
+		err := closeKey(ctx, counter, 0, w.ledger.Client(), &stdout, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "not read before the delete") || stdout.String() != "deleted\n" {
+			t.Fatalf("%v, %q", err, stdout.String())
+		}
+		if _, ok := stub.Key(gatewayAlias); ok || w.path != "" {
+			t.Fatalf("the key is registered, or a figure was posted to %q", w.path)
+		}
+	})
+	t.Run("a ledger over plain http fails the step after the delete", func(t *testing.T) {
+		stub, counter := opened(t, "0.5")
+		t.Setenv(ingestURLVariable, "http://ledger.example/v1/rows")
+		err := closeKey(ctx, counter, 0, w.ledger.Client(), io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "https") {
+			t.Fatalf("plain http: %v", err)
+		}
+		if _, ok := stub.Key(gatewayAlias); ok {
+			t.Fatal("the key is still registered")
+		}
+	})
 }
 
 func TestGatewayCloseRefusesWhatItCannotCloseSafely(t *testing.T) {

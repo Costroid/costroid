@@ -125,7 +125,7 @@ GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/
 
 ## The gateway's count
 
-`costroid gateway close` holds the gateway's admin key in the gateway's environment. Once the run is over, it can read what the gateway counted on the run's key and attest it under its own OIDC token:
+`costroid gateway close` holds the gateway's admin key in the gateway's environment. When `COSTROID_INGEST_URL` names this service, close reads what the gateway counted on the run's key before it deletes the key, and then attests the figure under its own OIDC token, for `COSTROID_INGEST_AUDIENCE`:
 
 ```json
 {"repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1", "currency": "USD", "spend": "0.412"}
@@ -135,12 +135,16 @@ It posts the body to `POST /v1/credentials/{key}/spend`, where `{key}` is the ke
 
 - the bearer is a CI token whose `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`;
 - the token's repository, run and attempt equal the body's;
-- the key is attested as minted for that run and attempt;
+- the key is attested as minted for that repository, run and attempt;
 - `currency` is `USD`, the only currency the service takes for the count, and `spend` is a decimal of zero or more with at most 12 fractional digits.
 
 A refusal answers `403` with `ATTESTATION_FORBIDDEN` for the first, `403` with `JOIN_KEY_MISMATCH` for the second, `409` with `JOIN_KEY_MISMATCH` for the third, and `400` with `BODY_MALFORMED` for the fourth. A key's spend is the largest figure attested for it, because a gateway's count only grows. A smaller figure later answers `204` and changes nothing.
 
-The store does not keep the figure in this release. Until it does, the path answers `501` with `SPEND_NOT_KEPT`, every token-verified spend reads `agent_counts`, and no budget on it passes. `costroid gateway close` does not post the figure yet.
+`gateway_spend` keeps one figure per key, and Postgres refuses a figure for a key that `minted_credentials` does not hold. The service keeps it only after the checks above, so the figure's key was minted for the run the closing job's token names.
+
+LiteLLM writes spend in binary floating point, so its figure can carry more than 12 fractional digits: `0.018000000000000002` for three requests of `0.006`. Close rounds such a figure up to 12 digits, `0.018000000001`, so the figure the service keeps is never below the gateway's. Close waits up to 30 seconds for the figure to stop moving before it reads it, because LiteLLM writes spend to its store in batches.
+
+A row's spend reads `gateway_measured` when it is budget-eligible, its `credential_basis` is `minted`, its `SubAccountId` is a key attested for the row's own repository, run and attempt, and a closing job attested that key's spend. The pull request's figure adds up the attested spend of those keys, each key once.
 
 The gateway counts what passed through it, at its own prices. Spend on a credential that bypassed it is not in the count. In the LiteLLM recipe, the agent's job holds no provider key, only the run's key.
 
@@ -157,7 +161,7 @@ An absent `config` is a base commit with no `costroid.yml`. An absent `workflow_
 The answer holds `budget`, as the per-PR view has it, and the verdict under `policy`, in the shape [`docs/policy.md`](policy.md) gives:
 
 - `trust` is `token_verified` only when every row of the pull request is.
-- `evidence` names what stands behind token-verified spend: `agent_counts`, `gateway_measured` or `reconciled`. Only the last two let a budget rule pass. On `agent_counts`, a budget rule that would pass concludes `unproven` with reason `unmeasured_spend`.
+- `evidence` names what stands behind token-verified spend: `agent_counts`, `gateway_measured` or `reconciled`. Only the last two let a budget rule or `model_allowlist` pass. On `agent_counts`, such a rule that would pass concludes `unproven` with reason `unmeasured_spend`, because the token counts and the model names are the agent's job's own.
 - `pr_budget` is held to the larger of the rows' USD list cost and the gateway's count.
 - The answer covers the whole pull request, never one run. `run_budget`, `run_cost_threshold`, `run_increase` and `run_increase_percent` conclude `unproven` with reason `no_run_rows`.
 - `monthly_budget` concludes `unproven` with reason `no_ledger`, because the pack reads no month to date yet.
@@ -237,7 +241,7 @@ Telemetry does not say how a run is billed, so an OTLP row is `list_equivalent` 
 
 ## Tenants
 
-Every table carries row level security with `FORCE`. The service names a tenant with `SET LOCAL` in each transaction, and no statement carries a tenant predicate of its own. The application role can insert rows and read them. It cannot update or delete them.
+Every table carries row level security with `FORCE`. The service names a tenant with `SET LOCAL` in each transaction, and no statement carries a tenant predicate of its own. The application role can insert rows and read them. It cannot update or delete them. In `gateway_spend` it can also update a key's figure and the time it was attested, and nothing else, so a key's larger figure replaces its smaller one.
 
 `egress_counters` is the deployment's own table and has no tenant column. Its policy admits every role, and the application role reads, inserts and updates it. It cannot delete from it.
 

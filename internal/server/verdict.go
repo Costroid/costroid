@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -65,7 +66,12 @@ func (s *Server) handleSpend(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, refuse(http.StatusConflict, codeJoinKey, "The key is not attested as minted for this run."))
 		return
 	}
-	if err := s.Spend.AttestSpend(r.Context(), who.tenant, stored, key.usd); err != nil {
+	err = s.Spend.AttestSpend(r.Context(), who.tenant, stored, key.usd)
+	if errors.Is(err, store.ErrAttestedElsewhere) || errors.Is(err, store.ErrNotMinted) {
+		s.fail(w, r, refuse(http.StatusConflict, codeJoinKey, "The key is not attested as minted for this run."))
+		return
+	}
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}

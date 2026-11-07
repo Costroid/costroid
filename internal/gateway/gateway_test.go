@@ -464,3 +464,66 @@ func TestExpiryForms(t *testing.T) {
 		t.Fatalf("an expiry without a zone failed the whole key read: %v", err)
 	}
 }
+
+func TestTheAttestedSpendRoundsUpToTwelveDigits(t *testing.T) {
+	for counted, want := range map[string]string{
+		"0.5":                  "0.5",
+		"0.018000000000000002": "0.018000000001",
+		"0.000000000001":       "0.000000000001",
+		"0.0000000000001":      "0.000000000001",
+		"1.2e-05":              "0.000012",
+		"0":                    "0",
+	} {
+		spend, err := decimal.ParseNumber(counted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := SpendFor(Count{Spend: spend}, run); got.Spend != want || got.Currency != "USD" || got.RunID != run.Run {
+			t.Errorf("%s attests %+v, want %s", counted, got, want)
+		}
+	}
+}
+
+func TestACountNamesOneKeyWithTheRunsAlias(t *testing.T) {
+	answers := map[string]string{
+		"none":       `{"keys":[]}`,
+		"another":    `{"keys":[{"token":"` + strings.Repeat("a", 64) + `","key_alias":"costroid:other","spend":1}]}`,
+		"two":        `{"keys":[{"token":"` + strings.Repeat("a", 64) + `","key_alias":"` + run.Alias() + `","spend":1},{"token":"` + strings.Repeat("b", 64) + `","key_alias":"` + run.Alias() + `","spend":2}]}`,
+		"no id":      `{"keys":[{"token":"sk-raw","key_alias":"` + run.Alias() + `","spend":1}]}`,
+		"no spend":   `{"keys":[{"token":"` + strings.Repeat("a", 64) + `","key_alias":"` + run.Alias() + `","spend":null}]}`,
+		"one":        `{"keys":[{"token":"` + strings.Repeat("a", 64) + `","key_alias":"` + run.Alias() + `","spend":1.2e-05}]}`,
+		"a negative": `{"keys":[{"token":"` + strings.Repeat("a", 64) + `","key_alias":"` + run.Alias() + `","spend":-1}]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/key/list" || r.URL.Query().Get("key_alias") != run.Alias() || r.URL.Query().Get("return_full_object") != "true" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(answers[r.Header.Get("X-Answer")]))
+	}))
+	defer server.Close()
+	for name, want := range map[string]string{"none": "absent", "another": "absent", "two": "error", "no id": "error", "no spend": "error", "a negative": "error", "one": "0.000012"} {
+		client := NewClient(server.URL)
+		client.HTTP.Transport = answerHeader(name)
+		count, found, err := client.Count(context.Background(), admin, run.Alias())
+		got := "error"
+		switch {
+		case err == nil && !found:
+			got = "absent"
+		case err == nil:
+			got = count.Spend.String()
+		}
+		if got != want || (err == nil && found && count.KeyID != strings.Repeat("a", 64)) {
+			t.Errorf("%s: %s %+v %v, want %s", name, got, count, err, want)
+		}
+	}
+}
+
+// answerHeader names which answer the test server gives.
+type answerHeader string
+
+func (a answerHeader) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = request.Clone(request.Context())
+	request.Header.Set("X-Answer", string(a))
+	return http.DefaultTransport.RoundTrip(request)
+}

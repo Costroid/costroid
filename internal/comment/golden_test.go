@@ -63,11 +63,12 @@ func goldenVerdict(t *testing.T, config string, trust policy.Trust, at time.Time
 func verdictOver(t *testing.T, usage policy.Usage, config string, trust policy.Trust, at time.Time) *policy.Verdict {
 	t.Helper()
 	verdict, err := policy.Evaluate(context.Background(), policy.Request{
-		Usage:  usage,
-		Trust:  trust,
-		Config: policy.ConfigFile{Data: []byte(config), Found: true, Ref: exampleBase, FromBase: true},
-		Start:  policy.Start{At: goldenStart},
-		At:     at,
+		Usage:    usage,
+		Trust:    trust,
+		Evidence: policy.GatewayMeasured,
+		Config:   policy.ConfigFile{Data: []byte(config), Found: true, Ref: exampleBase, FromBase: true},
+		Start:    policy.Start{At: goldenStart},
+		At:       at,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +130,8 @@ func manyFigures(t *testing.T) Input {
 func goldenStates(t *testing.T) map[string]Input {
 	t.Helper()
 	neutral := withVerdict(t, goldenVerdict(t, underBudget, policy.Unverified, insidePeriod))
-	// A pass needs rows a ledger checked and attributed, as serve reads them.
+	// A pass needs rows a ledger checked and attributed, and spend the gateway
+	// measured, as serve reads them.
 	// Rows the agent's job wrote never are, so the usage is the ledger's: the
 	// one row of sampleFields, attributed.
 	pass := realInput(t)

@@ -27,7 +27,9 @@ VALUES (costroid_tenant(), $1, 'USD', 'AI and Machine Learning', 'output', 'Toke
 	'2026-11-01T10:00:00Z', '2026-11-01T10:00:01Z', 'measured', 'agent_stream', 'exact', 'none',
 	'token_verified', '{}')`
 
-func migrationsWithout(t *testing.T, left string) fstest.MapFS {
+// migrationsBefore is the schema as it stood before the migration named: a
+// later migration can depend on it.
+func migrationsBefore(t *testing.T, first string) fstest.MapFS {
 	t.Helper()
 	names, err := fs.Glob(migrations.Files, "*.sql")
 	if err != nil {
@@ -35,7 +37,7 @@ func migrationsWithout(t *testing.T, left string) fstest.MapFS {
 	}
 	files := fstest.MapFS{}
 	for _, name := range names {
-		if name == left {
+		if name >= first {
 			continue
 		}
 		data, err := fs.ReadFile(migrations.Files, name)
@@ -50,7 +52,7 @@ func migrationsWithout(t *testing.T, left string) fstest.MapFS {
 func TestAnExactRowStoredBeforeTheMintedRuleKeepsItsGradeAndANewOneCannot(t *testing.T) {
 	db := storetest.Empty(t)
 	ctx := context.Background()
-	if err := store.MigrateFrom(ctx, db.OwnerURL, migrationsWithout(t, credentialMigration)); err != nil {
+	if err := store.MigrateFrom(ctx, db.OwnerURL, migrationsBefore(t, credentialMigration)); err != nil {
 		t.Fatal(err)
 	}
 	tenant := db.Tenant(t, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}})

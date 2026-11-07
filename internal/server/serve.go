@@ -210,12 +210,8 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 		Catalog:            pinned,
 		PseudonymKey:       key,
 		GatewayEnvironment: cmp.Or(os.Getenv(envGatewayEnv), defaultGatewayEnvironment),
+		Spend:              ledger,
 		Logger:             logger,
-	}
-	// The store keeps the gateway's attested spend once it implements
-	// SpendLedger. Until then no spend is measured.
-	if spend, keeps := any(ledger).(SpendLedger); keeps {
-		config.Spend = spend
 	}
 	service := New(config)
 	background, stop := context.WithCancel(ctx)

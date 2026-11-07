@@ -25,6 +25,7 @@ import (
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/run"
 	"github.com/Costroid/costroid/internal/scm"
@@ -610,7 +611,7 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	lifetime, earlier := readLifetime(ctx, host, pull, input, stderr)
 	input.Lifetime = lifetime
-	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, earlier, stderr)
+	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, earlier, measuredReports(lifetime), stderr)
 	input.Approval = reportApproval(ctx, host, pull, input.Verdict, stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if input.CheckRunID != nil {
@@ -848,9 +849,11 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, li
 // decideVerdict evaluates the policy. The settings come from the base branch's
 // head and the rows from the agent's job, so the trust path is unverified.
 // earlier is what the pull request's earlier runs cost, nil when it could not
-// be read, and then the pull request budget does not run. A policy that
-// cannot run leaves no verdict, and the check concludes neutral.
-func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, rowsPath string, state comment.State, earlier *policy.Lifetime, stderr io.Writer) *policy.Verdict {
+// be read, and then the pull request budget does not run. measured counts the
+// pull request's reports with a measured figure, and at the twentieth the
+// warn-only period ends. A policy that cannot run leaves no verdict, and the
+// check concludes neutral.
+func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, rowsPath string, state comment.State, earlier *policy.Lifetime, measured int, stderr io.Writer) *policy.Verdict {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
 	usage, err := reportUsage(rowsPath, state)
@@ -858,12 +861,13 @@ func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, row
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
 	verdict, err := policy.Evaluate(ctx, policy.Request{
-		Usage:    usage,
-		Trust:    policy.Unverified,
-		Config:   policy.ReadConfig(ctx, host, policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0}),
-		Start:    workflowStart(ctx, host, pull, stderr),
-		At:       time.Now(),
-		Lifetime: earlier,
+		Usage:                usage,
+		Trust:                policy.Unverified,
+		Config:               policy.ReadConfig(ctx, host, policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0}),
+		Start:                workflowStart(ctx, host, pull, stderr),
+		At:                   time.Now(),
+		Lifetime:             earlier,
+		MeasuredPullRequests: measured,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
@@ -873,6 +877,25 @@ func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, row
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
 	return &verdict
+}
+
+// measuredReports counts the pull request's reports with a measured figure,
+// this run's included, as the lifetime reader added them up. The reader counts
+// a report once per currency, so the count is the largest of those counts. It
+// reads low when reports state measured figures in different currencies, and a
+// low count only lets the period run longer. A history that could not be read
+// counts none, so the period runs its 7 days.
+func measuredReports(lifetime *comment.Lifetime) int {
+	if lifetime == nil {
+		return 0
+	}
+	count := 0
+	for _, figure := range lifetime.Figures {
+		if figure.Basis == string(focus.Measured) {
+			count = max(count, figure.Reports)
+		}
+	}
+	return count
 }
 
 // reportUsage reads the rows again for the policy. A file the comment could

@@ -358,9 +358,9 @@ func TestUnattributedNeverSatisfiesBudget(t *testing.T) {
 			}
 		}
 	})
-	t.Run("every row verified and attributed", func(t *testing.T) {
+	t.Run("every row verified, attributed and measured", func(t *testing.T) {
 		baseline, lifetime := verified(TokenVerified)
-		verdict := evaluate(t, Request{Usage: attributed, Trust: TokenVerified, Config: config(under), Baseline: baseline, Lifetime: lifetime})
+		verdict := evaluate(t, Request{Usage: attributed, Trust: TokenVerified, Evidence: GatewayMeasured, Config: config(under), Baseline: baseline, Lifetime: lifetime})
 		if verdict.Conclusion != Success {
 			t.Errorf("verified rows under every limit: %+v", verdict)
 		}
@@ -395,7 +395,7 @@ func TestAmountsCompareExactly(t *testing.T) {
 		{"0.1000000000009", Pass},
 	} {
 		usage := Usage{Rows: 1, Currencies: []CurrencyUsage{{Currency: "USD", ListCost: mustAmount(t, tc.cost), Rows: 1}}}
-		verdict := evaluate(t, Request{Usage: usage, Trust: TokenVerified, Config: limits})
+		verdict := evaluate(t, Request{Usage: usage, Trust: TokenVerified, Evidence: GatewayMeasured, Config: limits})
 		if got := result(t, verdict, RuleRunBudget); got.Outcome != tc.outcome {
 			t.Errorf("USD %s against 0.100000000001: %+v", tc.cost, got)
 		}

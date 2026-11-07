@@ -60,7 +60,11 @@ author with that budget per day.
 close deletes the run's key by its alias, and prints deleted, or absent when no
 key was left. Run it when the job ends, also on failure. When it finds no key,
 mint may still be waiting for the request, so close waits --retry-after, 13
-minutes by default, and deletes once more.
+minutes by default, and deletes once more. When COSTROID_INGEST_URL is set,
+close first reads what the gateway counted on the key, waiting up to 30 seconds
+for the figure to settle, and after the delete attests it to that ledger under
+the job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
+Only an attested count lets a budget on the run's rows pass.
 
 The gateway's URL must be https, except on localhost and 127.0.0.1.
 
@@ -405,16 +409,28 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
-	client := gateway.NewClient(*address)
-	deleted, err := gateway.Close(ctx, client, admin, binding)
+	counter := gateway.Counter{
+		Client: gateway.NewClient(*address), AdminKey: admin, Run: binding,
+		Poll: gatewayPoll, Stable: gatewaySpendStable, Settle: gatewaySpendSettle,
+	}
+	return closeKey(ctx, counter, *retry, &http.Client{Timeout: 30 * time.Second}, stdout, stderr)
+}
+
+// closeKey deletes the run's key, and when a ledger is named, reads the key's
+// spend before the delete and attests it after, through ledger.
+func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration, ledger *http.Client, stdout, stderr io.Writer) error {
+	counted := os.Getenv(ingestURLVariable) != ""
+	count, unread := readCount(ctx, counter, counted)
+	deleted, err := gateway.Close(ctx, counter.Client, counter.AdminKey, counter.Run)
 	if err == nil && !deleted {
-		fmt.Fprintf(stderr, "no key yet: waiting %s for a late mint, then deleting once more\n", *retry)
+		fmt.Fprintf(stderr, "no key yet: waiting %s for a late mint, then deleting once more\n", retry)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(*retry):
+		case <-time.After(retry):
 		}
-		deleted, err = gateway.Close(ctx, client, admin, binding)
+		count, unread = readCount(ctx, counter, counted)
+		deleted, err = gateway.Close(ctx, counter.Client, counter.AdminKey, counter.Run)
 	}
 	if err != nil {
 		return err
@@ -424,5 +440,44 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	} else {
 		fmt.Fprintln(stdout, "absent")
 	}
+	if unread != nil {
+		return fmt.Errorf("the key's spend was not read before the delete, so the ledger holds no gateway count for this run: %w", unread)
+	}
+	if count == nil {
+		return nil
+	}
+	return attestSpend(ctx, ledger, *count, counter.Run, stderr)
+}
+
+// readCount reads what the gateway counted on the run's key, when a ledger is
+// named to attest it to. It answers nil when no ledger is named or no key is
+// there.
+func readCount(ctx context.Context, counter gateway.Counter, counted bool) (*gateway.Count, error) {
+	if !counted {
+		return nil, nil
+	}
+	count, found, err := counter.Settled(ctx)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &count, nil
+}
+
+// attestSpend tells the ledger what the gateway counted on the run's key. A
+// failure fails the step. The key is deleted by then.
+func attestSpend(ctx context.Context, client *http.Client, count gateway.Count, binding gateway.Binding, stderr io.Writer) error {
+	target, err := gateway.SpendURL(os.Getenv(ingestURLVariable), count.KeyID)
+	if err != nil {
+		return err
+	}
+	token, err := gateway.ActionsToken(ctx, client, os.Getenv, os.Getenv(ingestAudienceVariable))
+	if err != nil {
+		return err
+	}
+	attestation := gateway.SpendFor(count, binding)
+	if err := gateway.AttestSpend(ctx, client, target, token, attestation); err != nil {
+		return fmt.Errorf("the key is deleted and the gateway's count is not attested, so no budget on the run's rows can pass on it: %w", err)
+	}
+	fmt.Fprintf(stderr, "attested the gateway's count of USD %s to the ledger\n", attestation.Spend)
 	return nil
 }

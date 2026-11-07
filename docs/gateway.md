@@ -20,7 +20,7 @@ A job cannot hand a secret to another job through its outputs: GitHub refuses to
 | 2    | Agent             | `actions/upload-artifact` keeps the sealed request as an artifact of this run. It holds no secret: only the minting job can open it                                                                                                                                                       |
 | 3    | Mint, in parallel | `costroid gateway mint` waits for that artifact, opens it with the sealing key's private half, checks that it names this repository, run and attempt, and registers the key on the gateway with its budget, expiry and metadata. With a ledger named, it then attests the key's id for this run to the ledger |
 | 4    | Agent             | `costroid run --gateway` waits until the key authenticates, reads the key back from the gateway, and starts the agent with the gateway's URL and the key in the agent's environment alone                                                                                                 |
-| 5    | Close, always     | `costroid gateway close` runs after mint and the agent's job, and deletes the key by its alias, which names the run and the attempt                                                                                                              |
+| 5    | Close, always     | `costroid gateway close` runs after mint and the agent's job, and deletes the key by its alias, which names the run and the attempt. With a ledger named, it first reads what the gateway counted on the key, and after the delete attests that figure to the ledger |
 
 The sealing key pair is drawn at random, once, on your own machine:
 
@@ -47,6 +47,18 @@ The mint job does not wait for the agent's job. The close job waits for both, so
 `SubAccountId` is what the rows state, and a row could state any key, a key every run shares among them. So the ledger grades a row `exact` only when the minting job attested its key for the run.
 
 When `COSTROID_INGEST_URL` is set, `costroid gateway mint` posts the key's id, the repository, the run and the attempt to the ledger's `/v1/credentials`, beside the ingest URL's `/v1/rows`. It sends them under the minting job's OIDC token, for `COSTROID_INGEST_AUDIENCE`, as the ingest job does. The ledger takes the attestation only when the token's `environment` claim names the gateway's environment, `costroid-gateway` by default, and the token's repository, run and attempt are the ones attested. A row reads `exact` only when its key was attested and the row's own token names that repository, run and attempt. [`docs/serve.md`](serve.md) has the rest.
+
+## How a budget passes on the gateway's count
+
+The rows' token counts come from the agent's job, so the ledger lets no budget pass on them alone. The gateway counts what passed through it, so its figure can stand behind the rows.
+
+When `COSTROID_INGEST_URL` is set, `costroid gateway close` reads the run's key by its alias from `GET /key/list` with `return_full_object=true`, before it deletes the key. It reads the key's id and its `spend`. LiteLLM writes spend to its store in batches, so close reads the figure again every 2 seconds until it has not moved for 12 seconds, for at most 30 seconds. After the delete, it posts the key's id, the repository, the run, the attempt and the figure in USD to the ledger's `/v1/credentials/{key}/spend`, under the closing job's OIDC token, for `COSTROID_INGEST_AUDIENCE`. A figure with more than 12 fractional digits is rounded up to 12. The closing job then needs `id-token: write` and both variables, as the minting job has. [`docs/serve.md`](serve.md#the-gateways-count) says what the ledger checks.
+
+Close deletes the key even when it cannot read the figure, and then fails the step: the run's budget cannot pass on the gateway's count. A ledger that refuses the figure fails the step too. Without `COSTROID_INGEST_URL`, close reads nothing and attests nothing.
+
+`GET /key/list` sits in the same MIT-licensed `key_management_endpoints.py` as the routes above and checks for no Enterprise licence. Read on 2026-11-07 in the `ghcr.io/berriai/litellm:v1.108.1` image the e2e journey pins.
+
+Two runs of the e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob` were logged in full on 2026-11-07, against LiteLLM v1.108.1. In both, the gateway refused a request with "Current cost: 0.012", and close attested USD 0.012, the rows' total. In one of the two, the admin's `GET /key/info` for the key, read after the run and before close, answered a `spend` of `0`. No reason was traced. The wait is there for that.
 
 The environment is what makes an attestation worth trusting. Any job that references `costroid-gateway` can attest, and on a pull request from a branch of this repository the workflow file is the pull request's own. The protection rules you set on the environment decide which runs reach it. With required reviewers, a person you named approves each run before it can mint or attest. Without a rule, anyone who can push a branch can attest a key for their own run.
 
@@ -110,20 +122,22 @@ Keep the admin key and the sealing key as secrets of a GitHub environment, `cost
 
 ## Mint with a key limited to its routes
 
-The master key can do everything on the proxy. Mint and close call eight routes: `/key/generate`, `/key/delete`, `/team/info`, `/team/new`, `/team/update`, `/user/info`, `/user/new` and `/user/update`. A LiteLLM key can be limited to them with `allowed_routes`, a field of its MIT-licensed code. The key's user is a proxy admin, so the key may create teams and set users' budgets; whether a lesser role suffices was not tested. Create the user and the key with the master key, once:
+The master key can do everything on the proxy. Mint and close call nine routes: `/key/generate`, `/key/list`, `/key/delete`, `/team/info`, `/team/new`, `/team/update`, `/user/info`, `/user/new` and `/user/update`. Close calls `/key/list` only when a ledger is named. A LiteLLM key can be limited to them with `allowed_routes`, a field of its MIT-licensed code. The key's user is a proxy admin, so the key may create teams and set users' budgets; whether a lesser role suffices was not tested. Create the user and the key with the master key, once:
 
 ```sh
 curl -sS -X POST "$LITELLM_URL/user/new" -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H 'Content-Type: application/json' -d '{"user_id": "costroid-minter", "user_role": "proxy_admin"}'
 curl -sS -X POST "$LITELLM_URL/key/generate" -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H 'Content-Type: application/json' -d '{"user_id": "costroid-minter", "allowed_routes": ["/key/generate", "/key/delete", "/team/info", "/team/new", "/team/update", "/user/info", "/user/new", "/user/update"]}'
+  -H 'Content-Type: application/json' -d '{"user_id": "costroid-minter", "allowed_routes": ["/key/generate", "/key/list", "/key/delete", "/team/info", "/team/new", "/team/update", "/user/info", "/user/new", "/user/update"]}'
 ```
 
 Store the `key` it answers as the environment's admin key in place of the master key.
 
-Verified on 2026-11-07 against LiteLLM v1.108.1 by the e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob`: both of its keys were minted and closed with such a key, and the key was refused with HTTP 403 on `GET /key/list`, `POST /model/new`, `POST /config/update` and `POST /v1/messages`.
+Verified on 2026-11-07 against LiteLLM v1.108.1 by the e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob`: both of its keys were minted and closed with such a key, the first with a ledger named, and the key was refused with HTTP 403 on `GET /team/list`, `POST /model/new`, `POST /config/update` and `POST /v1/messages`.
 
-The limit is not a boundary. The same journey shows that the limited key can call `/key/generate` for its own user, a proxy admin, with no `allowed_routes`, and the key it makes reaches `/key/list`. Whoever holds the limited key can therefore make a key with its user's proxy-admin role and no limit. The limit refuses any other route called with the key itself, and nothing more. The environment's protection rules are what keep the key.
+`/key/list` is a proxy admin's route, so the limited key can list every key on the proxy, with each key's id, alias, metadata and spend. Leave it out of `allowed_routes` when no ledger is named.
+
+The limit is not a boundary. The same journey shows that the limited key can call `/key/generate` for its own user, a proxy admin, with no `allowed_routes`, and the key it makes reaches `/team/list`. Whoever holds the limited key can therefore make a key with its user's proxy-admin role and no limit. The limit refuses any other route called with the key itself, and nothing more. The environment's protection rules are what keep the key.
 
 ## Daily caps
 
