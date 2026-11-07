@@ -37,8 +37,56 @@ curl --header "Authorization: Bearer $TOKEN" \
 
 ## Costroid Platform
 
-The [integration contract `integration/v0.1`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.1) fixes how rows reach Costroid Platform: `PUT /exports/{batch_id}` takes one CSV of FOCUS rows per batch, and a retry with the same bytes changes nothing. Costroid does not send to it yet.
+`costroid export` sends a rows file to Costroid Platform as one batch, by the [integration contract `integration/v0.2`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2). The body is the rows as CSV, in the form [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3) gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Nothing else in the row changes.
+
+The platform needs an integration token, which a tenant administrator creates there. It needs the `rows:write` scope, and `identity:read` on GitHub Actions. Keep it as a repository secret. `costroid export` reads it from `COSTROID_PLATFORM_TOKEN` and never from an argument.
+
+### From the action
+
+The `ingest` stage sends to the platform when `platform-url` is set, and to a ledger as well when `ingest-url` is. Add three inputs to the recipe's `ingest` step:
+
+```yaml
+        with:
+          stage: ingest
+          platform-url: https://app.costroid.com
+          installation-id: github-owner:${{ github.repository_owner_id }}
+          platform-token: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
+```
+
+`installation-id` names the installation the platform bound: `github-owner:` and the owner's number for a repository that runs only the action, or `github:` and the App installation's id where the GitHub App is installed. The recipes run the `ingest` job only when `COSTROID_INGEST_URL` is set, so to send to the platform alone, change that job's condition to `always() && needs.agent.result != 'skipped'`. The job keeps `id-token: write`.
+
+On GitHub Actions the batch id is the repository id, the run id and the run attempt, joined by hyphens: `903114-16873409921-1`. Sending one run's rows again restates its batch, and the same bytes change nothing. A re-run attempt runs the agent again, so it adds a batch.
+
+The job's OIDC token rides with the batch in `Costroid-Run-Token`, minted for the tenant's rows audience, which `costroid export` reads from `GET /identity`. It names the run and the repository that sent the rows, and the platform refuses a batch whose run belongs to an owner other than the installation's. It says nothing about the counts in the rows, which the agent's job wrote.
+
+### From anywhere else
+
+Outside GitHub Actions, name the batch, and no run token is sent:
+
+```sh
+COSTROID_PLATFORM_TOKEN=costroid_it_... costroid export --rows rows.jsonl \
+  --platform-url https://app.costroid.com \
+  --installation-id gitlab-namespace:4410287 --batch-id nightly-2026-11-07
+```
+
+The batch id is 1 to 128 letters, digits, dots, hyphens or underscores, unique within the tenant.
+
+### What the platform answers
+
+`costroid export` prints the code the platform sent and no other part of its answer.
+
+| Answer | `costroid export` | Exit code |
+| ------ | ----------------- | --------- |
+| 202 | `costroid: batch <id>, <n> rows, sha256 <digest>: accepted for ingest` | 0 |
+| 200 | The same line, ending `already held, so nothing changed` | 0 |
+| 402 `PLAN_WRITES_REFUSED` | A warning. Nothing in the rows is wrong, and the file is kept to send again | 0 |
+| 429 `QUOTA_` and the quota's name | A warning with the seconds in `Retry-After`. The file is kept to send again | 0 |
+| Any other refusal | `costroid: Costroid Platform refused batch <id>: <status> <code>` | 1 |
+
+The contract's [refusals](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#refusals) name every code. A batch the platform accepted can still fail on ingest, for example `ROW_IDENTITY_MISMATCH`. The platform states that verdict at `GET /exports/{batch_id}`, after `costroid export` has ended.
+
+In the `ingest` stage, a 402 or a 429 is a warning annotation, and any other failure warns and passes the job, as a ledger outage does. The artifact `costroid-rows` keeps the rows for 7 days.
 
 ## What does not exist yet
 
-Costroid has no writer for an S3 or GCS bucket, no Snowflake or BigQuery share, and no connector for any FinOps platform. To reach one today, load the rows file or the ledger's view with that tool's own import.
+Costroid has no writer for an S3 or GCS bucket, no Snowflake or BigQuery share, and no connector for any FinOps platform besides Costroid Platform. To reach one today, load the rows file or the ledger's view with that tool's own import.
