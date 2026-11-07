@@ -85,6 +85,8 @@ type reportFlags struct {
 	json        bool
 	// preview prints the comment and posts nothing.
 	preview bool
+	// exitOnVerdict ends a report on GitLab CI with the verdict's exit code.
+	exitOnVerdict bool
 }
 
 func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
@@ -97,6 +99,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	agentResult := set.String("agent-result", os.Getenv(agentResultVariable), "the agent job's result: success, failure, cancelled or skipped")
 	asJSON := set.Bool("json", false, "print the result object on stdout")
 	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
+	exitOnVerdict := set.Bool("exit-on-verdict", false, "on GitLab CI, exit 1 on a failure verdict and 3 on a neutral one")
 	if err := set.Parse(args); err != nil {
 		return reportFlags{}, err
 	}
@@ -106,7 +109,10 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	if *preview && *asJSON {
 		return reportFlags{}, errors.New("report takes --preview or --json, not both")
 	}
-	flags := reportFlags{rows: *rows, agentResult: *agentResult, json: *asJSON, preview: *preview}
+	if *preview && *exitOnVerdict {
+		return reportFlags{}, errors.New("report takes --preview or --exit-on-verdict, not both")
+	}
+	flags := reportFlags{rows: *rows, agentResult: *agentResult, json: *asJSON, preview: *preview, exitOnVerdict: *exitOnVerdict}
 	if *installation != "" {
 		// An unreadable installation costs the comment its account link and
 		// nothing else: a missing input never blocks the report.
@@ -242,7 +248,8 @@ func readReportRows(path string) (rowsReading, error) {
 // reportCommand exits 0 once its flags parse and a CI system is found. A report
 // is never why a job fails, so every failure after that ends as a line on
 // stderr. Outside CI there is no job to protect, so it refuses and says why.
-// --preview needs no CI system.
+// --preview needs no CI system. On GitLab CI, where no check can fail,
+// --exit-on-verdict makes the job's exit code the gate: verdictExit gives it.
 func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags, err := parseReport(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
@@ -259,6 +266,10 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if system == cicontext.NoSystem {
 		fmt.Fprintf(stderr, "costroid: %v\n", errNoCISystem)
 		return exitFailure
+	}
+	if flags.exitOnVerdict && system != cicontext.GitLabCI {
+		fmt.Fprintln(stderr, "costroid: warning: --exit-on-verdict applies on GitLab CI only. On GitHub Actions the costroid check is the gate, so the report exits 0")
+		flags.exitOnVerdict = false
 	}
 	if system == cicontext.GitHubActions {
 		if refusal := eventRefusal(os.Getenv("GITHUB_EVENT_NAME")); refusal != "" {
@@ -277,7 +288,34 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		input = post(ctx, target, input, flags.rows, stderr)
 	}
 	publish(input, flags.json, stdout, stderr)
-	return 0
+	if !flags.exitOnVerdict {
+		return 0
+	}
+	conclusion := input.Conclusion()
+	code := verdictExit(conclusion)
+	fmt.Fprintf(stderr, "costroid: the verdict is %s, so the report exits %d\n", conclusion, code)
+	return code
+}
+
+// The exit codes of report --exit-on-verdict. The GitLab recipe allows the job
+// to fail on exitVerdictNeutral alone, so a neutral verdict shows a warning
+// and exitVerdictFailure fails the pipeline.
+const (
+	exitVerdictFailure = 1
+	exitVerdictNeutral = 3
+)
+
+// verdictExit maps the check's conclusion to the job's exit code. Neutral
+// covers the warn-only period, a policy that could not run and a report that
+// could not reach the host, so only a rule the policy found broken exits 1.
+func verdictExit(conclusion string) int {
+	switch conclusion {
+	case policy.Success:
+		return 0
+	case policy.Failure:
+		return exitVerdictFailure
+	}
+	return exitVerdictNeutral
 }
 
 // rowsInput is what the rows file, the run's result object beside it and the

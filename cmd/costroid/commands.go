@@ -196,7 +196,7 @@ it, and the grade reads none.
 ` + resultFileHelp
 
 const reportHelp = `Usage:
-  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
+  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json] [--exit-on-verdict]
   costroid report --preview --rows rows.jsonl
 
 report posts from CI, and selects the host from the job's variables. On a pull
@@ -212,6 +212,9 @@ restates the run's cap, which rows do not record.
 --installation-id puts the GitHub App installation, github:<id> or the bare
 number, on the account link; COSTROID_INSTALLATION_ID does the same. A value
 in neither form is skipped with a warning. GitLab's link names the project id.
+--exit-on-verdict, on GitLab CI alone, ends the report with the verdict's exit
+code instead of 0: 1 on failure, 3 on neutral, 0 on success. On GitHub Actions
+the check is the gate, and the flag is ignored with a warning.
 
 ` + jsonHelp + `
 ` + resultFileHelp

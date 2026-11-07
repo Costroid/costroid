@@ -89,7 +89,7 @@ func TestEveryRuleBitesAShippedRecipe(t *testing.T) {
 		{"id_tokens on the report", reportEnvironment, reportEnvironment + "  id_tokens:\n    TOKEN:\n      aud: x\n", RuleReportJob},
 		{"a checkout in the report", "    GIT_STRATEGY: empty\n", "    GIT_STRATEGY: fetch\n", RuleReportJob},
 		{"no strategy in the report", "  variables:\n    GIT_STRATEGY: empty\n", "", RuleReportJob},
-		{"forks reach the report", reportForkGuard + "    - if: $COSTROID_GITLAB_TOKEN\n", "    - if: $COSTROID_GITLAB_TOKEN\n", RuleReportJob},
+		{"forks reach the report", reportForkGuard + "    - if: $COSTROID_GITLAB_TOKEN && $COSTROID_GATE\n", "    - if: $COSTROID_GITLAB_TOKEN && $COSTROID_GATE\n", RuleReportJob},
 		{"the agent's environment", "    name: costroid-report\n", "    name: costroid-agent\n", RuleReportJob},
 		{"no environment", reportEnvironment, "", RuleReportJob},
 		{"a provider key in the report", "    GIT_STRATEGY: empty\n", "    GIT_STRATEGY: empty\n    ANTHROPIC_API_KEY: $KEY\n", RuleReportJob},
@@ -473,11 +473,12 @@ func gitLabJob(t *testing.T, job string) *yaml.Node {
 }
 
 // The report keeps ingest's trigger and order, and adds the fork guard. Its last
-// rule names its own variable, because a comment needs no ledger.
+// two rules name its own variable, because a comment needs no ledger, the first
+// of them with the gate and the second without it.
 func TestGitLabReportRunsWhenIngestRuns(t *testing.T) {
 	ingest, report := gitLabJob(t, "costroid:ingest"), gitLabJob(t, "costroid:report")
 	ingestRules, reportRules := sequence(field(ingest, "rules")), sequence(field(report, "rules"))
-	if len(ingestRules) != 2 || len(reportRules) != 3 {
+	if len(ingestRules) != 2 || len(reportRules) != 4 {
 		t.Fatalf("%d and %d rules", len(ingestRules), len(reportRules))
 	}
 	if ingestFirst, reportFirst := scalarField(ingestRules[0], "if"), scalarField(reportRules[0], "if"); ingestFirst != reportFirst {
@@ -486,8 +487,10 @@ func TestGitLabReportRunsWhenIngestRuns(t *testing.T) {
 	if got := scalarField(reportRules[1], "if"); !strings.Contains(got, gitLabForkGuard) || scalarField(reportRules[1], "when") != "never" {
 		t.Errorf("the fork rule reads %q", got)
 	}
-	if got := scalarField(reportRules[2], "when"); got != scalarField(ingestRules[1], "when") {
-		t.Errorf("the last rule's when reads %q", got)
+	for _, rule := range reportRules[2:] {
+		if got := scalarField(rule, "when"); got != scalarField(ingestRules[1], "when") {
+			t.Errorf("the rule %q reads when %q", scalarField(rule, "if"), got)
+		}
 	}
 	if text(field(report, "needs")) != text(field(ingest, "needs")) || scalarField(report, "stage") != scalarField(ingest, "stage") {
 		t.Error("the report does not follow the agent as ingest does")
