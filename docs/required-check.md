@@ -58,4 +58,4 @@ A check that a branch cannot post has to come from a GitHub App other than GitHu
 
 ## GitLab
 
-GitLab has no check run, and the report posts none. The `costroid:report` job is allowed to fail, so a merge request's pipeline never waits on it. There is nothing to require there.
+GitLab has no check run, and the report posts none. Without `COSTROID_GATE`, the `costroid:report` job is allowed to fail, so a merge request's pipeline never waits on it and there is nothing to require. With `COSTROID_GATE` set, the job's exit code is the gate: [`docs/gitlab.md`](gitlab.md).
