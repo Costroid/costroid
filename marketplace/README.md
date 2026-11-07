@@ -146,7 +146,7 @@ Then add this job beside yours. Its `needs:` names your job, here `review`:
 ```yaml
 report:
   needs: review
-  if: always()
+  if: always() && github.event_name == 'pull_request'
   runs-on: ubuntu-24.04
   timeout-minutes: 5
   permissions:

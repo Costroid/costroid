@@ -17,7 +17,6 @@ With `costroid` [installed](#install), from the root of your repository:
 ```sh
 costroid init github --agent claude
 gh secret set ANTHROPIC_API_KEY
-gh label create costroid-agent
 git switch -c try-costroid
 git add .github/workflows/costroid.yml costroid.yml
 git commit -m "Add the costroid check"
