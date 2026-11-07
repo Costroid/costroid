@@ -26,7 +26,32 @@ A recorded run with a 0.001 USD cap stopped mid-turn at 0.0283136 USD, 65 millis
 
 All six ran on a subscription, so their rows are `list_equivalent`. Two one-word Codex prompts through the built binary were smoke tests and left no fixture. The later one reported 14065 input tokens on both the stream and the rollout file, and kept `wrapper-watchdog`.
 
-Fixtures are cut to an allowlist of keys. Prompts, tool output, paths, user and account ids, and rate-limit data are gone, and session, thread, request and message ids are replaced by synthetic ones. Each adapter has a test that scans its `testdata/` for those patterns.
+Fixtures are cut to an allowlist of keys. Prompts, tool output, paths, user and account ids, and rate-limit data are gone, and session, thread, request and message ids are replaced by synthetic ones. Each adapter has a test that scans its `testdata/` for those patterns. The next section says how a new recording is made.
+
+## Recording a fixture
+
+`scripts/record` turns a run into a fixture, and `make fixture` places one. Neither is part of the `costroid` binary.
+
+On a developer's machine, `local` runs the agent and keeps only what the scrub leaves:
+
+```
+go run ./scripts/record local --agent claude-code --scenario NAME --out DIR \
+  -- claude -p "PROMPT" --output-format stream-json --verbose
+```
+
+It takes the session id from the stream's `system/init` line, then copies that session's file and its `subagents/` from `CLAUDE_CONFIG_DIR`, or `~/.claude` without it. No other session in that directory is opened. With `--agent codex` and `codex exec --json`, it reads the thread from `thread.started` and copies that thread's rollout file from `CODEX_HOME`, or `~/.codex`, with the rollout files of its subagents written since the run began. The raw copy is removed when the command ends.
+
+The scrub keeps the keys the recordings of November 1, 2026 hold, and the few an adapter reads that those runs did not write: `cwd`, Codex's `thread_source` and `session_id`, and Claude Code's `error`. A count under a `usage` object is kept even when the list does not name it. Every other key is dropped, and the scrub prints the dropped key's path, never its value. A working directory reads `/work`, an agent's own text `@content` and a prompt `@prompt`. Session, thread, request, message, tool-use, response and turn ids take the synthetic forms the fixtures already use, and one raw id takes one synthetic id in every file of the run.
+
+`go run ./scripts/record verify DIR` exits 1 and names each problem: a key outside the allowlist, an id in no synthetic form, `sk-ant-`, `sk-`, `ghp_`, `ghs_`, `github_pat_`, `/home/`, `/Users/`, `/runner/work/`, `/tmp/`, or the text of a `--prompt-file`. It prints `ok` otherwise. `TestRecordingsHoldNoContent` runs it on every recording under a `testdata/` directory: each directory a `manifest.json` marks, and each one laid out as `testdata/<agent version>/<scenario>/` from before manifests. Fixtures written by hand sit under `synthetic/` or `not-recorded/`, and it skips them.
+
+Runs on an API key are recorded by a workflow that is dispatched by hand, never by a pull request. It runs one scenario, scrubs and verifies its files on the runner, and uploads only the scrubbed directory, kept 3 days. The raw files never leave the runner.
+
+```
+make fixture RUN=<workflow run id> SCENARIO=<scenario>
+```
+
+downloads that artifact with `gh`, verifies it again and places it under `internal/adapter/<adapter>/testdata/<agent version>/<scenario>/`, with a `manifest.json` and a README that states the run, the date, the versions and the run's own total. A scenario already placed is refused. To record it again, remove it in its own commit first.
 
 ## Claude Code
 

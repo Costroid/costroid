@@ -1,7 +1,7 @@
 VERSION ?= dev
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-.PHONY: check check-short bench-view bench-ingest fuzz build image e2e e2e-bite
+.PHONY: check check-short bench-view bench-ingest fuzz fixture build image e2e e2e-bite
 
 # Runs everything, with Postgres in Docker. A missing Docker fails this target.
 check:
@@ -31,14 +31,23 @@ bench-ingest:
 
 FUZZTIME ?= 30s
 
-# Runs each parser's fuzz target for FUZZTIME.
+# Runs every fuzz target in the module for FUZZTIME each. -short keeps the
+# Postgres tests out, so no target needs Docker.
 fuzz:
-	go test -run '^$$' -fuzz '^FuzzVerify$$' -fuzztime $(FUZZTIME) ./internal/oidc
-	go test -run '^$$' -fuzz '^FuzzReadIdentity$$' -fuzztime $(FUZZTIME) ./internal/oidc
-	go test -run '^$$' -fuzz '^FuzzParseJSONTraces$$' -fuzztime $(FUZZTIME) ./internal/otlp
-	go test -run '^$$' -fuzz '^FuzzParseJSONLogs$$' -fuzztime $(FUZZTIME) ./internal/otlp
-	go test -run '^$$' -fuzz '^FuzzParseProtobuf$$' -fuzztime $(FUZZTIME) ./internal/otlp
-	go test -short -run '^$$' -fuzz '^FuzzParseRows$$' -fuzztime $(FUZZTIME) ./internal/server
+	@for package in $$(go list ./...); do \
+		targets=$$(go test -short -list '^Fuzz' "$$package") || exit 1; \
+		for target in $$(printf '%s\n' "$$targets" | grep '^Fuzz'); do \
+			echo "fuzz $$target $$package"; \
+			go test -short -run '^$$' -fuzz "^$$target$$" -fuzztime $(FUZZTIME) "$$package" || exit 1; \
+		done; \
+	done
+
+RECORD_REPO ?= Costroid/costroid-dogfood
+
+# Places the recording of workflow run RUN for scenario SCENARIO under its
+# adapter's testdata, after verifying it again. It downloads with gh.
+fixture:
+	go run ./scripts/record fixture --run "$(RUN)" --scenario "$(SCENARIO)" --repo "$(RECORD_REPO)"
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/costroid ./cmd/costroid
