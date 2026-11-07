@@ -36,6 +36,7 @@ var commands = []command{
 	{name: "run", short: "costroid run --budget-usd N --out rows.jsonl -- <agent command>", help: runHelp, run: runCommand},
 	{name: "ingest-run", help: ingestRunHelp, run: func(_ context.Context, args []string, std stdio) int { return ingestRunCommand(args, std.stderr) }},
 	{name: "report", short: "costroid report --rows rows.jsonl", help: reportHelp, run: withOutputs(reportCommand)},
+	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
 	{name: "follow-up", help: followUpHelp, run: withOutputs(followUpCommand)},
 	{name: "reconcile", help: reconcileHelp, run: reconcileWithProvider},
 	{name: "policy", help: policyHelp, run: withOutputs(policyCommand)},
@@ -183,6 +184,7 @@ grade reads none.
 
 const reportHelp = `Usage:
   costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
+  costroid report --preview --rows rows.jsonl
 
 report posts from CI, and selects the host from the job's variables. On a pull
 request it reads costroid.yml at the head of the base branch when it runs, and
@@ -266,4 +268,11 @@ const lintRecipesHelp = `Usage:
 const versionHelp = `Usage:
   costroid version
   costroid --version
+`
+
+const demoHelp = `Usage:
+  costroid demo
+
+demo prints the comment Costroid posts on a pull request, built from the rows of
+a recorded claude-code-action run. It reads nothing and posts nothing.
 `
