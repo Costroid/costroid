@@ -205,3 +205,12 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: <count> files, <count> rejected lines` | What `lint-recipes` checked. It exits 1 when a line was rejected | Fix each line it printed above |
 | `costroid: <count> files, <count> with an agent: <count> high, <count> medium, <count> notes` | What `lint` judged. It exits 1 on a high finding, and on a medium one under `--strict` | Fix each finding it printed above. [`docs/lint.md`](lint.md) says what each rule asks |
 | `costroid: warning: <count> repeated rows in <path> were counted once` | `reconcile` read the same row more than once | None |
+| `costroid: wrote <file> from recipes/<recipe>, pinned to <release> at <commit>` | `init` wrote the workflow, with Costroid pinned to the release the binary belongs to | Run the commands it prints after it. [`docs/install.md`](install.md#write-the-workflow) says more |
+| `costroid: wrote costroid.yml, with every key commented out` | `init` wrote the configuration, which sets nothing yet | To set a key, remove the `#` before it and before each key it sits under |
+| `costroid: costroid.yml exists, and init left it as it is` | The repository has a configuration, and `init` never replaces it | None |
+| `costroid: init: <file> exists: pass --force to replace it` | `init` wrote nothing, because the workflow would replace a file | Pass `--force`, or name another path with `--out` |
+| `costroid: init: this is a development build, version <version>, which belongs to no release, so init pins nothing: <fix>` | The binary was built from a checkout, and `init` does not pin a commit that was never released | Install a release as the README shows, or pass the full commit SHA to pin with `--action-ref` |
+| `costroid: init: <error>` | `init` could not read or write a file, or refused its arguments, and exits 125 | Read the error. `costroid help init` gives the flags |
+| `costroid: init wrote nothing: recipes/<recipe> breaks a rule of lint-recipes, which is a defect in costroid` | The shipped recipe failed the linter, and `init` exits 1 | Report it as a bug, with the lines printed above it |
+| `costroid: printed a patch for <file>, and wrote nothing` | `init --existing` printed the patch on stdout | Save it, and apply it with `git apply` from the repository's root |
+| `costroid: <file> already calls Costroid/costroid/action, so init has nothing to add` | The workflow already reports | None |

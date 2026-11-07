@@ -11,5 +11,5 @@ Usage:
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 
-Other commands: ingest-run, follow-up, reconcile, export, policy, lint-recipes,
-gateway, serve, keys, egress, version.
+Other commands: ingest-run, init, follow-up, reconcile, export, policy,
+lint-recipes, gateway, serve, keys, egress, version.

@@ -37,6 +37,7 @@ var commands = []command{
 	{name: "ingest-run", help: ingestRunHelp, run: func(_ context.Context, args []string, std stdio) int { return ingestRunCommand(args, std.stderr) }},
 	{name: "report", short: "costroid report --rows rows.jsonl", help: reportHelp, run: withOutputs(reportCommand)},
 	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
+	{name: "init", help: initHelp, run: withoutContext(initCommand)},
 	{name: "follow-up", help: followUpHelp, run: withOutputs(followUpCommand)},
 	{name: "reconcile", help: reconcileHelp, run: reconcileWithProvider},
 	{name: "export", help: exportHelp, run: exportCommand},
