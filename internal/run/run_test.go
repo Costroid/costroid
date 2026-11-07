@@ -44,6 +44,7 @@ const (
 	fakeCutAfter        = "COSTROID_FAKE_CUT_AFTER"
 	fakeSubagentRollout = "COSTROID_FAKE_SUBAGENT_ROLLOUT"
 	fakeDetach          = "COSTROID_FAKE_DETACH"
+	fakeStderr          = "COSTROID_FAKE_STDERR"
 	subagentThread      = "00000000-0000-4000-8000-0000000000c1"
 	fakeCount           = 20
 	fakeThread          = "00000000-0000-4000-8000-0000000000aa"
@@ -290,6 +291,9 @@ func fakeClaude() {
 	}
 	if err := os.WriteFile(os.Getenv(fakeLog)+".anthropic", []byte(strings.Join(credentials, "\n")), 0o644); err != nil {
 		os.Exit(98)
+	}
+	if line := os.Getenv(fakeStderr); line != "" {
+		fmt.Fprintln(os.Stderr, line)
 	}
 	data, err := os.ReadFile(os.Getenv("COSTROID_FAKE_STREAM"))
 	if err != nil {

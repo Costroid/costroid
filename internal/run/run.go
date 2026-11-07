@@ -401,6 +401,7 @@ func (o Options) command(plan adapter.Plan, held *heldKey, stdout *os.File) *exe
 // is stopped when it exits, before its output is read to the end, so none can
 // hold the run open, keep the agent's credentials or write the rows.
 func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter.Session, builder rowBuilder, held *heldKey) (int, bool, error) {
+	o = o.lockStderr()
 	stdout, writer, err := os.Pipe()
 	if err != nil {
 		return 0, false, fmt.Errorf("run: open the agent's stdout: %w", err)
@@ -440,6 +441,42 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 		return 0, stop.byBudget(), fmt.Errorf("run: wait for the agent: %w", waitErr)
 	}
 	return exitCode(command), stop.byBudget(), nil
+}
+
+// lockStderr makes the run's stderr safe to share with the agent's. os/exec
+// gives the agent a file as it is, but copies into any other writer on a
+// goroutine of its own while the agent runs, and the run writes its warnings
+// to the same writer then. Under --json the agent's stdout goes there too.
+// Such a writer takes one write at a time. A file is left as it is, so the
+// agent still writes to it directly.
+func (o Options) lockStderr() Options {
+	if _, isFile := o.Stderr.(*os.File); isFile || o.Stderr == nil {
+		return o
+	}
+	locked := &lockedWriter{w: o.Stderr}
+	if sameWriter(o.Stdout, o.Stderr) {
+		o.Stdout = locked
+	}
+	o.Stderr = locked
+	return o
+}
+
+// sameWriter says whether two writers are one. Two values of a type that
+// cannot be compared are never the same writer.
+func sameWriter(a, b io.Writer) (same bool) {
+	defer func() { _ = recover() }()
+	return a == b
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // leftRunning says how many processes the agent left running at its exit.
