@@ -44,6 +44,12 @@ inputs:
   execution-file:
     description: For stage read, the execution_file output of the claude-code-action step.
     default: ""
+  codex-home:
+    description: >-
+      For stage read, in place of execution-file: the codex-home of an openai/codex-action step
+      that already ended in this job. Give that step a directory made for the job, under
+      runner.temp.
+    default: ""
   show-output:
     description: >-
       true prints the agent's own stream, its reasoning and its replies, to the job
@@ -186,6 +192,7 @@ runs:
       shell: bash
       env:
         COSTROID_EXECUTION_FILE: ${{ inputs.execution-file }}
+        COSTROID_CODEX_HOME: ${{ inputs.codex-home }}
         COSTROID_MINIMUM_AGENT_VERSION: ${{ inputs.minimum-agent-version }}
         COSTROID_BILLING_ACCOUNT: ${{ inputs.billing-account }}
         COSTROID_CREDENTIAL: ${{ inputs.credential }}

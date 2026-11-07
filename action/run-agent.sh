@@ -26,6 +26,9 @@ case ${COSTROID_AGENT:-} in
     agent=(codex exec)
     key_name=CODEX_API_KEY
     release=$codex_release
+    # A team on openai/codex-action holds its key as OPENAI_API_KEY. With
+    # api-key empty, the step's environment can give the key under either name.
+    COSTROID_AGENT_KEY=${COSTROID_AGENT_KEY:-${CODEX_API_KEY:-${OPENAI_API_KEY:-}}}
     ;;
   "") ;;
   *)
@@ -65,6 +68,10 @@ lowest=$(printf '%s\n%s\n' "$floor" "$found" | sort --version-sort | head -n 1)
 
 export "$key_name=$COSTROID_AGENT_KEY"
 unset COSTROID_AGENT_KEY
+# Codex gets one key, under the name Costroid's basis rule reads.
+if [[ $key_name == CODEX_API_KEY ]]; then
+  unset OPENAI_API_KEY
+fi
 
 extra=()
 while IFS= read -r line; do

@@ -107,6 +107,24 @@ Costroid did not start this run, so no budget held it, and the grade reads `none
 
 It needs the same one secret, `ANTHROPIC_API_KEY`. Then open a test pull request.
 
+## codex-action
+
+`openai/codex-action` runs Codex itself, so `costroid run` cannot wrap it. [`recipes/github-codex-action.yml`](../recipes/github-codex-action.yml) runs its own `codex-action` step and adds Costroid around it: the step writes its rollout files to `codex-home`, a directory the job makes under `runner.temp`, and the action's `read` stage reads that directory in the same job. A separate job posts the comment. Put your own prompt in the step that writes it.
+
+The recipe installs Codex 0.164.0-alpha.11.1 and passes the same version to the action as `codex-version`. It states `safety-strategy: drop-sudo`, the action's default, so a change shows in review. It leaves `allow-users` empty, because the job's `if` already says who may start the agent. The home's `config.toml` sets `otel.log_user_prompt=false`.
+
+The `read` stage reads every rollout file under `codex-home` written since the job started: the run's own thread and each subagent's, line by line, as `costroid run` reads them. A home that holds no such file gets no rows, and the report says why. Costroid did not start this run, so no budget held it, and the grade reads `none`. Each push to the pull request runs the agent again. The rollout files do not say how the run billed, so the rows read `list_equivalent`, the weaker claim.
+
+A real run of `codex-action` at `v1.13` with Codex 0.164.0-alpha.11.1, read on 2026-11-07, made two requests to `gpt-6.1-sol`. Their counts, priced by hand at the pinned catalog's list prices, come to USD 0.029324, and Costroid's rows give the same figure. The run is kept as a fixture with its content removed.
+
+`codex-action` publishes tags, not releases. The recipe pins the commit its tag named when that run checked it out:
+
+| Action                | Tag   | SHA                                        |
+| --------------------- | ----- | ------------------------------------------ |
+| `openai/codex-action` | v1.13 | `bdf19a4a223ec2549a3e2274a0cf61556bc07675` |
+
+It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. Until a release of Costroid holds the `codex-home` input, the recipe pins Costroid's action to the zero SHA and fails at start. Then open a test pull request.
+
 ## A fork's pull request
 
 The agent's recipes run no agent on a fork's pull request, and the fork's token cannot post the check. [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml) posts it from your repository once the agent's workflow completes. Copy it to `.github/workflows/costroid-follow-up.yml` on the default branch. It needs no secret.
