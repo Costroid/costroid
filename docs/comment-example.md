@@ -1,34 +1,36 @@
 <!-- costroid:comment -->
 ### Costroid
 
+This run cost USD 0.0391529 at list (Measured). Nothing held it to a budget.
+
 **Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Cost | Basis | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+| USD 0.0391529 | Measured | unattributed | none: nothing held the run to a budget |
 
 Unverified: the agent's job wrote these figures.
 
-Cap: USD 5 (agent-flag: client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+No cap held this run: its enforcement grade is none.
 
-Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, catalog `0.1.0`.
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.0391529 was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1000000 Tokens | 8 | USD 0.0000008 |
-| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1000000 Tokens | 15605 | USD 0.00015605 |
-| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1000000 Tokens | 3495 | USD 0.000436875 |
-| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1000000 Tokens | 4450 | USD 0.00089 |
-| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1000000 Tokens | 272 | USD 0.000136 |
-| `0.1.0` | `reasoning_output` | `anthropic/claude-haiku-5-5/reasoning_output/informational` | informational, not priced | 121 | USD 0 |
-| `0.1.0` | `cached_input_reported` | `anthropic/claude-haiku-5-5/cached_input_reported/informational` | informational, not priced | 15605 | USD 0 |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 1200 | USD 0.00012 |
+| `0.1.0` | `input_uncached` | `anthropic:claude-opus-5-5:global:standard:all:input_uncached` | USD 4 per 1,000,000 tokens | 4 | USD 0.000016 |
+| `0.1.0` | `cache_read` | `anthropic:claude-opus-5-5:global:standard:all:cache_read` | USD 0.2 per 1,000,000 tokens | 28767 | USD 0.0057534 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-opus-5-5:global:standard:all:cache_write_5m` | USD 5 per 1,000,000 tokens | 5959 | USD 0.029795 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 17 | USD 0.0000085 |
+| `0.1.0` | `output` | `anthropic:claude-opus-5-5:global:standard:all:output` | USD 20 per 1,000,000 tokens | 173 | USD 0.00346 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 28767 | USD 0 |
 
 </details>
 
@@ -48,45 +50,35 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
   "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
   "ci_run": null,
   "amounts": "shown",
-  "rows": 19,
+  "rows": 12,
   "run_identity": "unverified",
   "figures": [
     {
       "currency": "USD",
-      "list_cost": "0.001619725",
-      "cost_basis": "list_equivalent",
+      "list_cost": "0.0391529",
+      "cost_basis": "measured",
       "attribution_grade": "unattributed",
-      "enforcement_grade": "agent-flag",
-      "rows": 19,
+      "enforcement_grade": "none",
+      "rows": 12,
       "fallback_rows": 0,
       "tokens": {
-        "cache_read": "15605",
-        "cache_write_1h": "4450",
-        "cache_write_5m": "3495",
-        "cached_input_reported": "15605",
-        "input_uncached": "8",
-        "output": "272",
-        "reasoning_output": "121"
+        "cache_read": "28767",
+        "cache_write_5m": "5959",
+        "cached_input_reported": "28767",
+        "input_uncached": "1204",
+        "output": "190"
       }
     }
   ],
   "figures_omitted": 0,
-  "cap": {
-    "currency": "USD",
-    "amount": "5",
-    "enforcement_grade": "agent-flag",
-    "cost": "0.001619725",
-    "cost_basis": "list_equivalent",
-    "remainder": "4.998380275",
-    "overshoot": "0",
-    "overshoot_tokens": "0"
-  },
+  "cap": null,
   "data": {
     "agents": [
       "claude-code"
     ],
     "models": [
-      "claude-haiku-5-5"
+      "claude-haiku-5-5",
+      "claude-opus-5-5"
     ],
     "models_omitted": 0,
     "catalog_versions": [
@@ -105,7 +97,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
     "config_from_base": true,
-    "evaluated_at": "2026-11-06T09:00:00Z",
+    "evaluated_at": "2026-11-07T11:40:00Z",
     "warn_only": {
       "active": true,
       "reason": "in_period",
@@ -118,7 +110,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
         "outcome": "unproven",
         "reason": "unverified_rows",
         "limit_usd": "5",
-        "cost_usd": "0.001619725"
+        "cost_usd": "0.0391529"
       }
     ],
     "joinable_rows": 0

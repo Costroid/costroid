@@ -132,6 +132,53 @@ func exampleInput(t *testing.T) Input {
 	return input
 }
 
+// demoRows are the rows costroid demo embeds, read from a recorded
+// claude-code-action run, and demoTotal is what that run reported.
+const (
+	demoRows  = "../../cmd/costroid/testdata/demo/rows.jsonl"
+	demoTotal = "0.0391529"
+)
+
+// docsInput is the comment costroid demo prints and docs/comment-example.md
+// shows: the recorded run on a pull request whose costroid.yml at the base
+// commit sets a USD 5 run budget, reported without the run's cap.
+func docsInput(t *testing.T) Input {
+	t.Helper()
+	data, err := os.ReadFile(demoRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := ReadRows(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := policy.ReadUsage(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdict, err := policy.Evaluate(context.Background(), policy.Request{
+		Usage:  usage,
+		Trust:  policy.Unverified,
+		Config: policy.ConfigFile{Data: []byte("policy:\n  run_budget_usd: \"5\"\n"), Found: true, Ref: exampleBase, FromBase: true},
+		Start:  policy.Start{At: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)},
+		At:     time.Date(2026, 11, 7, 11, 40, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := exampleCheckRun
+	return Input{
+		Ledger:       ledger,
+		State:        Reported,
+		HeadSHA:      sampleHead,
+		Installation: exampleInstallation,
+		CheckRunID:   &id,
+		Amounts:      AmountsShown,
+		RunURL:       exampleRun,
+		Verdict:      &verdict,
+	}
+}
+
 func commentOf(t *testing.T, input Input) string {
 	t.Helper()
 	body, err := Comment(input)
@@ -151,7 +198,7 @@ func visiblePart(body string) string {
 
 func TestDocsExampleIsTheRenderedCommentForARealRowsFile(t *testing.T) {
 	path := filepath.Join("..", "..", "docs", "comment-example.md")
-	body := commentOf(t, exampleInput(t))
+	body := commentOf(t, docsInput(t))
 	if *update {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -557,14 +604,15 @@ func TestThousandsOfDistinctStringsStayInsideGitHubsLimit(t *testing.T) {
 
 // TestVisiblePartStaysShort counts every word a reader sees before opening a
 // block, summaries included. The comment held 67 such words before it named
-// its run and traced its figure, and 86 before its budget line stated the
-// cap, the grade, the cost and what is left or over.
+// its run and traced its figure, 86 before its budget line stated the cap,
+// the grade, the cost and what is left or over, and 106 before its first line
+// stated the figure.
 func TestVisiblePartStaysShort(t *testing.T) {
-	const wordsInTenSeconds = 110
+	const maxVisibleWords = 125
 	table := strings.NewReplacer("|", " ", "---", " ")
 	words := strings.Fields(table.Replace(visiblePart(commentOf(t, realInput(t)))))
 	t.Logf("%d words", len(words))
-	if len(words) > wordsInTenSeconds {
+	if len(words) > maxVisibleWords {
 		t.Errorf("%d words", len(words))
 	}
 }
@@ -580,6 +628,95 @@ func TestCommentNeverScolds(t *testing.T) {
 		text := strings.ReplaceAll(visiblePart(commentOf(t, candidate)), "<!--", "")
 		if found := scolding.FindString(text); found != "" {
 			t.Errorf("%q in\n%s", found, text)
+		}
+	}
+}
+
+func TestFirstLineStatesTheFigureWithItsBasis(t *testing.T) {
+	first := func(body string) string {
+		line, _, _ := strings.Cut(strings.TrimPrefix(body, Marker+"\n### Costroid\n\n"), "\n")
+		return line
+	}
+	if got, want := first(commentOf(t, docsInput(t))), "This run cost USD "+demoTotal+" at list (Measured). Nothing held it to a budget."; got != want {
+		t.Errorf("first line %q, want %q", got, want)
+	}
+	if got, want := first(commentOf(t, realInput(t))), "This run cost USD "+realTotal+" at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap."; got != want {
+		t.Errorf("first line %q, want %q", got, want)
+	}
+	if !strings.Contains(commentOf(t, realInput(t)), "can pass the cap.\n\n**Verdict: neutral.**") {
+		t.Error("the verdict does not follow the first line")
+	}
+	output, err := Check(realInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(output.Summary, "This run cost USD "+realTotal+" at list") {
+		t.Errorf("the check's summary does not open on the figure:\n%s", output.Summary)
+	}
+	euro, measured := sampleFields(), sampleFields()
+	euro.currency, euro.cost = "EUR", "0.2"
+	measured.enforcement = "none"
+	input := realInput(t)
+	input.Budget = nil
+	input.Ledger = ledgerOf(t, sampleFields(), euro, measured)
+	want := "This run cost EUR 0.2 at list (Measured), USD 0.1 at list (Measured) and USD 0.1 at list (Measured). Nothing held it to a budget."
+	if got := first(commentOf(t, input)); got != want {
+		t.Errorf("first line %q, want %q", got, want)
+	}
+	for _, empty := range []Input{{State: NoRows, Amounts: AmountsShown}, {State: Unreadable, Reason: InvalidRow, Amounts: AmountsShown}} {
+		if body := commentOf(t, empty); !strings.HasPrefix(first(body), "**Verdict: ") {
+			t.Errorf("a report with no figures opens on %q", first(body))
+		}
+	}
+}
+
+func TestFirstLineWithheldWhenShowCostFalse(t *testing.T) {
+	for _, amounts := range []Amounts{AmountsOff, AmountsUnsettled} {
+		input := docsInput(t)
+		input.Amounts = amounts
+		body := commentOf(t, input)
+		want := Marker + "\n### Costroid\n\nThis run was priced at list (Measured). Nothing held it to a budget.\n\n**Verdict: neutral.**"
+		if !strings.HasPrefix(body, want) {
+			t.Errorf("amounts %d:\n%s", amounts, body)
+		}
+		if strings.Contains(body, demoTotal) {
+			t.Errorf("amounts %d: the comment shows the amount:\n%s", amounts, body)
+		}
+	}
+	input := realInput(t)
+	input.Amounts = AmountsOff
+	euro := sampleFields()
+	euro.currency = "EUR"
+	input.Ledger = ledgerOf(t, sampleFields(), euro, fallbackFields())
+	body := commentOf(t, input)
+	assertNoAmount(t, body)
+	if !strings.Contains(body, "This run was priced at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.\n") {
+		t.Errorf("one basis is not named once:\n%s", body)
+	}
+}
+
+func TestAccountLinkCarriesInstallation(t *testing.T) {
+	for _, input := range []Input{realInput(t), docsInput(t)} {
+		body := commentOf(t, input)
+		if !strings.Contains(body, "[Your account on costroid.com](https://app.costroid.com/?installation=github%3A"+exampleInstallation+")") {
+			t.Errorf("the account link does not carry the installation:\n%s", body)
+		}
+	}
+	input := realInput(t)
+	input.AccountHost = AccountGitHub
+	if body := commentOf(t, input); !strings.Contains(body, "(https://app.costroid.com/?installation=github%3A"+exampleInstallation+")") {
+		t.Errorf("a named GitHub host drops the installation:\n%s", body)
+	}
+}
+
+func TestUnitPricesReadPerMillionTokens(t *testing.T) {
+	body := commentOf(t, docsInput(t))
+	if !strings.Contains(body, " per 1,000,000 tokens |") || strings.Contains(body, "000 Tokens") {
+		t.Errorf("unit prices are not per 1,000,000 tokens:\n%s", body)
+	}
+	for unit, want := range map[string]string{"1 Tokens": "1 tokens", "1000 Tokens": "1,000 tokens", "100000 Tokens": "100,000 tokens", "1000000 Tokens": "1,000,000 tokens", "999999999999 Tokens": "999,999,999,999 tokens"} {
+		if got := unitWords(unit); got != want {
+			t.Errorf("unitWords(%q) = %q, want %q", unit, got, want)
 		}
 	}
 }
@@ -871,7 +1008,7 @@ func TestTheTraceRecomputesTheFigureByHand(t *testing.T) {
 	if len(lines) != 7 {
 		t.Fatalf("%d trace lines in\n%s", len(lines), body)
 	}
-	unit := regexp.MustCompile(`^USD ([0-9.]+) per ([0-9]+) Tokens$`)
+	unit := regexp.MustCompile(`^USD ([0-9.]+) per ([0-9]{1,3}(?:,[0-9]{3})*) tokens$`)
 	var total decimal.Decimal
 	for _, line := range lines {
 		class, price, tokens, amount := line[1], line[2], decimal.MustParse(line[3]), decimal.MustParse(line[5])
@@ -885,7 +1022,7 @@ func TestTheTraceRecomputesTheFigureByHand(t *testing.T) {
 		if parts == nil {
 			t.Fatalf("unit price %q", price)
 		}
-		size := decimal.MustParse(parts[2])
+		size := decimal.MustParse(strings.ReplaceAll(parts[2], ",", ""))
 		if got := decimal.MustParse(parts[1]).Mul(tokens); got.Cmp(amount.Mul(size)) != 0 {
 			t.Errorf("%s: %s times %s over %s is not %s", class, parts[1], tokens, size, amount)
 		}

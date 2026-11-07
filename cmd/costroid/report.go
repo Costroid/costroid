@@ -70,6 +70,8 @@ type reportFlags struct {
 	// empty when the report was not told.
 	agentResult string
 	json        bool
+	// preview prints the comment and posts nothing.
+	preview bool
 }
 
 func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
@@ -81,13 +83,17 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id; GitLab uses the project id")
 	agentResult := set.String("agent-result", os.Getenv(agentResultVariable), "the agent job's result: success, failure, cancelled or skipped")
 	asJSON := set.Bool("json", false, "print the result object on stdout")
+	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
 	if err := set.Parse(args); err != nil {
 		return reportFlags{}, err
 	}
 	if *rows == "" {
 		return reportFlags{}, errors.New("report needs --rows")
 	}
-	flags := reportFlags{rows: *rows, installation: *installation, agentResult: *agentResult, json: *asJSON}
+	if *preview && *asJSON {
+		return reportFlags{}, errors.New("report takes --preview or --json, not both")
+	}
+	flags := reportFlags{rows: *rows, installation: *installation, agentResult: *agentResult, json: *asJSON, preview: *preview}
 	if *budget != "" {
 		amount, err := decimal.Parse(*budget)
 		if err != nil {
@@ -262,6 +268,7 @@ func targetFromEnvironment(system cicontext.System, flags reportFlags, stderr io
 // reportCommand exits 0 once its flags parse and a CI system is found. A report
 // is never why a job fails, so every failure after that ends as a line on
 // stderr. Outside CI there is no job to protect, so it refuses and says why.
+// --preview needs no CI system.
 func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags, err := parseReport(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
@@ -270,6 +277,9 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
+	}
+	if flags.preview {
+		return previewReport(ctx, flags, time.Now(), stdout, stderr)
 	}
 	system := cicontext.Detect(os.Getenv)
 	if system == cicontext.NoSystem {
@@ -282,6 +292,23 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 			return 0
 		}
 	}
+	input := rowsInput(flags, stderr)
+	input.RunURL = runURL(system)
+	input.CIRun = ciRunFromEnvironment(os.Getenv)
+	target, err := targetFromEnvironment(system, flags, stderr)
+	input.HeadSHA = target.pull.head
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+	} else {
+		input = post(ctx, target, input, flags.rows, stderr)
+	}
+	publish(input, flags.json, stdout, stderr)
+	return 0
+}
+
+// rowsInput is what the rows file, the run's result object beside it and the
+// flags give a report, before any host is read.
+func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 	rows, err := readReportRows(flags.rows)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
@@ -296,19 +323,52 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		ReaderLine: stated.ReaderError,
 		AgentError: agentErrorFor(stated.AgentError, stderr),
 		Budget:     flags.budget,
-		RunURL:     runURL(system),
-		CIRun:      ciRunFromEnvironment(os.Getenv),
 	}
-	input = withAgentResult(input, flags.agentResult, stderr)
-	target, err := targetFromEnvironment(system, flags, stderr)
-	input.HeadSHA = target.pull.head
+	return withAgentResult(input, flags.agentResult, stderr)
+}
+
+// previewReport prints, as Markdown, the comment a report posts for the rows,
+// and reads and posts nothing on any host. The verdict holds the rows to
+// costroid.yml in the working directory, as costroid policy does, and the
+// amounts are shown.
+func previewReport(ctx context.Context, flags reportFlags, at time.Time, stdout, stderr io.Writer) int {
+	input := rowsInput(flags, stderr)
+	input.Installation = flags.installation
+	input.Amounts = comment.AmountsShown
+	input.Verdict = previewVerdict(ctx, flags.rows, input.State, at, stderr)
+	body, err := comment.Comment(input)
+	if err == nil {
+		_, err = io.WriteString(stdout, body)
+	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
-	} else {
-		input = post(ctx, target, input, flags.rows, stderr)
+		fmt.Fprintf(stderr, "costroid: %v\n", fmt.Errorf("preview: %w", err))
+		return exitFailure
 	}
-	publish(input, flags.json, stdout, stderr)
 	return 0
+}
+
+// previewVerdict evaluates the policy offline at the given time. It reads no
+// workflow history, so a rule that fails warns, as it does under costroid
+// policy without --workflow-added.
+func previewVerdict(ctx context.Context, rowsPath string, state comment.State, at time.Time, stderr io.Writer) *policy.Verdict {
+	usage, err := reportUsage(rowsPath, state)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
+	verdict, err := policy.Evaluate(ctx, policy.Request{
+		Usage:  usage,
+		Trust:  policy.Unverified,
+		Config: policy.ConfigFromFile(configFile),
+		At:     at,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+		return nil
+	}
+	if problem := verdict.ConfigProblem(); problem != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
+	}
+	return &verdict
 }
 
 // maxRunResult bounds the run's result object the report reads. The object

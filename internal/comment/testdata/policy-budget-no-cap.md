@@ -1,6 +1,8 @@
 <!-- costroid:comment -->
 ### Costroid
 
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
 **Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
@@ -22,11 +24,11 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1000000 Tokens | 8 | USD 0.0000008 |
-| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1000000 Tokens | 15605 | USD 0.00015605 |
-| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1000000 Tokens | 3495 | USD 0.000436875 |
-| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1000000 Tokens | 4450 | USD 0.00089 |
-| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1000000 Tokens | 272 | USD 0.000136 |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
 | `0.1.0` | `reasoning_output` | `anthropic/claude-haiku-5-5/reasoning_output/informational` | informational, not priced | 121 | USD 0 |
 | `0.1.0` | `cached_input_reported` | `anthropic/claude-haiku-5-5/cached_input_reported/informational` | informational, not priced | 15605 | USD 0 |
 

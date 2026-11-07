@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -505,7 +506,10 @@ type traceLine struct {
 }
 
 type view struct {
-	Marker     string
+	Marker string
+	// FirstLine states the figure with its basis and grade, before the
+	// verdict. It is empty when the report has no figures.
+	FirstLine  string
 	Conclusion string
 	// VerdictLine says what the policy found, after the conclusion.
 	VerdictLine string
@@ -548,6 +552,7 @@ func (i Input) view() view {
 	shown := i.Amounts == AmountsShown
 	result := view{
 		Marker:         Marker,
+		FirstLine:      i.firstLine(shown),
 		Conclusion:     i.Conclusion(),
 		VerdictLine:    verdictLine(i.Verdict, shown),
 		RunLine:        runLine(i.HeadSHA, i.RunURL),
@@ -641,7 +646,81 @@ func unitPrice(currency string, trace Trace) string {
 	if trace.Class.Informational() {
 		return "informational, not priced"
 	}
-	return currency + " " + trace.UnitPrice.String() + " per " + trace.Unit
+	return currency + " " + trace.UnitPrice.String() + " per " + unitWords(trace.Unit)
+}
+
+// unitWords reads a pricing unit such as "1000000 Tokens" as "1,000,000
+// tokens". ReadRows admits no other form for a priced class.
+func unitWords(unit string) string {
+	match := pricingUnitPattern.FindStringSubmatch(unit)
+	if match == nil {
+		return unit
+	}
+	return grouped(match[1]) + " tokens"
+}
+
+// grouped writes a run of digits with a comma between each group of three.
+func grouped(digits string) string {
+	var out strings.Builder
+	for index, digit := range digits {
+		if index > 0 && (len(digits)-index)%3 == 0 {
+			out.WriteByte(',')
+		}
+		out.WriteRune(digit)
+	}
+	return out.String()
+}
+
+// firstFigures is how many figures the first line names. The table names
+// every figure.
+const firstFigures = 3
+
+// firstLine states what the run cost, at which basis, and what held it to a
+// cap, so the figure reads before the verdict. Withheld, it states the basis
+// and the grade without an amount.
+func (i Input) firstLine(shown bool) string {
+	if i.State != Reported || len(i.Ledger.Figures) == 0 {
+		return ""
+	}
+	figures := i.Ledger.Figures[:min(len(i.Ledger.Figures), firstFigures)]
+	omitted := len(i.Ledger.Figures) - len(figures) + i.Ledger.FiguresOmitted
+	var line string
+	if shown {
+		clauses := make([]string, len(figures))
+		for index, figure := range figures {
+			clauses[index] = fmt.Sprintf("%s %s at list (%s)", figure.Currency, figure.Cost, basisLabels[figure.Basis])
+		}
+		line = "This run cost " + listed(clauses, omitted) + "."
+	} else {
+		var clauses []string
+		for _, figure := range i.Ledger.Figures {
+			clause := "at list (" + basisLabels[figure.Basis] + ")"
+			if !slices.Contains(clauses, clause) {
+				clauses = append(clauses, clause)
+			}
+		}
+		line = "This run was priced " + listed(clauses, 0) + "."
+	}
+	return line + " " + heldSentence(weakestGrade(i.Ledger.Figures))
+}
+
+// heldSentence says what held the run to its cap, by the weakest grade.
+func heldSentence(grade string) string {
+	if grade == "none" {
+		return "Nothing held it to a budget."
+	}
+	return fmt.Sprintf("Held by %s: %s.", grade, enforcementNotes[grade])
+}
+
+// listed joins items as a sentence does, naming how many more are left out.
+func listed(items []string, omitted int) string {
+	if omitted > 0 {
+		return strings.Join(items, ", ") + more(omitted)
+	}
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 }
 
 // runLine names the commit and links the run only when each is well formed.
