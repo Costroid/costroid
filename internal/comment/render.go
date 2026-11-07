@@ -73,6 +73,31 @@ const (
 	AgentSkipped Reason = "agent_skipped"
 )
 
+// ArtifactRefused is the run reason a report states when the action refused
+// the artifact that carried the rows, because it held more than the rows and
+// the run object. Nothing in that artifact is read.
+const ArtifactRefused run.Reason = "artifact_refused"
+
+// maxRefusedEntries is how many of a refused artifact's entries the action
+// names, and maxRefusedName the longest name the comment repeats.
+const (
+	maxRefusedEntries = 10
+	maxRefusedName    = 128
+)
+
+// refusedNameByte is a byte the comment repeats from a refused entry's name.
+// The action shows every other byte as ?, and the comment does so again.
+var refusedNameByte = regexp.MustCompile(`[^A-Za-z0-9._/-]`)
+
+// RefusedArtifact is what an artifact the action refused held besides the
+// rows and the run object. The agent's job chose every name in it.
+type RefusedArtifact struct {
+	// Count is how many entries it held besides those two files.
+	Count int
+	// Entries names the first of them, as the action printed them.
+	Entries []string
+}
+
 // Amounts says whether the comment carries amounts, and why not.
 type Amounts int
 
@@ -190,6 +215,10 @@ type Input struct {
 	// Approval is a review that approved the head, nil when none counts. It
 	// turns a failed verdict's check neutral, and only on HeadSHA.
 	Approval *Approval
+	// Refused is the artifact the action refused, nil when it took the
+	// artifact or fetched none. A refusal fails the check whatever the
+	// policy or an approval says, and only on a report with no figures.
+	Refused *RefusedArtifact
 }
 
 // Approval is a review that approved one commit, as the host stated it.
@@ -204,9 +233,13 @@ type Approval struct {
 // ends in, never matches.
 var loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
 
-// Conclusion is the check's conclusion: the verdict's, neutral when no policy
-// ran, and neutral when an approval binds a failed verdict's head.
+// Conclusion is the check's conclusion: failure when the action refused the
+// artifact, the verdict's, neutral when no policy ran, and neutral when an
+// approval binds a failed verdict's head.
 func (i Input) Conclusion() string {
+	if i.refused() {
+		return policy.Failure
+	}
 	if i.Verdict == nil {
 		return policy.Neutral
 	}
@@ -471,11 +504,40 @@ func (i Input) conclusion() *string {
 	return &conclusion
 }
 
+// refused reports an artifact the action refused, on a report with no
+// figures.
+func (i Input) refused() bool {
+	return i.Refused != nil && i.Refused.Count > 0 && i.State != Reported
+}
+
+// refusedLine names what a refused artifact held, each name cleaned again and
+// shown as code.
+func (i Input) refusedLine() string {
+	entries := i.Refused.Entries[:min(len(i.Refused.Entries), maxRefusedEntries, i.Refused.Count)]
+	names := make([]string, len(entries))
+	for index, entry := range entries {
+		names[index] = "`" + refusedNameByte.ReplaceAllString(entry[:min(len(entry), maxRefusedName)], "?") + "`"
+	}
+	noun := "entries"
+	if i.Refused.Count == 1 {
+		noun = "entry"
+	}
+	line := fmt.Sprintf("This report shows no figures. Reason `%s`: the `costroid-rows` artifact held %d %s besides the rows and the run object, so the check fails and this report read none of it",
+		ArtifactRefused, i.Refused.Count, noun)
+	if len(names) == 0 {
+		return line + "."
+	}
+	return line + ": " + listed(names, i.Refused.Count-len(names)) + "."
+}
+
 // runReason is the run's reason from the closed list, on a report whose rows
-// file holds no rows. Beside rows, outside the list, beside a skipped agent,
-// or agent_error without a class from its list, it is dropped.
+// file holds no rows, or artifact_refused on a report whose artifact the
+// action refused. Beside rows, outside the list, beside a skipped agent, or
+// agent_error without a class from its list, it is dropped.
 func (i Input) runReason() run.Reason {
 	switch {
+	case i.refused():
+		return ArtifactRefused
 	case i.State != NoRows || i.Reason == AgentSkipped || i.RunReason.Sentence() == "":
 		return ""
 	case i.RunReason == run.ReasonAgentError && run.AgentErrorFix(i.AgentError) == "":
@@ -868,6 +930,8 @@ func (i Input) why() string {
 	switch {
 	case i.State == Reported:
 		return ""
+	case i.refused():
+		return i.refusedLine()
 	case i.Reason == NoRowsFile || i.Reason == ForkNoRows:
 		return "No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none."
 	case i.Reason == NotAFile:

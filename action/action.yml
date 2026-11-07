@@ -146,8 +146,11 @@ runs:
   using: composite
   steps:
     # In stages report and ingest the rows come first, into a directory of their
-    # own, and costroid is installed after them. Nothing the agent's job put in
-    # the artifact can then stand in for the binary, a tool or the event file.
+    # own, and costroid is installed after them from the release. Nothing the
+    # agent's job put in the artifact can then stand in for the binary, a tool
+    # or the event file. An artifact that holds more than the rows and the run
+    # object fails ingest, and in stage report it is deleted unread and the
+    # report fails its check.
     - name: Fetch the rows
       if: inputs.stage == 'report' || inputs.stage == 'ingest'
       continue-on-error: true
@@ -213,8 +216,8 @@ runs:
         retention-days: 7
 
     # The report runs after a failed agent, so it can say why the run wrote no
-    # rows, and never after a refused install: in stage report that refusal is
-    # an artifact holding more than the rows.
+    # rows, and never after a refused install. An artifact the install refused
+    # reaches it as the install's outputs, never as files.
     - name: Report on the pull request
       id: report
       if: always() && steps.install.outcome == 'success' && (inputs.stage == 'report' || inputs.stage == 'all')
@@ -224,6 +227,8 @@ runs:
         COSTROID_ROWS: ${{ inputs.stage == 'all' && format('{0}/costroid-rows.jsonl', runner.temp) || format('{0}/costroid-rows-in/costroid-rows.jsonl', runner.temp) }}
         COSTROID_BUDGET_USD: ${{ inputs.budget-usd }}
         COSTROID_AGENT_RESULT: ${{ inputs.agent-result }}
+        COSTROID_ARTIFACT_REFUSED: ${{ steps.install.outputs.refused }}
+        COSTROID_ARTIFACT_REFUSED_COUNT: ${{ steps.install.outputs.refused_count }}
       run: |
         touch "$COSTROID_ROWS"
         costroid report --rows "$COSTROID_ROWS" ${COSTROID_BUDGET_USD:+--budget-usd "$COSTROID_BUDGET_USD"}

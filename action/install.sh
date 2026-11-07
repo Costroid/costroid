@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Installs one released costroid binary and refuses it unless its SHA-256 matches.
 # It first refuses a stage the action does not have and, in stages report and
-# ingest, an artifact that holds anything but the rows and the run object.
+# ingest, an artifact that holds anything but the rows and the run object. In
+# stage ingest such an artifact fails the step. In stage report it is deleted
+# unread, the binary is installed from the release as ever, and the report
+# posts a failed check that names the entries.
 # Given no version and no sha256, it installs the release whose tag points at
 # this action's commit, and takes the SHA-256 from that release's SHA256SUMS
 # once cosign shows the release workflow signed it at that tag and commit.
@@ -44,7 +47,9 @@ STAGES
 # of the two files the run stage keeps, as a plain file. The agent's job chose
 # the names, so the first ten are printed with anything outside A-Z, a-z, 0-9,
 # ., _, / and - as ?. No artifact at all leaves an empty directory, and the
-# report then says the run left no rows.
+# report then says the run left no rows. In stage report a refused artifact is
+# deleted, an empty directory takes its place, and the step outputs refused and
+# refused_count tell the report what it held.
 check_rows() {
   local LC_ALL=C dir=$RUNNER_TEMP/costroid-rows-in entry kind count=0 names=""
   mkdir -p "$dir"
@@ -57,9 +62,17 @@ check_rows() {
       names+="${names:+, }${entry//[^A-Za-z0-9._\/-]/?}"
     fi
   done < <(find "$dir" -mindepth 1 -printf '%P\0%y\0')
-  if ((count > 0)); then
+  if ((count == 0)); then
+    return
+  fi
+  if [[ $COSTROID_STAGE != report ]]; then
     fail "the costroid-rows artifact holds $count entries besides the rows and the run object, so nothing was installed: $names"
   fi
+  [[ -n ${GITHUB_OUTPUT:-} ]] || fail "GITHUB_OUTPUT is not set, so the report cannot be told the artifact was refused"
+  rm -rf "$dir"
+  mkdir "$dir"
+  printf 'refused=%s\nrefused_count=%d\n' "$names" "$count" >>"$GITHUB_OUTPUT"
+  echo "costroid: the costroid-rows artifact holds $count entries besides the rows and the run object, so the report reads none of it and fails its check: $names" >&2
 }
 
 check_stage

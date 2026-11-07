@@ -73,14 +73,15 @@ func Keys() []string {
 
 // ParseSettings reads the policy mapping of costroid.yml. Any key or value
 // under it that the schema refuses is an error, so a typo never runs a rule
-// on a default. Keys outside it are not the policy's to judge.
+// on a default. A policy key with no value sets no rule, as an absent one
+// does. Keys outside it are not the policy's to judge.
 func ParseSettings(data []byte) (Settings, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return Settings{}, fmt.Errorf("policy: parse costroid.yml: %w", err)
 	}
 	mapping := policyMapping(&root)
-	if mapping == nil {
+	if mapping == nil || mapping.Tag == "!!null" {
 		return Settings{}, nil
 	}
 	if mapping.Kind != yaml.MappingNode {
@@ -119,16 +120,21 @@ func policyMapping(root *yaml.Node) *yaml.Node {
 }
 
 // section is the value of a top-level key, nil when the document is not a
-// mapping or lacks the key.
+// mapping or lacks the key. An alias reads as the node it names, as validate
+// reads it.
 func section(root *yaml.Node, key string) *yaml.Node {
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
 		return nil
 	}
 	document := root.Content[0]
 	for i := 0; i+1 < len(document.Content); i += 2 {
-		if document.Content[i].Value == key {
-			return document.Content[i+1]
+		if document.Content[i].Value != key {
+			continue
 		}
+		if value := document.Content[i+1]; value.Kind != yaml.AliasNode {
+			return value
+		}
+		return document.Content[i+1].Alias
 	}
 	return nil
 }

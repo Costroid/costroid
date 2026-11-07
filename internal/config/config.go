@@ -32,8 +32,10 @@ func (p Problem) String() string {
 }
 
 // Validate checks a file's bytes. An empty document is a valid file: every key
-// is optional. The error is for what could not be read; a file that was read
-// and breaks the schema answers Problems.
+// is optional. A file that is empty, ~, null or only --- reads as absent, and a
+// section with no value reads as that section absent, as the report reads
+// them. The error is for what could not be read; a file that was read and
+// breaks the schema answers Problems.
 func Validate(data []byte) ([]Problem, error) {
 	schema, err := compile()
 	if err != nil {
@@ -50,6 +52,9 @@ func Validate(data []byte) ([]Problem, error) {
 	if document == nil {
 		return nil, nil
 	}
+	if err := dropNullSections(document); err != nil {
+		return nil, err
+	}
 	instance, err := jsonValue(document)
 	if err != nil {
 		return []Problem{{Message: err.Error()}}, nil
@@ -58,7 +63,73 @@ func Validate(data []byte) ([]Problem, error) {
 	if err != nil {
 		return nil, err
 	}
+	floats = append(floats, floatDays(&root)...)
 	return withFloats(problemsOf(schema.Validate(instance)), floats), nil
+}
+
+// dropNullSections removes each section the file names with no value, such as
+// approval: alone, which the report reads as that section's defaults. A
+// section is a top-level key the schema states as a mapping. YAML decodes a
+// mapping with a key that is not a string to map[any]any.
+func dropNullSections(document any) error {
+	sections, err := sectionKeys()
+	if err != nil {
+		return err
+	}
+	switch mapping := document.(type) {
+	case map[string]any:
+		for key, value := range mapping {
+			if value == nil && sections[key] {
+				delete(mapping, key)
+			}
+		}
+	case map[any]any:
+		for key, value := range mapping {
+			if name, ok := key.(string); ok && value == nil && sections[name] {
+				delete(mapping, key)
+			}
+		}
+	}
+	return nil
+}
+
+// sectionKeys are the top-level keys the schema states as a mapping.
+func sectionKeys() (map[string]bool, error) {
+	var document struct {
+		Properties map[string]struct {
+			Type any `json:"type"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(costroid.ConfigSchema, &document); err != nil {
+		return nil, fmt.Errorf("config: read the schema: %w", err)
+	}
+	keys := map[string]bool{}
+	for key, property := range document.Properties {
+		if property.Type == "object" {
+			keys[key] = true
+		}
+	}
+	return keys, nil
+}
+
+// daysSentence is the approval rule's own sentence for an
+// approval.expires_days it cannot read, so validate refuses a float in the
+// same words.
+const daysSentence = "approval.expires_days must be a whole number of days from 1 to 90"
+
+// floatDays finds an approval.expires_days that YAML reads as a float, such as
+// 7.0, which the approval rule refuses and the schema, reading JSON, takes as
+// the integer 7.
+func floatDays(root *yaml.Node) []Problem {
+	mapping := valueOf(root.Content[0], "approval")
+	if mapping == nil {
+		return nil
+	}
+	value := valueOf(mapping, "expires_days")
+	if value == nil || value.Kind != yaml.ScalarNode || value.Tag != "!!float" {
+		return nil
+	}
+	return []Problem{{Path: "/approval/expires_days", Message: daysSentence}}
 }
 
 // amountSentence is the policy's own sentence for an amount it cannot read,

@@ -145,20 +145,20 @@ func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node,
 	l.permissions(job.key, permissions)
 
 	agent, agentStep := "", (*yaml.Node)(nil)
-	ingest, mint := false, false
+	ingest, gateway := false, false
 	for _, step := range steps {
 		l.step(step)
 		if name := stepAgent(step); name != "" {
 			agent, agentStep = name, step
 		}
 		ingest = ingest || costroidStage(step) == "ingest"
-		mint = mint || mintsKeys(step)
+		gateway = gateway || attestsKeys(step)
 	}
 	granted := grants(permissions)
 	if agent == "" {
-		attests := mint && field(job.value, "environment") != nil
+		attests := gateway && namesEnvironment(job.value)
 		if granted["id-token"] == "write" && !ingest && !attests {
-			l.add(job.key, RuleIDTokenScope, "id-token: write belongs on the ingest job, and on a job that mints gateway keys in an environment")
+			l.add(job.key, RuleIDTokenScope, "id-token: write belongs on the ingest job, and on a job that mints or closes gateway keys in an environment")
 		}
 		return
 	}
@@ -335,11 +335,14 @@ func agentOpenTo(step *yaml.Node) []entry {
 	return open
 }
 
-// mintsKeys reports whether a step runs costroid gateway mint, which attests
-// the key it registers under the job's OIDC token. The token names the job's
-// environment, and only that name lets the ledger take the attestation.
-func mintsKeys(step *yaml.Node) bool {
-	return strings.Contains(scalarField(step, "run"), "costroid gateway mint")
+// attestsKeys reports whether a step runs costroid gateway mint, which attests
+// the key it registers, or costroid gateway close, which attests what the
+// gateway counted on it. Both attest under the job's OIDC token. The token
+// names the job's environment, and only that name lets the ledger take the
+// attestation.
+func attestsKeys(step *yaml.Node) bool {
+	run := scalarField(step, "run")
+	return strings.Contains(run, "costroid gateway mint") || strings.Contains(run, "costroid gateway close")
 }
 
 // costroidStage reads the stage of a step that uses Costroid's action. The

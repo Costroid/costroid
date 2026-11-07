@@ -3,8 +3,10 @@ package reconcile
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -143,27 +145,43 @@ func (a anthropic) usage(ctx context.Context, grain string, span window, report 
 	return pages(ctx, endpoint, query, func(current page[anthropicUsageRow]) error {
 		report.stamp(span, current.DataRefreshedAt)
 		for _, row := range current.Data {
-			report.addUsage(row.usage(grain))
+			usage, err := row.usage(grain)
+			if err != nil {
+				return err
+			}
+			report.addUsage(usage)
 		}
 		return nil
 	})
 }
 
-func (r anthropicUsageRow) usage(grain string) Usage {
+// usage reads one bucket. A count below zero is no usage the report can
+// state, and every figure compared from it would be wrong, so the report is
+// refused.
+func (r anthropicUsageRow) usage(grain string) (Usage, error) {
+	day := r.StartingAt.UTC().Format(dayLayout)
+	counts := map[focus.TokenClass]int64{
+		focus.InputUncached: r.Usage.UncachedInputTokens,
+		focus.CacheRead:     r.Usage.CacheReadInputTokens,
+		focus.CacheWrite5m:  r.Usage.CacheCreation.Ephemeral5m,
+		focus.CacheWrite1h:  r.Usage.CacheCreation.Ephemeral1h,
+		focus.Output:        r.Usage.OutputTokens,
+	}
+	tokens := make(map[focus.TokenClass]decimal.Decimal, len(counts))
+	for _, class := range slices.Sorted(maps.Keys(counts)) {
+		if counts[class] < 0 {
+			return Usage{}, fmt.Errorf("usage on %s for %s: %s reads %d tokens, below zero", day, text(r.Group.Model), class, counts[class])
+		}
+		tokens[class] = decimal.FromInt(counts[class])
+	}
 	return Usage{
 		Credential: r.Group.credential(grain),
-		Day:        r.StartingAt.UTC().Format(dayLayout),
+		Day:        day,
 		Model:      text(r.Group.Model),
 		Tier:       r.Group.tier(),
 		Region:     r.Group.region(),
-		Tokens: map[focus.TokenClass]decimal.Decimal{
-			focus.InputUncached: decimal.FromInt(r.Usage.UncachedInputTokens),
-			focus.CacheRead:     decimal.FromInt(r.Usage.CacheReadInputTokens),
-			focus.CacheWrite5m:  decimal.FromInt(r.Usage.CacheCreation.Ephemeral5m),
-			focus.CacheWrite1h:  decimal.FromInt(r.Usage.CacheCreation.Ephemeral1h),
-			focus.Output:        decimal.FromInt(r.Usage.OutputTokens),
-		},
-	}
+		Tokens:     tokens,
+	}, nil
 }
 
 type anthropicCostRow struct {

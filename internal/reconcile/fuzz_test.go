@@ -110,12 +110,6 @@ func reportProvider(which uint8, server pageServer) Provider {
 	return NewOpenAI(server, "sk-sample")
 }
 
-// negativeAnthropicCount is a defect this target found: the Anthropic usage
-// reader keeps a count below zero, where the OpenAI reader refuses the page.
-// Its input is the seed testdata/fuzz/FuzzProviderReport/anthropic-negative-count.
-// The skip goes when the reader refuses the page.
-const negativeAnthropicCount = "defect: the Anthropic usage reader keeps a token count below zero"
-
 // assertReport holds a report to what a comparison needs: every token count
 // is a whole number at or above zero.
 func assertReport(t *testing.T, report Report) {
@@ -125,9 +119,6 @@ func assertReport(t *testing.T, report Report) {
 			t.Fatalf("a record no credential owns was kept: %+v", usage)
 		}
 		for class, tokens := range usage.Tokens {
-			if tokens.Sign() < 0 && report.Source == SourceAnthropic {
-				t.Skip(negativeAnthropicCount)
-			}
 			if tokens.Sign() < 0 || tokens.Scale() != 0 {
 				t.Fatalf("%s on %s: %s %s tokens, from the report as read", usage.Credential, usage.Day, tokens, class)
 			}

@@ -486,7 +486,6 @@ func TestSettingsRefuseWhatTheSchemaRefuses(t *testing.T) {
 		"policy:\n  enforce: \"yes\"\n",
 		"policy:\n  run_budget: \"5\"\n",
 		"policy: 5\n",
-		"policy:\n",
 		"policy: [\n",
 	} {
 		verdict := evaluate(t, Request{Usage: usageOf(t, line{"USD", "9", "", nil}), Config: config(body)})

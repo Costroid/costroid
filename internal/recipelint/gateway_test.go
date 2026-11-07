@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 const gatewayRecipe = "github-claude-code-litellm.yml"
@@ -69,18 +71,63 @@ func TestOnlyTheGatewayJobsNameTheAdminKeysEnvironment(t *testing.T) {
 	}
 }
 
-// TestOnlyTheMintJobInItsEnvironmentMayAttest holds id-token: write to the job
-// that mints keys, and to that job only while it names an environment.
-func TestOnlyTheMintJobInItsEnvironmentMayAttest(t *testing.T) {
-	source := read(t, filepath.Join(recipesDir, gatewayRecipe))
-	expectRule(t, source, edit{"the mint job outside its environment", "    environment: costroid-gateway\n    permissions:\n      # Downloads", "    permissions:\n      # Downloads", RuleIDTokenScope})
-	expectRule(t, source, edit{"the close job", "    environment: costroid-gateway\n    permissions: {}\n", "    environment: costroid-gateway\n    permissions:\n      id-token: write\n", RuleIDTokenScope})
-}
-
 const (
 	mintEnvironment  = "    environment: costroid-gateway\n    permissions:\n      # Downloads"
-	closeEnvironment = "    environment: costroid-gateway\n    permissions: {}\n"
+	closeEnvironment = "    environment: costroid-gateway\n    permissions:\n      # Attests"
+	closeCommand     = "        run: costroid gateway close\n"
 )
+
+// TestOnlyTheMintJobInItsEnvironmentMayAttest holds id-token: write on the job
+// that mints keys to that job while it names an environment.
+func TestOnlyTheMintJobInItsEnvironmentMayAttest(t *testing.T) {
+	source := read(t, filepath.Join(recipesDir, gatewayRecipe))
+	expectRule(t, source, edit{"the mint job outside its environment", mintEnvironment, "    permissions:\n      # Downloads", RuleIDTokenScope})
+	expectRule(t, source, edit{"the mint job in an empty environment", mintEnvironment, "    environment: \"\"\n    permissions:\n      # Downloads", RuleIDTokenScope})
+}
+
+// TestCloseJobMayAttest holds id-token: write on the job that closes keys to
+// that job while it names an environment, and holds the shipped close job to
+// the token and the two ingest variables the mint job has.
+func TestCloseJobMayAttest(t *testing.T) {
+	source := read(t, filepath.Join(recipesDir, gatewayRecipe))
+	for _, change := range []edit{
+		{"the close job outside its environment", closeEnvironment, "    permissions:\n      # Attests", RuleIDTokenScope},
+		{"the close job in an empty environment", closeEnvironment, "    environment: \"\"\n    permissions:\n      # Attests", RuleIDTokenScope},
+		{"the close job running something else", closeCommand, "        run: costroid gateway public-key\n", RuleIDTokenScope},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			expectRule(t, source, change)
+		})
+	}
+	if findings := LintBytes(gatewayRecipe, []byte(source)).Findings; len(findings) != 0 {
+		t.Errorf("the shipped close job is refused: %v", findings)
+	}
+	documents, err := parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := field(documents[0], "jobs")
+	mint, closing := field(jobs, "gateway-mint"), field(jobs, "gateway-close")
+	if grants(field(closing, "permissions"))["id-token"] != "write" {
+		t.Error("the close job cannot attest: it holds no id-token: write")
+	}
+	for _, variable := range []string{"COSTROID_INGEST_URL", "COSTROID_INGEST_AUDIENCE"} {
+		minted, closed := stepVariable(mint, variable), stepVariable(closing, variable)
+		if minted == "" || closed != minted {
+			t.Errorf("%s: the mint job sets %q, the close job %q", variable, minted, closed)
+		}
+	}
+}
+
+// stepVariable is the value one of a job's steps gives a variable.
+func stepVariable(job *yaml.Node, name string) string {
+	for _, step := range sequence(field(job, "steps")) {
+		if value := scalarField(field(step, "env"), name); value != "" {
+			return value
+		}
+	}
+	return ""
+}
 
 // TestGatewayKeysNeedAnEnvironment seeds the shipped gateway recipe with each
 // way a job could hold the admin key or the sealing key outside an
@@ -89,8 +136,8 @@ func TestGatewayKeysNeedAnEnvironment(t *testing.T) {
 	source := read(t, filepath.Join(recipesDir, gatewayRecipe))
 	for _, change := range []edit{
 		{"the mint job without its environment", mintEnvironment, "    permissions:\n      # Downloads", RuleGatewayEnvironment},
-		{"the close job without its environment", closeEnvironment, "    permissions: {}\n", RuleGatewayEnvironment},
-		{"the close job with an empty environment", closeEnvironment, "    environment: \"\"\n    permissions: {}\n", RuleGatewayEnvironment},
+		{"the close job without its environment", closeEnvironment, "    permissions:\n      # Attests", RuleGatewayEnvironment},
+		{"the close job with an empty environment", closeEnvironment, "    environment: \"\"\n    permissions:\n      # Attests", RuleGatewayEnvironment},
 		{"the sealing key in the workflow's env", "permissions: {}\n\nconcurrency", "permissions: {}\n\nenv:\n  COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.SEAL }}\n\nconcurrency", RuleGatewayEnvironment},
 		{"the sealing key on a job of its own", "  ingest:\n", "  seal:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    env:\n      COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.SEAL }}\n    steps:\n      - run: costroid gateway public-key\n\n  ingest:\n", RuleGatewayEnvironment},
 	} {
@@ -98,13 +145,13 @@ func TestGatewayKeysNeedAnEnvironment(t *testing.T) {
 			expectRule(t, source, change)
 		})
 	}
-	named := strings.Replace(source, closeEnvironment, "    environment:\n      name: costroid-gateway\n    permissions: {}\n", 1)
+	named := strings.Replace(source, closeEnvironment, "    environment:\n      name: costroid-gateway\n    permissions:\n      # Attests", 1)
 	if findings := LintBytes(gatewayRecipe, []byte(named)).Findings; len(findings) != 0 {
 		t.Errorf("an environment named in a mapping: %v", findings)
 	}
 	twice := strings.Replace(source, "  agent:\n", "  agent: &agent\n", 1)
 	twice = strings.Replace(twice, "  gateway-mint:\n", "  agent-again: *agent\n\n  gateway-mint:\n", 1)
-	twice = strings.Replace(twice, closeEnvironment, "    permissions: {}\n", 1)
+	twice = strings.Replace(twice, closeEnvironment, "    permissions:\n      # Attests", 1)
 	count := 0
 	for _, finding := range LintBytes(gatewayRecipe, []byte(twice)).Findings {
 		if finding.Rule == RuleGatewayEnvironment {

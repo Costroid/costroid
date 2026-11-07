@@ -36,6 +36,10 @@ const (
 	installationVariable = "COSTROID_INSTALLATION_ID"
 	gitLabTokenVariable  = "COSTROID_GITLAB_TOKEN"
 	agentResultVariable  = "COSTROID_AGENT_RESULT"
+	// refusedVariable and refusedCountVariable carry what the action's
+	// install found in a costroid-rows artifact it refused.
+	refusedVariable      = "COSTROID_ARTIFACT_REFUSED"
+	refusedCountVariable = "COSTROID_ARTIFACT_REFUSED_COUNT"
 	// reportTimeout bounds every request of one report together, so a stalled
 	// host costs the job half a minute at most.
 	reportTimeout = 30 * time.Second
@@ -398,8 +402,12 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 }
 
 // rowsInput is what the rows file, the run's result object beside it and the
-// flags give a report, before any host is read.
+// flags give a report, before any host is read. When the action refused the
+// artifact that carried them, neither file is read.
 func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
+	if refused := refusedArtifact(os.Getenv, stderr); refused != nil {
+		return comment.Input{State: comment.Unreadable, Reason: comment.NoRowsFile, Refused: refused, Budget: flags.budget}
+	}
 	rows, err := readReportRows(flags.rows)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
@@ -418,6 +426,28 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 		RowsFileSHA256: rows.fileSHA256,
 	}
 	return withAgentResult(input, flags.agentResult, stderr)
+}
+
+// refusedArtifact reads what the action's install found in a costroid-rows
+// artifact it refused: how many entries the artifact held besides the rows
+// and the run object, and the first names, separated by a comma and a space.
+// nil when the install refused nothing. A count that is not a whole number
+// from 1 is still a refusal, of at least the entries named.
+func refusedArtifact(getenv func(string) string, stderr io.Writer) *comment.RefusedArtifact {
+	names, stated := getenv(refusedVariable), getenv(refusedCountVariable)
+	if names == "" && stated == "" {
+		return nil
+	}
+	var entries []string
+	if names != "" {
+		entries = strings.Split(names, ", ")
+	}
+	count, err := strconv.Atoi(stated)
+	if least := max(len(entries), 1); err != nil || count < least {
+		fmt.Fprintf(stderr, "costroid: warning: %s is %q, which is fewer than the entries the artifact was refused for, so the report counts %d\n", refusedCountVariable, stated, least)
+		count = least
+	}
+	return &comment.RefusedArtifact{Count: count, Entries: entries}
 }
 
 // previewReport prints, as Markdown, the comment a report posts for the rows,
@@ -611,8 +641,10 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	lifetime, earlier := readLifetime(ctx, host, pull, input, stderr)
 	input.Lifetime = lifetime
-	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, earlier, measuredReports(lifetime), stderr)
-	input.Approval = reportApproval(ctx, host, pull, input.Verdict, stderr)
+	if input.Refused == nil {
+		input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, earlier, measuredReports(lifetime), stderr)
+		input.Approval = reportApproval(ctx, host, pull, input.Verdict, stderr)
+	}
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if input.CheckRunID != nil {
 		input.IDInCheck = nameCheck(ctx, host, input, stderr)

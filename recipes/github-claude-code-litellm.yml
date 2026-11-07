@@ -146,7 +146,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: costroid-gateway
-    permissions: {}
+    permissions:
+      # Attests what the gateway counted on the key to the ledger, when one is
+      # named. The token names this environment.
+      id-token: write
     steps:
       - name: Install costroid
         uses: Costroid/costroid/action@b5262619826d2db51bb08dbb920b8a30914382aa # v1.0.0-alpha.10
@@ -156,6 +159,8 @@ jobs:
         env:
           COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
           COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
+          COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
+          COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
         run: costroid gateway close
 
   ingest:

@@ -73,7 +73,10 @@ func readSample[T any](t *testing.T, file string) T {
 
 func TestAnthropicPublishedUsageSampleMapsToCanonicalClasses(t *testing.T) {
 	sample := readSample[page[anthropicUsageRow]](t, "anthropic/published-usage.json")
-	usage := sample.Data[0].usage(anthropicKeyGrain)
+	usage, err := sample.Data[0].usage(anthropicKeyGrain)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := map[focus.TokenClass]string{
 		focus.InputUncached: "1284500",
 		focus.CacheRead:     "3200000",

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -200,5 +201,96 @@ func TestEveryPolicyExampleInTheDocsIsValid(t *testing.T) {
 	}
 	if examples < 3 {
 		t.Fatalf("found %d examples", examples)
+	}
+}
+
+// TestValidateRefusesFloatDays holds validate to the approval rule's reading
+// of a YAML float: 7.0 is whole in JSON, so the schema alone takes it, and the
+// approval rule refuses it. Validate names it in the approval rule's sentence.
+func TestValidateRefusesFloatDays(t *testing.T) {
+	for _, value := range []string{"7.0", "7.", "1e1", "7.5", "90.0"} {
+		body := "approval:\n  expires_days: " + value + "\n"
+		problems, err := Validate([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, refused := policy.ParseApproval([]byte(body))
+		if refused == nil {
+			t.Fatalf("%q: the approval rule reads it", body)
+		}
+		want := Problem{Path: "/approval/expires_days", Message: strings.TrimPrefix(refused.Error(), "policy: ")}
+		if len(problems) != 1 || problems[0] != want {
+			t.Errorf("%q: %v, want %v", body, problems, want)
+		}
+	}
+	for _, body := range []string{"approval:\n  expires_days: 7\n", "approval:\n  expires_days: 90\n"} {
+		if problems, err := Validate([]byte(body)); err != nil || len(problems) != 0 {
+			t.Errorf("%q: %v, %v", body, problems, err)
+		}
+	}
+}
+
+// readers are the four that read costroid.yml, each saying whether it read
+// a file as its defaults.
+var readers = map[string]func(data []byte) (bool, error){
+	"validate": func(data []byte) (bool, error) {
+		problems, err := Validate(data)
+		if err != nil {
+			return false, err
+		}
+		if len(problems) != 0 {
+			return false, fmt.Errorf("%v", problems)
+		}
+		return true, nil
+	},
+	"comment": func(data []byte) (bool, error) {
+		config, err := comment.ParseConfig(data)
+		return config == comment.Config{ShowCost: true}, err
+	},
+	"policy": func(data []byte) (bool, error) {
+		settings, err := policy.ParseSettings(data)
+		return len(settings.Amounts) == 0 && len(settings.Models) == 0 && !settings.Enforce, err
+	},
+	"approval": func(data []byte) (bool, error) {
+		settings, err := policy.ParseApproval(data)
+		return settings == policy.ApprovalSettings{ExpiresDays: policy.DefaultApprovalDays}, err
+	},
+}
+
+// assertDefaults holds every reader to reading body as its defaults.
+func assertDefaults(t *testing.T, body string) {
+	t.Helper()
+	for name, read := range readers {
+		defaults, err := read([]byte(body))
+		if err != nil || !defaults {
+			t.Errorf("%s reads %q as defaults %t: %v", name, body, defaults, err)
+		}
+	}
+}
+
+func TestEmptyDocumentReadsAsDefaults(t *testing.T) {
+	for _, body := range []string{"", "\n", "# nothing\n", "~", "~\n", "null\n", "Null\n", "NULL\n", "---", "---\n", "--- ~\n", "--- null\n", "---\n...\n", "---\n# nothing\n"} {
+		assertDefaults(t, body)
+	}
+}
+
+func TestNullSectionReadsAsDefaults(t *testing.T) {
+	for _, section := range []string{"comment", "policy", "approval"} {
+		for _, value := range []string{"", " ~", " null", " Null", " NULL", " !!null"} {
+			assertDefaults(t, section+":"+value+"\n")
+		}
+		for _, value := range []string{` ""`, " []", " 0", " false"} {
+			body := section + ":" + value + "\n"
+			for _, name := range []string{"validate", section} {
+				if _, err := readers[name]([]byte(body)); err == nil {
+					t.Errorf("%s reads %q, a section that has a value and is no mapping", name, body)
+				}
+			}
+		}
+	}
+	assertDefaults(t, "comment:\npolicy:\napproval:\n")
+	assertDefaults(t, "policy: &none\napproval: *none\ncomment: *none\n")
+	if problems, err := Validate([]byte("agents:\n")); err != nil || len(problems) == 0 {
+		t.Errorf("validate reads agents with no value, a key that is a list and no section: %v, %v", problems, err)
 	}
 }

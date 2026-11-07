@@ -111,47 +111,107 @@ func pinnedInstall(r *release, stage string) (int, string) {
 }
 
 // The artifact the agent's job uploads could hold a binary or an event file
-// of its own. In the report and ingest stages it is refused before costroid is
-// installed, so no step after it runs.
+// of its own. In the ingest stage it is refused before costroid is installed,
+// so no step after it runs. In the report stage it is deleted unread, the
+// release's binary is installed, and the step's outputs tell the report.
 func TestInstallRefusesAnArtifactThatHoldsMoreThanTheRows(t *testing.T) {
-	for _, stage := range []string{"report", "ingest"} {
-		for name, files := range map[string]map[string]string{
-			"a binary and an event file": {
-				"costroid-rows.jsonl":         "{}\n",
-				"costroid-bin/costroid":       "#!/bin/sh\necho pwned\n",
-				"_github_workflow/event.json": "{}\n",
-			},
-			"a tool":                 {"costroid-bin/curl": "#!/bin/sh\necho pwned\n"},
-			"a third file":           {"costroid-rows.jsonl": "{}\n", "notes.txt": "x"},
-			"a hidden file":          {".costroid-rows.jsonl": "{}\n"},
-			"the rows as a folder":   {"costroid-rows.jsonl/x": "{}\n"},
-			"a name with a new line": {"x\n::error::y": ""},
-		} {
-			t.Run(stage+"/"+name, func(t *testing.T) {
-				r := newRelease(t)
-				rowsIn(t, r.root, files)
-				code, output := pinnedInstall(r, stage)
-				if code != 1 || !strings.Contains(output, "costroid: the costroid-rows artifact holds ") {
-					t.Fatalf("exit %d: %s", code, output)
-				}
-				if r.installed() || r.fetched() != "" {
-					t.Fatal("it installed after refusing the artifact")
-				}
-				if strings.Contains(output, "\n::") || strings.Count(output, "\n") != 1 {
-					t.Fatalf("an entry's name broke the line:\n%s", output)
-				}
-			})
-		}
+	for name, files := range map[string]map[string]string{
+		"a binary and an event file": {
+			"costroid-rows.jsonl":         "{}\n",
+			"costroid-bin/costroid":       "#!/bin/sh\necho pwned\n",
+			"_github_workflow/event.json": "{}\n",
+		},
+		"a tool":                 {"costroid-bin/curl": "#!/bin/sh\necho pwned\n"},
+		"a third file":           {"costroid-rows.jsonl": "{}\n", "notes.txt": "x"},
+		"a hidden file":          {".costroid-rows.jsonl": "{}\n"},
+		"the rows as a folder":   {"costroid-rows.jsonl/x": "{}\n"},
+		"a name with a new line": {"x\n::error::y": ""},
+	} {
+		t.Run("ingest/"+name, func(t *testing.T) {
+			r := newRelease(t)
+			rowsIn(t, r.root, files)
+			code, output := pinnedInstall(r, "ingest")
+			if code != 1 || !strings.Contains(output, "costroid: the costroid-rows artifact holds ") {
+				t.Fatalf("exit %d: %s", code, output)
+			}
+			if r.installed() || r.fetched() != "" {
+				t.Fatal("it installed after refusing the artifact")
+			}
+			if strings.Contains(output, "\n::") || strings.Count(output, "\n") != 1 {
+				t.Fatalf("an entry's name broke the line:\n%s", output)
+			}
+		})
+		t.Run("report/"+name, func(t *testing.T) {
+			r := newRelease(t)
+			dir := rowsIn(t, r.root, files)
+			code, output, outputs := reportInstall(r)
+			if code != 0 || !strings.Contains(output, "costroid: the costroid-rows artifact holds ") {
+				t.Fatalf("exit %d: %s", code, output)
+			}
+			if got := read(t, filepath.Join(r.root, "costroid-bin", "costroid")); got != releaseBinary {
+				t.Fatalf("installed %q, not the release's binary", got)
+			}
+			if left, err := os.ReadDir(dir); err != nil || len(left) != 0 {
+				t.Fatalf("the refused artifact is still there: %v, %v", left, err)
+			}
+			if strings.Contains(output, "\n::") || strings.Count(output, "\n") != 1 {
+				t.Fatalf("an entry's name broke the line:\n%s", output)
+			}
+			lines := strings.Split(strings.TrimSuffix(outputs, "\n"), "\n")
+			if len(lines) != 2 || !strings.HasPrefix(lines[0], "refused=") || !regexp.MustCompile(`^refused_count=[1-9][0-9]*$`).MatchString(lines[1]) {
+				t.Fatalf("the step outputs read:\n%s", outputs)
+			}
+			if names := strings.TrimPrefix(lines[0], "refused="); names == "" || strings.ContainsAny(names, "\r:`") {
+				t.Fatalf("the names output reads %q", names)
+			}
+		})
 	}
 }
 
-func TestInstallRefusesARowsFileThatIsALink(t *testing.T) {
-	r := newRelease(t)
-	dir := rowsIn(t, r.root, map[string]string{"costroid-rows.run.json": "{}"})
-	if err := os.Symlink("/etc/passwd", filepath.Join(dir, "costroid-rows.jsonl")); err != nil {
-		t.Fatal(err)
+// reportInstall runs the install in stage report with a step output file, and
+// returns that file's content.
+func reportInstall(r *release) (int, string, string) {
+	r.t.Helper()
+	path := filepath.Join(r.root, "github-output")
+	code, output := r.install("COSTROID_STAGE=report", "COSTROID_VERSION="+testVersion, "COSTROID_SHA256="+sumOf(releaseBinary), "GITHUB_OUTPUT="+path)
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		r.t.Fatal(err)
 	}
-	if code, output := pinnedInstall(r, "report"); code != 1 || r.installed() {
+	return code, output, string(data)
+}
+
+func TestInstallRefusesARowsFileThatIsALink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "secret")
+	write(t, target, "kept")
+	for _, stage := range []string{"report", "ingest"} {
+		t.Run(stage, func(t *testing.T) {
+			r := newRelease(t)
+			dir := rowsIn(t, r.root, map[string]string{"costroid-rows.run.json": "{}"})
+			if err := os.Symlink(target, filepath.Join(dir, "costroid-rows.jsonl")); err != nil {
+				t.Fatal(err)
+			}
+			if stage == "ingest" {
+				if code, output := pinnedInstall(r, stage); code != 1 || r.installed() {
+					t.Fatalf("exit %d: %s", code, output)
+				}
+				return
+			}
+			code, output, outputs := reportInstall(r)
+			if code != 0 || !strings.Contains(outputs, "refused=costroid-rows.jsonl\nrefused_count=1\n") {
+				t.Fatalf("exit %d, outputs %q: %s", code, outputs, output)
+			}
+			if read(t, target) != "kept" {
+				t.Fatal("the link's target changed")
+			}
+		})
+	}
+}
+
+func TestAReportInstallWithNoOutputFileFails(t *testing.T) {
+	r := newRelease(t)
+	rowsIn(t, r.root, map[string]string{"notes.txt": "x"})
+	if code, output := pinnedInstall(r, "report"); code != 1 || r.installed() || !strings.Contains(output, "GITHUB_OUTPUT is not set") {
 		t.Fatalf("exit %d: %s", code, output)
 	}
 }
@@ -229,6 +289,11 @@ func TestReportAndIngestReadTheRowsFromTheirOwnDirectory(t *testing.T) {
 	}
 	if got := scalarField(field(install.node, "env"), "COSTROID_STAGE"); got != "${{ inputs.stage }}" {
 		t.Errorf("install reads the stage from %q", got)
+	}
+	for variable, output := range map[string]string{"COSTROID_ARTIFACT_REFUSED": "refused", "COSTROID_ARTIFACT_REFUSED_COUNT": "refused_count"} {
+		if got := scalarField(field(report.node, "env"), variable); got != "${{ steps.install.outputs."+output+" }}" {
+			t.Errorf("the report reads %s from %q", variable, got)
+		}
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -56,35 +55,13 @@ func assertFindings(t *testing.T, path string, data []byte, report Report) {
 	}
 }
 
-// unknownAgentPanic is a defect this target found: LintBytes, and so
-// costroid lint-recipes, panics on a step of Costroid's action whose agent
-// input names an agent it has no install pattern for, such as agent: aider.
-// Its input is the seed testdata/fuzz/FuzzLintBytes/unknown-agent. The skip
-// goes when the lint names the agent instead.
-const unknownAgentPanic = "defect: LintBytes panics on an action step whose agent input names an unknown agent"
-
-// lintBytes is LintBytes, with the panic unknownAgentPanic names turned into
-// a skip. Any other panic still fails the target.
-func lintBytes(t *testing.T, path string, data []byte) (report Report) {
-	t.Helper()
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			if strings.Contains(string(debug.Stack()), "recipelint.(*linter).checkAgent") {
-				t.Skip(unknownAgentPanic)
-			}
-			panic(recovered)
-		}
-	}()
-	return LintBytes(path, data)
-}
-
 // FuzzLintBytes lints a recipe or an action. Every finding names a line of
 // the file, and the same bytes always give the same report.
 func FuzzLintBytes(f *testing.F) {
 	seedWorkflows(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		const path = "recipes/fuzz.yml"
-		report := lintBytes(t, path, data)
+		report := LintBytes(path, data)
 		assertFindings(t, path, data, report)
 		if again := LintBytes(path, data); !reflect.DeepEqual(again, report) {
 			t.Fatalf("two lints of the same bytes differ: %+v and %+v", report, again)

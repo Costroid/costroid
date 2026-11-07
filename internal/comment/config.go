@@ -51,15 +51,15 @@ var printableKey = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 // report job's log is where a reader of costroid.yml looks.
 var configWarnings io.Writer = os.Stderr
 
-// ParseConfig reads costroid.yml. An empty document or an absent key leaves
-// the default. A key the comment does not read is named on stderr and never
-// fails the read.
+// ParseConfig reads costroid.yml. A file that is empty, ~, null or only ---,
+// a section with no value, or an absent key leaves the default. A key the
+// comment does not read is named on stderr and never fails the read.
 func ParseConfig(data []byte) (Config, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return Config{}, fmt.Errorf("comment: parse costroid.yml: %w", err)
 	}
-	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 && root.Content[0].Kind != yaml.MappingNode {
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 && root.Content[0].Kind != yaml.MappingNode && root.Content[0].Tag != "!!null" {
 		return Config{}, errors.New("comment: costroid.yml is not a mapping")
 	}
 	for _, warning := range unreadKeys(&root) {
@@ -101,7 +101,8 @@ func readShowCost(root *yaml.Node) (bool, error) {
 }
 
 // child is the value of a mapping's key, nil when the node is not a mapping
-// or lacks the key. A document is read as the mapping it holds.
+// or lacks the key. A document is read as the mapping it holds, and an alias
+// as the node it names, as validate reads it.
 func child(node *yaml.Node, key string) *yaml.Node {
 	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
 		node = node.Content[0]
@@ -110,9 +111,13 @@ func child(node *yaml.Node, key string) *yaml.Node {
 		return nil
 	}
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
+		if node.Content[i].Value != key {
+			continue
 		}
+		if value := node.Content[i+1]; value.Kind != yaml.AliasNode {
+			return value
+		}
+		return node.Content[i+1].Alias
 	}
 	return nil
 }

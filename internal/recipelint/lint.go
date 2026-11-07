@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -29,6 +31,7 @@ const (
 	RuleAgentPermissions   = "agent-permissions"
 	RuleAgentGuard         = "agent-guard"
 	RuleAgentVersion       = "agent-version"
+	RuleUnknownAgent       = "unknown-agent"
 	RuleAgentContentFlags  = "agent-content-flags"
 	RuleAgentPromptInput   = "agent-prompt-input"
 	RuleAgentNoteToken     = "agent-note-token"
@@ -249,9 +252,15 @@ type agentRun struct {
 	minimum string
 }
 
-// checkAgent applies the rules both CI systems share.
+// checkAgent applies the rules both CI systems share. An agent the lint has no
+// rules for is the one finding, because none of the rules can be judged.
 func (l *linter) checkAgent(run agentRun, forbidden *regexp.Regexp) {
-	if install := agentInstall[run.agent]; !install.MatchString(run.text) {
+	install, known := agentInstall[run.agent]
+	if !known {
+		l.add(run.node, RuleUnknownAgent, "the agent %q is not one Costroid runs: it runs %s", run.agent, strings.Join(slices.Sorted(maps.Keys(agentInstall)), " or "))
+		return
+	}
+	if !install.MatchString(run.text) {
 		l.add(run.node, RuleAgentVersion, "%s is not installed at an exact version", run.agent)
 	}
 	if !strings.Contains(run.text, run.minimum) {

@@ -35,6 +35,10 @@ policy:
 
 `comment.show_cost` is `true` or `false`. A YAML 1.1 word such as `yes` or `no` is read as it meant, and the report's log names it so it can be rewritten. Any other value cannot be read: a repository not known to be private then withholds amounts, and the comment says the setting could not be read.
 
+A file that is empty, `~`, `null` or only `---` reads as no file. A section written with no value, such as `approval:` alone or `policy: ~`, reads as that section's defaults. `validate`, the report, `costroid policy` and `costroid approve` read both the same way.
+
+`approval.expires_days` is a whole number of days from 1 to 90. An unquoted `7.0` is a YAML float, so it is a problem, as it is for an amount.
+
 The schema also names `policy_pack`, `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them. `costroid report` prints a warning in the job log for each reserved key it finds, and for each key it does not know, and still posts.
 
 ## Check a file

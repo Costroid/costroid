@@ -109,3 +109,26 @@ func TestEachRecipeSaysEachPushRunsTheAgentAgain(t *testing.T) {
 		t.Error("docs/recipes.md does not say, for each CI system, that each push runs the agent again")
 	}
 }
+
+func TestUnknownAgentIsAFinding(t *testing.T) {
+	for name, named := range map[string]string{"aider": `"aider"`, `"line\nbreak"`: `"line\nbreak"`, "Claude": `"Claude"`} {
+		source := strings.Replace(goodWorkflow, "agent: claude", "agent: "+name, 1)
+		findings := LintBytes("x.yml", []byte(source)).Findings
+		if len(findings) != 1 || findings[0].Rule != RuleUnknownAgent {
+			t.Fatalf("%s: want one %s, got %v", name, RuleUnknownAgent, findings)
+		}
+		message := findings[0].String()
+		for _, want := range []string{named, "claude or codex"} {
+			if !strings.Contains(message, want) {
+				t.Errorf("%q does not name %s", message, want)
+			}
+		}
+		if strings.ContainsAny(message, "\r\n") {
+			t.Errorf("the finding spans lines: %q", message)
+		}
+	}
+	seed := "on: push\njobs:\n  agent:\n    steps:\n      - uses: Costroid/costroid/action@v1\n        with:\n          agent: aider\n"
+	if !slices.Contains(rules(LintBytes("x.yml", []byte(seed)).Findings), RuleUnknownAgent) {
+		t.Error("the fuzz seed's agent is not named")
+	}
+}
