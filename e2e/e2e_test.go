@@ -210,7 +210,7 @@ func newWorkspace(t *testing.T) *workspace {
 	w.copy(filepath.Join(fixtures, "session.jsonl"), filepath.Join(project, session+".jsonl"))
 	w.copy(filepath.Join(fixtures, "subagents", "agent-1.jsonl"), filepath.Join(project, session, "subagents", "agent-1.jsonl"))
 	event := filepath.Join(directory, "event.json")
-	w.write(event, fmt.Sprintf(`{"pull_request":{"number":%s,"head":{"sha":%q},"base":{"sha":%q}}}`, pull, head, base), 0o644)
+	w.write(event, fmt.Sprintf(`{"pull_request":{"number":%s,"head":{"sha":%q},"base":{"sha":%q,"ref":"main"}}}`, pull, head, base), 0o644)
 	w.env = append(os.Environ(),
 		"CLAUDE_CONFIG_DIR="+config, "GITHUB_ACTIONS=true", "GITHUB_SERVER_URL=https://github.com",
 		"GITHUB_REPOSITORY=acme/widgets", "GITHUB_RUN_ID="+runID, "GITHUB_JOB=agent", "GITHUB_SHA="+merge,
@@ -380,6 +380,7 @@ func readView(t *testing.T, services *stack, key string) {
 func postReport(t *testing.T, job *workspace) {
 	t.Helper()
 	github := scmtest.New(t)
+	github.Branches["main"] = base
 	env := append(job.env, "GITHUB_TOKEN="+github.Token, "GITHUB_API_URL="+github.Server.URL)
 	code, _, stderr := job.costroid(env, "report", "--rows", job.rows, "--budget-usd", "5")
 	if code != 0 {

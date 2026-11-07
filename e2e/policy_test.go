@@ -47,6 +47,7 @@ func TestAPolicyHoldsTheRecordedRunToItsBudget(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			github := scmtest.New(t)
+			github.Branches["main"] = base
 			github.Files["costroid.yml"] = "policy:\n  run_budget_usd: \"" + tc.budget + "\"\n"
 			github.Commits[workflowPath] = []time.Time{time.Now().Add(-tc.added)}
 			env := append(job.env, "GITHUB_TOKEN="+github.Token, "GITHUB_API_URL="+github.Server.URL,
