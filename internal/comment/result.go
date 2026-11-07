@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Costroid/costroid/internal/policy"
@@ -230,9 +231,42 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 	return ApprovedConclusion(b.verdict(), approval, b.HeadSHA)
 }
 
+// schemaV05 is the version before the one this release writes. A pull
+// request whose newest check a release that wrote it posted can still be
+// approved, so ParseResult reads it. It holds every field of the current
+// version but rows_sha256, rows_file_sha256 and lifetime.
+const schemaV05 = "costroid.result/0.5"
+
+// readSchemas are the versions ParseResult reads.
+var readSchemas = []string{schemaV05, schema}
+
+// blockV05 is a Block as costroid.result/0.5 holds it. Its fields hide the
+// Block's fields of the same names, which 0.5 does not hold, and stay nil, so
+// the object leaves them out.
+type blockV05 struct {
+	Block
+	RowsSHA256     *struct{} `json:"rows_sha256,omitempty"`
+	RowsFileSHA256 *struct{} `json:"rows_file_sha256,omitempty"`
+	Lifetime       *struct{} `json:"lifetime,omitempty"`
+}
+
+// encode writes the object as its own version lays it out.
+func (b Block) encode() (string, error) {
+	var object any = b
+	if b.Schema == schemaV05 {
+		object = blockV05{Block: b}
+	}
+	encoded, err := json.MarshalIndent(object, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("comment: encode block: %w", err)
+	}
+	return string(encoded), nil
+}
+
 // ParseResult reads the fenced result object a check run's text carries. It
-// takes only an object this release writes, and only one it would write byte
-// for byte, so a check that repeats it changes nothing it does not mean to.
+// takes an object of a version in readSchemas, and only one a release that
+// writes that version would write byte for byte, so a check that repeats it
+// changes nothing it does not mean to.
 func ParseResult(text string) (Block, error) {
 	object, fencedOpen := strings.CutPrefix(text, "```json\n")
 	object, fencedClose := strings.CutSuffix(object, "\n```")
@@ -248,14 +282,16 @@ func ParseResult(text string) (Block, error) {
 	if err := decoder.Decode(&block); err != nil {
 		return Block{}, fmt.Errorf("comment: read the result object: %w", err)
 	}
+	if !slices.Contains(readSchemas, block.Schema) {
+		return Block{}, fmt.Errorf("comment: the result object's schema is %q, and this release reads %s", string(Clean(block.Schema)), strings.Join(readSchemas, " and "))
+	}
+	if again, err := block.encode(); err == nil && again == object {
+		return block, nil
+	}
 	if block.Schema != schema {
-		return Block{}, fmt.Errorf("comment: the result object's schema is %q, and this release writes %s", string(Clean(block.Schema)), schema)
+		return Block{}, fmt.Errorf("comment: the result object is not one %s holds, and this release writes %s", block.Schema, schema)
 	}
-	again, err := json.MarshalIndent(block, "", "  ")
-	if err != nil || string(again) != object {
-		return Block{}, errors.New("comment: the result object is not one this release writes")
-	}
-	return block, nil
+	return Block{}, errors.New("comment: the result object is not one this release writes")
 }
 
 // Reconclude renders a check that repeats an earlier check run's result
@@ -266,14 +302,14 @@ func Reconclude(block Block, approval *Approval, previous int64) (CheckOutput, e
 	verdict := block.verdict()
 	conclusion := block.ApprovedConclusion(approval)
 	block.Conclusion = &conclusion
-	encoded, err := json.MarshalIndent(block, "", "  ")
+	encoded, err := block.encode()
 	if err != nil {
-		return CheckOutput{}, fmt.Errorf("comment: encode block: %w", err)
+		return CheckOutput{}, err
 	}
 	line := fmt.Sprintf("No approval binds commit `%s`, so the check concludes as the policy does.", block.HeadSHA[:min(len(block.HeadSHA), shortCommitLength)])
 	if conclusion != verdict {
 		line = approvalLine(*approval)
 	}
 	summary := fmt.Sprintf("**Verdict: %s.** %s\n\nCheck run %d carries this report in full.\n", conclusion, line, previous)
-	return CheckOutput{Title: "Verdict: " + conclusion, Summary: summary, Text: fenced(string(encoded))}, nil
+	return CheckOutput{Title: "Verdict: " + conclusion, Summary: summary, Text: fenced(encoded)}, nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
 
@@ -214,6 +216,95 @@ func TestFollowUpNamesItsCheck(t *testing.T) {
 			}
 			if !strings.HasSuffix(check.Summary, "\n\n"+want) {
 				t.Errorf("the named check's summary lost the fork's sentences:\n%s", check.Summary)
+			}
+		})
+	}
+}
+
+// recordedResultV05 is the costroid check run a release that wrote
+// costroid.result/0.5 posted on a real pull request, as GitHub listed it.
+const recordedResultV05 = "../../internal/history/testdata/check-runs/check-runs.json"
+
+// readRecordedV05 returns the recorded check run's text, the object exactly
+// as that release wrote it.
+func readRecordedV05(t *testing.T) string {
+	t.Helper()
+	var listed struct {
+		CheckRuns []struct {
+			Output struct {
+				Text string `json:"text"`
+			} `json:"output"`
+		} `json:"check_runs"`
+	}
+	data, err := os.ReadFile(recordedResultV05)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &listed); err != nil || len(listed.CheckRuns) != 1 {
+		t.Fatalf("%s: %v, %d check runs", recordedResultV05, err, len(listed.CheckRuns))
+	}
+	return listed.CheckRuns[0].Output.Text
+}
+
+// replaceOnce replaces old, which must occur exactly once in text.
+func replaceOnce(t *testing.T, text, old, replacement string) string {
+	t.Helper()
+	if count := strings.Count(text, old); count != 1 {
+		t.Fatalf("%q occurs %d times", old, count)
+	}
+	return strings.Replace(text, old, replacement, 1)
+}
+
+// TestApproveReconcludesAnOlderResultVersion approves a pull request whose
+// newest check a release that wrote costroid.result/0.5 posted. The recorded
+// object is read byte for byte as that release wrote it. Set on the head and
+// failed over an enforced budget, it is posted again as a 0.5 object, with
+// only its conclusion and its check run's id changed.
+func TestApproveReconcludesAnOlderResultVersion(t *testing.T) {
+	recorded := readRecordedV05(t)
+	block, err := comment.ParseResult(recorded)
+	if err != nil || block.Schema != "costroid.result/0.5" {
+		t.Fatalf("the recorded object reads %q: %v", block.Schema, err)
+	}
+
+	failed := replaceOnce(t, recorded, `"head_sha": "0000000000000000000000000000000000000001"`, `"head_sha": "`+headCommit+`"`)
+	// The stub numbers the check runs it posts from 1001, and GitHub numbers
+	// them in the order they are created, so the earlier check is 999.
+	failed = replaceOnce(t, failed, "\"check_run_id\": 90000001,\n  \"conclusion\": \"neutral\"", "\"check_run_id\": 999,\n  \"conclusion\": \"failure\"")
+	failed = replaceOnce(t, failed, "\"policy\": {\n    \"conclusion\": \"neutral\"", "\"policy\": {\n    \"conclusion\": \"failure\"")
+	failed = replaceOnce(t, failed, "\"active\": true,\n      \"reason\": \"in_period\",\n      \"started\": \"2026-11-04T14:16:40Z\",\n      \"ends\": \"2026-11-11T14:16:40Z\"", "\"active\": false,\n      \"reason\": \"enforced\"")
+	failed = replaceOnce(t, failed, "\"outcome\": \"unproven\",\n        \"reason\": \"unverified_rows\",\n        \"limit_usd\": \"0.5\"", "\"outcome\": \"fail\",\n        \"reason\": \"over_limit\",\n        \"limit_usd\": \"0.1\"")
+
+	repository := approvalEnvironment(t)
+	repository.Checks = []scmtest.Check{{ID: 999, Name: comment.CheckName, HeadSHA: headCommit, Conclusion: "failure", Text: failed, App: repository.App}}
+	repository.Reviews = []map[string]any{review(31, approver, "APPROVED", headCommit, approvedAt)}
+	code, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit))
+	if code != 0 || len(repository.Checks) != 2 {
+		t.Fatalf("exit %d, %d checks: %s", code, len(repository.Checks), stderr)
+	}
+	posted := repository.Checks[1]
+	want := replaceOnce(t, failed, "\"check_run_id\": 999,\n  \"conclusion\": \"failure\"", fmt.Sprintf("\"check_run_id\": %d,\n  \"conclusion\": \"neutral\"", posted.ID))
+	if posted.Conclusion != "neutral" || posted.Text != want {
+		t.Errorf("the check concludes %s and carries\n%s\nwant\n%s", posted.Conclusion, posted.Text, want)
+	}
+	if !strings.Contains(posted.Summary, "Check run 999 carries this report in full.") {
+		t.Errorf("the summary does not name the recorded check run:\n%s", posted.Summary)
+	}
+
+	repository.Reviews[0]["state"] = "DISMISSED"
+	if code, stderr := approve(t, reviewEventJSON("dismissed", approver, headCommit)); code != 0 || len(repository.Checks) != 3 || repository.Checks[2].Conclusion != "failure" {
+		t.Fatalf("the dismissal of an approval of a 0.5 object: exit %d, %d checks: %s", code, len(repository.Checks), stderr)
+	}
+	again, err := comment.ParseResult(repository.Checks[2].Text)
+	if err != nil || again.Schema != "costroid.result/0.5" {
+		t.Errorf("the dismissal posted %q: %v", again.Schema, err)
+	}
+
+	for name, schema := range map[string]string{"an earlier version": "costroid.result/0.4", "a later version": "costroid.result/9.9"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := comment.ParseResult(replaceOnce(t, recorded, `"costroid.result/0.5"`, `"`+schema+`"`))
+			if err == nil || !strings.Contains(err.Error(), schema) {
+				t.Errorf("read: %v", err)
 			}
 		})
 	}
