@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/status/v0.1/status.schema.json",
+  "title": "Costroid status file, version 0.1",
+  "description": "What one costroid run has spent so far, its cap, what is left and what holds it, written while the agent works so the agent and the job can read it. It holds amounts, counts, times and words from closed lists, never a prompt, a path or a model's answer. The run's result object, not this file, states what the run came to.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.status/0.1"
+    },
+    "state": {
+      "description": "running while the agent works, ended once it has exited and its usage has been read.",
+      "enum": ["running", "ended"]
+    },
+    "agent": {
+      "description": "The agent the run started. The list is closed.",
+      "enum": ["claude-code", "codex"]
+    },
+    "updates": {
+      "description": "When spend changes. each_request: after each request the run sees settle while the agent works. agent_end: only when the agent ends, because the agent states its usage then.",
+      "enum": ["each_request", "agent_end"]
+    },
+    "started_at": {
+      "description": "When the run started, in UTC.",
+      "$ref": "#/$defs/timestamp"
+    },
+    "updated_at": {
+      "description": "When the file was last written, in UTC.",
+      "$ref": "#/$defs/timestamp"
+    },
+    "spend": {
+      "description": "The run's priced usage so far, one entry per currency and basis, at the catalog's list prices. Entries are never summed across a currency or a basis. Null when the spend is not known: while the agent works under agent_end, and when the run's reader refused the agent's usage.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spend"
+          }
+        }
+      ]
+    },
+    "requests": {
+      "description": "The model requests priced so far. Null when spend is null, and when the agent states some usage as a turn's or a run's total, so the number of requests is not known.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 0
+        }
+      ]
+    },
+    "cap": {
+      "$ref": "#/$defs/cap"
+    },
+    "enforcement_grade": {
+      "description": "What holds the run to its cap: the grade the run started at, or the one the agent's reader stated when the agent ended. The result object states the grade the run earned once its rows are checked, and the two can differ.",
+      "enum": ["gateway-precheck", "agent-flag", "wrapper-watchdog", "none"]
+    }
+  },
+  "required": [
+    "schema",
+    "state",
+    "agent",
+    "updates",
+    "started_at",
+    "updated_at",
+    "spend",
+    "requests",
+    "cap",
+    "enforcement_grade"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "running"
+          },
+          "updates": {
+            "const": "agent_end"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spend": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spend": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "requests": {
+            "type": "null"
+          },
+          "cap": {
+            "type": "object",
+            "properties": {
+              "remainder": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spend": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "requests": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "spend": {
+            "type": "array",
+            "not": {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "const": "USD"
+                  }
+                }
+              },
+              "minContains": 2
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cap": {
+            "type": "object",
+            "properties": {
+              "remainder": {
+                "$ref": "#/$defs/decimal"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "description": "A non-negative decimal string. Never a JSON number and never scientific notation.",
+      "type": "string",
+      "pattern": "^[0-9]{1,26}(\\.[0-9]{1,12})?$"
+    },
+    "zero": {
+      "type": "string",
+      "pattern": "^0(\\.0{1,12})?$"
+    },
+    "timestamp": {
+      "description": "RFC 3339 in UTC, with up to nine fractional digits of a second.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "spend": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "cost_basis": {
+          "description": "measured for an API key's usage, list_equivalent for a subscription's usage at list price, which nobody billed. Null while the agent works when its reader states the basis only when the agent ends, as Codex's does.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": ["measured", "list_equivalent"]
+            }
+          ]
+        },
+        "list_cost": {
+          "$ref": "#/$defs/decimal"
+        }
+      },
+      "required": ["currency", "cost_basis", "list_cost"],
+      "additionalProperties": false
+    },
+    "cap": {
+      "description": "The cap the run was given, beside the spend in USD. It is not the policy's budget.",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "const": "USD"
+        },
+        "amount": {
+          "$ref": "#/$defs/decimal"
+        },
+        "remainder": {
+          "description": "amount minus the spend in USD, 0 when the spend is above amount. A run with no spend in USD has spent 0. Null when spend is null, and when the spend in USD holds two entries, because no one figure compares with the cap.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/decimal"
+            }
+          ]
+        },
+        "overshoot": {
+          "description": "The spend in USD minus amount, 0 when the spend is within amount. Null exactly when remainder is null.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/decimal"
+            }
+          ]
+        }
+      },
+      "required": ["currency", "amount", "remainder", "overshoot"],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "remainder": {
+              "type": "null"
+            },
+            "overshoot": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "remainder": {
+              "$ref": "#/$defs/decimal"
+            },
+            "overshoot": {
+              "$ref": "#/$defs/zero"
+            }
+          }
+        },
+        {
+          "properties": {
+            "remainder": {
+              "$ref": "#/$defs/zero"
+            },
+            "overshoot": {
+              "$ref": "#/$defs/decimal"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -155,6 +155,50 @@ Three fields say how the agent's job ended and which run wrote the object. Each 
 
 An agent can fail after some requests, so `agent_error` can sit beside figures. With no rows it comes with the run reason `agent_error`. This release fills all three. `costroid ingest-run` fills `agent_error` and `ci_run` as `costroid run` does.
 
+## Read the run's status
+
+While the agent works, `costroid run` writes a status file: what the run has spent so far, its cap, what is left and what holds it. The agent, or a later step of the job, reads it to learn what the run costs before the run ends. Its contract is [`status/v0.1`](https://github.com/Costroid/costroid-schemas/tree/main/status/v0.1) in `Costroid/costroid-schemas`.
+
+The file is at `$COSTROID_STATUS_FILE`. When that is unset, it is `$RUNNER_TEMP/costroid-status.json`, and GitHub Actions empties `RUNNER_TEMP` at the start and end of each job. When neither is set, as on GitLab unless the job sets `COSTROID_STATUS_FILE`, `run` writes no file.
+
+`run` writes the file when it reads the agent's first line, after each request it sees settle while it watches the agent, and when the agent ends. Each write replaces the whole file by renaming a new file over it, so a reader never meets part of one. No file means no `costroid run` has started an agent in this job. A file that reads `running`, with an empty `spend` and `requests` at `0`, is a run that has priced nothing yet.
+
+This is a recorded Codex run after its first request, under a 5 USD cap:
+
+```json
+{
+  "schema": "costroid.status/0.1",
+  "state": "running",
+  "agent": "codex",
+  "updates": "each_request",
+  "started_at": "2026-11-01T11:17:09Z",
+  "updated_at": "2026-11-01T11:17:10.25Z",
+  "spend": [
+    {
+      "currency": "USD",
+      "cost_basis": null,
+      "list_cost": "0.0291216"
+    }
+  ],
+  "requests": 1,
+  "cap": {
+    "currency": "USD",
+    "amount": "5",
+    "remainder": "4.9708784",
+    "overshoot": "0"
+  },
+  "enforcement_grade": "wrapper-watchdog"
+}
+```
+
+`updates` says when `spend` changes. `each_request` is a Codex run the wrapper watches: each request is priced from Codex's rollout file as it settles. `agent_end` is every other run, Claude Code's among them: the agent states its usage only when it ends, so `spend` and `requests` are null until then.
+
+`spend` holds one entry per currency and basis, at the catalog's list prices. Entries are never added across a currency or a basis. `cost_basis` is null while Codex works, because its reader states the basis when Codex ends. `requests` counts the model requests priced so far, and is null when the agent states some usage as a turn's or a run's total. `cap.remainder` and `cap.overshoot` set the spend in USD beside the cap, and both are null when that spend is not known.
+
+The file holds amounts, counts, times and words from closed lists. It never holds a prompt, a path, a model name or the model's answer.
+
+When the agent has ended, `state` reads `ended`. The run's object, beside the rows file, states what the run came to. Its grades come from the rows once they are checked, and can be lower than the file's `enforcement_grade`.
+
 ## In a workflow
 
 The action sets the same figures as step outputs on the report job: `cost`, `currency`, `cost_basis`, `tokens_input_uncached`, `tokens_cache_read`, `tokens_cache_write`, `tokens_output`, `enforcement_grade`, `catalog_version`, `check_run_id`, `conclusion` and `result`. When the figures hold more than one currency or basis, `currency` or `cost_basis` reads `multiple`, `cost` and the token outputs are empty, and `result` holds each figure.
