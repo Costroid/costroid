@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,42 @@ func Parse(text string) (Decimal, error) {
 		return Decimal{}, fmt.Errorf("decimal: %q has no integer form", text)
 	}
 	return Decimal{coefficient: coefficient, scale: len(fraction)}.normal(), nil
+}
+
+// maxExponent bounds a number's scientific notation. Anything larger is not a
+// money figure.
+const maxExponent = 64
+
+// ParseNumber reads a figure another program wrote as a JSON number, exactly.
+// Unlike Parse it takes a leading minus and an exponent, as in -0.25 or
+// 1.2e-05, because a provider's report or a gateway's float can carry either.
+func ParseNumber(text string) (Decimal, error) {
+	digits, negative := strings.CutPrefix(text, "-")
+	mantissa, exponent, scientific := strings.Cut(strings.ToLower(digits), "e")
+	value, err := Parse(mantissa)
+	if err != nil {
+		return Decimal{}, fmt.Errorf("decimal: %q is not a number", text)
+	}
+	if scientific {
+		shift, err := strconv.Atoi(exponent)
+		if err != nil || shift > maxExponent || shift < -maxExponent {
+			return Decimal{}, fmt.Errorf("decimal: the exponent of %q is out of range", text)
+		}
+		value = value.shift(shift)
+	}
+	if negative {
+		return Decimal{}.Sub(value), nil
+	}
+	return value, nil
+}
+
+// shift returns d × 10^power, exactly.
+func (d Decimal) shift(power int) Decimal {
+	if power < 0 {
+		return d.DivPow10(-power)
+	}
+	factor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(power)), nil)
+	return Decimal{coefficient: new(big.Int).Mul(d.int(), factor), scale: d.scale}.normal()
 }
 
 // MustParse is Parse for literals the program itself states.

@@ -59,8 +59,12 @@ func (g Grant) Holds() bool {
 	return len(g.Problems) == 0
 }
 
-// Await waits until the key authenticates, then reads it back.
+// Await waits until the key authenticates, then reads it back. A URL the key
+// would cross the network in the clear to is refused before any wait.
 func (s Session) Await(ctx context.Context) (KeyInfo, error) {
+	if err := CheckURL(s.Client.URL); err != nil {
+		return KeyInfo{}, err
+	}
 	deadline := time.Now().Add(s.Wait)
 	for {
 		info, err := s.Client.Info(ctx, s.Key, "")
@@ -78,22 +82,44 @@ func (s Session) Await(ctx context.Context) (KeyInfo, error) {
 	}
 }
 
-// Spend reads what the gateway counted on the key, in its own prices, as the
-// decimal string it answered. It waits while the figure differs from want and
-// is still moving, because the gateway stores spend after the response.
-func (s Session) Spend(ctx context.Context, want decimal.Decimal) (string, error) {
+// spendTolerance is how far the gateway's count may sit from the rows' total,
+// as a fraction of the total, and still be the same figure. LiteLLM sums spend
+// in binary floating point, so three requests of 0.006 read
+// 0.018000000000000002. A float64 sum of n terms drifts by about n × 1.1e-16
+// of the total; 1e-9 holds that for any run and is far below a cent of any
+// budget.
+var spendTolerance = decimal.MustParse("0.000000001")
+
+// SameSpend reports whether the gateway's count and the rows' total are the
+// same figure within spendTolerance.
+func SameSpend(counted, total decimal.Decimal) bool {
+	gap := counted.Sub(total)
+	if gap.Sign() < 0 {
+		gap = decimal.Decimal{}.Sub(gap)
+	}
+	return gap.Cmp(total.Mul(spendTolerance)) <= 0
+}
+
+// Spend reads what the gateway counted on the key, in its own prices. It waits
+// while the figure is not the same as want and is still moving, because the
+// gateway stores spend after the response.
+func (s Session) Spend(ctx context.Context, want decimal.Decimal) (decimal.Decimal, error) {
 	deadline := time.Now().Add(s.Settle)
-	last, since := "", time.Now()
+	var last decimal.Decimal
+	since := time.Now()
 	for {
 		info, err := s.Client.Info(ctx, s.Key, "")
 		if err != nil {
-			return "", err
+			return decimal.Decimal{}, err
 		}
-		spend := info.Spend.String()
-		if counted, err := decimal.Parse(spend); err == nil && counted.Cmp(want) == 0 {
+		spend, err := decimal.ParseNumber(info.Spend.String())
+		if err != nil {
+			return decimal.Decimal{}, fmt.Errorf("gateway: the key's spend field reads %.40q, which is not a number", info.Spend.String())
+		}
+		if SameSpend(spend, want) {
 			return spend, nil
 		}
-		if spend != last {
+		if spend.Cmp(last) != 0 {
 			last, since = spend, time.Now()
 		}
 		if time.Since(since) >= s.Stable || time.Now().After(deadline) {
@@ -117,7 +143,10 @@ func Inspect(key string, info KeyInfo, expect Expect) Grant {
 	} else {
 		grant.MaxBudget = budget
 	}
-	if info.Expires == nil || !info.Expires.After(expect.Now) {
+	switch expires, set, err := info.ExpiresAt(); {
+	case err != nil:
+		grant.Problems = append(grant.Problems, err.Error())
+	case !set || !expires.After(expect.Now):
 		grant.Problems = append(grant.Problems, "the key has no expiry ahead of now")
 	}
 	if info.MaxParallel == nil || *info.MaxParallel < 1 {

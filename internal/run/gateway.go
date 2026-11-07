@@ -114,16 +114,16 @@ func overshootBound(prices *catalog.Catalog, grant gateway.Grant, request adapte
 
 // compareSpend sets the gateway's count of the key's spend beside the rows'
 // catalog cost. The gateway holds the budget in its own prices, so a gap
-// between the two is a gap in what the budget held. The rows keep their own
-// figure whatever the gateway counted.
+// between the two is a gap in what the budget held. A gap within the float
+// rounding of the gateway's sum is no gap. The rows keep their own figure
+// whatever the gateway counted.
 func (h *heldKey) compareSpend(ctx context.Context, result *Result) {
 	spend, err := h.session.Spend(ctx, result.ListTotal)
 	if err != nil {
 		result.Report.Warnings = append(result.Report.Warnings, fmt.Sprintf("the gateway's count of the key's spend could not be read, so it is not set beside the rows: %v", err))
 		return
 	}
-	counted, err := decimal.Parse(spend)
-	if err == nil && counted.Cmp(result.ListTotal) == 0 {
+	if gateway.SameSpend(spend, result.ListTotal) {
 		return
 	}
 	result.Report.Warnings = append(result.Report.Warnings, fmt.Sprintf(

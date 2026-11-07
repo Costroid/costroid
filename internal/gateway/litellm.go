@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +37,27 @@ func NewClient(base string) *Client {
 	return &Client{URL: strings.TrimRight(base, "/"), HTTP: &http.Client{Timeout: 30 * time.Second}}
 }
 
+// loopbackHosts may serve the gateway over plain http: a key sent to them
+// never leaves the machine.
+var loopbackHosts = []string{"localhost", "127.0.0.1"}
+
+// CheckURL refuses a gateway URL a key would cross the network in the clear
+// to. Every call sends the admin key or the run's key in its Authorization
+// header, so the URL must be https, except on localhost and 127.0.0.1.
+func CheckURL(base string) error {
+	address, err := url.Parse(base)
+	if err != nil || address.Host == "" {
+		return errors.New("gateway: the gateway's URL is not an absolute URL")
+	}
+	switch {
+	case address.Scheme == "https":
+		return nil
+	case address.Scheme == "http" && slices.Contains(loopbackHosts, address.Hostname()):
+		return nil
+	}
+	return fmt.Errorf("gateway: the gateway's URL %s is not https, and every call sends a key in its Authorization header: use https, or http only on localhost or 127.0.0.1", address.Redacted())
+}
+
 // KeySpec is one run's key as the gateway registers it.
 type KeySpec struct {
 	Key         string
@@ -50,14 +72,16 @@ type KeySpec struct {
 
 // KeyInfo is what the gateway says about a key.
 type KeyInfo struct {
-	MaxBudget   *json.Number   `json:"max_budget"`
-	Spend       json.Number    `json:"spend"`
-	Expires     *time.Time     `json:"expires"`
-	MaxParallel *int           `json:"max_parallel_requests"`
-	Metadata    map[string]any `json:"metadata"`
-	Team        *string        `json:"team_id"`
-	User        *string        `json:"user_id"`
-	Status      string         `json:"status"`
+	MaxBudget *json.Number `json:"max_budget"`
+	Spend     json.Number  `json:"spend"`
+	// Expires is read as it came, so a form other than RFC 3339 is named
+	// rather than failing the whole answer.
+	Expires     json.RawMessage `json:"expires"`
+	MaxParallel *int            `json:"max_parallel_requests"`
+	Metadata    map[string]any  `json:"metadata"`
+	Team        *string         `json:"team_id"`
+	User        *string         `json:"user_id"`
+	Status      string          `json:"status"`
 }
 
 // Readiness is the gateway's public health answer.
@@ -111,8 +135,28 @@ func (c *Client) Delete(ctx context.Context, adminKey, alias string) (bool, erro
 	return len(answer.Deleted) > 0, err
 }
 
+// ExpiresAt reads the key's expiry. A key with none reads false. An expiry
+// that is not an RFC 3339 time with a zone offset is an error naming the field.
+func (k KeyInfo) ExpiresAt() (time.Time, bool, error) {
+	if len(k.Expires) == 0 || string(k.Expires) == "null" {
+		return time.Time{}, false, nil
+	}
+	var text string
+	if err := json.Unmarshal(k.Expires, &text); err != nil {
+		return time.Time{}, false, fmt.Errorf("the key's expires field is not a string: it reads %.40q", k.Expires)
+	}
+	at, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("the key's expires field reads %q, which is not an RFC 3339 time with a zone offset", text)
+	}
+	return at, true, nil
+}
+
 // Readiness asks the gateway's public health route, which needs no key.
 func (c *Client) Readiness(ctx context.Context) (Readiness, error) {
+	if err := CheckURL(c.URL); err != nil {
+		return Readiness{}, err
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/health/readiness", nil)
 	if err != nil {
 		return Readiness{}, fmt.Errorf("gateway: %w", err)
@@ -148,6 +192,9 @@ func (c *Client) EnsureDailyBudget(ctx context.Context, adminKey, kind, id strin
 }
 
 func (c *Client) call(ctx context.Context, method, route, bearer string, body, answer any) error {
+	if err := CheckURL(c.URL); err != nil {
+		return err
+	}
 	var payload io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)

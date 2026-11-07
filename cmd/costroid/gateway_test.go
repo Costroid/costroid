@@ -1,16 +1,20 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Costroid/costroid/internal/gateway"
+	"github.com/Costroid/costroid/internal/gateway/gatewaytest"
 )
 
 const (
@@ -102,5 +106,413 @@ func TestMintRefusesToAttestOverPlainHTTPOrWithoutTheIDTokenPermission(t *testin
 	err = attestKey(context.Background(), w.ledger.Client(), attestedKeyID, gateway.Binding{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "id-token") {
 		t.Fatalf("no id-token permission: %v", err)
+	}
+}
+
+const (
+	gatewayAdmin  = "sk-gateway-admin-for-these-tests"
+	gatewayRunID  = "16873409921"
+	gatewayAuthor = "octocat"
+	gatewayAlias  = "costroid:github.com/acme/widgets:" + gatewayRunID + ":1"
+)
+
+// gatewayJob is one GitHub Actions job of the gateway recipe, with a sealing
+// key pair of its own and nothing else from the environment it runs in.
+type gatewayJob struct {
+	dir     string
+	sealing string
+	public  string
+}
+
+func newGatewayJob(t *testing.T) gatewayJob {
+	t.Helper()
+	job := gatewayJob{dir: t.TempDir()}
+	var err error
+	if job.sealing, job.public, err = gateway.NewSealingKey(); err != nil {
+		t.Fatal(err)
+	}
+	event := filepath.Join(job.dir, "event.json")
+	body := `{"pull_request":{"number":7,"head":{"sha":"` + headCommit + `"},"base":{"sha":"` + baseCommit + `"},"user":{"login":"` + gatewayAuthor + `"}}}`
+	if err := os.WriteFile(event, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "acme/widgets",
+		"GITHUB_RUN_ID": gatewayRunID, "GITHUB_RUN_ATTEMPT": "1", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event,
+		"GITHUB_TOKEN": "", "GITHUB_API_URL": "", ingestURLVariable: "", gatewayURLVar: "",
+		adminKeyVariable: "", sealingKeyVariable: "", publicKeyVariable: "",
+	} {
+		t.Setenv(name, value)
+	}
+	return job
+}
+
+// request runs the agent's step and returns the key it drew.
+func (j gatewayJob) request(t *testing.T) string {
+	t.Helper()
+	t.Setenv(publicKeyVariable, j.public)
+	code, stdout, stderr := execute(t, "gateway", "request", "--out", j.dir)
+	if code != 0 {
+		t.Fatalf("gateway request exit %d: %s", code, stderr)
+	}
+	key, err := os.ReadFile(filepath.Join(j.dir, keyFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(stdout) != gateway.KeyID(string(key)) || strings.Contains(stdout+stderr, string(key)) {
+		t.Fatalf("gateway request printed %q, %q", stdout, stderr)
+	}
+	return string(key)
+}
+
+// mint runs the minting step against the stub with the flags given.
+func (j gatewayJob) mint(t *testing.T, stub *gatewaytest.LiteLLM, flags ...string) (int, string, string) {
+	t.Helper()
+	t.Setenv(adminKeyVariable, gatewayAdmin)
+	t.Setenv(sealingKeyVariable, j.sealing+"\n")
+	args := append([]string{"gateway", "mint", "--url", stub.URL, "--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1128000"}, flags...)
+	code, stdout, stderr := execute(t, args...)
+	for _, secret := range []string{gatewayAdmin, j.sealing} {
+		if strings.Contains(stdout+stderr, secret) {
+			t.Fatalf("gateway mint printed a secret: %s%s", stdout, stderr)
+		}
+	}
+	return code, stdout, stderr
+}
+
+func TestGatewayKeygenWritesThePrivateHalfAloneAndPrintsThePublicHalf(t *testing.T) {
+	newGatewayJob(t)
+	out := filepath.Join(t.TempDir(), "sealing-key")
+	code, stdout, stderr := execute(t, "gateway", "keygen", "--out", out)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private := strings.TrimSpace(string(data))
+	if public, err := gateway.PublicKey(private); err != nil || strings.TrimSpace(stdout) != public {
+		t.Fatalf("printed %q, the private half gives %q, %v", stdout, public, err)
+	}
+	if strings.Contains(stdout+stderr, private) {
+		t.Fatal("keygen printed the private half")
+	}
+	if info, err := os.Stat(out); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("the private half's file: %v, %v", info.Mode(), err)
+	}
+	t.Setenv(sealingKeyVariable, private)
+	if code, again, _ := execute(t, "gateway", "public-key"); code != 0 || again != stdout {
+		t.Fatalf("public-key printed %q, keygen %q", again, stdout)
+	}
+	if code, _, stderr := execute(t, "gateway", "keygen", "--out", out); code != exitFailure || !strings.Contains(stderr, "exists") {
+		t.Fatalf("keygen over an existing file: exit %d, %s", code, stderr)
+	}
+	if code, _, stderr := execute(t, "gateway", "keygen"); code != exitFailure || !strings.Contains(stderr, "--out") {
+		t.Fatalf("keygen with nowhere to write: exit %d, %s", code, stderr)
+	}
+}
+
+func TestGatewayPublicKeyWithOnlyTheAdminKeySaysToRunKeygen(t *testing.T) {
+	newGatewayJob(t)
+	t.Setenv(adminKeyVariable, gatewayAdmin)
+	code, stdout, stderr := execute(t, "gateway", "public-key")
+	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "costroid gateway keygen") || strings.Contains(stderr, gatewayAdmin) {
+		t.Fatalf("exit %d, %q, %q", code, stdout, stderr)
+	}
+}
+
+func TestGatewayRequestWritesTheKeyForThisUserAndTheSealedRequest(t *testing.T) {
+	job := newGatewayJob(t)
+	key := job.request(t)
+	if info, err := os.Stat(filepath.Join(job.dir, keyFileName)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("the key's file: %v, %v", info.Mode(), err)
+	}
+	file, err := os.Open(filepath.Join(job.dir, gateway.RequestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	request, err := gateway.ReadRequest(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := gateway.Binding{Repository: "github.com/acme/widgets", Run: gatewayRunID, Attempt: "1"}
+	if opened, err := request.Open(job.sealing, run); err != nil || opened != key {
+		t.Fatalf("the request opened to %q, %v", opened, err)
+	}
+}
+
+func TestGatewayRequestRefusesWhatItCannotSealFor(t *testing.T) {
+	job := newGatewayJob(t)
+	if code, _, stderr := execute(t, "gateway", "request", "--out", job.dir); code != exitFailure || !strings.Contains(stderr, "keygen printed") {
+		t.Errorf("no public key: exit %d, %s", code, stderr)
+	}
+	t.Setenv(publicKeyVariable, job.sealing)
+	if code, _, stderr := execute(t, "gateway", "request", "--out", job.dir); code != exitFailure || strings.Contains(stderr, job.sealing) || !strings.Contains(stderr, "private half") {
+		t.Errorf("the private half as the public key: exit %d, %s", code, stderr)
+	}
+	t.Setenv(publicKeyVariable, job.public)
+	t.Setenv("GITHUB_ACTIONS", "")
+	if code, _, stderr := execute(t, "gateway", "request", "--out", job.dir); code != exitFailure || !strings.Contains(stderr, "GitHub Actions") {
+		t.Errorf("outside GitHub Actions: exit %d, %s", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(job.dir, keyFileName)); err == nil {
+		t.Error("a refused request left a key behind")
+	}
+}
+
+func TestGatewayMintRegistersTheKeyWithEveryFlagAndTheEventsAuthor(t *testing.T) {
+	job := newGatewayJob(t)
+	key := job.request(t)
+	stub := gatewaytest.New(t, gatewayAdmin)
+	code, stdout, stderr := job.mint(t, stub, "--max-parallel-requests", "2", "--repository-daily-cap-usd", "20", "--author-daily-cap-usd", "5.5",
+		"--request", filepath.Join(job.dir, gateway.RequestFile))
+	if code != 0 || strings.TrimSpace(stdout) != gateway.KeyID(key) {
+		t.Fatalf("exit %d, %q, %s", code, stdout, stderr)
+	}
+	got, ok := stub.Key(gatewayAlias)
+	if !ok || got.Key != key || got.MaxBudget != "5" || got.Duration != "1800s" || got.MaxParallel != 2 {
+		t.Fatalf("registered %+v", got)
+	}
+	for name, want := range map[string]string{
+		gateway.MetaPullRequest: "7", gateway.MetaHead: headCommit, gateway.MetaRun: gatewayRunID,
+		gateway.MetaAttempt: "1", gateway.MetaMaxRequestTokens: "1128000", gateway.MetaRepository: "github.com/acme/widgets",
+	} {
+		if got.Metadata[name] != want {
+			t.Errorf("metadata %s reads %q, want %q", name, got.Metadata[name], want)
+		}
+	}
+	team, _ := stub.Budget("team", got.Team)
+	user, _ := stub.Budget("user", got.User)
+	if got.Team != "costroid:github.com/acme/widgets" || team.MaxBudget != "20" || team.Duration != "1d" {
+		t.Errorf("team %q holds %+v", got.Team, team)
+	}
+	if got.User != "costroid:github.com/"+gatewayAuthor || user.MaxBudget != "5.5" || user.Duration != "1d" {
+		t.Errorf("user %q holds %+v", got.User, user)
+	}
+	if stub.Refused() != 0 {
+		t.Errorf("the stub refused %d calls", stub.Refused())
+	}
+}
+
+func TestGatewayMintRefusesFlagsItCannotHoldTheKeyTo(t *testing.T) {
+	job := newGatewayJob(t)
+	job.request(t)
+	stub := gatewaytest.New(t, gatewayAdmin)
+	request := filepath.Join(job.dir, gateway.RequestFile)
+	for name, c := range map[string]struct {
+		args []string
+		want string
+	}{
+		"no budget":             {[]string{"--url", stub.URL, "--lifetime-minutes", "30", "--max-request-tokens", "1"}, "--budget-usd"},
+		"no lifetime":           {[]string{"--url", stub.URL, "--budget-usd", "5", "--max-request-tokens", "1"}, "--lifetime-minutes"},
+		"no largest request":    {[]string{"--url", stub.URL, "--budget-usd", "5", "--lifetime-minutes", "30"}, "--max-request-tokens"},
+		"no URL":                {[]string{"--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1"}, "--url"},
+		"plain http":            {[]string{"--url", "http://gateway.example", "--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1"}, "https"},
+		"a budget with a sign":  {[]string{"--url", stub.URL, "--budget-usd", "-5", "--lifetime-minutes", "30", "--max-request-tokens", "1"}, "--budget-usd"},
+		"a zero repository cap": {[]string{"--url", stub.URL, "--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1", "--repository-daily-cap-usd", "0"}, "--repository-daily-cap-usd must be a decimal above 0"},
+		"an author cap of text": {[]string{"--url", stub.URL, "--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1", "--author-daily-cap-usd", "five"}, "--author-daily-cap-usd must be a decimal above 0"},
+		"an unknown flag":       {[]string{"--budget", "5"}, "flag provided but not defined"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(adminKeyVariable, gatewayAdmin)
+			t.Setenv(sealingKeyVariable, job.sealing)
+			code, _, stderr := execute(t, append([]string{"gateway", "mint", "--request", request}, c.args...)...)
+			if code != exitFailure || !strings.Contains(stderr, c.want) {
+				t.Fatalf("exit %d, %s", code, stderr)
+			}
+		})
+	}
+	if _, ok := stub.Key(gatewayAlias); ok {
+		t.Error("a refused mint registered a key")
+	}
+	if code, stdout, _ := execute(t, "gateway", "mint", "-h"); code != 0 || stdout != "" {
+		t.Errorf("mint -h: exit %d, %q", code, stdout)
+	}
+}
+
+func TestGatewayMintNamesTheSecretItLacks(t *testing.T) {
+	job := newGatewayJob(t)
+	job.request(t)
+	stub := gatewaytest.New(t, gatewayAdmin)
+	flags := []string{"gateway", "mint", "--url", stub.URL, "--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1", "--request", filepath.Join(job.dir, gateway.RequestFile)}
+	if code, _, stderr := execute(t, flags...); code != exitFailure || !strings.Contains(stderr, adminKeyVariable) {
+		t.Errorf("no admin key: exit %d, %s", code, stderr)
+	}
+	t.Setenv(adminKeyVariable, gatewayAdmin)
+	if code, _, stderr := execute(t, flags...); code != exitFailure || !strings.Contains(stderr, sealingKeyVariable+" is not set: run costroid gateway keygen") {
+		t.Errorf("no sealing key: exit %d, %s", code, stderr)
+	}
+	other, _, _ := gateway.NewSealingKey()
+	t.Setenv(sealingKeyVariable, other)
+	if code, _, stderr := execute(t, flags...); code != exitFailure || !strings.Contains(stderr, publicKeyVariable) || strings.Contains(stderr, other) {
+		t.Errorf("another sealing key: exit %d, %s", code, stderr)
+	}
+	if _, ok := stub.Key(gatewayAlias); ok {
+		t.Error("a refused mint registered a key")
+	}
+}
+
+func TestGatewayMintRefusesAnEarlierVersionsRequestAndSaysToRunKeygen(t *testing.T) {
+	job := newGatewayJob(t)
+	stub := gatewaytest.New(t, gatewayAdmin)
+	legacy := filepath.Join(job.dir, "legacy.json")
+	body := `{"format":"costroid gateway request v1","repository":"github.com/acme/widgets","run_id":"` + gatewayRunID + `","run_attempt":"1","key_id":"x","sealed":"x"}`
+	if err := os.WriteFile(legacy, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := job.mint(t, stub, "--request", legacy)
+	if code != exitFailure || !strings.Contains(stderr, "derived from the admin key") || !strings.Contains(stderr, "costroid gateway keygen") {
+		t.Fatalf("exit %d, %s", code, stderr)
+	}
+}
+
+// artifactServer is GitHub's artifact API for one run, holding the request.
+func artifactServer(t *testing.T, request []byte) *httptest.Server {
+	t.Helper()
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	file, _ := writer.Create(gateway.RequestFile)
+	file.Write(request)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer gh-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/repos/acme/widgets/actions/runs/" + gatewayRunID + "/artifacts":
+			w.Write([]byte(`{"artifacts":[{"archive_download_url":"` + server.URL + `/zip","expired":false}]}`))
+		case "/zip":
+			w.Write(archive.Bytes())
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestGatewayMintReadsTheRequestFromThisRunsArtifact(t *testing.T) {
+	job := newGatewayJob(t)
+	key := job.request(t)
+	data, err := os.ReadFile(filepath.Join(job.dir, gateway.RequestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := gatewaytest.New(t, gatewayAdmin)
+	if code, _, stderr := job.mint(t, stub); code != exitFailure || !strings.Contains(stderr, "GITHUB_TOKEN") {
+		t.Fatalf("no token: exit %d, %s", code, stderr)
+	}
+	t.Setenv("GITHUB_API_URL", artifactServer(t, data).URL)
+	t.Setenv("GITHUB_TOKEN", "gh-token")
+	code, stdout, stderr := job.mint(t, stub)
+	if code != 0 || strings.TrimSpace(stdout) != gateway.KeyID(key) {
+		t.Fatalf("exit %d, %q, %s", code, stdout, stderr)
+	}
+	if got, ok := stub.Key(gatewayAlias); !ok || got.Key != key {
+		t.Fatalf("registered %+v", got)
+	}
+	if code, _, stderr := job.mint(t, stub, "--request", filepath.Join(job.dir, "absent.json")); code != exitFailure || !strings.Contains(stderr, "absent.json") {
+		t.Fatalf("a request file that is not there: exit %d, %s", code, stderr)
+	}
+}
+
+func TestGatewayEventAuthorIsThePullRequestsOrNothing(t *testing.T) {
+	dir := t.TempDir()
+	for body, want := range map[string]string{
+		`{"pull_request":{"user":{"login":"octocat"}}}`: "octocat",
+		`{"ref":"refs/heads/main"}`:                     "",
+		`not json`:                                      "",
+	} {
+		path := filepath.Join(dir, "event.json")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := eventAuthor(path); got != want {
+			t.Errorf("%s: author %q, want %q", body, got, want)
+		}
+	}
+	if got := eventAuthor(filepath.Join(dir, "absent.json")); got != "" {
+		t.Errorf("no event file: author %q", got)
+	}
+}
+
+func TestGatewayCloseDeletesTheKeyAndASecondCloseFindsItAbsent(t *testing.T) {
+	newGatewayJob(t)
+	stub := gatewaytest.New(t, gatewayAdmin)
+	stub.Add(gatewaytest.Key{Key: "sk-a-run-key-of-sixteen-or-more", Alias: gatewayAlias})
+	t.Setenv(adminKeyVariable, gatewayAdmin)
+	t.Setenv(gatewayURLVar, stub.URL)
+	code, stdout, stderr := execute(t, "gateway", "close")
+	if code != 0 || stdout != "deleted\n" {
+		t.Fatalf("first close: exit %d, %q, %s", code, stdout, stderr)
+	}
+	code, stdout, stderr = execute(t, "gateway", "close", "--retry-after", "1ms")
+	if code != 0 || stdout != "absent\n" || !strings.Contains(stderr, "late mint") {
+		t.Fatalf("second close: exit %d, %q, %s", code, stdout, stderr)
+	}
+	if strings.Contains(stdout+stderr, gatewayAdmin) {
+		t.Fatal("close printed the admin key")
+	}
+}
+
+// TestGatewayCloseDeletesAKeyMintedAfterItFirstLooked is the late mint: the
+// key is registered between close's first delete and its retry.
+func TestGatewayCloseDeletesAKeyMintedAfterItFirstLooked(t *testing.T) {
+	newGatewayJob(t)
+	stub := gatewaytest.New(t, gatewayAdmin)
+	stub.BeforeDelete = func(call int) {
+		if call == 2 {
+			stub.Add(gatewaytest.Key{Key: "sk-a-run-key-of-sixteen-or-more", Alias: gatewayAlias})
+		}
+	}
+	t.Setenv(adminKeyVariable, gatewayAdmin)
+	code, stdout, stderr := execute(t, "gateway", "close", "--url", stub.URL, "--retry-after", "1ms")
+	if code != 0 || stdout != "deleted\n" {
+		t.Fatalf("exit %d, %q, %s", code, stdout, stderr)
+	}
+	if _, ok := stub.Key(gatewayAlias); ok {
+		t.Fatal("the late key is still registered")
+	}
+}
+
+func TestGatewayCloseRefusesWhatItCannotCloseSafely(t *testing.T) {
+	newGatewayJob(t)
+	stub := gatewaytest.New(t, gatewayAdmin)
+	if code, _, stderr := execute(t, "gateway", "close"); code != exitFailure || !strings.Contains(stderr, "--url") {
+		t.Errorf("no URL: exit %d, %s", code, stderr)
+	}
+	t.Setenv(adminKeyVariable, gatewayAdmin)
+	if code, _, stderr := execute(t, "gateway", "close", "--url", "http://gateway.example"); code != exitFailure || !strings.Contains(stderr, "https") {
+		t.Errorf("plain http: exit %d, %s", code, stderr)
+	}
+	t.Setenv(adminKeyVariable, "sk-not-the-admin-key")
+	code, _, stderr := execute(t, "gateway", "close", "--url", stub.URL)
+	if code != exitFailure || !strings.Contains(stderr, "401") || strings.Contains(stderr, "sk-not-the-admin-key") {
+		t.Errorf("a wrong admin key: exit %d, %s", code, stderr)
+	}
+	t.Setenv(adminKeyVariable, "")
+	if code, _, stderr := execute(t, "gateway", "close", "--url", stub.URL); code != exitFailure || !strings.Contains(stderr, adminKeyVariable) {
+		t.Errorf("no admin key: exit %d, %s", code, stderr)
+	}
+	t.Setenv(adminKeyVariable, gatewayAdmin)
+	t.Setenv("GITHUB_RUN_ATTEMPT", "")
+	if code, _, stderr := execute(t, "gateway", "close", "--url", stub.URL); code != exitFailure || !strings.Contains(stderr, "GITHUB_RUN_ATTEMPT") {
+		t.Errorf("no attempt: exit %d, %s", code, stderr)
+	}
+}
+
+func TestGatewayUsage(t *testing.T) {
+	if code, _, stderr := execute(t, "gateway"); code != exitFailure || !strings.Contains(stderr, "costroid gateway keygen") {
+		t.Errorf("no subcommand: exit %d, %s", code, stderr)
+	}
+	if code, stdout, _ := execute(t, "gateway", "help"); code != 0 || !strings.Contains(stdout, "https") {
+		t.Errorf("help: exit %d, %s", code, stdout)
+	}
+	if code, _, stderr := execute(t, "gateway", "open"); code != exitFailure || !strings.Contains(stderr, `unknown gateway command "open"`) {
+		t.Errorf("an unknown subcommand: exit %d, %s", code, stderr)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -179,32 +178,8 @@ func grains(credentials []string, scopePrefix, keyGrain, scopeGrain string) []st
 	return needed
 }
 
-// maxExponent bounds a provider's scientific notation. Anything larger is not
-// a money figure.
-const maxExponent = 64
-
 // parseAmount reads a provider's figure exactly. Unlike a row's amounts it may
 // carry a sign, and OpenAI's are JSON numbers, which can carry an exponent.
 func parseAmount(text string) (decimal.Decimal, error) {
-	digits, negative := strings.CutPrefix(text, "-")
-	mantissa, exponent, scientific := strings.Cut(strings.ToLower(digits), "e")
-	value, err := decimal.Parse(mantissa)
-	if err != nil {
-		return decimal.Decimal{}, err
-	}
-	if scientific {
-		shift, err := strconv.Atoi(exponent)
-		if err != nil || shift > maxExponent || shift < -maxExponent {
-			return decimal.Decimal{}, fmt.Errorf("reconcile: exponent of %q is out of range", text)
-		}
-		if shift > 0 {
-			value = value.Mul(decimal.MustParse("1" + strings.Repeat("0", shift)))
-		} else {
-			value = value.DivPow10(-shift)
-		}
-	}
-	if negative {
-		return decimal.Decimal{}.Sub(value), nil
-	}
-	return value, nil
+	return decimal.ParseNumber(text)
 }

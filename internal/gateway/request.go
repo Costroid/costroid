@@ -47,13 +47,19 @@ func (b Binding) Alias() string {
 	return strings.Join([]string{"costroid", b.Repository, b.Run, b.Attempt}, ":")
 }
 
+// legacyRequestFormat is the format of versions that sealed to a public key
+// derived from the admin key.
+const legacyRequestFormat = "costroid gateway request v1"
+
 // Request is the sealed key and the run it is for. It holds no secret: only a
-// holder of the gateway's admin key can open it.
+// holder of the sealing key's private half can open it.
 type Request struct {
 	Format string `json:"format"`
 	Binding
-	KeyID  string `json:"key_id"`
-	Sealed string `json:"sealed"`
+	// SealingKey is the public key the key was sealed to.
+	SealingKey string `json:"sealing_key"`
+	KeyID      string `json:"key_id"`
+	Sealed     string `json:"sealed"`
 }
 
 // NewRequest draws a key for the run and seals it to the gateway's public key.
@@ -64,7 +70,7 @@ func NewRequest(publicKey string, binding Binding) (Request, string, error) {
 	if err != nil {
 		return Request{}, "", err
 	}
-	return Request{Format: requestFormat, Binding: binding, KeyID: KeyID(key), Sealed: sealed}, key, nil
+	return Request{Format: requestFormat, Binding: binding, SealingKey: publicKey, KeyID: KeyID(key), Sealed: sealed}, key, nil
 }
 
 // ReadRequest parses a request file.
@@ -80,20 +86,31 @@ func ReadRequest(source io.Reader) (Request, error) {
 	if err := json.Unmarshal(data, &request); err != nil {
 		return Request{}, fmt.Errorf("gateway: parse the request: %w", err)
 	}
+	if request.Format == legacyRequestFormat {
+		return Request{}, ErrDerivedSealingKey
+	}
 	if request.Format != requestFormat {
 		return Request{}, fmt.Errorf("gateway: the request's format is %q, not %q", request.Format, requestFormat)
 	}
 	return request, nil
 }
 
-// Open checks that the request names the run the caller is in, then opens it.
-// A request copied from another run is refused before it is opened.
-func (r Request) Open(adminKey string, run Binding) (string, error) {
+// Open checks that the request names the run the caller is in and was sealed
+// to this sealing key, then opens it. A request copied from another run is
+// refused before it is opened.
+func (r Request) Open(sealingKey string, run Binding) (string, error) {
 	if r.Binding != run {
-		return "", fmt.Errorf("gateway: the request is for %s, run %s, attempt %s, and this job is in %s, run %s, attempt %s",
+		return "", fmt.Errorf("gateway: the request is for %q, run %q, attempt %q, and this job is in %s, run %s, attempt %s",
 			r.Repository, r.Run, r.Attempt, run.Repository, run.Run, run.Attempt)
 	}
-	key, err := open(adminKey, run, r.Sealed)
+	public, err := PublicKey(sealingKey)
+	if err != nil {
+		return "", err
+	}
+	if r.SealingKey != public {
+		return "", fmt.Errorf("gateway: the request is sealed to another public key than the sealing key's public half, %s: set COSTROID_GATEWAY_PUBLIC_KEY to the public half costroid gateway keygen printed with COSTROID_GATEWAY_SEALING_KEY", public)
+	}
+	key, err := open(sealingKey, run, r.Sealed)
 	if err != nil {
 		return "", err
 	}

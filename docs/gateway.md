@@ -10,7 +10,7 @@ Organizations are Enterprise: every route in [`organization_endpoints.py`](https
 
 ## How the key reaches the agent
 
-The gateway's admin key is LiteLLM's master key. It never enters the job that runs the agent. Only the job that mints the key and the job that deletes it hold it.
+The gateway's admin key is LiteLLM's master key, or a key limited to the routes minting needs ([below](#mint-with-a-key-limited-to-its-routes)). It never enters the job that runs the agent. Only the job that mints the key and the job that deletes it hold it.
 
 A job cannot hand a secret to another job through its outputs: GitHub refuses to pass an output that holds a masked value, and an output that is not masked is printed in the next job's log. So the per-run key never crosses a job at all. The agent's job makes it.
 
@@ -18,15 +18,29 @@ A job cannot hand a secret to another job through its outputs: GitHub refuses to
 | ---- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1    | Agent             | `costroid gateway request` draws a random key and writes it to a file only the runner's user can read. It seals the key to the gateway's sealing key with [HPKE](https://www.rfc-editor.org/rfc/rfc9180) (X25519, HKDF-SHA256, AES-256-GCM), bound to the repository, the run and the attempt |
 | 2    | Agent             | `actions/upload-artifact` keeps the sealed request as an artifact of this run. It holds no secret: only the minting job can open it                                                                                                                                                       |
-| 3    | Mint, in parallel | `costroid gateway mint` waits for that artifact, opens it, checks that it names this repository, run and attempt, and registers the key on the gateway with its budget, expiry and metadata. With a ledger named, it then attests the key's id for this run to the ledger |
+| 3    | Mint, in parallel | `costroid gateway mint` waits for that artifact, opens it with the sealing key's private half, checks that it names this repository, run and attempt, and registers the key on the gateway with its budget, expiry and metadata. With a ledger named, it then attests the key's id for this run to the ledger |
 | 4    | Agent             | `costroid run --gateway` waits until the key authenticates, reads the key back from the gateway, and starts the agent with the gateway's URL and the key in the agent's environment alone                                                                                                 |
-| 5    | Close, always     | `costroid gateway close` deletes the key by its alias, which names the run and the attempt                                                                                                                                                                                                |
+| 5    | Close, always     | `costroid gateway close` deletes the key by its alias, which names the run and the attempt. When it finds no key, it waits 13 minutes for a late mint and deletes once more                                                                                                              |
 
-The sealing key pair comes from the admin key, so it needs no secret of its own. `costroid gateway public-key` prints the public half once. Store it as a repository variable. When the admin key changes, print it again.
+The sealing key pair is drawn at random, once, on your own machine:
+
+```sh
+costroid gateway keygen --out sealing-key
+```
+
+It writes the private half to `sealing-key`, readable by you alone, and prints the public half. Store the file's content as the secret `COSTROID_GATEWAY_SEALING_KEY` of the `costroid-gateway` environment, store the public half as the repository variable `COSTROID_GATEWAY_PUBLIC_KEY`, then delete the file. `costroid gateway public-key` prints the public half of the private half in `COSTROID_GATEWAY_SEALING_KEY`, to check the variable against it.
+
+Versions up to 1.0.0-alpha.8 derived the pair from the admin key, so anyone who read the public key, a repository variable, could test guesses at the admin key offline. `costroid gateway mint` now refuses a request sealed to a key derived that way, and a request from an earlier version, with a sentence that says to run `keygen`. If your public key was derived, run `keygen`, replace the variable, and rotate the admin key.
 
 No value of the key reaches an output or a log. The agent's job keeps `contents: read` and nothing else: it uploads an artifact through the runner's own token, and it learns that the key is ready by asking the gateway, never the GitHub API. The minting job needs `actions: read` to download the artifact and `id-token: write` to attest the key, and checks out nothing.
 
 An injected agent holds its own key, which is what it needs to run. It can spend that key's budget and no other. It cannot open another run's request, because every request is sealed to a key the agent's job never holds. A request copied from another run is refused, because the repository, run and attempt it names are checked.
+
+The gateway's URL must be `https`. Every call sends the admin key or the run's key in its `Authorization` header, so `costroid gateway` and `costroid run` refuse an `http` URL, except on `localhost` and `127.0.0.1`.
+
+## When mint is late
+
+The mint job does not wait for the agent's job, and the close job waits only for the agent's job. If close finds no key, mint may still be waiting for the request: it waits up to 10 minutes for the artifact, then makes up to five calls to the gateway of up to 30 seconds each. So close waits 13 minutes and deletes once more, and a key minted late is deleted too. A key minted after that, such as one whose minting job a reviewer approved after close ended, lives until its expiry, `--lifetime-minutes`. No runner holds it: the agent's job has ended, and only the sealing key opens its request.
 
 ## How the rows earn `exact`
 
@@ -66,7 +80,7 @@ When the agent ends, `costroid run` reads the key's spend from `/key/info`. It w
 costroid: warning: the gateway counted USD <gateway's figure> on the run's key, and the rows, priced at the catalog, come to USD <rows' total>. The gateway holds the budget in its own figure, and the rows keep theirs
 ```
 
-LiteLLM sums spend in binary floating point, and its counter read `0.018000000000000002` for three requests of `0.006`, so a figure equal in decimals can differ in its last digits and still warn. The gateway's figure is never written to a row.
+LiteLLM sums spend in binary floating point, and its counter read `0.018000000000000002` for three requests of `0.006`. A float64 sum of n terms drifts by about n × 1.1 × 10⁻¹⁶ of the total. So the run reads the gateway's figure exactly, exponent forms such as `1.2e-05` included, and takes it as the rows' total when the two differ by at most 10⁻⁹ of the total. Past that, it warns and prints the gateway's figure as the decimal it read. The gateway's figure is never written to a row.
 
 To make the two agree, give each model on the gateway the catalog's prices. A LiteLLM price is per token, and a catalog price is per million tokens, so divide by 1,000,000. For `claude-haiku-5-5` in catalog `0.1.0`:
 
@@ -88,11 +102,28 @@ The journey once showed USD 0.013951, and that figure was not a price. The mock 
 
 LiteLLM keeps spend in a database. With `allow_requests_on_db_unavailable: true` it keeps serving while the database is down: in the e2e journey, with its database stopped, LiteLLM v1.108.1 answered the next request with HTTP 200. `costroid run` asks the gateway's public `/health/readiness` before the agent starts, every two seconds while it runs, and after it ends. If any answer names a database that is not `connected`, or the gateway does not answer, the run's rows read `none`. An outage that starts and ends between two probes is not seen.
 
-## Keep the admin key behind an environment
+## Keep the admin key and the sealing key behind an environment
 
 On a pull request from a branch of the same repository, GitHub runs the workflow file from the pull request's head, with the repository's secrets. Anyone who can push a branch can change the mint job and read the admin key. That is GitHub's model for every secret a workflow can reach, not something particular to Costroid. A pull request from a fork gets no secrets: "secrets are not passed to the runner when a workflow is triggered from a forked repository" ([Using secrets in GitHub Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets), read 2026-11-06).
 
-Keep the admin key as a secret of a GitHub environment, `costroid-gateway`, and set its protection rules yourself. The recipe names that environment on the mint and close jobs, and on no other job. "Secrets stored in an environment are only available to workflow jobs that reference the environment", and with required reviewers "a job cannot access environment secrets until one of the required reviewers approves it" ([Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments), read 2026-11-06). With required reviewers, each run waits for a person you named before a key is minted. Without a protection rule, the environment only limits which jobs see the key.
+Keep the admin key and the sealing key as secrets of a GitHub environment, `costroid-gateway`, and set its protection rules yourself. The recipe names that environment on the mint and close jobs, and on no other job. `costroid lint-recipes` refuses a job that sets `COSTROID_GATEWAY_ADMIN_KEY` or `COSTROID_GATEWAY_SEALING_KEY` and names no environment, and refuses either on the agent's job. "Secrets stored in an environment are only available to workflow jobs that reference the environment", and with required reviewers "a job cannot access environment secrets until one of the required reviewers approves it" ([Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments), read 2026-11-06). With required reviewers, each run waits for a person you named before a key is minted. Without a protection rule, the environment only limits which jobs see the key.
+
+## Mint with a key limited to its routes
+
+The master key can do everything on the proxy. Mint and close call eight routes: `/key/generate`, `/key/delete`, `/team/info`, `/team/new`, `/team/update`, `/user/info`, `/user/new` and `/user/update`. A LiteLLM key can be limited to them with `allowed_routes`, a field of its MIT-licensed code. The key's user is a proxy admin, so the key may create teams and set users' budgets; whether a lesser role suffices was not tested. Create the user and the key with the master key, once:
+
+```sh
+curl -sS -X POST "$LITELLM_URL/user/new" -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H 'Content-Type: application/json' -d '{"user_id": "costroid-minter", "user_role": "proxy_admin"}'
+curl -sS -X POST "$LITELLM_URL/key/generate" -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H 'Content-Type: application/json' -d '{"user_id": "costroid-minter", "allowed_routes": ["/key/generate", "/key/delete", "/team/info", "/team/new", "/team/update", "/user/info", "/user/new", "/user/update"]}'
+```
+
+Store the `key` it answers as the environment's admin key in place of the master key.
+
+Verified on 2026-11-07 against LiteLLM v1.108.1 by the e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob`: both of its keys were minted and closed with such a key, and the key was refused with HTTP 403 on `GET /key/list`, `POST /model/new`, `POST /config/update` and `POST /v1/messages`.
+
+The limit is not a boundary. The same journey shows that the limited key can call `/key/generate` for its own user, a proxy admin, with no `allowed_routes`, and the key it makes reaches `/key/list`. Whoever holds the limited key can therefore make a key with its user's proxy-admin role and no limit. The limit refuses any other route called with the key itself, and nothing more. The environment's protection rules are what keep the key.
 
 ## Daily caps
 

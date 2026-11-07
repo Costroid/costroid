@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
@@ -21,43 +22,57 @@ import (
 const gatewayUsage = `costroid gateway gives one CI run its own key on a LiteLLM proxy.
 
 Usage:
+  costroid gateway keygen --out FILE
   costroid gateway public-key
   costroid gateway request --out DIR
   costroid gateway mint --url URL --budget-usd N --lifetime-minutes N --max-request-tokens N [--max-parallel-requests N]
                         [--repository-daily-cap-usd N] [--author-daily-cap-usd N] [--request FILE]
-  costroid gateway close --url URL
+  costroid gateway close --url URL [--retry-after DURATION]
 
-public-key prints the public half of the sealing key, which comes from the
-admin key in COSTROID_GATEWAY_ADMIN_KEY. Store it as a repository variable.
+keygen draws a sealing key pair at random. It writes the private half to FILE,
+which must not exist, for this user alone, and prints the public half. Store
+FILE's content as the secret COSTROID_GATEWAY_SEALING_KEY of the environment
+the mint job names, store the public half as the repository variable
+COSTROID_GATEWAY_PUBLIC_KEY, then delete FILE. Nothing about the pair comes
+from the admin key.
+
+public-key prints the public half of the sealing key in
+COSTROID_GATEWAY_SEALING_KEY, to check the repository variable against it.
 
 request runs in the agent's job. It draws the run's key, writes it to DIR/key
 for this user alone, and writes DIR/` + gateway.RequestFile + `, the key sealed to
 COSTROID_GATEWAY_PUBLIC_KEY for this repository, run and attempt. It prints the
 key's id, never the key.
 
-mint runs in a job that holds COSTROID_GATEWAY_ADMIN_KEY and never runs the
-agent. It opens the request, from --request or from this run's artifact
-costroid-gateway-request-<attempt> with GITHUB_TOKEN, and registers the key
-with the budget, an expiry, the parallel-request limit, and the repository,
-pull request, head commit, run and largest request in its metadata. It prints
-the key's id. When COSTROID_INGEST_URL is set, it then attests the key to that
-ledger under the job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs
-id-token: write. Only an attested key lets the run's rows read exact.
+mint runs in a job that holds COSTROID_GATEWAY_SEALING_KEY and
+COSTROID_GATEWAY_ADMIN_KEY and never runs the agent. It opens the request, from
+--request or from this run's artifact costroid-gateway-request-<attempt> with
+GITHUB_TOKEN, and registers the key with the budget, an expiry, the
+parallel-request limit, and the repository, pull request, head commit, run and
+largest request in its metadata. It prints the key's id. When
+COSTROID_INGEST_URL is set, it then attests the key to that ledger under the
+job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
+Only an attested key lets the run's rows read exact.
 --repository-daily-cap-usd puts the key in a team for the repository with that
 budget per day, and --author-daily-cap-usd in a user for the pull request's
 author with that budget per day.
 
 close deletes the run's key by its alias, and prints deleted, or absent when no
-key was left. Run it when the job ends, also on failure.
+key was left. Run it when the job ends, also on failure. When it finds no key,
+mint may still be waiting for the request, so close waits --retry-after, 13
+minutes by default, and deletes once more.
+
+The gateway's URL must be https, except on localhost and 127.0.0.1.
 
 Exit codes: 0 done, 125 not done.
 `
 
 const (
-	adminKeyVariable  = "COSTROID_GATEWAY_ADMIN_KEY"
-	publicKeyVariable = "COSTROID_GATEWAY_PUBLIC_KEY"
-	gatewayURLVar     = "COSTROID_GATEWAY_URL"
-	gatewayKeyFileVar = "COSTROID_GATEWAY_KEY_FILE"
+	adminKeyVariable   = "COSTROID_GATEWAY_ADMIN_KEY"
+	sealingKeyVariable = "COSTROID_GATEWAY_SEALING_KEY"
+	publicKeyVariable  = "COSTROID_GATEWAY_PUBLIC_KEY"
+	gatewayURLVar      = "COSTROID_GATEWAY_URL"
+	gatewayKeyFileVar  = "COSTROID_GATEWAY_KEY_FILE"
 	// The ingest job's variables. mint attests to the same ledger.
 	ingestURLVariable      = "COSTROID_INGEST_URL"
 	ingestAudienceVariable = "COSTROID_INGEST_AUDIENCE"
@@ -65,10 +80,14 @@ const (
 	requestArtifact        = "costroid-gateway-request-"
 	artifactWait           = 10 * time.Minute
 	artifactEvery          = 5 * time.Second
-	defaultParallel        = 1
-	gatewayKeyWait         = 10 * time.Minute
-	gatewayProbeEvery      = 2 * time.Second
-	gatewayPoll            = 2 * time.Second
+	// mintWindow is the longest mint can take to register a key after it
+	// starts: the artifact's wait, then up to five calls to the gateway of
+	// 30 seconds each.
+	mintWindow        = artifactWait + 3*time.Minute
+	defaultParallel   = 1
+	gatewayKeyWait    = 10 * time.Minute
+	gatewayProbeEvery = 2 * time.Second
+	gatewayPoll       = 2 * time.Second
 	// LiteLLM writes spend to its store every 10 seconds by default
 	// (PROXY_BATCH_WRITE_AT in litellm/constants.py at v1.108.1).
 	gatewaySpendSettle = 30 * time.Second
@@ -82,6 +101,8 @@ func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	var err error
 	switch args[0] {
+	case "keygen":
+		err = gatewayKeygen(args[1:], stdout, stderr)
 	case "public-key":
 		err = gatewayPublicKey(stdout)
 	case "request":
@@ -114,12 +135,50 @@ func adminKey() (string, error) {
 	return key, nil
 }
 
-func gatewayPublicKey(stdout io.Writer) error {
-	admin, err := adminKey()
+// sealingKey reads the sealing key's private half. A job set up before keygen
+// has none, and is told to run it.
+func sealingKey() (string, error) {
+	key := os.Getenv(sealingKeyVariable)
+	if key == "" {
+		return "", fmt.Errorf("%s is not set: run costroid gateway keygen, store the private half as that environment secret and the public half as the variable %s", sealingKeyVariable, publicKeyVariable)
+	}
+	return key, nil
+}
+
+func gatewayKeygen(args []string, stdout, stderr io.Writer) error {
+	set := gatewayFlags("keygen", stderr)
+	out := set.String("out", "", "the file the private half goes to; it must not exist")
+	if err := set.Parse(args); err != nil {
+		return err
+	}
+	if *out == "" {
+		return errors.New("gateway keygen needs --out: the private half goes to a file, never to the terminal")
+	}
+	private, public, err := gateway.NewSealingKey()
 	if err != nil {
 		return err
 	}
-	public, err := gateway.PublicKey(admin)
+	file, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("write the sealing key: %w", err)
+	}
+	if _, err := file.WriteString(private + "\n"); err != nil {
+		file.Close()
+		return fmt.Errorf("write the sealing key: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("write the sealing key: %w", err)
+	}
+	fmt.Fprintln(stdout, public)
+	return nil
+}
+
+func gatewayPublicKey(stdout io.Writer) error {
+	private, err := sealingKey()
+	if err != nil {
+		return err
+	}
+	public, err := gateway.PublicKey(strings.TrimSpace(private))
 	if err != nil {
 		return err
 	}
@@ -142,13 +201,13 @@ func gatewayRequest(args []string, stdout, stderr io.Writer) error {
 	}
 	public := os.Getenv(publicKeyVariable)
 	if *out == "" || public == "" {
-		return fmt.Errorf("gateway request needs --out and %s", publicKeyVariable)
+		return fmt.Errorf("gateway request needs --out and %s, the public half costroid gateway keygen printed", publicKeyVariable)
 	}
 	binding, err := gateway.ReadBinding(os.Getenv)
 	if err != nil {
 		return err
 	}
-	request, key, err := gateway.NewRequest(public, binding)
+	request, key, err := gateway.NewRequest(strings.TrimSpace(public), binding)
 	if err != nil {
 		return err
 	}
@@ -194,6 +253,9 @@ func parseMint(args []string, stderr io.Writer) (mintFlags, error) {
 	if *address == "" || *budget == "" || *minutes <= 0 || *tokens <= 0 {
 		return mintFlags{}, errors.New("gateway mint needs --url, --budget-usd, --lifetime-minutes and --max-request-tokens")
 	}
+	if err := gateway.CheckURL(*address); err != nil {
+		return mintFlags{}, err
+	}
 	amount, err := decimal.Parse(*budget)
 	if err != nil {
 		return mintFlags{}, fmt.Errorf("--budget-usd: %w", err)
@@ -232,6 +294,10 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
+	sealing, err := sealingKey()
+	if err != nil {
+		return err
+	}
 	binding, err := gateway.ReadBinding(os.Getenv)
 	if err != nil {
 		return err
@@ -242,7 +308,7 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	}
 	ci, _ := cicontext.Read(os.Getenv)
 	mint := gateway.Mint{
-		Client: gateway.NewClient(flags.url), AdminKey: admin, Run: binding, Request: request,
+		Client: gateway.NewClient(flags.url), AdminKey: admin, SealingKey: strings.TrimSpace(sealing), Run: binding, Request: request,
 		Budget: flags.budget, Lifetime: flags.lifetime, MaxParallel: flags.parallel, MaxRequestTokens: flags.requestTokens,
 		PullRequest: ci.PullRequest, Head: ci.Head, Author: eventAuthor(os.Getenv("GITHUB_EVENT_PATH")), Caps: flags.caps,
 	}
@@ -325,11 +391,15 @@ func eventAuthor(path string) string {
 func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	set := gatewayFlags("close", stderr)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
+	retry := set.Duration("retry-after", mintWindow, "how long to wait for a late mint when no key is found, before deleting once more")
 	if err := set.Parse(args); err != nil {
 		return err
 	}
 	if *address == "" {
 		return errors.New("gateway close needs --url")
+	}
+	if err := gateway.CheckURL(*address); err != nil {
+		return err
 	}
 	admin, err := adminKey()
 	if err != nil {
@@ -339,7 +409,17 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
-	deleted, err := gateway.Close(ctx, gateway.NewClient(*address), admin, binding)
+	client := gateway.NewClient(*address)
+	deleted, err := gateway.Close(ctx, client, admin, binding)
+	if err == nil && !deleted {
+		fmt.Fprintf(stderr, "no key yet: waiting %s for a late mint, then deleting once more\n", *retry)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(*retry):
+		}
+		deleted, err = gateway.Close(ctx, client, admin, binding)
+	}
 	if err != nil {
 		return err
 	}

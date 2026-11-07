@@ -29,8 +29,10 @@ type DailyCaps struct {
 
 // Mint is one key to register for one run.
 type Mint struct {
-	Client           *Client
-	AdminKey         string
+	Client   *Client
+	AdminKey string
+	// SealingKey is the private half the request was sealed to.
+	SealingKey       string
 	Run              Binding
 	Request          Request
 	Budget           decimal.Decimal
@@ -44,7 +46,8 @@ type Mint struct {
 }
 
 // Register opens the request and registers its key with the run's budget,
-// expiry and metadata. It returns the key's id.
+// expiry and metadata. It returns the key's id. A request sealed to the public
+// key earlier versions derived from the admin key is refused.
 func (m Mint) Register(ctx context.Context) (string, error) {
 	switch {
 	case m.Budget.Sign() <= 0:
@@ -56,7 +59,10 @@ func (m Mint) Register(ctx context.Context) (string, error) {
 	case m.MaxRequestTokens < 1:
 		return "", errors.New("gateway: the largest request must be at least 1 token")
 	}
-	key, err := m.Request.Open(m.AdminKey, m.Run)
+	if m.Request.SealingKey == derivedPublicKey(m.AdminKey) {
+		return "", ErrDerivedSealingKey
+	}
+	key, err := m.Request.Open(m.SealingKey, m.Run)
 	if err != nil {
 		return "", err
 	}

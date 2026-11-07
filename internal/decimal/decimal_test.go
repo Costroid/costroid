@@ -67,3 +67,30 @@ func TestMarshalJSONWritesAString(t *testing.T) {
 		t.Errorf("marshalled %s", out)
 	}
 }
+
+func TestParseExponent(t *testing.T) {
+	cases := map[string]string{
+		"0.06":                "0.06",
+		"8.6e-1":              "0.86",
+		"8.6E-1":              "0.86",
+		"1.5e2":               "150",
+		"1.5e+2":              "150",
+		"1.2e-05":             "0.000012",
+		"-0.25":               "-0.25",
+		"41280.000000":        "41280",
+		"0.30000000000000004": "0.30000000000000004",
+	}
+	for in, want := range cases {
+		got, err := ParseNumber(in)
+		if err != nil {
+			t.Errorf("ParseNumber(%q): %v", in, err)
+		} else if got.String() != want {
+			t.Errorf("ParseNumber(%q) = %s, want %s", in, got, want)
+		}
+	}
+	for _, in := range []string{"", "abc", "1e", "1e999", "1e-65", "--1", "+1", "NaN", "Infinity", ".5", "1.5e2.5"} {
+		if _, err := ParseNumber(in); err == nil {
+			t.Errorf("ParseNumber(%q) was accepted", in)
+		}
+	}
+}

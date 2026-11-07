@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/gateway"
 )
 
 const (
@@ -86,8 +87,17 @@ type gatewayStack struct {
 	project string
 	url     string
 	admin   string
-	env     []string
+	// minter is a key limited to the routes mint and close call. The jobs
+	// hold it as their admin key; the test reads the gateway with admin.
+	minter string
+	env    []string
 }
+
+// minterRoutes are the routes costroid gateway mint and close call, and the
+// only ones the minting key may.
+var minterRoutes = []string{"/key/generate", "/key/delete", "/team/info", "/team/new", "/team/update", "/user/info", "/user/new", "/user/update"}
+
+const minterUser = "costroid-minter"
 
 func composeGateway(t *testing.T, mock *mockUpstream) *gatewayStack {
 	t.Helper()
@@ -97,6 +107,7 @@ func composeGateway(t *testing.T, mock *mockUpstream) *gatewayStack {
 		project: fmt.Sprintf("costroid-gateway-e2e-%d", os.Getpid()),
 		url:     "http://127.0.0.1:" + strconv.Itoa(port),
 		admin:   "sk-e2e-admin-" + strconv.Itoa(os.Getpid()),
+		minter:  "sk-e2e-minter-" + strconv.Itoa(os.Getpid()),
 	}
 	s.env = append(os.Environ(), "LITELLM_MASTER_KEY="+s.admin, "MOCK_UPSTREAM="+mock.url, "LITELLM_PORT="+strconv.Itoa(port))
 	t.Cleanup(s.down)
@@ -104,7 +115,40 @@ func composeGateway(t *testing.T, mock *mockUpstream) *gatewayStack {
 		t.Fatalf("compose up: %v\n%s", err, out)
 	}
 	s.awaitStore("connected")
+	s.adminCall(http.MethodPost, "/user/new", map[string]any{"user_id": minterUser, "user_role": "proxy_admin"}, http.StatusOK)
+	s.adminCall(http.MethodPost, "/key/generate", map[string]any{"key": s.minter, "user_id": minterUser, "allowed_routes": minterRoutes}, http.StatusOK)
 	return s
+}
+
+// adminCall calls the gateway with its master key and wants the status given.
+func (s *gatewayStack) adminCall(method, route string, body any, want int) {
+	s.t.Helper()
+	if got, answer := s.call(s.admin, method, route, body); got != want {
+		s.t.Fatalf("%s %s answered %d, want %d: %s", method, route, got, want, answer)
+	}
+}
+
+// call calls the gateway with the bearer given and returns the status and body.
+func (s *gatewayStack) call(bearer, method, route string, body any) (int, string) {
+	s.t.Helper()
+	var payload io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			s.t.Fatal(err)
+		}
+		payload = bytes.NewReader(data)
+	}
+	request, _ := http.NewRequest(method, s.url+route, payload)
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer response.Body.Close()
+	data, _ := io.ReadAll(response.Body)
+	return response.StatusCode, string(data)
 }
 
 func (s *gatewayStack) docker(args ...string) ([]byte, error) {
@@ -213,6 +257,7 @@ type gatewayJob struct {
 	*workspace
 	stack   *gatewayStack
 	ci      []string
+	sealing string
 	public  string
 	request string
 	report  string
@@ -239,11 +284,19 @@ func newGatewayJob(t *testing.T, stack *gatewayStack) *gatewayJob {
 		"GITHUB_RUN_ID="+runID, "GITHUB_JOB=agent", "GITHUB_SHA="+merge, "GITHUB_EVENT_NAME=pull_request",
 		"GITHUB_EVENT_PATH="+event, "CLAUDE_CONFIG_DIR="+filepath.Join(w.directory, "claude-config"),
 	)
-	code, stdout, stderr := w.costroid(append(job.ci, "COSTROID_GATEWAY_ADMIN_KEY="+stack.admin), "gateway", "public-key")
+	sealing := filepath.Join(w.directory, "sealing-key")
+	code, stdout, stderr := w.costroid(job.ci, "gateway", "keygen", "--out", sealing)
 	if code != 0 {
-		t.Fatalf("gateway public-key exit %d: %s", code, stderr)
+		t.Fatalf("gateway keygen exit %d: %s", code, stderr)
 	}
-	job.public = strings.TrimSpace(stdout)
+	data, err := os.ReadFile(sealing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.sealing, job.public = strings.TrimSpace(string(data)), strings.TrimSpace(stdout)
+	if strings.Contains(stdout+stderr, job.sealing) {
+		t.Fatal("gateway keygen printed the sealing key's private half")
+	}
 	return job
 }
 
@@ -264,7 +317,7 @@ func (j *gatewayJob) open(attempt int) string {
 	if strings.Contains(stdout+stderr, key) {
 		j.t.Fatal("gateway request printed the key")
 	}
-	mintEnv := append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.admin)
+	mintEnv := append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter, "COSTROID_GATEWAY_SEALING_KEY="+j.sealing)
 	code, stdout, stderr = j.costroid(mintEnv, "gateway", "mint", "--url", j.stack.url, "--budget-usd", gatewayBudget,
 		"--lifetime-minutes", "10", "--max-request-tokens", gatewayRequestTokens,
 		"--repository-daily-cap-usd", repositoryCap, "--author-daily-cap-usd", "5",
@@ -272,8 +325,10 @@ func (j *gatewayJob) open(attempt int) string {
 	if code != 0 {
 		j.t.Fatalf("gateway mint exit %d: %s", code, stderr)
 	}
-	if strings.Contains(stdout+stderr, key) {
-		j.t.Fatal("gateway mint printed the key")
+	for _, secret := range []string{key, j.stack.minter, j.sealing} {
+		if strings.Contains(stdout+stderr, secret) {
+			j.t.Fatal("gateway mint printed a key")
+		}
 	}
 	id := keyID(key)
 	if !strings.Contains(stdout, id) {
@@ -303,9 +358,12 @@ func (j *gatewayJob) run(attempt int, extra ...string) *exec.Cmd {
 
 func (j *gatewayJob) close(attempt int) {
 	j.t.Helper()
-	code, stdout, stderr := j.costroid(append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.admin), "gateway", "close", "--url", j.stack.url)
-	if code != 0 {
+	code, stdout, stderr := j.costroid(append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter), "gateway", "close", "--url", j.stack.url)
+	if code != 0 || stdout != "deleted\n" {
 		j.t.Fatalf("gateway close exit %d: %s%s", code, stdout, stderr)
+	}
+	if strings.Contains(stdout+stderr, j.stack.minter) {
+		j.t.Fatal("gateway close printed the admin key")
 	}
 }
 
@@ -402,11 +460,15 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	if over.Cmp(decimal.MustParse(gatewayBound)) > 0 {
 		t.Errorf("the run cost USD %s, past the budget by more than the bound", total)
 	}
-	// The gateway's figure is set beside the rows' whenever the two differ, and
-	// never replaces them.
-	_, spend := stack.keyInfo(id)
-	warning := "the gateway counted USD " + spend + " on the run's key, and the rows, priced at the catalog, come to USD " + total.String()
-	if equal := decimal.MustParse(spend).Cmp(total) == 0; equal == strings.Contains(string(out), warning) {
+	// The gateway's figure is set beside the rows' whenever the two differ by
+	// more than float rounding, and never replaces them.
+	_, counted := stack.keyInfo(id)
+	spend, err := decimal.ParseNumber(counted)
+	if err != nil {
+		t.Fatalf("the gateway's spend %q: %v", counted, err)
+	}
+	warning := "the gateway counted USD " + spend.String() + " on the run's key, and the rows, priced at the catalog, come to USD " + total.String()
+	if gateway.SameSpend(spend, total) == strings.Contains(string(out), warning) {
 		t.Errorf("the gateway counted USD %s and the rows USD %s, and the run's warnings read:\n%s", spend, total, out)
 	}
 	t.Logf("the gateway counted USD %s, the rows USD %s", spend, total)
@@ -423,6 +485,28 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	}
 
 	recordAStoreFailureAsNone(t, stack, job, mock)
+	holdTheMintersKeyToItsRoutes(t, stack)
+}
+
+// holdTheMintersKeyToItsRoutes records what a key limited to mint's and
+// close's routes holds on LiteLLM v1.108.1. The journey minted and closed
+// both keys with it. It is refused on the other routes tried, the model's
+// route among them.
+// It can still mint a key without the limit for its own user, a proxy admin,
+// and that key reaches every admin route: the limit is no boundary against
+// whoever holds the key.
+func holdTheMintersKeyToItsRoutes(t *testing.T, stack *gatewayStack) {
+	t.Helper()
+	for route, method := range map[string]string{"/key/list": http.MethodGet, "/model/new": http.MethodPost, "/config/update": http.MethodPost, "/v1/messages": http.MethodPost} {
+		if status, body := stack.call(stack.minter, method, route, map[string]any{}); status != http.StatusForbidden || !strings.Contains(body, "not allowed to call this route") {
+			t.Errorf("the minting key on %s %s answered %d: %.200s", method, route, status, body)
+		}
+	}
+	unlimited := "sk-e2e-unlimited-" + strconv.Itoa(os.Getpid())
+	stack.call(stack.minter, http.MethodPost, "/key/generate", map[string]any{"key": unlimited, "user_id": minterUser})
+	if status, body := stack.call(unlimited, http.MethodGet, "/key/list", nil); status != http.StatusOK {
+		t.Errorf("a key the minting key made for its own user answered %d on /key/list, and docs/gateway.md says it reaches every admin route: %.200s", status, body)
+	}
 }
 
 // recordAStoreFailureAsNone stops the gateway's store while the agent runs. The

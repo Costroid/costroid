@@ -1,7 +1,8 @@
 // Package gateway gives one CI run its own key on a LiteLLM proxy. The agent's
 // job draws the key and seals it to the gateway's sealing key; a job that holds
-// the proxy's admin key opens it and registers it with the run's budget; the
-// agent runs on it; a last job deletes it. No key crosses a job in the clear.
+// the sealing key's private half and the proxy's admin key opens it and
+// registers it with the run's budget; the agent runs on it; a last job deletes
+// it. No key crosses a job in the clear.
 package gateway
 
 import (
@@ -14,13 +15,25 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const (
 	keyPrefix     = "sk-"
-	sealingLabel  = "costroid gateway sealing key v1"
-	requestFormat = "costroid gateway request v1"
+	requestFormat = "costroid gateway request v2"
+	// SealingKeyPrefix starts the sealing key's private half, so it is never
+	// taken for the public half.
+	SealingKeyPrefix = "costroid-sealing-key-v1-"
+	// legacyLabel is what earlier versions derived the sealing key from the
+	// admin key with. It is kept only to recognise such a key and refuse it.
+	legacyLabel = "costroid gateway sealing key v1"
 )
+
+// ErrDerivedSealingKey is a request sealed to a public key derived from the
+// admin key, as versions before keygen made it. Anyone who reads that public
+// key can test guesses at the admin key offline.
+var ErrDerivedSealingKey = errors.New("gateway: the request is sealed to a public key derived from the admin key, which anyone who reads it can test guesses at the admin key against. " +
+	"Run costroid gateway keygen, store the private half as the environment secret COSTROID_GATEWAY_SEALING_KEY and the public half as the variable COSTROID_GATEWAY_PUBLIC_KEY, and rotate the admin key")
 
 var (
 	kem   = hpke.DHKEM(ecdh.X25519())
@@ -41,40 +54,70 @@ func KeyID(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// sealingKey derives the gateway's sealing key pair from its admin key, so the
-// pair needs no secret of its own. Only a holder of the admin key can open a
-// request.
-func sealingKey(adminKey string) (hpke.PrivateKey, error) {
-	if adminKey == "" {
-		return nil, errors.New("gateway: the admin key is empty")
-	}
-	mac := hmac.New(sha256.New, []byte(adminKey))
-	mac.Write([]byte(sealingLabel))
-	private, err := kem.DeriveKeyPair(mac.Sum(nil))
+// NewSealingKey draws a sealing key pair at random. It returns the private
+// half, for an environment secret, and the public half, for a repository
+// variable. Nothing about the pair depends on the admin key.
+func NewSealingKey() (private, public string, err error) {
+	pair, err := kem.GenerateKey()
 	if err != nil {
-		return nil, fmt.Errorf("gateway: derive the sealing key: %w", err)
+		return "", "", fmt.Errorf("gateway: draw the sealing key: %w", err)
 	}
-	return private, nil
+	raw, err := pair.Bytes()
+	if err != nil {
+		return "", "", fmt.Errorf("gateway: encode the sealing key: %w", err)
+	}
+	return SealingKeyPrefix + coder.EncodeToString(raw), coder.EncodeToString(pair.PublicKey().Bytes()), nil
 }
 
-// PublicKey is the public half of the sealing key, as a repository variable
-// holds it.
-func PublicKey(adminKey string) (string, error) {
-	private, err := sealingKey(adminKey)
+// PublicKey is the public half of a sealing key's private half.
+func PublicKey(sealingKey string) (string, error) {
+	private, err := readSealingKey(sealingKey)
 	if err != nil {
 		return "", err
 	}
 	return coder.EncodeToString(private.PublicKey().Bytes()), nil
 }
 
+func readSealingKey(sealingKey string) (hpke.PrivateKey, error) {
+	encoded, ok := strings.CutPrefix(sealingKey, SealingKeyPrefix)
+	if !ok {
+		return nil, fmt.Errorf("gateway: the sealing key does not start with %s: it is the private half costroid gateway keygen wrote", SealingKeyPrefix)
+	}
+	raw, err := coder.DecodeString(encoded)
+	if err != nil {
+		return nil, errors.New("gateway: the sealing key is not base64url after its prefix")
+	}
+	private, err := kem.NewPrivateKey(raw)
+	if err != nil {
+		return nil, errors.New("gateway: the sealing key is not an X25519 private key")
+	}
+	return private, nil
+}
+
+// derivedPublicKey is the public key an earlier version derived from the admin
+// key. It is computed only to refuse a request sealed to it.
+func derivedPublicKey(adminKey string) string {
+	mac := hmac.New(sha256.New, []byte(adminKey))
+	mac.Write([]byte(legacyLabel))
+	private, err := kem.DeriveKeyPair(mac.Sum(nil))
+	if err != nil {
+		return ""
+	}
+	return coder.EncodeToString(private.PublicKey().Bytes())
+}
+
 func seal(publicKey string, binding Binding, key string) (string, error) {
+	if strings.HasPrefix(publicKey, SealingKeyPrefix) {
+		return "", errors.New("gateway: COSTROID_GATEWAY_PUBLIC_KEY holds the sealing key's private half, which is now readable by anyone who reads the variable. " +
+			"Delete the variable, run costroid gateway keygen again, and store the new private half only as the environment secret COSTROID_GATEWAY_SEALING_KEY")
+	}
 	raw, err := coder.DecodeString(publicKey)
 	if err != nil {
-		return "", fmt.Errorf("gateway: the sealing key is not base64url: %w", err)
+		return "", fmt.Errorf("gateway: the public key is not base64url: %w", err)
 	}
 	public, err := kem.NewPublicKey(raw)
 	if err != nil {
-		return "", fmt.Errorf("gateway: the sealing key is not an X25519 key: %w", err)
+		return "", fmt.Errorf("gateway: the public key is not an X25519 key: %w", err)
 	}
 	sealed, err := hpke.Seal(public, kdf, aead, binding.info(), []byte(key))
 	if err != nil {
@@ -83,8 +126,8 @@ func seal(publicKey string, binding Binding, key string) (string, error) {
 	return coder.EncodeToString(sealed), nil
 }
 
-func open(adminKey string, binding Binding, sealed string) (string, error) {
-	private, err := sealingKey(adminKey)
+func open(sealingKey string, binding Binding, sealed string) (string, error) {
+	private, err := readSealingKey(sealingKey)
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +137,7 @@ func open(adminKey string, binding Binding, sealed string) (string, error) {
 	}
 	key, err := hpke.Open(private, kdf, aead, binding.info(), raw)
 	if err != nil {
-		return "", errors.New("gateway: the request does not open with this admin key for this run: it was sealed to another key, or for another repository, run or attempt")
+		return "", errors.New("gateway: the request does not open with this sealing key for this run: it was sealed to another key, or for another repository, run or attempt")
 	}
 	return string(key), nil
 }

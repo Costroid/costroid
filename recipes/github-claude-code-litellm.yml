@@ -53,6 +53,7 @@ jobs:
         run: git diff "$BASE...$HEAD" > pull-request.diff
       - name: Draw the run's key and seal it for the gateway
         env:
+          # The public half costroid gateway keygen printed.
           COSTROID_GATEWAY_PUBLIC_KEY: ${{ vars.COSTROID_GATEWAY_PUBLIC_KEY }}
         run: costroid gateway request --out "$RUNNER_TEMP/costroid-gateway"
       - name: Hand the sealed request to the minting job
@@ -104,8 +105,8 @@ jobs:
       || contains(github.event.pull_request.labels.*.name, 'costroid-agent'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # The admin key is a secret of this environment, behind protection rules you
-    # set. docs/gateway.md says why.
+    # The admin key and the sealing key are secrets of this environment, behind
+    # protection rules you set. docs/gateway.md says why.
     environment: costroid-gateway
     permissions:
       # Downloads the sealed request from this run's artifacts.
@@ -121,6 +122,7 @@ jobs:
       - name: Register the run's key with its budget
         env:
           COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.COSTROID_GATEWAY_SEALING_KEY }}
           COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
           COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
           COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
@@ -134,10 +136,11 @@ jobs:
 
   gateway-close:
     needs: agent
-    # Deletes the key whatever became of the agent, also when it failed.
+    # Deletes the key whatever became of the agent, also when it failed. When
+    # it finds no key, it waits 13 minutes for a late mint and deletes once more.
     if: always() && needs.agent.result != 'skipped'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     environment: costroid-gateway
     permissions: {}
     steps:

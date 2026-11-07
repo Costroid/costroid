@@ -20,6 +20,8 @@ func TestTheAdminKeyOnTheAgentsJobIsRefused(t *testing.T) {
 		{"the admin secret on the agent's step", agentKeyStep, "          GATEWAY: ${{ secrets.LITELLM_MASTER_KEY }}\n" + agentKeyStep, RuleAgentAdminKey},
 		{"the admin variable on the agent's step", agentKeyStep, "          COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.OTHER }}\n" + agentKeyStep, RuleAgentAdminKey},
 		{"every secret on the agent's step", agentKeyStep, "          ALL: ${{ toJSON(secrets) }}\n" + agentKeyStep, RuleAgentAdminKey},
+		{"the sealing key on the agent's step", agentKeyStep, "          COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.OTHER }}\n" + agentKeyStep, RuleAgentAdminKey},
+		{"the sealing secret on the agent's step", agentKeyStep, "          SEAL: ${{ secrets.COSTROID_GATEWAY_SEALING_KEY }}\n" + agentKeyStep, RuleAgentAdminKey},
 		{"the admin secret in the workflow's env", "permissions: {}\n", "permissions: {}\n\nenv:\n  GATEWAY: ${{ secrets.LITELLM_MASTER_KEY }}\n", RuleAgentAdminKey},
 	} {
 		t.Run(change.name, func(t *testing.T) {
@@ -73,4 +75,43 @@ func TestOnlyTheMintJobInItsEnvironmentMayAttest(t *testing.T) {
 	source := read(t, filepath.Join(recipesDir, gatewayRecipe))
 	expectRule(t, source, edit{"the mint job outside its environment", "    environment: costroid-gateway\n    permissions:\n      # Downloads", "    permissions:\n      # Downloads", RuleIDTokenScope})
 	expectRule(t, source, edit{"the close job", "    environment: costroid-gateway\n    permissions: {}\n", "    environment: costroid-gateway\n    permissions:\n      id-token: write\n", RuleIDTokenScope})
+}
+
+const (
+	mintEnvironment  = "    environment: costroid-gateway\n    permissions:\n      # Downloads"
+	closeEnvironment = "    environment: costroid-gateway\n    permissions: {}\n"
+)
+
+// TestGatewayKeysNeedAnEnvironment seeds the shipped gateway recipe with each
+// way a job could hold the admin key or the sealing key outside an
+// environment, and holds the shipped forms of an environment to no finding.
+func TestGatewayKeysNeedAnEnvironment(t *testing.T) {
+	source := read(t, filepath.Join(recipesDir, gatewayRecipe))
+	for _, change := range []edit{
+		{"the mint job without its environment", mintEnvironment, "    permissions:\n      # Downloads", RuleGatewayEnvironment},
+		{"the close job without its environment", closeEnvironment, "    permissions: {}\n", RuleGatewayEnvironment},
+		{"the close job with an empty environment", closeEnvironment, "    environment: \"\"\n    permissions: {}\n", RuleGatewayEnvironment},
+		{"the sealing key in the workflow's env", "permissions: {}\n\nconcurrency", "permissions: {}\n\nenv:\n  COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.SEAL }}\n\nconcurrency", RuleGatewayEnvironment},
+		{"the sealing key on a job of its own", "  ingest:\n", "  seal:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    env:\n      COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.SEAL }}\n    steps:\n      - run: costroid gateway public-key\n\n  ingest:\n", RuleGatewayEnvironment},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			expectRule(t, source, change)
+		})
+	}
+	named := strings.Replace(source, closeEnvironment, "    environment:\n      name: costroid-gateway\n    permissions: {}\n", 1)
+	if findings := LintBytes(gatewayRecipe, []byte(named)).Findings; len(findings) != 0 {
+		t.Errorf("an environment named in a mapping: %v", findings)
+	}
+	twice := strings.Replace(source, "  agent:\n", "  agent: &agent\n", 1)
+	twice = strings.Replace(twice, "  gateway-mint:\n", "  agent-again: *agent\n\n  gateway-mint:\n", 1)
+	twice = strings.Replace(twice, closeEnvironment, "    permissions: {}\n", 1)
+	count := 0
+	for _, finding := range LintBytes(gatewayRecipe, []byte(twice)).Findings {
+		if finding.Rule == RuleGatewayEnvironment {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("two agent jobs gave %d findings for one close job outside its environment", count)
+	}
 }
