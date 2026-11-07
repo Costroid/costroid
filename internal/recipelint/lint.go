@@ -64,48 +64,92 @@ var agentInstall = map[string]*regexp.Regexp{
 	codexAgent:  regexp.MustCompile(`@openai/codex@[0-9]+\.[0-9]+\.[0-9]+`),
 }
 
-// Finding is one line of a recipe and the rule it breaks. A note uses the same
-// shape and rejects nothing.
+// Finding is one line of a file and the rule it breaks. A note uses the same
+// shape and rejects nothing. Severity is set by the customer profile alone.
 type Finding struct {
-	Path    string
-	Line    int
-	Rule    string
-	Message string
+	Path     string
+	Line     int
+	Severity Severity
+	Rule     string
+	Message  string
 }
 
 func (f Finding) String() string {
+	if f.Severity != "" {
+		return fmt.Sprintf("%s:%d: %s: %s: %s", f.Path, f.Line, f.Severity, f.Rule, f.Message)
+	}
 	return fmt.Sprintf("%s:%d: %s: %s", f.Path, f.Line, f.Rule, f.Message)
 }
 
-// Report is what one lint found.
+// Report is what one lint found. Agents counts the workflows the customer
+// profile judged, the ones with an agent step.
 type Report struct {
 	Files    int
+	Agents   int
 	Findings []Finding
 	Notes    []Finding
 }
 
-// Lint checks the files named and every YAML file under the directories named.
-// Naming nothing to lint is an error, so a mistyped path cannot pass.
+// Profile chooses the rules a lint holds files to.
+type Profile int
+
+const (
+	// Recipes holds Costroid's shipped recipes to every rule.
+	Recipes Profile = iota
+	// Customer holds a team's own agent workflows to the rules on who can
+	// start a run and what the agent's job holds, each with a severity.
+	Customer
+)
+
+// Options are a lint's settings. The zero value lints recipes.
+type Options struct {
+	Profile Profile
+}
+
+// noun names what the profile reads, for its errors.
+func (o Options) noun() string {
+	if o.Profile == Customer {
+		return "workflow"
+	}
+	return "recipe"
+}
+
+func (o Options) lintBytes(path string, data []byte) Report {
+	if o.Profile == Customer {
+		return LintCustomer(path, data)
+	}
+	return LintBytes(path, data)
+}
+
+// Lint checks the files named and every YAML file under the directories named,
+// under the recipe profile.
 func Lint(paths []string) (Report, error) {
+	return LintWith(paths, Options{})
+}
+
+// LintWith checks the files named and every YAML file under the directories
+// named. Naming nothing to lint is an error, so a mistyped path cannot pass.
+func LintWith(paths []string, options Options) (Report, error) {
 	var report Report
 	for _, path := range paths {
 		files, err := yamlFiles(path)
 		if err != nil {
-			return report, err
+			return report, fmt.Errorf("read a %s: %w", options.noun(), err)
 		}
 		for _, file := range files {
 			data, err := os.ReadFile(file)
 			if err != nil {
-				return report, fmt.Errorf("read a recipe: %w", err)
+				return report, fmt.Errorf("read a %s: %w", options.noun(), err)
 			}
-			single := LintBytes(file, data)
+			single := options.lintBytes(file, data)
 			report.Files++
+			report.Agents += single.Agents
 			report.Findings = append(report.Findings, single.Findings...)
 			report.Notes = append(report.Notes, single.Notes...)
 		}
 	}
 	if report.Files == 0 {
-		return report, errors.New("no recipes found")
+		return report, fmt.Errorf("no %ss found", options.noun())
 	}
 	return report, nil
 }
@@ -113,7 +157,7 @@ func Lint(paths []string) (Report, error) {
 func yamlFiles(path string) ([]string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("read a recipe: %w", err)
+		return nil, err
 	}
 	if !info.IsDir() {
 		return []string{path}, nil
@@ -129,7 +173,7 @@ func yamlFiles(path string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("read the recipes in %s: %w", path, err)
+		return nil, fmt.Errorf("list the YAML files in %s: %w", path, err)
 	}
 	return files, nil
 }

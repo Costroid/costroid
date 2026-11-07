@@ -253,13 +253,27 @@ func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.N
 	l.agentCheckout(job)
 }
 
-// stepAgent names the agent a step starts, or nothing.
+const (
+	claudeCodeAction = "anthropics/claude-code-action"
+	codexAction      = "openai/codex-action"
+)
+
+// openingInputs are the inputs of each agent's action that let more than the
+// repository's own people start it, and the value of each that does. An empty
+// value means any value but false.
+var openingInputs = map[string]map[string]string{
+	claudeCodeAction: {"allowed_non_write_users": "*", "allowed_bots": ""},
+	codexAction:      {"allow-users": "*", "allow-bots": ""},
+}
+
+// stepAgent names the agent a step starts, or nothing. A claude-code-action
+// step starts Claude whether its prompt input or a @claude mention in a
+// comment gives it the task, so the mention workflow is an agent workflow.
 func stepAgent(step *yaml.Node) string {
-	uses := strings.ToLower(scalarField(step, "uses"))
-	switch {
-	case strings.HasPrefix(uses, "anthropics/claude-code-action"):
+	switch agentAction(step) {
+	case claudeCodeAction:
 		return claudeAgent
-	case strings.HasPrefix(uses, "openai/codex-action"):
+	case codexAction:
 		return codexAgent
 	}
 	if stage := costroidStage(step); stage == "run" || stage == "all" {
@@ -272,6 +286,36 @@ func stepAgent(step *yaml.Node) string {
 		return agents[0]
 	}
 	return ""
+}
+
+// agentAction names the agent's action a step uses, or nothing.
+func agentAction(step *yaml.Node) string {
+	uses := strings.ToLower(scalarField(step, "uses"))
+	for _, action := range []string{claudeCodeAction, codexAction} {
+		if strings.HasPrefix(uses, action) {
+			return action
+		}
+	}
+	return ""
+}
+
+// agentOpenTo lists the inputs of an agent's action that let any account or
+// a bot start it: allow-users: "*" and allow-bots on codex-action,
+// allowed_non_write_users: "*" and allowed_bots on claude-code-action.
+func agentOpenTo(step *yaml.Node) []entry {
+	opening := openingInputs[agentAction(step)]
+	var open []entry
+	for _, input := range entries(field(step, "with")) {
+		want, known := opening[input.key.Value]
+		value := strings.TrimSpace(input.value.Value)
+		if !known || value == "" || strings.EqualFold(value, "false") {
+			continue
+		}
+		if want == "" || value == want {
+			open = append(open, input)
+		}
+	}
+	return open
 }
 
 // mintsKeys reports whether a step runs costroid gateway mint, which attests

@@ -1,0 +1,50 @@
+name: review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions: {}
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Review with Claude
+        id: claude
+        uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: Review this pull request.
+
+      # Block 1: read what the run cost.
+      - name: Read what the run cost
+        if: always() && steps.claude.outputs.execution_file != ''
+        uses: Costroid/costroid/action@a4db648a1ad602760e88277f4875b55d08ea73ef # v1.0.0-alpha.9
+        with:
+          stage: read
+          execution-file: ${{ steps.claude.outputs.execution_file }}
+          billing-account: ${{ github.repository_owner }}
+
+  # Block 2: report it on the pull request.
+  report:
+    needs: review
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: Costroid/costroid/action@a4db648a1ad602760e88277f4875b55d08ea73ef # v1.0.0-alpha.9
+        with:
+          stage: report
+          agent-result: ${{ needs.review.result }}
