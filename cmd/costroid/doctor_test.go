@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -378,5 +380,41 @@ func TestDoctorHelpRunsNoCheck(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := doctorCommand(context.Background(), []string{"--help"}, &stdout, &stderr); code != 0 || stderr.String() != doctorHelp || stdout.Len() != 0 {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
+}
+
+var markdownShell = regexp.MustCompile("(?s)```sh\n(.*?)```")
+
+const repositoryRoot = "../.."
+
+// TestReadmeTryItBlockIsWhatInitPrints runs the README's first command and
+// holds the rest of its block to the commands init prints after it.
+func TestReadmeTryItBlockIsWhatInitPrints(t *testing.T) {
+	readme := readFile(t, filepath.Join(repositoryRoot, "README.md"))
+	_, section, _ := strings.Cut(readme, "\n## Try it on a pull request\n")
+	section, _, _ = strings.Cut(section, "\n## ")
+	block := markdownShell.FindStringSubmatch(section)
+	if block == nil {
+		t.Fatal("the README's Try it section has no shell block")
+	}
+	lines := strings.Split(strings.TrimSuffix(block[1], "\n"), "\n")
+	args := strings.Fields(lines[0])
+	if len(args) < 2 || args[0] != "costroid" || args[1] != "init" {
+		t.Fatalf("the block opens with %q, not costroid init", lines[0])
+	}
+	code, stdout, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, args[2:]...)
+	if code != 0 {
+		t.Fatalf("%s exited %d: %s", lines[0], code, stderr)
+	}
+	_, printed, found := strings.Cut(stdout, "These commands are left, and init ran none of them:\n")
+	if !found {
+		t.Fatalf("init printed no commands:\n%s", stdout)
+	}
+	var want []string
+	for line := range strings.SplitSeq(strings.TrimSuffix(printed, "\n"), "\n") {
+		want = append(want, strings.TrimSpace(line))
+	}
+	if !slices.Equal(lines[1:], want) {
+		t.Errorf("the README's block runs %q after init, and init prints %q", lines[1:], want)
 	}
 }

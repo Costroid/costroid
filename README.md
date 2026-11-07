@@ -2,6 +2,32 @@
 
 Costroid is the cost check for pull requests. It runs a coding agent under a budget, records what the run cost per token class as FOCUS rows, and posts the figure on the pull request.
 
+## What a pull request gets
+
+Each pull request gets one check, `costroid`, and one comment. The comment's first line states what the run cost and on what basis. For a recorded run of Claude Code 2.1.316 under `claude-code-action` on 2026-11-07, it reads:
+
+> This run cost USD 0.0391529 at list (Measured). Nothing held it to a budget.
+
+The figure equals the `total_cost_usd` the run itself reported, as [the recording's notes](cmd/costroid/demo/README.md) say. [`docs/comment-example.md`](docs/comment-example.md) is the whole comment, and `costroid demo` prints it.
+
+## Try it on a pull request
+
+With `costroid` [installed](#install), from the root of your repository:
+
+```sh
+costroid init github --agent claude
+gh secret set ANTHROPIC_API_KEY
+gh label create costroid-agent
+git switch -c try-costroid
+git add .github/workflows/costroid.yml costroid.yml
+git commit -m "Add the costroid check"
+gh pr create --fill
+```
+
+`init` writes the workflow, pinned to the release the binary belongs to, and a `costroid.yml` that sets nothing yet. It prints the commands after it and runs none of them. The secret is an Anthropic API key: the workflow runs Claude Code with `--bare`, so a Claude subscription's token does not work. The label lets a maintainer start the agent on a first contributor's pull request. Each push to the pull request runs the agent again, with a budget of USD 5 for each run.
+
+`costroid doctor` checks the repository before the pull request, and [`docs/troubleshooting.md`](docs/troubleshooting.md#checking-a-repository) lists what it prints. Already on `claude-code-action`? `costroid init github --agent claude-code-action --existing .github/workflows/claude.yml` prints the two blocks to add to the workflow you have, as [`docs/existing-workflow.md`](docs/existing-workflow.md) shows.
+
 Bring your own key and your own agent. There is no account, and Costroid runs no service that your data goes to: the key stays in your repository's secrets, the rows stay in the job, and the ledger, if you run one, is yours.
 
 Besides the agent's provider, the GitHub recipes that run an agent call one third-party service. They run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) on the agent's job, which records the job's outbound calls and sends telemetry to its vendor. [`docs/recipes.md`](docs/recipes.md#egress-in-the-agents-job) says what it costs and how to drop it.
