@@ -985,7 +985,7 @@ var limitNouns = map[string]string{
 
 // verdictLine opens with the approval when one turns the check neutral.
 func (i Input) verdictLine(shown bool) string {
-	line := verdictLine(i.Verdict, shown)
+	line := verdictLine(i.Verdict, shown, i.lifetimeBases())
 	if i.approved() {
 		return approvalLine(*i.Approval) + " " + line
 	}
@@ -994,16 +994,23 @@ func (i Input) verdictLine(shown bool) string {
 
 // verdictLine is built from the verdict's closed fields and its amounts, so
 // no text from the pull request reaches it.
-func verdictLine(verdict *policy.Verdict, shown bool) string {
+func verdictLine(verdict *policy.Verdict, shown bool, bases []string) string {
 	if verdict == nil {
 		return "No policy ran on this change."
 	}
-	return strings.Join(VerdictSentences(*verdict, shown), " ")
+	return strings.Join(verdictSentences(*verdict, shown, bases), " ")
 }
 
 // VerdictSentences says what the policy found, one sentence per fact, in the
-// words the comment uses. shown says whether amounts may be printed.
+// words the comment uses. shown says whether amounts may be printed. It reads
+// no lifetime, so a pull request's total is said to add every basis.
 func VerdictSentences(verdict policy.Verdict, shown bool) []string {
+	return verdictSentences(verdict, shown, nil)
+}
+
+// verdictSentences names the bases the pull request's total adds, in
+// basisOrder, or every basis when bases is empty.
+func verdictSentences(verdict policy.Verdict, shown bool, bases []string) []string {
 	var sentences []string
 	switch verdict.Config {
 	case policy.ConfigInvalid:
@@ -1013,7 +1020,7 @@ func VerdictSentences(verdict policy.Verdict, shown bool) []string {
 	}
 	held := false
 	for _, result := range verdict.Results {
-		sentences = append(sentences, resultSentence(result, verdict.JoinableRows, shown))
+		sentences = append(sentences, resultSentence(result, verdict.JoinableRows, shown, bases))
 		held = held || result.HeldByWarnOnly
 	}
 	if len(sentences) == 0 {
@@ -1028,7 +1035,7 @@ func VerdictSentences(verdict policy.Verdict, shown bool) []string {
 	return sentences
 }
 
-func resultSentence(result policy.Result, joinable int, shown bool) string {
+func resultSentence(result policy.Result, joinable int, shown bool, bases []string) string {
 	label, noun := ruleLabels[result.Rule], limitNouns[result.Rule]
 	switch {
 	case result.Rule == policy.RuleModelAllowlist:
@@ -1038,7 +1045,7 @@ func resultSentence(result policy.Result, joinable int, shown bool) string {
 			return label + ": " + sentence
 		}
 	case result.Rule == policy.RulePullRequestBudget:
-		if sentence := pullRequestSentence(result, shown); sentence != "" {
+		if sentence := pullRequestSentence(result, shown, bases); sentence != "" {
 			return label + ": " + sentence
 		}
 	}
@@ -1130,25 +1137,63 @@ func increaseSentence(result policy.Result, shown bool) string {
 
 // pullRequestSentence states the pull request's total against its budget, or
 // is empty for a reason every rule states alike.
-func pullRequestSentence(result policy.Result, shown bool) string {
+func pullRequestSentence(result policy.Result, shown bool, bases []string) string {
 	amounts := shown && result.CostUSD != "" && result.LimitUSD != ""
 	switch result.Reason {
 	case policy.ReasonOverLimit:
 		if amounts {
-			return fmt.Sprintf("USD %s over this pull request's runs is over the USD %s budget.", result.CostUSD, result.LimitUSD)
+			return fmt.Sprintf("USD %s over this pull request's runs is over the USD %s budget. %s", result.CostUSD, result.LimitUSD, totalBases(bases))
 		}
-		return "this pull request's runs are over the budget."
+		return "this pull request's runs are over the budget. " + totalBases(bases)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("USD %s over this pull request's runs is within the USD %s budget.", result.CostUSD, result.LimitUSD)
+			return fmt.Sprintf("USD %s over this pull request's runs is within the USD %s budget. %s", result.CostUSD, result.LimitUSD, totalBases(bases))
 		}
-		return "this pull request's runs are within the budget."
+		return "this pull request's runs are within the budget. " + totalBases(bases)
 	case policy.ReasonNoLifetime:
 		return "this check read no total for the pull request's earlier runs, so the rule did not run."
 	case policy.ReasonRepeatPossible:
 		return "the pull request's total may count a report twice, so it cannot show the budget broken or kept."
 	}
 	return ""
+}
+
+// basisOrder is the order totalBases names the bases in.
+var basisOrder = []string{"measured", "list_equivalent", "billed", "estimate", "derived"}
+
+// lifetimeBases are the bases of the pull request's USD figures, which the
+// pull request budget adds together, in basisOrder. Empty when no lifetime
+// was read.
+func (i Input) lifetimeBases() []string {
+	if i.Lifetime == nil {
+		return nil
+	}
+	var bases []string
+	for _, basis := range basisOrder {
+		for _, figure := range i.Lifetime.Figures {
+			if figure.Currency == budgetCurrency && figure.Basis == basis {
+				bases = append(bases, basis)
+				break
+			}
+		}
+	}
+	return bases
+}
+
+// totalBases says which bases the pull request's total adds, so the total
+// never reads as one basis when it holds several.
+func totalBases(bases []string) string {
+	switch len(bases) {
+	case 0:
+		return "The total adds every basis together, at list."
+	case 1:
+		return "The total is at list (" + basisLabels[bases[0]] + ")."
+	}
+	labels := make([]string, len(bases))
+	for index, basis := range bases {
+		labels[index], _, _ = strings.Cut(basisLabels[basis], ",")
+	}
+	return "The total adds " + listed(labels, 0) + " together, at list."
 }
 
 // enforceNow is the one line that ends the warn-only period.

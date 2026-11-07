@@ -10,7 +10,7 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 | `run_cost_threshold`   | `policy.max_run_cost_usd`     | The run's cost at list, in USD, against the threshold |
 | `run_increase`         | `policy.max_increase_usd`     | The run's cost at list, in USD, against the median of this agent's earlier runs plus the amount set |
 | `run_increase_percent` | `policy.max_increase_percent` | The run's cost at list, in USD, against the median of this agent's earlier runs plus the percent set |
-| `pr_budget`            | `policy.pr_budget_usd`        | The pull request's total at list, in USD, this run included, against the budget |
+| `pr_budget`            | `policy.pr_budget_usd`        | The pull request's total at list, in USD, over every basis, this run included, against the budget |
 | `monthly_budget`       | `policy.monthly_budget_usd`   | The repository's month to date, in USD, against the budget. It reads a ledger only |
 | `model_allowlist`      | `policy.models`               | Each row's `costroid/model` tag against the list |
 | `attribution`          | none                          | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `windowed`, or `exact` when the credential is a gateway key attested for their run |
@@ -28,6 +28,8 @@ Four rules read figures from outside the run. One that is set and lacks its figu
 | `monthly_budget`                       | The repository's month to date, from a ledger                 | No ledger reaches the check, so it concludes `unproven` with reason `no_ledger`        |
 
 `pr_budget` runs when `costroid report` posts on a GitHub pull request. The report reads the `costroid` check runs on every commit of the pull request, adds up the figures in USD of every basis, and adds this run's rows. A figure in another currency is left out of the total, and the rule then cannot pass. An earlier report with this run's `rows_sha256` is this run reported again and is left out, and a repeated `rows_sha256` counts once. The comment states the same total under the figures, per currency and basis.
+
+The rule's line names the bases its total adds, because a Measured figure and a List-equivalent one are different claims. Over two bases it reads `The total adds Measured and List-equivalent together, at list.`, and over one `The total is at list (Measured).`
 
 `pr_budget` treats a total that may count one report twice as no proof either way: the rule concludes `unproven` with reason `repeat_possible`. That happens when an earlier report states no `rows_sha256`, as every result object before `result/v0.6` does, and when this run's rows name no row ids.
 
