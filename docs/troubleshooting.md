@@ -218,6 +218,11 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: init wrote nothing: recipes/<recipe> breaks a rule of lint-recipes, which is a defect in costroid` | The shipped recipe failed the linter, and `init` exits 1 | Report it as a bug, with the lines printed above it |
 | `costroid: printed a patch for <file>, and wrote nothing` | `init --existing` printed the patch on stdout | Save it, and apply it with `git apply` from the repository's root |
 | `costroid: <file> already calls Costroid/costroid/action, so init has nothing to add` | The workflow already reports | None |
+| `costroid: <file> already runs <action>, so init prints the patch that reports from it, as --existing <file> does` | `init` ran with no `--agent` in a repository whose workflow runs `claude-code-action` or `codex-action`, so it printed a patch in place of a second agent workflow | Save the patch and apply it with `git apply`. To write a new workflow anyway, pass `--agent` |
+| `costroid: init: this directory is in no git repository, and init writes at a repository's root: run it inside your repository` | `init` found no repository around the current directory, wrote nothing and exits 2 | Run it inside your repository, or run `git init` first |
+| `costroid: wrote .gitlab-ci.yml, which includes <file>` | The repository had no `.gitlab-ci.yml`, so `init` wrote one that includes the template | Commit it with the template |
+| `costroid: added <file> to the include of .gitlab-ci.yml` | `init` added the template to the pipeline's `include:` | Commit `.gitlab-ci.yml` with the template |
+| `costroid: .gitlab-ci.yml already includes <file>` | The pipeline already reads the template, so `init` left `.gitlab-ci.yml` as it is | None |
 
 ## Checking a repository
 
