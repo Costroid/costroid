@@ -135,7 +135,7 @@ func exampleInput(t *testing.T) Input {
 // demoRows are the rows costroid demo embeds, read from a recorded
 // claude-code-action run, and demoTotal is what that run reported.
 const (
-	demoRows  = "../../cmd/costroid/testdata/demo/rows.jsonl"
+	demoRows  = "../../cmd/costroid/demo/rows.jsonl"
 	demoTotal = "0.0391529"
 )
 

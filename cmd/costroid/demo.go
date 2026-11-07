@@ -15,9 +15,9 @@ import (
 )
 
 // demoRows are the rows ingest-run writes from a recorded claude-code-action
-// run. testdata/demo/README.md names the recording.
+// run. demo/README.md names the recording.
 //
-//go:embed testdata/demo/rows.jsonl
+//go:embed demo/rows.jsonl
 var demoRows string
 
 // The pull request the demo's comment is posted on. Its commit, check run,

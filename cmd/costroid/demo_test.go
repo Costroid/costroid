@@ -14,7 +14,7 @@ import (
 
 const (
 	docsExample  = "../../docs/comment-example.md"
-	demoRowsFile = "testdata/demo/rows.jsonl"
+	demoRowsFile = "demo/rows.jsonl"
 	actionDir    = "../../internal/adapter/claudecode/testdata/2.1.316/action-session"
 	// actionSession names the session file the recording's result points to.
 	actionSession = "00000000-0000-4000-8000-000000000001"
