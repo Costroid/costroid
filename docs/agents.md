@@ -197,7 +197,7 @@ This is a recorded Codex run after its first request, under a 5 USD cap:
 
 The file holds amounts, counts, times and words from closed lists. It never holds a prompt, a path, a model name or the model's answer.
 
-When the agent has ended, `state` reads `ended`. The run's object, beside the rows file, states what the run came to. Its grades come from the rows once they are checked, and can be lower than the file's `enforcement_grade`.
+When the agent has ended, `state` reads `ended`. The run's last write states the grade the run earned once its rows were checked, the same grade as the run's object beside the rows file, which states what the run came to.
 
 ## In a workflow
 

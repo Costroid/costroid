@@ -58,7 +58,7 @@
       "$ref": "#/$defs/cap"
     },
     "enforcement_grade": {
-      "description": "What holds the run to its cap: the grade the run started at, or the one the agent's reader stated when the agent ended. The result object states the grade the run earned once its rows are checked, and the two can differ.",
+      "description": "What holds the run to its cap: the grade the run started at while the agent works, then the one the agent's reader stated when the agent ended. The run's last write states the grade the run earned once its rows were checked, which its result object states too.",
       "enum": ["gateway-precheck", "agent-flag", "wrapper-watchdog", "none"]
     }
   },
