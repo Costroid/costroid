@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	// resultSchema is result/v0.4 of Costroid/costroid-schemas, copied. A
+	// resultSchema is result/v0.5 of Costroid/costroid-schemas, copied. A
 	// published version never changes in place, so the copy cannot go stale.
 	resultSchema = "../../internal/comment/testdata/result.schema.json"
 	agentsDoc    = "../../docs/agents.md"
@@ -266,7 +266,7 @@ func validateResult(t *testing.T, object string) {
 		t.Fatal(err)
 	}
 	if err := schema.Validate(instance); err != nil {
-		t.Errorf("the object breaks result/v0.4: %#v\n%s", err, object)
+		t.Errorf("the object breaks result/v0.5: %#v\n%s", err, object)
 	}
 }
 

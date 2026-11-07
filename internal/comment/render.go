@@ -29,9 +29,9 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.4 in
+	// schema names the result object's contract, result/v0.5 in
 	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.4"
+	schema = "costroid.result/0.5"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -176,15 +176,24 @@ func (i Input) Conclusion() string {
 // Block is the result object, the machine-readable block. Strings under Data
 // originate in the pull request.
 type Block struct {
-	Schema         string        `json:"schema"`
-	CheckRunID     *int64        `json:"check_run_id,omitempty"`
-	Conclusion     *string       `json:"conclusion"`
-	State          State         `json:"state"`
-	Reason         Reason        `json:"reason,omitempty"`
-	ReasonLine     int           `json:"reason_line,omitempty"`
-	RunReason      run.Reason    `json:"run_reason,omitempty"`
-	ReaderError    string        `json:"reader_error,omitempty"`
-	HeadSHA        string        `json:"head_sha"`
+	Schema      string     `json:"schema"`
+	CheckRunID  *int64     `json:"check_run_id,omitempty"`
+	Conclusion  *string    `json:"conclusion"`
+	State       State      `json:"state"`
+	Reason      Reason     `json:"reason,omitempty"`
+	ReasonLine  int        `json:"reason_line,omitempty"`
+	RunReason   run.Reason `json:"run_reason,omitempty"`
+	ReaderError string     `json:"reader_error,omitempty"`
+	// AgentError is the class of error the agent ended with, null when the
+	// run stated none.
+	AgentError *BlockAgentError `json:"agent_error"`
+	// AgentSkipped says whether the CI system skipped the agent's job, null
+	// when the report was not told.
+	AgentSkipped *bool  `json:"agent_skipped"`
+	HeadSHA      string `json:"head_sha"`
+	// CIRun is the run the environment names, a claim, null when it names
+	// none.
+	CIRun          *BlockCIRun   `json:"ci_run"`
 	Amounts        string        `json:"amounts"`
 	Rows           int           `json:"rows"`
 	RunIdentity    string        `json:"run_identity"`
@@ -194,6 +203,19 @@ type Block struct {
 	Data           BlockData     `json:"data"`
 	// Policy is the verdict, without its amounts when amounts are withheld.
 	Policy *policy.Verdict `json:"policy,omitempty"`
+}
+
+// BlockAgentError names an agent's error by its class from a closed list,
+// never by the agent's own text.
+type BlockAgentError struct {
+	Class string `json:"class"`
+}
+
+// BlockCIRun is GitHub Actions' run id and attempt as the environment states
+// them.
+type BlockCIRun struct {
+	ID      int64 `json:"id"`
+	Attempt int   `json:"attempt"`
 }
 
 // BlockFigure is one Figure. ListCost and Tokens are empty when amounts are

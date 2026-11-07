@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.4/result.schema.json",
-  "title": "Costroid result object, version 0.4",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.5/result.schema.json",
+  "title": "Costroid result object, version 0.5",
   "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.4"
+      "const": "costroid.result/0.5"
     },
     "check_run_id": {
       "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
@@ -45,6 +45,35 @@
       "description": "The reader's first error line, beside the run reason reader_refused. Every character outside the allowlist is replaced by ?, and the line is cut at 160 bytes.",
       "type": "string",
       "pattern": "^[A-Za-z0-9 .,:;()'=_/+?-]{1,160}$"
+    },
+    "agent_error": {
+      "description": "The class of error the agent ended with, read from its own result fields and never from its text. Null when the agent ended without one, or the run stated none. It can sit beside figures, because an agent can fail after some requests.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/agentError"
+        }
+      ]
+    },
+    "agent_skipped": {
+      "description": "Whether the CI system said the agent's job was skipped. Null when the report was not told the job's result.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ci_run": {
+      "description": "The CI run that wrote the object, as the environment states it. A claim, never verified. Null when the environment names no run.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/ciRun"
+        }
+      ]
     },
     "head_sha": {
       "description": "The head commit, lower case. Empty when the environment named none.",
@@ -106,7 +135,10 @@
     "figures",
     "figures_omitted",
     "cap",
-    "data"
+    "data",
+    "agent_error",
+    "agent_skipped",
+    "ci_run"
   ],
   "additionalProperties": false,
   "allOf": [
@@ -179,6 +211,98 @@
           "run_reason": {
             "const": "reader_refused"
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "run_reason"
+        ],
+        "properties": {
+          "run_reason": {
+            "const": "agent_error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "agent_error": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "agent_error"
+        ],
+        "properties": {
+          "agent_error": {
+            "type": "object"
+          },
+          "state": {
+            "not": {
+              "const": "reported"
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "run_reason"
+        ],
+        "properties": {
+          "run_reason": {
+            "const": "agent_error"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "agent_skipped"
+        ],
+        "properties": {
+          "agent_skipped": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "const": "agent_skipped"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "const": "agent_skipped"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "agent_skipped": {
+            "const": true
+          }
+        },
+        "not": {
+          "required": [
+            "run_reason"
+          ]
         }
       }
     },
@@ -314,7 +438,8 @@
         "rows_path_not_a_file",
         "rows_file_unread",
         "invalid_row",
-        "fork_no_rows"
+        "fork_no_rows",
+        "agent_skipped"
       ]
     },
     "runReason": {
@@ -322,8 +447,48 @@
       "enum": [
         "no_usage",
         "concurrent_run",
-        "reader_refused"
+        "reader_refused",
+        "agent_error"
       ]
+    },
+    "agentError": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "The list is closed. unknown is an error the agent stated in no class this list names.",
+          "enum": [
+            "authentication_failed",
+            "billing_error",
+            "rate_limit",
+            "invalid_request",
+            "server_error",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "additionalProperties": false
+    },
+    "ciRun": {
+      "description": "GitHub Actions' GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT. Other CI systems state none in this version.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "id",
+        "attempt"
+      ],
+      "additionalProperties": false
     },
     "tokenClass": {
       "enum": [
