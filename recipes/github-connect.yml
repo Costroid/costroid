@@ -1,0 +1,37 @@
+# Binds this repository's owner to its Costroid Platform tenant, so the ingest
+# job of an agent recipe can send rows there. Copy to
+# .github/workflows/costroid-connect.yml on the default branch, beside the
+# agent's recipe. docs/connect.md says what the proof is and what it binds.
+name: costroid-connect
+
+on:
+  # GitHub runs a schedule from the default branch only, so the platform takes
+  # its proof whatever the branch rules are. A binding stays current for 7 days
+  # after its last proof, and a daily run renews it.
+  schedule:
+    - cron: "23 5 * * *"
+  # A push to the default branch binds at once when that branch is protected.
+  push:
+
+permissions: {}
+
+jobs:
+  connect:
+    if: >-
+      vars.COSTROID_PLATFORM_URL != ''
+      && (github.event_name == 'schedule'
+      || github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      # The proof is the job's OIDC token, issued for the tenant's audience.
+      id-token: write
+    steps:
+      - uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+        with:
+          stage: install
+      - name: Bind the owner
+        env:
+          COSTROID_PLATFORM_URL: ${{ vars.COSTROID_PLATFORM_URL }}
+          COSTROID_PLATFORM_TOKEN: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
+        run: costroid connect --platform-url "$COSTROID_PLATFORM_URL"

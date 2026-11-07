@@ -855,11 +855,14 @@ func printNextSteps(stdout io.Writer, repo repository, flags initFlags, changed 
 	}
 }
 
-// secretNames lists the repository secrets a GitHub recipe reads, in order.
+// secretNames lists the repository secrets a GitHub recipe needs, in order.
+// The integration token is left out: a recipe sends to Costroid Platform only
+// once COSTROID_PLATFORM_URL is set, and docs/connect.md keeps the token as an
+// organization secret.
 func secretNames(recipe []byte) []string {
 	var names []string
 	for _, match := range secretName.FindAllSubmatch(recipe, -1) {
-		if name := string(match[1]); name != "GITHUB_TOKEN" && !slices.Contains(names, name) {
+		if name := string(match[1]); name != "GITHUB_TOKEN" && name != platformTokenVariable && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}

@@ -90,8 +90,8 @@ func TestGitLabUsesPostStage(t *testing.T) {
 			t.Errorf("%s runs in %s, which only .costroid-agent may set", item.key.Value, stage.Value)
 		}
 	}
-	if jobs != 4 {
-		t.Fatalf("read %d jobs, want 4", jobs)
+	if jobs != 5 {
+		t.Fatalf("read %d jobs, want 5", jobs)
 	}
 	for _, job := range []string{"costroid:report", "costroid:ingest"} {
 		if got := scalarField(field(root, job), "stage"); got != ".post" {
