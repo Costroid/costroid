@@ -61,6 +61,11 @@ var claudeCorpus = map[string]corpusRead{
 		source: SourceSessionFile, basis: focus.Measured, requests: 3, grade: adapter.GradeNone,
 		tokens: adapter.Tokens{InputUncached: 1204, CacheRead: 28767, CacheWrite5m: 5959, Output: 190, CachedInputReported: 28767},
 	},
+	"2.1.316/action-budget-stop": {
+		source: SourceExecutionFile, basis: focus.Measured, requests: 1, grade: adapter.GradeNone,
+		tokens:   adapter.Tokens{InputUncached: 1200, Output: 17},
+		warnings: []string{"no session file: one set of rows per model, for the whole run"},
+	},
 	"2.1.319/current": {
 		source: SourceSessionFile, basis: focus.Measured, requests: 1, grade: adapter.GradeAgentFlag,
 		tokens: adapter.Tokens{InputUncached: 2, CacheRead: 11507, CacheWrite5m: 6085, Output: 4, CachedInputReported: 11507},

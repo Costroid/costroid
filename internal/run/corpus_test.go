@@ -60,6 +60,9 @@ var runCorpus = map[string]corpusRows{
 	"codex/0.164.0-alpha.11.1/resume":  {rows: 4, total: "0.283188", fallback: 3, grade: adapter.GradeNone},
 	"codex/0.164.0-alpha.11.1/stopped": {rows: 4, total: "0.0283136", grade: adapter.GradeWrapperWatchdog},
 	"codex/0.167.0/stopped":            {rows: 8, total: "0.0350276", grade: adapter.GradeWrapperWatchdog},
+	// Stopped at --max-budget-usd 0.0001. Its one model, claude-haiku-5-5, had
+	// spent USD 0.0001285, and its session file holds no request.
+	"claude-code/2.1.316/action-budget-stop": {rows: 2, total: "0.0001285", grade: adapter.GradeNone},
 }
 
 // corpusAt is when the corpus reads a recording as run or saved.
