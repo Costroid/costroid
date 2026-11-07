@@ -34,7 +34,7 @@ INSERT INTO focus_rows (
 	tenant_id, row_id, billing_currency, service_category, sku_meter, consumed_unit, consumed_quantity,
 	list_cost, effective_cost, charge_period_start, charge_period_end, cost_basis, cost_source,
 	attribution_grade, enforcement_grade, run_identity, agent, model, repo, pr, commit_sha,
-	workflow_run_id, actor, catalog_version, document)
+	workflow_run_id, actor, catalog_version, document, credential_basis)
 SELECT costroid_tenant(), encode(sha256(($1 || ':' || i)::bytea), 'hex'), 'USD', 'AI and Machine Learning',
 	(ARRAY['input_uncached', 'cache_read', 'cache_write_5m', 'output', 'reasoning_output'])[1 + i % 5],
 	CASE WHEN i % 5 = 4 THEN 'Informational Tokens' ELSE 'Tokens' END,
@@ -50,7 +50,8 @@ SELECT costroid_tenant(), encode(sha256(($1 || ':' || i)::bytea), 'hex'), 'USD',
 	(ARRAY['claude-opus-5-5', 'claude-haiku-5-5', 'gpt-5.6-sol', 'gpt-6-sol'])[1 + i % 4],
 	'github.com/acme/repo-' || (i % $2), (1 + floor($3 * random() ^ 3))::bigint::text,
 	md5(i::text) || md5(i::text), (i / 50)::text, 'octo-dev', '0.1.0',
-	($4::jsonb || jsonb_build_object('x_CostroidRowId', encode(sha256(($1 || ':' || i)::bytea), 'hex')))::json
+	($4::jsonb || jsonb_build_object('x_CostroidRowId', encode(sha256(($1 || ':' || i)::bytea), 'hex')))::json,
+	CASE WHEN i % 11 = 0 THEN 'stated' ELSE 'minted' END
 FROM generate_series(1, $5::bigint) AS i`
 
 func seedTenant(b *testing.B, conn *pgx.Conn, tenant store.TenantID, salt string, rows int, document string) {

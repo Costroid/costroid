@@ -29,6 +29,7 @@ Migrations run forward only. The service refuses a migration edited after it was
 | Path                     | Answers                                                               |
 | ------------------------ | --------------------------------------------------------------------- |
 | `POST /v1/rows`          | The JSON lines `costroid run --out` writes                            |
+| `POST /v1/credentials`   | A minting job's attestation of a gateway key                          |
 | `POST /otlp/v1/logs`     | OTLP/HTTP logs, protobuf or JSON                                      |
 | `POST /otlp/v1/traces`   | OTLP/HTTP traces, protobuf or JSON                                    |
 | `POST /otlp/v1/metrics`  | Accepted and not read, so an exporter of all three signals sees no error |
@@ -69,11 +70,11 @@ A stated head that differs from the token's `sha` on a `pull_request` run is exp
 
 `head_basis = 'stated'` is the seam for an SCM check. No token names a pull request's head, so the join cannot disprove a stated one. A later check reads those rows and reports a head the pull request never had as its own issue. A row with `head_basis = 'stated'` and `commit_sha` equal to `token_commit_sha` on a `pull_request` run names the merge commit, which is a wrapper stating `GITHUB_SHA`. A wrapper states `github.event.pull_request.head.sha`.
 
-| Credential                                                                         | `run_identity`   | `attribution_grade` | Counts toward a budget |
-| ---------------------------------------------------------------------------------- | ---------------- | ------------------- | ---------------------- |
-| CI token that names a pull request, on a row with a `SubAccountId` and a head      | `token_verified` | `exact`             | Yes                    |
-| CI token, otherwise                                                                | `token_verified` | `windowed`          | Yes                    |
-| Ingest key                                                                         | `unverified`     | `unattributed`      | Never                  |
+| Credential                                                                                                 | `run_identity`   | `attribution_grade` | Counts toward a budget |
+| ---------------------------------------------------------------------------------------------------------- | ---------------- | ------------------- | ---------------------- |
+| CI token that names a pull request, on a row with a head and a `SubAccountId` attested for the token's run | `token_verified` | `exact`             | Yes                    |
+| CI token, otherwise                                                                                        | `token_verified` | `windowed`          | Yes                    |
+| Ingest key                                                                                                 | `unverified`     | `unattributed`      | Never                  |
 
 A sender may lower an `exact` row to `windowed`. It cannot raise a row. Postgres holds the last line as well: a `CHECK` refuses an unverified row with any other grade, and `budget_eligible` is a generated column.
 
@@ -81,9 +82,33 @@ A budget rule reads `budget.spend` in the per-PR answer. While no eligible row e
 
 `totals` in the same answer adds up every row of the pull request, one figure per currency and cost basis. It is a reading, so an unverified row counts, and a budget rule never reads it.
 
-`SubAccountId` is kept as the sender stated it, so a stored row can reconcile per credential. It is a claim, like every other column a sender states. `exact` needs one, because the grade means a provider's report can be filtered by the row's credential. A session id joins a row and never earns `exact`, so a `SubAccountId` that repeats the session id reads `windowed`. A row from OTLP states no credential, so it stops at `windowed` too.
+`SubAccountId` is kept as the sender stated it, so a stored row can reconcile per credential. It is a claim, like every other column a sender states. `exact` means a provider's report can be filtered by the row's credential, and a key every run shares can be filtered by too, so a stated credential is not enough. `exact` needs a credential attested as minted for the token's run, as the next section says. A shared key, a provider's key id, or any credential the service cannot prove reads `windowed`. A session id joins a row and never earns `exact`, so a `SubAccountId` that repeats the session id reads `windowed`. A row from OTLP states no credential, so it stops at `windowed` too.
 
 `BillingAccountId` is kept the same way, up to 512 characters, and `unknown` when a row states none. It is a stated claim that nothing verifies, and it never replaces the tenant. The per-PR view returns it as `billing_account_id` on each line, and a line never adds across two accounts.
+
+## Which credential earns `exact`
+
+`costroid gateway mint` registers one key per run on a LiteLLM gateway, and the rows name the key's id in `SubAccountId`. Once it has registered the key, the minting job attests it: it posts to `POST /v1/credentials` under its own OIDC token. [`docs/gateway.md`](gateway.md) describes the jobs.
+
+```json
+{"key_id": "<64 hexadecimal characters>", "repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1"}
+```
+
+The service stores an attestation only when all of these hold:
+
+- the bearer is a CI token, not an ingest key;
+- the token's `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`, `costroid-gateway` by default;
+- the token's repository, run and attempt equal the attestation's.
+
+A refusal answers `403` with `ATTESTATION_FORBIDDEN` for the first two, and `JOIN_KEY_MISMATCH` for the third. A key already attested for another run answers `409` with `JOIN_KEY_MISMATCH`, and the first attestation stands. The same attestation again answers `204` and changes nothing.
+
+A row reads `exact` only when its `SubAccountId` is an attested key and the row's own CI token names the attestation's repository, run and attempt, besides naming a pull request and a head. A key attested for another run, another attempt or another repository reads `windowed`, and so does a key never attested.
+
+The environment's protection rules are what make an attestation trustworthy. The repository's owner sets them in GitHub, and the service only reads the claim GitHub puts in the token. A job admitted to the environment can attest a key for its own run, and no other. With required reviewers on the environment, a person approves each run before its job can attest. Without them, anyone who can push a branch of the repository can run a job in that environment, and attest a key that is not a run key.
+
+GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc) lists the `environment` claim. It was not re-read on 2026-11-07, and no real token from an environment job has been read, so the claim's presence on that job is unverified.
+
+`credential_basis` records the outcome on each row: `minted` for an attested key, `stated` otherwise, and empty when the row names no credential. Postgres refuses an `exact` row whose basis is not `minted`. Rows stored before this rule keep their grade.
 
 ## Prices
 

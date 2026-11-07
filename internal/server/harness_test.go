@@ -17,6 +17,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/oidc/oidctest"
 	"github.com/Costroid/costroid/internal/store"
@@ -38,6 +39,11 @@ const (
 	acmeKey     = "costroid_ik_acme-test-key"
 	betaKey     = "costroid_ik_beta-test-key"
 	testMaster  = "a master key used by these tests only"
+	// fixturesKey is the run key every memory world holds attested for
+	// acmeRun's first attempt.
+	fixturesKey = "sk-fixtures-run-key"
+	// gatewayEnvironment is the environment every world trusts to attest.
+	gatewayEnvironment = "costroid-gateway"
 )
 
 var testNow = time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
@@ -62,13 +68,40 @@ type memoryLedger struct {
 	keys   map[string]store.TenantID
 	rows   map[store.TenantID]map[string]store.Record
 	drops  map[store.TenantID]map[string]int64
+	minted map[store.TenantID]map[string]store.MintedCredential
 }
 
 func newMemoryLedger() *memoryLedger {
 	return &memoryLedger{
 		owners: map[string]store.TenantID{}, keys: map[string]store.TenantID{},
 		rows: map[store.TenantID]map[string]store.Record{}, drops: map[store.TenantID]map[string]int64{},
+		minted: map[store.TenantID]map[string]store.MintedCredential{},
 	}
+}
+
+func (m *memoryLedger) Attest(_ context.Context, tenant store.TenantID, minted store.MintedCredential) error {
+	if m.minted[tenant] == nil {
+		m.minted[tenant] = map[string]store.MintedCredential{}
+	}
+	stored, seen := m.minted[tenant][minted.KeySHA256]
+	if !seen {
+		m.minted[tenant][minted.KeySHA256] = minted
+		return nil
+	}
+	if !stored.SameRun(minted) {
+		return store.ErrAttestedElsewhere
+	}
+	return nil
+}
+
+func (m *memoryLedger) MintedCredentials(_ context.Context, tenant store.TenantID, keys []string) (map[string]store.MintedCredential, error) {
+	found := map[string]store.MintedCredential{}
+	for _, key := range keys {
+		if minted, ok := m.minted[tenant][key]; ok {
+			found[key] = minted
+		}
+	}
+	return found, nil
 }
 
 func (m *memoryLedger) TenantForOwner(_ context.Context, host, owner string) (store.TenantID, error) {
@@ -128,7 +161,7 @@ func newWorld(t testing.TB, ledger Ledger) *world {
 		oidc.Issuer{Kind: oidc.GitHubActions, URL: issuer.URL(), JWKSURL: issuer.URL() + "/keys", Host: "github.com"})
 	service := New(Config{
 		Ledger: ledger, Verifier: verifier, Catalog: pinned, PseudonymKey: []byte(testMaster),
-		Now: func() time.Time { return testNow }, Logger: slog.New(slog.DiscardHandler),
+		GatewayEnvironment: gatewayEnvironment, Now: func() time.Time { return testNow }, Logger: slog.New(slog.DiscardHandler),
 	})
 	server := httptest.NewServer(service.Handler())
 	t.Cleanup(server.Close)
@@ -233,9 +266,10 @@ func row(id string, class focus.TokenClass, tokens int) map[string]any {
 	}
 }
 
-// credentialed states the credential a provider's report can be filtered by.
+// credentialed states the key attested as minted for the fixtures' run,
+// which a provider's report can be filtered by.
 func credentialed(r map[string]any) map[string]any {
-	r["SubAccountId"] = "apikey_01ExampleCi"
+	r["SubAccountId"] = gateway.KeyID(fixturesKey)
 	return r
 }
 

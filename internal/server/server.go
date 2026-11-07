@@ -29,6 +29,8 @@ type Ledger interface {
 	TenantForKey(ctx context.Context, keySHA256 string) (store.TenantID, error)
 	Ingest(ctx context.Context, tenant store.TenantID, batch store.Batch) (store.Receipt, error)
 	PullRequest(ctx context.Context, tenant store.TenantID, repo, pr string) ([]store.Line, error)
+	Attest(ctx context.Context, tenant store.TenantID, minted store.MintedCredential) error
+	MintedCredentials(ctx context.Context, tenant store.TenantID, keys []string) (map[string]store.MintedCredential, error)
 }
 
 // TokenVerifier checks a CI OIDC token.
@@ -43,8 +45,11 @@ type Config struct {
 	Catalog  *catalog.Catalog
 	// PseudonymKey is the master key the per-tenant HMAC keys derive from.
 	PseudonymKey []byte
-	Now          func() time.Time
-	Logger       *slog.Logger
+	// GatewayEnvironment is the GitHub environment whose jobs may attest a
+	// minted credential. Empty trusts none, and then no row reads exact.
+	GatewayEnvironment string
+	Now                func() time.Time
+	Logger             *slog.Logger
 }
 
 // Server handles ingest and the view.
@@ -69,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("POST /v1/rows", s.handleRows)
+	mux.HandleFunc("POST /v1/credentials", s.handleCredentials)
 	mux.HandleFunc("POST /otlp/v1/traces", s.handleTraces)
 	mux.HandleFunc("POST /otlp/v1/logs", s.handleLogs)
 	mux.HandleFunc("POST /otlp/v1/metrics", s.handleMetrics)
@@ -97,6 +103,7 @@ const (
 	codeAuth         = "AUTH_TOKEN_INVALID"
 	codeNoTenant     = "TENANT_NOT_BOUND"
 	codeJoinKey      = "JOIN_KEY_MISMATCH"
+	codeAttestation  = "ATTESTATION_FORBIDDEN"
 	codeInvalidRow   = "ROW_INVALID"
 	codeUnknownPrice = "PROVIDER_UNKNOWN"
 	codeBodyTooLarge = "BODY_TOO_LARGE"

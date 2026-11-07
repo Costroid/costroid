@@ -66,3 +66,11 @@ func TestOnlyTheGatewayJobsNameTheAdminKeysEnvironment(t *testing.T) {
 		}
 	}
 }
+
+// TestOnlyTheMintJobInItsEnvironmentMayAttest holds id-token: write to the job
+// that mints keys, and to that job only while it names an environment.
+func TestOnlyTheMintJobInItsEnvironmentMayAttest(t *testing.T) {
+	source := read(t, filepath.Join(recipesDir, gatewayRecipe))
+	expectRule(t, source, edit{"the mint job outside its environment", "    environment: costroid-gateway\n    permissions:\n      # Downloads", "    permissions:\n      # Downloads", RuleIDTokenScope})
+	expectRule(t, source, edit{"the close job", "    environment: costroid-gateway\n    permissions: {}\n", "    environment: costroid-gateway\n    permissions:\n      id-token: write\n", RuleIDTokenScope})
+}

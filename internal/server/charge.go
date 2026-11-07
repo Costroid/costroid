@@ -99,6 +99,9 @@ type joinResult struct {
 	grade, identity     string
 	attempt             string
 	actor, event        string
+	// credentialBasis is store.CredentialMinted when an attestation names the
+	// row's credential as minted for this run.
+	credentialBasis string
 }
 
 func joinKeyRefusal(key string) *refusal {
@@ -109,10 +112,13 @@ func joinKeyRefusal(key string) *refusal {
 // that disagrees rejects the batch, and a stated pull request the token cannot
 // confirm is discarded, which leaves the row windowed. A row with no head to
 // name stays windowed too, because the tag contract's exact row names one, and
-// so does a row with no credential, because the row contract's exact row does.
-func (s *Server) join(c *charge, who caller) (joinResult, error) {
+// so does a row whose credential no attestation names as minted for this run,
+// because a stated credential may be a key every run shares.
+func (s *Server) join(c *charge, who caller, proven map[string]bool) (joinResult, error) {
 	if who.identity == nil {
-		return s.joinUnverified(c, who)
+		result, err := s.joinUnverified(c, who)
+		result.credentialBasis = basisOf(c, proven)
+		return result, err
 	}
 	id := who.identity
 	for _, pair := range []struct{ key, stated, token string }{
@@ -135,11 +141,24 @@ func (s *Server) join(c *charge, who caller) (joinResult, error) {
 		tokenSHA: id.CommitSHA, headBasis: basis,
 		grade: gradeWindowed, identity: identityToken,
 		attempt: id.RunAttempt, actor: id.Actor, event: id.Event,
+		credentialBasis: basisOf(c, proven),
 	}
-	if id.PullRequest != "" && head != "" && c.namesCredential() && !c.weakJoin {
+	if id.PullRequest != "" && head != "" && result.credentialBasis == store.CredentialMinted && !c.weakJoin {
 		result.grade = gradeExact
 	}
 	return result, nil
+}
+
+// basisOf says whether the row's credential was attested as minted for the
+// run, or only stated. A session id stated as the credential is never minted.
+func basisOf(c *charge, proven map[string]bool) string {
+	switch {
+	case c.credential == "":
+		return ""
+	case c.namesCredential() && proven[c.credential]:
+		return store.CredentialMinted
+	}
+	return store.CredentialStated
 }
 
 // namesCredential reports whether a row states what a provider's report can be
@@ -239,7 +258,7 @@ func (s *Server) price(c *charge, joined joinResult) (store.Record, error) {
 	}
 	return store.Record{
 		Row: row, RunAttempt: joined.attempt, Actor: joined.actor, Event: joined.event,
-		TokenCommitSHA: joined.tokenSHA, HeadBasis: joined.headBasis,
+		TokenCommitSHA: joined.tokenSHA, HeadBasis: joined.headBasis, CredentialBasis: joined.credentialBasis,
 	}, nil
 }
 
@@ -316,13 +335,17 @@ func overshootOf(c *charge, joined joinResult) *decimal.Decimal {
 // row fails the whole request, so a retry is whole too.
 func (s *Server) write(r *http.Request, who caller, charges []charge, drops map[string]int64) (store.Receipt, error) {
 	now := s.Now()
+	proven, err := s.provenCredentials(r.Context(), who, charges)
+	if err != nil {
+		return store.Receipt{}, err
+	}
 	records := make([]store.Record, len(charges))
-	err := fanout.Each(len(charges), func(_, i int) error {
+	err = fanout.Each(len(charges), func(_, i int) error {
 		c := &charges[i]
 		if c.start.After(now.Add(futureSkew)) {
 			return refuse(http.StatusUnprocessableEntity, codeInvalidRow, "A row's charge period starts in the future.")
 		}
-		joined, err := s.join(c, who)
+		joined, err := s.join(c, who, proven)
 		if err != nil {
 			return err
 		}

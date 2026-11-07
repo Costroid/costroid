@@ -67,6 +67,20 @@ func TestVerifyReadsAGitHubRunFromTheToken(t *testing.T) {
 	}
 }
 
+func TestOnlyAJobThatReferencesAnEnvironmentNamesOne(t *testing.T) {
+	s := newStubIssuer(t)
+	claims := s.claims()
+	got, err := s.verifier(GitHubActions).Verify(context.Background(), s.Token(claims))
+	if err != nil || got.Environment != "" {
+		t.Fatalf("a job with no environment reads %q, %v", got.Environment, err)
+	}
+	claims["environment"] = "costroid-gateway"
+	got, err = s.verifier(GitHubActions).Verify(context.Background(), s.Token(claims))
+	if err != nil || got.Environment != "costroid-gateway" {
+		t.Fatalf("got %q, %v", got.Environment, err)
+	}
+}
+
 func TestVerifyReadsAGitLabRunFromTheToken(t *testing.T) {
 	s := newStubIssuer(t)
 	claims := s.claims()

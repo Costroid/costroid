@@ -305,3 +305,30 @@ func TestPostgresTheActorIsStoredAsTheLoginOrThePseudonym(t *testing.T) {
 		t.Fatalf("%v", actors)
 	}
 }
+
+func TestPostgresOnlyAnAttestedKeyReadsExact(t *testing.T) {
+	w := postgresWorld(t)
+	id := w.mintFor(t, acmeRun, "1")
+	minted := stating(id)
+	shared := stating(providerKeyID)
+	shared["x_CostroidRowId"] = focus.RowIdentity("req-2", focus.Output)
+	w.rows(w.token(), lines(t, minted, shared)).want(t, http.StatusOK)
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, w.db.SuperURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	rows, err := conn.Query(ctx, `SELECT attribution_grade || ' ' || coalesce(credential_basis, '') FROM focus_rows ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(stored, []string{"exact minted", "windowed stated"}) {
+		t.Fatalf("stored %v", stored)
+	}
+}

@@ -107,6 +107,10 @@ type Identity struct {
 	Actor        string
 	Event        string
 	PullRequest  string
+	// Environment is the GitHub deployment environment the job referenced,
+	// empty when it referenced none. Its protection rules are the
+	// repository's, so only a job they admitted carries it.
+	Environment string
 }
 
 // Verifier checks tokens against a set of issuers and one audience.
@@ -286,6 +290,8 @@ type githubClaims struct {
 	Actor      string `json:"actor"`
 	EventName  string `json:"event_name"`
 	Ref        string `json:"ref"`
+	// Environment is present only on a job that references an environment.
+	Environment string `json:"environment"`
 }
 
 type gitlabClaims struct {
@@ -308,6 +314,7 @@ func readIdentity(issuer Issuer, payload string) (Identity, error) {
 		path = c.Repository
 		identity.RunID, identity.RunAttempt = c.RunID, c.RunAttempt
 		identity.CommitSHA, identity.Actor, identity.Event = c.SHA, c.Actor, c.EventName
+		identity.Environment = c.Environment
 		if match := githubPull.FindStringSubmatch(c.Ref); match != nil {
 			identity.PullRequest = match[1]
 		}

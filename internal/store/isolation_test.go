@@ -51,9 +51,15 @@ func rowID(n int) string {
 }
 
 // record builds a stored row by hand. Pricing is the server's and is tested there.
+// record builds a row. An exact one names a credential the service proved
+// minted for its run, as the service writes it.
 func record(id string, list string, grade, identity string) store.Record {
 	version := "0.1.0"
 	cost := decimal.MustParse(list)
+	basis := ""
+	if grade == "exact" {
+		basis = store.CredentialMinted
+	}
 	return store.Record{
 		Row: focus.Row{
 			RowID: id, BillingCurrency: "USD", ServiceCategory: "AI and Machine Learning",
@@ -66,7 +72,8 @@ func record(id string, list string, grade, identity string) store.Record {
 				focus.TagRunIdentity: identity, store.TagRepo: repoA, store.TagPR: prA,
 			},
 		},
-		Actor: "octo-dev",
+		Actor:           "octo-dev",
+		CredentialBasis: basis,
 	}
 }
 
@@ -483,6 +490,23 @@ func TestTheDatabaseRefusesAnUnverifiedRowClaimingAGrade(t *testing.T) {
 	for _, grade := range []string{"exact", "windowed"} {
 		_, err := s.Ingest(context.Background(), a, batch(record(rowID(1), "1", grade, "unverified")))
 		requireSQLState(t, err, checkViolation)
+	}
+}
+
+func TestTheDatabaseRefusesAnExactRowWhoseCredentialWasNotMinted(t *testing.T) {
+	db := storetest.New(t)
+	s := open(t, db)
+	a, _ := tenants(t, db)
+	for _, basis := range []string{store.CredentialStated, ""} {
+		exact := record(rowID(1), "1", "exact", "token_verified")
+		exact.CredentialBasis = basis
+		_, err := s.Ingest(context.Background(), a, batch(exact))
+		requireSQLState(t, err, checkViolation)
+	}
+	stated := record(rowID(2), "1", "windowed", "token_verified")
+	stated.CredentialBasis = store.CredentialStated
+	if _, err := s.Ingest(context.Background(), a, batch(stated)); err != nil {
+		t.Fatalf("a windowed row with a stated credential was refused: %v", err)
 	}
 }
 

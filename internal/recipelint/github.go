@@ -116,18 +116,20 @@ func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node,
 	l.permissions(job.key, permissions)
 
 	agent, agentStep := "", (*yaml.Node)(nil)
-	ingest := false
+	ingest, mint := false, false
 	for _, step := range steps {
 		l.step(step)
 		if name := stepAgent(step); name != "" {
 			agent, agentStep = name, step
 		}
 		ingest = ingest || costroidStage(step) == "ingest"
+		mint = mint || mintsKeys(step)
 	}
 	granted := grants(permissions)
 	if agent == "" {
-		if granted["id-token"] == "write" && !ingest {
-			l.add(job.key, RuleIDTokenScope, "id-token: write belongs on the ingest job alone")
+		attests := mint && field(job.value, "environment") != nil
+		if granted["id-token"] == "write" && !ingest && !attests {
+			l.add(job.key, RuleIDTokenScope, "id-token: write belongs on the ingest job, and on a job that mints gateway keys in an environment")
 		}
 		return
 	}
@@ -254,6 +256,13 @@ func stepAgent(step *yaml.Node) string {
 
 // costroidStage reads the stage of a step that uses Costroid's action. The
 // action's default is all, so a step that states none runs the agent.
+// mintsKeys reports whether a step runs costroid gateway mint, which attests
+// the key it registers under the job's OIDC token. The token names the job's
+// environment, and only that name lets the ledger take the attestation.
+func mintsKeys(step *yaml.Node) bool {
+	return strings.Contains(scalarField(step, "run"), "costroid gateway mint")
+}
+
 func costroidStage(step *yaml.Node) string {
 	ref, _, _ := strings.Cut(scalarField(step, "uses"), "@")
 	if !strings.EqualFold(ref, costroidAction) {

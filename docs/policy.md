@@ -8,7 +8,7 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 | -------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `run_budget`         | `policy.run_budget_usd`    | The run's cost at list, in USD, against the budget                                                                                                                   |
 | `run_cost_threshold` | `policy.max_run_cost_usd`  | The run's cost at list, in USD, against the threshold                                                                                                                |
-| `attribution`        | none                       | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `exact` |
+| `attribution`        | none                       | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `windowed`, or `exact` when the credential is a gateway key attested for their run |
 
 A rule without its setting does not run. With no `costroid.yml`, only `attribution` runs. `attribution` warns, or says nothing. It never fails and never passes.
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/otlp"
 	"github.com/Costroid/costroid/internal/store"
@@ -35,6 +36,9 @@ func memoryWorld(t *testing.T) (*world, *memoryLedger) {
 	ledger.owners["github.com:beta"] = b
 	ledger.keys[store.KeyDigest(acmeKey)] = a
 	ledger.keys[store.KeyDigest(betaKey)] = b
+	ledger.minted[a] = map[string]store.MintedCredential{gateway.KeyID(fixturesKey): {
+		KeySHA256: gateway.KeyID(fixturesKey), Repository: acmeRepo, RunID: acmeRun, RunAttempt: "1", Environment: gatewayEnvironment,
+	}}
 	return newWorld(t, ledger), ledger
 }
 

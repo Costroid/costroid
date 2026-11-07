@@ -40,7 +40,9 @@ agent. It opens the request, from --request or from this run's artifact
 costroid-gateway-request-<attempt> with GITHUB_TOKEN, and registers the key
 with the budget, an expiry, the parallel-request limit, and the repository,
 pull request, head commit, run and largest request in its metadata. It prints
-the key's id.
+the key's id. When COSTROID_INGEST_URL is set, it then attests the key to that
+ledger under the job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs
+id-token: write. Only an attested key lets the run's rows read exact.
 --repository-daily-cap-usd puts the key in a team for the repository with that
 budget per day, and --author-daily-cap-usd in a user for the pull request's
 author with that budget per day.
@@ -56,14 +58,17 @@ const (
 	publicKeyVariable = "COSTROID_GATEWAY_PUBLIC_KEY"
 	gatewayURLVar     = "COSTROID_GATEWAY_URL"
 	gatewayKeyFileVar = "COSTROID_GATEWAY_KEY_FILE"
-	keyFileName       = "key"
-	requestArtifact   = "costroid-gateway-request-"
-	artifactWait      = 10 * time.Minute
-	artifactEvery     = 5 * time.Second
-	defaultParallel   = 1
-	gatewayKeyWait    = 10 * time.Minute
-	gatewayProbeEvery = 2 * time.Second
-	gatewayPoll       = 2 * time.Second
+	// The ingest job's variables. mint attests to the same ledger.
+	ingestURLVariable      = "COSTROID_INGEST_URL"
+	ingestAudienceVariable = "COSTROID_INGEST_AUDIENCE"
+	keyFileName            = "key"
+	requestArtifact        = "costroid-gateway-request-"
+	artifactWait           = 10 * time.Minute
+	artifactEvery          = 5 * time.Second
+	defaultParallel        = 1
+	gatewayKeyWait         = 10 * time.Minute
+	gatewayProbeEvery      = 2 * time.Second
+	gatewayPoll            = 2 * time.Second
 	// LiteLLM writes spend to its store every 10 seconds by default
 	// (PROXY_BATCH_WRITE_AT in litellm/constants.py at v1.108.1).
 	gatewaySpendSettle = 30 * time.Second
@@ -246,6 +251,29 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return err
 	}
 	fmt.Fprintln(stdout, id)
+	return attestKey(ctx, &http.Client{Timeout: 30 * time.Second}, id, binding, stderr)
+}
+
+// attestKey tells the ledger the key was minted for this run. Without a
+// ledger there is nothing to tell. A failure fails the step, and the key
+// stays registered for the agent.
+func attestKey(ctx context.Context, client *http.Client, id string, binding gateway.Binding, stderr io.Writer) error {
+	ingest := os.Getenv(ingestURLVariable)
+	if ingest == "" {
+		return nil
+	}
+	target, err := gateway.CredentialsURL(ingest)
+	if err != nil {
+		return err
+	}
+	token, err := gateway.ActionsToken(ctx, client, os.Getenv, os.Getenv(ingestAudienceVariable))
+	if err != nil {
+		return err
+	}
+	if err := gateway.Attest(ctx, client, target, token, gateway.AttestationFor(id, binding)); err != nil {
+		return fmt.Errorf("the key is registered and not attested, so the run's rows cannot read exact: %w", err)
+	}
+	fmt.Fprintln(stderr, "attested to the ledger")
 	return nil
 }
 

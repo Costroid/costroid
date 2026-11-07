@@ -18,15 +18,23 @@ A job cannot hand a secret to another job through its outputs: GitHub refuses to
 | ---- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1    | Agent             | `costroid gateway request` draws a random key and writes it to a file only the runner's user can read. It seals the key to the gateway's sealing key with [HPKE](https://www.rfc-editor.org/rfc/rfc9180) (X25519, HKDF-SHA256, AES-256-GCM), bound to the repository, the run and the attempt |
 | 2    | Agent             | `actions/upload-artifact` keeps the sealed request as an artifact of this run. It holds no secret: only the minting job can open it                                                                                                                                                       |
-| 3    | Mint, in parallel | `costroid gateway mint` waits for that artifact, opens it, checks that it names this repository, run and attempt, and registers the key on the gateway with its budget, expiry and metadata                                                                                               |
+| 3    | Mint, in parallel | `costroid gateway mint` waits for that artifact, opens it, checks that it names this repository, run and attempt, and registers the key on the gateway with its budget, expiry and metadata. With a ledger named, it then attests the key's id for this run to the ledger |
 | 4    | Agent             | `costroid run --gateway` waits until the key authenticates, reads the key back from the gateway, and starts the agent with the gateway's URL and the key in the agent's environment alone                                                                                                 |
 | 5    | Close, always     | `costroid gateway close` deletes the key by its alias, which names the run and the attempt                                                                                                                                                                                                |
 
 The sealing key pair comes from the admin key, so it needs no secret of its own. `costroid gateway public-key` prints the public half once. Store it as a repository variable. When the admin key changes, print it again.
 
-No value of the key reaches an output or a log. The agent's job keeps `contents: read` and nothing else: it uploads an artifact through the runner's own token, and it learns that the key is ready by asking the gateway, never the GitHub API. The minting job needs `actions: read` to download the artifact, and checks out nothing.
+No value of the key reaches an output or a log. The agent's job keeps `contents: read` and nothing else: it uploads an artifact through the runner's own token, and it learns that the key is ready by asking the gateway, never the GitHub API. The minting job needs `actions: read` to download the artifact and `id-token: write` to attest the key, and checks out nothing.
 
 An injected agent holds its own key, which is what it needs to run. It can spend that key's budget and no other. It cannot open another run's request, because every request is sealed to a key the agent's job never holds. A request copied from another run is refused, because the repository, run and attempt it names are checked.
+
+## How the rows earn `exact`
+
+`SubAccountId` is what the rows state, and a row could state any key, a key every run shares among them. So the ledger grades a row `exact` only when the minting job attested its key for the run.
+
+When `COSTROID_INGEST_URL` is set, `costroid gateway mint` posts the key's id, the repository, the run and the attempt to the ledger's `/v1/credentials`, beside the ingest URL's `/v1/rows`. It sends them under the minting job's OIDC token, for `COSTROID_INGEST_AUDIENCE`, as the ingest job does. The ledger takes the attestation only when the token's `environment` claim names the gateway's environment, `costroid-gateway` by default, and the token's repository, run and attempt are the ones attested. A row reads `exact` only when its key was attested and the row's own token names that repository, run and attempt. [`docs/serve.md`](serve.md) has the rest.
+
+The environment is what makes an attestation worth trusting. Any job that references `costroid-gateway` can attest, and on a pull request from a branch of this repository the workflow file is the pull request's own. The protection rules you set on the environment decide which runs reach it. With required reviewers, a person you named approves each run before it can mint or attest. Without a rule, anyone who can push a branch can attest a key for their own run.
 
 ## What the rows say
 

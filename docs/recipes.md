@@ -131,7 +131,7 @@ Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ing
 | `pull_request`, never `pull_request_target`                                 | A fork's code never runs with the base repository's secrets                         |
 | Permissions declared per job                                                | The workflow grants nothing, and each job names what it needs                       |
 | The agent's job holds `contents: read` and nothing else                     | GitHub grants permissions per job, so the agent runs in a job of its own            |
-| `id-token: write` on the `ingest` job alone                                 | An agent that could mint the token could forge its run's identity                   |
+| `id-token: write` on the `ingest` job, and on the job that mints a gateway key in its environment | An agent that could mint the token could forge its run's identity, and only a job the environment admitted may attest a key |
 | Every action pinned to a full SHA, with its release beside it               | A moved tag cannot change what runs                                                 |
 | Content flags off                                                           | Prompts, responses, tool input and API bodies stay out of telemetry                 |
 | The prompt is a literal in the recipe                                       | No comment, title or description reaches the agent, Costroid's own comment included |

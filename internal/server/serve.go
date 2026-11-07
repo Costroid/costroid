@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -22,11 +23,14 @@ import (
 )
 
 const (
-	envDatabase  = "COSTROID_DATABASE_URL"
-	envMigration = "COSTROID_MIGRATION_DATABASE_URL"
-	envAudience  = "COSTROID_OIDC_AUDIENCE"
-	envPseudonym = "COSTROID_PSEUDONYM_KEY"
-	envEgress    = "COSTROID_EGRESS_ALLOW"
+	envDatabase   = "COSTROID_DATABASE_URL"
+	envMigration  = "COSTROID_MIGRATION_DATABASE_URL"
+	envAudience   = "COSTROID_OIDC_AUDIENCE"
+	envPseudonym  = "COSTROID_PSEUDONYM_KEY"
+	envEgress     = "COSTROID_EGRESS_ALLOW"
+	envGatewayEnv = "COSTROID_GATEWAY_ENVIRONMENT"
+
+	defaultGatewayEnvironment = "costroid-gateway"
 
 	minPseudonymKeyBytes = 32
 	keySetTimeout        = 10 * time.Second
@@ -49,6 +53,9 @@ Environment:
   COSTROID_PSEUDONYM_KEY           at least 32 bytes in base64, the master key
                                    for per-tenant address pseudonyms
   COSTROID_EGRESS_ALLOW            hosts for the egress allowlist, comma-separated
+  COSTROID_GATEWAY_ENVIRONMENT     the GitHub environment whose jobs may attest
+                                   a minted gateway key, costroid-gateway by
+                                   default
 
 --bind gives an SCM owner to this instance's tenant, and needs the owner role.
 
@@ -57,6 +64,10 @@ COSTROID_EGRESS_ALLOW. The list starts empty, and an empty list refuses every
 outbound call. OIDC ingest needs each issuer's host on it, the default issuers
 included. Without one, a token from that issuer answers EGRESS_REFUSED. costroid
 egress report prints what was attempted.
+
+A row reads exact only when its SubAccountId is a gateway key that a job in
+that environment attested as minted for the run the row's CI token names.
+docs/serve.md says why.
 `
 
 type serveOptions struct {
@@ -189,11 +200,12 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	issuers := issuersOf(options)
 	logAllowlist(logger, gate, issuers)
 	service := New(Config{
-		Ledger:       ledger,
-		Verifier:     oidc.NewVerifier(audience, gate.Client(keySetTimeout), nil, issuers...),
-		Catalog:      pinned,
-		PseudonymKey: key,
-		Logger:       logger,
+		Ledger:             ledger,
+		Verifier:           oidc.NewVerifier(audience, gate.Client(keySetTimeout), nil, issuers...),
+		Catalog:            pinned,
+		PseudonymKey:       key,
+		GatewayEnvironment: cmp.Or(os.Getenv(envGatewayEnv), defaultGatewayEnvironment),
+		Logger:             logger,
 	})
 	background, stop := context.WithCancel(ctx)
 	flushed := make(chan struct{})

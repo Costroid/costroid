@@ -110,6 +110,9 @@ jobs:
     permissions:
       # Downloads the sealed request from this run's artifacts.
       actions: read
+      # Attests the key to the ledger, when one is named, so the run's rows
+      # can read exact. The token names this environment.
+      id-token: write
     steps:
       - name: Install costroid
         uses: Costroid/costroid/action@fccfbd6a9eab4d012f4715c050f527050454a818 # v1.0.0-alpha.8
@@ -119,6 +122,8 @@ jobs:
         env:
           COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
           COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
+          COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
+          COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
           GITHUB_TOKEN: ${{ github.token }}
         # The key lives as long as the agent's job may. The largest request is
         # the recorded context window, 1000000 tokens, plus the recorded largest
