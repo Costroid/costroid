@@ -304,10 +304,20 @@ func TestAStoreThatFailsWhileTheAgentRunsIsReported(t *testing.T) {
 	}
 }
 
+// envAgent states its gateway variables as an agent adapter does: the
+// endpoint and the key set, and a provider key removed.
+type envAgent struct{}
+
+func (envAgent) GatewayEnv(base, key string) []string {
+	return []string{"AGENT_BASE_URL=" + base, "AGENT_TOKEN=" + key, "PROVIDER_API_KEY="}
+}
+
+func (envAgent) GatewayArgs(string) []string { return nil }
+
 func TestTheAgentGetsTheGatewayInPlaceOfAnyProviderCredential(t *testing.T) {
 	session := Session{Client: NewClient("http://gateway.test/"), Key: "sk-run"}
-	env := session.Env([]string{"PATH=/bin", "ANTHROPIC_API_KEY=sk-ant-provider", "ANTHROPIC_AUTH_TOKEN=old", "ANTHROPIC_BASE_URL=https://api.anthropic.com"})
-	want := []string{"PATH=/bin", "ANTHROPIC_BASE_URL=http://gateway.test", "ANTHROPIC_AUTH_TOKEN=sk-run"}
+	env := session.Env([]string{"PATH=/bin", "PROVIDER_API_KEY=sk-provider", "AGENT_TOKEN=old", "AGENT_BASE_URL=https://api.provider.test"}, envAgent{})
+	want := []string{"PATH=/bin", "AGENT_BASE_URL=http://gateway.test", "AGENT_TOKEN=sk-run"}
 	if strings.Join(env, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("env %q", env)
 	}
