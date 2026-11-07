@@ -1,7 +1,8 @@
-# The gateway journey's LiteLLM. The one model routes to the mock upstream the
-# test serves, at the pinned catalog's list prices for claude-haiku-5-5: 0.10
-# USD per million input tokens and 0.50 per million output tokens. A store
-# failure lets requests through, which is the case the journey records as none.
+# The gateway journey's LiteLLM. Both models route to the mock upstream the test
+# serves, at the pinned catalog's list prices: claude-haiku-5-5 at USD 0.10 per
+# million input tokens and 0.50 per million output tokens on the Messages API,
+# gpt-5-nano at USD 0.05 and 0.40 on the Responses API. A store failure lets
+# requests through, which is the case the journey records as none.
 model_list:
   - model_name: claude-haiku-5-5
     litellm_params:
@@ -10,6 +11,13 @@ model_list:
       api_key: os.environ/MOCK_UPSTREAM_KEY
       input_cost_per_token: 0.0000001
       output_cost_per_token: 0.0000005
+  - model_name: gpt-5-nano
+    litellm_params:
+      model: openai/gpt-5-nano
+      api_base: os.environ/MOCK_UPSTREAM_OPENAI
+      api_key: os.environ/MOCK_UPSTREAM_KEY
+      input_cost_per_token: 0.00000005
+      output_cost_per_token: 0.0000004
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   allow_requests_on_db_unavailable: true

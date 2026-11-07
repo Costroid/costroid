@@ -1,6 +1,6 @@
-# Hold Claude Code to a budget with a LiteLLM gateway
+# Hold an agent to a budget with a LiteLLM gateway
 
-A gateway is the one place a budget stops a request before it is paid. With a [LiteLLM](https://github.com/BerriAI/litellm) proxy you run, Costroid gives each run its own virtual key: a budget equal to the run's budget, an expiry equal to the job's timeout, and the repository, pull request, head commit and run id in its metadata. Claude Code sends every request through the gateway on that key. The key is deleted when the job ends, also when it fails. The rows read `gateway-precheck`.
+A gateway is the one place a budget stops a request before it is paid. With a [LiteLLM](https://github.com/BerriAI/litellm) proxy you run, Costroid gives each run its own virtual key: a budget equal to the run's budget, an expiry equal to the job's timeout, and the repository, pull request, head commit and run id in its metadata. Claude Code or Codex sends every request through the gateway on that key. The key is deleted when the job ends, also when it fails. The rows read `gateway-precheck`.
 
 ## What LiteLLM gives, and under which licence
 
@@ -38,6 +38,21 @@ An injected agent holds its own key, which is what it needs to run. It can spend
 
 The gateway's URL must be `https`. Every call sends the admin key or the run's key in its `Authorization` header, so `costroid gateway` and `costroid run` refuse an `http` URL, except on `localhost` and `127.0.0.1`.
 
+## How each agent reaches the gateway
+
+`costroid run --gateway` points the agent at the gateway with the agent's own settings, and takes away any provider key the job holds beside the run's key. An agent with no way to name a gateway is refused before the run asks for its key.
+
+| Agent       | What `costroid run` sets                                                                                                                                                         | What it removes     |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| Claude Code | `ANTHROPIC_BASE_URL` to the gateway's URL, and `ANTHROPIC_AUTH_TOKEN` to the run's key                                                                                          | `ANTHROPIC_API_KEY` |
+| Codex       | `CODEX_API_KEY` to the run's key, and two arguments at the end of the command's options: `--config openai_base_url="<gateway>/v1"` and `--config model_provider="openai"` | `OPENAI_API_KEY`    |
+
+Codex reads its base URL from configuration alone. It stopped reading the `OPENAI_BASE_URL` environment variable in [openai/codex#16720](https://github.com/openai/codex/pull/16720) (2026-04-03), which `rust-v0.164.0-alpha.11.1` holds. Its [advanced configuration page](https://learn.chatgpt.com/docs/config-file/config-advanced) says: "To change the base URL for the built-in OpenAI provider, use `openai_base_url`". Its [basic configuration page](https://learn.chatgpt.com/docs/config-file/config-basic) puts "CLI flags and `--config` overrides" above every configuration file. A later `--config` overrides an earlier one: `build_cli_overrides_layer` in [`codex-rs/config/src/overrides.rs`](https://github.com/openai/codex/blob/rust-v0.164.0-alpha.11.1/codex-rs/config/src/overrides.rs) applies them in order. So the run's two arguments come after any the command holds, and `model_provider` keeps a provider set in `~/.codex/config.toml` or a profile from sending requests around the gateway. Both pages were read on 2026-11-07.
+
+`codex exec` takes `CODEX_API_KEY` before any other sign-in, so Codex runs on the run's key. The rows read `measured`, because the gateway bills every request per token on its own provider key, whatever key the job holds.
+
+The gateway needs each Codex model on its OpenAI route. Codex calls the Responses API, `/v1/responses`. On 2026-11-07, LiteLLM v1.108.1 served it, streamed and not, to an upstream mock, and charged each request USD 0.0045 for 10,000 input and 10,000 output tokens of `gpt-5-nano` at the catalog's prices. On a key with a USD 0.01 budget it admitted three requests and refused the fourth with HTTP 422, "Budget has been exceeded! ... Current cost: 0.013500000000000003, Max budget: 0.01". The refused request never reached the upstream.
+
 ## When mint is late
 
 The mint job does not wait for the agent's job. The close job waits for both, so a key that mint registers late is still deleted, with no wait. A key minted after close, such as one whose minting job a reviewer approved after close ended, lives until its expiry, `--lifetime-minutes`. No runner holds it: the agent's job has ended, and only the sealing key opens its request. A workflow that runs close beside mint can pass `--retry-after` to wait for a late mint and delete once more.
@@ -74,7 +89,7 @@ The gateway checks a key's spend before each request. A request that starts unde
 
 A run reads `gateway-precheck` only when the key the gateway returns has a budget at or under the run's, an expiry, a parallel-request limit, a request size, and metadata naming the run the job belongs to. Otherwise the rows read `none` and say which fact was missing.
 
-The plus one comes from how LiteLLM counts. LiteLLM counts a request's cost after it answers, so a request sent at once after the one before it can be admitted before that one is counted. On 2026-11-06, LiteLLM v1.108.1 took requests back to back on a key with a USD 0.01 budget and one request at a time, each USD 0.006 in its prices and the catalog's (its `x-litellm-response-cost` header read `0.006`). In 4 of 6 runs it admitted a third request after two had passed USD 0.01. Its refusal of the fourth read "Current cost: 0.013951" while the third was still being counted, and later refusals read "0.018000000000000002". Those runs came to USD 0.018, over the budget by USD 0.008. In none of the six was a request admitted while two that had ended were still uncounted, so the bound counts one: the plus one above. The journey's bound is 2 × 20000 tokens × USD 0.50 per million tokens, USD 0.02.
+The plus one comes from how LiteLLM counts. LiteLLM counts a request's cost after it answers, so a request sent at once after the one before it can be admitted before that one is counted. On 2026-11-06, LiteLLM v1.108.1 took requests back to back on a key with a USD 0.01 budget and one request at a time, each USD 0.006 in its prices and the catalog's (its `x-litellm-response-cost` header read `0.006`). In 4 of 6 runs it admitted a third request after two had passed USD 0.01. Its refusal of the fourth read "Current cost: 0.013951" while the third was still being counted, and later refusals read "0.018000000000000002". Those runs came to USD 0.018, over the budget by USD 0.008. In none of the six was a request admitted while two that had ended were still uncounted, so the bound counts one: the plus one above. The journey's bound is 2 × 20000 tokens × USD 0.50 per million tokens, USD 0.02, for Claude Code, and 2 × 20000 tokens × USD 0.40 per million tokens, USD 0.016, for Codex on `gpt-5-nano`.
 
 The plus one rests on that observation of LiteLLM v1.108.1, not on anything LiteLLM promises. So each run checks itself. When the rows, priced at the catalog, pass the key's budget by more than the bound they state, the run warns with both decimal strings, and its rows read `none` with the reason in `ChargeDescription`:
 

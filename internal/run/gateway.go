@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/Costroid/costroid/internal/adapter"
-	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
@@ -25,10 +24,12 @@ var billedClasses = []focus.TokenClass{
 	focus.CacheWrite30m, focus.CacheWrite12h, focus.Output,
 }
 
-// heldKey is the run's key once the gateway has returned it.
+// heldKey is the run's key once the gateway has returned it, and the agent
+// that runs on it.
 type heldKey struct {
 	session gateway.Session
 	grant   gateway.Grant
+	agent   adapter.Gatewayed
 }
 
 // openGateway waits for the run's key and holds it to what the run needs. A
@@ -38,15 +39,32 @@ func (o Options) openGateway(ctx context.Context, agent adapter.Agent) (*heldKey
 	if o.Gateway == nil {
 		return nil, nil
 	}
-	if agent.Name() != claudecode.Name {
-		return nil, fmt.Errorf("run: a gateway key runs Claude Code, not %s", agent.Name())
+	gatewayed, ok := agent.(adapter.Gatewayed)
+	if !ok {
+		return nil, fmt.Errorf("run: %s cannot be pointed at a gateway, so a gateway key cannot run it", agent.Name())
 	}
 	info, err := o.Gateway.Await(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("run: %w", err)
 	}
 	grant := gateway.Inspect(o.Gateway.Key, info, gateway.Expect{Budget: o.Budget, Run: o.CI.Run, Now: o.Now()})
-	return &heldKey{session: *o.Gateway, grant: grant}, nil
+	return &heldKey{session: *o.Gateway, grant: grant, agent: gatewayed}, nil
+}
+
+// argv is the agent's command with what it needs to reach the gateway after
+// every option it holds: before a "--" that ends them, or at the end.
+func (h *heldKey) argv(argv []string) []string {
+	args := h.agent.GatewayArgs(h.session.Client.URL)
+	at := len(argv)
+	if end := slices.Index(argv, "--"); end > 0 {
+		at = end
+	}
+	return slices.Insert(slices.Clone(argv), at, args...)
+}
+
+// env is the agent's environment on the gateway.
+func (h *heldKey) env(base []string) []string {
+	return h.session.Env(base, h.agent)
 }
 
 // enforcement is gateway-precheck while the key and its store hold, and none

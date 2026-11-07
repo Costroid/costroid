@@ -3,16 +3,23 @@ package run
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/adapter/claudecode"
+	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
 )
 
@@ -226,5 +233,138 @@ func TestAnOvershootAboveTheBoundRecordsNone(t *testing.T) {
 		if row["x_CostroidOvershootBound"] != nil {
 			t.Errorf("a none row states a bound: %v", row["x_CostroidOvershootBound"])
 		}
+	}
+}
+
+// plainAgent is an agent with no way to reach a gateway.
+type plainAgent struct{}
+
+func (plainAgent) Name() string { return "plain" }
+
+func (plainAgent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
+	return adapter.Plan{Argv: argv}, nil
+}
+
+func (plainAgent) NewSession(adapter.Plan) adapter.Session { return nil }
+
+func TestOpenGatewayRefusesAnAgentWithoutGatewayEnv(t *testing.T) {
+	var asked atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked.Add(1)
+		w.Write([]byte(keyInfoHolding))
+	}))
+	t.Cleanup(server.Close)
+	session := &gateway.Session{Client: gateway.NewClient(server.URL), Key: gatewayKey, Wait: time.Second, Poll: 10 * time.Millisecond}
+	options := Options{Gateway: session, Budget: decimal.MustParse("0.01"), CI: cicontext.Context{Run: gatewayRun}}.withDefaults()
+
+	held, err := options.openGateway(context.Background(), plainAgent{})
+	if err == nil || held != nil || !strings.Contains(err.Error(), "plain cannot be pointed at a gateway") {
+		t.Fatalf("an agent without gateway variables: held %v, err %v", held, err)
+	}
+	if asked.Load() != 0 {
+		t.Error("the run asked the gateway for a key it could not hand the agent")
+	}
+	for _, agent := range []adapter.Agent{claudecode.Agent{}, codex.Agent{}} {
+		if held, err := options.openGateway(context.Background(), agent); err != nil || held == nil {
+			t.Errorf("%s through a gateway: %v", agent.Name(), err)
+		}
+	}
+}
+
+// codexGatewayScript stands in for codex exec. It writes its arguments and its
+// environment beside log, one per line, and reports one turn on the stream.
+const codexGatewayScript = `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli 0.164.0-alpha.11.1"; exit 0; fi
+printf '%%s\n' "$@" > %[1]q.argv
+env > %[1]q.env
+echo '{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-00000000c0de"}'
+echo '{"type":"turn.started"}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10000,"cached_input_tokens":0,"output_tokens":10000}}'
+`
+
+// codexGatewayRun runs Codex through a holding gateway key. The job holds an
+// OpenAI key and no CODEX_API_KEY, as the recipe's job does, and the command
+// names its own provider and base URL, which the gateway's must override. It
+// returns the outcome, the agent's arguments and its environment.
+func codexGatewayRun(t *testing.T, extra ...string) (outcome, []string, []string, *gateway.Session) {
+	t.Helper()
+	directory := t.TempDir()
+	log := filepath.Join(directory, "codex")
+	agent := filepath.Join(directory, "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(agent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agent, []byte(fmt.Sprintf(codexGatewayScript, log)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", providerKey)
+	t.Setenv("CODEX_API_KEY", "")
+	session := fakeGateway(t, keyInfoHolding, `{"status":"healthy","db":"connected"}`)
+	argv := append([]string{agent, "exec", "-c", `model_provider="elsewhere"`, "--config", `openai_base_url="https://elsewhere.test/v1"`, "-m", "gpt-5-nano"}, extra...)
+	var rows, stdout, stderr bytes.Buffer
+	result, err := Run(context.Background(), Options{
+		Argv: append(argv, "work"), Budget: decimal.MustParse("0.01"), CI: cicontext.Context{Run: gatewayRun},
+		Rows: &rows, Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr, Catalog: pinned(t), Gateway: session,
+	})
+	got := outcome{result: result, stdout: stdout.String(), stderr: stderr.String(), err: err, rows: parseRows(t, rows.Bytes())}
+	if err != nil || len(got.rows) == 0 {
+		t.Fatalf("run: %v, %d rows, %s", err, len(got.rows), got.stderr)
+	}
+	return got, logged(t, log+".argv"), strings.Split(string(mustRead(t, log+".env")), "\n"), session
+}
+
+// lastConfig is the value Codex takes for a --config key: the last one given.
+func lastConfig(argv []string, key string) string {
+	var value string
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] != "-c" && argv[i] != "--config" {
+			continue
+		}
+		if name, setting, ok := strings.Cut(argv[i+1], "="); ok && name == key {
+			value = setting
+		}
+	}
+	return value
+}
+
+func TestCodexGatewaySetsTheOpenAIBaseOnTheCommandLine(t *testing.T) {
+	got, argv, env, session := codexGatewayRun(t)
+	if want := `"` + session.Client.URL + `/v1"`; lastConfig(argv, "openai_base_url") != want {
+		t.Errorf("Codex reads openai_base_url as %s, want %s: %q", lastConfig(argv, "openai_base_url"), want, argv)
+	}
+	if !slices.Contains(env, "CODEX_API_KEY="+gatewayKey) || slices.ContainsFunc(env, func(entry string) bool { return strings.HasPrefix(entry, "OPENAI_API_KEY=") }) {
+		t.Errorf("the agent's credentials: %q", slices.DeleteFunc(env, func(entry string) bool { return !strings.Contains(entry, "API_KEY") }))
+	}
+	for _, row := range got.rows {
+		if tagOf(row, "costroid/enforcement_grade") != "gateway-precheck" || row["SubAccountId"] != gateway.KeyID(gatewayKey) {
+			t.Errorf("grade %q, SubAccountId %v: %v", tagOf(row, "costroid/enforcement_grade"), row["SubAccountId"], row["ChargeDescription"])
+		}
+		// One request in flight and one not yet counted, each of 20000 tokens
+		// at gpt-5-nano's highest price, output at USD 0.40 per million.
+		if row["x_CostroidOvershootBound"] != "0.016" {
+			t.Errorf("bound %v", row["x_CostroidOvershootBound"])
+		}
+		if tagOf(row, focus.TagCostBasis) != string(focus.Measured) {
+			t.Errorf("a run on the gateway's key reads %q with no CODEX_API_KEY in costroid's environment", tagOf(row, focus.TagCostBasis))
+		}
+	}
+	if strings.Contains(got.stdout+got.stderr, gatewayKey) {
+		t.Error("the run printed the key")
+	}
+}
+
+func TestCodexGatewayPinsTheProvider(t *testing.T) {
+	_, argv, _, _ := codexGatewayRun(t)
+	if got := lastConfig(argv, "model_provider"); got != `"openai"` {
+		t.Errorf("Codex reads model_provider as %s, so its requests can go around the gateway: %q", got, argv)
+	}
+}
+
+func TestGatewayArgumentsComeBeforeTheEndOfOptions(t *testing.T) {
+	_, argv, _, _ := codexGatewayRun(t, "--")
+	end := slices.Index(argv, "--")
+	if end < 0 || argv[len(argv)-1] != "work" || lastConfig(argv[:end], "model_provider") != `"openai"` {
+		t.Errorf("the gateway's arguments after the end of options would read as the prompt: %q", argv)
 	}
 }

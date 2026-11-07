@@ -253,8 +253,12 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	if held != nil {
 		plan.Enforcement = held.enforcement("")
+		plan.Argv = held.argv(plan.Argv)
 	}
 	session := agent.NewSession(plan)
+	if billed, ok := session.(adapter.GatewayBilled); ok && held != nil {
+		billed.BilledThroughGateway()
+	}
 	builder := process.builder(agent.Name(), plan.Enforcement)
 	builder.held = held
 	result := Result{Agent: agent.Name(), Enforcement: plan.Enforcement}
@@ -391,7 +395,7 @@ func (o Options) command(plan adapter.Plan, held *heldKey, stdout *os.File) *exe
 		command.Env = append(command.Env, cicontext.ResourceAttributesVariable+"="+attributes)
 	}
 	if held != nil {
-		command.Env = held.session.Env(command.Env)
+		command.Env = held.env(command.Env)
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return command

@@ -120,7 +120,7 @@ func (Agent) NewSession(plan adapter.Plan) adapter.Session {
 		planned:   plan.Enforcement,
 		home:      homeDir(),
 		model:     modelOf(plan.Argv),
-		costBasis: costBasisOf(os.Getenv("CODEX_API_KEY")),
+		costBasis: costBasisOf(os.Getenv(codexAPIKeyVariable)),
 		version:   versionOf(plan.Argv),
 	}
 }

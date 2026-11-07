@@ -10,14 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
-)
-
-// The variables Claude Code reads its endpoint and its credential from.
-const (
-	baseURLVariable   = "ANTHROPIC_BASE_URL"
-	authTokenVariable = "ANTHROPIC_AUTH_TOKEN"
-	apiKeyVariable    = "ANTHROPIC_API_KEY"
 )
 
 // Session is one run's key on one gateway, as the agent's job holds it.
@@ -171,14 +165,24 @@ func metadata(info KeyInfo, key string) string {
 	return value
 }
 
-// Env is the agent's environment: the base given, with the gateway's URL and
-// the run's key in place of any provider credential it held.
-func (s Session) Env(base []string) []string {
+// Env is the agent's environment: the base given, with the agent's own
+// variables for the gateway's URL and the run's key in place of any it held,
+// and without each credential the agent names to be removed.
+func (s Session) Env(base []string, agent adapter.Gatewayed) []string {
+	var set []string
+	replaced := map[string]bool{}
+	for _, entry := range agent.GatewayEnv(s.Client.URL, s.Key) {
+		name, value, _ := strings.Cut(entry, "=")
+		replaced[name] = true
+		if value != "" {
+			set = append(set, entry)
+		}
+	}
 	env := slices.DeleteFunc(slices.Clone(base), func(entry string) bool {
 		name, _, _ := strings.Cut(entry, "=")
-		return name == baseURLVariable || name == authTokenVariable || name == apiKeyVariable
+		return replaced[name]
 	})
-	return append(env, baseURLVariable+"="+s.Client.URL, authTokenVariable+"="+s.Key)
+	return append(env, set...)
 }
 
 // Watch probes the gateway's store until stop is called, and once more then.

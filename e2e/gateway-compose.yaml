@@ -19,6 +19,7 @@ services:
       DATABASE_URL: postgresql://postgres:e2e-litellm@litellm-db:5432/litellm
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
       MOCK_UPSTREAM: ${MOCK_UPSTREAM:?set MOCK_UPSTREAM}
+      MOCK_UPSTREAM_OPENAI: ${MOCK_UPSTREAM:?set MOCK_UPSTREAM}/v1
       MOCK_UPSTREAM_KEY: mock-upstream
     volumes:
       - ./testdata/litellm.yaml:/app/config.yaml:ro

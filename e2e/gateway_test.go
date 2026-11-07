@@ -44,21 +44,25 @@ const (
 	gatewayBudget        = "0.01"
 	gatewayRequestTokens = "20000"
 	// mockUsage is what the mock upstream reports for each request: 10000 input
-	// and 10000 output tokens, USD 0.006 at claude-haiku-5-5's list prices.
+	// and 10000 output tokens, USD 0.006 at claude-haiku-5-5's list prices and
+	// USD 0.0045 at gpt-5-nano's.
 	mockUsage = `{"input_tokens":10000,"output_tokens":10000}`
 	// gatewayBound is one request in flight and one not yet counted, each of
 	// 20000 tokens at the sheet's highest claude-haiku-5-5 price, output at
 	// USD 0.50 per million tokens.
 	gatewayBound = "0.02"
-	gatewayWait  = 4 * time.Minute
-	author       = "octocat"
+	// codexBound is the same at gpt-5-nano's highest price, output at USD 0.40
+	// per million tokens.
+	codexBound  = "0.016"
+	gatewayWait = 4 * time.Minute
+	author      = "octocat"
 	// repositoryCap is the repository's daily cap, carried as its team's budget.
 	repositoryCap = "20"
 	team          = "costroid:github.com/acme/widgets"
 )
 
-// mockUpstream answers the Messages API with fixed usage and counts the
-// requests that reached it.
+// mockUpstream answers the Messages API and the Responses API with fixed usage
+// and counts the requests that reached it.
 type mockUpstream struct {
 	url      string
 	requests atomic.Int64
@@ -73,18 +77,39 @@ func startMock(t *testing.T) *mockUpstream {
 	}
 	mock := &mockUpstream{url: "http://host.docker.internal:" + strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)}
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		if r.URL.Path != "/v1/messages" {
-			http.NotFound(w, r)
-			return
+		var request struct {
+			Stream bool `json:"stream"`
 		}
-		count := mock.requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"id":"msg_mock_%d","type":"message","role":"assistant","model":"claude-haiku-5-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,"usage":%s}`, count, mockUsage)
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		switch r.URL.Path {
+		case "/v1/messages":
+			count := mock.requests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":"msg_mock_%d","type":"message","role":"assistant","model":"claude-haiku-5-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,"usage":%s}`, count, mockUsage)
+		case "/v1/responses":
+			respond(w, mock.requests.Add(1), request.Stream)
+		default:
+			http.NotFound(w, r)
+		}
 	})}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 	return mock
+}
+
+// respond answers one Responses API request, as a stream of events when the
+// request asks for one, as Codex does.
+func respond(w http.ResponseWriter, count int64, stream bool) {
+	response := fmt.Sprintf(`{"id":"resp_mock_%d","object":"response","created_at":1762560000,"status":"completed","model":"gpt-5-nano","output":[{"type":"message","id":"msg_mock_%d","status":"completed","role":"assistant","content":[{"type":"output_text","text":"ok","annotations":[]}]}],"parallel_tool_calls":true,"tool_choice":"auto","tools":[],"usage":{"input_tokens":10000,"input_tokens_details":{"cached_tokens":0},"output_tokens":10000,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":20000}}`, count, count)
+	if !stream {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, response)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	created := fmt.Sprintf(`{"id":"resp_mock_%d","object":"response","created_at":1762560000,"status":"in_progress","model":"gpt-5-nano","output":[]}`, count)
+	fmt.Fprintf(w, "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":%s}\n\n", created)
+	fmt.Fprintf(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":%s}\n\n", response)
 }
 
 // dockerBridge is the host's address on Docker's default bridge, which
@@ -277,15 +302,36 @@ type gatewayJob struct {
 	public  string
 	request string
 	report  string
+	// command is the agent's arguments, and provider the provider keys the
+	// job holds, which must never reach the agent.
+	command  []string
+	provider []string
 }
 
-func newGatewayJob(t *testing.T, stack *gatewayStack) *gatewayJob {
+// fakeAgent is a stand-in for an agent: the name costroid run knows it by,
+// its source, its arguments, and the provider keys a job of its kind holds.
+type fakeAgent struct {
+	name, source string
+	command      []string
+	provider     []string
+}
+
+var (
+	claudeCode = fakeAgent{name: "claude", source: "./testdata/gatewayagent", command: []string{"-p", "Fix the failing test."},
+		provider: []string{"ANTHROPIC_API_KEY=sk-ant-must-not-reach-the-agent"}}
+	// The Codex job holds an OpenAI key and no CODEX_API_KEY, as the recipe's
+	// does, and its command names a provider the gateway's must override.
+	codexExec = fakeAgent{name: "codex", source: "./testdata/gatewaycodex", command: []string{"exec", "-c", `model_provider="elsewhere"`, "-m", "gpt-5-nano", "Fix the failing test."},
+		provider: []string{"OPENAI_API_KEY=sk-must-not-reach-the-agent"}}
+)
+
+func newGatewayJob(t *testing.T, stack *gatewayStack, agent fakeAgent) *gatewayJob {
 	t.Helper()
 	w := &workspace{t: t, directory: t.TempDir()}
 	w.binary = filepath.Join(w.directory, "costroid")
-	w.agent = filepath.Join(w.directory, "claude")
+	w.agent = filepath.Join(w.directory, agent.name)
 	w.rows = filepath.Join(w.directory, "rows.jsonl")
-	for target, source := range map[string]string{w.binary: "../cmd/costroid", w.agent: "./testdata/gatewayagent"} {
+	for target, source := range map[string]string{w.binary: "../cmd/costroid", w.agent: agent.source} {
 		build := exec.Command("go", "build", "-o", target, source)
 		build.Env = append(os.Environ(), "CGO_ENABLED=0")
 		if out, err := build.CombinedOutput(); err != nil {
@@ -294,11 +340,13 @@ func newGatewayJob(t *testing.T, stack *gatewayStack) *gatewayJob {
 	}
 	event := filepath.Join(w.directory, "event.json")
 	w.write(event, fmt.Sprintf(`{"pull_request":{"number":%s,"head":{"sha":%q},"base":{"sha":%q},"user":{"login":%q}}}`, pull, head, base, author), 0o644)
-	job := &gatewayJob{workspace: w, stack: stack, request: filepath.Join(w.directory, "gateway"), report: filepath.Join(w.directory, "agent.json")}
+	job := &gatewayJob{workspace: w, stack: stack, request: filepath.Join(w.directory, "gateway"), report: filepath.Join(w.directory, "agent.json"),
+		command: agent.command, provider: agent.provider}
 	job.ci = append(os.Environ(),
 		"GITHUB_ACTIONS=true", "GITHUB_SERVER_URL=https://github.com", "GITHUB_REPOSITORY=acme/widgets",
 		"GITHUB_RUN_ID="+runID, "GITHUB_JOB=agent", "GITHUB_SHA="+merge, "GITHUB_EVENT_NAME=pull_request",
 		"GITHUB_EVENT_PATH="+event, "CLAUDE_CONFIG_DIR="+filepath.Join(w.directory, "claude-config"),
+		"CODEX_HOME="+filepath.Join(w.directory, "codex-home"),
 	)
 	sealing := filepath.Join(w.directory, "sealing-key")
 	code, stdout, stderr := w.costroid(job.ci, "gateway", "keygen", "--out", sealing)
@@ -366,9 +414,10 @@ func (j *gatewayJob) key() string {
 // run is costroid run on the agent's job. The job also holds a provider key,
 // which must never reach the agent.
 func (j *gatewayJob) run(attempt int, extra ...string) *exec.Cmd {
-	env := append(j.attempt(attempt), "ANTHROPIC_API_KEY=sk-ant-must-not-reach-the-agent", "GATEWAY_AGENT_REPORT="+j.report)
-	command := exec.Command(j.binary, "run", "--budget-usd", gatewayBudget, "--out", j.rows,
-		"--gateway", j.stack.url, "--gateway-key-file", filepath.Join(j.request, "key"), "--", j.agent, "-p", "Fix the failing test.")
+	env := append(append(j.attempt(attempt), j.provider...), "GATEWAY_AGENT_REPORT="+j.report)
+	args := []string{"run", "--budget-usd", gatewayBudget, "--out", j.rows,
+		"--gateway", j.stack.url, "--gateway-key-file", filepath.Join(j.request, "key"), "--", j.agent}
+	command := exec.Command(j.binary, append(args, j.command...)...)
 	command.Env = append(env, extra...)
 	return command
 }
@@ -441,10 +490,25 @@ func keyID(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob runs each agent
+// that takes a gateway through one LiteLLM and one mock upstream: Claude Code
+// on the Messages API, Codex on the Responses API.
 func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	mock := startMock(t)
 	stack := composeGateway(t, mock)
-	job := newGatewayJob(t, stack)
+	t.Run("claude-code", func(t *testing.T) { holdClaudeCode(t, stack.on(t), mock) })
+	t.Run("codex", func(t *testing.T) { holdCodex(t, stack.on(t), mock) })
+}
+
+// on is the stack as a subtest calls it.
+func (s *gatewayStack) on(t *testing.T) *gatewayStack {
+	sub := *s
+	sub.t = t
+	return &sub
+}
+
+func holdClaudeCode(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
+	job := newGatewayJob(t, stack, claudeCode)
 	ledger := startLedger(t)
 
 	id := job.open(1, ledger.jobEnv(1)...)
@@ -452,15 +516,60 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	if budget, window := stack.teamBudget(); decimal.MustParse(budget).Cmp(decimal.MustParse(repositoryCap)) != 0 || window != "1d" {
 		t.Errorf("the repository's team holds USD %v per %q, want %s per 1d", budget, window, repositoryCap)
 	}
-	out, err := job.run(1).CombinedOutput()
+	total := runToTheRefusal(t, job, mock, 1, id, gatewayBound)
+
+	holdTheBudgetToTheClosingJobsCount(t, ledger, job, total)
+	if status := stack.keyStatus(id); status != "deleted" {
+		t.Errorf("after close the gateway reads the key as %q", status)
+	}
+	if stack.authenticates(key) {
+		t.Error("the key still authenticates after close")
+	}
+
+	recordAStoreFailureAsNone(t, stack, job, mock)
+	holdTheMintersKeyToItsRoutes(t, stack)
+}
+
+// holdCodex runs Codex on the attempt after Claude Code's two. Its rows read
+// measured though costroid's own environment holds no CODEX_API_KEY, because
+// the agent runs on the gateway's key.
+func holdCodex(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
+	const attempt = 3
+	job := newGatewayJob(t, stack, codexExec)
+	id := job.open(attempt)
+	key := job.key()
+	total := runToTheRefusal(t, job, mock, attempt, id, codexBound)
+	for _, row := range job.readRows() {
+		if row.Tags["costroid/agent"] != "codex" || row.Tags["costroid/cost_basis"] != "measured" {
+			t.Errorf("agent %q, basis %q: %s", row.Tags["costroid/agent"], row.Tags["costroid/cost_basis"], row.Description)
+		}
+	}
+	t.Logf("the Codex run's rows come to USD %s", total)
+	job.close(attempt)
+	if status := stack.keyStatus(id); status != "deleted" {
+		t.Errorf("after close the gateway reads the key as %q", status)
+	}
+	if stack.authenticates(key) {
+		t.Error("the key still authenticates after close")
+	}
+}
+
+// runToTheRefusal runs the agent on the key until the gateway refuses it, and
+// holds the rows to the key: its id, gateway-precheck, the bound given, an
+// overshoot within it, and the gateway's count set beside them only when it
+// differs. It returns the rows' total.
+func runToTheRefusal(t *testing.T, job *gatewayJob, mock *mockUpstream, attempt int, id, bound string) decimal.Decimal {
+	t.Helper()
+	before := mock.requests.Load()
+	out, err := job.run(attempt).CombinedOutput()
 	if err != nil {
 		t.Fatalf("costroid run: %v\n%s", err, out)
 	}
 	result := job.outcome()
 	if result.Accepted < 1 || result.RefusedStatus == 0 {
-		t.Fatalf("the gateway never refused the key: %+v", result)
+		t.Fatalf("the gateway never refused the key: %+v\n%s", result, out)
 	}
-	if got := mock.requests.Load(); got != int64(result.Accepted) {
+	if got := mock.requests.Load() - before; got != int64(result.Accepted) {
 		t.Errorf("the upstream saw %d requests, and the agent had %d accepted: a refused request reached it", got, result.Accepted)
 	}
 	t.Logf("accepted %d, then refused with %d: %.200s", result.Accepted, result.RefusedStatus, result.Refusal)
@@ -473,18 +582,18 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 		if row.Tags["costroid/enforcement_grade"] != "gateway-precheck" {
 			t.Errorf("the grade reads %q: %s", row.Tags["costroid/enforcement_grade"], row.Description)
 		}
-		if row.OvershootBound == nil || *row.OvershootBound != gatewayBound {
-			t.Errorf("the overshoot bound reads %v, want %s", row.OvershootBound, gatewayBound)
+		if row.OvershootBound == nil || *row.OvershootBound != bound {
+			t.Errorf("the overshoot bound reads %v, want %s", row.OvershootBound, bound)
 		}
 		total = total.Add(decimal.MustParse(row.ListCost))
 	}
 	over := total.Sub(decimal.MustParse(gatewayBudget))
-	if over.Cmp(decimal.MustParse(gatewayBound)) > 0 {
+	if over.Cmp(decimal.MustParse(bound)) > 0 {
 		t.Errorf("the run cost USD %s, past the budget by more than the bound", total)
 	}
 	// The gateway's figure is set beside the rows' whenever the two differ by
 	// more than float rounding, and never replaces them.
-	_, counted := stack.keyInfo(id)
+	_, counted := job.stack.keyInfo(id)
 	spend, err := decimal.ParseNumber(counted)
 	if err != nil {
 		t.Fatalf("the gateway's spend %q: %v", counted, err)
@@ -494,20 +603,10 @@ func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 		t.Errorf("the gateway counted USD %s and the rows USD %s, and the run's warnings read:\n%s", spend, total, out)
 	}
 	t.Logf("the gateway counted USD %s, the rows USD %s", spend, total)
-	if strings.Contains(string(out), key) {
+	if strings.Contains(string(out), job.key()) {
 		t.Error("costroid run printed the key")
 	}
-
-	holdTheBudgetToTheClosingJobsCount(t, ledger, job, total)
-	if status := stack.keyStatus(id); status != "deleted" {
-		t.Errorf("after close the gateway reads the key as %q", status)
-	}
-	if stack.authenticates(key) {
-		t.Error("the key still authenticates after close")
-	}
-
-	recordAStoreFailureAsNone(t, stack, job, mock)
-	holdTheMintersKeyToItsRoutes(t, stack)
+	return total
 }
 
 // holdTheMintersKeyToItsRoutes records what a key limited to mint's and

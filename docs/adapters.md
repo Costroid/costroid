@@ -8,6 +8,7 @@ What each agent's stream carries, as recorded on November 1, 2026. The fixtures 
 | ----------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude Code | `gateway-precheck` | Through a LiteLLM gateway on a key made for the run: the gateway checks the key's budget before each request. The requests in flight can pass it by the bound each row states. [`gateway.md`](gateway.md) has the design. |
 | Claude Code | `agent-flag`       | Costroid passes `--max-budget-usd`. Claude Code checks its own estimate between requests, so the request that crosses the cap still runs and is still paid. |
+| Codex       | `gateway-precheck` | Through the same gateway: Costroid gives Codex the gateway's address and provider on its command line, which override its configuration files. [`gateway.md`](gateway.md) has the design. |
 | Codex       | `wrapper-watchdog` | Costroid reads Codex's rollout file during the turn, prices each request as it settles and stops the process at the cap. Requests in flight can pass it.    |
 | Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a file whose shape the reader does not know, or a file that contradicts the stream. Nothing stops the run.  |
 
