@@ -289,3 +289,21 @@ doctor ends with one line of its own.
 | ---- | ------- | --- |
 | `costroid: doctor: <count> fail, <count> warn, <count> ok` | What doctor checked. It exits 1 when one line reads `fail` | Fix each `fail` line above it, then each `warn` line |
 | `costroid: doctor: <error>` | doctor could not run its checks, and exits 125. `--ci` outside a GitHub Actions job is one such error | Read the error. `costroid help doctor` gives the flags |
+
+## Posting the agent's answer
+
+With `post-review: "true"`, the action runs `costroid review --keep` in the agent's job and `costroid review --post` in the report's job. [`docs/review.md`](review.md) says what the comment shows. Neither step fails its job: `--keep` exits 0 when the run left no answer, its step continues on an error, and `--post` exits 0 whatever the host answers.
+
+The answer travels as `costroid-review.md` in the `costroid-rows` artifact. A report or ingest step without `post-review: "true"` refuses an artifact that holds it, with the refused artifact's line in [Installing the binary](#installing-the-binary), and the report's check fails.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: kept the agent's answer, <count> bytes, for the review comment` | The agent's job kept the run's final answer, and nothing else it wrote | None |
+| `costroid: no answer was kept, so the review comment will say the job kept none: <error>` | The run ended without an answer: it stopped at its cap, its last turn failed, or it never finished. The error says which. In stage `run` with `show-output: true`, the agent's stream went to the log and not to a file, so there is nothing to read | None, when the error names a cap or a failed turn. In stage `run`, leave `show-output` false |
+| `costroid: warning: the answer is <count> bytes, so its first <count> were kept` | The answer is longer than 1 MiB. The comment shows its first 30000 bytes in any case | None |
+| `costroid: the agent's job kept no answer, so the review comment says so` | The artifact holds no `costroid-review.md`, so the comment says the job kept none. The agent's job's log says why | Read the agent's job's log. Set `post-review: "true"` on the agent's step as well |
+| `costroid: warning: the kept answer was not read, so the review comment says the job kept none: <error>` | `costroid-review.md` could not be read, or is not a plain file | Read the error |
+| `costroid: posted the agent's answer in a comment of its own` | The comment was posted, or the one an earlier run posted was edited | None |
+| `costroid: warning: the agent's answer was not posted: <error>` | The host refused the comment. A fork's pull request gets a read-only token, so this is expected there | Give the report's job `pull-requests: write`, as the recipes do |
+| `costroid: not posted: review posts on the pull_request event, and this run's event is <event>` | On GitHub Actions, the answer is posted on the `pull_request` event only, as the report is | Run the report's job on `pull_request` |
+| `costroid: review refused: neither GitHub Actions nor GitLab CI was detected` | `costroid review --post` ran outside CI. It exits 125 | Run it in the report's job |
