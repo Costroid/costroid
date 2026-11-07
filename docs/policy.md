@@ -61,7 +61,7 @@ The second half of the period, 20 pull requests with a measured cost, needs a re
 
 ## Settings come from the base branch
 
-The report reads `costroid.yml` at the head of the pull request's base branch when the report runs, never at the pull request's head. A pull request that raises its own budget, or removes `policy.enforce`, does not change its own verdict. The comment says so on every pull request: a change to `costroid.yml` applies after the merge. On a push, the report reads the file at the commit it reports on.
+The report reads `costroid.yml` at the head of the pull request's base branch when the report runs, never at the pull request's head. A pull request that raises its own budget, or removes `policy.enforce`, does not change its own verdict. The comment says so on every pull request: a change to `costroid.yml` applies after the merge. On GitHub the report posts on the `pull_request` event alone. On any other event it posts nothing, and one line says why.
 
 The event's base commit is not that head. GitHub sets `pull_request.base.sha` to the merge-base, and GitLab's `CI_MERGE_REQUEST_DIFF_BASE_SHA` is the merge-base too, so either moves only when the pull request updates. The report asks the host for the head of the branch the event names, `pull_request.base.ref` on GitHub and `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` on GitLab, so a budget changed on the base branch reaches every open pull request at its next report. The verdict records the commit it read as `config_ref`.
 

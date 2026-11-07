@@ -3,6 +3,7 @@
 package scmtest
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -26,14 +27,14 @@ type Comment struct {
 	Login string
 }
 
-// Pull is one pull request a commit belongs to. A HeadRepository left empty
-// answers as a fork GitHub no longer has.
+// Pull is one pull request of the repository. HeadRepository is owner/name,
+// and left empty it answers as a fork GitHub no longer has.
 type Pull struct {
 	Number         int
 	State          string
 	HeadSHA        string
 	HeadRepository string
-	BaseRepository string
+	HeadBranch     string
 }
 
 // Check is a stored check run.
@@ -63,8 +64,9 @@ type Stub struct {
 	FilesAt map[string]map[string]string
 	// Branches maps a branch to the commit at its head.
 	Branches map[string]string
-	// CommitPulls maps a commit to the pull requests GitHub lists for it.
-	CommitPulls map[string][]Pull
+	// Pulls are the repository's pull requests. The list of a commit's pull
+	// requests answers empty, as GitHub's does for a fork's.
+	Pulls []Pull
 	// App is the slug of the App the token belongs to. A check run's answer
 	// names it, and the stub posts comments as its account.
 	App string
@@ -84,7 +86,7 @@ func New(t *testing.T) *Stub {
 	t.Helper()
 	stub := &Stub{
 		Token: "stub-token", Fail: map[string]int{}, Files: map[string]string{}, FilesAt: map[string]map[string]string{},
-		Branches: map[string]string{}, CommitPulls: map[string][]Pull{}, Commits: map[string][]time.Time{},
+		Branches: map[string]string{}, Commits: map[string][]time.Time{},
 		App: "github-actions", nextID: 1000,
 	}
 	stub.Server = httptest.NewServer(stub)
@@ -142,7 +144,9 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch {
 	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/pulls"):
-		s.listCommitPulls(w, r, path)
+		s.answer(w, []any{})
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls"):
+		s.listPulls(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/branches-where-head"):
 		s.listBranchesAt(w, path)
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/check-runs"):
@@ -205,30 +209,38 @@ func commitOf(path string) string {
 	return sha
 }
 
-// listCommitPulls answers as GitHub's list of a commit's pull requests does.
-func (s *Stub) listCommitPulls(w http.ResponseWriter, r *http.Request, path string) {
-	size, err := strconv.Atoi(r.URL.Query().Get("per_page"))
+// listPulls answers as GitHub's list of pull requests does, filtered by state
+// and by a head of the form owner:branch.
+func (s *Stub) listPulls(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	size, err := strconv.Atoi(query.Get("per_page"))
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	page, err := strconv.Atoi(query.Get("page"))
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	pulls := s.CommitPulls[commitOf(path)]
+	state := cmp.Or(query.Get("state"), "open")
+	owner, branch, filtered := strings.Cut(query.Get("head"), ":")
+	var matched []Pull
+	for _, pull := range s.Pulls {
+		holder, _, _ := strings.Cut(pull.HeadRepository, "/")
+		if pull.State != state || filtered && (holder != owner || pull.HeadBranch != branch) {
+			continue
+		}
+		matched = append(matched, pull)
+	}
 	listed := []map[string]any{}
-	for index := (page - 1) * size; index >= 0 && index < len(pulls) && index < page*size; index++ {
-		pull := pulls[index]
-		head := map[string]any{"sha": pull.HeadSHA, "repo": nil}
+	for index := (page - 1) * size; index >= 0 && index < len(matched) && index < page*size; index++ {
+		pull := matched[index]
+		head := map[string]any{"sha": pull.HeadSHA, "ref": pull.HeadBranch, "repo": nil}
 		if pull.HeadRepository != "" {
 			head["repo"] = map[string]string{"full_name": pull.HeadRepository}
 		}
-		listed = append(listed, map[string]any{
-			"number": pull.Number, "state": pull.State, "head": head,
-			"base": map[string]any{"repo": map[string]string{"full_name": pull.BaseRepository}},
-		})
+		listed = append(listed, map[string]any{"number": pull.Number, "state": pull.State, "head": head})
 	}
 	s.answer(w, listed)
 }

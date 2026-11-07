@@ -32,7 +32,7 @@ const (
 	// maxCommitPages bounds the walk for a file's first commit at 1,000.
 	maxCommitPages = 10
 	pullsPerPage   = 100
-	// maxPullPages bounds the list of a commit's pull requests at 1,000.
+	// maxPullPages bounds a list of open pull requests at 1,000.
 	maxPullPages = 10
 	// actionsLogin is the account GitHub Actions' own token posts as.
 	actionsLogin = "github-actions[bot]"
@@ -391,39 +391,35 @@ func (g *GitHub) BranchHead(ctx context.Context, branch string) (string, error) 
 	return ref.Object.SHA, nil
 }
 
-// PullsForCommit lists the pull requests GitHub associates with a commit, open
-// and closed.
-func (g *GitHub) PullsForCommit(ctx context.Context, sha string) ([]CommitPull, error) {
-	if !shaPattern.MatchString(sha) {
-		return nil, errors.New("scm: the commit is not a full SHA")
+// OpenPullsFrom lists the open pull requests whose head is branch in a
+// repository owner holds. It asks by branch, not by commit: GitHub's list of a
+// commit's pull requests leaves out a fork's.
+func (g *GitHub) OpenPullsFrom(ctx context.Context, owner, branch string) ([]OpenPull, error) {
+	if owner == "" || branch == "" {
+		return nil, errors.New("scm: a head needs an owner and a branch")
 	}
-	type repository struct {
-		FullName string `json:"full_name"`
-	}
-	var pulls []CommitPull
+	var pulls []OpenPull
 	for page := 1; page <= maxPullPages; page++ {
 		var answer []struct {
-			Number int    `json:"number"`
-			State  string `json:"state"`
+			Number int `json:"number"`
 			Head   struct {
-				SHA  string      `json:"sha"`
-				Repo *repository `json:"repo"`
+				SHA  string `json:"sha"`
+				Repo *struct {
+					FullName string `json:"full_name"`
+				} `json:"repo"`
 			} `json:"head"`
-			Base struct {
-				Repo *repository `json:"repo"`
-			} `json:"base"`
 		}
-		query := url.Values{"per_page": {strconv.Itoa(pullsPerPage)}, "page": {strconv.Itoa(page)}}
-		if err := g.do(ctx, http.MethodGet, g.repo("/commits/"+sha+"/pulls?"+query.Encode()), nil, &answer); err != nil {
+		query := url.Values{
+			"state": {"open"}, "head": {owner + ":" + branch},
+			"per_page": {strconv.Itoa(pullsPerPage)}, "page": {strconv.Itoa(page)},
+		}
+		if err := g.do(ctx, http.MethodGet, g.repo("/pulls?"+query.Encode()), nil, &answer); err != nil {
 			return nil, err
 		}
 		for _, pull := range answer {
-			listed := CommitPull{Number: pull.Number, Open: pull.State == "open", HeadSHA: pull.Head.SHA}
+			listed := OpenPull{Number: pull.Number, HeadSHA: pull.Head.SHA}
 			if pull.Head.Repo != nil {
 				listed.HeadRepository = pull.Head.Repo.FullName
-			}
-			if pull.Base.Repo != nil {
-				listed.BaseRepository = pull.Base.Repo.FullName
 			}
 			pulls = append(pulls, listed)
 		}
@@ -431,7 +427,7 @@ func (g *GitHub) PullsForCommit(ctx context.Context, sha string) ([]CommitPull, 
 			return pulls, nil
 		}
 	}
-	return nil, fmt.Errorf("scm: more than %d pull requests hold the commit", maxPullPages*pullsPerPage)
+	return nil, fmt.Errorf("scm: more than %d open pull requests have the head %q", maxPullPages*pullsPerPage, owner+":"+branch)
 }
 
 // BranchesAt lists this repository's branches whose head is the commit.

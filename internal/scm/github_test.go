@@ -165,37 +165,38 @@ func TestStickyCommentIgnoresAnAppSlugThatIsNotOne(t *testing.T) {
 	}
 }
 
+// TestPullsForCommit finds a fork's open pull request by its head branch. The
+// stub answers the list of a commit's pull requests empty, as GitHub does for
+// a fork's, so a lookup by commit finds nothing.
 func TestPullsForCommit(t *testing.T) {
 	stub := scmtest.New(t)
-	stub.CommitPulls[sampleSHA] = []scmtest.Pull{
-		{Number: 7, State: "open", HeadSHA: sampleSHA, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"},
-		{Number: 3, State: "closed", HeadSHA: movedSHA, HeadRepository: "example/widgets", BaseRepository: "example/widgets"},
-		{Number: 2, State: "open", HeadSHA: sampleSHA, BaseRepository: "example/widgets"},
+	stub.Pulls = []scmtest.Pull{
+		{Number: 7, State: "open", HeadSHA: sampleSHA, HeadRepository: "stranger/widgets", HeadBranch: "fix/a b#c"},
+		{Number: 6, State: "closed", HeadSHA: sampleSHA, HeadRepository: "stranger/widgets", HeadBranch: "fix/a b#c"},
+		{Number: 5, State: "open", HeadSHA: movedSHA, HeadRepository: "stranger/widgets", HeadBranch: "main"},
+		{Number: 4, State: "open", HeadSHA: sampleSHA, HeadRepository: "someone/widgets", HeadBranch: "fix/a b#c"},
 	}
 	host := adapter(t, stub)
-	pulls, err := host.PullsForCommit(context.Background(), sampleSHA)
+	pulls, err := host.OpenPullsFrom(context.Background(), "stranger", "fix/a b#c")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []scm.CommitPull{
-		{Number: 7, Open: true, HeadSHA: sampleSHA, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"},
-		{Number: 3, Open: false, HeadSHA: movedSHA, HeadRepository: "example/widgets", BaseRepository: "example/widgets"},
-		{Number: 2, Open: true, HeadSHA: sampleSHA, HeadRepository: "", BaseRepository: "example/widgets"},
-	}
-	if fmt.Sprint(pulls) != fmt.Sprint(want) {
+	if want := []scm.OpenPull{{Number: 7, HeadSHA: sampleSHA, HeadRepository: "stranger/widgets"}}; fmt.Sprint(pulls) != fmt.Sprint(want) {
 		t.Errorf("pulls = %+v", pulls)
 	}
-	if want := "GET /repos/example/widgets/commits/" + sampleSHA + "/pulls?page=1&per_page=100"; stub.Requests[0] != want {
+	if want := "GET /repos/example/widgets/pulls?head=stranger%3Afix%2Fa+b%23c&page=1&per_page=100&state=open"; stub.Requests[0] != want {
 		t.Errorf("request = %s", stub.Requests[0])
 	}
-	if pulls, err := host.PullsForCommit(context.Background(), movedSHA); err != nil || len(pulls) != 0 {
-		t.Errorf("a commit with no pull request: %v, %v", pulls, err)
+	if pulls, err := host.OpenPullsFrom(context.Background(), "nobody", "main"); err != nil || len(pulls) != 0 {
+		t.Errorf("a head with no pull request: %v, %v", pulls, err)
 	}
-	if _, err := host.PullsForCommit(context.Background(), "main"); err == nil {
-		t.Error("a ref that is not a SHA was asked about")
+	for _, head := range [][2]string{{"", "main"}, {"stranger", ""}} {
+		if _, err := host.OpenPullsFrom(context.Background(), head[0], head[1]); err == nil {
+			t.Errorf("%q was asked about", head)
+		}
 	}
 	stub.Fail["GET /pulls"] = http.StatusForbidden
-	if _, err := host.PullsForCommit(context.Background(), sampleSHA); !errors.As(err, new(*scm.StatusError)) {
+	if _, err := host.OpenPullsFrom(context.Background(), "stranger", "main"); !errors.As(err, new(*scm.StatusError)) {
 		t.Errorf("a refused list: %v", err)
 	}
 }
@@ -204,9 +205,9 @@ func TestPullsForCommitPagesAndStopsAtAThousand(t *testing.T) {
 	for count, fails := range map[int]bool{100: false, 250: false, 999: false, 1000: true} {
 		stub := scmtest.New(t)
 		for number := range count {
-			stub.CommitPulls[sampleSHA] = append(stub.CommitPulls[sampleSHA], scmtest.Pull{Number: number + 1, State: "open", HeadSHA: sampleSHA})
+			stub.Pulls = append(stub.Pulls, scmtest.Pull{Number: number + 1, State: "open", HeadSHA: sampleSHA, HeadRepository: "stranger/widgets", HeadBranch: "main"})
 		}
-		pulls, err := adapter(t, stub).PullsForCommit(context.Background(), sampleSHA)
+		pulls, err := adapter(t, stub).OpenPullsFrom(context.Background(), "stranger", "main")
 		if fails {
 			if err == nil || !strings.Contains(err.Error(), "more than 1000") {
 				t.Errorf("%d pull requests: err = %v", count, err)

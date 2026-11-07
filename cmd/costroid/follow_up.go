@@ -41,9 +41,13 @@ type finishedRun struct {
 	ID             int64  `json:"id"`
 	Event          string `json:"event"`
 	HeadSHA        string `json:"head_sha"`
+	HeadBranch     string `json:"head_branch"`
 	Path           string `json:"path"`
 	HeadRepository *struct {
 		FullName string `json:"full_name"`
+		Owner    struct {
+			Login string `json:"login"`
+		} `json:"owner"`
 	} `json:"head_repository"`
 }
 
@@ -116,37 +120,38 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	return 0
 }
 
-// confirmForkPull binds the head commit to an open pull request from the fork
-// the finished run names. A fork can push any commit it can read to a branch
-// of its own, such as the head of another pull request or of a branch here,
-// and a check on that commit would land on someone else's change. So a commit
-// that heads a pull request from any other repository, or a branch of this
-// one, gets nothing. A list that cannot be read gets nothing too.
+// confirmForkPull binds the head commit to the one open pull request from the
+// fork's branch the finished run names. A fork can push any commit it can read
+// to a branch of its own, such as the head of a branch here, and a check on
+// that commit would land on someone else's change. So a commit that heads a
+// branch of this repository gets nothing, and so does an answer that cannot
+// be read. The lookup is by branch, because GitHub's list of a commit's pull
+// requests leaves out a fork's.
 func confirmForkPull(ctx context.Context, host scm.Reporter, run finishedRun, repository string) error {
-	commits, ok := host.(scm.Commits)
+	heads, ok := host.(scm.ForkHeads)
 	if !ok {
-		return errors.New("this host lists no pull requests for a commit")
+		return errors.New("this host cannot find a fork's pull request")
+	}
+	fork := run.HeadRepository.FullName
+	if run.HeadBranch == "" || run.HeadRepository.Owner.Login == "" {
+		return errors.New("the finished run names no head branch and owner to find its pull request by")
 	}
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
-	pulls, err := commits.PullsForCommit(ctx, run.HeadSHA)
+	pulls, err := heads.OpenPullsFrom(ctx, run.HeadRepository.Owner.Login, run.HeadBranch)
 	if err != nil {
-		return fmt.Errorf("the head commit's pull requests could not be read: %w", err)
+		return fmt.Errorf("the fork's open pull requests could not be read: %w", err)
 	}
-	fork, found := run.HeadRepository.FullName, false
+	matched := 0
 	for _, pull := range pulls {
-		if pull.HeadSHA != run.HeadSHA {
-			continue
+		if pull.HeadSHA == run.HeadSHA && strings.EqualFold(pull.HeadRepository, fork) && !strings.EqualFold(pull.HeadRepository, repository) {
+			matched++
 		}
-		if !strings.EqualFold(pull.HeadRepository, fork) {
-			return fmt.Errorf("the head commit is also the head of pull request %d, which comes from another repository", pull.Number)
-		}
-		found = found || (pull.Open && strings.EqualFold(pull.BaseRepository, repository))
 	}
-	if !found {
-		return fmt.Errorf("no open pull request from %s has the head commit as its head", fork)
+	if matched != 1 {
+		return fmt.Errorf("%d open pull requests from %s have the head commit as their head, and the check needs exactly 1", matched, fork)
 	}
-	branches, err := commits.BranchesAt(ctx, run.HeadSHA)
+	branches, err := heads.BranchesAt(ctx, run.HeadSHA)
 	if err != nil {
 		return fmt.Errorf("the branches at the head commit could not be read: %w", err)
 	}

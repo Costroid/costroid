@@ -17,12 +17,14 @@ Costroid has not run on a fork's pull request yet. The first case is read from G
 
 [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml) posts the check for a fork's pull request. Copy it to `.github/workflows/costroid-follow-up.yml` on the default branch, beside the agent's recipe. It starts on `workflow_run` when the workflow named `costroid` completes, and its one job runs in your repository with your repository's token.
 
-A fork's pull request gets one `costroid` check on its head commit, and no comment:
+The follow-up finds the fork's pull request by the branch the finished run names. It posts only when exactly one open pull request from that branch has the run's head commit as its head, and no branch of your repository has that commit as its head. Otherwise it posts nothing, and its log says why in a line that starts `costroid: not posted:`. A required `costroid` check then waits.
+
+When it posts, a fork's pull request gets one `costroid` check on its head commit, and no comment:
 
 | What the fork's run left | The check | Why |
 | --- | --- | --- |
 | No rows, as with every recipe as it ships | `neutral`, with the reason `fork_no_rows` at the end of its summary | The recipes run no agent on a fork's pull request, so no figure reached the check |
-| Rows, because you let an agent run on forks | `neutral` or `failure`, never `success` | The fork's own run wrote the rows, so they are unverified, and an unverified row never satisfies a budget rule. [`docs/policy.md`](policy.md) has the table |
+| Rows, because you let an agent run on forks | `neutral`, never `failure` or `success` | The fork's own run wrote the rows. A rule they fail warns, and the summary ends with the reason. An unverified row never satisfies a budget rule. [`docs/policy.md`](policy.md) has the table |
 | A rows file over 8 MiB | `neutral`, with the reason `rows_file_unread` | The follow-up does not read a file past its cap |
 
 A `neutral` check passes a required check, so a fork's pull request can merge. The check's machine block reads `no_rows_file` when no rows arrived, because the result object's list of reasons has no fork entry yet.

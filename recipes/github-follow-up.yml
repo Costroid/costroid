@@ -28,8 +28,8 @@ jobs:
       # Reads costroid.yml at the default branch's commit, and the branches
       # whose head is the fork's head commit.
       contents: read
-      # Lists the head commit's pull requests. The check is posted only when
-      # one open pull request from the fork has that commit as its head.
+      # Finds the fork's open pull request by its branch. The check is posted
+      # only when exactly one has the finished run's head commit as its head.
       pull-requests: read
     steps:
       # The fork's workflow wrote these files. costroid reads one of them as

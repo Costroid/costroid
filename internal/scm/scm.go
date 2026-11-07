@@ -46,23 +46,20 @@ type PullRequest struct {
 	Author  string
 }
 
-// CommitPull is one pull request a commit belongs to, as the host lists it.
-type CommitPull struct {
-	Number int
-	// Open is false for a closed or merged pull request.
-	Open    bool
+// OpenPull is one open pull request as the host lists it.
+type OpenPull struct {
+	Number  int
 	HeadSHA string
-	// HeadRepository and BaseRepository are owner/name. A head repository the
-	// host no longer has is empty.
+	// HeadRepository is owner/name, empty when the host no longer has it.
 	HeadRepository string
-	BaseRepository string
 }
 
-// Commits is what a fork's follow-up asks about the commit it posts on.
-type Commits interface {
-	// PullsForCommit lists the pull requests the commit belongs to.
-	PullsForCommit(ctx context.Context, sha string) ([]CommitPull, error)
-	// BranchesAt lists the repository's branches whose head is the commit.
+// ForkHeads is what a fork's follow-up asks before it posts on a commit.
+type ForkHeads interface {
+	// OpenPullsFrom lists this repository's open pull requests whose head is
+	// branch in a repository owner holds.
+	OpenPullsFrom(ctx context.Context, owner, branch string) ([]OpenPull, error)
+	// BranchesAt lists this repository's branches whose head is the commit.
 	BranchesAt(ctx context.Context, sha string) ([]string, error)
 }
 

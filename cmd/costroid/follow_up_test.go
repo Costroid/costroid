@@ -16,6 +16,9 @@ const (
 	defaultBranchCommit = "3333333333333333333333333333333333333333"
 	finishedRunID       = 19203384756
 	agentWorkflow       = ".github/workflows/costroid.yml"
+	// forkBranch is the fork's branch, named as a fork's branch often is: the
+	// same as the base repository's default branch.
+	forkBranch = "main"
 )
 
 // followUpEnvironment is a workflow_run job in example/widgets, after the
@@ -23,21 +26,22 @@ const (
 // lists as the head commit's one pull request.
 func followUpEnvironment(t *testing.T, headRepository string) *scmtest.Stub {
 	t.Helper()
+	owner, _, _ := strings.Cut(headRepository, "/")
 	event, err := json.Marshal(map[string]any{"workflow_run": map[string]any{
 		"id":              finishedRunID,
 		"event":           "pull_request",
 		"head_sha":        headCommit,
-		"head_branch":     "main",
+		"head_branch":     forkBranch,
 		"path":            agentWorkflow,
 		"pull_requests":   []any{},
-		"head_repository": map[string]string{"full_name": headRepository},
+		"head_repository": map[string]any{"full_name": headRepository, "owner": map[string]string{"login": owner}},
 		"repository":      map[string]string{"full_name": "example/widgets"},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	stub := reportEnvironment(t, string(event))
-	stub.CommitPulls[headCommit] = []scmtest.Pull{{Number: 7, State: "open", HeadSHA: headCommit, HeadRepository: headRepository, BaseRepository: "example/widgets"}}
+	stub.Pulls = []scmtest.Pull{{Number: 7, State: "open", HeadSHA: headCommit, HeadRepository: headRepository, HeadBranch: forkBranch}}
 	t.Setenv("GITHUB_EVENT_NAME", "workflow_run")
 	t.Setenv("GITHUB_SHA", defaultBranchCommit)
 	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
@@ -79,40 +83,32 @@ func TestForkFollowUpPostsOneNeutralCheckWithTheReason(t *testing.T) {
 	}
 }
 
-// bindsTheHead reports one of the two reads that bind the head commit to the
-// fork's pull request. They name the commit and read nothing at it.
+// bindsTheHead reports the read that checks no branch here has the head
+// commit as its head. It names the commit and reads nothing at it.
 func bindsTheHead(request string) bool {
-	prefix := "GET /repos/example/widgets/commits/" + headCommit + "/"
-	return strings.HasPrefix(request, prefix+"pulls?") || request == prefix+"branches-where-head"
+	return request == "GET /repos/example/widgets/commits/"+headCommit+"/branches-where-head"
 }
 
 // TestForkFollowUpRefusesASharedCommit gives a fork's run a head commit that
-// someone else's change also holds, with rows over an enforced budget. A
-// check on that commit would fail their change, so nothing is posted.
+// is not bound to exactly one open pull request from the fork's branch, or
+// that heads a branch here, with rows over an enforced budget. A check on that
+// commit could fail someone else's change, so nothing is posted.
 func TestForkFollowUpRefusesASharedCommit(t *testing.T) {
-	fork := scmtest.Pull{Number: 7, State: "open", HeadSHA: headCommit, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"}
+	fork := scmtest.Pull{Number: 7, State: "open", HeadSHA: headCommit, HeadRepository: "stranger/widgets", HeadBranch: forkBranch}
+	moved := fork
+	moved.HeadSHA = defaultBranchCommit
+	closed := fork
+	closed.State = "closed"
+	twin := fork
+	twin.Number = 8
+	elsewhere := fork
+	elsewhere.HeadBranch = "other"
 	cases := map[string]struct {
 		pulls    []scmtest.Pull
 		branches map[string]string
 		fail     string
 		says     string
 	}{
-		"the head of a pull request from a branch here": {
-			pulls: []scmtest.Pull{fork, {Number: 5, State: "open", HeadSHA: headCommit, HeadRepository: "example/widgets", BaseRepository: "example/widgets"}},
-			says:  "pull request 5, which comes from another repository",
-		},
-		"the head of a closed pull request from a branch here": {
-			pulls: []scmtest.Pull{{Number: 5, State: "closed", HeadSHA: headCommit, HeadRepository: "example/widgets", BaseRepository: "example/widgets"}, fork},
-			says:  "pull request 5, which comes from another repository",
-		},
-		"the head of another fork's pull request": {
-			pulls: []scmtest.Pull{fork, {Number: 9, State: "open", HeadSHA: headCommit, HeadRepository: "someone/widgets", BaseRepository: "example/widgets"}},
-			says:  "pull request 9, which comes from another repository",
-		},
-		"the head of a pull request from a fork that is gone": {
-			pulls: []scmtest.Pull{fork, {Number: 4, State: "closed", HeadSHA: headCommit, BaseRepository: "example/widgets"}},
-			says:  "pull request 4, which comes from another repository",
-		},
 		"the head of the default branch": {
 			pulls:    []scmtest.Pull{fork},
 			branches: map[string]string{"main": headCommit},
@@ -124,20 +120,32 @@ func TestForkFollowUpRefusesASharedCommit(t *testing.T) {
 			says:     "the head of a branch of this repository",
 		},
 		"in no pull request": {
-			says: "no open pull request from stranger/widgets has the head commit as its head",
+			says: "0 open pull requests from stranger/widgets have the head commit as their head",
 		},
 		"in a closed pull request alone": {
-			pulls: []scmtest.Pull{{Number: 7, State: "closed", HeadSHA: headCommit, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"}},
-			says:  "no open pull request from stranger/widgets",
+			pulls: []scmtest.Pull{closed},
+			says:  "0 open pull requests from stranger/widgets",
 		},
-		"in the history of a pull request": {
-			pulls: []scmtest.Pull{{Number: 7, State: "open", HeadSHA: defaultBranchCommit, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"}},
-			says:  "no open pull request from stranger/widgets",
+		"behind the pull request's head": {
+			pulls: []scmtest.Pull{moved},
+			says:  "0 open pull requests from stranger/widgets",
+		},
+		"in a pull request from another branch of the fork": {
+			pulls: []scmtest.Pull{elsewhere},
+			says:  "0 open pull requests from stranger/widgets",
+		},
+		"in a pull request from another fork": {
+			pulls: []scmtest.Pull{{Number: 9, State: "open", HeadSHA: headCommit, HeadRepository: "someone/widgets", HeadBranch: forkBranch}},
+			says:  "0 open pull requests from stranger/widgets",
+		},
+		"in two open pull requests": {
+			pulls: []scmtest.Pull{fork, twin},
+			says:  "2 open pull requests from stranger/widgets have the head commit as their head, and the check needs exactly 1",
 		},
 		"a list GitHub refuses": {
 			pulls: []scmtest.Pull{fork},
-			fail:  "GET /pulls",
-			says:  "the head commit's pull requests could not be read",
+			fail:  "GET /repos/example/widgets/pulls",
+			says:  "the fork's open pull requests could not be read",
 		},
 		"branches GitHub refuses": {
 			pulls: []scmtest.Pull{fork},
@@ -150,7 +158,7 @@ func TestForkFollowUpRefusesASharedCommit(t *testing.T) {
 			stub := followUpEnvironment(t, "stranger/widgets")
 			stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
 			stub.Files[configFile] = overBudget + "  enforce: true\n"
-			stub.CommitPulls[headCommit] = c.pulls
+			stub.Pulls = c.pulls
 			for branch, head := range c.branches {
 				stub.Branches[branch] = head
 			}
@@ -169,6 +177,21 @@ func TestForkFollowUpRefusesASharedCommit(t *testing.T) {
 				t.Errorf("outputs %q, %v", data, err)
 			}
 		})
+	}
+}
+
+// TestForkFollowUpFindsItsPullRequestByBranch holds the lookup to the fork's
+// head branch. The stub answers the list of a commit's pull requests empty, as
+// GitHub does for a fork's, so a lookup by commit posts nothing and fails here.
+func TestForkFollowUpFindsItsPullRequestByBranch(t *testing.T) {
+	stub := followUpEnvironment(t, "stranger/widgets")
+	code, _, stderr := execute(t, "follow-up", "--rows", absentRows(t))
+	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].HeadSHA != headCommit {
+		t.Fatalf("exit %d, checks %+v: %s", code, stub.Checks, stderr)
+	}
+	lookup := "GET /repos/example/widgets/pulls?head=stranger%3A" + forkBranch + "&page=1&per_page=100&state=open"
+	if found := requestsWith(stub.Requests, "/pulls"); len(found) != 1 || found[0] != lookup {
+		t.Errorf("the pull request was looked up as %v", found)
 	}
 }
 
