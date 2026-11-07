@@ -44,7 +44,8 @@ STAGES
 }
 
 # check_rows refuses the costroid-rows artifact unless each entry in it is one
-# of the two files the run stage keeps, as a plain file. The agent's job chose
+# of the two files the run stage keeps, as a plain file, or, with post-review
+# true, the agent's answer the run stage keeps beside them. The agent's job chose
 # the names, so the first ten are printed with anything outside A-Z, a-z, 0-9,
 # ., _, / and - as ?. No artifact at all leaves an empty directory, and the
 # report then says the run left no rows. In stage report a refused artifact is
@@ -55,6 +56,9 @@ check_rows() {
   mkdir -p "$dir"
   while IFS= read -r -d '' entry && IFS= read -r -d '' kind; do
     if [[ $kind == f && ($entry == costroid-rows.jsonl || $entry == costroid-rows.run.json) ]]; then
+      continue
+    fi
+    if [[ $kind == f && $entry == costroid-review.md && ${COSTROID_POST_REVIEW:-false} == true ]]; then
       continue
     fi
     count=$((count + 1))
