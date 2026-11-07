@@ -9,11 +9,47 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// RuleEgressAudit names harden-runner in audit mode. It is a note and rejects
-// nothing: audit mode records a job's outbound calls and blocks none.
-const RuleEgressAudit = "egress-audit"
+// RuleEgressAudit names harden-runner that leaves a job's egress open or
+// broken: audit mode, block mode with no allowed-endpoints, or a list that
+// harden-runner cannot read. RuleEgressEndpoint names a host a recipe allows
+// that is not one of egressHosts, and telemetry left on, which allows
+// step-security's own hosts. Both are notes and reject nothing.
+const (
+	RuleEgressAudit    = "egress-audit"
+	RuleEgressEndpoint = "egress-endpoint"
+)
 
 const hardenRunner = "step-security/harden-runner@"
+
+// egressHosts are the hosts an agent's job in the recipes may allow: the
+// agent's provider, GitHub, and the hosts the install steps reach. A recipe
+// that allows another host adds it here with the step that needs it, and to
+// the table in docs/recipes.md, or lint-recipes notes it.
+var egressHosts = map[string]bool{
+	// Claude Code, and the run's key on the LiteLLM gateway.
+	"api.anthropic.com:443":      true,
+	"vars.COSTROID_GATEWAY_HOST": true,
+	// Codex, and the proxy codex-action starts.
+	"api.openai.com:443": true,
+	// actions/checkout, Costroid's install, cosign-installer and setup-bun.
+	"github.com:443": true,
+	// claude-code-action and codex-action read the pull request and the actor.
+	"api.github.com:443": true,
+	// actions/upload-artifact, and the run and read stages that keep the rows.
+	"results-receiver.actions.githubusercontent.com:443": true,
+	"productionresultssa*.blob.core.windows.net:443":     true,
+	// Where github.com sends a release download: Costroid, cosign and Bun.
+	"release-assets.githubusercontent.com:443": true,
+	// cosign reads Sigstore's trusted root here before it checks a release.
+	"tuf-repo-cdn.sigstore.dev:443": true,
+	// npm installs the agent at its pinned version; bun installs
+	// claude-code-action's packages.
+	"registry.npmjs.org:443": true,
+}
+
+// endpointToken is one entry of allowed-endpoints: an expression, which may
+// hold spaces, or a run of other characters.
+var endpointToken = regexp.MustCompile(`\$\{\{.*?\}\}|\S+`)
 
 var (
 	shaPin      = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+@[0-9a-f]{40}$`)
@@ -169,22 +205,93 @@ func (l *linter) step(step *yaml.Node) {
 	if uses := field(step, "uses"); uses != nil {
 		l.uses(step, uses)
 		l.downloadPath(step)
-		l.egressAudit(step, uses)
+		l.egress(step, uses)
 	}
 	if run := field(step, "run"); run != nil && strings.Contains(run.Value, "${{") {
 		l.add(run, RuleExpressionInScript, "an expression in a script is a shell injection: pass it through env")
 	}
 }
 
-// egressAudit notes harden-runner in audit mode, which lets an injected agent
-// send what its job holds to any host the runner reaches.
-func (l *linter) egressAudit(step, uses *yaml.Node) {
-	if !strings.HasPrefix(strings.ToLower(uses.Value), hardenRunner) {
+// egress notes a harden-runner step that leaves the job's egress open or
+// broken, and in block mode each host it allows beyond egressHosts.
+func (l *linter) egress(step, uses *yaml.Node) {
+	if !isHardenRunner(uses) {
 		return
 	}
-	if policy := field(field(step, "with"), "egress-policy"); policy != nil && policy.Value == "audit" {
-		l.note(policy, RuleEgressAudit, "egress-policy audit records the job's outbound calls and blocks none, so an injected agent can still send what its job holds to any host the runner reaches")
+	if node, message := egressGap(step); node != nil {
+		l.note(node, RuleEgressAudit, "%s", message)
+		return
 	}
+	with := field(step, "with")
+	if !blocks(with) {
+		return
+	}
+	if telemetry := field(with, "disable-telemetry"); telemetry == nil || !strings.EqualFold(telemetry.Value, "true") {
+		l.note(firstOf(telemetry, uses), RuleEgressEndpoint, "disable-telemetry is not true, so harden-runner also allows agent.api.stepsecurity.io and prod.app-api.stepsecurity.io: set disable-telemetry: true")
+	}
+	list := field(with, "allowed-endpoints")
+	for _, endpoint := range allowedEndpoints(list.Value) {
+		if !egressHosts[endpoint] {
+			l.note(list, RuleEgressEndpoint, "harden-runner allows %s, which is not the agent's provider, GitHub or a host the install steps reach, so an injected agent can send to it: keep it only for a step that needs it", endpoint)
+		}
+	}
+}
+
+func isHardenRunner(uses *yaml.Node) bool {
+	return strings.HasPrefix(strings.ToLower(uses.Value), hardenRunner)
+}
+
+// blocks reports whether a harden-runner step is in block mode. An empty
+// policy is block, the default of the action's input at v2.22.3.
+func blocks(with *yaml.Node) bool {
+	policy := scalarField(with, "egress-policy")
+	return policy == "" || policy == "block"
+}
+
+// egressGap names what leaves a harden-runner step's egress open or broken,
+// with its fix, or returns nil. Audit mode blocks no call. Block mode with no
+// list allows GitHub's own hosts alone. A line break in the list hides the
+// hosts on either side of it, because harden-runner's agent splits the list on
+// spaces alone (step-security/agent v0.18.0, config.go, parseEndpoints).
+func egressGap(step *yaml.Node) (*yaml.Node, string) {
+	with := field(step, "with")
+	if policy := field(with, "egress-policy"); policy != nil && policy.Value == "audit" {
+		return policy, "egress-policy audit records the job's outbound calls and blocks none, so an injected agent can send what its job holds to any host: set egress-policy: block and list the hosts the job reaches in allowed-endpoints"
+	}
+	if !blocks(with) {
+		return nil, ""
+	}
+	list := field(with, "allowed-endpoints")
+	switch {
+	case list == nil || strings.TrimSpace(list.Value) == "":
+		return firstOf(list, field(with, "egress-policy"), step), "egress-policy block names no allowed-endpoints, so harden-runner allows GitHub's own hosts alone and the agent cannot reach its provider: list the hosts the job reaches in allowed-endpoints"
+	case strings.Contains(strings.TrimSpace(list.Value), "\n"):
+		return list, "allowed-endpoints holds a line break, and harden-runner splits the list on spaces alone, so the hosts on either side of it are not allowed: write the list as a folded block, allowed-endpoints: >-"
+	}
+	return nil, ""
+}
+
+// firstOf picks the node a note names: the first one the step has.
+func firstOf(nodes ...*yaml.Node) *yaml.Node {
+	for _, node := range nodes {
+		if node != nil {
+			return node
+		}
+	}
+	return nil
+}
+
+// allowedEndpoints lists the entries of allowed-endpoints. An expression reads
+// as the name inside it, such as vars.COSTROID_GATEWAY_HOST.
+func allowedEndpoints(value string) []string {
+	var endpoints []string
+	for _, token := range endpointToken.FindAllString(value, -1) {
+		if inner, found := strings.CutPrefix(token, "${{"); found {
+			token = strings.TrimSpace(strings.TrimSuffix(inner, "}}"))
+		}
+		endpoints = append(endpoints, token)
+	}
+	return endpoints
 }
 
 // uses holds one action reference to a SHA and to a recorded release. The
