@@ -336,6 +336,53 @@ func TestVerifyRefusesContent(t *testing.T) {
 	if code := run(context.Background(), []string{"verify", clean}, os.Getenv, nil, &stdout, io.Discard); code != 0 || stdout.String() != "ok\n" {
 		t.Errorf("verify on a clean recording exited %d and printed %q", code, stdout.String())
 	}
+	t.Run("a third agent, gh-aw", verifyRefusesGhAwContent)
+}
+
+// verifyRefusesGhAwContent plants one thing into a scrubbed gh-aw record per
+// case, the keys Claude Code's list keeps but gh-aw's does not included.
+func verifyRefusesGhAwContent(t *testing.T) {
+	raw := t.TempDir()
+	write(t, filepath.Join(raw, ghawUsageFile), ghawRecord)
+	clean := scrubbed(t, raw, nil)
+	if problems, err := verifyDirectory(clean, []string{plantedPrompt}); err != nil || len(problems) > 0 {
+		t.Fatalf("a clean gh-aw recording was refused: %v %v", problems, err)
+	}
+	set := func(key string, item *value) func(*value) {
+		return func(line *value) { setField(line, key, item) }
+	}
+	cases := []struct {
+		name   string
+		change func(*value)
+		want   string
+	}{
+		{"the prompt as the model", set("model", stringValue("said: "+plantedPrompt)), "holds the run's prompt"},
+		{"an Anthropic key in the path", set("path", stringValue("/v1/messages?key="+plantedKey)), "holds an Anthropic key"},
+		{"a home as the agent name", set("agent_name", stringValue("/home/someone/reviewer")), "holds a home directory"},
+		{"a raw request id", set("request_id", stringValue("msg_01PlantedRequest")), "request_id is not a synthetic request id"},
+		{"Claude Code's message", set("message", &value{kind: kindObject}), "key outside the allowlist: message"},
+		{"Claude Code's usage", set("usage", &value{kind: kindObject, keys: []string{"input_tokens"}, items: []*value{{kind: kindLiteral, raw: "3"}}}), "key outside the allowlist: usage"},
+		{"a working directory", set("cwd", stringValue(placeholderPath)), "key outside the allowlist: cwd"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "recording")
+			transformDir(t, clean, dir, tc.change)
+			copyManifest(t, clean, dir)
+			problems, err := verifyDirectory(dir, []string{plantedPrompt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.ContainsFunc(problems, func(p string) bool { return strings.Contains(p, tc.want) }) {
+				t.Errorf("verify did not say %q; it said %v", tc.want, problems)
+			}
+			promptFile := filepath.Join(t.TempDir(), "prompt.txt")
+			write(t, promptFile, plantedPrompt)
+			if code := run(context.Background(), []string{"verify", "--prompt-file", promptFile, dir}, os.Getenv, nil, io.Discard, io.Discard); code != exitRefused {
+				t.Errorf("verify exited %d, want %d", code, exitRefused)
+			}
+		})
+	}
 }
 
 func copyManifest(t *testing.T, from, to string) {

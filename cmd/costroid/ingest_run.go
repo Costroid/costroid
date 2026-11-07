@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
@@ -18,37 +19,110 @@ import (
 )
 
 type ingestRunFlags struct {
-	executionFile string
-	codexHome     string
-	// since is when the job started. Zero reads every file in codexHome.
+	source givenSource
+	// since is when the job started. Zero reads every file the source holds.
 	since   time.Time
 	out     string
 	account accountFlags
+}
+
+// sourceKind is one kind of thing a finished run leaves that ingest-run reads.
+type sourceKind struct {
+	// name is KIND in --from KIND=PATH.
+	name string
+	// alias says --NAME PATH reads as --from NAME=PATH, as it did before
+	// --from existed.
+	alias bool
+	// what says what PATH names.
+	what string
+	// since says the kind takes --since.
+	since bool
+	open  func(path string, since time.Time) (endedRun, error)
+}
+
+// sourceKinds is every source ingest-run reads, one row each. ingest-run
+// reads exactly one, however it is named.
+var sourceKinds = []sourceKind{
+	{name: "execution-file", alias: true, what: "the execution_file output of anthropics/claude-code-action", open: openExecutionFile},
+	{name: "codex-home", alias: true, what: "the codex-home given to openai/codex-action", since: true, open: openCodexHome},
+}
+
+// givenSource is one source the command line names.
+type givenSource struct {
+	kind *sourceKind
+	path string
+}
+
+// sourcesFlag gathers every source named, by --from or by an alias.
+type sourcesFlag struct{ given []givenSource }
+
+func (f *sourcesFlag) add(kind *sourceKind, path string) error {
+	if path == "" {
+		return fmt.Errorf("%s takes a path", kind.name)
+	}
+	f.given = append(f.given, givenSource{kind: kind, path: path})
+	return nil
+}
+
+// from reads KIND=PATH.
+func (f *sourcesFlag) from(value string) error {
+	name, path, found := strings.Cut(value, "=")
+	for i := range sourceKinds {
+		if found && sourceKinds[i].name == name {
+			return f.add(&sourceKinds[i], path)
+		}
+	}
+	return fmt.Errorf("takes KIND=PATH, with KIND one of %s", kindNames(sourceKinds, "or"))
+}
+
+// kindNames lists the kinds in prose, the last joined by word.
+func kindNames(kinds []sourceKind, word string) string {
+	names := make([]string, len(kinds))
+	for i, kind := range kinds {
+		names[i] = kind.name
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " " + word + " " + names[len(names)-1]
 }
 
 func parseIngestRun(args []string, stderr io.Writer) (ingestRunFlags, error) {
 	set := flag.NewFlagSet("ingest-run", flag.ContinueOnError)
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
-	executionFile := set.String("execution-file", "", "the execution_file output of claude-code-action")
-	codexHome := set.String("codex-home", "", "the codex-home given to openai/codex-action")
-	since := set.String("since", "", "with --codex-home, when the job started, in RFC 3339")
+	var sources sourcesFlag
+	set.Func("from", "KIND=PATH, the source to read", sources.from)
+	var sinceKinds []sourceKind
+	for i := range sourceKinds {
+		kind := &sourceKinds[i]
+		if kind.alias {
+			set.Func(kind.name, kind.what, func(path string) error { return sources.add(kind, path) })
+		}
+		if kind.since {
+			sinceKinds = append(sinceKinds, *kind)
+		}
+	}
+	since := set.String("since", "", "when the job started, in RFC 3339")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
 	account := addAccountFlags(set)
 	if err := set.Parse(args); err != nil {
 		return ingestRunFlags{}, err
 	}
+	given := sources.given
 	switch {
-	case *executionFile != "" && *codexHome != "":
-		return ingestRunFlags{}, errors.New("ingest-run takes --execution-file or --codex-home, not both")
-	case *codexHome != "" && (*out == "" || set.NArg() != 0):
-		return ingestRunFlags{}, errors.New("ingest-run needs --codex-home and --out")
-	case *codexHome == "" && (*executionFile == "" || *out == "" || set.NArg() != 0):
-		return ingestRunFlags{}, errors.New("ingest-run needs --execution-file and --out")
-	case *since != "" && *codexHome == "":
-		return ingestRunFlags{}, errors.New("ingest-run takes --since only with --codex-home")
+	case len(given) > 1:
+		names := make([]string, len(given))
+		for i, source := range given {
+			names[i] = source.kind.name
+		}
+		return ingestRunFlags{}, fmt.Errorf("ingest-run reads one source, and was given %d: %s", len(given), strings.Join(names, ", "))
+	case len(given) == 0 || *out == "" || set.NArg() != 0:
+		return ingestRunFlags{}, fmt.Errorf("ingest-run needs --from KIND=PATH and --out, with KIND one of %s", kindNames(sourceKinds, "or"))
+	case *since != "" && !given[0].kind.since:
+		return ingestRunFlags{}, fmt.Errorf("ingest-run takes --since only with %s", kindNames(sinceKinds, "or"))
 	}
-	flags := ingestRunFlags{executionFile: *executionFile, codexHome: *codexHome, out: *out, account: account}
+	flags := ingestRunFlags{source: given[0], out: *out, account: account}
 	if *since != "" {
 		at, err := time.Parse(time.RFC3339Nano, *since)
 		if err != nil {
@@ -75,17 +149,18 @@ type endedRun interface {
 // openEndedRun opens what the flags name. Nothing is written before it is
 // open, so a path that names nothing leaves no rows file.
 func openEndedRun(flags ingestRunFlags) (endedRun, error) {
-	if flags.codexHome == "" {
-		return openExecutionFile(flags.executionFile)
-	}
-	info, err := os.Stat(flags.codexHome)
+	return flags.source.kind.open(flags.source.path, flags.since)
+}
+
+func openCodexHome(dir string, since time.Time) (endedRun, error) {
+	info, err := os.Stat(dir)
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("--codex-home %s is not a directory", flags.codexHome)
+		return nil, fmt.Errorf("codex-home %s is not a directory", dir)
 	}
-	return codexHome{dir: flags.codexHome, since: flags.since}, nil
+	return codexHome{dir: dir, since: since}, nil
 }
 
 // codexHome is the codex-home an openai/codex-action step wrote its rollout
@@ -114,7 +189,7 @@ type openedExecution struct {
 	saved time.Time
 }
 
-func openExecutionFile(path string) (endedRun, error) {
+func openExecutionFile(path string, _ time.Time) (endedRun, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -156,9 +231,8 @@ func ingestRunCommand(args []string, stderr io.Writer) int {
 }
 
 // ingestRun writes the rows and, beside them, the result object, as costroid
-// run does. Once the execution file or the Codex home is open, the rows file
-// and the object are written whatever the reader makes of it, so the report
-// can say why no rows came.
+// run does. Once the source is open, the rows file and the object are written
+// whatever the reader makes of it, so the report can say why no rows came.
 func ingestRun(flags ingestRunFlags, stderr io.Writer) error {
 	pinned, err := catalog.Load()
 	if err != nil {

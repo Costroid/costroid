@@ -11,12 +11,6 @@ import (
 	"strings"
 )
 
-// adapterDirectory maps a manifest's agent to the adapter package that reads it.
-var adapterDirectory = map[string]string{
-	agentClaudeCode: "claudecode",
-	agentCodex:      "codex",
-}
-
 // placement puts one recording under its adapter's testdata.
 type placement struct {
 	run      string
@@ -70,8 +64,12 @@ func (p placement) place() (string, error) {
 	if !versionDirectory.MatchString(m.Version) {
 		return "", fmt.Errorf("the artifact's agent version %q cannot name a directory", m.Version)
 	}
+	entry, err := agentFor(m.Agent)
+	if err != nil {
+		return "", fmt.Errorf("the artifact records no agent an adapter reads: %w", err)
+	}
 	m.Run = p.run
-	target := filepath.Join(p.root, "internal", "adapter", adapterDirectory[m.Agent], "testdata", m.Version, p.scenario)
+	target := filepath.Join(p.root, "internal", "adapter", entry.adapter, "testdata", m.Version, p.scenario)
 	if _, err := os.Stat(target); !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%s exists; remove it in its own commit to record it again", target)
 	}
@@ -79,7 +77,7 @@ func (p placement) place() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := writeFixture(p.from, target, m, files); err != nil {
+	if err := writeFixture(p.from, target, m, entry, files); err != nil {
 		os.RemoveAll(target)
 		return "", err
 	}
@@ -88,14 +86,14 @@ func (p placement) place() (string, error) {
 
 // writeFixture copies the recording to target with its manifest and README,
 // then verifies the copy.
-func writeFixture(from, target string, m manifest, files []*recordingFile) error {
+func writeFixture(from, target string, m manifest, entry *agentEntry, files []*recordingFile) error {
 	if err := copyTree(from, target); err != nil {
 		return err
 	}
 	if err := writeManifest(target, m); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(target, readmeName), []byte(readme(m, files)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(target, readmeName), []byte(readme(m, entry, files)), 0o644); err != nil {
 		return err
 	}
 	if problems, err := verifyDirectory(target, nil); err != nil || len(problems) > 0 {
@@ -136,16 +134,14 @@ func copyTree(from, to string) error {
 	})
 }
 
-var agentNames = map[string]string{agentClaudeCode: "Claude Code", agentCodex: "Codex"}
-
 // readme states where the recording came from and the run's own total.
-func readme(m manifest, files []*recordingFile) string {
+func readme(m manifest, entry *agentEntry, files []*recordingFile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", m.Scenario)
 	if m.Run == localRunName {
-		fmt.Fprintf(&b, "A recording of %s %s, run on a developer's machine", agentNames[m.Agent], m.Version)
+		fmt.Fprintf(&b, "A recording of %s %s, run on a developer's machine", entry.title, m.Version)
 	} else {
-		fmt.Fprintf(&b, "A recording of %s %s, workflow run %s", agentNames[m.Agent], m.Version, m.Run)
+		fmt.Fprintf(&b, "A recording of %s %s, workflow run %s", entry.title, m.Version, m.Run)
 	}
 	if m.Date != "" {
 		fmt.Fprintf(&b, " on %s", m.Date)
@@ -154,22 +150,24 @@ func readme(m manifest, files []*recordingFile) string {
 		fmt.Fprintf(&b, ", under Costroid at `%s`", m.Costroid)
 	}
 	b.WriteString(". `go run ./scripts/record verify` passed on it before and after it was placed here.\n\n")
-	fmt.Fprintf(&b, "%s\n", runTotal(m.Agent, files))
+	fmt.Fprintf(&b, "%s\n", entry.total(files))
 	return b.String()
 }
 
-// runTotal is the agent's own figure for the whole run, with its source.
-func runTotal(agent string, files []*recordingFile) string {
-	if agent == agentClaudeCode {
-		for _, name := range []string{"stream.jsonl", "claude-execution-output.json"} {
-			if last := lastLine(files, name, func(v *value) bool { return v.fieldText("type") == "result" }); last != nil {
-				if total := last.field("total_cost_usd"); total != nil && total.isNumber() {
-					return fmt.Sprintf("The run's own total: %s USD, the `total_cost_usd` of the last result in `%s`. Claude Code estimates it at list price.", total.raw, name)
-				}
+// claudeTotal is Claude Code's own figure for the whole run, with its source.
+func claudeTotal(files []*recordingFile) string {
+	for _, name := range []string{"stream.jsonl", "claude-execution-output.json"} {
+		if last := lastLine(files, name, func(v *value) bool { return v.fieldText("type") == "result" }); last != nil {
+			if total := last.field("total_cost_usd"); total != nil && total.isNumber() {
+				return fmt.Sprintf("The run's own total: %s USD, the `total_cost_usd` of the last result in `%s`. Claude Code estimates it at list price.", total.raw, name)
 			}
 		}
-		return "No result line states the run's own total."
 	}
+	return "No result line states the run's own total."
+}
+
+// codexTotal is Codex's own token counts for the whole run, with their source.
+func codexTotal(files []*recordingFile) string {
 	if last := lastLine(files, "stream.jsonl", func(v *value) bool { return v.fieldText("type") == "turn.completed" }); last != nil {
 		return "The run's own total, the `usage` of the last `turn.completed` in `stream.jsonl`: " + tokenCounts(last.field("usage")) + "."
 	}

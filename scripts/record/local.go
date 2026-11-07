@@ -28,22 +28,6 @@ type localRun struct {
 	now    func() time.Time
 }
 
-// agentHome is the directory the agent writes its sessions to.
-func agentHome(agent string, getenv func(string) string) (string, error) {
-	variable, fallback := "CLAUDE_CONFIG_DIR", ".claude"
-	if agent == agentCodex {
-		variable, fallback = "CODEX_HOME", ".codex"
-	}
-	if dir := getenv(variable); dir != "" {
-		return dir, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("find the agent's directory: set %s: %w", variable, err)
-	}
-	return filepath.Join(home, fallback), nil
-}
-
 // run starts the command with its stdout in a private directory, collects
 // the run's own session from there, scrubs it into out and verifies it. The
 // raw files are removed whatever happens. A scrubbed directory that fails

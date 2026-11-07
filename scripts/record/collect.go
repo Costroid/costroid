@@ -129,24 +129,33 @@ func collect(src source) (*collected, error) {
 			return nil, err
 		}
 	}
-	switch src.agent {
-	case agentClaudeCode:
-		session := firstField(stream, isInit, "session_id")
-		if session == "" {
-			session = firstField(executionLines(execution), isInit, "session_id")
-		}
-		if session == "" {
-			return nil, errors.New("no system/init line names the session: run claude -p with --output-format stream-json --verbose, or name the execution file")
-		}
-		return c, collectClaude(c, src, session)
-	case agentCodex:
-		thread := firstField(stream, func(line *value) bool { return line.fieldText("type") == "thread.started" }, "thread_id")
-		if thread == "" && !src.freshHome {
-			return nil, errors.New("no thread.started line names the thread: run codex exec --json, or collect from a home made for this run")
-		}
-		return c, collectCodex(c, src, thread)
+	entry, err := agentFor(src.agent)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("agent %q is neither %s nor %s", src.agent, agentClaudeCode, agentCodex)
+	return c, entry.collect(entry, c, src, stream, execution)
+}
+
+// collectClaudeRun copies the session the stream or the execution file names.
+func collectClaudeRun(e *agentEntry, c *collected, src source, stream, execution []byte) error {
+	session := firstField(stream, isInit, "session_id")
+	if session == "" {
+		session = firstField(executionLines(execution), isInit, "session_id")
+	}
+	if session == "" {
+		return fmt.Errorf("no system/init line names the session: run %s, or name the execution file", e.stream)
+	}
+	return collectClaude(c, src, session)
+}
+
+// collectCodexRun copies the thread the stream names, or with a home made for
+// the run, the thread no stream named.
+func collectCodexRun(e *agentEntry, c *collected, src source, stream, _ []byte) error {
+	thread := firstField(stream, func(line *value) bool { return line.fieldText("type") == "thread.started" }, "thread_id")
+	if thread == "" && !src.freshHome {
+		return fmt.Errorf("no thread.started line names the thread: run %s, or collect from a home made for this run", e.stream)
+	}
+	return collectCodex(c, src, thread)
 }
 
 func isInit(line *value) bool {

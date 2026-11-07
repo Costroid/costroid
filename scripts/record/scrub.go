@@ -154,6 +154,7 @@ func (f *recordingFile) encode() []byte {
 // scrubber cuts one run's files to the allowlist. One scrubber serves every
 // file of a run, so an id maps to the same synthetic id in each.
 type scrubber struct {
+	list    *allowlist
 	prompts []string
 	ids     map[*idKind]*idMap
 	report  scrubReport
@@ -164,8 +165,9 @@ type idMap struct {
 	next int
 }
 
-func newScrubber(prompts []string) *scrubber {
+func newScrubber(list *allowlist, prompts []string) *scrubber {
 	return &scrubber{
+		list:    list,
 		prompts: promptNeedles(prompts),
 		ids:     map[*idKind]*idMap{},
 		report:  scrubReport{dropped: map[string]int{}, unread: map[string]int{}},
@@ -200,7 +202,7 @@ func (s *scrubber) reserve(v *value, path string) {
 	case kindObject:
 		for i, key := range v.keys {
 			p := child(path, key)
-			if kind, ok := idPaths[p]; ok {
+			if kind, ok := s.list.ids[p]; ok {
 				if text, isID := kind.text(v.items[i]); isID {
 					if match := kind.fixture.FindStringSubmatch(text); match != nil {
 						n, _ := strconv.Atoi(match[1])
@@ -210,7 +212,7 @@ func (s *scrubber) reserve(v *value, path string) {
 					}
 				}
 			}
-			if root, ok := embeddedResults[p]; ok && v.items[i].kind == kindString {
+			if root, ok := s.list.embedded[p]; ok && v.items[i].kind == kindString {
 				if object, ok := fencedObject(v.items[i].text); ok {
 					s.reserve(object, root)
 				}
@@ -299,14 +301,14 @@ func (s *scrubber) scrub(v *value, path string) *value {
 
 // member decides one key's or element's fate by its path.
 func (s *scrubber) member(v *value, path string) *value {
-	if placeholder, ok := placeholders[path]; ok {
+	if placeholder, ok := s.list.placeholders[path]; ok {
 		if v.kind == kindLiteral && v.raw == "null" {
 			return v
 		}
 		s.report.replaced++
 		return stringValue(placeholder)
 	}
-	if kind, ok := idPaths[path]; ok {
+	if kind, ok := s.list.ids[path]; ok {
 		text, isID := kind.text(v)
 		switch {
 		case !isID && kind.numeric && v.kind == kindString:
@@ -317,10 +319,10 @@ func (s *scrubber) member(v *value, path string) *value {
 		}
 		return kind.value(s.mapID(kind, text))
 	}
-	if root, ok := embeddedResults[path]; ok {
+	if root, ok := s.list.embedded[path]; ok {
 		return s.embedded(v, path, root)
 	}
-	if allowed.kept[path] {
+	if s.list.kept[path] {
 		return s.scrub(v, path)
 	}
 	if v.isNumber() && countUnderUsage(path) {
@@ -334,7 +336,7 @@ func (s *scrubber) scalar(v *value, path string) *value {
 	if v.kind != kindString {
 		return v
 	}
-	if allowed.containers[path] {
+	if s.list.containers[path] {
 		s.report.replaced++
 		return stringValue(placeholderContent)
 	}
@@ -365,13 +367,13 @@ func scrubDirectory(raw, out string, prompts []string) (scrubReport, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return scrubReport{}, err
 	}
-	s := newScrubber(prompts)
+	if manifest.Agent == "" && manifest.Host == "" {
+		manifest.Agent = recognizedAgent(files)
+	}
+	s := newScrubber(allowlistOf(manifest.Agent), prompts)
 	s.scrubFiles(files)
 	if manifest.Version == "" {
-		manifest.Version = agentVersion(files)
-	}
-	if manifest.Agent == "" {
-		manifest.Agent = agentOf(files)
+		manifest.Version = versionOf(manifest.Agent, files)
 	}
 	manifest.Recorded = true
 	if err := os.Mkdir(out, 0o755); err != nil {
@@ -408,16 +410,11 @@ func agentVersion(files []*recordingFile) string {
 	return ""
 }
 
-func agentOf(files []*recordingFile) string {
-	for _, file := range files {
-		for _, line := range file.lines {
-			if line.fieldText("claude_code_version") != "" || line.fieldText("sessionId") != "" {
-				return agentClaudeCode
-			}
-			if line.fieldText("type") == "session_meta" || line.fieldText("type") == "thread.started" {
-				return agentCodex
-			}
-		}
+// versionOf reads the agent's version as its entry says, or as Claude Code
+// and Codex state theirs when the registry names no such agent.
+func versionOf(agent string, files []*recordingFile) string {
+	if entry, err := agentFor(agent); err == nil {
+		return entry.version(files)
 	}
-	return ""
+	return agentVersion(files)
 }
