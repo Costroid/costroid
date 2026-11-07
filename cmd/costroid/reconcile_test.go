@@ -222,7 +222,7 @@ func TestReconcileRefusesARangeThatRunsBackwards(t *testing.T) {
 }
 
 func TestReconcileIsOnTheHelpPage(t *testing.T) {
-	code, stdout, _ := execute(t, "help")
+	code, stdout, _ := execute(t, "help", "reconcile")
 	if code != 0 || !strings.Contains(stdout, "costroid reconcile --rows rows.jsonl --from D --to D") {
 		t.Errorf("exit %d:\n%s", code, stdout)
 	}

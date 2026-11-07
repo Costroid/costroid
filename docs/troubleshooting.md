@@ -174,7 +174,7 @@ The action's `agent-result` input passes the agent job's result to the report, a
 
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
-| `costroid: <error>` | A command could not go on, and exits 125. The error says why | Read the error. `costroid help` lists every command and flag |
+| `costroid: <error>` | A command could not go on, and exits 125. The error says why | Read the error. `costroid help` lists the commands, and `costroid help <command>` gives one command's flags |
 | `costroid: unknown command <name>` | No such command | Run `costroid help` |
 | `costroid: validate takes one path` | `validate` got more than one file | Validate one file at a time |
 | `costroid: lint-recipes needs at least one path` | No file to lint | Name a recipe or a directory |
