@@ -77,7 +77,7 @@ e2e-bite:
 # checksum, not the transport, is the check.
 LINT_BIN = $(CURDIR)/bin/lint
 ACTIONLINT_VERSION = v1.7.12
-GOVULNCHECK_VERSION = v1.1.4
+GOVULNCHECK_VERSION = v1.9.0
 SHELLCHECK_DEB = shellcheck_0.11.0-2_amd64.deb
 SHELLCHECK_SHA256 = 06990eaf21b5dfa3d855e492f7ca2d6fcacf63b490a73a545850c50cf7af2bce
 SHELLCHECK_URL = http://archive.ubuntu.com/ubuntu/pool/universe/s/shellcheck/$(SHELLCHECK_DEB)
