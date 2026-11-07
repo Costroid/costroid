@@ -199,4 +199,5 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: validate takes one path` | `validate` got more than one file | Validate one file at a time |
 | `costroid: lint-recipes needs at least one path` | No file to lint | Name a recipe or a directory |
 | `costroid: <count> files, <count> rejected lines` | What `lint-recipes` checked. It exits 1 when a line was rejected | Fix each line it printed above |
+| `costroid: <count> files, <count> with an agent: <count> high, <count> medium, <count> notes` | What `lint` judged. It exits 1 on a high finding, and on a medium one under `--strict` | Fix each finding it printed above. [`docs/lint.md`](lint.md) says what each rule asks |
 | `costroid: warning: <count> repeated rows in <path> were counted once` | `reconcile` read the same row more than once | None |

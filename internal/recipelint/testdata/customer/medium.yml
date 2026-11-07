@@ -1,4 +1,5 @@
-# codex-action moved by its tag, opened to any account and to bots.
+# codex-action moved by its tag, opened to any account and to bots. Its own
+# check of who starts it is not read here, so these stay medium.
 name: review
 
 on:

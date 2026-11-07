@@ -23,6 +23,7 @@ const (
 // RuleUnpinned, RuleAgentPromptInput and RuleUnreadable.
 const (
 	RuleCommentTrigger    = "comment-trigger"
+	RuleAgentOpen         = "agent-open"
 	RuleAgentContentWrite = "agent-contents-write"
 	RuleSubscriptionToken = "subscription-token"
 )
@@ -168,7 +169,8 @@ func (l *linter) customerAgentJob(root *yaml.Node, agent customerAgent, texts []
 	if granted["id-token"] == "write" {
 		l.flag(job.key, High, RuleAgentIDToken, "job %s holds id-token: write, so an injected agent can mint a token that claims this repository's identity", job.key.Value)
 	}
-	if len(texts) > 0 && !authorTest.MatchString(scalarField(job.value, "if")) {
+	open := agentOpenTo(agent.step)
+	if len(texts) > 0 && !authorTest.MatchString(scalarField(job.value, "if")) && !actionGuards(agent.step, open) {
 		l.flag(job.key, High, RuleCommentTrigger, "%s can start job %s, and its if tests neither author_association nor the actor, so nothing in the workflow limits who starts the agent on your key", strings.Join(texts, ", "), job.key.Value)
 	}
 	for _, step := range sequence(field(job.value, "steps")) {
@@ -179,8 +181,10 @@ func (l *linter) customerAgentJob(root *yaml.Node, agent customerAgent, texts []
 	if match := gitHubForbidden.FindString(text(field(job.value, "steps"))); match != "" {
 		l.flag(job.key, Medium, RuleAgentPromptInput, "%s reaches the agent's job, and a pull request's author or a comment writes it", match)
 	}
-	for _, input := range agentOpenTo(agent.step) {
-		l.flag(input.value, Medium, RuleAgentPromptInput, "%s: %s lets %s start the agent on your key", input.key.Value, input.value.Value, openedTo(input.key.Value))
+	for _, input := range open {
+		if severity := openSeverity(agent.step, input); severity != "" {
+			l.flag(input.value, severity, RuleAgentOpen, "%s: %s lets %s start the agent on your key", input.key.Value, input.value.Value, openedTo(input))
+		}
 	}
 	switch {
 	case permissions == nil:
@@ -199,12 +203,42 @@ func customerPinned(ref string) bool {
 	return shaPin.MatchString(ref) || digestPin.MatchString(ref) || strings.HasPrefix(ref, "./")
 }
 
-// openedTo says who an opening input admits.
-func openedTo(input string) string {
-	if strings.Contains(input, "bot") {
-		return "bots"
+// actionGuards reports whether the agent's action itself refuses a run that
+// someone without write access, or a bot, starts. claude-code-action does so
+// while allowed_non_write_users and allowed_bots are both empty, by its
+// action.yml as read on 2026-11-07. codex-action's check is not read, so it
+// never counts.
+func actionGuards(step *yaml.Node, open []entry) bool {
+	return agentAction(step) == claudeCodeAction && len(open) == 0
+}
+
+// openSeverity ranks an opening input. On claude-code-action "*" admits
+// anyone and is high, and a list admits those it names and is medium. On
+// codex-action, whose inputs are unread, "*" on allow-users and any allow-bots
+// are medium, and a list of users is not flagged.
+func openSeverity(step *yaml.Node, input entry) Severity {
+	value := strings.TrimSpace(input.value.Value)
+	switch {
+	case agentAction(step) == claudeCodeAction && value == "*":
+		return High
+	case agentAction(step) == claudeCodeAction:
+		return Medium
+	case input.key.Value == "allow-users" && value != "*":
+		return ""
 	}
-	return "any account"
+	return Medium
+}
+
+// openedTo says who an opening input admits.
+func openedTo(input entry) string {
+	kind := "account"
+	if strings.Contains(input.key.Value, "bot") {
+		kind = "bot"
+	}
+	if strings.TrimSpace(input.value.Value) == "*" {
+		return "any " + kind
+	}
+	return "each " + kind + " it names"
 }
 
 // subscriptionToken finds a subscription's token on the agent's step or in

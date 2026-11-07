@@ -47,16 +47,16 @@ func TestCustomerWorkflows(t *testing.T) {
 			"high " + RulePullRequestTarget,
 		},
 		"high-comment-trigger.yml": {"high " + RuleCommentTrigger},
+		"high-agent-open.yml":      {"high " + RuleAgentOpen},
 		"high-id-token.yml":        {"high " + RuleAgentIDToken},
 		"high-expression.yml":      {"high " + RuleExpressionInScript},
 		"medium.yml": {
-			"medium " + RuleAgentPromptInput,
-			"medium " + RuleAgentPromptInput,
+			"medium " + RuleAgentOpen,
+			"medium " + RuleAgentOpen,
 			"medium " + RuleUnpinned,
 		},
 		"mention.yml": {
 			"high " + RuleAgentIDToken,
-			"high " + RuleCommentTrigger,
 			"high " + RulePullRequestTarget,
 			"medium " + RuleUnpinned,
 			"medium " + RuleUnpinned,
@@ -111,30 +111,82 @@ func TestTwoBlockExampleIsClean(t *testing.T) {
 
 // TestMentionWorkflowGivesOnlyItsHighFindings lints the common @claude mention
 // workflow. The recipe profile rejects it for rules that only Costroid's own
-// recipes keep; the customer profile names its three high findings and none
-// of those.
+// recipes keep. The customer profile names its two high findings and none of
+// those: claude-code-action's own check guards the comments, until an input
+// opens it to anyone.
 func TestMentionWorkflowGivesOnlyItsHighFindings(t *testing.T) {
-	report, _ := lintCustomerFile(t, "mention.yml")
-	var high []string
-	for _, finding := range report.Findings {
-		if finding.Severity == High {
-			high = append(high, finding.Rule)
+	source := read(t, filepath.Join(customerDir, "mention.yml"))
+	high := func(report Report) []string {
+		var rules []string
+		for _, finding := range report.Findings {
+			if finding.Severity == High {
+				rules = append(rules, finding.Rule)
+			}
 		}
+		slices.Sort(rules)
+		return rules
 	}
-	slices.Sort(high)
-	if want := []string{RuleAgentIDToken, RuleCommentTrigger, RulePullRequestTarget}; !slices.Equal(high, want) {
-		t.Fatalf("high: %v, want %v", high, want)
+	report, _ := lintCustomerFile(t, "mention.yml")
+	if got, want := high(report), []string{RuleAgentIDToken, RulePullRequestTarget}; !slices.Equal(got, want) {
+		t.Fatalf("high: %v, want %v", got, want)
 	}
 	for _, finding := range slices.Concat(report.Findings, report.Notes) {
 		if slices.Contains(recipeOnlyRules, finding.Rule) {
 			t.Errorf("a recipe-only rule: %v", finding)
 		}
 	}
-	strict := LintBytes("mention.yml", []byte(read(t, filepath.Join(customerDir, "mention.yml"))))
+	const token = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}\n"
+	opened := strings.Replace(source, token, token+"          allowed_non_write_users: \"*\"\n", 1)
+	if opened == source {
+		t.Fatal("the edit changed nothing")
+	}
+	got, want := high(LintCustomer("mention.yml", []byte(opened))), []string{RuleAgentIDToken, RuleAgentOpen, RuleCommentTrigger, RulePullRequestTarget}
+	if !slices.Equal(got, want) {
+		t.Fatalf("opened to anyone, high: %v, want %v", got, want)
+	}
+	strict := LintBytes("mention.yml", []byte(source))
 	for _, rule := range []string{RuleAgentVersion, RuleAgentContentFlags, RuleAgentGuard} {
 		if !slices.Contains(rules(strict.Findings), rule) {
 			t.Errorf("the recipe profile does not name %s, so this test proves nothing about it", rule)
 		}
+	}
+}
+
+// TestClaudeActionInputsOnACommentEvent puts clean.yml's step on
+// issue_comment and sets each opening input of claude-code-action. Only both
+// inputs empty leaves the action's own check standing.
+func TestClaudeActionInputsOnACommentEvent(t *testing.T) {
+	source := strings.Replace(read(t, filepath.Join(customerDir, "clean.yml")), "  pull_request:\n", "  issue_comment:\n", 1)
+	const prompt = "          prompt: Review this pull request.\n"
+	for _, test := range []struct {
+		input string
+		want  []string
+	}{
+		{"", nil},
+		{`allowed_bots: ""`, nil},
+		{`allowed_non_write_users: ""`, nil},
+		{`allowed_non_write_users: "*"`, []string{"high " + RuleAgentOpen, "high " + RuleCommentTrigger}},
+		{`allowed_bots: "*"`, []string{"high " + RuleAgentOpen, "high " + RuleCommentTrigger}},
+		{`allowed_non_write_users: "octocat"`, []string{"high " + RuleCommentTrigger, "medium " + RuleAgentOpen}},
+		{`allowed_bots: "dependabot[bot]"`, []string{"high " + RuleCommentTrigger, "medium " + RuleAgentOpen}},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			edited := source
+			if test.input != "" {
+				edited = strings.Replace(source, prompt, prompt+"          "+test.input+"\n", 1)
+			}
+			if !strings.Contains(edited, "issue_comment") || (test.input != "" && edited == source) {
+				t.Fatal("the edit changed nothing")
+			}
+			var got []string
+			for _, finding := range LintCustomer("x.yml", []byte(edited)).Findings {
+				got = append(got, string(finding.Severity)+" "+finding.Rule)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("got %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

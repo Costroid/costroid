@@ -1,5 +1,6 @@
 # The common @claude mention workflow: comments and issues start the agent,
-# and so does pull_request_target.
+# and so does pull_request_target. claude-code-action admits only people with
+# write access by default, so the comments need no test in the if.
 name: claude
 
 on:

@@ -24,14 +24,22 @@ Any other workflow passes with nothing said. The last line counts the files read
 | Severity | Rule                   | What it finds                                                                                                                                                   |
 | -------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | high     | `pull-request-target`  | `pull_request_target` starts the workflow, which hands a stranger's pull request to an agent that holds your secrets, or a job there checks out the pull request's head and runs its code beside them |
-| high     | `comment-trigger`      | A comment, review, issue or discussion event starts the agent's job, and the job's `if` tests neither `author_association` nor `github.actor`                     |
+| high     | `comment-trigger`      | A comment, review, issue or discussion event starts the agent's job, the job's `if` tests neither `author_association` nor `github.actor`, and the agent's action does not check who started it (see below) |
+| high     | `agent-open`           | `allowed_non_write_users: "*"` or `allowed_bots: "*"` on `claude-code-action`, which lets anyone, or any bot, start the agent on your key |
 | high     | `agent-id-token`       | The agent's job holds `id-token: write`, so an injected agent can mint a token that claims your repository's identity                                          |
 | high     | `expression-in-script` | A `run` script holds `${{ }}`. The runner pastes the value into the shell before it runs, so the value can run commands. Pass it through `env`                  |
 | medium   | `unpinned-action`      | An action in the agent's job is not pinned to a full commit SHA or an image digest. An action in your own repository counts as pinned                           |
-| medium   | `agent-prompt-input`   | A comment, review, issue, discussion, title, body or branch name reaches the agent's job, or `allow-users: "*"`, `allow-bots`, `allowed_non_write_users: "*"` or `allowed_bots` opens the agent to any account or to bots |
+| medium   | `agent-prompt-input`   | A comment, review, issue, discussion, title, body or branch name reaches the agent's job |
+| medium   | `agent-open`           | `claude-code-action` names users in `allowed_non_write_users` or bots in `allowed_bots`; or `codex-action` sets `allow-users: "*"` or `allow-bots` |
 | note     | `agent-contents-write` | The agent's job can write to your code, or declares no permissions and takes the repository's default token                                                    |
 | note     | `subscription-token`   | The agent signs in with `claude_code_oauth_token` or `CLAUDE_CODE_OAUTH_TOKEN`. Costroid reports such a run's tokens at API list price as list-equivalent, never as billed |
 | high     | `unreadable`           | The file is not valid YAML, so nothing in it could be judged                                                                                                    |
+
+## Who may start the agent
+
+`claude-code-action` checks who started a run. By default it refuses a user without write access to the repository, and it refuses bots. Two inputs change that. Its `action.yml` describes `allowed_non_write_users` as one that "bypasses security checks", and `allowed_bots` with "Empty string (default) allows no bots" ([`action.yml`](https://github.com/anthropics/claude-code-action/blob/main/action.yml), read 2026-11-07). So a `claude-code-action` step with both inputs empty or absent counts as guarded, and a comment event needs no test in the job's `if`. With either input set, the job's `if` must test the author.
+
+`codex-action` has `allow-users` and `allow-bots`. Costroid has not read how its check works, so its step never counts as guarded, and its inputs are medium findings at most.
 
 A note says something you should know. Many teams need an agent that writes to the pull request, and a note never fails the command.
 

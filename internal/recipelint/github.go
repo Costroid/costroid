@@ -258,12 +258,11 @@ const (
 	codexAction      = "openai/codex-action"
 )
 
-// openingInputs are the inputs of each agent's action that let more than the
-// repository's own people start it, and the value of each that does. An empty
-// value means any value but false.
-var openingInputs = map[string]map[string]string{
-	claudeCodeAction: {"allowed_non_write_users": "*", "allowed_bots": ""},
-	codexAction:      {"allow-users": "*", "allow-bots": ""},
+// openingInputs are the inputs of each agent's action that let more people or
+// bots start it than the action admits by default.
+var openingInputs = map[string][]string{
+	claudeCodeAction: {"allowed_non_write_users", "allowed_bots"},
+	codexAction:      {"allow-users", "allow-bots"},
 }
 
 // stepAgent names the agent a step starts, or nothing. A claude-code-action
@@ -299,19 +298,14 @@ func agentAction(step *yaml.Node) string {
 	return ""
 }
 
-// agentOpenTo lists the inputs of an agent's action that let any account or
-// a bot start it: allow-users: "*" and allow-bots on codex-action,
-// allowed_non_write_users: "*" and allowed_bots on claude-code-action.
+// agentOpenTo lists the opening inputs a step sets: every one that is not
+// empty, and not false.
 func agentOpenTo(step *yaml.Node) []entry {
 	opening := openingInputs[agentAction(step)]
 	var open []entry
 	for _, input := range entries(field(step, "with")) {
-		want, known := opening[input.key.Value]
 		value := strings.TrimSpace(input.value.Value)
-		if !known || value == "" || strings.EqualFold(value, "false") {
-			continue
-		}
-		if want == "" || value == want {
+		if slices.Contains(opening, input.key.Value) && value != "" && !strings.EqualFold(value, "false") {
 			open = append(open, input)
 		}
 	}
