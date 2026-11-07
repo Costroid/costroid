@@ -42,11 +42,11 @@ fuzz:
 		done; \
 	done
 
-RECORD_REPO ?= Costroid/costroid-dogfood
-
-# Places the recording of workflow run RUN for scenario SCENARIO under its
-# adapter's testdata, after verifying it again. It downloads with gh.
+# Places the recording of workflow run RUN in repository RECORD_REPO
+# (owner/name) for scenario SCENARIO under its adapter's testdata, after
+# verifying it again. It downloads with gh.
 fixture:
+	@test -n "$(RECORD_REPO)" || { echo "set RECORD_REPO to the owner/name of the repository that ran the recording"; exit 2; }
 	go run ./scripts/record fixture --run "$(RUN)" --scenario "$(SCENARIO)" --repo "$(RECORD_REPO)"
 
 build:
