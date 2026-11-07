@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,8 @@ import (
 	"testing"
 
 	costroid "github.com/Costroid/costroid"
+	"github.com/Costroid/costroid/internal/recipelint"
+	"go.yaml.in/yaml/v3"
 )
 
 // fakeKey stands for a provider key. No four characters of it in a row
@@ -383,9 +386,142 @@ func TestDoctorHelpRunsNoCheck(t *testing.T) {
 	}
 }
 
-var markdownShell = regexp.MustCompile("(?s)```sh\n(.*?)```")
+var (
+	markdownYAML  = regexp.MustCompile("(?s)```yaml\n(.*?)```")
+	markdownShell = regexp.MustCompile("(?s)```sh\n(.*?)```")
+	placeholder   = regexp.MustCompile(`<[a-z][a-z -]*>|__RELEASE_[A-Z_]*`)
+	listingPin    = regexp.MustCompile(`Costroid/costroid(?:/action|-action)@(\S+)(?: # (\S+))?`)
+)
 
 const repositoryRoot = "../.."
+
+// listingFor writes the listing for tag the way a release does: through
+// scripts/marketplace.sh, in a scratch checkout that holds the script and
+// marketplace/ with the tag on its one commit. It returns the README the
+// script wrote and the tag's commit.
+func listingFor(t *testing.T, tag string) (string, string) {
+	t.Helper()
+	checkout, home := filepath.Join(t.TempDir(), "costroid"), t.TempDir()
+	for _, name := range []string{"scripts/marketplace.sh", "marketplace/README.md", "marketplace/action.yml", "marketplace/LICENSE", "marketplace/NOTICE"} {
+		writeFile(t, filepath.Join(checkout, name), readFile(t, filepath.Join(repositoryRoot, name)))
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", checkout}, args...)...)
+		command.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
+		}
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	git("init", "--quiet")
+	git("add", ".")
+	git("commit", "--quiet", "--message", "Add the listing")
+	git("tag", "--annotate", "--message", tag, tag)
+	out := filepath.Join(t.TempDir(), "costroid-action")
+	command := exec.Command("bash", filepath.Join(checkout, "scripts", "marketplace.sh"), tag, out)
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("scripts/marketplace.sh %s: %v: %s", tag, err, output)
+	}
+	return readFile(t, filepath.Join(out, "README.md")), git("rev-parse", "HEAD")
+}
+
+func TestListingHasNoPlaceholder(t *testing.T) {
+	if source := readFile(t, filepath.Join(repositoryRoot, "marketplace", "README.md")); strings.Contains(source, "<commit>") {
+		t.Error("marketplace/README.md asks the reader to fill in <commit>")
+	}
+	tag := "v" + testRelease
+	listing, tagCommit := listingFor(t, tag)
+	if found := placeholder.FindAllString(listing, -1); len(found) > 0 {
+		t.Errorf("the listing for %s keeps placeholders: %v", tag, found)
+	}
+	pins := listingPin.FindAllStringSubmatch(listing, -1)
+	if len(pins) == 0 {
+		t.Fatal("the listing pins no Costroid action")
+	}
+	for _, pin := range pins {
+		if pin[1] != tagCommit || pin[2] != tag {
+			t.Errorf("the listing pins %q, want %s # %s", pin[0], tagCommit, tag)
+		}
+	}
+}
+
+func TestListingRecipeLints(t *testing.T) {
+	listing, tagCommit := listingFor(t, "v"+testRelease)
+	release := pin{commit: tagCommit, version: testRelease}
+	blocks := markdownYAML.FindAllStringSubmatch(listing, -1)
+	if len(blocks) != 3 {
+		t.Fatalf("the listing has %d YAML blocks, want the recipe and the two blocks", len(blocks))
+	}
+	recipe := blocks[0][1]
+	if report := recipelint.LintBytes("listing.yml", []byte(recipe)); len(report.Findings) > 0 {
+		t.Errorf("the listing's recipe breaks a rule of lint-recipes: %v", report.Findings)
+	}
+	if report := recipelint.LintCustomer("listing.yml", []byte(recipe)); len(report.Findings) > 0 {
+		t.Errorf("costroid lint finds %v in the listing's recipe", report.Findings)
+	}
+	if want := pinnedRecipeAt(t, "github-claude-code.yml", release); recipe != want {
+		t.Errorf("the listing's recipe is not recipes/github-claude-code.yml pinned to the tag:\n%s", recipe)
+	}
+	for index, want := range []string{
+		strings.Join(readStep(0, 2, addedStepID, release), "\n") + "\n",
+		strings.Join(reportJob(0, 2, "report", "review", release), "\n") + "\n",
+	} {
+		if got := blocks[index+1][1]; got != want {
+			t.Errorf("block %d is not what costroid init --existing adds:\n%s\nwant:\n%s", index+1, got, want)
+		}
+	}
+}
+
+func pinnedRecipeAt(t *testing.T, name string, release pin) string {
+	t.Helper()
+	recipe, err := pinRecipe(name, shippedRecipe(t, name), release, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(recipe)
+}
+
+func TestListingNamesEveryOutputOfTheAction(t *testing.T) {
+	var action struct {
+		Outputs map[string]any `yaml:"outputs"`
+	}
+	if err := yaml.Unmarshal([]byte(readFile(t, filepath.Join(repositoryRoot, "action", "action.yml"))), &action); err != nil {
+		t.Fatal(err)
+	}
+	_, outputs, _ := strings.Cut(readFile(t, filepath.Join(repositoryRoot, "marketplace", "README.md")), "\n## Outputs\n")
+	outputs, _, _ = strings.Cut(outputs, "\n## ")
+	if len(action.Outputs) == 0 {
+		t.Fatal("action.yml declares no outputs")
+	}
+	for name := range action.Outputs {
+		if !strings.Contains(outputs, "`"+name+"`") {
+			t.Errorf("the listing's Outputs section does not name %s", name)
+		}
+	}
+}
+
+func TestReadmeAndListingQuoteTheDemoCommentsFirstLine(t *testing.T) {
+	body, err := demoComment(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := lineWith(body, "This run cost ")
+	if first == "" {
+		t.Fatalf("the demo's comment states no cost line:\n%s", body)
+	}
+	for _, page := range []string{"README.md", "marketplace/README.md"} {
+		if !strings.Contains(readFile(t, filepath.Join(repositoryRoot, page)), "\n> "+first+"\n") {
+			t.Errorf("%s does not quote the comment's first line %q", page, first)
+		}
+	}
+}
 
 // TestReadmeTryItBlockIsWhatInitPrints runs the README's first command and
 // holds the rest of its block to the commands init prints after it.
