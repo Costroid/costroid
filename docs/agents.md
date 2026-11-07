@@ -139,7 +139,7 @@ When the rows file holds no rows and the run said why, `run_reason` carries the 
 | `concurrent_run` | Another run held the agent's state directory, so this run never started its agent. |
 | `reader_refused` | The reader refused the agent's stream or its execution file, so no usage was read. |
 
-`result/v0.6` also defines `artifact_refused`, for a report that refuses the artifact that carried the rows. This release does not write it.
+The report writes `artifact_refused` when the action refused the artifact that carried the rows; the check then fails, and an approval does not change that.
 
 With `reader_refused`, `reader_error` carries the reader's first error line. The error can quote the agent's stream, so every character outside letters, digits, the space and `.,:;()'=_/+-` reads `?`, and the line is cut at 160 bytes.
 
