@@ -3,7 +3,6 @@
 bin
 deploy
 docs
-recipes
 action
 e2e
 *.md
