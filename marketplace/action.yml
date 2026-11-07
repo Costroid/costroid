@@ -44,10 +44,19 @@ inputs:
       used as it is, held to minimum-agent-version.
     default: ""
   budget-usd:
-    description: The run's budget in USD.
+    description: >-
+      The run's budget in USD. For stage read, the cap the claude-code-action step gave Claude
+      Code as --max-budget-usd in its claude_args.
     default: ""
   execution-file:
     description: For stage read, the execution_file output of the claude-code-action step.
+    default: ""
+  claude-args:
+    description: >-
+      For stage read with budget-usd, the claude_args the claude-code-action step was given. The
+      read stage cannot see the step's inputs, so it reads --max-budget-usd from these. The grade
+      reads agent-flag when that flag equals budget-usd and the run stopped at it or ended under
+      it, and none, with the reason, otherwise.
     default: ""
   codex-home:
     description: >-
@@ -163,6 +172,7 @@ runs:
         agent-version: ${{ inputs.agent-version }}
         budget-usd: ${{ inputs.budget-usd }}
         execution-file: ${{ inputs.execution-file }}
+        claude-args: ${{ inputs.claude-args }}
         codex-home: ${{ inputs.codex-home }}
         show-output: ${{ inputs.show-output }}
         api-key: ${{ inputs.api-key }}

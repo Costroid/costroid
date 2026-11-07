@@ -179,6 +179,7 @@ and a reader that refused the agent's output adds its first error line.
 
 const ingestRunHelp = `Usage:
   costroid ingest-run --from KIND=PATH --out rows.jsonl [--since T] [--billing-account ID] [--credential ID]
+  costroid ingest-run --from execution-file=F --out rows.jsonl --cap-usd N [--claude-args TEXT]
 
 ingest-run writes the rows of an agent's run after the run ended, from what
 the run left at PATH. KIND is one of:
@@ -189,8 +190,14 @@ the run left at PATH. KIND is one of:
 --since, with codex-home, is when the job started, in RFC 3339: a file last
 written before it belongs to an earlier job and is not read. --execution-file F
 and --codex-home D read as --from execution-file=F and --from codex-home=D.
-ingest-run reads one source. Costroid did not start the run, so no budget held
-it, and the grade reads none.
+ingest-run reads one source. Costroid did not start the run, so the grade reads
+none unless the workflow states a cap.
+
+--cap-usd, with execution-file, is the cap the workflow gave Claude Code as
+--max-budget-usd, and --claude-args the step's claude_args. The grade reads
+agent-flag when the run stopped at that cap, or ended under it with
+claude_args stating it; otherwise it reads none, with the reason. The result
+object states the cap.
 
 ` + accountHelp + `
 ` + ciHelp + `

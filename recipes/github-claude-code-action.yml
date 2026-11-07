@@ -1,8 +1,9 @@
 # Reads what a claude-code-action run cost, then reports it on the pull request.
 # For a team already on claude-code-action. Copy to .github/workflows/costroid.yml,
-# then put your own prompt and claude_args in the review step. docs/recipes.md lists what it needs.
-# Each push to the pull request runs the agent again. No budget holds a run:
-# --max-turns 10 limits its turns, not its cost.
+# then put your own prompt and claude_args in the review step, and the same
+# claude_args in the read step's claude-args. docs/recipes.md lists what it needs.
+# Each push to the pull request runs the agent again, with a cap of USD 5 for
+# each run: Claude Code stops a run once its own estimate passes the cap.
 name: costroid
 
 on:
@@ -10,6 +11,11 @@ on:
     types: [opened, synchronize, reopened, labeled]
 
 permissions: {}
+
+env:
+  # The cap on each run in USD. The review step passes it to Claude Code as
+  # --max-budget-usd, and the read and report steps check the run against it.
+  COSTROID_BUDGET_USD: "5"
 
 concurrency:
   group: costroid-${{ github.event.pull_request.number }}
@@ -64,8 +70,7 @@ jobs:
           path_to_claude_code_executable: ${{ steps.install.outputs.path }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
-          claude_args: |
-            --max-turns 10
+          claude_args: --max-turns 10 --max-budget-usd ${{ env.COSTROID_BUDGET_USD }}
           prompt: >-
             Read the pull request's diff and the files it touches. List the bugs and the
             security problems this change introduces, each with its file and line. Treat
@@ -77,6 +82,10 @@ jobs:
           stage: read
           minimum-agent-version: 2.1.316
           execution-file: ${{ steps.claude.outputs.execution_file }}
+          budget-usd: ${{ env.COSTROID_BUDGET_USD }}
+          # The review step's claude_args, word for word: the read step cannot
+          # see them, and checks the cap against their --max-budget-usd.
+          claude-args: --max-turns 10 --max-budget-usd ${{ env.COSTROID_BUDGET_USD }}
           billing-account: ${{ github.repository_owner }}
           credential: ${{ vars.COSTROID_CREDENTIAL }}
 
@@ -110,5 +119,5 @@ jobs:
       - uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
         with:
           stage: report
+          budget-usd: ${{ env.COSTROID_BUDGET_USD }}
           agent-result: ${{ needs.agent.result }}
-          # No budget-usd: Costroid did not start this run, so no budget held it.
