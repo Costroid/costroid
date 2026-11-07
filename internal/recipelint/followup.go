@@ -1,6 +1,7 @@
 package recipelint
 
 import (
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -12,6 +13,9 @@ import (
 // that repository's token, after a workflow a fork's pull request could edit,
 // so it holds no code and runs nothing that workflow left behind.
 const (
+	// RuleFollowUpPermissions holds a follow-up's token to what it needs.
+	RuleFollowUpPermissions = "follow-up-permissions"
+
 	followUpEvent    = "workflow_run"
 	downloadArtifact = "actions/download-artifact"
 	checkoutAction   = "actions/checkout"
@@ -27,6 +31,9 @@ var (
 
 	// runnerDirectory names a directory a downloaded artifact can sit in.
 	runnerDirectory = regexp.MustCompile(`\$\{\{\s*(runner\.temp|github\.workspace)\s*\}\}|\$\{?(RUNNER_TEMP|GITHUB_WORKSPACE)\}?`)
+
+	// followUpCommand is the step that posts the check.
+	followUpCommand = regexp.MustCompile(`\bcostroid\s+follow-up\b`)
 
 	// rowsLine is the one line that may name the artifact: costroid reads the
 	// rows file in it as data.
@@ -49,10 +56,42 @@ func (l *linter) followUp(root *yaml.Node) {
 			l.add(env, RuleFollowUpCode, "job %s's env names the pull request's head: a follow-up never fetches it", job.key.Value)
 		}
 		steps := sequence(field(job.value, "steps"))
+		l.followUpPermissions(root, job, steps)
 		artifacts := l.artifactDirectories(steps)
 		for _, step := range steps {
 			l.followUpStep(step, artifacts)
 		}
+	}
+}
+
+// followUpPermissions holds a follow-up job to one write, checks, because it
+// runs with the base repository's token after a workflow a fork can edit. The
+// job that posts reads the head commit's pull requests, so it needs
+// pull-requests: read, without which costroid follow-up posts nothing.
+func (l *linter) followUpPermissions(root *yaml.Node, job entry, steps []*yaml.Node) {
+	permissions := field(job.value, "permissions")
+	if permissions == nil {
+		permissions = field(root, "permissions")
+	}
+	granted := grants(permissions)
+	for _, scope := range slices.Sorted(maps.Keys(granted)) {
+		if granted[scope] != "write" || scope == "checks" {
+			continue
+		}
+		held := scope + ": write"
+		if scope == "*" {
+			held = "write-all"
+		}
+		l.add(job.key, RuleFollowUpPermissions, "job %s holds %s, and a follow-up writes checks alone", job.key.Value, held)
+	}
+	posts := false
+	for _, step := range steps {
+		if run := field(step, "run"); run != nil && followUpCommand.MatchString(run.Value) {
+			posts = true
+		}
+	}
+	if posts && granted["pull-requests"] != "read" && granted["*"] != "read" {
+		l.add(job.key, RuleFollowUpPermissions, "job %s runs costroid follow-up without pull-requests: read, so it can bind the check to no pull request", job.key.Value)
 	}
 }
 

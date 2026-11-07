@@ -99,20 +99,38 @@ func readGitHub(getenv func(string) string) (Context, error) {
 		Run:           getenv("GITHUB_RUN_ID"),
 		Task:          getenv("GITHUB_JOB"),
 	}
+	name := getenv("GITHUB_EVENT_NAME")
 	event, err := ReadEvent(getenv("GITHUB_EVENT_PATH"))
 	if err != nil {
-		if !strings.HasPrefix(getenv("GITHUB_EVENT_NAME"), "pull_request") {
+		if buildsItsCommit(name) {
 			context.Head = getenv("GITHUB_SHA")
 		}
 		return context.checked(), err
 	}
-	context.Head = getenv("GITHUB_SHA")
-	if event.PullRequest != nil {
+	switch {
+	case event.PullRequest != nil:
 		context.PullRequest = fmt.Sprint(event.PullRequest.Number)
 		context.Head = event.PullRequest.Head.SHA
 		context.Base = event.PullRequest.Base.SHA
+	case name == "issue_comment" && event.Issue != nil && event.Issue.PullRequest != nil:
+		// A comment's event names the pull request and not its head, and
+		// GITHUB_SHA is the default branch's last commit.
+		context.PullRequest = fmt.Sprint(event.Issue.Number)
+	case buildsItsCommit(name):
+		context.Head = getenv("GITHUB_SHA")
 	}
 	return context.checked(), nil
+}
+
+// buildsItsCommit reports an event whose GITHUB_SHA is the commit the run is
+// about. On another event it can be a merge commit or the default branch's
+// last commit, so it names no head there.
+func buildsItsCommit(eventName string) bool {
+	switch eventName {
+	case "push", "schedule", "workflow_dispatch":
+		return true
+	}
+	return false
 }
 
 // readGitLab prefers the source branch's head. GitLab sets that variable only
@@ -224,6 +242,12 @@ var ErrNoEventFile = errors.New("GITHUB_EVENT_PATH is not set")
 
 // Event is the part of a GitHub event file Costroid reads.
 type Event struct {
+	// Issue is set on issue_comment. Its pull_request field is set when the
+	// issue is a pull request.
+	Issue *struct {
+		Number      int       `json:"number"`
+		PullRequest *struct{} `json:"pull_request"`
+	} `json:"issue"`
 	PullRequest *struct {
 		Number int `json:"number"`
 		Head   struct {

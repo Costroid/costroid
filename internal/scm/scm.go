@@ -46,6 +46,26 @@ type PullRequest struct {
 	Author  string
 }
 
+// CommitPull is one pull request a commit belongs to, as the host lists it.
+type CommitPull struct {
+	Number int
+	// Open is false for a closed or merged pull request.
+	Open    bool
+	HeadSHA string
+	// HeadRepository and BaseRepository are owner/name. A head repository the
+	// host no longer has is empty.
+	HeadRepository string
+	BaseRepository string
+}
+
+// Commits is what a fork's follow-up asks about the commit it posts on.
+type Commits interface {
+	// PullsForCommit lists the pull requests the commit belongs to.
+	PullsForCommit(ctx context.Context, sha string) ([]CommitPull, error)
+	// BranchesAt lists the repository's branches whose head is the commit.
+	BranchesAt(ctx context.Context, sha string) ([]string, error)
+}
+
 // Reporter is what a report needs from one repository on one source-code host.
 type Reporter interface {
 	// PostCheck returns the check's id. A host without one answers ErrNoCheck.
@@ -53,8 +73,8 @@ type Reporter interface {
 	// UpdateCheck replaces the output of check run id with check's title,
 	// summary and text. A host without checks answers ErrNoCheck.
 	UpdateCheck(ctx context.Context, id int64, check CheckRun) error
-	// UpsertComment edits the host's own comment that opens with marker, or
-	// creates it when there is none.
+	// UpsertComment edits the comment that opens with marker and that the
+	// token's own account wrote, or creates it when there is none.
 	UpsertComment(ctx context.Context, pullRequest int, marker, body string) error
 	// ReadFile reads a file at a ref. A missing file is ErrNotFound.
 	ReadFile(ctx context.Context, path, ref string) ([]byte, error)

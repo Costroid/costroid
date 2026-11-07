@@ -186,3 +186,50 @@ func TestDetectNamesTheSystemAndPrefersGitHub(t *testing.T) {
 		}
 	}
 }
+
+// TestEventHeads holds GITHUB_SHA to the events where it is the commit the run
+// is about. On a comment it is the default branch's last commit, so a
+// comment on a pull request names the pull request and no head.
+func TestEventHeads(t *testing.T) {
+	const comment = `{"issue":{"number":12,"pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/12"}}}`
+	cases := []struct {
+		name, event, file string
+		pullRequest, head string
+		unreadable        bool
+	}{
+		{name: "push", event: "push", file: `{"ref":"refs/heads/main"}`, head: merge},
+		{name: "schedule", event: "schedule", file: `{"schedule":"0 0 * * *"}`, head: merge},
+		{name: "workflow_dispatch", event: "workflow_dispatch", file: `{"inputs":{}}`, head: merge},
+		{name: "pull_request", event: "pull_request", file: pullRequestEvent, pullRequest: pullID, head: head},
+		{name: "pull_request_target", event: "pull_request_target", file: pullRequestEvent, pullRequest: pullID, head: head},
+		{name: "a comment on a pull request", event: "issue_comment", file: comment, pullRequest: "12"},
+		{name: "a comment on an issue", event: "issue_comment", file: `{"issue":{"number":12}}`},
+		{name: "a comment whose pull_request is null", event: "issue_comment", file: `{"issue":{"number":12,"pull_request":null}}`},
+		{name: "a review comment", event: "pull_request_review_comment", file: pullRequestEvent, pullRequest: pullID, head: head},
+		{name: "workflow_run", event: "workflow_run", file: `{"workflow_run":{"head_sha":"` + head + `"}}`},
+		{name: "release", event: "release", file: `{"release":{}}`},
+		{name: "no event name", event: "", file: `{}`},
+		{name: "push with no event file", event: "push", head: merge, unreadable: true},
+		{name: "a comment with no event file", event: "issue_comment", unreadable: true},
+		{name: "workflow_run with no event file", event: "workflow_run", unreadable: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			values := github(t, c.file)
+			values["GITHUB_EVENT_NAME"] = c.event
+			if c.unreadable {
+				values["GITHUB_EVENT_PATH"] = filepath.Join(t.TempDir(), "gone.json")
+			}
+			context, err := Read(environment(values))
+			if (err != nil) != c.unreadable {
+				t.Fatalf("err = %v", err)
+			}
+			if context.PullRequest != c.pullRequest || context.Head != c.head {
+				t.Errorf("pull request %q, head %q; want %q, %q", context.PullRequest, context.Head, c.pullRequest, c.head)
+			}
+			if tags := context.Tags(); c.head == "" && tags[focus.TagCommitSHA] != "" {
+				t.Errorf("a row would state the head %s", tags[focus.TagCommitSHA])
+			}
+		})
+	}
+}

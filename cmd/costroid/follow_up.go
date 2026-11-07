@@ -28,6 +28,10 @@ const (
 const forkNoRowsSentence = "Reason: `" + string(comment.ForkNoRows) + "`. This pull request comes from a fork, and its workflow run left no rows. " +
 	"The recipes run no agent on a fork's pull request. A neutral check does not block a merge."
 
+// forkCapSentence ends the summary of a check the cap held at neutral.
+const forkCapSentence = "This pull request comes from a fork, and the fork's own run wrote these rows. " +
+	"Its check concludes neutral at most, so a rule that fails here warns and does not block a merge."
+
 var errNotGitHubActions = errors.New("follow-up refused: GitHub Actions was not detected")
 
 // finishedRun is the part of a workflow_run event the follow-up reads. GitHub
@@ -100,11 +104,56 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	host, err := hostFromEnvironment(pull)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
-	} else {
-		input = postFollowUp(ctx, host, pull, run.Path, input, rowsPath, stderr)
+		publish(input, false, stdout, stderr)
+		return 0
 	}
+	if err := confirmForkPull(ctx, host, run, os.Getenv("GITHUB_REPOSITORY")); err != nil {
+		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		return 0
+	}
+	input = postFollowUp(ctx, host, pull, run.Path, input, rowsPath, stderr)
 	publish(input, false, stdout, stderr)
 	return 0
+}
+
+// confirmForkPull binds the head commit to an open pull request from the fork
+// the finished run names. A fork can push any commit it can read to a branch
+// of its own, such as the head of another pull request or of a branch here,
+// and a check on that commit would land on someone else's change. So a commit
+// that heads a pull request from any other repository, or a branch of this
+// one, gets nothing. A list that cannot be read gets nothing too.
+func confirmForkPull(ctx context.Context, host scm.Reporter, run finishedRun, repository string) error {
+	commits, ok := host.(scm.Commits)
+	if !ok {
+		return errors.New("this host lists no pull requests for a commit")
+	}
+	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
+	defer cancel()
+	pulls, err := commits.PullsForCommit(ctx, run.HeadSHA)
+	if err != nil {
+		return fmt.Errorf("the head commit's pull requests could not be read: %w", err)
+	}
+	fork, found := run.HeadRepository.FullName, false
+	for _, pull := range pulls {
+		if pull.HeadSHA != run.HeadSHA {
+			continue
+		}
+		if !strings.EqualFold(pull.HeadRepository, fork) {
+			return fmt.Errorf("the head commit is also the head of pull request %d, which comes from another repository", pull.Number)
+		}
+		found = found || (pull.Open && strings.EqualFold(pull.BaseRepository, repository))
+	}
+	if !found {
+		return fmt.Errorf("no open pull request from %s has the head commit as its head", fork)
+	}
+	branches, err := commits.BranchesAt(ctx, run.HeadSHA)
+	if err != nil {
+		return fmt.Errorf("the branches at the head commit could not be read: %w", err)
+	}
+	if len(branches) > 0 {
+		return errors.New("the head commit is the head of a branch of this repository")
+	}
+	return nil
 }
 
 // forkRun reads the finished run and returns the head commit of its fork's
@@ -178,9 +227,22 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input.Amounts = resolveAmounts(ctx, host, pull.base, stderr)
-	input.Verdict = followUpVerdict(ctx, host, pull, workflow, rowsPath, input.State, stderr)
-	input.CheckRunID = postFollowUpCheck(ctx, host, input, stderr)
+	verdict := followUpVerdict(ctx, host, pull, workflow, rowsPath, input.State, stderr)
+	capped := capAtNeutral(verdict)
+	input.Verdict = verdict
+	input.CheckRunID = postFollowUpCheck(ctx, host, input, capped, stderr)
 	return input
+}
+
+// capAtNeutral holds a fork's verdict at neutral and reports whether it moved
+// it. The recipes run no agent on a fork's pull request, so a fork's rows are
+// the fork's own statement: they neither block a merge nor pass a budget.
+func capAtNeutral(verdict *policy.Verdict) bool {
+	if verdict == nil || verdict.Conclusion == policy.Neutral {
+		return false
+	}
+	verdict.Conclusion = policy.Neutral
+	return true
 }
 
 // followUpVerdict holds the rows to the settings on the default branch's
@@ -233,8 +295,9 @@ func finishedWorkflowStart(ctx context.Context, host scm.Reporter, workflow, bas
 }
 
 // postFollowUpCheck posts the check. When a fork's run left no rows, the
-// summary ends with the reason.
-func postFollowUpCheck(ctx context.Context, host scm.Reporter, input comment.Input, stderr io.Writer) *int64 {
+// summary ends with the reason, and when the cap held the verdict, with the
+// cap.
+func postFollowUpCheck(ctx context.Context, host scm.Reporter, input comment.Input, capped bool, stderr io.Writer) *int64 {
 	output, err := comment.Check(input)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
@@ -242,6 +305,9 @@ func postFollowUpCheck(ctx context.Context, host scm.Reporter, input comment.Inp
 	}
 	if input.Reason == comment.ForkNoRows {
 		output.Summary += "\n\n" + forkNoRowsSentence
+	}
+	if capped {
+		output.Summary += "\n\n" + forkCapSentence
 	}
 	id, err := host.PostCheck(ctx, scm.CheckRun{
 		Name:       comment.CheckName,

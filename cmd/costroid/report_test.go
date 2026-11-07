@@ -35,6 +35,7 @@ func reportEnvironment(t *testing.T, event string) *scmtest.Stub {
 	t.Setenv("GITHUB_API_URL", stub.Server.URL)
 	t.Setenv("GITHUB_REPOSITORY", "example/widgets")
 	t.Setenv("GITHUB_SHA", mergeSHA)
+	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
 	t.Setenv("GITHUB_EVENT_PATH", path)
 	t.Setenv(installationVariable, "")
 	t.Setenv("GITHUB_OUTPUT", "")
@@ -232,11 +233,43 @@ func TestAJobWithoutATokenOrARepositoryExitsZeroAndSaysSo(t *testing.T) {
 	}
 }
 
-func TestAPushPostsTheCheckOnGitHubSHAAndNoComment(t *testing.T) {
-	stub := reportEnvironment(t, `{"ref":"refs/heads/main"}`)
-	code, _, stderr := execute(t, "report", "--rows", realRows)
-	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].HeadSHA != mergeSHA || len(stub.Comments) != 0 {
-		t.Errorf("exit %d: %s: %+v", code, stderr, stub.Checks)
+// TestReportOnACommentEventPostsNothingAndSaysWhy runs report where an
+// @-mention workflow runs it: on a comment, whose GITHUB_SHA is the default
+// branch's last commit. It posts nothing, and one line says why and where to
+// read on.
+func TestReportOnACommentEventPostsNothingAndSaysWhy(t *testing.T) {
+	stub := reportEnvironment(t, `{"action":"created","issue":{"number":7,"pull_request":{"url":"https://api.github.com/repos/example/widgets/pulls/7"}},"comment":{"body":"@claude review"}}`)
+	t.Setenv("GITHUB_EVENT_NAME", "issue_comment")
+	outputs, summary := stepFiles(t)
+	code, stdout, stderr := execute(t, "report", "--rows", realRows, "--json")
+	if code != 0 || len(stub.Requests) != 0 || stdout != "" {
+		t.Fatalf("exit %d, requests %v, stdout %q: %s", code, stub.Requests, stdout, stderr)
+	}
+	want := "costroid: not posted: report posts on the pull_request event, and this run's event is \"issue_comment\". " +
+		"docs/existing-workflow.md says how to report from the workflow you have\n"
+	if stderr != want {
+		t.Errorf("stderr:\n%s", stderr)
+	}
+	for _, path := range []string{outputs, summary} {
+		if data, err := os.ReadFile(path); err == nil && len(data) != 0 {
+			t.Errorf("%s holds %q", path, data)
+		}
+	}
+}
+
+func TestReportPostsOnThePullRequestEventAlone(t *testing.T) {
+	for _, event := range []string{"push", "schedule", "workflow_dispatch", "pull_request_target", "workflow_run", ""} {
+		t.Run(event, func(t *testing.T) {
+			stub := reportEnvironment(t, pullRequestEvent())
+			t.Setenv("GITHUB_EVENT_NAME", event)
+			code, _, stderr := execute(t, "report", "--rows", realRows)
+			if code != 0 || len(stub.Requests) != 0 || strings.Count(stderr, "\n") != 1 || !strings.Contains(stderr, "costroid: not posted: report posts on the pull_request event") {
+				t.Errorf("exit %d, requests %v: %s", code, stub.Requests, stderr)
+			}
+			if event == "workflow_run" && !strings.Contains(stderr, "costroid follow-up") {
+				t.Errorf("a workflow_run job is not sent to the follow-up: %s", stderr)
+			}
+		})
 	}
 }
 

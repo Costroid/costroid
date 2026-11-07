@@ -79,7 +79,7 @@ func TestStickyCommentIsFoundPastTheFirstPage(t *testing.T) {
 	for range 250 {
 		stub.Comments = append(stub.Comments, scmtest.Comment{ID: int64(len(stub.Comments) + 1), Body: "chatter"})
 	}
-	stub.Comments = append(stub.Comments, scmtest.Comment{ID: 900, Body: marker + " old", Bot: true})
+	stub.Comments = append(stub.Comments, scmtest.Comment{ID: 900, Body: marker + " old", Login: "github-actions[bot]"})
 	if err := adapter(t, stub).UpsertComment(context.Background(), 7, marker, marker+" new"); err != nil {
 		t.Fatal(err)
 	}
@@ -90,12 +90,150 @@ func TestStickyCommentIsFoundPastTheFirstPage(t *testing.T) {
 
 func TestAPersonsCommentHoldingTheMarkerIsLeftAlone(t *testing.T) {
 	stub := scmtest.New(t)
-	stub.Comments = []scmtest.Comment{{ID: 1, Body: marker + " planted by a person"}}
+	stub.Comments = []scmtest.Comment{{ID: 1, Body: marker + " planted by a person", Login: "octocat"}}
 	if err := adapter(t, stub).UpsertComment(context.Background(), 7, marker, marker+" new"); err != nil {
 		t.Fatal(err)
 	}
 	if stub.Comments[0].Body != marker+" planted by a person" || len(stub.Comments) != 2 {
 		t.Errorf("comments = %+v", stub.Comments)
+	}
+}
+
+// TestStickyCommentMatchesOwnLogin plants the marker in comments by a person
+// and by another App. Only the comment the token's own account wrote is
+// edited: GitHub Actions' account by default, and the App's account once a
+// check run's answer names that App.
+func TestStickyCommentMatchesOwnLogin(t *testing.T) {
+	planted := []scmtest.Comment{
+		{ID: 1, Body: marker + " planted by a person", Login: "octocat"},
+		{ID: 2, Body: marker + " planted by another App", Login: "other-app[bot]"},
+		{ID: 3, Body: marker + " by the Actions token", Login: "github-actions[bot]"},
+		{ID: 4, Body: marker + " by the App's token", Login: "costroid-app[bot]"},
+	}
+	cases := []struct {
+		name, app string
+		postCheck bool
+		edited    int64
+	}{
+		{"the Actions token", "github-actions", false, 3},
+		{"the Actions token after a check", "github-actions", true, 3},
+		{"an App's token after a check", "costroid-app", true, 4},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stub := scmtest.New(t)
+			stub.App = c.app
+			stub.Comments = append([]scmtest.Comment(nil), planted...)
+			host := adapter(t, stub)
+			if c.postCheck {
+				if _, err := host.PostCheck(context.Background(), scm.CheckRun{Name: "costroid", HeadSHA: sampleSHA, Conclusion: "neutral", Completed: time.Unix(0, 0)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := host.UpsertComment(context.Background(), 7, marker, marker+" new"); err != nil {
+				t.Fatal(err)
+			}
+			if len(stub.Comments) != len(planted) {
+				t.Fatalf("a comment was added: %+v", stub.Comments)
+			}
+			for index, comment := range stub.Comments {
+				want := planted[index].Body
+				if comment.ID == c.edited {
+					want = marker + " new"
+				}
+				if comment.Body != want {
+					t.Errorf("comment %d by %s reads %q", comment.ID, comment.Login, comment.Body)
+				}
+			}
+		})
+	}
+}
+
+func TestStickyCommentIgnoresAnAppSlugThatIsNotOne(t *testing.T) {
+	stub := scmtest.New(t)
+	stub.App = "Bad Slug"
+	stub.Comments = []scmtest.Comment{{ID: 1, Body: marker + " old", Login: "github-actions[bot]"}}
+	host := adapter(t, stub)
+	if _, err := host.PostCheck(context.Background(), scm.CheckRun{Name: "costroid", HeadSHA: sampleSHA, Conclusion: "neutral", Completed: time.Unix(0, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.UpsertComment(context.Background(), 7, marker, marker+" new"); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.Comments) != 1 || stub.Comments[0].Body != marker+" new" {
+		t.Errorf("comments = %+v", stub.Comments)
+	}
+}
+
+func TestPullsForCommit(t *testing.T) {
+	stub := scmtest.New(t)
+	stub.CommitPulls[sampleSHA] = []scmtest.Pull{
+		{Number: 7, State: "open", HeadSHA: sampleSHA, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"},
+		{Number: 3, State: "closed", HeadSHA: movedSHA, HeadRepository: "example/widgets", BaseRepository: "example/widgets"},
+		{Number: 2, State: "open", HeadSHA: sampleSHA, BaseRepository: "example/widgets"},
+	}
+	host := adapter(t, stub)
+	pulls, err := host.PullsForCommit(context.Background(), sampleSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []scm.CommitPull{
+		{Number: 7, Open: true, HeadSHA: sampleSHA, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"},
+		{Number: 3, Open: false, HeadSHA: movedSHA, HeadRepository: "example/widgets", BaseRepository: "example/widgets"},
+		{Number: 2, Open: true, HeadSHA: sampleSHA, HeadRepository: "", BaseRepository: "example/widgets"},
+	}
+	if fmt.Sprint(pulls) != fmt.Sprint(want) {
+		t.Errorf("pulls = %+v", pulls)
+	}
+	if want := "GET /repos/example/widgets/commits/" + sampleSHA + "/pulls?page=1&per_page=100"; stub.Requests[0] != want {
+		t.Errorf("request = %s", stub.Requests[0])
+	}
+	if pulls, err := host.PullsForCommit(context.Background(), movedSHA); err != nil || len(pulls) != 0 {
+		t.Errorf("a commit with no pull request: %v, %v", pulls, err)
+	}
+	if _, err := host.PullsForCommit(context.Background(), "main"); err == nil {
+		t.Error("a ref that is not a SHA was asked about")
+	}
+	stub.Fail["GET /pulls"] = http.StatusForbidden
+	if _, err := host.PullsForCommit(context.Background(), sampleSHA); !errors.As(err, new(*scm.StatusError)) {
+		t.Errorf("a refused list: %v", err)
+	}
+}
+
+func TestPullsForCommitPagesAndStopsAtAThousand(t *testing.T) {
+	for count, fails := range map[int]bool{100: false, 250: false, 999: false, 1000: true} {
+		stub := scmtest.New(t)
+		for number := range count {
+			stub.CommitPulls[sampleSHA] = append(stub.CommitPulls[sampleSHA], scmtest.Pull{Number: number + 1, State: "open", HeadSHA: sampleSHA})
+		}
+		pulls, err := adapter(t, stub).PullsForCommit(context.Background(), sampleSHA)
+		if fails {
+			if err == nil || !strings.Contains(err.Error(), "more than 1000") {
+				t.Errorf("%d pull requests: err = %v", count, err)
+			}
+			continue
+		}
+		if err != nil || len(pulls) != count || pulls[count-1].Number != count {
+			t.Errorf("%d pull requests: %d read, %v", count, len(pulls), err)
+		}
+	}
+}
+
+func TestBranchesAtNamesEveryBranchWhoseHeadIsTheCommit(t *testing.T) {
+	stub := scmtest.New(t)
+	stub.Branches["main"] = sampleSHA
+	stub.Branches["release"] = sampleSHA
+	stub.Branches["other"] = movedSHA
+	host := adapter(t, stub)
+	branches, err := host.BranchesAt(context.Background(), sampleSHA)
+	if err != nil || strings.Join(branches, ",") != "main,release" {
+		t.Errorf("branches %v, %v", branches, err)
+	}
+	if !strings.HasSuffix(stub.Requests[0], "/commits/"+sampleSHA+"/branches-where-head") {
+		t.Errorf("request = %s", stub.Requests[0])
+	}
+	if _, err := host.BranchesAt(context.Background(), "main"); err == nil {
+		t.Error("a ref that is not a SHA was asked about")
 	}
 }
 

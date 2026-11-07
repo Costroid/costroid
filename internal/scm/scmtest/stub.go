@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -17,11 +18,22 @@ import (
 	"time"
 )
 
-// Comment is a stored issue comment.
+// Comment is a stored issue comment. Login is its author's account, and an
+// App's account ends in [bot].
 type Comment struct {
-	ID   int64
-	Body string
-	Bot  bool
+	ID    int64
+	Body  string
+	Login string
+}
+
+// Pull is one pull request a commit belongs to. A HeadRepository left empty
+// answers as a fork GitHub no longer has.
+type Pull struct {
+	Number         int
+	State          string
+	HeadSHA        string
+	HeadRepository string
+	BaseRepository string
 }
 
 // Check is a stored check run.
@@ -51,6 +63,11 @@ type Stub struct {
 	FilesAt map[string]map[string]string
 	// Branches maps a branch to the commit at its head.
 	Branches map[string]string
+	// CommitPulls maps a commit to the pull requests GitHub lists for it.
+	CommitPulls map[string][]Pull
+	// App is the slug of the App the token belongs to. A check run's answer
+	// names it, and the stub posts comments as its account.
+	App string
 	// Commits maps a path to the dates of the commits that touched it,
 	// newest first, as the commits API lists them.
 	Commits    map[string][]time.Time
@@ -67,7 +84,8 @@ func New(t *testing.T) *Stub {
 	t.Helper()
 	stub := &Stub{
 		Token: "stub-token", Fail: map[string]int{}, Files: map[string]string{}, FilesAt: map[string]map[string]string{},
-		Branches: map[string]string{}, Commits: map[string][]time.Time{}, nextID: 1000,
+		Branches: map[string]string{}, CommitPulls: map[string][]Pull{}, Commits: map[string][]time.Time{},
+		App: "github-actions", nextID: 1000,
 	}
 	stub.Server = httptest.NewServer(stub)
 	t.Cleanup(stub.Server.Close)
@@ -123,6 +141,10 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.URL.Path
 	switch {
+	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/pulls"):
+		s.listCommitPulls(w, r, path)
+	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/branches-where-head"):
+		s.listBranchesAt(w, path)
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/check-runs"):
 		s.postCheck(w, body)
 	case r.Method == http.MethodPatch && strings.Contains(path, "/check-runs/"):
@@ -173,7 +195,54 @@ func (s *Stub) postCheck(w http.ResponseWriter, body []byte) {
 	check := Check{s.next(), request.Name, request.HeadSHA, request.Conclusion, request.Output.Summary, request.Output.Text}
 	s.Checks = append(s.Checks, check)
 	w.WriteHeader(http.StatusCreated)
-	s.answer(w, map[string]int64{"id": check.ID})
+	s.answer(w, map[string]any{"id": check.ID, "app": map[string]string{"slug": s.App}})
+}
+
+// commitOf reads the commit out of /repos/o/r/commits/{sha}/....
+func commitOf(path string) string {
+	rest := path[strings.Index(path, "/commits/")+len("/commits/"):]
+	sha, _, _ := strings.Cut(rest, "/")
+	return sha
+}
+
+// listCommitPulls answers as GitHub's list of a commit's pull requests does.
+func (s *Stub) listCommitPulls(w http.ResponseWriter, r *http.Request, path string) {
+	size, err := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	pulls := s.CommitPulls[commitOf(path)]
+	listed := []map[string]any{}
+	for index := (page - 1) * size; index >= 0 && index < len(pulls) && index < page*size; index++ {
+		pull := pulls[index]
+		head := map[string]any{"sha": pull.HeadSHA, "repo": nil}
+		if pull.HeadRepository != "" {
+			head["repo"] = map[string]string{"full_name": pull.HeadRepository}
+		}
+		listed = append(listed, map[string]any{
+			"number": pull.Number, "state": pull.State, "head": head,
+			"base": map[string]any{"repo": map[string]string{"full_name": pull.BaseRepository}},
+		})
+	}
+	s.answer(w, listed)
+}
+
+// listBranchesAt answers with every branch whose head is the commit.
+func (s *Stub) listBranchesAt(w http.ResponseWriter, path string) {
+	sha := commitOf(path)
+	listed := []map[string]any{}
+	for _, branch := range slices.Sorted(maps.Keys(s.Branches)) {
+		if s.Branches[branch] == sha {
+			listed = append(listed, map[string]any{"name": branch, "commit": map[string]string{"sha": sha}})
+		}
+	}
+	s.answer(w, listed)
 }
 
 // patchCheck replaces a stored check's output, as GitHub does. The posted
@@ -215,7 +284,7 @@ func commentBody(body []byte) string {
 }
 
 func (s *Stub) postComment(w http.ResponseWriter, body []byte) {
-	s.Comments = append(s.Comments, Comment{ID: s.next(), Body: commentBody(body), Bot: true})
+	s.Comments = append(s.Comments, Comment{ID: s.next(), Body: commentBody(body), Login: s.App + "[bot]"})
 	w.WriteHeader(http.StatusCreated)
 	s.answer(w, map[string]string{})
 }
@@ -248,7 +317,8 @@ func (s *Stub) listComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type account struct {
-		Type string `json:"type"`
+		Login string `json:"login"`
+		Type  string `json:"type"`
 	}
 	type comment struct {
 		ID   int64   `json:"id"`
@@ -260,10 +330,10 @@ func (s *Stub) listComments(w http.ResponseWriter, r *http.Request) {
 	for index := start; index >= 0 && index < len(s.Comments) && index < start+size; index++ {
 		stored := s.Comments[index]
 		kind := "User"
-		if stored.Bot {
+		if strings.HasSuffix(stored.Login, "[bot]") {
 			kind = "Bot"
 		}
-		listed = append(listed, comment{stored.ID, stored.Body, account{kind}})
+		listed = append(listed, comment{stored.ID, stored.Body, account{stored.Login, kind}})
 	}
 	s.answer(w, listed)
 }

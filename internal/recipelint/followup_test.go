@@ -90,3 +90,44 @@ func parseOne(t *testing.T, source string) *yaml.Node {
 	}
 	return field(documents[0], "on")
 }
+
+func TestForkFollowUpHoldsItsTokenToWhatItNeeds(t *testing.T) {
+	const listPulls = "      pull-requests: read\n"
+	edits := map[string]edit{
+		"no pull-requests: read": {from: listPulls, to: ""},
+		"pull-requests: none":    {from: listPulls, to: "      pull-requests: none\n"},
+		"pull-requests: write":   {from: listPulls, to: "      pull-requests: write\n"},
+		"contents: write":        {from: "      contents: read\n", to: "      contents: write\n"},
+		"actions: write":         {from: "      actions: read\n", to: "      actions: write\n"},
+		"an id token":            {from: listPulls, to: listPulls + "      id-token: write\n"},
+		"issues: write":          {from: listPulls, to: listPulls + "      issues: write\n"},
+		"write-all on the job":   {from: "    permissions:\n      # Downloads", to: "    permissions: write-all\n    env:\n      # Downloads"},
+	}
+	for name, change := range edits {
+		t.Run(name, func(t *testing.T) {
+			change.rule = RuleFollowUpPermissions
+			expectRule(t, read(t, filepath.Join(recipesDir, followUpRecipe)), change)
+		})
+	}
+}
+
+func TestForkFollowUpPermissionsLeaveOtherWorkflowsAlone(t *testing.T) {
+	for _, finding := range LintBytes("x.yml", []byte(goodWorkflow)).Findings {
+		if finding.Rule == RuleFollowUpPermissions {
+			t.Errorf("%v", finding)
+		}
+	}
+	// read-all reads the pull requests, and writes nothing.
+	source := read(t, filepath.Join(recipesDir, followUpRecipe))
+	start := strings.Index(source, "    permissions:\n      # Downloads")
+	end := strings.Index(source, "    steps:\n")
+	if start < 0 || end < start {
+		t.Fatal("the recipe's job permissions moved")
+	}
+	readAll := source[:start] + "    permissions: read-all\n" + source[end:]
+	for _, finding := range LintBytes("x.yml", []byte(readAll)).Findings {
+		if finding.Rule == RuleFollowUpPermissions {
+			t.Errorf("read-all: %v", finding)
+		}
+	}
+}

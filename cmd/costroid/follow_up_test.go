@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,8 @@ const (
 )
 
 // followUpEnvironment is a workflow_run job in example/widgets, after the
-// agent's workflow finished on a pull request from headRepository.
+// agent's workflow finished on pull request 7 from headRepository, which GitHub
+// lists as the head commit's one pull request.
 func followUpEnvironment(t *testing.T, headRepository string) *scmtest.Stub {
 	t.Helper()
 	event, err := json.Marshal(map[string]any{"workflow_run": map[string]any{
@@ -35,6 +37,7 @@ func followUpEnvironment(t *testing.T, headRepository string) *scmtest.Stub {
 		t.Fatal(err)
 	}
 	stub := reportEnvironment(t, string(event))
+	stub.CommitPulls[headCommit] = []scmtest.Pull{{Number: 7, State: "open", HeadSHA: headCommit, HeadRepository: headRepository, BaseRepository: "example/widgets"}}
 	t.Setenv("GITHUB_EVENT_NAME", "workflow_run")
 	t.Setenv("GITHUB_SHA", defaultBranchCommit)
 	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
@@ -70,9 +73,149 @@ func TestForkFollowUpPostsOneNeutralCheckWithTheReason(t *testing.T) {
 		t.Errorf("the settings came from %s, not the default branch's commit", verdict.ConfigRef)
 	}
 	for _, request := range stub.Requests {
-		if strings.Contains(request, headCommit) {
+		if strings.Contains(request, headCommit) && !bindsTheHead(request) {
 			t.Errorf("the follow-up read the head: %s", request)
 		}
+	}
+}
+
+// bindsTheHead reports one of the two reads that bind the head commit to the
+// fork's pull request. They name the commit and read nothing at it.
+func bindsTheHead(request string) bool {
+	prefix := "GET /repos/example/widgets/commits/" + headCommit + "/"
+	return strings.HasPrefix(request, prefix+"pulls?") || request == prefix+"branches-where-head"
+}
+
+// TestForkFollowUpRefusesASharedCommit gives a fork's run a head commit that
+// someone else's change also holds, with rows over an enforced budget. A
+// check on that commit would fail their change, so nothing is posted.
+func TestForkFollowUpRefusesASharedCommit(t *testing.T) {
+	fork := scmtest.Pull{Number: 7, State: "open", HeadSHA: headCommit, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"}
+	cases := map[string]struct {
+		pulls    []scmtest.Pull
+		branches map[string]string
+		fail     string
+		says     string
+	}{
+		"the head of a pull request from a branch here": {
+			pulls: []scmtest.Pull{fork, {Number: 5, State: "open", HeadSHA: headCommit, HeadRepository: "example/widgets", BaseRepository: "example/widgets"}},
+			says:  "pull request 5, which comes from another repository",
+		},
+		"the head of a closed pull request from a branch here": {
+			pulls: []scmtest.Pull{{Number: 5, State: "closed", HeadSHA: headCommit, HeadRepository: "example/widgets", BaseRepository: "example/widgets"}, fork},
+			says:  "pull request 5, which comes from another repository",
+		},
+		"the head of another fork's pull request": {
+			pulls: []scmtest.Pull{fork, {Number: 9, State: "open", HeadSHA: headCommit, HeadRepository: "someone/widgets", BaseRepository: "example/widgets"}},
+			says:  "pull request 9, which comes from another repository",
+		},
+		"the head of a pull request from a fork that is gone": {
+			pulls: []scmtest.Pull{fork, {Number: 4, State: "closed", HeadSHA: headCommit, BaseRepository: "example/widgets"}},
+			says:  "pull request 4, which comes from another repository",
+		},
+		"the head of the default branch": {
+			pulls:    []scmtest.Pull{fork},
+			branches: map[string]string{"main": headCommit},
+			says:     "the head of a branch of this repository",
+		},
+		"the head of a branch with no pull request": {
+			pulls:    []scmtest.Pull{fork},
+			branches: map[string]string{"release": headCommit, "main": defaultBranchCommit},
+			says:     "the head of a branch of this repository",
+		},
+		"in no pull request": {
+			says: "no open pull request from stranger/widgets has the head commit as its head",
+		},
+		"in a closed pull request alone": {
+			pulls: []scmtest.Pull{{Number: 7, State: "closed", HeadSHA: headCommit, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"}},
+			says:  "no open pull request from stranger/widgets",
+		},
+		"in the history of a pull request": {
+			pulls: []scmtest.Pull{{Number: 7, State: "open", HeadSHA: defaultBranchCommit, HeadRepository: "stranger/widgets", BaseRepository: "example/widgets"}},
+			says:  "no open pull request from stranger/widgets",
+		},
+		"a list GitHub refuses": {
+			pulls: []scmtest.Pull{fork},
+			fail:  "GET /pulls",
+			says:  "the head commit's pull requests could not be read",
+		},
+		"branches GitHub refuses": {
+			pulls: []scmtest.Pull{fork},
+			fail:  "GET /branches-where-head",
+			says:  "the branches at the head commit could not be read",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			stub := followUpEnvironment(t, "stranger/widgets")
+			stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+			stub.Files[configFile] = overBudget + "  enforce: true\n"
+			stub.CommitPulls[headCommit] = c.pulls
+			for branch, head := range c.branches {
+				stub.Branches[branch] = head
+			}
+			if c.fail != "" {
+				stub.Fail[c.fail] = http.StatusForbidden
+			}
+			outputs, _ := stepFiles(t)
+			code, _, stderr := execute(t, "follow-up", "--rows", realRows)
+			if code != 0 || len(stub.Writes()) != 0 || len(stub.Checks) != 0 {
+				t.Fatalf("exit %d, writes %v: %s", code, stub.Writes(), stderr)
+			}
+			if !strings.Contains(stderr, "costroid: not posted: ") || !strings.Contains(stderr, c.says) {
+				t.Errorf("stderr: %s", stderr)
+			}
+			if data, err := os.ReadFile(outputs); err != nil || len(data) != 0 {
+				t.Errorf("outputs %q, %v", data, err)
+			}
+		})
+	}
+}
+
+// TestForkFollowUpCapsAtNeutral gives a fork's pull request rows over an
+// enforced budget after the warn-only period. The rules fail, and the check
+// concludes neutral and says why.
+func TestForkFollowUpCapsAtNeutral(t *testing.T) {
+	stub := followUpEnvironment(t, "stranger/widgets")
+	stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+	stub.Files[configFile] = overBudget + "  enforce: true\n"
+	outputs, _ := stepFiles(t)
+	code, _, stderr := execute(t, "follow-up", "--rows", realRows)
+	if code != 0 || len(stub.Checks) != 1 {
+		t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+	}
+	check := stub.Checks[0]
+	if check.Conclusion != "neutral" || check.HeadSHA != headCommit {
+		t.Errorf("check = %+v", check)
+	}
+	if !strings.HasSuffix(check.Summary, "\n\n"+forkCapSentence) {
+		t.Errorf("the summary does not say why:\n%s", check.Summary)
+	}
+	block := checkBlock(t, check.Text)
+	validateResult(t, block)
+	verdict := checkVerdict(t, check.Text)
+	if verdict.Conclusion != "neutral" || len(verdict.Results) == 0 || verdict.Results[0].Outcome != "fail" || verdict.Results[0].Reason != "over_limit" {
+		t.Errorf("verdict = %+v", verdict)
+	}
+	if !strings.Contains(stderr, "costroid: check run 1001, conclusion neutral\n") {
+		t.Errorf("stderr: %s", stderr)
+	}
+	if got := readOutputs(t, outputs)["conclusion"]; got != "neutral" {
+		t.Errorf("the conclusion output reads %q", got)
+	}
+}
+
+// TestForkFollowUpLeavesANeutralVerdictAsItIs holds the cap's sentence to the
+// checks the cap moved.
+func TestForkFollowUpLeavesANeutralVerdictAsItIs(t *testing.T) {
+	stub := followUpEnvironment(t, "stranger/widgets")
+	stub.Files[configFile] = underBudget
+	code, _, stderr := execute(t, "follow-up", "--rows", realRows)
+	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].Conclusion != "neutral" {
+		t.Fatalf("exit %d, %+v: %s", code, stub.Checks, stderr)
+	}
+	if strings.Contains(stub.Checks[0].Summary, forkCapSentence) {
+		t.Errorf("an uncapped check names the cap:\n%s", stub.Checks[0].Summary)
 	}
 }
 

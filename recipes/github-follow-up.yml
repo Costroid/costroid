@@ -25,8 +25,12 @@ jobs:
       # Downloads the rows the finished run kept.
       actions: read
       checks: write
-      # Reads costroid.yml at the default branch's commit.
+      # Reads costroid.yml at the default branch's commit, and the branches
+      # whose head is the fork's head commit.
       contents: read
+      # Lists the head commit's pull requests. The check is posted only when
+      # one open pull request from the fork has that commit as its head.
+      pull-requests: read
     steps:
       # The fork's workflow wrote these files. costroid reads one of them as
       # data, and no step runs anything from them.

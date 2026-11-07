@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,10 +31,20 @@ const (
 	commitsPerPage  = 100
 	// maxCommitPages bounds the walk for a file's first commit at 1,000.
 	maxCommitPages = 10
-	botAccount     = "Bot"
+	pullsPerPage   = 100
+	// maxPullPages bounds the list of a commit's pull requests at 1,000.
+	maxPullPages = 10
+	// actionsLogin is the account GitHub Actions' own token posts as.
+	actionsLogin = "github-actions[bot]"
+	// botSuffix ends the login of a GitHub App's account. A person's login
+	// cannot hold a bracket.
+	botSuffix = "[bot]"
 )
 
-var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
+var (
+	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
+	appSlugPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,99}$`)
+)
 
 // TokenSource supplies the bearer token of each request.
 type TokenSource interface {
@@ -72,6 +83,11 @@ type GitHub struct {
 	limits       *Limiter
 	installation int64
 	client       *http.Client
+
+	mu sync.Mutex
+	// login is the account the token posts as: GitHub Actions' until a check
+	// run's answer names another App.
+	login string
 }
 
 // NewGitHub returns the adapter. The token never travels over plain HTTP,
@@ -97,6 +113,7 @@ func NewGitHub(options GitHubOptions) (*GitHub, error) {
 		limits:       options.Limits,
 		installation: options.Installation,
 		client:       bounded(options.Client),
+		login:        actionsLogin,
 	}, nil
 }
 
@@ -218,7 +235,9 @@ type checkOutput struct {
 	Text    string `json:"text"`
 }
 
-// PostCheck creates the check run and returns its id.
+// PostCheck creates the check run and returns its id. Only a GitHub App can
+// create one, and the answer names that App, so the adapter takes the App's
+// account as the token's own from then on.
 func (g *GitHub) PostCheck(ctx context.Context, check CheckRun) (int64, error) {
 	request := struct {
 		Name        string      `json:"name"`
@@ -236,10 +255,18 @@ func (g *GitHub) PostCheck(ctx context.Context, check CheckRun) (int64, error) {
 		Output:      checkOutput{Title: check.Title, Summary: check.Summary, Text: check.Text},
 	}
 	var created struct {
-		ID int64 `json:"id"`
+		ID  int64 `json:"id"`
+		App *struct {
+			Slug string `json:"slug"`
+		} `json:"app"`
 	}
 	if err := g.do(ctx, http.MethodPost, g.repo("/check-runs"), request, &created); err != nil {
 		return 0, err
+	}
+	if created.App != nil && appSlugPattern.MatchString(created.App.Slug) {
+		g.mu.Lock()
+		g.login = created.App.Slug + botSuffix
+		g.mu.Unlock()
 	}
 	return created.ID, nil
 }
@@ -257,13 +284,13 @@ type issueComment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
 	User struct {
-		Type string `json:"type"`
+		Login string `json:"login"`
 	} `json:"user"`
 }
 
-// UpsertComment edits the sticky comment in place. Only a comment a bot
-// account wrote qualifies, so a person who pastes the marker into their own
-// comment cannot have it rewritten.
+// UpsertComment edits the sticky comment in place. Only a comment the token's
+// own account wrote qualifies, so neither a person nor another App that
+// writes the marker into its own comment can have it rewritten.
 func (g *GitHub) UpsertComment(ctx context.Context, pullRequest int, marker, body string) error {
 	id, err := g.findComment(ctx, pullRequest, marker)
 	if err != nil {
@@ -279,7 +306,15 @@ func (g *GitHub) UpsertComment(ctx context.Context, pullRequest int, marker, bod
 	return g.do(ctx, http.MethodPatch, g.repo(fmt.Sprintf("/issues/comments/%d", id)), content, nil)
 }
 
+// ownLogin is the account the token posts as.
+func (g *GitHub) ownLogin() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.login
+}
+
 func (g *GitHub) findComment(ctx context.Context, pullRequest int, marker string) (int64, error) {
+	login := g.ownLogin()
 	for page := 1; page <= maxCommentPages; page++ {
 		var comments []issueComment
 		path := g.repo(fmt.Sprintf("/issues/%d/comments?per_page=%d&page=%d", pullRequest, commentsPerPage, page))
@@ -287,7 +322,7 @@ func (g *GitHub) findComment(ctx context.Context, pullRequest int, marker string
 			return 0, err
 		}
 		for _, comment := range comments {
-			if comment.User.Type == botAccount && strings.HasPrefix(comment.Body, marker) {
+			if strings.EqualFold(comment.User.Login, login) && strings.HasPrefix(comment.Body, marker) {
 				return comment.ID, nil
 			}
 		}
@@ -354,6 +389,67 @@ func (g *GitHub) BranchHead(ctx context.Context, branch string) (string, error) 
 		return "", fmt.Errorf("scm: the answer for branch %s names no commit at its head", branch)
 	}
 	return ref.Object.SHA, nil
+}
+
+// PullsForCommit lists the pull requests GitHub associates with a commit, open
+// and closed.
+func (g *GitHub) PullsForCommit(ctx context.Context, sha string) ([]CommitPull, error) {
+	if !shaPattern.MatchString(sha) {
+		return nil, errors.New("scm: the commit is not a full SHA")
+	}
+	type repository struct {
+		FullName string `json:"full_name"`
+	}
+	var pulls []CommitPull
+	for page := 1; page <= maxPullPages; page++ {
+		var answer []struct {
+			Number int    `json:"number"`
+			State  string `json:"state"`
+			Head   struct {
+				SHA  string      `json:"sha"`
+				Repo *repository `json:"repo"`
+			} `json:"head"`
+			Base struct {
+				Repo *repository `json:"repo"`
+			} `json:"base"`
+		}
+		query := url.Values{"per_page": {strconv.Itoa(pullsPerPage)}, "page": {strconv.Itoa(page)}}
+		if err := g.do(ctx, http.MethodGet, g.repo("/commits/"+sha+"/pulls?"+query.Encode()), nil, &answer); err != nil {
+			return nil, err
+		}
+		for _, pull := range answer {
+			listed := CommitPull{Number: pull.Number, Open: pull.State == "open", HeadSHA: pull.Head.SHA}
+			if pull.Head.Repo != nil {
+				listed.HeadRepository = pull.Head.Repo.FullName
+			}
+			if pull.Base.Repo != nil {
+				listed.BaseRepository = pull.Base.Repo.FullName
+			}
+			pulls = append(pulls, listed)
+		}
+		if len(answer) < pullsPerPage {
+			return pulls, nil
+		}
+	}
+	return nil, fmt.Errorf("scm: more than %d pull requests hold the commit", maxPullPages*pullsPerPage)
+}
+
+// BranchesAt lists this repository's branches whose head is the commit.
+func (g *GitHub) BranchesAt(ctx context.Context, sha string) ([]string, error) {
+	if !shaPattern.MatchString(sha) {
+		return nil, errors.New("scm: the commit is not a full SHA")
+	}
+	var answer []struct {
+		Name string `json:"name"`
+	}
+	if err := g.do(ctx, http.MethodGet, g.repo("/commits/"+sha+"/branches-where-head"), nil, &answer); err != nil {
+		return nil, err
+	}
+	branches := make([]string, 0, len(answer))
+	for _, branch := range answer {
+		branches = append(branches, branch.Name)
+	}
+	return branches, nil
 }
 
 // ReadFile reads one file through the contents API.

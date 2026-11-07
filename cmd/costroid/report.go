@@ -42,6 +42,24 @@ var headPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 // errNoCISystem is why a report outside a supported CI system refuses to run.
 var errNoCISystem = errors.New("report refused: neither GitHub Actions nor GitLab CI was detected")
 
+// reportEvent is the one GitHub event report posts on. On any other event the
+// event file names no head, and GITHUB_SHA can be the default branch's last
+// commit, so a check would land on a commit the run did not review.
+const reportEvent = "pull_request"
+
+// eventRefusal says why report posts nothing on a GitHub event, empty on the
+// event it posts on.
+func eventRefusal(eventName string) string {
+	switch eventName {
+	case reportEvent:
+		return ""
+	case followUpTrigger:
+		return "not posted: report posts on the pull_request event, and a workflow_run job posts through costroid follow-up"
+	}
+	return fmt.Sprintf("not posted: report posts on the pull_request event, and this run's event is %q. "+
+		"docs/existing-workflow.md says how to report from the workflow you have", eventName)
+}
+
 type reportFlags struct {
 	rows         string
 	budget       *decimal.Decimal
@@ -251,6 +269,12 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if system == cicontext.NoSystem {
 		fmt.Fprintf(stderr, "costroid: %v\n", errNoCISystem)
 		return exitFailure
+	}
+	if system == cicontext.GitHubActions {
+		if refusal := eventRefusal(os.Getenv("GITHUB_EVENT_NAME")); refusal != "" {
+			fmt.Fprintf(stderr, "costroid: %s\n", refusal)
+			return 0
+		}
 	}
 	rows, err := readReportRows(flags.rows)
 	if err != nil {
