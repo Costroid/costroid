@@ -13,6 +13,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/adapter/codex"
+	"github.com/Costroid/costroid/internal/adapter/ghaw"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -50,6 +51,7 @@ type sourceKind struct {
 var sourceKinds = []sourceKind{
 	{name: "execution-file", alias: true, what: "the execution_file output of anthropics/claude-code-action", capped: true, open: openExecutionFile},
 	{name: "codex-home", alias: true, what: "the codex-home given to openai/codex-action", since: true, open: openCodexHome},
+	{name: "gh-aw", what: "the directory a gh-aw run's usage artifact was downloaded to", open: openGhAwUsage},
 }
 
 // givenSource is one source the command line names.
@@ -209,6 +211,38 @@ func (h codexHome) read() (adapter.Report, error) {
 
 func (codexHome) close() error { return nil }
 
+func openGhAwUsage(dir string, _ time.Time) (endedRun, error) {
+	info, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("gh-aw %s does not exist: the run uploaded no usage artifact, or its download failed", dir)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("gh-aw %s is not a directory: download the run's usage artifact into a directory of its own", dir)
+	}
+	return ghawUsage{dir: dir}, nil
+}
+
+// ghawUsage is the usage artifact of a gh-aw run, downloaded. The run wrote
+// it, so it is read as data and nothing in it is run.
+type ghawUsage struct {
+	dir string
+}
+
+func (ghawUsage) agent() string { return ghaw.Name }
+
+func (u ghawUsage) read() (adapter.Report, error) {
+	report, err := ghaw.ReadUsage(os.DirFS(u.dir))
+	if err != nil {
+		return adapter.Report{}, &run.ReaderError{Err: err}
+	}
+	return report, nil
+}
+
+func (ghawUsage) close() error { return nil }
+
 // openedExecution is the file claude-code-action wrote, open, when it was
 // saved, and the cap the workflow states for its run.
 type openedExecution struct {
@@ -295,6 +329,9 @@ func ingestRun(flags ingestRunFlags, stderr io.Writer) error {
 	recordRunResult(io.Discard, stderr, record)
 	summarizeRows(stderr, flags.out, pinned.Version(), result)
 	fmt.Fprintf(stderr, "costroid: %s\n", result.Enforcement.Note)
+	if stated := result.Report.AgentStated; stated != nil {
+		fmt.Fprintf(stderr, "costroid: %s stated %s AI credits for this run. Costroid does not convert credits.\n", stated.Source, stated.Quantity)
+	}
 	warnAccount(stderr, flags.account)
 	for _, warning := range result.Report.Warnings {
 		fmt.Fprintf(stderr, "costroid: warning: %s\n", warning)

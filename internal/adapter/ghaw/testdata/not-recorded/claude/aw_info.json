@@ -1,0 +1,1 @@
+{"engine_id":"claude","model_config":{"routing":{"enabled":false},"models":{"allowed":[],"blocked":[]},"max_ai_credits_source":"frontmatter","max_ai_credits":10}}

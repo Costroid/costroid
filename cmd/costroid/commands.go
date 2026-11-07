@@ -193,6 +193,7 @@ the run left at PATH. KIND is one of:
 
   execution-file  the execution_file output of anthropics/claude-code-action
   codex-home      the codex-home given to openai/codex-action
+  gh-aw           the directory a gh-aw run's usage artifact was downloaded to
 
 --since, with codex-home, is when the job started, in RFC 3339: a file last
 written before it belongs to an earlier job and is not read. --execution-file F
