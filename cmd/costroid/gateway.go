@@ -80,14 +80,10 @@ const (
 	requestArtifact        = "costroid-gateway-request-"
 	artifactWait           = 10 * time.Minute
 	artifactEvery          = 5 * time.Second
-	// mintWindow is the longest mint can take to register a key after it
-	// starts: the artifact's wait, then up to five calls to the gateway of
-	// 30 seconds each.
-	mintWindow        = artifactWait + 3*time.Minute
-	defaultParallel   = 1
-	gatewayKeyWait    = 10 * time.Minute
-	gatewayProbeEvery = 2 * time.Second
-	gatewayPoll       = 2 * time.Second
+	defaultParallel        = 1
+	gatewayKeyWait         = 10 * time.Minute
+	gatewayProbeEvery      = 2 * time.Second
+	gatewayPoll            = 2 * time.Second
 	// LiteLLM writes spend to its store every 10 seconds by default
 	// (PROXY_BATCH_WRITE_AT in litellm/constants.py at v1.108.1).
 	gatewaySpendSettle = 30 * time.Second
@@ -391,7 +387,7 @@ func eventAuthor(path string) string {
 func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	set := gatewayFlags("close", stderr)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
-	retry := set.Duration("retry-after", mintWindow, "how long to wait for a late mint when no key is found, before deleting once more")
+	retry := set.Duration("retry-after", 0, "when no key is found, how long to wait for a mint that may still be running before deleting once more; the recipe runs close after mint, so it needs none")
 	if err := set.Parse(args); err != nil {
 		return err
 	}

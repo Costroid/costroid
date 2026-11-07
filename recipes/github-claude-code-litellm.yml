@@ -135,7 +135,9 @@ jobs:
             --max-request-tokens 1128000 --max-parallel-requests 1
 
   gateway-close:
-    needs: agent
+    # After mint as well as the agent, so a key mint registers late is still
+    # deleted, with no wait.
+    needs: [agent, gateway-mint]
     # Deletes the key whatever became of the agent, also when it failed. When
     # it finds no key, it waits 13 minutes for a late mint and deletes once more.
     if: always() && needs.agent.result != 'skipped'

@@ -20,7 +20,7 @@ A job cannot hand a secret to another job through its outputs: GitHub refuses to
 | 2    | Agent             | `actions/upload-artifact` keeps the sealed request as an artifact of this run. It holds no secret: only the minting job can open it                                                                                                                                                       |
 | 3    | Mint, in parallel | `costroid gateway mint` waits for that artifact, opens it with the sealing key's private half, checks that it names this repository, run and attempt, and registers the key on the gateway with its budget, expiry and metadata. With a ledger named, it then attests the key's id for this run to the ledger |
 | 4    | Agent             | `costroid run --gateway` waits until the key authenticates, reads the key back from the gateway, and starts the agent with the gateway's URL and the key in the agent's environment alone                                                                                                 |
-| 5    | Close, always     | `costroid gateway close` deletes the key by its alias, which names the run and the attempt. When it finds no key, it waits 13 minutes for a late mint and deletes once more                                                                                                              |
+| 5    | Close, always     | `costroid gateway close` runs after mint and the agent's job, and deletes the key by its alias, which names the run and the attempt                                                                                                              |
 
 The sealing key pair is drawn at random, once, on your own machine:
 
@@ -40,7 +40,7 @@ The gateway's URL must be `https`. Every call sends the admin key or the run's k
 
 ## When mint is late
 
-The mint job does not wait for the agent's job, and the close job waits only for the agent's job. If close finds no key, mint may still be waiting for the request: it waits up to 10 minutes for the artifact, then makes up to five calls to the gateway of up to 30 seconds each. So close waits 13 minutes and deletes once more, and a key minted late is deleted too. A key minted after that, such as one whose minting job a reviewer approved after close ended, lives until its expiry, `--lifetime-minutes`. No runner holds it: the agent's job has ended, and only the sealing key opens its request.
+The mint job does not wait for the agent's job. The close job waits for both, so a key that mint registers late is still deleted, with no wait. A key minted after close, such as one whose minting job a reviewer approved after close ended, lives until its expiry, `--lifetime-minutes`. No runner holds it: the agent's job has ended, and only the sealing key opens its request. A workflow that runs close beside mint can pass `--retry-after` to wait for a late mint and delete once more.
 
 ## How the rows earn `exact`
 
