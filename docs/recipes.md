@@ -129,6 +129,8 @@ It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. Unt
 
 The agent's recipes run no agent on a fork's pull request, and the fork's token cannot post the check. [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml) posts it from your repository once the agent's workflow completes. Copy it to `.github/workflows/costroid-follow-up.yml` on the default branch. It needs no secret.
 
+A failing `costroid` check can be approved by a pull-request review. [`recipes/github-approval.yml`](../recipes/github-approval.yml) re-posts the check when a writer who is not the author approves the current head; [`docs/approval.md`](approval.md) says which reviews count and for how long.
+
 [`docs/required-check.md`](required-check.md#a-forks-pull-request) says what a fork's pull request gets, and [`docs/security.md`](security.md#a-forks-pull-request) why the follow-up never meets its code.
 
 ## What the job log shows

@@ -21,7 +21,7 @@ const (
 	recipesDir   = "../../recipes"
 	actionDir    = "../../action"
 	recipesDoc   = "../../docs/recipes.md"
-	shippedFiles = 8
+	shippedFiles = 9
 	testVersion  = "1.2.3"
 )
 
