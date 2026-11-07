@@ -1,4 +1,5 @@
 VERSION ?= dev
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
 .PHONY: check check-short bench-view bench-ingest fuzz fixture build image e2e e2e-bite
@@ -50,7 +51,7 @@ fixture:
 	go run ./scripts/record fixture --run "$(RUN)" --scenario "$(SCENARIO)" --repo "$(RECORD_REPO)"
 
 build:
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/costroid ./cmd/costroid
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/costroid ./cmd/costroid
 
 IMAGE ?= ghcr.io/costroid/costroid:$(VERSION)
 

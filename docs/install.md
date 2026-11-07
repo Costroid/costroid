@@ -1,4 +1,39 @@
-# Host the ledger
+# Install
+
+Install the binary as the [README](../README.md#install) shows. `costroid init` then writes the workflow for your repository. Hosting the ledger is optional.
+
+## Write the workflow
+
+From the root of your repository:
+
+```sh
+costroid init github --agent claude
+```
+
+`init` writes `.github/workflows/costroid.yml` from the recipe this release ships, with Costroid's action pinned to the commit of the release the binary belongs to. `--agent` takes `claude`, `codex`, `claude-code-action` or `codex-action`. [`docs/recipes.md`](recipes.md) describes each recipe.
+
+On GitLab, `init` writes `.gitlab/costroid.yml`, with `COSTROID_VERSION` and `COSTROID_COMMIT` set to that release and `COSTROID_AGENT` to the agent, `claude` or `codex`:
+
+```sh
+costroid init gitlab --agent codex
+```
+
+`init` also writes `costroid.yml` at the root when the repository has none. Every key of the schema is in it, commented out under its description, so the file sets nothing until you remove a `#`. [`docs/configuration.md`](configuration.md) describes the keys.
+
+It holds the recipe to the rules of `costroid lint-recipes` before it writes it, and it refuses to replace a file unless you pass `--force`. Then it prints what each push to a pull request can spend, and the commands that are left: the secret, the label, a branch and a pull request. It runs none of them.
+
+A binary built from a checkout with `make build` belongs to no release, so `init` refuses rather than pin a commit that was never released. On GitHub, `--action-ref` names the commit to pin instead.
+
+### A workflow that already runs claude-code-action
+
+```sh
+costroid init github --agent claude-code-action --existing .github/workflows/claude.yml > costroid.patch
+git apply costroid.patch
+```
+
+`--existing` writes nothing. It prints a patch that gives your Claude step an `id` if it has none, adds a `read` step after that step and adds a `report` job. [`docs/existing-workflow.md`](existing-workflow.md) shows the result and what each block holds.
+
+## Host the ledger
 
 The CLI needs no server: `costroid run` and `costroid report` work from a job alone. Host the ledger to keep every run's rows, read the per-PR view and hold budgets to verified rows.
 

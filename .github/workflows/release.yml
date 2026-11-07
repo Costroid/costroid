@@ -60,7 +60,7 @@ jobs:
         run: |
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath \
-              -ldflags "-s -w -X main.version=$VERSION" \
+              -ldflags "-s -w -X main.version=$VERSION -X main.commit=$GITHUB_SHA" \
               -o "dist/costroid-${target%/*}-${target#*/}" ./cmd/costroid
           done
       - name: Write the SBOM
