@@ -31,9 +31,9 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.5 in
+	// schema names the result object's contract, result/v0.6 in
 	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.5"
+	schema = "costroid.result/0.6"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -109,6 +109,7 @@ var basisLabels = map[string]string{
 var (
 	installationPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 	commitPattern       = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+	digestPattern       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	// runURLPattern holds no character that can end a Markdown link target.
 	runURLPattern = regexp.MustCompile(`^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+$`)
 )
@@ -165,6 +166,15 @@ type Input struct {
 	// CIRun is the CI run as the environment states it, nil when it states
 	// none. A run whose id or attempt is below 1 is dropped.
 	CIRun *BlockCIRun
+	// RowsSHA256 is the digest of the rows' x_CostroidRowId values, sorted,
+	// and RowsFileSHA256 the digest of the rows file's bytes, each as the
+	// report read them. Empty when not stated; a value that is not a digest
+	// is dropped.
+	RowsSHA256     string
+	RowsFileSHA256 string
+	// Lifetime is the pull request's total, nil off a pull request. It is
+	// withheld with the amounts.
+	Lifetime *Lifetime
 	// RunURL is the CI run's page as the environment names it, empty when it
 	// names none. A value outside runURLPattern is dropped.
 	RunURL string
@@ -207,7 +217,12 @@ type Block struct {
 	HeadSHA      string `json:"head_sha"`
 	// CIRun is the run the environment names, a claim, null when it names
 	// none.
-	CIRun          *BlockCIRun   `json:"ci_run"`
+	CIRun *BlockCIRun `json:"ci_run"`
+	// RowsSHA256 and RowsFileSHA256 name the rows and the rows file the
+	// figures were built from, null when not stated. RowsSHA256 is null
+	// without figures.
+	RowsSHA256     *string       `json:"rows_sha256"`
+	RowsFileSHA256 *string       `json:"rows_file_sha256"`
 	Amounts        string        `json:"amounts"`
 	Rows           int           `json:"rows"`
 	RunIdentity    string        `json:"run_identity"`
@@ -215,8 +230,30 @@ type Block struct {
 	FiguresOmitted int           `json:"figures_omitted"`
 	Cap            *BlockCap     `json:"cap"`
 	Data           BlockData     `json:"data"`
+	// Lifetime is the pull request's total as the comment states it, null
+	// off a pull request and when amounts are withheld.
+	Lifetime *BlockLifetime `json:"lifetime"`
 	// Policy is the verdict, without its amounts when amounts are withheld.
 	Policy *policy.Verdict `json:"policy,omitempty"`
+}
+
+// BlockLifetime is the pull request's total, one figure per currency and
+// basis, as the comment's lines state it.
+type BlockLifetime struct {
+	Figures        []BlockLifetimeFigure `json:"figures"`
+	FiguresOmitted int                   `json:"figures_omitted"`
+	Capped         bool                  `json:"capped"`
+	Unread         int                   `json:"unread"`
+}
+
+// BlockLifetimeFigure is one line of the pull request's total. MayRepeat
+// says the line reads "which may include a repeated report".
+type BlockLifetimeFigure struct {
+	Currency  string `json:"currency"`
+	CostBasis string `json:"cost_basis"`
+	ListCost  string `json:"list_cost"`
+	Reports   int    `json:"reports"`
+	MayRepeat bool   `json:"may_repeat"`
 }
 
 // BlockAgentError names an agent's error by its class from a closed list,
@@ -331,6 +368,8 @@ func (i Input) block() (string, error) {
 		AgentSkipped:   i.agentSkipped(),
 		HeadSHA:        i.headSHA(),
 		CIRun:          i.ciRun(),
+		RowsSHA256:     i.rowsDigest(),
+		RowsFileSHA256: digestOrNil(i.RowsFileSHA256),
 		Amounts:        "withheld",
 		Rows:           i.Ledger.Rows,
 		RunIdentity:    artifactIdentity,
@@ -366,6 +405,7 @@ func (i Input) block() (string, error) {
 	if shown {
 		block.Amounts = "shown"
 		block.Cap = i.capCheck().block()
+		block.Lifetime = i.Lifetime.block()
 	}
 	block.Policy = blockVerdict(i.Verdict, shown)
 	encoded, err := json.MarshalIndent(block, "", "  ")
@@ -435,6 +475,46 @@ func (i Input) ciRun() *BlockCIRun {
 	}
 	ciRun := *i.CIRun
 	return &ciRun
+}
+
+// rowsDigest is the rows' digest beside figures, and nil without them.
+func (i Input) rowsDigest() *string {
+	if i.State != Reported {
+		return nil
+	}
+	return digestOrNil(i.RowsSHA256)
+}
+
+func digestOrNil(digest string) *string {
+	if !digestPattern.MatchString(digest) {
+		return nil
+	}
+	return &digest
+}
+
+// block is the lifetime as the comment's lines state it, nil for no
+// lifetime.
+func (l *Lifetime) block() *BlockLifetime {
+	if l == nil {
+		return nil
+	}
+	shown := l.Figures[:min(len(l.Figures), maxLifetimeFigures)]
+	block := &BlockLifetime{
+		Figures:        make([]BlockLifetimeFigure, 0, len(shown)),
+		FiguresOmitted: len(l.Figures) - len(shown),
+		Capped:         l.Capped,
+		Unread:         l.Unread,
+	}
+	for _, figure := range shown {
+		block.Figures = append(block.Figures, BlockLifetimeFigure{
+			Currency:  figure.Currency,
+			CostBasis: figure.Basis,
+			ListCost:  figure.Cost.String(),
+			Reports:   figure.Reports,
+			MayRepeat: figure.Undigested && figure.Reports > 1,
+		})
+	}
+	return block
 }
 
 // readerLine is the reader's error line beside the reason reader_refused, and

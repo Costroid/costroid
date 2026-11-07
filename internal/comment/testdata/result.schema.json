@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.5/result.schema.json",
-  "title": "Costroid result object, version 0.5",
-  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.6/result.schema.json",
+  "title": "Costroid result object, version 0.6",
+  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.5"
+      "const": "costroid.result/0.6"
     },
     "check_run_id": {
       "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
@@ -75,6 +75,14 @@
         }
       ]
     },
+    "rows_sha256": {
+      "description": "The SHA-256 of the rows the figures were built from, as the report read them: each row's x_CostroidRowId, sorted, each followed by a line feed. Lower-case hex. Null when the rows file holds no rows, or a row names no x_CostroidRowId of 64 lower-case hex digits. Two objects with the same digest report the same rows.",
+      "$ref": "#/$defs/nullableDigest"
+    },
+    "rows_file_sha256": {
+      "description": "The SHA-256 of the rows file, byte for byte, as the report read it. Lower-case hex. Null when the report could not read the file to its end.",
+      "$ref": "#/$defs/nullableDigest"
+    },
     "head_sha": {
       "description": "The head commit, lower case. Empty when the environment named none.",
       "type": "string",
@@ -122,6 +130,17 @@
     },
     "policy": {
       "$ref": "#/$defs/policy"
+    },
+    "lifetime": {
+      "description": "The pull request's total at list, this run included, as the comment states it: one figure per currency and basis. Null off a pull request, when the earlier reports could not be read, and when amounts are withheld.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/lifetime"
+        }
+      ]
     }
   },
   "required": [
@@ -138,7 +157,10 @@
     "data",
     "agent_error",
     "agent_skipped",
-    "ci_run"
+    "ci_run",
+    "rows_sha256",
+    "rows_file_sha256",
+    "lifetime"
   ],
   "additionalProperties": false,
   "allOf": [
@@ -193,6 +215,24 @@
           "figures": {
             "type": "array",
             "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "not": {
+              "const": "reported"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rows_sha256": {
+            "type": "null"
           }
         }
       }
@@ -367,6 +407,9 @@
                 ]
               }
             }
+          },
+          "lifetime": {
+            "type": "null"
           }
         }
       }
@@ -443,12 +486,13 @@
       ]
     },
     "runReason": {
-      "description": "Why the run wrote no rows, as costroid run or costroid ingest-run stated it. Present only when the run stated one. The list is closed.",
+      "description": "Why the run wrote no rows, as costroid run or costroid ingest-run stated it, or artifact_refused, which the report states when it refuses the artifact that carried the rows. Present only when one was stated. The list is closed.",
       "enum": [
         "no_usage",
         "concurrent_run",
         "reader_refused",
-        "agent_error"
+        "agent_error",
+        "artifact_refused"
       ]
     },
     "agentError": {
@@ -715,7 +759,7 @@
       }
     },
     "policy": {
-      "description": "The policy's verdict, present when a policy ran. docs/policy.md states each field. The comment's copy drops limit_usd and cost_usd when it withholds amounts.",
+      "description": "The policy's verdict, present when a policy ran. docs/policy.md states each field. The comment's copy drops limit_usd, cost_usd and baseline_usd when it withholds amounts.",
       "type": "object",
       "properties": {
         "conclusion": {
@@ -797,6 +841,11 @@
                 "enum": [
                   "run_budget",
                   "run_cost_threshold",
+                  "run_increase",
+                  "run_increase_percent",
+                  "pr_budget",
+                  "monthly_budget",
+                  "model_allowlist",
                   "attribution"
                 ]
               },
@@ -816,7 +865,15 @@
                   "unverified_rows",
                   "unattributed_rows",
                   "other_currency",
-                  "joinable_rows"
+                  "joinable_rows",
+                  "over_baseline",
+                  "no_baseline",
+                  "no_lifetime",
+                  "repeat_possible",
+                  "no_ledger",
+                  "model_outside_allowlist",
+                  "unreadable_model",
+                  "models_on_allowlist"
                 ]
               },
               "held_by_warn_only": {
@@ -826,9 +883,24 @@
                 "type": "string",
                 "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
               },
-              "cost_usd": {
+              "limit_percent": {
+                "description": "The increase over the baseline a run may reach, in percent. Only under run_increase_percent.",
                 "type": "string",
                 "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "cost_usd": {
+                "description": "The run's cost in USD, and under pr_budget the pull request's total, this run included.",
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "baseline_usd": {
+                "description": "The median of the agent's earlier runs, in USD, that the increase rules compare the run with.",
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "models": {
+                "description": "The models outside policy.models, sorted, at most 10. Only under model_allowlist.",
+                "$ref": "#/$defs/names"
               }
             },
             "required": [
@@ -857,6 +929,100 @@
         "joinable_rows"
       ],
       "additionalProperties": false
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableDigest": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/digest"
+        }
+      ]
+    },
+    "lifetime": {
+      "description": "The lines the comment states under the figures. Figures with the same currency and basis are added up over the reports on every commit of the pull request; nothing is added across a currency or a basis.",
+      "type": "object",
+      "properties": {
+        "figures": {
+          "description": "At most 10, sorted by currency, then by basis.",
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/lifetimeFigure"
+          }
+        },
+        "figures_omitted": {
+          "description": "The totals past the first 10, left out.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "capped": {
+          "description": "True when the host listed as many commits of the pull request as it lists, 250 on GitHub, so a later commit can be missing from the figures.",
+          "type": "boolean"
+        },
+        "unread": {
+          "description": "The check runs left out because their result object could not be read or added up.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "figures",
+        "figures_omitted",
+        "capped",
+        "unread"
+      ],
+      "additionalProperties": false
+    },
+    "lifetimeFigure": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "cost_basis": {
+          "$ref": "#/$defs/costBasis"
+        },
+        "list_cost": {
+          "$ref": "#/$defs/decimal"
+        },
+        "reports": {
+          "description": "The reports in the sum. Reports with the same rows_sha256 count once.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "may_repeat": {
+          "description": "True when the sum holds two or more reports and one of them states no rows_sha256, so a report over the same rows can be counted twice.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "currency",
+        "cost_basis",
+        "list_cost",
+        "reports",
+        "may_repeat"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "reports": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "may_repeat": {
+            "const": false
+          }
+        }
+      }
     }
   }
 }

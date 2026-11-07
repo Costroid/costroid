@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/Costroid/costroid/internal/comment"
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
 )
 
@@ -29,7 +30,13 @@ const (
 
 // schemas are the result objects this release adds up: those that carry
 // every figure with its amount in the check run.
-var schemas = []string{"costroid.result/0.3", "costroid.result/0.4", "costroid.result/0.5"}
+var schemas = []string{"costroid.result/0.3", "costroid.result/0.4", "costroid.result/0.5", digestSchema}
+
+// digestSchema is the first result object that states the digest of its rows.
+const digestSchema = "costroid.result/0.6"
+
+// usd is the one currency the policy's pull request budget is held in.
+const usd = "USD"
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -40,23 +47,31 @@ type Report struct {
 	CheckRun int64
 	Block    comment.Block
 	// RowsSHA256 is the digest of the rows the object reports, empty when it
-	// states none. No result object up to v0.5 states one.
+	// states none. Only a result/v0.6 object states one.
 	RowsSHA256 string
+}
+
+// Totals is a pull request's reports added up twice: as the comment states
+// them, and as the policy's pull request budget reads them.
+type Totals struct {
+	// Lifetime is every report, this run's included, per currency and basis.
+	Lifetime comment.Lifetime
+	// Earlier is the reports before this run's, in USD over every basis.
+	Earlier policy.Lifetime
 }
 
 // Parse reads one result object. An object in a schema this release does not
 // add up, with its amounts withheld or a figure left out, or with a figure
 // comment.FigureCost refuses, is refused whole: a total without it would read
 // as a smaller cost.
+//
+// The digest of the rows is read from a result/v0.6 object only. An older
+// object states none, so it counts once per check run.
 func Parse(object []byte) (Report, error) {
-	var parsed struct {
-		comment.Block
-		RowsSHA256 string `json:"rows_sha256"`
-	}
-	if err := json.Unmarshal(object, &parsed); err != nil {
+	var block comment.Block
+	if err := json.Unmarshal(object, &block); err != nil {
 		return Report{}, fmt.Errorf("history: result object: %w", err)
 	}
-	block := parsed.Block
 	switch {
 	case !slices.Contains(schemas, block.Schema):
 		return Report{}, fmt.Errorf("history: schema %q is not one this release adds up", string(comment.Clean(block.Schema)))
@@ -64,7 +79,7 @@ func Parse(object []byte) (Report, error) {
 		return Report{}, errors.New("history: the result object withholds its amounts")
 	case block.FiguresOmitted != 0:
 		return Report{}, errors.New("history: the result object leaves figures out")
-	case parsed.RowsSHA256 != "" && !digestPattern.MatchString(parsed.RowsSHA256):
+	case block.RowsSHA256 != nil && !digestPattern.MatchString(*block.RowsSHA256):
 		return Report{}, errors.New("history: rows_sha256 is not a SHA-256 digest")
 	}
 	for _, figure := range block.Figures {
@@ -72,7 +87,11 @@ func Parse(object []byte) (Report, error) {
 			return Report{}, fmt.Errorf("history: %w", err)
 		}
 	}
-	return Report{Block: block, RowsSHA256: parsed.RowsSHA256}, nil
+	report := Report{Block: block}
+	if block.Schema == digestSchema && block.RowsSHA256 != nil {
+		report.RowsSHA256 = *block.RowsSHA256
+	}
+	return report, nil
 }
 
 // parseText reads the fenced object a check run's text carries.
@@ -111,23 +130,64 @@ func CheckRunBlocks(ctx context.Context, host scm.History, sha string) (reports 
 // Read adds up the reports on every commit of the pull request and own, this
 // run's report, whose check run is not posted yet. The head is read even when
 // the host's list of commits leaves it out.
-func Read(ctx context.Context, host scm.History, number int, head string, own Report) (comment.Lifetime, error) {
+func Read(ctx context.Context, host scm.History, number int, head string, own Report) (Totals, error) {
 	commits, capped, err := host.PullCommits(ctx, number)
 	if err != nil {
-		return comment.Lifetime{}, err
+		return Totals{}, err
 	}
 	if !slices.Contains(commits, head) {
 		commits = append(commits, head)
 	}
 	reports, unread, err := readCommits(ctx, host, commits)
 	if err != nil {
-		return comment.Lifetime{}, err
+		return Totals{}, err
 	}
 	figures, err := Total(append(reports, own))
 	if err != nil {
-		return comment.Lifetime{}, err
+		return Totals{}, err
 	}
-	return comment.Lifetime{Figures: figures, Capped: capped, Unread: unread}, nil
+	earlier, err := Earlier(reports, own)
+	if err != nil {
+		return Totals{}, err
+	}
+	return Totals{Lifetime: comment.Lifetime{Figures: figures, Capped: capped, Unread: unread}, Earlier: earlier}, nil
+}
+
+// Earlier adds up the reports before own, this run's, in USD over every
+// basis, as the policy's pull request budget reads them. A report with own's
+// digest is this run's rows reported again, so it is left out, and a repeated
+// digest counts once. A report without a digest beside another report's
+// figures may count the same rows twice, and the total says so. A check run
+// is never more than a claim, so the total is unverified.
+func Earlier(reports []Report, own Report) (policy.Lifetime, error) {
+	earlier := policy.Lifetime{Trust: policy.Unverified}
+	seen := map[string]bool{}
+	if own.RowsSHA256 != "" {
+		seen[own.RowsSHA256] = true
+	}
+	for _, report := range reports {
+		if report.RowsSHA256 != "" {
+			if seen[report.RowsSHA256] {
+				continue
+			}
+			seen[report.RowsSHA256] = true
+		}
+		if len(report.Block.Figures) > 0 && (report.RowsSHA256 == "" || own.RowsSHA256 == "") {
+			earlier.MayRepeat = true
+		}
+		for _, figure := range report.Block.Figures {
+			cost, err := comment.FigureCost(figure)
+			if err != nil {
+				return policy.Lifetime{}, fmt.Errorf("history: %w", err)
+			}
+			if figure.Currency != usd {
+				earlier.OtherCurrency = true
+				continue
+			}
+			earlier.USD = earlier.USD.Add(cost)
+		}
+	}
+	return earlier, nil
 }
 
 // readCommits reads the commits' check runs, parallel at a time, and keeps

@@ -13,6 +13,7 @@ import (
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/history"
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
@@ -23,9 +24,10 @@ const (
 	secondCommit   = "2b7d9c0e41f35a68b0c2d4e6f8091a2b3c4d5e6f"
 	thirdCommit    = "3c8e0d1f52a46b79c1d3e5f7091b2c3d4e5f6a7b"
 	pullNumber     = 7
-	// plantedDigest stands for a digest of rows. No result object up to v0.5
-	// carries one, so the tests that need one write it in.
+	// plantedDigest and otherDigest stand for digests of rows. The figures
+	// beside them are synthetic, so no rows have these digests.
 	plantedDigest = "5f1d3c0b8a9e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a392817060504"
+	otherDigest   = "a0b1c2d3e4f5061728394a5b6c7d8e9f00112233445566778899aabbccddeeff"
 )
 
 func adapter(t *testing.T, stub *scmtest.Stub) *scm.GitHub {
@@ -61,14 +63,14 @@ func checkText(t *testing.T, figures ...comment.Figure) string {
 	return output.Text
 }
 
-// withSchema rewrites the object's schema, as an older release wrote it.
+// withSchema rewrites the object's schema, as another release wrote it.
 func withSchema(text, schema string) string {
-	return strings.Replace(text, `"schema": "costroid.result/0.5"`, `"schema": "`+schema+`"`, 1)
+	return strings.Replace(text, `"schema": "costroid.result/0.6"`, `"schema": "`+schema+`"`, 1)
 }
 
 // withDigest writes a rows digest into the object.
 func withDigest(text, digest string) string {
-	return strings.Replace(text, `"schema": "costroid.result/0.5",`, `"schema": "costroid.result/0.5",`+"\n  \"rows_sha256\": \""+digest+"\",", 1)
+	return strings.Replace(text, `"rows_sha256": null`, `"rows_sha256": "`+digest+`"`, 1)
 }
 
 // ownReport is this run's report, which wrote no rows.
@@ -95,11 +97,16 @@ func posted(stub *scmtest.Stub, commit, text string) {
 
 func read(t *testing.T, stub *scmtest.Stub, head string) comment.Lifetime {
 	t.Helper()
-	lifetime, err := history.Read(context.Background(), adapter(t, stub), pullNumber, head, ownReport(t))
+	return readWith(t, stub, head, ownReport(t)).Lifetime
+}
+
+func readWith(t *testing.T, stub *scmtest.Stub, head string, own history.Report) history.Totals {
+	t.Helper()
+	totals, err := history.Read(context.Background(), adapter(t, stub), pullNumber, head, own)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return lifetime
+	return totals
 }
 
 // sentences renders the comment with the lifetime and returns its lifetime
@@ -195,6 +202,77 @@ func TestLifetimeDropsRepeats(t *testing.T) {
 	})
 }
 
+// digestedReport is this run's own report: synthetic figures over rows whose
+// digest is digest.
+func digestedReport(t *testing.T, digest string, figures ...comment.Figure) history.Report {
+	t.Helper()
+	result, err := comment.Result(comment.Input{State: comment.Reported, Ledger: comment.Ledger{Rows: len(figures), Figures: figures}, RowsSHA256: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := history.Parse([]byte(result))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return own
+}
+
+// TestLifetimeDropsRepeatsByDigest holds the repeat rule to result/v0.6: a
+// digest a v0.6 object states drops every later report over the same rows,
+// this run's own included, and an older object's digest is never read, so it
+// still counts once per check run and the line says so.
+func TestLifetimeDropsRepeatsByDigest(t *testing.T) {
+	t.Run("a v0.6 repeat on another commit counts once", func(t *testing.T) {
+		stub := scmtest.New(t)
+		pullWith(stub, secondCommit, thirdCommit)
+		text := withDigest(checkText(t, figure("USD", "measured", "0.1")), plantedDigest)
+		posted(stub, secondCommit, text)
+		posted(stub, thirdCommit, text)
+		totals := readWith(t, stub, thirdCommit, digestedReport(t, otherDigest, figure("USD", "measured", "0.05")))
+		assertFigures(t, totals.Lifetime.Figures, want{"USD", "measured", "0.15", 2, false})
+		if lines := sentences(t, totals.Lifetime); len(lines) != 1 || lines[0] != "Across this pull request: USD 0.15 at list (Measured), from 2 reports." {
+			t.Errorf("lines %q", lines)
+		}
+		if totals.Earlier.USD.String() != "0.1" || totals.Earlier.MayRepeat || totals.Earlier.OtherCurrency || totals.Earlier.Trust != policy.Unverified {
+			t.Errorf("earlier %+v, want USD 0.1, no repeat, unverified", totals.Earlier)
+		}
+	})
+	t.Run("this run reported again counts once and is not earlier", func(t *testing.T) {
+		stub := scmtest.New(t)
+		pullWith(stub, secondCommit)
+		posted(stub, secondCommit, withDigest(checkText(t, figure("USD", "measured", "0.1")), plantedDigest))
+		totals := readWith(t, stub, secondCommit, digestedReport(t, plantedDigest, figure("USD", "measured", "0.1")))
+		assertFigures(t, totals.Lifetime.Figures, want{"USD", "measured", "0.1", 1, false})
+		if totals.Earlier.USD.Sign() != 0 || totals.Earlier.MayRepeat {
+			t.Errorf("earlier %+v counts this run's own rows", totals.Earlier)
+		}
+	})
+	t.Run("an older object's digest is not read", func(t *testing.T) {
+		stub := scmtest.New(t)
+		pullWith(stub, secondCommit)
+		older := withSchema(withDigest(checkText(t, figure("USD", "measured", "0.1")), plantedDigest), "costroid.result/0.5")
+		posted(stub, secondCommit, older)
+		posted(stub, secondCommit, older)
+		totals := readWith(t, stub, secondCommit, digestedReport(t, otherDigest, figure("EUR", "measured", "0.3")))
+		assertFigures(t, totals.Lifetime.Figures, want{"EUR", "measured", "0.3", 1, false}, want{"USD", "measured", "0.2", 2, true})
+		if lines := sentences(t, totals.Lifetime); len(lines) != 2 || lines[1] != "Across this pull request: USD 0.2 at list (Measured), from 2 reports, which may include a repeated report." {
+			t.Errorf("lines %q", lines)
+		}
+		if totals.Earlier.USD.String() != "0.2" || !totals.Earlier.MayRepeat {
+			t.Errorf("earlier %+v, want USD 0.2 that may repeat", totals.Earlier)
+		}
+	})
+	t.Run("a run without a digest cannot tell itself apart", func(t *testing.T) {
+		stub := scmtest.New(t)
+		pullWith(stub, secondCommit)
+		posted(stub, secondCommit, withDigest(checkText(t, figure("USD", "measured", "0.1"), figure("EUR", "billed", "2")), plantedDigest))
+		totals := readWith(t, stub, secondCommit, digestedReport(t, "", figure("USD", "measured", "0.1")))
+		if totals.Earlier.USD.String() != "0.1" || !totals.Earlier.MayRepeat || !totals.Earlier.OtherCurrency {
+			t.Errorf("earlier %+v, want USD 0.1 that may repeat, beside another currency", totals.Earlier)
+		}
+	})
+}
+
 func TestLifetimeNeverSumsCurrencies(t *testing.T) {
 	var reports []history.Report
 	for _, text := range []string{
@@ -228,7 +306,7 @@ func TestLifetimeLeavesOutWhatItCannotAddUp(t *testing.T) {
 	posted(stub, secondCommit, text)
 	for _, unread := range []string{
 		withSchema(text, "costroid.result/0.2"),
-		withSchema(text, "costroid.result/0.6"),
+		withSchema(text, "costroid.result/0.7"),
 		strings.Replace(text, `"amounts": "shown"`, `"amounts": "withheld"`, 1),
 		strings.Replace(text, `"figures_omitted": 0`, `"figures_omitted": 1`, 1),
 		strings.Replace(text, `"currency": "USD"`, `"currency": "usd"`, 1),
@@ -262,11 +340,11 @@ func TestLifetimeReadsTheTokensOwnApp(t *testing.T) {
 	}
 	posted(stub, secondCommit, checkText(t, figure("USD", "measured", "0.2")))
 	stub.Checks = append(stub.Checks, scmtest.Check{ID: 901, Name: comment.CheckName, HeadSHA: secondCommit, Text: checkText(t, figure("USD", "measured", "5")), App: "someone-else"})
-	lifetime, err := history.Read(context.Background(), host, pullNumber, secondCommit, ownReport(t))
+	totals, err := history.Read(context.Background(), host, pullNumber, secondCommit, ownReport(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertFigures(t, lifetime.Figures, want{"USD", "measured", "0.5", 2, true})
+	assertFigures(t, totals.Lifetime.Figures, want{"USD", "measured", "0.5", 2, true})
 }
 
 func TestLifetimeSaysWhenGitHubListsNoMoreCommits(t *testing.T) {

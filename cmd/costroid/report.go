@@ -1,17 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,7 +44,10 @@ const (
 	baseHeadTimeout = 4 * time.Second
 )
 
-var headPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+var (
+	headPattern  = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+	rowIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
 
 // errNoCISystem is why a report outside a supported CI system refuses to run.
 var errNoCISystem = errors.New("report refused: neither GitHub Actions nor GitLab CI was detected")
@@ -188,12 +196,81 @@ func resolveBranchHead(ctx context.Context, host scm.Reporter, branch string) (s
 }
 
 // rowsReading is what the rows file gave the report, and why it gave no
-// figures when it gave none.
+// figures when it gave none. rowsSHA256 and fileSHA256 are the digests of
+// the rows and of the file, empty when the file was not read to its end.
 type rowsReading struct {
-	ledger comment.Ledger
-	state  comment.State
-	reason comment.Reason
-	line   int
+	ledger     comment.Ledger
+	state      comment.State
+	reason     comment.Reason
+	line       int
+	rowsSHA256 string
+	fileSHA256 string
+}
+
+// rowsDigest hashes the rows file as the report reads it: every byte of it,
+// and each row's x_CostroidRowId, which name the rows whatever order or line
+// endings the file gives them.
+type rowsDigest struct {
+	file    hash.Hash
+	pending []byte
+	ids     []string
+	unnamed bool
+}
+
+func newRowsDigest() *rowsDigest {
+	return &rowsDigest{file: sha256.New()}
+}
+
+// Write takes the bytes the rows reader reads and splits them into lines as
+// that reader does.
+func (d *rowsDigest) Write(p []byte) (int, error) {
+	d.file.Write(p)
+	rest := p
+	for {
+		end := bytes.IndexByte(rest, '\n')
+		if end < 0 {
+			d.pending = append(d.pending, rest...)
+			return len(p), nil
+		}
+		d.row(append(d.pending, rest[:end]...))
+		d.pending = d.pending[:0]
+		rest = rest[end+1:]
+	}
+}
+
+// row keeps one line's row id. The rows reader skips an empty line, so this
+// does too.
+func (d *rowsDigest) row(line []byte) {
+	line = bytes.TrimSuffix(line, []byte{'\r'})
+	if len(line) == 0 {
+		return
+	}
+	var row struct {
+		ID string `json:"x_CostroidRowId"`
+	}
+	if json.Unmarshal(line, &row) != nil || !rowIDPattern.MatchString(row.ID) {
+		d.unnamed = true
+		return
+	}
+	d.ids = append(d.ids, row.ID)
+}
+
+// sums returns the digest of the rows and of the file, once the file has been
+// read to its end. The rows' digest is the SHA-256 of their row ids, sorted,
+// each followed by a line feed. It is empty when a row names no row id.
+func (d *rowsDigest) sums() (rows, file string) {
+	d.row(d.pending)
+	d.pending = nil
+	file = hex.EncodeToString(d.file.Sum(nil))
+	if d.unnamed {
+		return "", file
+	}
+	slices.Sort(d.ids)
+	sum := sha256.New()
+	for _, id := range d.ids {
+		io.WriteString(sum, id+"\n")
+	}
+	return hex.EncodeToString(sum.Sum(nil)), file
 }
 
 func readReportRows(path string) (rowsReading, error) {
@@ -215,7 +292,8 @@ func readReportRows(path string) (rowsReading, error) {
 		return unread, err
 	}
 	defer file.Close()
-	ledger, err := comment.ReadRows(file)
+	digest := newRowsDigest()
+	ledger, err := comment.ReadRows(io.TeeReader(file, digest))
 	var invalid *comment.RowError
 	if errors.As(err, &invalid) {
 		return rowsReading{state: comment.Unreadable, reason: comment.InvalidRow, line: invalid.Line}, err
@@ -223,10 +301,11 @@ func readReportRows(path string) (rowsReading, error) {
 	if err != nil {
 		return unread, err
 	}
+	rowsSHA256, fileSHA256 := digest.sums()
 	if ledger.Rows == 0 {
-		return rowsReading{ledger: ledger, state: comment.NoRows, reason: comment.EmptyRowsFile}, nil
+		return rowsReading{ledger: ledger, state: comment.NoRows, reason: comment.EmptyRowsFile, fileSHA256: fileSHA256}, nil
 	}
-	return rowsReading{ledger: ledger, state: comment.Reported}, nil
+	return rowsReading{ledger: ledger, state: comment.Reported, rowsSHA256: rowsSHA256, fileSHA256: fileSHA256}, nil
 }
 
 // runURL is the page of the CI run this report belongs to, empty when the
@@ -315,14 +394,16 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 	}
 	stated := readRunReason(flags.rows, stderr)
 	input := comment.Input{
-		Ledger:     rows.ledger,
-		State:      rows.state,
-		Reason:     rows.reason,
-		ReasonLine: rows.line,
-		RunReason:  runReasonFor(rows.state, stated.RunReason, stderr),
-		ReaderLine: stated.ReaderError,
-		AgentError: agentErrorFor(stated.AgentError, stderr),
-		Budget:     flags.budget,
+		Ledger:         rows.ledger,
+		State:          rows.state,
+		Reason:         rows.reason,
+		ReasonLine:     rows.line,
+		RunReason:      runReasonFor(rows.state, stated.RunReason, stderr),
+		ReaderLine:     stated.ReaderError,
+		AgentError:     agentErrorFor(stated.AgentError, stderr),
+		Budget:         flags.budget,
+		RowsSHA256:     rows.rowsSHA256,
+		RowsFileSHA256: rows.fileSHA256,
 	}
 	return withAgentResult(input, flags.agentResult, stderr)
 }
@@ -516,8 +597,9 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
-	lifetime := readLifetime(ctx, host, pull, input, stderr)
-	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, stderr)
+	lifetime, earlier := readLifetime(ctx, host, pull, input, stderr)
+	input.Lifetime = lifetime
+	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, earlier, stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if input.CheckRunID != nil {
 		input.IDInCheck = nameCheck(ctx, host, input, stderr)
@@ -752,9 +834,11 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, li
 }
 
 // decideVerdict evaluates the policy. The settings come from the base branch's
-// head and the rows from the agent's job, so the trust path is unverified. A
-// policy that cannot run leaves no verdict, and the check concludes neutral.
-func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, rowsPath string, state comment.State, stderr io.Writer) *policy.Verdict {
+// head and the rows from the agent's job, so the trust path is unverified.
+// earlier is what the pull request's earlier runs cost, nil when it could not
+// be read, and then the pull request budget does not run. A policy that
+// cannot run leaves no verdict, and the check concludes neutral.
+func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, rowsPath string, state comment.State, earlier *policy.Lifetime, stderr io.Writer) *policy.Verdict {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
 	usage, err := reportUsage(rowsPath, state)
@@ -762,11 +846,12 @@ func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, row
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
 	verdict, err := policy.Evaluate(ctx, policy.Request{
-		Usage:  usage,
-		Trust:  policy.Unverified,
-		Config: policy.ReadConfig(ctx, host, policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0}),
-		Start:  workflowStart(ctx, host, pull, stderr),
-		At:     time.Now(),
+		Usage:    usage,
+		Trust:    policy.Unverified,
+		Config:   policy.ReadConfig(ctx, host, policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0}),
+		Start:    workflowStart(ctx, host, pull, stderr),
+		At:       time.Now(),
+		Lifetime: earlier,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)

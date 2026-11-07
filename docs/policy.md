@@ -24,10 +24,14 @@ Four rules read figures from outside the run. One that is set and lacks its figu
 | Rule                                   | Reads                                                         | In this release                                                                        |
 | -------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `run_increase`, `run_increase_percent` | The median of 10 or more earlier runs of the same agent        | No baseline reaches the check, so both conclude `unproven` with reason `no_baseline`   |
-| `pr_budget`                            | The total of the pull request's earlier runs, from their check runs | No total reaches the check, so it concludes `unproven` with reason `no_lifetime`  |
+| `pr_budget`                            | The total of the pull request's earlier runs, from their check runs | `costroid report` reads it on a GitHub pull request. Off a pull request, on GitLab, under `costroid policy`, or when a commit's check runs cannot be read, it concludes `unproven` with reason `no_lifetime` |
 | `monthly_budget`                       | The repository's month to date, from a ledger                 | No ledger reaches the check, so it concludes `unproven` with reason `no_ledger`        |
 
-`pr_budget` treats a total that may count one report twice as no proof either way: the rule concludes `unproven` with reason `repeat_possible`.
+`pr_budget` runs when `costroid report` posts on a GitHub pull request. The report reads the `costroid` check runs on every commit of the pull request, adds up the figures in USD of every basis, and adds this run's rows. A figure in another currency is left out of the total, and the rule then cannot pass. An earlier report with this run's `rows_sha256` is this run reported again and is left out, and a repeated `rows_sha256` counts once. The comment states the same total under the figures, per currency and basis.
+
+`pr_budget` treats a total that may count one report twice as no proof either way: the rule concludes `unproven` with reason `repeat_possible`. That happens when an earlier report states no `rows_sha256`, as every result object before `result/v0.6` does, and when this run's rows name no row ids.
+
+Any job of the repository can post a check run named `costroid`, so the total is unverified. It can show a pull request over its budget, never within it: the rule warns or fails, or concludes `unproven`. A total that leaves out check runs, because GitHub lists at most 250 commits or an object could not be read, can only read low.
 
 `model_allowlist` takes exact model ids, and prefixes that end in `*`: `claude-*` admits `claude-sonnet-5-5`, and `claude` admits only `claude`. A row whose tag is absent, or is not a model id of at most 128 letters, digits and `._:/+-`, cannot pass the rule: it concludes `unproven` with reason `unreadable_model`. A model off the list fails the rule whatever else the rows hold, and the verdict names at most 10 such models.
 

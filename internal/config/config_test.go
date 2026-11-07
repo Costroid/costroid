@@ -108,6 +108,8 @@ func TestSchemaAndThePolicyAgree(t *testing.T) {
 		{"policy:\n  models: [claude-sonnet-5-5, \"gpt-5*\"]\n", true},
 		{"policy:\n  run_budget_usd: -1\n", false},
 		{"policy:\n  run_budget_usd: 0.5\n", false},
+		{"policy:\n  run_budget_usd: 5.0\n", false},
+		{"policy:\n  pr_budget_usd: 1e23\n", false},
 		{"policy:\n  models: []\n", false},
 		{"policy:\n  models: [codex, codex]\n", false},
 		{"policy:\n  models: [\"*\"]\n", false},
@@ -127,6 +129,51 @@ func TestSchemaAndThePolicyAgree(t *testing.T) {
 		if (len(problems) == 0) != tc.valid || (parseErr == nil) != tc.valid {
 			t.Errorf("%q: schema %v, policy %v, want valid %v", tc.body, problems, parseErr, tc.valid)
 		}
+	}
+}
+
+// TestValidateRefusesFloatAmount holds validate to the policy's reading of a
+// YAML float: 5.0 and 1e3 are whole in JSON, so the schema alone takes them,
+// and the policy refuses them. Validate names each in the policy's sentence,
+// in place of what the schema says, for every amount key the policy reads.
+func TestValidateRefusesFloatAmount(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"run_budget_usd", "5.0"},
+		{"max_run_cost_usd", "0.5"},
+		{"pr_budget_usd", "1e3"},
+		{"monthly_budget_usd", "900.00"},
+		{"max_increase_usd", "1."},
+		{"max_increase_percent", "10.0"},
+	} {
+		body := "policy:\n  " + tc.key + ": " + tc.value + "\n"
+		problems, err := Validate([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, refused := policy.ParseSettings([]byte(body))
+		if refused == nil {
+			t.Fatalf("%q: the policy reads it", body)
+		}
+		want := Problem{Path: "/policy/" + tc.key, Message: strings.TrimPrefix(refused.Error(), "policy: ")}
+		if len(problems) != 1 || problems[0] != want {
+			t.Errorf("%q: %v, want %v", body, problems, want)
+		}
+	}
+	amounts, err := amountKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range policy.Keys() {
+		if _, refused := policy.ParseSettings([]byte("policy:\n  " + key + ": 5.0\n")); amounts[key] != (refused != nil && strings.Contains(refused.Error(), "must be a whole number")) {
+			t.Errorf("%s: the schema states it as an amount %t, the policy refuses 5.0 as one: %v", key, amounts[key], refused)
+		}
+	}
+	problems, err := Validate([]byte("policy:\n  run_budget_usd: 5.0\n  max_run_cost_usd: 1e3\n  pr_budget_usd: 40\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 2 || !strings.HasPrefix(problems[0].Message, "policy.max_run_cost_usd must be a whole number") || !strings.HasPrefix(problems[1].Message, "policy.run_budget_usd must be a whole number") {
+		t.Errorf("two floats beside an integer: %v", problems)
 	}
 }
 

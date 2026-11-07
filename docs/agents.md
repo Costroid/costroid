@@ -1,6 +1,6 @@
 # Read a result from an agent
 
-Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the cap and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.5) in `Costroid/costroid-schemas`.
+Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the cap and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.6`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.6) in `Costroid/costroid-schemas`.
 
 ## Where the object is
 
@@ -75,6 +75,49 @@ This is a recorded Codex run, stopped at a 0.001 USD cap after its first request
 
 The cap is not the policy's budget. The policy reads its budget from `policy.run_budget_usd` in `costroid.yml`, and `policy.results` states it as `limit_usd` beside the rule `run_budget`. No rule reads the cap. Either can be present without the other, and the comment names them apart: `Cap:` for the one, `Run budget:` for the other.
 
+## Name the rows
+
+Two digests name what the figures were built from, each as lower-case hex:
+
+| Field              | Value                                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `rows_sha256`      | The SHA-256 of the rows' `x_CostroidRowId` values, sorted, each followed by a line feed. Null when there are no figures |
+| `rows_file_sha256` | The SHA-256 of the rows file, byte for byte, as the report read it. Null when the report could not read it to its end   |
+
+Two objects with the same `rows_sha256` report the same rows, whatever order or line endings each file gave them. `rows_sha256` is null as well when a row names no `x_CostroidRowId` of 64 lower-case hex digits. Both can be checked by hand against the rows file:
+
+```sh
+jq -r .x_CostroidRowId costroid-rows.jsonl | LC_ALL=C sort | sha256sum
+sha256sum costroid-rows.jsonl
+```
+
+`costroid report` fills both.
+
+## Read the pull request's total
+
+`lifetime` holds the totals the comment states under the figures: the reports on every commit of the pull request, this run's included, added up per currency and basis.
+
+```json
+{
+  "figures": [
+    {
+      "currency": "USD",
+      "cost_basis": "measured",
+      "list_cost": "0.15",
+      "reports": 2,
+      "may_repeat": false
+    }
+  ],
+  "figures_omitted": 0,
+  "capped": false,
+  "unread": 0
+}
+```
+
+Reports with the same `rows_sha256` count once. An object older than `result/v0.6` states no digest, so it counts once per check run, and `may_repeat` is `true` when such a report shares a total with another. `figures` holds at most 10 totals, and `figures_omitted` counts the rest. `capped` is `true` when GitHub listed 250 commits, its limit, so a later commit can be missing. `unread` counts the check runs whose object could not be read or added up.
+
+`lifetime` is null off a pull request, on GitLab, when a commit's check runs could not be read, and in a comment's copy that withholds amounts. Any job of the repository can post a check run named `costroid`, so the total is a claim, never a measurement.
+
 ## When there are no figures
 
 `state` is `reported` when the rows gave figures. Otherwise `figures` is empty and `reason` is one of a closed list:
@@ -95,6 +138,8 @@ When the rows file holds no rows and the run said why, `run_reason` carries the 
 | `no_usage`       | The agent ended and reported no usage.                                             |
 | `concurrent_run` | Another run held the agent's state directory, so this run never started its agent. |
 | `reader_refused` | The reader refused the agent's stream or its execution file, so no usage was read. |
+
+`result/v0.6` also defines `artifact_refused`, for a report that refuses the artifact that carried the rows. This release does not write it.
 
 With `reader_refused`, `reader_error` carries the reader's first error line. The error can quote the agent's stream, so every character outside letters, digits, the space and `.,:;()'=_/+-` reads `?`, and the line is cut at 160 bytes.
 
