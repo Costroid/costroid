@@ -29,7 +29,7 @@ Then open a test pull request. The `report` job posts the `costroid` check and t
 
 ## Codex
 
-Copy [`recipes/github-codex.yml`](../recipes/github-codex.yml) to `.github/workflows/costroid.yml`, and set `CODEX_API_KEY` in place of `ANTHROPIC_API_KEY`. Everything else in the table above is the same.
+Copy [`recipes/github-codex.yml`](../recipes/github-codex.yml) to `.github/workflows/costroid.yml`, and set `OPENAI_API_KEY` in place of `ANTHROPIC_API_KEY`. Everything else in the table above is the same.
 
 The recipe installs Codex 0.164.0-alpha.11.1. Codex 0.167.0 is recorded too. Costroid reads Codex's undocumented rollout file by its shape, not by its version: a version without a recording runs, reads per request when its file has the shape the reader knows, and the run names the version.
 
@@ -103,7 +103,7 @@ Inside your own project, `costroid:report` holds the token, the rows artifact an
 
 The recipe installs Claude Code 2.1.316, the version with a recorded fixture, and passes its path to the action, so the version is fixed. The file holds prompts and tool output. Costroid reads usage from it and nothing else, and it never leaves the job.
 
-Costroid did not start this run, so no budget held it, and the grade reads `none`. Each push to the pull request runs the agent again, and `--max-turns` limits each run's turns, not its cost. The rows come at one set per model for the whole run, so the log reads, for example, `one run, 2 models`. A real file from version 2.1.316, read on 2026-11-04, matched the run's own total to the last digit, and is kept as a fixture with its content removed.
+Costroid did not start this run. When the step's `claude_args` holds `--max-budget-usd` and the read step is given the same figure, the grade reads `agent-flag`; otherwise it reads `none`, with the reason ([`docs/existing-workflow.md`](existing-workflow.md)). Each push to the pull request runs the agent again, and `--max-turns` limits each run's turns, not its cost. The rows come at one set per model for the whole run, so the log reads, for example, `one run, 2 models`. A real file from version 2.1.316, read on 2026-11-04, matched the run's own total to the last digit, and is kept as a fixture with its content removed.
 
 It needs the same one secret, `ANTHROPIC_API_KEY`. Then open a test pull request.
 

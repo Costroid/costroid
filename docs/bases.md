@@ -40,7 +40,7 @@ The basis follows the key the agent runs on.
 
 [`recipes/github-claude-code.yml`](../recipes/github-claude-code.yml) takes the secret `ANTHROPIC_API_KEY` as the action's `api-key`. It runs `claude -p --bare`, and under `--bare` Claude Code authenticates with `ANTHROPIC_API_KEY` or an `apiKeyHelper` alone, so a Claude subscription's token does not work here (`claude --help`, Claude Code 2.1.319, read 2026-11-07). The rows read `measured`. A recorded Claude Code 2.1.319 run on an API key reads `measured`, and a test holds it.
 
-[`recipes/github-codex.yml`](../recipes/github-codex.yml) takes the secret `CODEX_API_KEY` as the action's `api-key`. The rows read `measured`.
+[`recipes/github-codex.yml`](../recipes/github-codex.yml) takes the secret `OPENAI_API_KEY` as the action's `api-key`, which the action gives Codex as `CODEX_API_KEY`. The rows read `measured`.
 
 [`recipes/github-codex-action.yml`](../recipes/github-codex-action.yml) gives `openai/codex-action` the secret `CODEX_API_KEY` or `OPENAI_API_KEY` as its `openai-api-key`. That action takes only an API key, so the rows read `measured`.
 
