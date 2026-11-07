@@ -27,7 +27,7 @@ var resultSchemaPath = filepath.Join("testdata", "result.schema.json")
 //	sha256sum rows.jsonl
 const (
 	realRowsSHA256     = "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4"
-	realRowsFileSHA256 = "74a8dbed24e7286ecc81ca4095a40a499f2ba2cfcde88e9a47522b2123888036"
+	realRowsFileSHA256 = "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c"
 )
 
 func compileResultSchema(t *testing.T) *jsonschema.Schema {
