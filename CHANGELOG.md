@@ -2,6 +2,30 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.11 (2026-11-07)
+
+### Breaking changes
+
+- A rows artifact that holds anything besides the rows and the run object now fails the `costroid` check with the run reason `artifact_refused`, naming the entries it refused. It used to skip the report, so no check posted. An approval does not turn it neutral.
+- `costroid report` skips an `--installation-id` in neither form `github:<id>` nor a bare number with a warning, and posts without the account link.
+- `costroid lint-recipes` refuses `id-token: write` on a gateway job that names no environment, `environment: ""` included.
+
+### What you can now do
+
+- Check a repository's setup with `costroid doctor`: each problem on one line, with its fix. A secret the repository's own list lacks is a warning, because an organization or environment secret does not show there.
+- Pass a budget on `costroid serve` only on spend the gateway measured: `costroid gateway close` attests the key's spend, and a budget concludes `success` only on that figure or a reconciled provider report, never on the agent's own counts.
+- End the warn-only period at the twentieth pull request with a measured cost, counted from the earlier `costroid` checks.
+- Read an empty `costroid.yml`, a file that is only `---`, `~` or `null`, or a section with no value as the defaults, in `validate` and every reader alike.
+- Read `openai/codex-action` rows as `measured`: that action takes only an API key.
+- See which bases a pull request's budget adds together, on the comment's line.
+
+### Fixes
+
+- The Anthropic usage reader refuses a negative token count, as the OpenAI reader does.
+- `costroid validate` refuses `approval.expires_days` written as a float.
+- `costroid lint-recipes` reports an agent it does not know instead of stopping.
+- A data race between the agent's stderr and the run's own warnings, seen under `go test -race`.
+
 ## 1.0.0-alpha.10 (2026-11-07)
 
 ### Breaking changes
