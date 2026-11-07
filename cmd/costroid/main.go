@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 	"unicode/utf8"
 
 	"github.com/Costroid/costroid/internal/adapter"
@@ -23,130 +22,8 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
-	"github.com/Costroid/costroid/internal/reconcile"
 	"github.com/Costroid/costroid/internal/run"
-	"github.com/Costroid/costroid/internal/server"
 )
-
-const usage = `costroid runs a coding agent under a budget and records what it cost.
-
-Usage:
-  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--gateway URL --gateway-key-file F] [--json] -- <agent command>
-  costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
-  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID] [--json]
-  costroid follow-up --rows rows.jsonl
-  costroid reconcile --rows rows.jsonl --from D --to D [--credential ID] [--out FILE] [--reports DIR --as-of T]
-  costroid policy --rows rows.jsonl [--config costroid.yml] [--workflow-added T] [--at T] [--json]
-  costroid validate [costroid.yml]
-  costroid lint-recipes <paths>
-  costroid gateway public-key | request | mint | close
-  costroid serve
-  costroid keys create --owner host:owner
-  costroid keys revoke <id>
-  costroid egress report [--json]
-  costroid version
-
-The agent command is claude -p or codex exec. Costroid adds the flags it needs.
-
---billing-account fills BillingAccountId on every row. Without it, the
-COSTROID_BILLING_ACCOUNT variable does. With neither, the rows read unknown.
-
---credential fills SubAccountId: the id of the key, workspace or project the run
-spends on, never the key itself. Without it, COSTROID_CREDENTIAL does. With
-neither, the column is null and reconcile asks for one.
-
---gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
-the run's own key, which costroid gateway request drew and costroid gateway
-mint registered. Without them, COSTROID_GATEWAY_URL and
-COSTROID_GATEWAY_KEY_FILE do. run waits for the key, reads it back, and gives the
-agent the gateway's URL and the key in place of any provider credential. The
-key's id fills SubAccountId. The rows read gateway-precheck when the key has a
-budget at or under --budget-usd, an expiry, a parallel-request limit, a largest
-request and this run's id, and when the gateway's store answered before, during
-and after the run. Otherwise they read none and say why. costroid gateway help
-describes the other steps.
-
-Inside GitHub Actions or GitLab CI, run and ingest-run state the repository, the
-pull request, the head commit and the CI run on every row, and run sets the
-vcs.* and cicd.* attributes through OTEL_RESOURCE_ATTRIBUTES for the agent. These
-are claims. Rows stay unverified and unattributed until a ledger checks them
-against the job's OIDC token.
-
---json prints one result object on stdout when the command ends: figures per
-currency and basis, token counts by class, grades, the cap and what is left or
-over, and a reason when there are no figures. run then sends the agent's
-stream to stderr, and its object says why it wrote no rows when it wrote none.
-report prints the object its check run carries, byte for byte. run prints none
-when it exits 125 before it creates the rows file. docs/agents.md describes the
-object.
-
-run and ingest-run write the same object beside the rows file they created,
-whether or not --json is given and whatever their exit: --out rows.jsonl gives
-rows.run.json. report reads the run's reason for an empty rows file from it,
-and a reader that refused the agent's output adds its first error line.
-
-ingest-run writes the rows of a claude-code-action run from the action's
-execution_file output, after the action ended. No budget held that run, so the
-grade reads none.
-
-report posts from CI, and selects the host from the job's variables. On a pull
-request it reads costroid.yml at the head of the base branch when it runs, and
-at the event's base commit when that head cannot be read. On GitHub
-Actions it posts one check run and one sticky comment, with GITHUB_TOKEN and the
-GITHUB_* variables, then writes the step's outputs and a job summary. The
-summary withholds amounts and token counts where the comment does. On GitLab CI
-it posts one sticky merge request note, with COSTROID_GITLAB_TOKEN and the CI_*
-variables, and no check. It exits 0 whatever the host answers, so a failed post
-never fails the job. Outside both it refuses and exits 125. --budget-usd
-restates the run's cap, which rows do not record.
---installation-id puts the GitHub App installation on the account link;
-COSTROID_INSTALLATION_ID does the same. GitLab's link names the project id.
-
-follow-up posts the check for a fork's pull request from a workflow_run job,
-which holds the base repository's token. It reads the finished run's rows as
-data, up to 8 MiB, and costroid.yml at the default branch's commit. It posts no
-comment, and nothing for a branch of the repository itself, whose report job
-posts the check. Like report, it exits 0 whatever the host answers, and outside
-GitHub Actions it refuses and exits 125.
-
-policy gives, offline, the verdict the check gives: it holds the rows to the
-policy keys of the costroid.yml named, which should be the base branch's.
---workflow-added and --at state when the workflow reached the base branch and
-when the check ran, both as RFC 3339. Without --workflow-added the warn-only
-period has not ended. --json prints the verdict as the check's machine block
-carries it.
-
-reconcile compares rows with the provider's usage and cost reports, per
-credential per UTC day. Tokens must match within 1% by class. List-price dollars
-are compared within 10%, and the residual is split into named causes.
-
-It runs where the admin key lives, and it reads the key from
-ANTHROPIC_ADMIN_KEY or OPENAI_ADMIN_KEY. The key never leaves the process.
---reports reads saved report files from a directory instead, and needs no key;
---as-of states when they were saved. docs/reconcile.md names the files.
-
-A row's credential is its SubAccountId. --credential names one for rows where
-that is null. --out keeps one row per source, credential and day, and a rerun
-replaces it. Rerun through the eighth day after month end, when restating stops.
-
-Exit codes of run:
-  the agent's own   the run finished, or the agent stopped itself
-  124               costroid stopped the agent at the cap
-  125               costroid could not run the agent or record the run
-
-Exit codes of policy:
-  0                 success or neutral
-  1                 failure
-  125               costroid could not read the rows or the file
-
-Exit codes of reconcile:
-  0                 no token miss
-  1                 a token miss, which is a defect
-  125               costroid could not read the rows or a report
-
-validate and lint-recipes exit 0 when every file passes, 1 when one is rejected
-and 125 when they cannot read it.
-`
 
 const (
 	exitBudgetStop = 124
@@ -172,52 +49,37 @@ func main() {
 }
 
 func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	std := stdio{stdin: stdin, stdout: stdout, stderr: stderr}
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return exitFailure
 	}
-	switch args[0] {
-	case "run":
-		return runCommand(ctx, args[1:], stdin, stdout, stderr)
-	case "serve":
-		return server.Main(ctx, args[1:], stderr)
-	case "keys":
-		return server.KeysMain(ctx, args[1:], stdout, stderr)
-	case "egress":
-		return server.EgressMain(ctx, args[1:], stdout, stderr)
-	case "reconcile":
-		return reconcileCommand(ctx, args[1:], os.Getenv, reconcile.NewClient(), time.Now, stdout, stderr)
-	case "lint-recipes":
-		return lintRecipes(args[1:], stdout, stderr)
-	case "gateway":
-		return gatewayCommand(ctx, args[1:], stdout, stderr)
-	case "ingest-run":
-		return ingestRunCommand(args[1:], stderr)
-	case "report":
-		return reportCommand(ctx, args[1:], stdout, stderr)
-	case "follow-up":
-		return followUpCommand(ctx, args[1:], stdout, stderr)
-	case "policy":
-		return policyCommand(ctx, args[1:], stdout, stderr)
-	case "validate":
-		return validateCommand(args[1:], stdout, stderr)
-	case "version":
-		return versionCommand(stdout, stderr)
-	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
+	switch name := args[0]; {
+	case name == "help":
+		return helpCommand(ctx, args[1:], std)
+	case isHelpFlag(name):
+		return helpCommand(ctx, nil, std)
+	case name == "--version":
+		return versionCommand(ctx, nil, std)
+	}
+	entry, ok := lookup(args[0])
+	if !ok {
+		return unknownCommand(args[0], stderr)
+	}
+	if entry.help != "" && len(args) > 1 && isHelpFlag(args[1]) {
+		fmt.Fprint(stdout, entry.help)
 		return 0
 	}
-	fmt.Fprintf(stderr, "costroid: unknown command %q\n\n%s", args[0], usage)
-	return exitFailure
+	return entry.run(ctx, args[1:], std)
 }
 
-func versionCommand(stdout, stderr io.Writer) int {
+func versionCommand(_ context.Context, _ []string, std stdio) int {
 	pinned, err := catalog.Load()
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		fmt.Fprintf(std.stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
-	fmt.Fprintf(stdout, "costroid %s, catalog %s\n", version, pinned.Version())
+	fmt.Fprintf(std.stdout, "costroid %s, catalog %s\n", version, pinned.Version())
 	return 0
 }
 
@@ -247,6 +109,32 @@ func (a accountFlags) check() error {
 	return nil
 }
 
+const runHelp = `Usage:
+  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--gateway URL --gateway-key-file F] [--json] -- <agent command>
+
+The agent command is claude -p or codex exec. Costroid adds the flags it needs.
+
+` + accountHelp + `
+--gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
+the run's own key, which costroid gateway request drew and costroid gateway
+mint registered. Without them, COSTROID_GATEWAY_URL and
+COSTROID_GATEWAY_KEY_FILE do. run waits for the key, reads it back, and gives the
+agent the gateway's URL and the key in place of any provider credential. The
+key's id fills SubAccountId. The rows read gateway-precheck when the key has a
+budget at or under --budget-usd, an expiry, a parallel-request limit, a largest
+request and this run's id, and when the gateway's store answered before, during
+and after the run. Otherwise they read none and say why. costroid gateway help
+describes the other steps.
+
+` + ciHelp + `
+` + jsonHelp + `
+` + resultFileHelp + `
+Exit codes of run:
+  the agent's own   the run finished, or the agent stopped itself
+  124               costroid stopped the agent at the cap
+  125               costroid could not run the agent or record the run
+`
+
 type runFlags struct {
 	budget  decimal.Decimal
 	out     string
@@ -260,7 +148,7 @@ type runFlags struct {
 func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	set := flag.NewFlagSet("run", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
+	set.Usage = func() { fmt.Fprint(stderr, runHelp) }
 	budget := set.String("budget-usd", "", "the run's budget in USD")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
 	asJSON := set.Bool("json", false, "print the result object on stdout, and the agent's stream on stderr")
@@ -324,7 +212,8 @@ func readCI(stderr io.Writer) cicontext.Context {
 	return context
 }
 
-func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runCommand(ctx context.Context, args []string, std stdio) int {
+	stdin, stdout, stderr := std.stdin, std.stdout, std.stderr
 	flags, err := parseRun(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -200,8 +201,98 @@ func TestTheEgressCommandIsDispatched(t *testing.T) {
 	}
 }
 
-func TestUnknownCommandExitsAsAFailure(t *testing.T) {
-	if code, _, stderr := execute(t, "diff"); code != exitFailure || !strings.Contains(stderr, "diff") {
-		t.Errorf("exit %d, %q", code, stderr)
+func TestUnknownCommandExitsAsAFailureAndNamesHelp(t *testing.T) {
+	for _, args := range [][]string{{"diff"}, {"help", "diff"}} {
+		code, _, stderr := execute(t, args...)
+		if code != exitFailure || stderr != "costroid: unknown command \"diff\"\nRun costroid help to list the commands.\n" {
+			t.Errorf("%v: exit %d, %q", args, code, stderr)
+		}
+	}
+}
+
+var update = flag.Bool("update", false, "rewrite testdata/usage.golden")
+
+const maxUsageLines = 15
+
+func TestBareCommandPrintsShortUsage(t *testing.T) {
+	code, stdout, stderr := execute(t)
+	if code != exitFailure || stdout != "" {
+		t.Fatalf("exit %d, stdout %q", code, stdout)
+	}
+	if stderr != usage.String() {
+		t.Errorf("stderr is not the short usage:\n%s", stderr)
+	}
+	if lines := strings.Count(stderr, "\n"); lines > maxUsageLines {
+		t.Errorf("the short usage has %d lines", lines)
+	}
+	for _, line := range []string{"  costroid run --budget-usd N --out rows.jsonl -- <agent command>\n", "  costroid report --rows rows.jsonl\n", "  costroid validate [costroid.yml]\n", "  costroid help <command>\n", "  costroid --version\n"} {
+		if !strings.Contains(stderr, line) {
+			t.Errorf("the short usage lacks %q", line)
+		}
+	}
+	for _, entry := range commands {
+		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(entry.name) + `\b`).MatchString(stderr) {
+			t.Errorf("the short usage does not name %s", entry.name)
+		}
+	}
+}
+
+func TestHelpPerCommand(t *testing.T) {
+	for _, entry := range commands {
+		t.Run(entry.name, func(t *testing.T) {
+			code, stdout, stderr := execute(t, "help", entry.name)
+			if code != 0 {
+				t.Fatalf("help %s: exit %d, %q", entry.name, code, stderr)
+			}
+			if !strings.Contains(stdout+stderr, "costroid "+entry.name) {
+				t.Errorf("help %s does not show its usage:\n%s%s", entry.name, stdout, stderr)
+			}
+			if entry.help == "" {
+				return
+			}
+			if stdout != entry.help || !strings.HasPrefix(stdout, "Usage:\n  costroid "+entry.name) {
+				t.Errorf("help %s printed:\n%s", entry.name, stdout)
+			}
+			for _, option := range []string{"-h", "-help", "--help"} {
+				code, flagOut, flagErr := execute(t, entry.name, option)
+				if code != 0 || flagOut != entry.help || flagErr != "" {
+					t.Errorf("%s %s: exit %d, stdout %q, stderr %q", entry.name, option, code, flagOut, flagErr)
+				}
+			}
+		})
+	}
+}
+
+func TestRunHelpAfterAFlagPrintsRunsHelp(t *testing.T) {
+	code, stdout, stderr := execute(t, "run", "--out", "rows.jsonl", "--help")
+	if code != 0 || stdout != "" || stderr != runHelp {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+func TestVersionFlag(t *testing.T) {
+	code, stdout, stderr := execute(t, "--version")
+	_, want, _ := execute(t, "version")
+	if code != 0 || stderr != "" || stdout != want {
+		t.Errorf("exit %d, stdout %q, stderr %q, version prints %q", code, stdout, stderr, want)
+	}
+}
+
+func TestUsageGolden(t *testing.T) {
+	golden := filepath.Join("testdata", "usage.golden")
+	if *update {
+		if err := os.WriteFile(golden, []byte(usage.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"help"}, {"-h"}, {"-help"}, {"--help"}} {
+		code, stdout, stderr := execute(t, args...)
+		if code != 0 || stderr != "" || stdout != string(want) {
+			t.Errorf("%v: exit %d, stderr %q, stdout differs from %s:\n%s", args, code, stderr, golden, stdout)
+		}
 	}
 }
