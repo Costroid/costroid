@@ -113,7 +113,7 @@ It needs the same one secret, `ANTHROPIC_API_KEY`. Then open a test pull request
 
 The recipe installs Codex 0.164.0-alpha.11.1 and passes the same version to the action as `codex-version`. It states `safety-strategy: drop-sudo`, the action's default, so a change shows in review. It leaves `allow-users` empty, because the job's `if` already says who may start the agent. The home's `config.toml` sets `otel.log_user_prompt=false`.
 
-The `read` stage reads every rollout file under `codex-home` written since the job started: the run's own thread and each subagent's, line by line, as `costroid run` reads them. A home that holds no such file gets no rows, and the report says why. Costroid did not start this run, so no budget held it, and the grade reads `none`. Each push to the pull request runs the agent again. The rollout files do not say how the run billed, so the rows read `list_equivalent`, the weaker claim.
+The `read` stage reads every rollout file under `codex-home` written since the job started: the run's own thread and each subagent's, line by line, as `costroid run` reads them. A home that holds no such file gets no rows, and the report says why. Costroid did not start this run, so no budget held it, and the grade reads `none`. Each push to the pull request runs the agent again. `openai/codex-action` takes only an API key, through its `openai-api-key` input, so the rows read `measured`.
 
 A real run of `codex-action` at `v1.13` with Codex 0.164.0-alpha.11.1, read on 2026-11-07, made two requests to `gpt-6.1-sol`. Their counts, priced by hand at the pinned catalog's list prices, come to USD 0.029324, and Costroid's rows give the same figure. The run is kept as a fixture with its content removed.
 

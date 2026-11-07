@@ -42,6 +42,8 @@ The basis follows the key the agent runs on.
 
 [`recipes/github-codex.yml`](../recipes/github-codex.yml) takes the secret `CODEX_API_KEY` as the action's `api-key`. The rows read `measured`.
 
+[`recipes/github-codex-action.yml`](../recipes/github-codex-action.yml) gives `openai/codex-action` the secret `CODEX_API_KEY` or `OPENAI_API_KEY` as its `openai-api-key`. That action takes only an API key, so the rows read `measured`.
+
 The action's `run` stage refuses to start without `api-key`, so neither recipe runs an agent on a subscription.
 
 [`recipes/github-claude-code-action.yml`](../recipes/github-claude-code-action.yml) passes `ANTHROPIC_API_KEY` to `claude-code-action`, and Costroid's `read` stage holds no key. The rows read `measured` when the execution file's `apiKeySource` names a key. A run that you give a subscription's token in place of the key reads `list_equivalent` by the same rule. No run on a subscription's token has been recorded, so that reading is unverified.

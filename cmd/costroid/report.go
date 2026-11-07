@@ -105,11 +105,13 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	}
 	flags := reportFlags{rows: *rows, agentResult: *agentResult, json: *asJSON, preview: *preview}
 	if *installation != "" {
-		number, ok := appInstallation(*installation)
-		if !ok {
-			return reportFlags{}, errors.New("--installation-id must be github:<id> or the GitHub App installation's bare number")
+		// An unreadable installation costs the comment its account link and
+		// nothing else: a missing input never blocks the report.
+		if number, ok := appInstallation(*installation); ok {
+			flags.installation = number
+		} else {
+			fmt.Fprintf(stderr, "costroid: warning: --installation-id %q is not github:<id> or a GitHub App installation's bare number, so the comment links no account\n", *installation)
 		}
-		flags.installation = number
 	}
 	if *budget != "" {
 		amount, err := decimal.Parse(*budget)
