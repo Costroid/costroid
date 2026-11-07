@@ -479,11 +479,12 @@ func TestTwoSheetsForOneProviderAreRefused(t *testing.T) {
 // TestRowStartingAfterTheSheetDateHoldsFromItsStart holds that a price the
 // provider announced for a later day answers from that day, and the row it
 // replaces answers until then, while a row that starts on the sheet's date
-// still prices a request made before it.
+// still prices a request made before it. The later row comes first, so row
+// order cannot pass the test.
 func TestRowStartingAfterTheSheetDateHoldsFromItsStart(t *testing.T) {
 	release := fstest.MapFS{"x.json": {Data: []byte(`{"Provider":"google","ServiceProviderName":"Google","SheetDate":"2026-11-07","rows":[
-{"RowType":"unit_price","SkuPriceId":"now","ModelId":"m","RegionId":"global","ServiceTier":"standard","TokenClass":"output","ListUnitPrice":"10","PricingUnit":"1000000 Tokens","EffectiveStart":"2026-11-07","EffectiveEnd":"2026-12-01"},
-{"RowType":"unit_price","SkuPriceId":"later","ModelId":"m","RegionId":"global","ServiceTier":"standard","TokenClass":"output","ListUnitPrice":"12","PricingUnit":"1000000 Tokens","EffectiveStart":"2026-12-01","EffectiveEnd":null}]}`)}}
+{"RowType":"unit_price","SkuPriceId":"later","ModelId":"m","RegionId":"global","ServiceTier":"standard","TokenClass":"output","ListUnitPrice":"12","PricingUnit":"1000000 Tokens","EffectiveStart":"2026-12-01","EffectiveEnd":null},
+{"RowType":"unit_price","SkuPriceId":"now","ModelId":"m","RegionId":"global","ServiceTier":"standard","TokenClass":"output","ListUnitPrice":"10","PricingUnit":"1000000 Tokens","EffectiveStart":"2026-11-07","EffectiveEnd":"2026-12-01"}]}`)}}
 	c, err := Parse("0.0.1", release)
 	if err != nil {
 		t.Fatal(err)

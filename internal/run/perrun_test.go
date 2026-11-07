@@ -8,6 +8,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
+	"github.com/Costroid/costroid/internal/focus"
 )
 
 const perRunInit = `{"type":"system","subtype":"init","session_id":"per-run","apiKeySource":"ANTHROPIC_API_KEY","claude_code_version":"2.1.319"}`
@@ -128,5 +129,32 @@ func TestPerRunGrainKeepsFastModeSeenOnTheStream(t *testing.T) {
 	if description := rows["claude-opus-5-5 input_uncached"]["ChargeDescription"].(string); strings.Contains(description, "upper bound") ||
 		strings.Contains(description, "no stream message") {
 		t.Errorf("a run every message of which stated fast mode in us says otherwise: %q", description)
+	}
+}
+
+// TestCoarseRowWithNoStatedInputSaysItsContextTierIsUnknown holds that an
+// entry coarser than a request, with input tokens and no whole input stated,
+// says its context tier is unknown, and that one with no input does not.
+func TestCoarseRowWithNoStatedInputSaysItsContextTierIsUnknown(t *testing.T) {
+	const unknown = "one turn's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read under"
+	cases := map[string]struct {
+		tokens adapter.Tokens
+		says   bool
+	}{
+		"with input":   {adapter.Tokens{InputUncached: 150000, Output: 10}, true},
+		"output alone": {adapter.Tokens{Output: 10}, false},
+	}
+	for name, tc := range cases {
+		request := haikuRequest("turn", tc.tokens)
+		request.Grain = adapter.PerTurn
+		var written bytes.Buffer
+		if _, err := Record(Options{Rows: &written, Catalog: pinned(t)}, "codex", adapter.Report{CostBasis: focus.Measured, Requests: []adapter.Request{request}}); err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range parseRows(t, written.Bytes()) {
+			if said := strings.Contains(row["ChargeDescription"].(string), unknown); said != tc.says {
+				t.Errorf("%s, %s: %q", name, row["SkuMeter"], row["ChargeDescription"])
+			}
+		}
 	}
 }
