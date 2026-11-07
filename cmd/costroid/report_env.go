@@ -113,12 +113,20 @@ func runURL(system cicontext.System) string {
 	return strings.TrimRight(server, "/") + "/" + repository + "/actions/runs/" + run
 }
 
+// platformVariable names Costroid Platform's origin, as the action's
+// platform-url input sets it. The comment checks its form.
+const platformVariable = "COSTROID_PLATFORM_URL"
+
 // reportTarget is where a report goes and what it says about itself there.
+// The platform and the repository let the comment link the pull request on
+// Costroid Platform.
 type reportTarget struct {
 	host         scm.Reporter
 	pull         pullContext
 	installation string
 	accountHost  string
+	platform     string
+	repository   string
 }
 
 // targetFromEnvironment selects the adapter. A job on a known CI system gets an
@@ -133,7 +141,21 @@ func targetFromEnvironment(system cicontext.System, flags reportFlags, stderr io
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
 	host, err := hostFromEnvironment(pull)
-	return reportTarget{host: host, pull: pull, installation: flags.installation}, err
+	return reportTarget{
+		host:         host,
+		pull:         pull,
+		installation: flags.installation,
+		platform:     os.Getenv(platformVariable),
+		repository:   checkedRepository(),
+	}, err
+}
+
+// checkedRepository is the repository as the costroid/repo tag names it, empty
+// when the environment names none the tag allows. The repository does not
+// depend on the event file, whose error readPullContext reports.
+func checkedRepository() string {
+	run, _ := cicontext.Read(os.Getenv)
+	return run.Repository
 }
 
 // ciRunFromEnvironment is GitHub Actions' run id and attempt, nil outside it
@@ -171,7 +193,8 @@ func hostFromEnvironment(pull pullContext) (scm.Reporter, error) {
 // gitLabTarget reads a merge request pipeline in the customer's CI, outside the
 // service's egress allowlist, so its client is a plain one. The project is the merge
 // request's, and a fork's pipeline is refused here as well as in the recipe's
-// rules, so a fork's merge request never gets a post.
+// rules, so a fork's merge request never gets a post. The installation is the
+// project's namespace, the id the integration contract binds.
 func gitLabTarget() (reportTarget, error) {
 	run, err := cicontext.Read(os.Getenv)
 	if err != nil {
@@ -205,7 +228,9 @@ func gitLabTarget() (reportTarget, error) {
 	return reportTarget{
 		host:         host,
 		pull:         pullContext{head: run.Head, base: run.Base, baseBranch: os.Getenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME"), pullRequest: number},
-		installation: project,
+		installation: os.Getenv("CI_PROJECT_NAMESPACE_ID"),
 		accountHost:  comment.AccountGitLab,
+		platform:     os.Getenv(platformVariable),
+		repository:   run.Repository,
 	}, nil
 }

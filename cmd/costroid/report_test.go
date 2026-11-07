@@ -38,6 +38,7 @@ func reportEnvironment(t *testing.T, event string) *scmtest.Stub {
 	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
 	t.Setenv("GITHUB_EVENT_PATH", path)
 	t.Setenv(installationVariable, "")
+	t.Setenv(platformVariable, "")
 	t.Setenv("GITHUB_OUTPUT", "")
 	t.Setenv("GITHUB_STEP_SUMMARY", "")
 	return stub

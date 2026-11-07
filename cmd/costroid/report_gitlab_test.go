@@ -13,7 +13,10 @@ import (
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
 
-const showCostOff = "comment:\n  show_cost: false\n"
+const (
+	showCostOff     = "comment:\n  show_cost: false\n"
+	gitLabNamespace = "4410287"
+)
 
 // gitLabEnvironment states a merge request pipeline against a stub. The commit
 // is headCommit, as on an ordinary merge request pipeline.
@@ -29,6 +32,7 @@ func gitLabEnvironment(t *testing.T) *scmtest.GitLab {
 		"CI_PROJECT_PATH":                    "platform/widgets",
 		"CI_PROJECT_URL":                     "https://gitlab.corp.example/platform/widgets",
 		"CI_PROJECT_ID":                      stub.Project,
+		"CI_PROJECT_NAMESPACE_ID":            gitLabNamespace,
 		"CI_MERGE_REQUEST_PROJECT_ID":        stub.Project,
 		"CI_MERGE_REQUEST_SOURCE_PROJECT_ID": stub.Project,
 		"CI_MERGE_REQUEST_IID":               strconv.Itoa(scmtest.GitLabRequest),
@@ -38,6 +42,7 @@ func gitLabEnvironment(t *testing.T) *scmtest.GitLab {
 		"CI_PIPELINE_ID":                     "901",
 		"CI_JOB_ID":                          "902",
 		installationVariable:                 "",
+		platformVariable:                     "",
 	} {
 		t.Setenv(name, value)
 	}
@@ -168,7 +173,7 @@ func TestGitLabMergedResultsNamesTheSourceBranchHead(t *testing.T) {
 	}
 }
 
-func TestGitLabAccountLinkNamesTheProjectAndNoHostname(t *testing.T) {
+func TestGitLabAccountLinkNamesTheNamespaceAndNoHostname(t *testing.T) {
 	stub := gitLabEnvironment(t)
 	t.Setenv(installationVariable, "58120394")
 	execute(t, "report", "--rows", realRows)
@@ -176,10 +181,10 @@ func TestGitLabAccountLinkNamesTheProjectAndNoHostname(t *testing.T) {
 		t.Fatalf("%d notes", len(stub.Notes))
 	}
 	body := stub.Notes[0].Body
-	if !strings.Contains(body, "https://app.costroid.com/?installation=gitlab%3A"+stub.Project+")") {
+	if !strings.Contains(body, "https://app.costroid.com/?installation=gitlab-namespace%3A"+gitLabNamespace+")") {
 		t.Errorf("no link in\n%s", body)
 	}
-	for _, leak := range []string{"gitlab.corp.example", "platform/widgets", strings.TrimPrefix(stub.Server.URL, "http://"), "58120394"} {
+	for _, leak := range []string{"gitlab.corp.example", "platform/widgets", strings.TrimPrefix(stub.Server.URL, "http://"), "58120394", "installation=gitlab%3A" + stub.Project} {
 		if strings.Contains(body, leak) {
 			t.Errorf("%q is in\n%s", leak, body)
 		}

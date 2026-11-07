@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -38,7 +39,10 @@ const (
 	artifactIdentity = "unverified"
 	budgetCurrency   = "USD"
 	accountURL       = "https://app.costroid.com/"
-	exportURL        = "https://docs.costroid.com/export"
+	// accountPage is where the account link goes when the report names no
+	// installation and no platform: the page that says what the account is.
+	accountPage = "https://docs.costroid.com/account"
+	exportURL   = "https://docs.costroid.com/export"
 )
 
 // State says what the rows file gave the report.
@@ -135,6 +139,11 @@ var (
 	digestPattern       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	// runURLPattern holds no character that can end a Markdown link target.
 	runURLPattern = regexp.MustCompile(`^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+$`)
+	// originPattern is an https origin, and repositoryPattern the form of the
+	// costroid/repo tag without its percent sign. Neither holds a character
+	// that ends a Markdown link target or a query value.
+	originPattern     = regexp.MustCompile(`^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+	repositoryPattern = regexp.MustCompile(`^[a-z0-9.-]+(/[a-z0-9._~-]+){1,8}$`)
 )
 
 const (
@@ -148,6 +157,13 @@ const (
 	AccountGitLab = "gitlab"
 )
 
+// installationKinds is the kind each host's installation id takes in the
+// integration contract.
+var installationKinds = map[string]string{
+	AccountGitHub: "github:",
+	AccountGitLab: "gitlab-namespace:",
+}
+
 // Input is everything a render reads.
 type Input struct {
 	Ledger  Ledger
@@ -158,11 +174,18 @@ type Input struct {
 	// policy's budget is a separate amount, read from costroid.yml.
 	Budget *decimal.Decimal
 	// Installation is the SCM installation id, empty when no App is installed.
-	// On GitLab it is the project id.
+	// On GitLab it is the project's namespace id.
 	Installation string
 	// AccountHost is the host the installation id belongs to, GitHub when
 	// empty. It is a name, never an instance's address.
 	AccountHost string
+	// Platform is Costroid Platform's https origin, empty when the report was
+	// given none. Repository is the checked repository in the form of the
+	// costroid/repo tag, and PullRequest its number, 0 off a pull request.
+	// With all three the account link opens the pull request there.
+	Platform    string
+	Repository  string
+	PullRequest int
 	// CheckRunID names the posted check, nil when the post failed.
 	CheckRunID *int64
 	// IDInCheck says the check run's own text names CheckRunID. The id exists
@@ -491,7 +514,7 @@ func (i Input) view() view {
 		ModelsOmitted:  i.Ledger.ModelsOmitted,
 		Catalogs:       spans(i.Ledger.Catalogs),
 		Rows:           i.Ledger.Rows,
-		AccountURL:     accountLink(i.AccountHost, i.Installation),
+		AccountURL:     i.accountLink(),
 		CheckRuns:      i.AccountHost != AccountGitLab,
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
@@ -732,13 +755,29 @@ func spans(names []Data) string {
 	return strings.Join(rendered, ", ")
 }
 
-// accountLink carries the installation id when there is one. A malformed id is
-// dropped, and the link still opens the account.
-func accountLink(host, installation string) string {
-	if !installationPattern.MatchString(installation) {
-		return accountURL
+// accountLink opens the pull request on Costroid Platform when the report
+// names the platform, the repository and the pull request. Otherwise it carries
+// the installation id, and with no installation it opens the page that says
+// what the account is. A malformed value is dropped.
+func (i Input) accountLink() string {
+	if link, ok := pullLink(i.Platform, i.Repository, i.PullRequest); ok {
+		return link
 	}
-	return accountURL + "?" + url.Values{"installation": {cmp.Or(host, AccountGitHub) + ":" + installation}}.Encode()
+	kind, known := installationKinds[cmp.Or(i.AccountHost, AccountGitHub)]
+	if !known || !installationPattern.MatchString(i.Installation) {
+		return accountPage
+	}
+	return accountURL + "?" + url.Values{"installation": {kind + i.Installation}}.Encode()
+}
+
+// pullLink is the pull request's page on the platform, built only from values
+// its patterns checked, so none needs escaping.
+func pullLink(platform, repository string, pullRequest int) (string, bool) {
+	origin := strings.TrimSuffix(platform, "/")
+	if pullRequest < 1 || len(origin) > maxRunURLLength || !originPattern.MatchString(origin) || !repositoryPattern.MatchString(repository) {
+		return "", false
+	}
+	return origin + "/#/pulls?repo=" + repository + "&pr=" + strconv.Itoa(pullRequest), true
 }
 
 //go:embed comment.tmpl
