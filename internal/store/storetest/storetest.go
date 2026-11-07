@@ -70,7 +70,9 @@ func start() (func(), error) {
 		return nil, fmt.Errorf("start postgres: %w", err)
 	}
 	id := strings.TrimSpace(out)
-	stop := func() { _, _ = output("docker", "rm", "-f", id) }
+	// -v removes the anonymous data volume. Without it every run leaves
+	// about 3 GB behind.
+	stop := func() { _, _ = output("docker", "rm", "-f", "-v", id) }
 	mapped, err := output("docker", "port", id, "5432/tcp")
 	if err != nil {
 		stop()
