@@ -4,6 +4,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
@@ -79,6 +80,17 @@ func (t Tokens) Counts() []Count {
 	return present
 }
 
+// Check refuses a negative class. No source counts fewer than no tokens, and
+// a negative count would price as a negative cost.
+func (t Tokens) Check() error {
+	for _, count := range t.Counts() {
+		if count.Tokens < 0 {
+			return fmt.Errorf("%s holds %d tokens, below zero", count.Class, count.Tokens)
+		}
+	}
+	return nil
+}
+
 // Add returns the class-by-class sum.
 func (t Tokens) Add(other Tokens) Tokens {
 	return Tokens{
@@ -120,6 +132,31 @@ type Request struct {
 	Note string
 }
 
+// AgentError is the class of error a run's agent ended in. The class is read
+// from the agent's own fields, never from its text. The values are a closed
+// list; a class the agent states that is not on it reads as unknown.
+type AgentError string
+
+// The classes an agent's run can end in. Empty means it ended in none.
+const (
+	AgentErrorAuthentication AgentError = "authentication_failed"
+	AgentErrorBilling        AgentError = "billing_error"
+	AgentErrorRateLimit      AgentError = "rate_limit"
+	AgentErrorInvalidRequest AgentError = "invalid_request"
+	AgentErrorServer         AgentError = "server_error"
+	AgentErrorUnknown        AgentError = "unknown"
+)
+
+// ParseAgentError maps the class an agent states onto the closed list.
+func ParseAgentError(stated string) AgentError {
+	switch class := AgentError(stated); class {
+	case AgentErrorAuthentication, AgentErrorBilling, AgentErrorRateLimit, AgentErrorInvalidRequest, AgentErrorServer:
+		return class
+	default:
+		return AgentErrorUnknown
+	}
+}
+
 // Report is what a run's usage came to.
 type Report struct {
 	SessionID    string
@@ -128,6 +165,9 @@ type Report struct {
 	CostSource   string
 	Requests     []Request
 	Warnings     []string
+	// AgentError is the class of error the agent ended the run in. Empty means
+	// the run did not end in one.
+	AgentError AgentError
 	// Enforcement is the grade the run earned, when it differs from what the
 	// plan could promise. Empty means the plan's grade held.
 	Enforcement Enforcement

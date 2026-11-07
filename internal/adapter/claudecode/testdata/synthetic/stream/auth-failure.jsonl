@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000000b","apiKeySource":"ANTHROPIC_API_KEY","claude_code_version":"2.1.316","cwd":"/work"}
+{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"SYNTHETIC-ERROR-TEXT"}]},"error":"authentication_failed"}
+{"type":"result","subtype":"success","is_error":true,"result":"SYNTHETIC-ERROR-TEXT","session_id":"00000000-0000-4000-8000-00000000000b","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"modelUsage":{}}

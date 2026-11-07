@@ -1,0 +1,13 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000000a","apiKeySource":"ANTHROPIC_API_KEY","claude_code_version":"2.1.316","cwd":"/work"}
+{"type":"user","message":"SYNTHETIC-PROMPT-TEXT"}
+{"type":"user","message":null}
+{"type":"assistant","message":"SYNTHETIC-TEXT"}
+{"type":"assistant","message":{"model":"claude-haiku-5-5","usage":{"input_tokens":"3","output_tokens":16.0}}}
+{"type":"stream_event","event":{"type":"message_delta","usage":{"output_tokens":4.0}}}
+{"type":7,"message":"SYNTHETIC-TEXT"}
+{"message":"SYNTHETIC-TEXT"}
+["SYNTHETIC-TEXT"]
+"SYNTHETIC-TEXT"
+null
+{"type":"system","subtype":"init","session_id":42}
+{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-00000000000a","total_cost_usd":0.5,"usage":{"input_tokens":3,"output_tokens":20},"modelUsage":{"claude-haiku-5-5":{"inputTokens":3,"outputTokens":20.0,"cacheReadInputTokens":"100","cacheCreationInputTokens":1e2,"cacheCreationEphemeral5mInputTokens":40,"cacheCreationEphemeral1hInputTokens":"60.0","thinkingTokens":null,"costUSD":0.5,"contextWindow":200000,"webSearchRequests":"none"}}}

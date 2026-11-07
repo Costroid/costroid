@@ -1,0 +1,4 @@
+[
+  {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000000e","apiKeySource":"ANTHROPIC_API_KEY","claude_code_version":"2.1.316"},
+  {"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-00000000000e","modelUsage":{"claude-haiku-5-5":{"inputTokens":1,"outputTokens":2}}},
+  {"type":"assistant","message":{"model":"claude-haiku-5-5","content":[{"type":"text","text":"SYNTH

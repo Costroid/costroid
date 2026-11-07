@@ -1,6 +1,7 @@
 package claudecode
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -465,4 +466,352 @@ func TestAMessageThatIsAStringIsRead(t *testing.T) {
 	if !session.answered["claude-opus-5-5"] {
 		t.Error("the assistant line's model was not read")
 	}
+}
+
+func synthetic(format, file string) string {
+	return filepath.Join("testdata", "synthetic", format, file)
+}
+
+// feedLines reads a stream file into a new session whose config directory
+// holds no session file, and finishes it.
+func feedLines(t *testing.T, path string) (adapter.Report, error) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := Agent{ConfigDir: t.TempDir()}.NewSession(adapter.Plan{})
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatalf("%s: %v", line, err)
+		}
+	}
+	return session.Finish()
+}
+
+const initLine = `{"type":"system","subtype":"init","session_id":"s","apiKeySource":"ANTHROPIC_API_KEY","claude_code_version":"2.1.316"}`
+
+// finishResult feeds an init line and one result line whose haiku totals are
+// the given JSON object, and finishes.
+func finishResult(t *testing.T, haiku string) (adapter.Report, error) {
+	t.Helper()
+	session := &Session{}
+	for _, line := range []string{initLine, `{"type":"result","subtype":"success","session_id":"s","modelUsage":{"claude-haiku-5-5":` + haiku + `}}`} {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return session.Finish()
+}
+
+func TestResultCountsAcceptIntegralForms(t *testing.T) {
+	for _, form := range []string{`10`, `10.0`, `"10"`, `"10.0"`, `1e1`, `100e-1`, `1.0E+1`} {
+		report, err := finishResult(t, `{"inputTokens":`+form+`,"outputTokens":2}`)
+		if err != nil {
+			t.Errorf("%s: %v", form, err)
+			continue
+		}
+		if got := report.Requests[0].Tokens.InputUncached; got != 10 {
+			t.Errorf("%s read as %d", form, got)
+		}
+	}
+	refused := map[string]string{
+		`10.5`:                    "is not a whole number",
+		`"10.5"`:                  "is not a whole number",
+		`1e-1`:                    "is not a whole number",
+		`-1`:                      "is negative",
+		`"-10"`:                   "is negative",
+		`"ten"`:                   "is not a number",
+		`" 10"`:                   "is not a number",
+		`true`:                    "is not a number",
+		`{"n":10}`:                "is not a number",
+		`9223372036854775808`:     "is past the largest count",
+		`1e19`:                    "is past the largest count",
+		`1e99999999999`:           "is past the largest count",
+		`92233720368547758080e-1`: "is past the largest count",
+	}
+	for form, reason := range refused {
+		_, err := finishResult(t, `{"inputTokens":`+form+`,"outputTokens":2}`)
+		if err == nil || !strings.Contains(err.Error(), "the result object could not be read: modelUsage claude-haiku-5-5 inputTokens: ") || !strings.Contains(err.Error(), reason) {
+			t.Errorf("%s: %v", form, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "no result object") {
+			t.Errorf("%s: an unread result was called absent: %v", form, err)
+		}
+	}
+}
+
+func TestResultCountsTakeTheLargestWholeCount(t *testing.T) {
+	report, err := finishResult(t, `{"inputTokens":9223372036854775807,"outputTokens":"9.223372036854775807e18"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.Requests[0].Tokens; got.InputUncached != 1<<63-1 || got.Output != 1<<63-1 {
+		t.Errorf("%+v", got)
+	}
+}
+
+func TestResultWithUnknownFieldsAndNullTotalsIsRead(t *testing.T) {
+	report, err := feedLines(t, synthetic("stream", "every-shape.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := adapter.Tokens{InputUncached: 3, CacheRead: 100, CacheWrite5m: 40, CacheWrite1h: 60, Output: 20, CachedInputReported: 100}
+	if len(report.Requests) != 1 || report.Requests[0].Tokens != want {
+		t.Fatalf("%+v", report.Requests)
+	}
+	session := &Session{}
+	for _, line := range []string{initLine, `{"type":"result","subtype":"success","modelUsage":null}`} {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if report, err := session.Finish(); err != nil || len(report.Requests) != 0 {
+		t.Errorf("a null modelUsage: %+v, %v", report, err)
+	}
+}
+
+func TestOddStreamLinesAreSkippedAndCountedInOneWarning(t *testing.T) {
+	report, err := feedLines(t, synthetic("stream", "every-shape.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SessionID != "00000000-0000-4000-8000-00000000000a" || report.CostBasis != focus.Measured {
+		t.Errorf("the init line was not read, or a later odd init replaced it: %s %s", report.SessionID, report.CostBasis)
+	}
+	var skipped []string
+	for _, warning := range report.Warnings {
+		if strings.Contains(warning, "skipped") {
+			skipped = append(skipped, warning)
+		}
+	}
+	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], "6 stream lines were skipped") {
+		t.Errorf("warnings %q", report.Warnings)
+	}
+}
+
+func TestAResultThatCannotBeReadIsNamedNotCalledAbsent(t *testing.T) {
+	session := Agent{ConfigDir: t.TempDir()}.NewSession(adapter.Plan{})
+	for _, line := range []string{initLine, `{"type":"result","session_id":"s","modelUsage":"SYNTHETIC-TEXT"}`} {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := session.Finish()
+	if err == nil || err.Error() != "claude-code: the result object could not be read: modelUsage is not an object of models" {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestAResultThatReadsReplacesAnEarlierOneThatDidNot(t *testing.T) {
+	report, err := finishResult(t, `{"inputTokens":4}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &Session{}
+	for _, line := range []string{
+		initLine,
+		`{"type":"result","session_id":"s","modelUsage":{"claude-haiku-5-5":{"inputTokens":1.5}}}`,
+		`{"type":"result","session_id":"s","modelUsage":{"claude-haiku-5-5":{"inputTokens":4}}}`,
+	} {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	later, err := session.Finish()
+	if err != nil || later.Requests[0].Tokens != report.Requests[0].Tokens {
+		t.Fatalf("%+v, %v", later.Requests, err)
+	}
+	session = &Session{}
+	for _, line := range []string{
+		initLine,
+		`{"type":"result","session_id":"s","modelUsage":{"claude-haiku-5-5":{"inputTokens":4}}}`,
+		`{"type":"result","session_id":"s","modelUsage":{"claude-haiku-5-5":{"inputTokens":1.5}}}`,
+	} {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := session.Finish(); err == nil {
+		t.Error("a last result that could not be read was passed over for an earlier one")
+	}
+}
+
+func TestResultUsageWithoutModelUsageFails(t *testing.T) {
+	report, err := feedLines(t, synthetic("stream", "usage-without-model-usage.jsonl"))
+	want := "claude-code: the result states usage but no per-model totals; Claude Code 1.0.0 is not read"
+	if err == nil || err.Error() != want {
+		t.Fatalf("%v, %+v", err, report)
+	}
+	session := &Session{}
+	if err := session.Feed([]byte(`{"type":"result","usage":{"output_tokens":"7"},"modelUsage":{}}`), recorded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Finish(); err == nil || !strings.Contains(err.Error(), "Claude Code of an unstated version is not read") {
+		t.Errorf("%v", err)
+	}
+	session = &Session{}
+	if err := session.Feed([]byte(`{"type":"result","usage":"SYNTHETIC-TEXT"}`), recorded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Finish(); err == nil {
+		t.Error("a usage that cannot be read was taken for none")
+	}
+}
+
+func TestResultWithZeroUsageAndNoModelUsageReadsAsNoUsage(t *testing.T) {
+	report, err := feedLines(t, synthetic("stream", "auth-failure.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Requests) != 0 {
+		t.Errorf("%+v", report.Requests)
+	}
+}
+
+func TestAgentErrorClassFromFields(t *testing.T) {
+	report, err := feedLines(t, synthetic("stream", "auth-failure.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.AgentError != adapter.AgentErrorAuthentication {
+		t.Errorf("the fixture read as %q", report.AgentError)
+	}
+	assistant := func(class string) string {
+		return `{"type":"assistant","message":{"model":"claude-haiku-5-5"},"error":` + class + `}`
+	}
+	ended := `{"type":"result","subtype":"success","is_error":true,"result":"authentication_failed","modelUsage":{}}`
+	succeeded := `{"type":"result","subtype":"success","is_error":false,"result":"rate_limit","modelUsage":{}}`
+	cases := []struct {
+		name  string
+		lines []string
+		want  adapter.AgentError
+	}{
+		{"authentication", []string{assistant(`"authentication_failed"`), ended}, adapter.AgentErrorAuthentication},
+		{"billing", []string{assistant(`"billing_error"`), ended}, adapter.AgentErrorBilling},
+		{"rate limit", []string{assistant(`"rate_limit"`), ended}, adapter.AgentErrorRateLimit},
+		{"invalid request", []string{assistant(`"invalid_request"`), ended}, adapter.AgentErrorInvalidRequest},
+		{"server", []string{assistant(`"server_error"`), ended}, adapter.AgentErrorServer},
+		{"a class not on the list", []string{assistant(`"overloaded"`), ended}, adapter.AgentErrorUnknown},
+		{"a class that is not text", []string{assistant(`{"type":"server_error"}`), ended}, adapter.AgentErrorUnknown},
+		{"the last stated class", []string{assistant(`"rate_limit"`), assistant(`"billing_error"`), ended}, adapter.AgentErrorBilling},
+		{"an error result with no class", []string{ended}, adapter.AgentErrorUnknown},
+		{"a class the run recovered from", []string{assistant(`"rate_limit"`), succeeded}, ""},
+		{"a null class", []string{assistant(`null`), ended}, adapter.AgentErrorUnknown},
+		{"a budget stop", []string{`{"type":"result","subtype":"error_max_budget_usd","is_error":true,"modelUsage":{}}`}, ""},
+		{"a turn limit", []string{`{"type":"result","subtype":"error_max_turns","is_error":true,"modelUsage":{}}`}, ""},
+		{"an execution error", []string{`{"type":"result","subtype":"error_during_execution","is_error":true,"modelUsage":{}}`}, adapter.AgentErrorUnknown},
+		{"text alone", []string{`{"type":"assistant","message":{"content":[{"type":"text","text":"authentication_failed"}]}}`, succeeded}, ""},
+		{"a stated class and no result", []string{assistant(`"server_error"`)}, adapter.AgentErrorServer},
+	}
+	for _, tc := range cases {
+		session := &Session{}
+		for _, line := range append([]string{initLine}, tc.lines...) {
+			if err := session.Feed([]byte(line), recorded); err != nil {
+				t.Fatal(err)
+			}
+		}
+		report, _ := session.Finish()
+		if report.AgentError != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, report.AgentError, tc.want)
+		}
+	}
+}
+
+func TestRecordedRunsEndInNoAgentError(t *testing.T) {
+	scenarios := map[string]string{
+		"one-request": "00000000-0000-4000-8000-000000000001",
+		"subagent":    "00000000-0000-4000-8000-000000000002",
+		"budget-stop": "00000000-0000-4000-8000-000000000003",
+	}
+	for scenario, sessionID := range scenarios {
+		if class := replay(t, scenario, sessionID).AgentError; class != "" {
+			t.Errorf("%s: %q", scenario, class)
+		}
+	}
+}
+
+func TestTokensCheckRefusesNegative(t *testing.T) {
+	if err := (adapter.Tokens{InputUncached: 1, Output: 2}).Check(); err != nil {
+		t.Errorf("a whole count was refused: %v", err)
+	}
+	classes := map[string]adapter.Tokens{
+		"input_uncached":        {InputUncached: -1},
+		"cache_read":            {CacheRead: -1},
+		"cache_write_5m":        {CacheWrite5m: -1},
+		"cache_write_1h":        {CacheWrite1h: -1},
+		"cache_write_30m":       {CacheWrite30m: -1},
+		"output":                {Output: 5, ReasoningOutput: -1},
+		"cached_input_reported": {CachedInputReported: -1},
+	}
+	for name, tokens := range classes {
+		if err := tokens.Check(); err == nil || !strings.Contains(err.Error(), "below zero") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	_, err := finishResult(t, `{"inputTokens":1,"cacheCreationInputTokens":100,"cacheCreationEphemeral1hInputTokens":150}`)
+	if err == nil || !strings.Contains(err.Error(), "the result's totals for claude-haiku-5-5 do not add up") || !strings.Contains(err.Error(), "below zero") {
+		t.Errorf("lifetimes past the written total: %v", err)
+	}
+}
+
+// fuzzResult is a result whose cache writes all state their lifetime, so its
+// rows do not depend on how the run bills.
+const fuzzResult = `{"type":"result","subtype":"success","is_error":false,"session_id":"fuzz","modelUsage":{"claude-haiku-5-5":{"inputTokens":3,"outputTokens":20,"cacheReadInputTokens":100,"cacheCreationInputTokens":100,"cacheCreationEphemeral5mInputTokens":40,"cacheCreationEphemeral1hInputTokens":60}}}`
+
+var fuzzWant = adapter.Tokens{InputUncached: 3, CacheRead: 100, CacheWrite5m: 40, CacheWrite1h: 60, Output: 20, CachedInputReported: 100}
+
+func addStreamSeeds(f *testing.F) {
+	paths, err := filepath.Glob(filepath.Join("testdata", "*", "*", "*.jsonl"))
+	if err != nil {
+		f.Fatal(err)
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			f.Fatal(err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			f.Add([]byte(line))
+		}
+	}
+}
+
+// FuzzClaudeFeed feeds any lines. No line may panic the reader, a finished
+// run never holds a negative class, and a valid result after the lines still
+// sets the run's totals.
+func FuzzClaudeFeed(f *testing.F) {
+	addStreamSeeds(f)
+	f.Add([]byte(`{"type":"result","modelUsage":{"claude-haiku-5-5":{"inputTokens":1.5}}}`))
+	f.Add([]byte(`{"type":"result","usage":{"input_tokens":5}}`))
+	f.Add([]byte(`{"type":"result","modelUsage":{"claude-haiku-5-5":{"cacheCreationInputTokens":1,"cacheCreationEphemeral5mInputTokens":5}}}`))
+	f.Fuzz(func(t *testing.T, garbage []byte) {
+		lines := bytes.Split(garbage, []byte("\n"))
+		alone := &Session{}
+		for _, line := range lines {
+			_ = alone.Feed(line, recorded)
+		}
+		if report, err := alone.Finish(); err == nil {
+			for _, request := range report.Requests {
+				if err := request.Tokens.Check(); err != nil {
+					t.Fatalf("%s: %v", request.ID, err)
+				}
+			}
+		}
+		session := &Session{}
+		_ = session.Feed([]byte(initLine), recorded)
+		for _, line := range lines {
+			_ = session.Feed(line, recorded)
+		}
+		if err := session.Feed([]byte(fuzzResult), recorded); err != nil {
+			t.Fatal(err)
+		}
+		report, err := session.Finish()
+		if err != nil {
+			t.Fatalf("a valid last result was refused: %v", err)
+		}
+		if len(report.Requests) != 1 || report.Requests[0].ID != "fuzz:claude-haiku-5-5" || report.Requests[0].Tokens != fuzzWant {
+			t.Fatalf("%+v", report.Requests)
+		}
+	})
 }

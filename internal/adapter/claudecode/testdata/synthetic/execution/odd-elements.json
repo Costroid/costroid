@@ -1,0 +1,9 @@
+[
+  {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000000d","apiKeySource":"ANTHROPIC_API_KEY","claude_code_version":"2.1.316","cwd":"/work"},
+  "SYNTHETIC-NOTE",
+  42,
+  null,
+  {"type":"user","timestamp":1793530500,"message":{"role":"user","content":"SYNTHETIC-PROMPT-TEXT"}},
+  {"type":"assistant","timestamp":"2026-11-01T11:14:00.000Z","message":{"model":"claude-haiku-5-5"}},
+  {"type":"result","subtype":"success","is_error":false,"duration_ms":1234.5,"session_id":"00000000-0000-4000-8000-00000000000d","modelUsage":{"claude-haiku-5-5":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}
+]
