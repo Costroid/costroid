@@ -40,7 +40,7 @@ jobs:
       # Block 1: read what the run cost.
       - name: Read what the run cost
         if: always() && steps.claude.outputs.execution_file != ''
-        uses: Costroid/costroid/action@a4db648a1ad602760e88277f4875b55d08ea73ef # v1.0.0-alpha.9
+        uses: Costroid/costroid/action@b5262619826d2db51bb08dbb920b8a30914382aa # v1.0.0-alpha.10
         with:
           stage: read
           execution-file: ${{ steps.claude.outputs.execution_file }}
@@ -57,7 +57,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@a4db648a1ad602760e88277f4875b55d08ea73ef # v1.0.0-alpha.9
+      - uses: Costroid/costroid/action@b5262619826d2db51bb08dbb920b8a30914382aa # v1.0.0-alpha.10
         with:
           stage: report
           agent-result: ${{ needs.review.result }}
