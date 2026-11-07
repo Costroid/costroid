@@ -174,3 +174,26 @@ costroid:report:
     - >-
       costroid report --rows costroid-rows.jsonl --budget-usd "$COSTROID_BUDGET_USD"
       ${COSTROID_GATE:+--exit-on-verdict}
+
+# Binds the project's namespace to its Costroid Platform tenant, so its rows
+# can be sent there. It runs in a scheduled pipeline, or on a push to the
+# default branch, when COSTROID_PLATFORM_URL and COSTROID_PLATFORM_AUDIENCE are
+# set. Scope COSTROID_PLATFORM_TOKEN to the environment costroid-connect, so no
+# agent's job can read it. docs/export.md has the details.
+costroid:connect:
+  extends: .costroid-install
+  stage: .post
+  timeout: 5 minutes
+  environment:
+    name: costroid-connect
+    action: access
+  variables:
+    GIT_STRATEGY: empty
+  id_tokens:
+    COSTROID_PLATFORM_PROOF:
+      aud: $COSTROID_PLATFORM_AUDIENCE
+  rules:
+    - if: $COSTROID_PLATFORM_URL && $COSTROID_PLATFORM_AUDIENCE && $CI_PIPELINE_SOURCE == "schedule"
+    - if: $COSTROID_PLATFORM_URL && $COSTROID_PLATFORM_AUDIENCE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - costroid connect --platform-url "$COSTROID_PLATFORM_URL"
