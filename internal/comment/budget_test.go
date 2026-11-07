@@ -161,30 +161,25 @@ func TestCapLineNamesTheGradeOfACapTheReportWasNotGiven(t *testing.T) {
 	}
 }
 
-// policyBudgetGolden is the comment on the recorded run under a USD 5 policy
-// budget, by a report that was not given the run's cap.
-var policyBudgetGolden = filepath.Join("testdata", "policy-budget-no-cap.md")
+// policyBudgetNoCap names the golden state of the recorded run under a USD 5
+// policy budget, by a report that was not given the run's cap.
+const policyBudgetNoCap = "policy-budget-no-cap"
+
+// policyBudgetWithoutCap is the input of the policyBudgetNoCap state.
+func policyBudgetWithoutCap(t *testing.T) Input {
+	t.Helper()
+	input := exampleInput(t)
+	input.Budget = nil
+	return input
+}
 
 // TestPolicyBudgetBesideNoCap renders the policy's budget beside every kind
-// of cap line, and holds the case of a policy budget and no cap to a golden.
-// The cap and the budget never share a name, and no line says a budget is
-// missing while the verdict checks one.
+// of cap line. TestGolden holds the case of a policy budget and no cap to its
+// golden. The cap and the budget never share a name, and no line says a
+// budget is missing while the verdict checks one.
 func TestPolicyBudgetBesideNoCap(t *testing.T) {
-	golden := exampleInput(t)
-	golden.Budget = nil
+	golden := goldenStates(t)[policyBudgetNoCap]
 	body := commentOf(t, golden)
-	if *update {
-		if err := os.WriteFile(policyBudgetGolden, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	saved, err := os.ReadFile(policyBudgetGolden)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(saved) != body {
-		t.Errorf("%s is stale, rerun with -update", policyBudgetGolden)
-	}
 	if !strings.Contains(body, `"cap": null`) || !strings.Contains(body, `"limit_usd": "5"`) {
 		t.Errorf("the block does not hold the two apart:\n%s", body)
 	}

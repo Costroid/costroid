@@ -224,6 +224,8 @@ func goldenStates(t *testing.T) map[string]Input {
 	failed := neutral
 	failed.AgentError = adapter.AgentErrorRateLimit
 	states["agent-error-beside-figures"] = failed
+
+	states[policyBudgetNoCap] = policyBudgetWithoutCap(t)
 	return states
 }
 
