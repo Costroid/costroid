@@ -684,9 +684,9 @@ func VerdictSentences(verdict policy.Verdict, shown bool) []string {
 	var sentences []string
 	switch verdict.Config {
 	case policy.ConfigInvalid:
-		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` at the base commit is not valid, and `costroid validate` names the problem.")
+		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` on the base branch is not valid, and `costroid validate` names the problem.")
 	case policy.ConfigUnread:
-		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` at the base commit could not be read, and a missing input never blocks a merge.")
+		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` on the base branch could not be read, and a missing input never blocks a merge.")
 	}
 	held := false
 	for _, result := range verdict.Results {
@@ -694,13 +694,13 @@ func VerdictSentences(verdict policy.Verdict, shown bool) []string {
 		held = held || result.HeldByWarnOnly
 	}
 	if len(sentences) == 0 {
-		sentences = append(sentences, "No rule applied: `costroid.yml` at the base commit sets no budget and no threshold.")
+		sentences = append(sentences, "No rule applied: `costroid.yml` on the base branch sets no budget and no threshold.")
 	}
 	if held {
 		sentences = append(sentences, warnOnlySentence(verdict.WarnOnly))
 	}
 	if verdict.ConfigFromBase {
-		sentences = append(sentences, "A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base commit's file.")
+		sentences = append(sentences, "A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.")
 	}
 	return sentences
 }

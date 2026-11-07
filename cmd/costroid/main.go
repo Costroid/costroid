@@ -110,7 +110,7 @@ posts the check. Like report, it exits 0 whatever the host answers, and outside
 GitHub Actions it refuses and exits 125.
 
 policy gives, offline, the verdict the check gives: it holds the rows to the
-policy keys of the costroid.yml named, which should be the base commit's.
+policy keys of the costroid.yml named, which should be the base branch's.
 --workflow-added and --at state when the workflow reached the base branch and
 when the check ran, both as RFC 3339. Without --workflow-added the warn-only
 period has not ended. --json prints the verdict as the check's machine block

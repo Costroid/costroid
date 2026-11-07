@@ -1,7 +1,7 @@
 <!-- costroid:comment -->
 ### Costroid
 
-**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base commit's file.
+**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 

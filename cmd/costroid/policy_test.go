@@ -163,7 +163,7 @@ func TestAnUnreadBaseConfigConcludesNeutralAndSaysWhy(t *testing.T) {
 	if stub.Checks[0].Conclusion != policy.Neutral || verdict.Config != policy.ConfigUnread || len(verdict.Results) != 0 {
 		t.Errorf("posted %s with %+v", stub.Checks[0].Conclusion, verdict)
 	}
-	if want := "No rule ran, so the check concludes neutral: `costroid.yml` at the base commit could not be read"; !strings.Contains(stub.Comments[0].Body, want) {
+	if want := "No rule ran, so the check concludes neutral: `costroid.yml` on the base branch could not be read"; !strings.Contains(stub.Comments[0].Body, want) {
 		t.Errorf("the comment does not say why:\n%s", stub.Comments[0].Body)
 	}
 }

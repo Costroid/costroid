@@ -26,7 +26,7 @@ func parsePolicy(args []string, stderr io.Writer) (policyFlags, error) {
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
-	config := set.String("config", configFile, "costroid.yml as the base commit holds it")
+	config := set.String("config", configFile, "costroid.yml as the base branch holds it")
 	added := set.String("workflow-added", "", "when the workflow reached the base branch, as RFC 3339")
 	at := set.String("at", "", "the time of the check, as RFC 3339; now when empty")
 	asJSON := set.Bool("json", false, "print the verdict as the machine block carries it")
