@@ -87,7 +87,7 @@ A [resource group](https://docs.gitlab.com/ci/resource_groups/) runs one report 
 
 ### No check on GitLab
 
-GitHub's check run has no direct equal, and the report posts none. A [commit status](https://docs.gitlab.com/api/commits/) has no neutral state (read November 1, 2026), and creating one [needs the Developer role](https://docs.gitlab.com/user/permissions/) (read November 1, 2026), which is more than the note needs. The comment says the check run was not posted, and its machine block names no check. `allow_failure` keeps the job from failing a pipeline.
+GitHub's check run has no direct equal, and the report posts none. A [commit status](https://docs.gitlab.com/api/commits/) has no neutral state (read November 1, 2026), and creating one [needs the Developer role](https://docs.gitlab.com/user/permissions/) (read November 1, 2026), which is more than the note needs. The comment says the check run was not posted, and its machine block names no check. `allow_failure` keeps the job from failing a pipeline unless `COSTROID_GATE` is set, as [`docs/gitlab.md`](gitlab.md) says.
 
 ### Forks
 
