@@ -29,6 +29,7 @@ const (
 	openAIScope    = "project_id"
 	openAIScopeID  = "proj_"
 	openAIBatch    = "batch"
+	openAILineItem = "line_item"
 
 	// openAILag is SPEC.md C's outer bound on a provider's lateness. The
 	// reports stamp no freshness, so a day younger than this is pending.
@@ -37,6 +38,22 @@ const (
 
 // standardTiers are the report's words for the default tier.
 var standardTiers = []string{"", "default", "auto", catalog.TierStandard}
+
+// openAILineKinds maps the part of a line item after the model to a class.
+// The costs page shows one line item, "gpt-6-astra, input_tokens"
+// (https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs
+// retrieved 2026-11-07); the other
+// kinds are the usage report's own field names, and are not yet seen on a
+// line item. input_tokens is read as uncached input, the class billed at the
+// input price. A kind not named here proves no price, and its amount stays in
+// the day's total.
+var openAILineKinds = map[string]focus.TokenClass{
+	"input_tokens":                 focus.InputUncached,
+	"input_cached_tokens":          focus.CacheRead,
+	"input_cache_write_30m_tokens": focus.CacheWrite30m,
+	"input_cache_write_12h_tokens": focus.CacheWrite12h,
+	"output_tokens":                focus.Output,
+}
 
 type openAI struct {
 	client Doer
@@ -183,6 +200,7 @@ func openAICredential(grain string, key, project *string) string {
 type openAICostResult struct {
 	APIKeyID  *string `json:"api_key_id"`
 	ProjectID *string `json:"project_id"`
+	LineItem  *string `json:"line_item"`
 	Amount    struct {
 		Value    json.Number `json:"value"`
 		Currency string      `json:"currency"`
@@ -191,7 +209,7 @@ type openAICostResult struct {
 
 func (o openAI) costs(ctx context.Context, grain string, span window, report *Report) error {
 	endpoint := fetch{client: o.client, endpoint: openAICosts, authorize: o.authorize}
-	return pages(ctx, endpoint, openAIQuery(span, grain), func(current page[openAIBucket[openAICostResult]]) error {
+	return pages(ctx, endpoint, openAIQuery(span, openAILineItem, grain), func(current page[openAIBucket[openAICostResult]]) error {
 		for _, bucket := range current.Data {
 			for _, result := range bucket.Results {
 				cost, err := result.cost(grain, bucket.day())
@@ -206,19 +224,30 @@ func (o openAI) costs(ctx context.Context, grain string, span window, report *Re
 }
 
 // cost reads every line as a token line. The report's line_item is a free
-// string, so a tool's charge stays in the amount and reads as residual.
+// string, so a tool's charge stays in the amount and reads as residual. The
+// report states one amount, so the price proof reads it as the list figure,
+// and the line item names its model and class.
 func (r openAICostResult) cost(grain, day string) (Cost, error) {
 	if !strings.EqualFold(r.Amount.Currency, currency) {
 		return Cost{}, fmt.Errorf("currency %q: reports are read in USD", r.Amount.Currency)
 	}
-	amount, err := parseAmount(r.Amount.Value.String())
+	figure, err := stated(r.Amount.Value.String(), 0)
 	if err != nil {
 		return Cost{}, fmt.Errorf("amount: %w", err)
 	}
-	return Cost{
+	cost := Cost{
 		Credential: openAICredential(grain, r.APIKeyID, r.ProjectID),
 		Day:        day,
-		Amount:     amount,
+		Amount:     figure.Value,
 		Tokens:     true,
-	}, nil
+		ListFigure: &figure,
+	}
+	if r.LineItem != nil {
+		cost.Label = *r.LineItem
+		if index := strings.LastIndex(cost.Label, ", "); index >= 0 {
+			cost.Model = cost.Label[:index]
+			cost.Class = openAILineKinds[cost.Label[index+len(", "):]]
+		}
+	}
+	return cost, nil
 }

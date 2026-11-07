@@ -8,7 +8,7 @@ Each day a scheduled job in a private repository runs one small Claude Code task
 
 Measured cost is what the day's rows on the key cost at list price, from Costroid's own rows. It reads on a day with no provider report as well, so the test's spend is always on the page.
 
-`go run ./scripts/accuracy -write docs/accuracy.md` re-runs `costroid reconcile` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, and the list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines both steps and each cause.
+`go run ./scripts/accuracy -write docs/accuracy.md` re-runs `costroid reconcile` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, every price the cost report implies equals the catalog's to the last digit the report states, and the list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines each step and each cause.
 
 No line is edited by hand. `go run ./scripts/accuracy -check docs/accuracy.md -days 14` recomputes every line from the inputs, refuses the page when one line differs, and passes only when the last 14 days on it are consecutive and each passed. The last column is the SHA-256 of a listing of each input file's SHA-256 and path, in the form `sha256sum` prints, so a line names the exact inputs it was computed from.
 

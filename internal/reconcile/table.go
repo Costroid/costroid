@@ -19,22 +19,31 @@ const (
 	percentDigits = 2
 )
 
-// Render prints the tokens table and the dollars table.
+// Render prints four tables: tokens, prices, dollars by class, and dollars
+// for the day.
 func Render(w io.Writer, result Result) error {
 	out := bufio.NewWriter(w)
-	table := tabwriter.NewWriter(out, 0, 0, columnGap, ' ', 0)
-	fmt.Fprintln(table, "TOKENS\tcredential\tday\tclass\tledger\tprovider\tdelta\tdiff\tverdict")
-	for _, row := range result.Rows {
-		renderTokens(table, row)
+	tables := []struct {
+		header string
+		row    func(io.Writer, Row)
+	}{
+		{"TOKENS\tcredential\tday\tclass\tledger\tprovider\tdelta\tdiff\tverdict", renderTokens},
+		{"PRICES\tcredential\tday\tmodel\ttier\tregion\tclass\ttokens\tprovider list USD\timplied USD/1M\tcatalog USD/1M\tverdict", renderPrices},
+		{"DOLLARS BY CLASS\tcredential\tday\tclass\tledger list USD\tprovider list USD\tdelta\tdiff\tverdict", renderClassDollars},
+		{"DOLLARS\tcredential\tday\tledger USD\tprovider USD\tresidual\tdiff\tverdict\trounding\tattribution", renderDollars},
 	}
-	err := table.Flush()
-	fmt.Fprintln(out)
-	table = tabwriter.NewWriter(out, 0, 0, columnGap, ' ', 0)
-	fmt.Fprintln(table, "DOLLARS\tcredential\tday\tledger USD\tprovider USD\tresidual\tdiff\tverdict\trounding\tattribution")
-	for _, row := range result.Rows {
-		renderDollars(table, row)
+	var err error
+	for i, each := range tables {
+		if i > 0 {
+			fmt.Fprintln(out)
+		}
+		table := tabwriter.NewWriter(out, 0, 0, columnGap, ' ', 0)
+		fmt.Fprintln(table, each.header)
+		for _, row := range result.Rows {
+			each.row(table, row)
+		}
+		err = errors.Join(err, table.Flush())
 	}
-	err = errors.Join(err, table.Flush())
 	renderFooter(out, result)
 	return errors.Join(err, out.Flush())
 }
@@ -48,6 +57,35 @@ func renderTokens(w io.Writer, row Row) {
 		verdict := "within 1%"
 		if !check.Within {
 			verdict = "MISS"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Class,
+			check.Ledger, check.Provider, check.Delta, percentOf(check.Delta, check.Provider), verdict)
+	}
+}
+
+func renderPrices(w io.Writer, row Row) {
+	for _, check := range row.Prices {
+		implied := notApplicable
+		if check.ImpliedUnitPrice != nil {
+			implied = check.ImpliedUnitPrice.String()
+		}
+		verdict := "match"
+		if !check.Match {
+			verdict = "MISS"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Model, check.Tier, check.Region,
+			check.Class, check.Tokens, check.ProviderList, implied, check.CatalogUnitPrice, verdict)
+	}
+}
+
+func renderClassDollars(w io.Writer, row Row) {
+	if row.Dollars == nil {
+		return
+	}
+	for _, check := range row.Dollars.Classes {
+		verdict := "within 1%"
+		if !check.Within {
+			verdict = "outside 1%"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Class,
 			check.Ledger, check.Provider, check.Delta, percentOf(check.Delta, check.Provider), verdict)
@@ -127,8 +165,20 @@ func renderFooter(w io.Writer, result Result) {
 	for _, other := range result.Unmatched {
 		fmt.Fprintf(w, "%s %s: the provider reports this credential and the ledger never names it\n", other.Source, other.Credential)
 	}
-	if misses := result.Misses(); misses > 0 {
-		fmt.Fprintf(w, "Credential days with a token miss: %d. Each is a defect.\n", misses)
+	tokens, prices := 0, 0
+	for _, row := range result.Rows {
+		if row.State == TokensMiss {
+			tokens++
+		}
+		if priceMissed(row.Prices) {
+			prices++
+		}
+	}
+	if tokens > 0 {
+		fmt.Fprintf(w, "Credential days with a token miss: %d. Each is a defect.\n", tokens)
+	}
+	if prices > 0 {
+		fmt.Fprintf(w, "Credential days with a price miss: %d. Each is a defect.\n", prices)
 	}
 }
 

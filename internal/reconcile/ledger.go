@@ -76,11 +76,25 @@ type Ledger struct {
 type ledgerGroup struct {
 	tokens map[focus.TokenClass]decimal.Decimal
 	list   decimal.Decimal
+	// classList is list split by class.
+	classList map[focus.TokenClass]decimal.Decimal
 	// rows counts the rows summed into list.
 	rows            int64
 	billed          bool
 	assumedLifetime bool
 	measured        map[recordKey]*Usage
+	// skus names the catalog rows each model's class was priced at, so a
+	// price proof knows which context tier the day's tokens fell in.
+	skus map[priceKey][]string
+}
+
+func newLedgerGroup() *ledgerGroup {
+	return &ledgerGroup{
+		tokens:    map[focus.TokenClass]decimal.Decimal{},
+		classList: map[focus.TokenClass]decimal.Decimal{},
+		measured:  map[recordKey]*Usage{},
+		skus:      map[priceKey][]string{},
+	}
 }
 
 type recordKey struct {
@@ -163,16 +177,21 @@ func (l *Ledger) add(row ledgerRow, fallbackCredential string) error {
 	key := Key{sources[row.ServiceProviderName], credential, row.ChargePeriodStart.UTC().Format(dayLayout)}
 	group := l.groups[key]
 	if group == nil {
-		group = &ledgerGroup{tokens: map[focus.TokenClass]decimal.Decimal{}, measured: map[recordKey]*Usage{}}
+		group = newLedgerGroup()
 		l.groups[key] = group
 	}
 	group.tokens[row.SkuMeter] = group.tokens[row.SkuMeter].Add(tokens)
+	priced := priceKey{row.tag(focus.TagModel), row.tier(), row.region(), row.SkuMeter}
+	if !slices.Contains(group.skus[priced], row.SkuPriceID) {
+		group.skus[priced] = append(group.skus[priced], row.SkuPriceID)
+	}
 	if row.tag(focus.TagAssumedTTL) != "" || strings.Contains(row.ChargeDescription, lifetimeAssumedNote) {
 		group.assumedLifetime = true
 	}
 	if focus.CostBasis(row.tag(focus.TagCostBasis)) == focus.Measured {
 		group.billed = true
 		group.list = group.list.Add(list)
+		group.classList[row.SkuMeter] = group.classList[row.SkuMeter].Add(list)
 		group.rows++
 		group.addMeasured(row, tokens)
 	}
@@ -234,7 +253,9 @@ func (l *Ledger) group(key Key) *ledgerGroup {
 	if group := l.groups[key]; group != nil {
 		return group
 	}
-	return &ledgerGroup{tokens: map[focus.TokenClass]decimal.Decimal{}, measured: map[recordKey]*Usage{}, billed: true}
+	group := newLedgerGroup()
+	group.billed = true
+	return group
 }
 
 // Sources lists the reports this ledger needs, in order.

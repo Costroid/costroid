@@ -1,6 +1,6 @@
 # Compare a ledger with a provider's report
 
-`costroid reconcile` compares rows with a provider's usage and cost reports, per credential per UTC day. Tokens must match within 1% by class, and a miss is a defect. List-price dollars are compared within 10%, and the residual is split into named causes.
+`costroid reconcile` compares rows with a provider's usage and cost reports, per credential per UTC day. Tokens must match within 1% by class, and a miss is a defect. Each price the cost report implies must equal the catalog's, and a miss is a defect. List-price dollars are compared within 1% per class, then within 10% for the day, and the residual is split into named causes.
 
 It runs in your CI, where the admin key lives, not in the service's container, so the service's egress allowlist does not bind it.
 
@@ -54,6 +54,36 @@ costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-01 --reports
 
 Keep each response's body as the provider sent it, or cut to the records of the credentials you reconcile, as `scripts/accuracy -save` keeps them. A range that needs a second page, or a second provider window, cannot be saved as one file.
 
+## Prices
+
+Costroid asks Anthropic's cost report for each day split by model and token type, under the same tier, region and speed it reads usage by. It asks OpenAI's for each line item, such as `gpt-6-astra, input_tokens`. A line's list figure divided by the usage report's tokens for the same model and class is the provider's own unit price for that day. Anthropic's list figure is `list_amount`. OpenAI's cost report states one amount, and Costroid reads it as the list figure, so a negotiated OpenAI rate shows as a miss on every line.
+
+Each row's `prices` holds one entry per model, tier, region and class: `tokens`, `provider_list`, `implied_unit_price` in USD per million tokens, `catalog_unit_price`, the `sku_price_id` it came from, and `match`. A price matches when the tokens at the catalog's price land within one unit of the last digit the report states. Anthropic states cents to six places, so that unit is USD 0.00000001. OpenAI writes a JSON number, which drops trailing zeros, so the unit is the last digit the number shows.
+
+Over 50,000 output tokens, a price of USD 10.01 per million against the catalog's 10 moves the line by USD 0.0005, which is 50,000 units. On a day that costs USD 0.0004, an output price 9% over the catalog's misses, while the day's dollars land within 10% and within rounding.
+
+A miss sets the row's state to `price_miss`, and it is a defect, like a token miss. A row with both reads `tokens_miss`, and its `prices` still marks each miss. `implied_unit_price` is rounded to six places and carries the report's rounding: 203 cache writes stated as 0.002538 cents imply USD 0.125025 per million, and match the catalog's 0.125. The verdict reads the amounts, never the rounded price.
+
+Where the catalog prices a class at more than one context tier, the report does not say which tier the tokens fell in. The line is held to the one tier the ledger's own rows were priced at. When the report's figure matches a different tier, the notes name it, because then the ledger priced the run at the wrong tier.
+
+These lines prove no price, and the row's notes name each one:
+
+- Anthropic's priority tier. Requests under a Priority Tier commitment "contribute zero token cost to `amount` and `list_amount`", and the commitment is billed elsewhere ([Usage and Cost Analytics API](https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api), retrieved 2026-11-07).
+- A class the catalog prices at more than one context tier, when the ledger priced it at more than one that day, or at none.
+- An OpenAI model served at more than one tier that day, because a line item does not name its tier.
+- A token type or line item that names no class Costroid reads, and any class of the same model that has no line of its own that day.
+- A report that does not split token cost by class, such as one saved by an earlier version.
+
+A model the catalog has no price for is held to the catalog's fallback, which is an upper bound, and the notes say so.
+
+OpenAI's costs page shows one line item kind, `input_tokens`, which Costroid reads as uncached input ([Costs](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs), retrieved 2026-11-07). It reads `input_cached_tokens`, `input_cache_write_30m_tokens`, `input_cache_write_12h_tokens` and `output_tokens` by the usage report's field names. No saved response has shown those four on a line item yet.
+
+## Dollars by class
+
+`dollars.classes` compares each class at list price: the ledger's list cost against the cost report's list figure. Each class is within when it lands within 1% of the report's figure, and the bound is inclusive. It is the first line of the dollar comparison, and the day within 10% is the second.
+
+A class outside 1% with matching tokens and prices means the ledger priced the right tokens at the wrong price, such as the wrong context tier, which the day's total can hide. It is not a defect on its own, because priority-tier tokens move it too. Cache writes compare as one figure where the tokens do. `classes` is null when the report does not split token cost by class.
+
 ## Amounts and rounding
 
 Each row's `dollars` holds two provider figures for the day's token charges. `provider_effective` is what the cost report bills, after any discount. `provider_list` is the same charges at list price. Anthropic states both, as `amount` and `list_amount`. OpenAI's cost report states one amount, so `provider_list` is null on an OpenAI row.
@@ -74,10 +104,10 @@ OpenAI's older usage responses leave uncached input and 30-minute writes to be d
 
 ## Exit codes
 
-| Code | Meaning                                  |
-| ---- | ---------------------------------------- |
-| 0    | No token miss                            |
-| 1    | A token miss, which is a defect          |
+| Code | Meaning                                      |
+| ---- | -------------------------------------------- |
+| 0    | No token miss and no price miss              |
+| 1    | A token miss or a price miss, each a defect  |
 | 125  | Costroid could not read the rows or a report |
 
 ## Costroid's own figures

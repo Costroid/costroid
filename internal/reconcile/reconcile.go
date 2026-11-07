@@ -1,6 +1,8 @@
 // Package reconcile compares the ledger with the provider's own reports, per
-// credential per day, in two steps. Tokens must match by class within 1%, and
-// a miss is a defect. List-price dollars must land within 10% of the cost
+// credential per day. Tokens must match by class within 1%, and a miss is a
+// defect. Each price the cost report implies must equal the catalog's to the
+// report's last stated digit, and a miss is a defect. List-price dollars are
+// compared per class within 1%, then for the day within 10% of the cost
 // report, and the residual is split into named causes.
 //
 // The fetchers hold a provider admin key, so this package runs only in the
@@ -46,6 +48,9 @@ const (
 	Matched State = "matched"
 	// TokensMiss means a class missed the tolerance. It is a defect.
 	TokensMiss State = "tokens_miss"
+	// PriceMiss means every class matched and a price missed the catalog.
+	// It is a defect.
+	PriceMiss State = "price_miss"
 	// Pending means the provider has not finished reporting the day. A
 	// pending row carries no figure, because a partial report is not a miss.
 	Pending State = "pending"
@@ -90,6 +95,7 @@ type Row struct {
 	Final           bool         `json:"final"`
 	DataRefreshedAt *time.Time   `json:"data_refreshed_at"`
 	Tokens          []TokenCheck `json:"tokens"`
+	Prices          []PriceCheck `json:"prices"`
 	Dollars         *DollarCheck `json:"dollars"`
 	Notes           []string     `json:"notes"`
 }
@@ -113,7 +119,12 @@ type TokenCheck struct {
 // when the report does not state it on every token line. Rounding compares
 // ProviderList with Ledger under FOCUS 1.4's rounding variance tolerance, and
 // is null when ProviderList is.
+//
+// Classes is the first line: each class at list price on both sides, null
+// when the report does not split token cost by class. Verdict is the second
+// line, the day within 10%.
 type DollarCheck struct {
+	Classes           []ClassDollars   `json:"classes"`
 	Verdict           DollarVerdict    `json:"verdict"`
 	Ledger            decimal.Decimal  `json:"ledger"`
 	Provider          decimal.Decimal  `json:"provider"`
@@ -144,11 +155,12 @@ type Result struct {
 	Unmatched []Unmatched
 }
 
-// Misses counts the rows whose tokens are a defect.
+// Misses counts the rows that hold a defect: a token miss, a price miss or
+// both.
 func (r Result) Misses() int {
 	misses := 0
 	for _, row := range r.Rows {
-		if row.State == TokensMiss {
+		if row.State == TokensMiss || row.State == PriceMiss {
 			misses++
 		}
 	}
@@ -250,6 +262,18 @@ func (c comparison) row(key Key) (Row, error) {
 	}
 	if slices.ContainsFunc(row.Tokens, func(check TokenCheck) bool { return check.Class == cacheWrite }) {
 		row.Notes = append(row.Notes, "cache writes compared as one figure, because the ledger cannot see their lifetime")
+	}
+	prices, notes, err := c.prices(key, group, usage)
+	if err != nil {
+		return Row{}, err
+	}
+	row.Prices = prices
+	row.Notes = append(row.Notes, notes...)
+	if priceMissed(prices) {
+		if row.State == Matched {
+			row.State = PriceMiss
+		}
+		row.Notes = append(row.Notes, "a price the report implies missed the catalog past the report's last stated digit: this is a defect")
 	}
 	dollars, notes, err := c.dollars(key, group, usage, row.Tokens)
 	if err != nil {

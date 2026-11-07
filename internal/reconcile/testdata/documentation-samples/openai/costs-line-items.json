@@ -1,0 +1,62 @@
+{
+  "object": "page",
+  "data": [
+    {
+      "object": "bucket",
+      "start_time": 1791936000,
+      "end_time": 1792022400,
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": 0.4,
+            "currency": "usd"
+          },
+          "line_item": "gpt-5.6-sol, input_tokens",
+          "project_id": null,
+          "api_key_id": "key_ExampleCi",
+          "quantity": 100000,
+          "quantity_unit": "tokens"
+        },
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": 0.02,
+            "currency": "usd"
+          },
+          "line_item": "gpt-5.6-sol, input_cached_tokens",
+          "project_id": null,
+          "api_key_id": "key_ExampleCi",
+          "quantity": 50000,
+          "quantity_unit": "tokens"
+        },
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": 0.005,
+            "currency": "usd"
+          },
+          "line_item": "gpt-5.6-sol, input_cache_write_30m_tokens",
+          "project_id": null,
+          "api_key_id": "key_ExampleCi",
+          "quantity": 1000,
+          "quantity_unit": "tokens"
+        },
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": 0.4,
+            "currency": "usd"
+          },
+          "line_item": "gpt-5.6-sol, output_tokens",
+          "project_id": null,
+          "api_key_id": "key_ExampleCi",
+          "quantity": 20000,
+          "quantity_unit": "tokens"
+        }
+      ]
+    }
+  ],
+  "has_more": false,
+  "next_page": null
+}
