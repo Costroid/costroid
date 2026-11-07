@@ -51,7 +51,7 @@ func TestAuditModeWarns(t *testing.T) {
 // A report that is not told the agent's job was skipped says the agent printed
 // no usage, and that job has no log to read.
 func TestReportJobsPassAgentResult(t *testing.T) {
-	for _, name := range []string{"github-claude-code.yml", "github-codex.yml", "github-claude-code-litellm.yml"} {
+	for _, name := range []string{"github-claude-code.yml", "github-codex.yml", "github-claude-code-litellm.yml", "github-claude-code-action.yml"} {
 		t.Run(name, func(t *testing.T) {
 			documents, err := parse([]byte(read(t, filepath.Join(recipesDir, name))))
 			if err != nil {

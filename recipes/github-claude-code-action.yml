@@ -100,4 +100,5 @@ jobs:
       - uses: Costroid/costroid/action@a4db648a1ad602760e88277f4875b55d08ea73ef # v1.0.0-alpha.9
         with:
           stage: report
+          agent-result: ${{ needs.agent.result }}
           # No budget-usd: Costroid did not start this run, so no budget held it.

@@ -34,6 +34,7 @@ jobs:
       - uses: Costroid/costroid-action@<commit> # __RELEASE_TAG__
         with:
           stage: report
+          agent-result: ${{ needs.agent.result }}
 ```
 
 Set one secret on the repository, `ANTHROPIC_API_KEY`, the provider key. The action installs the Costroid release at its own commit and checks it by its signature, so it needs no version, no checksum and no account. Then open a test pull request: the `report` job posts the `costroid` check and the comment.
