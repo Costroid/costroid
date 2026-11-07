@@ -66,6 +66,12 @@ inputs:
   github-token:
     description: The token that posts the check and the comment.
     default: ${{ github.token }}
+  agent-result:
+    description: >-
+      For stage report, the result of the agent's job, as needs.<job>.result gives it. skipped
+      makes the report say the agent did not run on the pull request, in place of a report
+      with no rows. Empty tells the report nothing.
+    default: ""
   ingest-url:
     description: The ledger's rows endpoint.
     default: ""
@@ -140,5 +146,6 @@ runs:
         billing-account: ${{ inputs.billing-account }}
         credential: ${{ inputs.credential }}
         github-token: ${{ inputs.github-token }}
+        agent-result: ${{ inputs.agent-result }}
         ingest-url: ${{ inputs.ingest-url }}
         ingest-audience: ${{ inputs.ingest-audience }}

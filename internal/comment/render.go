@@ -17,6 +17,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
@@ -65,6 +66,9 @@ const (
 	// ForkNoRows is a fork's pull request whose workflow run left no rows
 	// file, as the follow-up finds it. The recipes run no agent there.
 	ForkNoRows Reason = "fork_no_rows"
+	// AgentSkipped is a pull request whose agent job the CI system skipped,
+	// so no agent ran and no rows were written.
+	AgentSkipped Reason = "agent_skipped"
 )
 
 // Amounts says whether the comment carries amounts, and why not.
@@ -151,6 +155,15 @@ type Input struct {
 	// ReaderLine is the reader's first error line, shown only with the run
 	// reason reader_refused, and cleaned again before it is.
 	ReaderLine string
+	// AgentError is the class of error the agent ended in, as the run stated
+	// it. A class outside the closed list is dropped.
+	AgentError adapter.AgentError
+	// AgentSkipped says whether the CI system skipped the agent's job, nil
+	// when the report was not told. The reason agent_skipped says it too.
+	AgentSkipped *bool
+	// CIRun is the CI run as the environment states it, nil when it states
+	// none. A run whose id or attempt is below 1 is dropped.
+	CIRun *BlockCIRun
 	// RunURL is the CI run's page as the environment names it, empty when it
 	// names none. A value outside runURLPattern is dropped.
 	RunURL string
@@ -313,7 +326,10 @@ func (i Input) block() (string, error) {
 		ReasonLine:     i.ReasonLine,
 		RunReason:      i.runReason(),
 		ReaderError:    i.readerLine(),
+		AgentError:     i.blockAgentError(),
+		AgentSkipped:   i.agentSkipped(),
 		HeadSHA:        i.headSHA(),
+		CIRun:          i.ciRun(),
 		Amounts:        "withheld",
 		Rows:           i.Ledger.Rows,
 		RunIdentity:    artifactIdentity,
@@ -368,12 +384,56 @@ func (i Input) conclusion() *string {
 }
 
 // runReason is the run's reason from the closed list, on a report whose rows
-// file holds no rows. Beside rows, or outside the list, it is dropped.
+// file holds no rows. Beside rows, outside the list, beside a skipped agent,
+// or agent_error without a class from its list, it is dropped.
 func (i Input) runReason() run.Reason {
-	if i.State != NoRows || i.RunReason.Sentence() == "" {
+	switch {
+	case i.State != NoRows || i.Reason == AgentSkipped || i.RunReason.Sentence() == "":
+		return ""
+	case i.RunReason == run.ReasonAgentError && run.AgentErrorFix(i.AgentError) == "":
 		return ""
 	}
 	return i.RunReason
+}
+
+// agentError is the agent's error class from the closed list, beside figures
+// or with the run reason agent_error, and empty otherwise.
+func (i Input) agentError() adapter.AgentError {
+	if run.AgentErrorFix(i.AgentError) == "" {
+		return ""
+	}
+	if i.State != Reported && i.runReason() != run.ReasonAgentError {
+		return ""
+	}
+	return i.AgentError
+}
+
+func (i Input) blockAgentError() *BlockAgentError {
+	class := i.agentError()
+	if class == "" {
+		return nil
+	}
+	return &BlockAgentError{Class: string(class)}
+}
+
+// agentSkipped is true with the reason agent_skipped. Without it, a skipped
+// agent is not stated, because a report with no such reason has figures or a
+// reason of its own.
+func (i Input) agentSkipped() *bool {
+	skipped := i.Reason == AgentSkipped
+	if skipped || (i.AgentSkipped != nil && !*i.AgentSkipped) {
+		return &skipped
+	}
+	return nil
+}
+
+// ciRun is the CI run when its id and attempt are each at least 1.
+func (i Input) ciRun() *BlockCIRun {
+	if i.CIRun == nil || i.CIRun.ID < 1 || i.CIRun.Attempt < 1 {
+		return nil
+	}
+	ciRun := *i.CIRun
+	return &ciRun
 }
 
 // readerLine is the reader's error line beside the reason reader_refused, and
@@ -453,6 +513,9 @@ type view struct {
 	RunLine string
 	// Why is the sentence for a report without figures, empty otherwise.
 	Why string
+	// AgentError is the sentence for an agent error beside figures, empty
+	// otherwise.
+	AgentError string
 	// CheckRuns is false on GitLab, which has no check run to name.
 	CheckRuns   bool
 	ShowAmounts bool
@@ -489,6 +552,7 @@ func (i Input) view() view {
 		VerdictLine:    verdictLine(i.Verdict, shown),
 		RunLine:        runLine(i.HeadSHA, i.RunURL),
 		Why:            i.why(),
+		AgentError:     i.agentErrorBesideFigures(),
 		ShowAmounts:    shown,
 		AmountsOff:     i.Amounts == AmountsOff,
 		FiguresOmitted: i.Ledger.FiguresOmitted,
@@ -606,14 +670,27 @@ func (i Input) why() string {
 		return fmt.Sprintf("Line %d of the rows file is not a valid row, %s A partial total would read as a smaller cost.", i.ReasonLine, shows)
 	case i.Reason == InvalidRow:
 		return "A line of the rows file is not a valid row, " + shows + " A partial total would read as a smaller cost."
+	case i.Reason == AgentSkipped:
+		return "The agent did not run on this pull request: its author needs the `costroid-agent` label."
 	case i.readerLine() != "":
 		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. The reader's first error: `%s`.", i.RunReason, i.RunReason.Sentence(), i.readerLine())
+	case i.agentError() != "":
+		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. It ended with `%s`: %s.", i.RunReason, i.RunReason.Sentence(), i.AgentError, run.AgentErrorFix(i.AgentError))
 	case i.runReason() != "":
 		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s.", i.RunReason, i.RunReason.Sentence())
 	case i.State == NoRows:
 		return "The rows file holds no rows, " + shows + " Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."
 	}
 	return "The rows file could not be read, " + shows
+}
+
+// agentErrorBesideFigures says the agent ended in an error after the requests
+// the figures cover, and what to do about it.
+func (i Input) agentErrorBesideFigures() string {
+	if i.State != Reported || i.agentError() == "" {
+		return ""
+	}
+	return fmt.Sprintf("The agent ended with `%s` after the requests these figures cover: %s.", i.AgentError, run.AgentErrorFix(i.AgentError))
 }
 
 // fallbackSentence names the models the catalog does not price and the

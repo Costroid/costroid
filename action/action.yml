@@ -61,6 +61,12 @@ inputs:
   github-token:
     description: The token that posts the check and the comment.
     default: ${{ github.token }}
+  agent-result:
+    description: >-
+      For stage report, the result of the agent's job, as needs.<job>.result gives it. skipped
+      makes the report say the agent did not run on the pull request, in place of a report
+      with no rows. Empty tells the report nothing.
+    default: ""
   ingest-url:
     description: The ledger's rows endpoint.
     default: ""
@@ -194,6 +200,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         COSTROID_ROWS: ${{ inputs.stage == 'all' && format('{0}/costroid-rows.jsonl', runner.temp) || format('{0}/costroid-rows-in/costroid-rows.jsonl', runner.temp) }}
         COSTROID_BUDGET_USD: ${{ inputs.budget-usd }}
+        COSTROID_AGENT_RESULT: ${{ inputs.agent-result }}
       run: |
         touch "$COSTROID_ROWS"
         costroid report --rows "$COSTROID_ROWS" ${COSTROID_BUDGET_USD:+--budget-usd "$COSTROID_BUDGET_USD"}

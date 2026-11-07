@@ -273,8 +273,8 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	if (*gatewayURL == "") != (*keyFile == "") {
 		return runFlags{}, errors.New("--gateway and --gateway-key-file go together")
 	}
-	if *budget == "" || *out == "" || set.NArg() == 0 {
-		return runFlags{}, errors.New("run needs --budget-usd, --out and an agent command after --")
+	if missing := missingRunArguments(*budget, *out, set.NArg()); missing != "" {
+		return runFlags{}, errors.New("run needs " + missing)
 	}
 	amount, err := decimal.Parse(*budget)
 	if err != nil {
@@ -290,6 +290,28 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 		budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON,
 		gateway: *gatewayURL, gatewayKeyFile: *keyFile,
 	}, nil
+}
+
+// missingRunArguments names each of run's required arguments that is absent,
+// empty when none is.
+func missingRunArguments(budget, out string, commandWords int) string {
+	var missing []string
+	if budget == "" {
+		missing = append(missing, "--budget-usd")
+	}
+	if out == "" {
+		missing = append(missing, "--out")
+	}
+	if commandWords == 0 {
+		missing = append(missing, "an agent command after --")
+	}
+	switch len(missing) {
+	case 0:
+		return ""
+	case 1:
+		return missing[0]
+	}
+	return strings.Join(missing[:len(missing)-1], ", ") + " and " + missing[len(missing)-1]
 }
 
 // readCI never stops a run: a job whose event file cannot be read still spends
@@ -332,7 +354,7 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		agentOutput = stderr
 	}
 	ci := readCI(stderr)
-	record := runRecord{out: flags.out, budget: &flags.budget, head: ci.Head, json: flags.json}
+	record := runRecord{out: flags.out, budget: &flags.budget, head: ci.Head, json: flags.json, ciRun: ciRunFromEnvironment(os.Getenv)}
 	session, err := gatewaySession(flags)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", errors.Join(err, rows.Close()))
@@ -355,7 +377,7 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)
 	}
-	record.reason = result.Reason
+	record.reason, record.agentError = result.Reason, result.AgentError
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		recordRunResult(stdout, stderr, record.failed(err))
@@ -406,7 +428,11 @@ type runRecord struct {
 	reason run.Reason
 	// readerLine is the reader's first error line, with reader_refused.
 	readerLine string
-	json       bool
+	// agentError is the class of error the agent ended in, empty for none.
+	agentError adapter.AgentError
+	// ciRun is the CI run the environment names, nil when it names none.
+	ciRun *comment.BlockCIRun
+	json  bool
 }
 
 // failed adds what err says about a run that ended before its rows were
@@ -468,6 +494,8 @@ func runResult(stderr io.Writer, record runRecord) (string, error) {
 		ReasonLine:  rows.line,
 		RunReason:   record.reason,
 		ReaderLine:  record.readerLine,
+		AgentError:  record.agentError,
+		CIRun:       record.ciRun,
 		HeadSHA:     record.head,
 		Budget:      record.budget,
 		Amounts:     comment.AmountsShown,
@@ -508,7 +536,10 @@ func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
 		fmt.Fprintf(w, "costroid: %s, %d %s\n", result.Agent, count, noun(result, count))
 	}
 	fmt.Fprintf(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
-	fmt.Fprintf(w, "costroid: USD %s at list, %s\n", result.ListTotal, labels[report.CostBasis])
+	// A run with no rows measured nothing, so it states no cost.
+	if result.Rows > 0 {
+		fmt.Fprintf(w, "costroid: USD %s at list, %s\n", result.ListTotal, labels[report.CostBasis])
+	}
 }
 
 func warnAccount(w io.Writer, account accountFlags) {

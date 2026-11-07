@@ -23,6 +23,10 @@
 {{.Fallback}}
 
 {{end -}}
+{{if .AgentError -}}
+{{.AgentError}}
+
+{{end -}}
 Unverified: the agent's job wrote these figures.
 
 {{if .FiguresOmitted -}}
@@ -117,6 +121,10 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{- end}}
 {{if .Fallback -}}
 {{.Fallback}}
+
+{{end -}}
+{{if .AgentError -}}
+{{.AgentError}}
 
 {{end -}}
 Unverified: the agent's job wrote these figures.

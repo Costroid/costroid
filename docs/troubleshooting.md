@@ -51,12 +51,14 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: could not read the version of <agent>` | `--version` printed no version | Check the agent's install step |
 | `costroid: <agent> <version> is older than the minimum <version>` | The installed agent is older than the floor | Raise the install step's version, or lower the floor to a version the recipe records |
 | `costroid: the agent's output is in <path> on this runner, not in this log. show-output: true prints it.` | The agent's own stream went to a file on the runner, so the log does not show its reasoning or replies | None. On a private repository, set `show-output: true` to see it |
-| `costroid: run needs --budget-usd, --out and an agent command after --` | `costroid run` was called without one of them | Pass all three |
+| `costroid: run needs <arguments>` | `costroid run` was called without the arguments the line names, from `--budget-usd`, `--out` and an agent command after `--` | Pass each one the line names |
 | `costroid: --budget-usd must be above 0` | The budget is zero or negative | Pass a positive amount |
 | `costroid: --credential takes the key's id, never the key: this value reads like a key` | The credential looks like a provider key | Pass the key's id from the provider's console, never the key |
 | `costroid: run: no adapter for <command>: costroid runs claude and codex` | The command after `--` is not `claude` or `codex` | Run one of those two |
+| `costroid: <agent> is not on PATH: install it with <command>` | The command after `--` is `claude` or `codex`, and no program of that name is on `PATH`. The line names the npm command that installs the version the recipes install | Run that command, or install the agent in a step before this one, as the recipes do |
 | `costroid: run refused, reason <reason>: <error>` | Costroid did not start the agent and wrote no rows. The reason `concurrent_run` means another `costroid run` of Claude Code holds the same config directory. The first run would count the second's session as nested, and the second would count it again | Run one agent at a time per config directory, or give each run its own `CLAUDE_CONFIG_DIR` |
-| `costroid: unreadable stream line: <error>` | A line of the agent's stream was not the JSON Costroid reads. The run goes on | Check that the agent runs with the flags the recipe passes |
+| `costroid: warning: 1 line of the agent's stdout was not read: <error>` | A line the agent printed was not the JSON Costroid reads. The run went on. Blank lines are skipped and not counted. The line comes once, after the agent's output ends | Check that the agent runs with the flags the recipe passes. A line a wrapper script prints lands here too |
+| `costroid: warning: <count> lines of the agent's stdout were not read; the first: <error>` | The same, for more than one line. The error is the first line's | The same |
 | `costroid: price the run: <error>` | The run's tokens could not be priced, so the run wrote no rows | Report it with the agent's version |
 | `costroid: reason reader_refused: <error>` | The reader refused the agent's stream, so the run wrote no rows. The rows file is empty, and the object beside it carries the reason and the error's first line, which the report shows. The error `claude-code: the stream held no result object and no session file was found` means Claude Code ended before it reported usage, and wrote no session file | Read the agent's output file on the runner, or rerun with `show-output: true` on a private repository |
 
@@ -69,18 +71,32 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: <agent>, <count> requests` | How many requests or turns the rows cover, by the grain the agent reported | None |
 | `costroid: <agent>, one run, <count> models` | The agent reported one total per model for the whole run | None |
 | `costroid: <count> rows in <path>, catalog <version>` | Where the rows are, and which price catalog priced them | None |
-| `costroid: USD <amount> at list, <label>` | The run's cost at list price, with its accuracy label, for example `List-equivalent, not billed` | None |
+| `costroid: USD <amount> at list, <label>` | The run's cost at list price, with its accuracy label, for example `List-equivalent, not billed`. A run that wrote no rows measured nothing, so it prints no such line | None |
 | `costroid: budget USD <amount>, <grade>: <note>` | The budget, and how it was enforced, for example `agent-flag: client-side estimate, can pass the cap` | None. [`docs/adapters.md`](adapters.md) says what each grade means |
 | `costroid: <grade>: <note>` | How a run Costroid did not start was enforced, from `ingest-run` | None |
 | `costroid: stopped the agent at the cap` | Costroid stopped the agent when its cost reached the budget. The step exits 124 | Raise `budget-usd` if the run needed more |
 | `costroid: over budget by USD <amount>` | The run cost more than its budget. A client-side cap can be passed | None. The grade says how far the cap holds |
 | `costroid: warning: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT` | The rows name no billing account | Set `billing-account`, as the recipes do |
 | `costroid: warning: the rows state no pull request: <error>` | The CI event file could not be read, so the rows carry no pull request | Run the recipe on `pull_request` |
-| `costroid: warning: reason <reason>: <sentence>` | The run wrote no rows, and the rows file is empty. The reason `no_usage` means the agent ended and reported no usage | Read the agent's output. A run that failed before its first request reports none |
+| `costroid: warning: reason <reason>: <sentence>` | The run wrote no rows, and the rows file is empty. The reason `no_usage` means the agent ended and reported no usage. The reason `agent_error` means the agent ended in an error before it reported usage, and the sentence names the error's class and its fix, as [the classes below](#agent-errors) list | For `no_usage`, read the agent's output: a run that failed before its first request reports none. For `agent_error`, the fix the line names |
+| `costroid: warning: the agent ended with <class>: <fix>; the rows hold the requests it made before` | The agent ended in an error after some requests. The rows hold those requests | The fix the line names |
 | `costroid: warning: the run ended inside a turn with 1 model request in flight, sent at <time>: Codex writes usage only when a request completes, so that request in flight is not counted and its tokens reach no row` | Costroid stopped Codex after a tool's output went to the model and before the model's answer. The rows hold every request that completed | None. The provider still bills that request, so reconciliation shows it |
 | `costroid: warning: the run ended inside a turn, and the rollout files show no model request in flight, so the rows hold every request they show sent` | Costroid stopped Codex while a tool ran, so no model request was lost | None |
 | `costroid: warning: the run's result object was not written: <error>` | The rows were written, and the object beside them, which carries the reason for a run that wrote no rows, was not | Make the rows file's directory writable. The run never writes through a link the agent left at that path |
 | `costroid: warning: <warning>` | The agent's stream or files were incomplete. The rows were written, and the warning says what they lack | Read the warning. Most mean the run ended early |
+
+### Agent errors
+
+Costroid reads an agent error's class from the agent's own fields, never from its text: Claude Code's `is_error` on the result and `error` on the assistant message. The report shows the class beside the figures, or as the reason `agent_error` when the run wrote no rows.
+
+| Class | Meaning | Fix |
+| ----- | ------- | --- |
+| `authentication_failed` | The provider refused the API key | Check the API key the agent runs with, the `api-key` input in the action |
+| `billing_error` | The provider refused the request for the account's billing | Check the credit balance of the provider account the API key belongs to |
+| `rate_limit` | The provider limited the key's request rate | Run the job again later, or raise the API key's rate limit with the provider |
+| `invalid_request` | The provider refused a request as invalid | Check the model name and the arguments the agent runs with |
+| `server_error` | The provider failed the request | Run the job again |
+| `unknown` | The agent stated an error in no class this list names | Run the agent alone with the same arguments to read its error |
 
 ## Reading a claude-code-action run
 
@@ -112,6 +128,8 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 
 `costroid report` exits 0 once it finds a CI system, whatever the host answers, so a failed post never fails the job.
 
+The action's `agent-result` input passes the agent job's result to the report, as `needs.<job>.result` gives it. When that job was skipped and left no rows, the comment says the agent did not run on the pull request, with the reason `agent_skipped`, in place of a report with no rows.
+
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
 | `costroid: check run <id>, conclusion <conclusion>` | The `costroid` check run was posted with the policy's conclusion: `success`, `neutral` or `failure` | None. [`docs/policy.md`](policy.md) says how each is reached |
@@ -128,6 +146,9 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: warning: the run's result object <path> is ignored: <error>` | The object `costroid run` writes beside the rows, `costroid-rows.run.json` beside `costroid-rows.jsonl`, could not be read. The report shows no reason for an empty rows file | Keep both files in the artifact, as the action and the recipes do |
 | `costroid: warning: the run's reason <reason> is not one this release knows, so it is ignored` | A newer `costroid run` wrote a reason this report does not know | Report with the release that ran the agent |
 | `costroid: warning: the run's reason <reason> is ignored, because only an empty rows file carries one` | The rows file holds rows, or could not be read, so it says more than the run's reason | None |
+| `costroid: warning: the agent's error class <class> is not one this release knows, so it is ignored` | The run's object names an error class this report does not list | Report with the release that ran the agent |
+| `costroid: warning: the agent's result <result> is not success, failure, cancelled or skipped, so it is ignored` | The action's `agent-result` input, or `--agent-result`, holds a value GitHub Actions does not give a job's result | Pass `${{ needs.<job>.result }}` of the agent's job |
+| `costroid: warning: the agent's job reads skipped, and the rows file is not empty, so the result is ignored` | The report was told the agent's job was skipped, and the rows file holds rows or a line that is not one. The report shows what the file holds | Pass the result of the job that wrote the rows |
 | `costroid: warning: costroid.yml is read at the event's base commit <commit>, not the base branch's head: <error>` | The report could not read the head of the pull request's base branch, so it read `costroid.yml` and the workflow's history at the merge-base the event names. A setting changed on the base branch since the pull request last updated does not apply to it | Give the `report` job `contents: read`, as the recipes do |
 | `costroid: warning: costroid.yml: <error>` | `costroid.yml` at the base branch's head could not be read or parsed. A public repository's comment then withholds amounts | Give the `report` job `contents: read`, and run `costroid validate` on the file |
 | `costroid: warning: policy: read <file> at <commit>: <error>` | The policy could not read its settings at that commit, so no rule ran and the check concludes `neutral` | Give the `report` job `contents: read` |

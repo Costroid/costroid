@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -28,6 +29,7 @@ const (
 	configFile           = "costroid.yml"
 	installationVariable = "COSTROID_INSTALLATION_ID"
 	gitLabTokenVariable  = "COSTROID_GITLAB_TOKEN"
+	agentResultVariable  = "COSTROID_AGENT_RESULT"
 	// reportTimeout bounds every request of one report together, so a stalled
 	// host costs the job half a minute at most.
 	reportTimeout = 30 * time.Second
@@ -64,7 +66,10 @@ type reportFlags struct {
 	rows         string
 	budget       *decimal.Decimal
 	installation string
-	json         bool
+	// agentResult is the agent job's result as the CI system states it,
+	// empty when the report was not told.
+	agentResult string
+	json        bool
 }
 
 func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
@@ -74,6 +79,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	budget := set.String("budget-usd", "", "the cap the run was given, in USD")
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation id; GitLab uses the project id")
+	agentResult := set.String("agent-result", os.Getenv(agentResultVariable), "the agent job's result: success, failure, cancelled or skipped")
 	asJSON := set.Bool("json", false, "print the result object on stdout")
 	if err := set.Parse(args); err != nil {
 		return reportFlags{}, err
@@ -81,7 +87,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	if *rows == "" {
 		return reportFlags{}, errors.New("report needs --rows")
 	}
-	flags := reportFlags{rows: *rows, installation: *installation, json: *asJSON}
+	flags := reportFlags{rows: *rows, installation: *installation, agentResult: *agentResult, json: *asJSON}
 	if *budget != "" {
 		amount, err := decimal.Parse(*budget)
 		if err != nil {
@@ -288,9 +294,12 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		ReasonLine: rows.line,
 		RunReason:  runReasonFor(rows.state, stated.RunReason, stderr),
 		ReaderLine: stated.ReaderError,
+		AgentError: agentErrorFor(stated.AgentError, stderr),
 		Budget:     flags.budget,
 		RunURL:     runURL(system),
+		CIRun:      ciRunFromEnvironment(os.Getenv),
 	}
+	input = withAgentResult(input, flags.agentResult, stderr)
 	target, err := targetFromEnvironment(system, flags, stderr)
 	input.HeadSHA = target.pull.head
 	if err != nil {
@@ -306,18 +315,26 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 // the run writes is a few kilobytes.
 const maxRunResult = 1 << 20
 
-// statedReason is what the run's result object says about a run that wrote
-// no rows. The comment cleans ReaderError again before it shows it.
+// statedReason is what the run's result object says about why the run wrote
+// no rows, and about the error its agent ended in. The comment cleans
+// ReaderError again before it shows it.
 type statedReason struct {
-	RunReason   run.Reason `json:"run_reason"`
-	ReaderError string     `json:"reader_error"`
+	RunReason   run.Reason        `json:"run_reason"`
+	ReaderError string            `json:"reader_error"`
+	AgentError  *statedAgentError `json:"agent_error"`
+}
+
+// statedAgentError is the class of error the run says its agent ended in.
+type statedAgentError struct {
+	Class string `json:"class"`
 }
 
 // readRunReason reads the reason from the result object costroid run or
 // ingest-run wrote beside the rows. The agent's job wrote that file, as it
-// wrote the rows, so only the reason and the reader's error line are read, and
-// only a reason from the closed list is used. A run that wrote no object, as
-// an older release does, gives no reason.
+// wrote the rows, so only the reason, the reader's error line and the agent's
+// error class are read, and only a reason or a class from its closed list is
+// used. A run that wrote no object, as an older release does, gives no
+// reason.
 func readRunReason(rows string, stderr io.Writer) statedReason {
 	path := runResultPath(rows)
 	info, err := os.Lstat(path)
@@ -347,6 +364,69 @@ func readJSON(path string, into any) error {
 		return err
 	}
 	return json.Unmarshal(data, into)
+}
+
+// agentErrorFor keeps the agent's error class when it is on the closed list.
+func agentErrorFor(stated *statedAgentError, stderr io.Writer) adapter.AgentError {
+	if stated == nil {
+		return ""
+	}
+	class := adapter.AgentError(stated.Class)
+	if run.AgentErrorFix(class) == "" {
+		fmt.Fprintf(stderr, "costroid: warning: the agent's error class %q is not one this release knows, so it is ignored\n", stated.Class)
+		return ""
+	}
+	return class
+}
+
+// The results GitHub Actions states for a job a report needs.
+const (
+	agentSucceeded = "success"
+	agentFailed    = "failure"
+	agentCancelled = "cancelled"
+	agentSkipped   = "skipped"
+)
+
+// withAgentResult applies the agent job's result. A skipped job wrote no
+// rows, so a report whose rows file is empty or absent says the agent did not
+// run, in place of any other reason. A result the report does not know is
+// ignored, and so is a skipped job beside a rows file that holds rows or a
+// line that is not one, which says more than the result does.
+func withAgentResult(input comment.Input, result string, stderr io.Writer) comment.Input {
+	switch result {
+	case "":
+		return input
+	case agentSucceeded, agentFailed, agentCancelled:
+		ran := false
+		input.AgentSkipped = &ran
+		return input
+	case agentSkipped:
+	default:
+		fmt.Fprintf(stderr, "costroid: warning: the agent's result %q is not success, failure, cancelled or skipped, so it is ignored\n", result)
+		return input
+	}
+	if input.State != comment.NoRows && input.Reason != comment.NoRowsFile {
+		fmt.Fprintln(stderr, "costroid: warning: the agent's job reads skipped, and the rows file is not empty, so the result is ignored")
+		return input
+	}
+	skipped := true
+	input.State, input.Reason, input.ReasonLine, input.RunReason = comment.NoRows, comment.AgentSkipped, 0, ""
+	input.AgentSkipped = &skipped
+	return input
+}
+
+// ciRunFromEnvironment is GitHub Actions' run id and attempt, nil outside it
+// or when either is not a whole number from 1.
+func ciRunFromEnvironment(getenv func(string) string) *comment.BlockCIRun {
+	if cicontext.Detect(getenv) != cicontext.GitHubActions {
+		return nil
+	}
+	id, idErr := strconv.ParseInt(getenv("GITHUB_RUN_ID"), 10, 64)
+	attempt, attemptErr := strconv.Atoi(getenv("GITHUB_RUN_ATTEMPT"))
+	if idErr != nil || attemptErr != nil || id < 1 || attempt < 1 {
+		return nil
+	}
+	return &comment.BlockCIRun{ID: id, Attempt: attempt}
 }
 
 // runReasonFor keeps the run's reason for an empty rows file. A reason this

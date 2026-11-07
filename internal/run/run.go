@@ -66,12 +66,58 @@ const (
 	// ReasonReaderRefused is a run whose reader refused the agent's stream or
 	// its execution file, so no usage was read.
 	ReasonReaderRefused Reason = "reader_refused"
+	// ReasonAgentError is a run whose agent ended in an error before it
+	// reported any usage. The run's result names the error's class.
+	ReasonAgentError Reason = "agent_error"
 )
 
 var reasonSentences = map[Reason]string{
 	ReasonNoUsage:       "the agent reported no usage, so the run wrote no rows",
 	ReasonConcurrentRun: "another costroid run holds the agent's state directory, so this run did not start and wrote no rows",
 	ReasonReaderRefused: "the reader refused the agent's stream, so the run wrote no rows",
+	ReasonAgentError:    "the agent ended in an error before it reported usage, so the run wrote no rows",
+}
+
+// agentErrorFixes says what to do about each class of agent error.
+var agentErrorFixes = map[adapter.AgentError]string{
+	adapter.AgentErrorAuthentication: "check the API key the agent runs with, the api-key input in the action",
+	adapter.AgentErrorBilling:        "check the credit balance of the provider account the API key belongs to",
+	adapter.AgentErrorRateLimit:      "run the job again later, or raise the API key's rate limit with the provider",
+	adapter.AgentErrorInvalidRequest: "check the model name and the arguments the agent runs with",
+	adapter.AgentErrorServer:         "run the job again, because the provider failed the request",
+	adapter.AgentErrorUnknown:        "run the agent alone with the same arguments to read its error",
+}
+
+// AgentErrorFix says what to do about an agent error of the class given,
+// empty for a class outside the closed list.
+func AgentErrorFix(class adapter.AgentError) string {
+	return agentErrorFixes[class]
+}
+
+// AgentErrorLine is an agent error's class and its fix, in one line.
+func AgentErrorLine(class adapter.AgentError) string {
+	return fmt.Sprintf("the agent ended with %s: %s", class, AgentErrorFix(class))
+}
+
+// installLines are the commands that install each agent at the version this
+// release's recipes install.
+var installLines = map[string]string{
+	"claude": "npm install --global @anthropic-ai/claude-code@2.1.316",
+	"codex":  "npm install --global @openai/codex@0.164.0-alpha.11.1",
+}
+
+// MissingAgentError is an agent command that is not on PATH.
+type MissingAgentError struct {
+	Name string
+	Err  error
+}
+
+func (e *MissingAgentError) Error() string {
+	return fmt.Sprintf("%s is not on PATH: install it with %s", e.Name, installLines[e.Name])
+}
+
+func (e *MissingAgentError) Unwrap() error {
+	return e.Err
 }
 
 // Sentence is the reason in words.
@@ -143,6 +189,10 @@ type Result struct {
 	ListTotal   decimal.Decimal
 	// Reason is set when the run wrote no rows.
 	Reason Reason
+	// AgentError is the class of error the agent ended in, empty when it
+	// ended in none. It can sit beside rows: an agent can fail after it has
+	// made requests.
+	AgentError adapter.AgentError
 }
 
 // windowedSession is a Session that counts the sessions of other agent
@@ -268,9 +318,16 @@ func (o Options) record(result *Result, builder rowBuilder, report adapter.Repor
 			return err
 		}
 	}
-	if len(rows) == 0 {
+	result.AgentError = report.AgentError
+	switch {
+	case len(rows) == 0 && report.AgentError != "":
+		result.Reason = ReasonAgentError
+		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", ReasonAgentError, AgentErrorLine(report.AgentError)))
+	case len(rows) == 0:
 		result.Reason = ReasonNoUsage
 		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", ReasonNoUsage, ReasonNoUsage.Sentence()))
+	case report.AgentError != "":
+		report.Warnings = append(report.Warnings, AgentErrorLine(report.AgentError)+"; the rows hold the requests it made before")
 	}
 	result.Report = report
 	writer := focus.NewWriter(o.Rows)
@@ -322,6 +379,9 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 		return 0, false, fmt.Errorf("run: open the agent's stdout: %w", err)
 	}
 	if err := command.Start(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) && installLines[plan.Argv[0]] != "" {
+			return 0, false, &MissingAgentError{Name: plan.Argv[0], Err: err}
+		}
 		return 0, false, fmt.Errorf("run: start %s: %w", plan.Argv[0], err)
 	}
 	stop := newStopper(command.Process.Pid, o.Grace)
@@ -353,17 +413,21 @@ func exitCode(command *exec.Cmd) int {
 }
 
 // read copies the agent's stdout through and feeds the session. Lines are read
-// whole, because a stream line can be longer than any fixed buffer.
+// whole, because a stream line can be longer than any fixed buffer. A blank
+// line is not fed. A line the session cannot read is counted, and one warning
+// at the end names the count and the first line's error.
 func (o Options) read(stdout io.Reader, session adapter.Session) error {
 	reader := bufio.NewReader(stdout)
+	var unread unreadLines
+	defer unread.summarize(o.Stderr)
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			if _, writeErr := o.Stdout.Write(line); writeErr != nil {
 				return fmt.Errorf("run: copy the agent's stdout: %w", writeErr)
 			}
-			if feedErr := session.Feed(bytes.TrimSpace(line), o.Now()); feedErr != nil {
-				fmt.Fprintf(o.Stderr, "costroid: unreadable stream line: %v\n", feedErr)
+			if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+				unread.add(session.Feed(trimmed, o.Now()))
 			}
 		}
 		if errors.Is(err, io.EOF) {
@@ -372,6 +436,31 @@ func (o Options) read(stdout io.Reader, session adapter.Session) error {
 		if err != nil {
 			return fmt.Errorf("run: read the agent's stdout: %w", err)
 		}
+	}
+}
+
+// unreadLines counts the stdout lines a session could not read and keeps the
+// first one's error.
+type unreadLines struct {
+	count int
+	first error
+}
+
+func (u *unreadLines) add(err error) {
+	if err == nil {
+		return
+	}
+	if u.count == 0 {
+		u.first = err
+	}
+	u.count++
+}
+
+func (u *unreadLines) summarize(w io.Writer) {
+	if u.count == 1 {
+		fmt.Fprintf(w, "costroid: warning: 1 line of the agent's stdout was not read: %v\n", u.first)
+	} else if u.count > 1 {
+		fmt.Fprintf(w, "costroid: warning: %d lines of the agent's stdout were not read; the first: %v\n", u.count, u.first)
 	}
 }
 
