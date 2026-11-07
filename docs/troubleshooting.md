@@ -64,6 +64,7 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: warning: <count> lines of the agent's stdout were not read; the first: <error>` | The same, for more than one line. The error is the first line's | The same |
 | `costroid: price the run: <error>` | The run's tokens could not be priced, so the run wrote no rows | Report it with the agent's version |
 | `costroid: reason reader_refused: <error>` | The reader refused the agent's stream, so the run wrote no rows. The rows file is empty, and the object beside it carries the reason and the error's first line, which the report shows. The error `claude-code: the stream held no result object and no session file was found` means Claude Code ended before it reported usage, and wrote no session file | Read the agent's output file on the runner, or rerun with `show-output: true` on a private repository |
+| `domain not allowed: <host>`, in harden-runner's log when the job ends | A step of the agent's job called a host outside the job's `allowed-endpoints`, and harden-runner blocked it. A download, an install or the agent's request that failed before it follows from this line | If the step needs the host, add it as [Add an endpoint](recipes.md#add-an-endpoint) says. In the LiteLLM recipe, set the variable `COSTROID_GATEWAY_HOST` to the gateway's host |
 
 ## The run's summary
 

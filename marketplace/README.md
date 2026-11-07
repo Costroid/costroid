@@ -48,10 +48,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Audit mode observes and blocks nothing. See docs/recipes.md before you keep it.
+      # Block mode: the job reaches only these hosts. docs/recipes.md says why each is here.
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: audit
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >-
+            api.anthropic.com:443
+            github.com:443
+            results-receiver.actions.githubusercontent.com:443
+            productionresultssa*.blob.core.windows.net:443
+            release-assets.githubusercontent.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            registry.npmjs.org:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0

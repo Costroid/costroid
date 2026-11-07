@@ -28,7 +28,7 @@ The sealing key pair is drawn at random, once, on your own machine:
 costroid gateway keygen --out sealing-key
 ```
 
-It writes the private half to `sealing-key`, readable by you alone, and prints the public half. Store the file's content as the secret `COSTROID_GATEWAY_SEALING_KEY` of the `costroid-gateway` environment, store the public half as the repository variable `COSTROID_GATEWAY_PUBLIC_KEY`, then delete the file. `costroid gateway public-key` prints the public half of the private half in `COSTROID_GATEWAY_SEALING_KEY`, to check the variable against it.
+It writes the private half to `sealing-key`, readable by you alone, and prints the public half. Store the file's content as the secret `COSTROID_GATEWAY_SEALING_KEY` of the `costroid-gateway` environment, store the public half as the repository variable `COSTROID_GATEWAY_PUBLIC_KEY`, then delete the file. Store the gateway's host, with its port when the URL names one, as the repository variable `COSTROID_GATEWAY_HOST`: the agent's job reaches only the hosts it allows, and a workflow expression cannot take the host out of `COSTROID_GATEWAY_URL` ([`docs/recipes.md`](recipes.md#egress-in-the-agents-job)). `costroid gateway public-key` prints the public half of the private half in `COSTROID_GATEWAY_SEALING_KEY`, to check the variable against it.
 
 Versions up to 1.0.0-alpha.8 derived the pair from the admin key, so anyone who read the public key, a repository variable, could test guesses at the admin key offline. `costroid gateway mint` now refuses a request sealed to a key derived that way, and a request from an earlier version, with a sentence that says to run `keygen`. If your public key was derived, run `keygen`, replace the variable, and rotate the admin key.
 

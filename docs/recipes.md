@@ -87,7 +87,7 @@ A [resource group](https://docs.gitlab.com/ci/resource_groups/) runs one report 
 
 ### No check on GitLab
 
-GitHub's check run has no direct equal, and the report posts none. A [commit status](https://docs.gitlab.com/api/commits/) has no neutral state (read November 1, 2026), and creating one [needs the Developer role](https://docs.gitlab.com/user/permissions/) (read November 1, 2026), which is more than the note needs. The comment says the check run was not posted, and its machine block names no check. `allow_failure` keeps the job from failing a pipeline.
+GitHub's check run has no direct equal, and the report posts none. A [commit status](https://docs.gitlab.com/api/commits/) has no neutral state (read November 1, 2026), and creating one [needs the Developer role](https://docs.gitlab.com/user/permissions/) (read November 1, 2026), which is more than the note needs. The comment says the check run was not posted, and its machine block names no check. `allow_failure` keeps the job from failing a pipeline unless `COSTROID_GATE` is set, as [`docs/gitlab.md`](gitlab.md) says.
 
 ### Forks
 
@@ -139,19 +139,48 @@ The agent's own stream holds its reasoning, its replies and what it read. A publ
 
 ## Egress in the agent's job
 
-The GitHub recipes run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) in audit mode on the agent's job. It records the job's outbound calls and blocks none, so it shows what an injected agent reached and does not stop it.
+The GitHub recipes run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) in block mode as the first step of the agent's job. From that step on, the job reaches only the hosts in the step's `allowed-endpoints`, so an injected agent cannot send its key or your code to any other host. A lookup of another host fails, and when the job ends the step prints `domain not allowed: <host>` in its log.
 
-Read this before you keep the step (vendor's README and `action.yml` at v2.22.3, read November 1, 2026):
+Each list names what its own job's steps call. They were read on 2026-11-08 from the source of each action at the commit the recipes pin, and the redirect host from a live request:
 
-- Telemetry goes to the vendor, and it can be turned off only in block mode.
-- The free tier covers public repositories on GitHub-hosted runners. Private repositories need a paid plan.
-- On a self-hosted runner without a subscription, the step does nothing.
+| Host | Why the job reaches it | Recipes |
+| ---- | ---------------------- | ------- |
+| `api.anthropic.com` | Claude Code's provider | `github-claude-code`, `github-claude-code-action` |
+| `api.openai.com` | Codex's provider. `codex-action` starts a proxy that calls it | `github-codex`, `github-codex-action` |
+| The variable `COSTROID_GATEWAY_HOST` | The LiteLLM gateway, in place of the provider | `github-claude-code-litellm` |
+| `github.com` | `actions/checkout`. The install step lists Costroid's tags and downloads its release, and `sigstore/cosign-installer` and `oven-sh/setup-bun` download theirs | All five |
+| `api.github.com` | `claude-code-action` reads the pull request, and `codex-action` checks the actor's access | `github-claude-code-action`, `github-codex-action` |
+| `results-receiver.actions.githubusercontent.com`, `productionresultssa*.blob.core.windows.net` | `actions/upload-artifact`, which keeps the rows | All five |
+| `release-assets.githubusercontent.com` | github.com answers a release download with a redirect to this host. `curl -I` on `v1.0.0-alpha.11`'s `SHA256SUMS` showed it on 2026-11-08 | All five |
+| `tuf-repo-cdn.sigstore.dev` | cosign reads Sigstore's trusted root here before it checks the release's signature (`tuf.DefaultMirror` in [`sigstore-go`](https://github.com/sigstore/sigstore-go/blob/main/pkg/tuf/options.go)) | All five |
+| `registry.npmjs.org` | npm installs the agent at its pinned version, and Bun installs `claude-code-action`'s packages | All five |
 
-`costroid lint-recipes` prints a note for each step in audit mode. A note rejects nothing.
+Each host is listed on port 443. The LiteLLM recipe lists the gateway and not `api.anthropic.com`, so the run's own key is the only provider credential the job can use. Claude Code's [network requirements](https://code.claude.com/docs/en/network-config#network-access-requirements) (read 2026-11-08) list other hosts for sign-in, plugins, updates and error reports. A run on an API key or a gateway needs none of them, so they stay blocked.
 
-To drop the step, delete it. Costroid does not depend on it. GitLab's recipe has no equal, so limit a GitLab runner's egress at its network.
+The LiteLLM recipe reads the gateway's host from the repository variable `COSTROID_GATEWAY_HOST`: the host of `COSTROID_GATEWAY_URL`, with its port when the URL names one, such as `litellm.example.com` or `litellm.example.com:4000`. A workflow expression cannot take the host out of a URL. Without the variable the agent cannot reach the gateway, and its run fails.
 
-The action's install step reaches github.com, for the release's tags and files, and runs cosign to check the signature.
+What block mode leaves open, read in [`step-security/agent`](https://github.com/step-security/agent/tree/v0.18.0) v0.18.0, the agent harden-runner v2.22.3 installs:
+
+- It allows GitHub's own hosts besides the list: the Actions domains of GitHub's [meta API](https://api.github.com/meta), which include `*.github.com`, `*.githubapp.com` and `ghcr.io`, and every Azure storage account whose name starts `productionresultssa`. An injected agent can still send what it holds to GitHub, or to the npm registry, under an account of its own.
+- The step prints each blocked host name in its log. A public repository's log is public, so a host name an injected agent made up is public too.
+
+### Telemetry
+
+StepSecurity's [Harden-Runner documentation](https://docs.stepsecurity.io/harden-runner) (read 2026-11-08) says "Harden-Runner sends runtime telemetry from the runner to StepSecurity": network and DNS events, process and file-write events, and the workflow's and job's metadata, sent to `agent.api.stepsecurity.io`, `prod.app-api.stepsecurity.io` and an S3 bucket in AWS us-east-1 and us-west-2. It says it does not collect "Source code or file contents", "Secret values" or "Environment variable values".
+
+The same page says "workflows running in block mode can stop sending telemetry with the disable-telemetry input", and the recipes set `disable-telemetry: true`. The step still calls `agent.api.stepsecurity.io` as it starts, with the repository, the run's id and the job's name, and reads GitHub's domains from it. It downloads its agent from github.com (`src/setup.ts` and `src/install-agent.ts` at v2.22.3).
+
+### Private repositories
+
+The free tier covers public repositories on GitHub-hosted runners. The same page says "The Community Tier does not support private repositories." On a private repository without a subscription, the agent sets the job back to audit mode and sends no telemetry (`agent.go` at v0.18.0). It then blocks nothing. On a self-hosted runner without a subscription "the Harden-Runner action is a no-op" (the [README](https://github.com/step-security/harden-runner/blob/v2.22.3/README.md) at v2.22.3). In either case, limit the job's egress at your network.
+
+### Add an endpoint
+
+Add `host:443` to the job's `allowed-endpoints`, on a line of its own inside the folded block (`>-`). harden-runner's agent splits the list on spaces alone (`config.go` at v0.18.0), so a literal block (`|`) allows neither host on either side of a line break. Another port is `host:port`, and `*.example.com:443` allows every subdomain.
+
+`costroid lint-recipes` prints an `egress-audit` note for the step in audit mode, in block mode with no `allowed-endpoints`, and with a line break in the list, each with its fix. It prints an `egress-endpoint` note for a host outside the table above and for telemetry left on, so a recipe that needs another host says here why. A note rejects nothing.
+
+To drop the step, delete it. Costroid does not depend on it, and the job then reaches any host. GitLab's recipe has no equal, so limit a GitLab runner's egress at its network.
 
 ## What a row says about the run
 
@@ -190,7 +219,7 @@ costroid lint-recipes recipes action/action.yml
 
 An injected agent can still spend its budget and edit the PR.
 
-The diff and the repository are the agent's input, and anyone who opens a pull request writes them. An injected agent reads whatever its job holds, including the provider key, and can send it to any host the runner reaches. The recipes do not limit egress. To limit it, run the agent's job on a runner behind your own firewall, or give it a short-lived gateway key in place of the provider key.
+The diff and the repository are the agent's input, and anyone who opens a pull request writes them. An injected agent reads whatever its job holds, including the provider key, and can send it to any host its job reaches. On a public repository harden-runner limits those to the provider, GitHub and the install hosts; on a private repository it needs StepSecurity's paid plan, as [Egress in the agent's job](#egress-in-the-agents-job) says. To limit egress further, run the agent's job on a runner behind your own firewall, or give it a short-lived gateway key in place of the provider key.
 
 The recipes give the agent no write token, so its edits stay in the job's checkout until you add a step that pushes them. Adding that step makes them part of the pull request.
 
