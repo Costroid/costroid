@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -42,6 +43,7 @@ const (
 	fakeStreamUsage     = "COSTROID_FAKE_STREAM_USAGE"
 	fakeCutAfter        = "COSTROID_FAKE_CUT_AFTER"
 	fakeSubagentRollout = "COSTROID_FAKE_SUBAGENT_ROLLOUT"
+	fakeDetach          = "COSTROID_FAKE_DETACH"
 	subagentThread      = "00000000-0000-4000-8000-0000000000c1"
 	fakeCount           = 20
 	fakeThread          = "00000000-0000-4000-8000-0000000000aa"
@@ -92,6 +94,9 @@ func fakeCodex(mode string) {
 		os.Exit(98)
 	}
 	defer logFile.Close()
+	if err := os.WriteFile(os.Getenv(fakeLog)+".otel", []byte(os.Getenv(cicontext.ResourceAttributesVariable)), 0o644); err != nil {
+		os.Exit(98)
+	}
 	switch mode {
 	case "stream":
 		fakeStreamOnly(logFile)
@@ -254,6 +259,13 @@ func fakeClaude() {
 	}
 	fmt.Fprintln(starts, os.Getpid())
 	starts.Close()
+	if detach := os.Getenv(fakeDetach); detach != "" {
+		cgroup, _ := os.ReadFile("/proc/self/cgroup")
+		if err := os.WriteFile(os.Getenv(fakeLog)+".cgroup", cgroup, 0o644); err != nil {
+			os.Exit(98)
+		}
+		leaveDetachedChild(detach)
+	}
 	for wait := 0; wait < 100; wait++ {
 		if _, err := os.Stat(os.Getenv(fakeLog) + ".hold"); err != nil {
 			break
@@ -288,6 +300,28 @@ func fakeClaude() {
 		data = bytes.Replace(data, []byte(`"subtype":"init",`), []byte(`"subtype":"init","cwd":"/work",`), -1)
 	}
 	os.Stdout.Write(data)
+}
+
+// leaveDetachedChild starts a shell in a session of its own that sleeps for a
+// minute, the way an agent's tool can leave one, and waits until it has
+// written its pid beside the log. A quiet child's output goes nowhere; a
+// holding one keeps the agent's stdout and stderr open.
+func leaveDetachedChild(how string) {
+	pidFile := os.Getenv(fakeLog) + ".detached"
+	child := exec.Command("setsid", "sh", "-c", `echo $$ > "$0.part" && mv "$0.part" "$0" && exec sleep 60`, pidFile)
+	if how == "holding" {
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+	}
+	if err := child.Start(); err != nil {
+		os.Exit(94)
+	}
+	for wait := 0; wait < 100; wait++ {
+		if _, err := os.Stat(pidFile); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	os.Exit(94)
 }
 
 // writeNestedSession leaves the session file a hook's own claude -p would, in
@@ -1254,6 +1288,50 @@ func TestTheAgentInheritsTheJoinKeysThroughItsResourceAttributes(t *testing.T) {
 	if string(data) != want {
 		t.Fatalf("the agent read %q", data)
 	}
+}
+
+// TestJoinAttributes holds that costroid run hands every agent the six vcs.*
+// and cicd.* join keys through OTEL_RESOURCE_ATTRIBUTES, beside the job's own
+// attributes, so the agent's telemetry names the pull request, both commits,
+// the repository and the CI run.
+func TestJoinAttributes(t *testing.T) {
+	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	ci := cicontext.Context{
+		Repository: "github.com/acme/widgets", RepositoryURL: "https://github.com/Acme/Widgets",
+		PullRequest: "7", Head: head, Base: base, Run: "1234", Task: "agent",
+	}
+	want := strings.Join([]string{
+		"service.name=ci",
+		"cicd.pipeline.run.id=1234",
+		"cicd.pipeline.task.run.id=agent",
+		"vcs.change.id=7",
+		"vcs.ref.base.revision=" + base,
+		"vcs.ref.head.revision=" + head,
+		"vcs.repository.url.full=https://github.com/Acme/Widgets",
+	}, ",")
+	t.Setenv(cicontext.ResourceAttributesVariable, "service.name=ci")
+	check := func(agent string, got outcome, log string) {
+		t.Helper()
+		if got.err != nil {
+			t.Fatalf("%s: %v", agent, got.err)
+		}
+		data, err := os.ReadFile(log + ".otel")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != want {
+			t.Errorf("%s read %s", agent, data)
+		}
+	}
+	claudeLog := installClaudeRun(t, "subagent", subagentSession)
+	check("claude", runAgentIn(t, ci, []string{agentNamed(t, "claude"), "-p", "work"}, "5", pinned(t)), claudeLog)
+
+	codexLog := filepath.Join(t.TempDir(), "progress")
+	t.Setenv(fakeMode, "one-turn")
+	t.Setenv(fakeStreamInput, "1000")
+	t.Setenv(fakeLog, codexLog)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	check("codex", runAgentIn(t, ci, []string{agentNamed(t, "codex"), "exec", "--ephemeral", "-m", "gpt-5.6-sol", "work"}, "5", pinned(t)), codexLog)
 }
 
 func recordedReport() adapter.Report {

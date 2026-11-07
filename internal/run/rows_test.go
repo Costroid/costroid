@@ -2,8 +2,15 @@ package run
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +18,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
 
@@ -86,5 +94,104 @@ func TestNewestRecordedRunRowsComeToItsOwnTotal(t *testing.T) {
 	}
 	if err := checkListTotal(result.ListTotal, "0.000877895"); err != nil {
 		t.Error(err)
+	}
+}
+
+// TestRowsDigestInResult holds that a run's result states the SHA-256 of the
+// rows file's bytes as written, and the SHA-256 of its rows' sorted ids, each
+// followed by a line feed. A run with no rows states the empty file's digest
+// and no rows digest.
+func TestRowsDigestInResult(t *testing.T) {
+	installClaudeRun(t, "subagent", subagentSession)
+	var rows, stderr bytes.Buffer
+	result, err := Run(context.Background(), Options{
+		Argv: []string{agentNamed(t, "claude"), "-p", "work"}, Budget: decimal.MustParse("5"),
+		Rows: &rows, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: &stderr, Catalog: pinned(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := sha256.Sum256(rows.Bytes())
+	if result.RowsFileSHA256 != hex.EncodeToString(file[:]) {
+		t.Errorf("rows file sha256 %q, the file's bytes hash to %x", result.RowsFileSHA256, file)
+	}
+	var ids []string
+	for _, row := range parseRows(t, rows.Bytes()) {
+		ids = append(ids, row["x_CostroidRowId"].(string))
+	}
+	if len(ids) != 19 {
+		t.Fatalf("%d rows", len(ids))
+	}
+	slices.Sort(ids)
+	byID := sha256.Sum256([]byte(strings.Join(ids, "\n") + "\n"))
+	if result.RowsSHA256 != hex.EncodeToString(byID[:]) {
+		t.Errorf("rows sha256 %q, the sorted ids hash to %x", result.RowsSHA256, byID)
+	}
+
+	var none bytes.Buffer
+	empty, err := Record(Options{Rows: &none, Catalog: pinned(t)}, "claude-code", adapter.Report{CostBasis: focus.Measured})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	if empty.RowsFileSHA256 != emptySHA256 || empty.RowsSHA256 != "" {
+		t.Errorf("no rows: file %q, rows %q", empty.RowsFileSHA256, empty.RowsSHA256)
+	}
+}
+
+// TestModelOutsideAllowlistWritesUnknownModel holds that a model name the
+// comment's allowlist refuses never reaches a row: the row reads
+// unknown-model in its tag, its SkuId and its description, is priced at the
+// fallback as the name itself would have been, and one warning counts the
+// requests, nested sessions included. A name the allowlist passes stands, and
+// the caller's report is left as it was.
+func TestModelOutsideAllowlistWritesUnknownModel(t *testing.T) {
+	hostile := []string{
+		"evil\n::error title=Costroid::Budget exceeded",
+		"=HYPERLINK(\"https://evil.example\")",
+		"-claude-haiku-5-5",
+		strings.Repeat("a", 129),
+		"",
+	}
+	var requests []adapter.Request
+	for i, model := range hostile[:4] {
+		request := haikuRequest(fmt.Sprintf("hostile-%d", i), adapter.Tokens{Output: 1000})
+		request.Model = model
+		requests = append(requests, request)
+	}
+	kept := haikuRequest("kept", adapter.Tokens{Output: 1000})
+	kept.Model = strings.Repeat("a", 128)
+	nested := haikuRequest("nested", adapter.Tokens{Output: 1000})
+	nested.Model = hostile[4]
+	report := adapter.Report{CostBasis: focus.Measured, Requests: append(requests, haikuRequest("allowed", adapter.Tokens{Output: 1000}), kept),
+		Nested: []adapter.Report{{SessionID: "nested", CostBasis: focus.Measured, Requests: []adapter.Request{nested}}}}
+	var rows bytes.Buffer
+	result, err := Record(Options{Rows: &rows, Catalog: pinned(t)}, "claude-code", report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const warning = "5 requests named a model outside the allowed characters, so their rows read unknown-model"
+	if !slices.Contains(result.Report.Warnings, warning) {
+		t.Errorf("warnings %q", result.Report.Warnings)
+	}
+	models := map[string]int{}
+	for _, row := range parseRows(t, rows.Bytes()) {
+		model := tagOf(row, focus.TagModel)
+		models[model]++
+		if model == "unknown-model" && (row["SkuId"] != "anthropic/unknown-model/output" || row["SkuPriceId"] != "anthropic:fallback:output" || !strings.HasPrefix(row["ChargeDescription"].(string), "unknown-model output tokens")) {
+			t.Errorf("%v %v %q", row["SkuId"], row["SkuPriceId"], row["ChargeDescription"])
+		}
+	}
+	for _, part := range []string{"::error", "HYPERLINK", "-claude-haiku-5-5", strings.Repeat("a", 129)} {
+		if strings.Contains(rows.String(), part) {
+			t.Errorf("the rows hold %q", part)
+		}
+	}
+	want := map[string]int{"unknown-model": 5, "claude-haiku-5-5": 1, strings.Repeat("a", 128): 1}
+	if !maps.Equal(models, want) {
+		t.Errorf("models %v", models)
+	}
+	if report.Requests[0].Model != hostile[0] || report.Nested[0].Requests[0].Model != "" {
+		t.Error("the caller's report was changed")
 	}
 }

@@ -1,6 +1,8 @@
 package run
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"regexp"
@@ -17,6 +19,8 @@ const (
 	attributionGrade = "unattributed"
 	runIdentity      = "unverified"
 	nestedNote       = "nested session: started and ended inside this run"
+	// unknownModel stands in for a model name outside modelPattern.
+	unknownModel = "unknown-model"
 )
 
 // The tag convention's value patterns. A value that misses one is omitted,
@@ -24,7 +28,63 @@ const (
 var (
 	sessionTagPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
 	versionTagPattern = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,64}$`)
+	// modelPattern is the allowlist and the 128-character cap the comment
+	// holds every string from the pull request to. The agent writes the model
+	// name, so a row states it only when it passes.
+	modelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/+_-]{0,127}$`)
+	// rowIDPattern is the shape of an x_CostroidRowId.
+	rowIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
+
+// containModels returns the report with every model name outside
+// modelPattern read as unknown-model, nested sessions included, and how many
+// requests it renamed. The report it was given is left as it was.
+func containModels(report adapter.Report) (adapter.Report, int) {
+	renamed := 0
+	report.Requests = slices.Clone(report.Requests)
+	for i := range report.Requests {
+		if !modelPattern.MatchString(report.Requests[i].Model) {
+			report.Requests[i].Model = unknownModel
+			renamed++
+		}
+	}
+	report.Nested = slices.Clone(report.Nested)
+	for i := range report.Nested {
+		var count int
+		report.Nested[i], count = containModels(report.Nested[i])
+		renamed += count
+	}
+	return report, renamed
+}
+
+func unknownModelLine(renamed int) string {
+	if renamed == 1 {
+		return "1 request named a model outside the allowed characters, so its rows read " + unknownModel
+	}
+	return fmt.Sprintf("%d requests named a model outside the allowed characters, so their rows read %s", renamed, unknownModel)
+}
+
+// rowsDigest is the SHA-256 of the rows' x_CostroidRowId values, sorted, each
+// followed by a line feed. It is empty for no rows, and for a row whose id is
+// not 64 lower-case hex digits.
+func rowsDigest(rows []focus.Row) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if !rowIDPattern.MatchString(row.RowID) {
+			return ""
+		}
+		ids = append(ids, row.RowID)
+	}
+	slices.Sort(ids)
+	digest := sha256.New()
+	for _, id := range ids {
+		digest.Write([]byte(id + "\n"))
+	}
+	return hex.EncodeToString(digest.Sum(nil))
+}
 
 // rowBuilder prices one report into rows.
 type rowBuilder struct {

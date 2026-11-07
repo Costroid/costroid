@@ -179,6 +179,21 @@ What the runs showed:
 
 The fixture is under `testdata/not-recorded/`. No run of the action made it. It is the recorded `subagent` stream, cut to the SDK's messages, with one synthetic prompt that a test holds out of every row. Rows come to USD 0.001619725, the recorded total.
 
+## Join attributes
+
+`costroid run` gives every agent the run's join keys in `OTEL_RESOURCE_ATTRIBUTES`, so the agent's own telemetry names the pull request it ran for. They are the OpenTelemetry `vcs.*` and `cicd.*` attributes:
+
+| Attribute                   | GitHub Actions                                                                                                  | GitLab CI                                                  |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `vcs.change.id`             | The pull request's number, from the event file                                                                  | `CI_MERGE_REQUEST_IID`                                     |
+| `vcs.ref.head.revision`     | The pull request's head commit, from the event file; `GITHUB_SHA` on `push`, `schedule` and `workflow_dispatch` | `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, else `CI_COMMIT_SHA` |
+| `vcs.ref.base.revision`     | The pull request's base commit, from the event file                                                             | `CI_MERGE_REQUEST_DIFF_BASE_SHA`                           |
+| `vcs.repository.url.full`   | `GITHUB_SERVER_URL`, then `/` and `GITHUB_REPOSITORY`                                                           | `CI_PROJECT_URL`                                           |
+| `cicd.pipeline.run.id`      | `GITHUB_RUN_ID`                                                                                                 | `CI_PIPELINE_ID`                                           |
+| `cicd.pipeline.task.run.id` | `GITHUB_JOB`                                                                                                    | `CI_JOB_ID`                                                |
+
+The job's own attributes stay, and a join key the job set already is replaced. A value that fails its tag pattern is left out, and outside CI none is set. A character the variable's syntax does not allow is percent-encoded. Like the rows' tags, these are what the CI system states, and nothing checks them before a server does.
+
 ## Stdin
 
 Costroid passes its stdin to the agent unchanged. When that stdin is a pipe with no data, `claude -p` waits three seconds and prints a warning. The warning is Claude Code's. A caller who wants it gone redirects `< /dev/null`.

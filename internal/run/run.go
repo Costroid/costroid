@@ -5,6 +5,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -193,6 +195,14 @@ type Result struct {
 	// ended in none. It can sit beside rows: an agent can fail after it has
 	// made requests.
 	AgentError adapter.AgentError
+	// RowsSHA256 is the SHA-256 of the rows' x_CostroidRowId values, sorted,
+	// each followed by a line feed, in lower-case hex. Empty when the run wrote
+	// no rows.
+	RowsSHA256 string
+	// RowsFileSHA256 is the SHA-256 of every byte the run wrote to Rows, in
+	// lower-case hex. A rows file that reads otherwise was written after the
+	// run.
+	RowsFileSHA256 string
 }
 
 // windowedSession is a Session that counts the sessions of other agent
@@ -305,6 +315,10 @@ func claim(agent adapter.Agent) (func(), error) {
 }
 
 func (o Options) record(result *Result, builder rowBuilder, report adapter.Report) error {
+	report, renamed := containModels(report)
+	if renamed > 0 {
+		report.Warnings = append(report.Warnings, unknownModelLine(renamed))
+	}
 	rows, err := builder.rows(report)
 	if err != nil {
 		result.Report = report
@@ -330,7 +344,8 @@ func (o Options) record(result *Result, builder rowBuilder, report adapter.Repor
 		report.Warnings = append(report.Warnings, AgentErrorLine(report.AgentError)+"; the rows hold the requests it made before")
 	}
 	result.Report = report
-	writer := focus.NewWriter(o.Rows)
+	written := sha256.New()
+	writer := focus.NewWriter(io.MultiWriter(o.Rows, written))
 	for _, row := range rows {
 		if err := writer.Write(row); err != nil {
 			return err
@@ -338,6 +353,8 @@ func (o Options) record(result *Result, builder rowBuilder, report adapter.Repor
 	}
 	result.Rows = len(rows)
 	result.ListTotal = listTotal(rows)
+	result.RowsSHA256 = rowsDigest(rows)
+	result.RowsFileSHA256 = hex.EncodeToString(written.Sum(nil))
 	return nil
 }
 
@@ -362,9 +379,12 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter.Session, builder rowBuilder, held *heldKey) (int, bool, error) {
+// command is the agent's process: its own process group, writing its stdout
+// to the run, with the run's join keys in its environment.
+func (o Options) command(plan adapter.Plan, held *heldKey, stdout *os.File) *exec.Cmd {
 	command := exec.Command(plan.Argv[0], plan.Argv[1:]...)
 	command.Stdin = o.Stdin
+	command.Stdout = stdout
 	command.Stderr = o.Stderr
 	command.Env = os.Environ()
 	if attributes := o.CI.ResourceAttributes(os.Getenv(cicontext.ResourceAttributesVariable)); attributes != "" {
@@ -374,11 +394,23 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 		command.Env = held.session.Env(command.Env)
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdout, err := command.StdoutPipe()
+	return command
+}
+
+// execute runs the agent to its end. Every process the agent leaves running
+// is stopped when it exits, before its output is read to the end, so none can
+// hold the run open, keep the agent's credentials or write the rows.
+func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter.Session, builder rowBuilder, held *heldKey) (int, bool, error) {
+	stdout, writer, err := os.Pipe()
 	if err != nil {
 		return 0, false, fmt.Errorf("run: open the agent's stdout: %w", err)
 	}
-	if err := command.Start(); err != nil {
+	defer stdout.Close()
+	command, contained, err := startContained(func() *exec.Cmd { return o.command(plan, held, writer) })
+	// The agent holds its own copy, so the run's end of it closes when the
+	// agent and everything it left have exited.
+	writer.Close()
+	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) && installLines[plan.Argv[0]] != "" {
 			return 0, false, &MissingAgentError{Name: plan.Argv[0], Err: err}
 		}
@@ -392,7 +424,13 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 	finishTail := o.tail(plan, session, builder, stop)
 	readErr := o.read(stdout, session)
 	stop.agentDone()
+	// An agent whose output can no longer be read meets a closed pipe.
+	stdout.Close()
+	if left := contained.end(); left > 0 {
+		fmt.Fprintf(o.Stderr, "costroid: warning: %s\n", leftRunning(left))
+	}
 	waitErr := command.Wait()
+	contained.release()
 	finishTail()
 	if readErr != nil {
 		return 0, stop.byBudget(), readErr
@@ -402,6 +440,14 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 		return 0, stop.byBudget(), fmt.Errorf("run: wait for the agent: %w", waitErr)
 	}
 	return exitCode(command), stop.byBudget(), nil
+}
+
+// leftRunning says how many processes the agent left running at its exit.
+func leftRunning(count int) string {
+	if count == 1 {
+		return "the agent left 1 process running, and costroid stopped it"
+	}
+	return fmt.Sprintf("the agent left %d processes running, and costroid stopped them", count)
 }
 
 func exitCode(command *exec.Cmd) int {

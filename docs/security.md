@@ -26,3 +26,7 @@ A pull request from a branch of your repository runs the agent's workflow as tha
 The settings are out of that reach: the report reads `costroid.yml` on the base branch, never on the pull request's head. The check is not. A required `costroid` check is as strong as your trust in everyone who can push a branch, and [`docs/required-check.md`](required-check.md#what-a-required-check-holds-against) says what it does and does not block.
 
 A check that a branch cannot post has to come from a GitHub App other than GitHub Actions, named as the check's source in the ruleset. Costroid ships no such App.
+
+## The agent's processes
+
+On Linux, `costroid run` is the child subreaper of every process the agent starts. When the agent exits, each process it left running, one in a session of its own included, is killed and waited for before the rows are written, and a warning counts them. None of them can keep spending on the agent's key or rewrite the rows file after the run. Where the run may write to its own cgroup v2 directory, the agent also starts in a cgroup of its own, which is killed whole. A process another service starts for the agent, such as a container through the Docker daemon, is not the agent's descendant and keeps running. On macOS only the agent's process group is killed, so a process that leaves the group outlives the run.
