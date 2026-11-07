@@ -416,6 +416,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 == follow-up: a fork's rows over an enforced budget
 -- writes
 POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1001
 -- stderr
 costroid: check run 1001, conclusion neutral
 -- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
@@ -457,6 +458,7 @@ This pull request comes from a fork, and the fork's own run wrote these rows. It
 ```json
 {
   "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "reported",
   "agent_error": null,
@@ -536,6 +538,7 @@ This pull request comes from a fork, and the fork's own run wrote these rows. It
 == follow-up: a fork's run left no rows
 -- writes
 POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1001
 -- stderr
 costroid: warning: lstat testdata/no-such-run/costroid-rows.jsonl: no such file or directory
 costroid: check run 1001, conclusion neutral
@@ -551,6 +554,7 @@ Reason: `fork_no_rows`. This pull request comes from a fork, and its workflow ru
 ```json
 {
   "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "rows_unreadable",
   "reason": "fork_no_rows",

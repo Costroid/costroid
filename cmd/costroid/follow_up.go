@@ -225,8 +225,9 @@ func finishedRunURL(id int64) string {
 	return strings.TrimRight(server, "/") + "/" + repository + "/actions/runs/" + strconv.FormatInt(id, 10)
 }
 
-// postFollowUp posts the check alone. The pull request's number is not in a
-// fork's workflow_run event, and the check is what a required check reads.
+// postFollowUp posts the check alone, and names the check run in its own
+// result object as report does. The pull request's number is not in a fork's
+// workflow_run event, and the check is what a required check reads.
 func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, workflow string, input comment.Input, rowsPath string, stderr io.Writer) comment.Input {
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
@@ -244,12 +245,7 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 	}, stderr)
 	capped := capAtNeutral(verdict)
 	input.Verdict = verdict
-	id, err := postCheck(ctx, host, input.HeadSHA, input.Conclusion(), inputCheck(input, forkSentences(input, capped)...), stderr)
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
-	}
-	input.CheckRunID = id
-	return input
+	return postInputCheck(ctx, host, input, stderr, forkSentences(input, capped)...)
 }
 
 // capAtNeutral holds a fork's verdict at neutral and reports whether it moved

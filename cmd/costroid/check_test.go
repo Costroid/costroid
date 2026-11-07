@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -176,5 +177,44 @@ func TestCheckWritesPerFlowAreUnchanged(t *testing.T) {
 	}
 	if string(saved) != recorded.String() {
 		t.Errorf("%s is stale, rerun with -update. It records:\n%s", checkWritesGolden, recorded.String())
+	}
+}
+
+// TestFollowUpNamesItsCheck holds a fork's check to what a branch's check
+// carries: the check run's id in its own result object and in the step's
+// outputs. The second request keeps the fork's sentences in the summary.
+func TestFollowUpNamesItsCheck(t *testing.T) {
+	for name, rows := range map[string]string{
+		"rows over an enforced budget": realRows,
+		"no rows":                      filepath.Join("testdata", "no-such-run", "costroid-rows.jsonl"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := followUpEnvironment(t, "stranger/widgets")
+			stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+			stub.Files[configFile] = enforcedOver
+			outputs, _ := stepFiles(t)
+			code, _, stderr := execute(t, "follow-up", "--rows", rows)
+			if code != 0 || len(stub.Checks) != 1 {
+				t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+			}
+			check := stub.Checks[0]
+			id := fmt.Sprint(check.ID)
+			if writes := stub.Writes(); !slices.Equal(writes, []string{"POST /repos/example/widgets/check-runs", "PATCH /repos/example/widgets/check-runs/" + id}) {
+				t.Errorf("the follow-up wrote %q", writes)
+			}
+			if object := objectOf(t, check); object.CheckRunID == nil || *object.CheckRunID != check.ID {
+				t.Errorf("the check's object names check run %v, not its own %d", object.CheckRunID, check.ID)
+			}
+			if got := readOutputs(t, outputs)["check_run_id"]; got != id {
+				t.Errorf("the check_run_id output reads %q, want %s", got, id)
+			}
+			want := forkCapSentence
+			if rows != realRows {
+				want = forkNoRowsSentence
+			}
+			if !strings.HasSuffix(check.Summary, "\n\n"+want) {
+				t.Errorf("the named check's summary lost the fork's sentences:\n%s", check.Summary)
+			}
+		})
 	}
 }
