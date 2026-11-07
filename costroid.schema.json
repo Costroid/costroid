@@ -48,7 +48,7 @@
           "minimum": 0
         },
         "pr_budget_usd": {
-          "description": "The budget a pull request's runs are held to together, in USD, as a whole number or a quoted decimal. Until the total of the pull request's earlier runs reaches the check, the rule does not run.",
+          "description": "The budget a pull request's runs are held to together, in USD, as a whole number or a quoted decimal. The report adds this run to the total of the pull request's earlier runs, read from their costroid check runs. Where that total cannot be read, or may count one report twice, the rule concludes unproven.",
           "type": ["string", "integer"],
           "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
           "minimum": 0

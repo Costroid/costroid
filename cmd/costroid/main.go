@@ -377,18 +377,20 @@ func runResult(stderr io.Writer, record runRecord) (string, error) {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
 	input := comment.Input{
-		Ledger:      rows.ledger,
-		State:       rows.state,
-		Reason:      rows.reason,
-		ReasonLine:  rows.line,
-		RunReason:   record.reason,
-		ReaderLine:  record.readerLine,
-		AgentError:  record.agentError,
-		CIRun:       record.ciRun,
-		HeadSHA:     record.head,
-		Budget:      record.budget,
-		Amounts:     comment.AmountsShown,
-		BeforeCheck: true,
+		Ledger:         rows.ledger,
+		State:          rows.state,
+		Reason:         rows.reason,
+		ReasonLine:     rows.line,
+		RunReason:      record.reason,
+		ReaderLine:     record.readerLine,
+		AgentError:     record.agentError,
+		CIRun:          record.ciRun,
+		HeadSHA:        record.head,
+		Budget:         record.budget,
+		Amounts:        comment.AmountsShown,
+		BeforeCheck:    true,
+		RowsSHA256:     rows.rowsSHA256,
+		RowsFileSHA256: rows.fileSHA256,
 	}
 	return comment.Result(input)
 }
