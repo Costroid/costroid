@@ -49,9 +49,9 @@ var fuzzConfigs = []string{
 	"",
 }
 
-// budgetRules are the rules a cost is held to. On rows the agent's job wrote,
+// fuzzBudgetRules are the rules a cost is held to. On rows the agent's job wrote,
 // none of them passes, whatever the rows claim.
-var budgetRules = []string{
+var fuzzBudgetRules = []string{
 	RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent,
 	RulePullRequestBudget, RuleMonthlyBudget,
 }
@@ -131,7 +131,7 @@ func assertUnverifiedNeverPasses(t *testing.T, usage Usage, config []byte) {
 		t.Fatalf("rows the job wrote concluded %s: %+v", verdict.Conclusion, verdict)
 	}
 	for _, result := range verdict.Results {
-		if slices.Contains(budgetRules, result.Rule) && result.Outcome == Pass {
+		if slices.Contains(fuzzBudgetRules, result.Rule) && result.Outcome == Pass {
 			t.Fatalf("rows the job wrote passed %s: %+v", result.Rule, result)
 		}
 		if !slices.Contains([]string{Pass, Warn, Fail, Unproven}, result.Outcome) || result.Reason == "" {

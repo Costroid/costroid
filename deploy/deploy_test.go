@@ -129,7 +129,7 @@ func TestTheDocsCallTheFirewallTheStrongerControl(t *testing.T) {
 	}
 }
 
-// TestWorkflowsPassTheRecipeLinter puts the two workflows under the pin rules.
+// TestWorkflowsPassTheRecipeLinter puts the three workflows under the pin rules.
 // A release signs with its OIDC identity, so id-token-scope, a rule about agents,
 // does not apply to it. No agent runs in either file.
 func TestWorkflowsPassTheRecipeLinter(t *testing.T) {
@@ -137,7 +137,7 @@ func TestWorkflowsPassTheRecipeLinter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Files != 2 {
+	if report.Files != 3 {
 		t.Fatalf("linted %d files", report.Files)
 	}
 	for _, finding := range report.Findings {
