@@ -40,6 +40,9 @@ const (
 	checkRunsPerPage = 100
 	// maxCheckRunPages bounds a commit's list of check runs of one name at 300.
 	maxCheckRunPages = 3
+	reviewsPerPage   = 100
+	// maxReviewPages bounds a pull request's list of reviews at 1,000.
+	maxReviewPages = 10
 	// actionsApp is GitHub Actions' App, and actionsLogin the account its own
 	// token posts as.
 	actionsApp   = "github-actions"
@@ -590,4 +593,37 @@ func (g *GitHub) CheckRuns(ctx context.Context, sha, name string) ([]ListedCheck
 		}
 	}
 	return nil, fmt.Errorf("scm: more than %d check runs named %s are on commit %s", maxCheckRunPages*checkRunsPerPage, name, sha)
+}
+
+// Reviews pages through the pull request's reviews in the order GitHub lists
+// them. A review whose account was deleted names no reviewer, and a pending
+// review states no time.
+func (g *GitHub) Reviews(ctx context.Context, number int) ([]Review, error) {
+	var reviews []Review
+	for page := 1; page <= maxReviewPages; page++ {
+		var answer []struct {
+			ID   int64 `json:"id"`
+			User *struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			State       string    `json:"state"`
+			CommitID    string    `json:"commit_id"`
+			SubmittedAt time.Time `json:"submitted_at"`
+		}
+		query := url.Values{"per_page": {strconv.Itoa(reviewsPerPage)}, "page": {strconv.Itoa(page)}}
+		if err := g.do(ctx, http.MethodGet, g.repo(fmt.Sprintf("/pulls/%d/reviews?%s", number, query.Encode())), nil, &answer); err != nil {
+			return nil, err
+		}
+		for _, listed := range answer {
+			review := Review{ID: listed.ID, State: strings.ToUpper(listed.State), CommitID: listed.CommitID, SubmittedAt: listed.SubmittedAt}
+			if listed.User != nil {
+				review.Reviewer = listed.User.Login
+			}
+			reviews = append(reviews, review)
+		}
+		if len(answer) < reviewsPerPage {
+			return reviews, nil
+		}
+	}
+	return nil, fmt.Errorf("scm: pull request %d has more than %d reviews", number, maxReviewPages*reviewsPerPage)
 }

@@ -49,9 +49,12 @@ var gitHubGuards = []string{
 }
 
 func (l *linter) workflow(root *yaml.Node) {
-	l.events(field(root, "on"))
+	l.events(field(root, "on"), startsAgent(root))
 	if isFollowUp(field(root, "on")) {
 		l.followUp(root)
+	}
+	if isApproval(root) {
+		l.approval(root)
 	}
 	workflowPermissions := field(root, "permissions")
 	guarded := needsGuard(field(root, "on"))
@@ -90,12 +93,16 @@ func eventNames(on *yaml.Node) []string {
 	return names
 }
 
-func (l *linter) events(on *yaml.Node) {
+// events refuses the privileged trigger, and a comment's or a review's
+// trigger in a workflow that starts an agent. A workflow with no agent step,
+// such as the approval recipe, may run on a review: nobody's text reaches an
+// agent there.
+func (l *linter) events(on *yaml.Node, agent bool) {
 	check := func(node *yaml.Node, name string) {
 		if name == "pull_request_target" {
 			l.add(node, RulePullRequestTarget, "runs with the base repository's secrets on code a PR controls: use pull_request")
 		}
-		if commentEvents[name] {
+		if agent && commentEvents[name] {
 			l.add(node, RuleAgentPromptInput, "%s starts a run from a comment: use pull_request", name)
 		}
 	}
@@ -108,6 +115,22 @@ func (l *linter) events(on *yaml.Node) {
 	for _, event := range sequence(on) {
 		check(event, event.Value)
 	}
+}
+
+// startsAgent reports a workflow with an agent step, or a job that calls
+// another workflow, whose steps this file does not show. A workflow whose
+// jobs cannot be read is held to the agent's rules.
+func startsAgent(root *yaml.Node) bool {
+	jobs := entries(field(root, "jobs"))
+	if len(jobs) == 0 {
+		return true
+	}
+	for _, job := range jobs {
+		if field(job.value, "uses") != nil || slices.ContainsFunc(sequence(field(job.value, "steps")), func(step *yaml.Node) bool { return stepAgent(step) != "" }) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node, guarded bool) {

@@ -115,16 +115,83 @@ func ParseSettings(data []byte) (Settings, error) {
 }
 
 func policyMapping(root *yaml.Node) *yaml.Node {
+	return section(root, "policy")
+}
+
+// section is the value of a top-level key, nil when the document is not a
+// mapping or lacks the key.
+func section(root *yaml.Node, key string) *yaml.Node {
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
 		return nil
 	}
 	document := root.Content[0]
 	for i := 0; i+1 < len(document.Content); i += 2 {
-		if document.Content[i].Value == "policy" {
+		if document.Content[i].Value == key {
 			return document.Content[i+1]
 		}
 	}
 	return nil
+}
+
+// The keys under approval, and the bounds of approval.expires_days.
+const (
+	keyAllowAuthor = "allow_author"
+	keyExpiresDays = "expires_days"
+	// DefaultApprovalDays is how long an approval lasts when expires_days is
+	// not set.
+	DefaultApprovalDays = 7
+	maxApprovalDays     = 90
+)
+
+// ApprovalSettings are the approval keys of costroid.yml.
+type ApprovalSettings struct {
+	// AllowAuthor lets a pull request's author approve it.
+	AllowAuthor bool
+	// ExpiresDays is how many days a review approves for.
+	ExpiresDays int
+}
+
+// ApprovalKeys are the keys under approval that ParseApproval reads, sorted.
+func ApprovalKeys() []string {
+	return []string{keyAllowAuthor, keyExpiresDays}
+}
+
+// ParseApproval reads the approval mapping of costroid.yml. Without it, the
+// author cannot approve and an approval lasts DefaultApprovalDays. Any key or
+// value under it that the schema refuses is an error, so a typo never widens
+// who can approve.
+func ParseApproval(data []byte) (ApprovalSettings, error) {
+	settings := ApprovalSettings{ExpiresDays: DefaultApprovalDays}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return ApprovalSettings{}, fmt.Errorf("policy: parse costroid.yml: %w", err)
+	}
+	mapping := section(&root, "approval")
+	if mapping == nil || mapping.Tag == "!!null" {
+		return settings, nil
+	}
+	if mapping.Kind != yaml.MappingNode {
+		return ApprovalSettings{}, errors.New("policy: approval in costroid.yml is not a mapping")
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		key, value := mapping.Content[i].Value, mapping.Content[i+1]
+		switch key {
+		case keyAllowAuthor:
+			if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
+				return ApprovalSettings{}, errors.New("policy: approval.allow_author must be true or false")
+			}
+			settings.AllowAuthor = value.Value == "true"
+		case keyExpiresDays:
+			var days int
+			if value.Kind != yaml.ScalarNode || value.Tag != "!!int" || value.Decode(&days) != nil || days < 1 || days > maxApprovalDays {
+				return ApprovalSettings{}, fmt.Errorf("policy: approval.expires_days must be a whole number of days from 1 to %d", maxApprovalDays)
+			}
+			settings.ExpiresDays = days
+		default:
+			return ApprovalSettings{}, errors.New("policy: costroid.yml names an approval key Costroid does not read")
+		}
+	}
+	return settings, nil
 }
 
 // parseAmount takes a quoted scalar's own text, so 0.1 stays 0.1. A YAML

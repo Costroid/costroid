@@ -10,6 +10,7 @@ import (
 	"cmp"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -186,15 +187,61 @@ type Input struct {
 	Reconciliations []Reconciliation
 	// Verdict is the policy's, nil when no policy ran.
 	Verdict *policy.Verdict
+	// Approval is a review that approved the head, nil when none counts. It
+	// turns a failed verdict's check neutral, and only on HeadSHA.
+	Approval *Approval
 }
 
-// Conclusion is the check's conclusion: the verdict's, or neutral when no
-// policy ran.
+// Approval is a review that approved one commit, as the host stated it.
+type Approval struct {
+	// Approver is the reviewer's login, which no App's account can be.
+	Approver string
+	HeadSHA  string
+	At       time.Time
+}
+
+// loginPattern is a person's login on GitHub. A bracket, as an App's account
+// ends in, never matches.
+var loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+
+// Conclusion is the check's conclusion: the verdict's, neutral when no policy
+// ran, and neutral when an approval binds a failed verdict's head.
 func (i Input) Conclusion() string {
 	if i.Verdict == nil {
 		return policy.Neutral
 	}
+	if i.approved() {
+		return policy.Neutral
+	}
 	return i.Verdict.Conclusion
+}
+
+// approved reports an approval that turns this check's failure neutral.
+func (i Input) approved() bool {
+	return i.Verdict != nil && i.Verdict.Conclusion == policy.Failure && i.Approval.binds(i.HeadSHA)
+}
+
+// binds reports an approval of the commit head by a person.
+func (a *Approval) binds(head string) bool {
+	return a != nil && commitPattern.MatchString(head) && a.HeadSHA == head && loginPattern.MatchString(a.Approver) && !a.At.IsZero()
+}
+
+// ApprovedConclusion is the conclusion a check gets from the policy's
+// verdict and an approval of its head: neutral for an approved failure, and
+// the verdict otherwise. On rows the agent's job wrote, an approval never
+// concludes success.
+func ApprovedConclusion(verdict string, approval *Approval, head string) string {
+	if verdict == policy.Failure && approval.binds(head) {
+		return policy.Neutral
+	}
+	return verdict
+}
+
+// approvalLine says who approved which commit and when, and what that does to
+// the check. The login passed loginPattern, so it renders as a code span.
+func approvalLine(approval Approval) string {
+	return fmt.Sprintf("`%s` approved commit `%s` at %s, so the check concludes neutral. The policy's verdict stays failure, and a new push ends the approval.",
+		approval.Approver, approval.HeadSHA[:shortCommitLength], approval.At.UTC().Format("2006-01-02 15:04 MST"))
 }
 
 // Block is the result object, the machine-readable block. Strings under Data
@@ -634,7 +681,7 @@ func (i Input) view() view {
 		Marker:         Marker,
 		FirstLine:      i.firstLine(shown),
 		Conclusion:     i.Conclusion(),
-		VerdictLine:    verdictLine(i.Verdict, shown),
+		VerdictLine:    i.verdictLine(shown),
 		RunLine:        runLine(i.HeadSHA, i.RunURL),
 		Why:            i.why(),
 		AgentError:     i.agentErrorBesideFigures(),
@@ -936,6 +983,15 @@ var limitNouns = map[string]string{
 	policy.RuleMonthlyBudget:      "budget",
 }
 
+// verdictLine opens with the approval when one turns the check neutral.
+func (i Input) verdictLine(shown bool) string {
+	line := verdictLine(i.Verdict, shown)
+	if i.approved() {
+		return approvalLine(*i.Approval) + " " + line
+	}
+	return line
+}
+
 // verdictLine is built from the verdict's closed fields and its amounts, so
 // no text from the pull request reaches it.
 func verdictLine(verdict *policy.Verdict, shown bool) string {
@@ -1110,4 +1166,66 @@ func warnOnlySentence(period policy.WarnOnly) string {
 		}
 	}
 	return "Warn-only: the commit that added this workflow to the base branch could not be read, so a rule that fails warns. " + enforceNow
+}
+
+// verdict is the policy's conclusion, neutral when no policy ran.
+func (b Block) verdict() string {
+	if b.Policy == nil {
+		return policy.Neutral
+	}
+	return b.Policy.Conclusion
+}
+
+// ApprovedConclusion is the conclusion the check that repeats this object
+// gets with the approval, nil for none.
+func (b Block) ApprovedConclusion(approval *Approval) string {
+	return ApprovedConclusion(b.verdict(), approval, b.HeadSHA)
+}
+
+// ParseResult reads the fenced result object a check run's text carries. It
+// takes only an object this release writes, and only one it would write byte
+// for byte, so a check that repeats it changes nothing it does not mean to.
+func ParseResult(text string) (Block, error) {
+	object, fencedOpen := strings.CutPrefix(text, "```json\n")
+	object, fencedClose := strings.CutSuffix(object, "\n```")
+	if !fencedOpen || !fencedClose {
+		return Block{}, errors.New("comment: the check run's text is not a fenced result object")
+	}
+	if strings.Contains(object, "`") {
+		return Block{}, errors.New("comment: the result object holds a backtick")
+	}
+	decoder := json.NewDecoder(strings.NewReader(object))
+	decoder.DisallowUnknownFields()
+	var block Block
+	if err := decoder.Decode(&block); err != nil {
+		return Block{}, fmt.Errorf("comment: read the result object: %w", err)
+	}
+	if block.Schema != schema {
+		return Block{}, fmt.Errorf("comment: the result object's schema is %q, and this release writes %s", string(Clean(block.Schema)), schema)
+	}
+	again, err := json.MarshalIndent(block, "", "  ")
+	if err != nil || string(again) != object {
+		return Block{}, errors.New("comment: the result object is not one this release writes")
+	}
+	return block, nil
+}
+
+// Reconclude renders a check that repeats an earlier check run's result
+// object with the conclusion an approval gives it: neutral for an approved
+// failure, the policy's verdict when no approval counts. previous names the
+// check run that carries the report in full.
+func Reconclude(block Block, approval *Approval, previous int64) (CheckOutput, error) {
+	verdict := block.verdict()
+	conclusion := block.ApprovedConclusion(approval)
+	block.Conclusion = &conclusion
+	encoded, err := json.MarshalIndent(block, "", "  ")
+	if err != nil {
+		return CheckOutput{}, fmt.Errorf("comment: encode block: %w", err)
+	}
+	line := fmt.Sprintf("No approval binds commit `%s`, so the check concludes as the policy does.", block.HeadSHA[:min(len(block.HeadSHA), shortCommitLength)])
+	if conclusion != verdict {
+		line = approvalLine(*approval)
+	}
+	summary := fmt.Sprintf("**Verdict: %s.** %s\n\nCheck run %d carries this report in full.\n", conclusion, line, previous)
+	return CheckOutput{Title: "Verdict: " + conclusion, Summary: summary, Text: fenced(string(encoded))}, nil
 }

@@ -29,9 +29,10 @@ var reservedKeys = map[string]bool{
 // knownKeys are the keys this release reads, by the mapping that holds them.
 // The policy's own parser names its keys, so the two never drift apart.
 var knownKeys = map[string]map[string]bool{
-	"":        {"comment": true, "policy": true},
-	"comment": {"show_cost": true},
-	"policy":  keySet(policy.Keys()),
+	"":         {"comment": true, "policy": true, "approval": true},
+	"comment":  {"show_cost": true},
+	"policy":   keySet(policy.Keys()),
+	"approval": keySet(policy.ApprovalKeys()),
 }
 
 func keySet(keys []string) map[string]bool {

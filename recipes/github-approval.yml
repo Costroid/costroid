@@ -1,0 +1,34 @@
+# Lets a reviewer turn a failed costroid check neutral by approving the pull
+# request. Copy to .github/workflows/costroid-approval.yml on the default
+# branch, beside the agent's recipe. docs/approval.md says which reviews count.
+# It checks out no code and runs no agent, so a review never starts a paid run.
+name: costroid-approval
+
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions: {}
+
+concurrency:
+  group: costroid-approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      # Reads costroid.yml at the base branch's head.
+      contents: read
+      # Reads the pull request's head, author and reviews.
+      pull-requests: read
+    steps:
+      - uses: Costroid/costroid/action@0000000000000000000000000000000000000000 # the first release with costroid approve
+        with:
+          stage: install
+      - name: Post the check with the approval
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: costroid approve

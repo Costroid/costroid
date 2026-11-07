@@ -77,6 +77,25 @@
         }
       }
     },
+    "approval": {
+      "description": "Who can turn a failed check neutral by approving the pull request in a review, and for how long. A review counts only on the pull request's head commit, from an account that can write to the repository and is not an App. The report and costroid approve read these keys at the base branch's head.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_author": {
+          "description": "Whether the pull request's author can approve it.",
+          "type": "boolean",
+          "default": false
+        },
+        "expires_days": {
+          "description": "How many days after it was submitted a review approves the head it names. A new push ends an approval sooner.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "default": 7
+        }
+      }
+    },
     "policy_pack": {
       "description": "The policy pack this repository is held to. Reserved: this release reads no pack.",
       "type": "string",

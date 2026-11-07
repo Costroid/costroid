@@ -65,6 +65,8 @@ func eventRefusal(eventName string) string {
 		return ""
 	case followUpTrigger:
 		return "not posted: report posts on the pull_request event, and a workflow_run job posts through costroid follow-up"
+	case approveEvent:
+		return "not posted: report posts on the pull_request event, and a review's job posts through costroid approve"
 	}
 	return fmt.Sprintf("not posted: report posts on the pull_request event, and this run's event is %q. "+
 		"docs/existing-workflow.md says how to report from the workflow you have", eventName)
@@ -600,6 +602,7 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	lifetime, earlier := readLifetime(ctx, host, pull, input, stderr)
 	input.Lifetime = lifetime
 	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, earlier, stderr)
+	input.Approval = reportApproval(ctx, host, pull, input.Verdict, stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if input.CheckRunID != nil {
 		input.IDInCheck = nameCheck(ctx, host, input, stderr)
