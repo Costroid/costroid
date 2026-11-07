@@ -113,16 +113,35 @@ The `read` stage. A line here ends the step with exit code 125.
 
 ## Sending rows to a ledger
 
-The `ingest` stage. Each line here is a warning annotation, and the job still passes: a ledger outage never blocks a merge.
+The `ingest` stage. Each line here is a warning annotation, and the job still passes: a ledger or platform outage never blocks a merge.
 
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
-| `costroid: ingest-url is empty, so no rows were sent` | No ledger is named | Set `COSTROID_INGEST_URL`, or drop the job |
+| `costroid: ingest-url and platform-url are empty, so no rows were sent` | Neither a ledger nor Costroid Platform is named | Set `COSTROID_INGEST_URL` or the `platform-url` input, or drop the job |
+| `costroid: platform-token is empty, so no rows were sent to Costroid Platform` | `platform-url` is set and the integration token is not | Pass the token's secret as `platform-token`. [`docs/export.md`](export.md#costroid-platform) says which scopes it needs |
+| `costroid: installation-id is empty, so no rows were sent to Costroid Platform` | `platform-url` is set and the installation is not | Set `installation-id`, as [`docs/export.md`](export.md#from-the-action) shows |
+| `costroid: Costroid Platform did not take the rows` | `costroid export` refused the batch or could not send it. The line above it says why | Read that line. [Sending rows to Costroid Platform](#sending-rows-to-costroid-platform) lists them |
 | `costroid: the run left no rows` | The agent's job wrote no rows | Read the agent job's log |
 | `costroid: this job has no id-token permission` | The job cannot ask for an OIDC token | Give the `ingest` job `id-token: write`, and that job alone |
 | `costroid: this runner has no /usr/bin/curl or no /usr/bin/jq, so no rows were sent` | On a GitHub runner, the `ingest` stage calls the system's own `curl` and `jq` by those paths, so no program a step put on `PATH` handles the job's OIDC token | Use a runner image with both at those paths |
 | `costroid: GitHub issued no OIDC token` | GitHub refused the token request | Run the job again |
 | `costroid: the ledger refused the rows` | The ledger answered an error or could not be reached | Read the ledger's log. [`docs/serve.md`](serve.md) lists its refusals |
+
+## Sending rows to Costroid Platform
+
+`costroid export`, which the `ingest` stage runs when `platform-url` is set.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: batch <id>, <count> rows, sha256 <digest>: accepted for ingest` | The platform took the batch. It states the batch's verdict at `GET /exports/{batch_id}` | None |
+| `costroid: batch <id>, <count> rows, sha256 <digest>: already held, so nothing changed` | These bytes were sent before under this batch id | None |
+| `costroid: <path> holds no rows, so nothing was sent` | The rows file is empty | Read the agent job's log |
+| `costroid: warning: Costroid Platform refused <batch>: <status> <code>. Nothing in the rows is wrong, and <path> is kept to send again` | 402 `PLAN_WRITES_REFUSED`: the tenant's plan does not allow writes at present. 429 and a `QUOTA_` code: a quota is spent, and the line adds the seconds to wait. The command exits 0 | Send the rows again later. The artifact keeps them for 7 days |
+| `costroid: warning: Costroid Platform's export quota is <state>` | `approaching` past 80% of a quota, or `exhausted` | Send fewer batches, or wait for the next UTC day |
+| `costroid: Costroid Platform refused <batch>: <status> <code>` | The platform refused, and stored nothing. The command exits 1 | The contract's [refusals](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#refusals) say what each code means |
+| `costroid: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform` | The variable is empty or holds another kind of key | Pass the integration token the platform showed |
+| `costroid: this job has no id-token permission, so no run token can name the run: give the job id-token: write` | On GitHub Actions the batch goes with the job's OIDC token, and the job cannot ask for one | Give the `ingest` job `id-token: write` |
+| `costroid: outside GitHub Actions, export needs --batch-id` | Only a GitHub Actions run gives a batch id | Pass `--batch-id` |
 
 ## Posting the report
 

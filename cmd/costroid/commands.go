@@ -39,6 +39,7 @@ var commands = []command{
 	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
 	{name: "follow-up", help: followUpHelp, run: withOutputs(followUpCommand)},
 	{name: "reconcile", help: reconcileHelp, run: reconcileWithProvider},
+	{name: "export", help: exportHelp, run: exportCommand},
 	{name: "policy", help: policyHelp, run: withOutputs(policyCommand)},
 	{name: "validate", short: "costroid validate [costroid.yml]", help: validateHelp, run: withoutContext(validateCommand)},
 	{name: "lint-recipes", help: lintRecipesHelp, run: withoutContext(lintRecipes)},

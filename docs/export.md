@@ -37,7 +37,7 @@ curl --header "Authorization: Bearer $TOKEN" \
 
 ## Costroid Platform
 
-`costroid export` sends a rows file to Costroid Platform as one batch, by the [integration contract `integration/v0.2`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2). The body is the rows as CSV, in the form [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3) gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Nothing else in the row changes.
+`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract `integration/v0.2`, which `Costroid/costroid-schemas` publishes when Costroid Platform opens to it. The body is the rows as CSV, in the form [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3) gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Nothing else in the row changes.
 
 The platform needs an integration token, which a tenant administrator creates there. It needs the `rows:write` scope, and `identity:read` on GitHub Actions. Keep it as a repository secret. `costroid export` reads it from `COSTROID_PLATFORM_TOKEN` and never from an argument.
 
@@ -83,7 +83,7 @@ The batch id is 1 to 128 letters, digits, dots, hyphens or underscores, unique w
 | 429 `QUOTA_` and the quota's name | A warning with the seconds in `Retry-After`. The file is kept to send again | 0 |
 | Any other refusal | `costroid: Costroid Platform refused batch <id>: <status> <code>` | 1 |
 
-The contract's [refusals](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#refusals) name every code. A batch the platform accepted can still fail on ingest, for example `ROW_IDENTITY_MISMATCH`. The platform states that verdict at `GET /exports/{batch_id}`, after `costroid export` has ended.
+The contract names every refusal code. A batch the platform accepted can still fail on ingest, for example `ROW_IDENTITY_MISMATCH`. The platform states that verdict at `GET /exports/{batch_id}`, after `costroid export` has ended.
 
 In the `ingest` stage, a 402 or a 429 is a warning annotation, and any other failure warns and passes the job, as a ledger outage does. The artifact `costroid-rows` keeps the rows for 7 days.
 

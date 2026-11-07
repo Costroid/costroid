@@ -11,11 +11,11 @@ inputs:
     description: >-
       run installs and runs the agent, then keeps its rows as an artifact. read reads the
       execution file of a claude-code-action run that already ended, then keeps its rows the same
-      way. ingest sends those rows to a ledger. report posts the check and the comment. all does
-      run and report in one job, which gives the agent's job the report's permissions, so the
-      recipes never use it. install installs costroid and does nothing else, so a later step
-      can run it, as the fork follow-up recipe does. It has no default, and an empty stage
-      fails the step with the list of stages.
+      way. ingest sends those rows to a ledger, to Costroid Platform, or to both. report posts the
+      check and the comment. all does run and report in one job, which gives the agent's job the
+      report's permissions, so the recipes never use it. install installs costroid and does
+      nothing else, so a later step can run it, as the fork follow-up recipe does. It has no
+      default, and an empty stage fails the step with the list of stages.
     required: true
   version:
     description: >-
@@ -77,6 +77,22 @@ inputs:
     default: ""
   ingest-audience:
     description: The audience the ledger requires on the CI token.
+    default: ""
+  platform-url:
+    description: >-
+      For stage ingest, Costroid Platform's https origin, such as https://app.costroid.com. Empty
+      sends nothing there. docs/export.md says how to connect a repository.
+    default: ""
+  installation-id:
+    description: >-
+      For stage ingest with platform-url, the installation the rows come through, as the platform
+      bound it: github-owner:<repository_owner_id>, or github:<id> where the GitHub App is
+      installed.
+    default: ""
+  platform-token:
+    description: >-
+      For stage ingest with platform-url, an integration token from a secret, with the rows:write
+      and identity:read scopes. It reaches the ingest step and no other.
     default: ""
 
 outputs:
@@ -149,3 +165,6 @@ runs:
         agent-result: ${{ inputs.agent-result }}
         ingest-url: ${{ inputs.ingest-url }}
         ingest-audience: ${{ inputs.ingest-audience }}
+        platform-url: ${{ inputs.platform-url }}
+        installation-id: ${{ inputs.installation-id }}
+        platform-token: ${{ inputs.platform-token }}
