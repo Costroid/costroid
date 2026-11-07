@@ -117,6 +117,9 @@ func runURL(system cicontext.System) string {
 // platform-url input sets it. The comment checks its form.
 const platformVariable = "COSTROID_PLATFORM_URL"
 
+// gitLabDotCom is the one GitLab host whose namespace ids the platform binds.
+const gitLabDotCom = "gitlab.com"
+
 // reportTarget is where a report goes and what it says about itself there.
 // The platform and the repository let the comment link the pull request on
 // Costroid Platform.
@@ -194,7 +197,7 @@ func hostFromEnvironment(pull pullContext) (scm.Reporter, error) {
 // service's egress allowlist, so its client is a plain one. The project is the merge
 // request's, and a fork's pipeline is refused here as well as in the recipe's
 // rules, so a fork's merge request never gets a post. The installation is the
-// project's namespace, the id the integration contract binds.
+// project's namespace on gitlab.com, the id the integration contract binds.
 func gitLabTarget() (reportTarget, error) {
 	run, err := cicontext.Read(os.Getenv)
 	if err != nil {
@@ -228,9 +231,19 @@ func gitLabTarget() (reportTarget, error) {
 	return reportTarget{
 		host:         host,
 		pull:         pullContext{head: run.Head, base: run.Base, baseBranch: os.Getenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME"), pullRequest: number},
-		installation: os.Getenv("CI_PROJECT_NAMESPACE_ID"),
+		installation: gitLabInstallation(),
 		accountHost:  comment.AccountGitLab,
 		platform:     os.Getenv(platformVariable),
 		repository:   run.Repository,
 	}, nil
+}
+
+// gitLabInstallation is the installation a GitLab job names. The integration
+// contract binds a namespace only on gitlab.com, so a self-managed instance's
+// job names none.
+func gitLabInstallation() string {
+	if os.Getenv("CI_SERVER_HOST") != gitLabDotCom {
+		return ""
+	}
+	return os.Getenv("CI_PROJECT_NAMESPACE_ID")
 }

@@ -175,6 +175,7 @@ func TestGitLabMergedResultsNamesTheSourceBranchHead(t *testing.T) {
 
 func TestGitLabAccountLinkNamesTheNamespaceAndNoHostname(t *testing.T) {
 	stub := gitLabEnvironment(t)
+	t.Setenv("CI_SERVER_HOST", gitLabDotCom)
 	t.Setenv(installationVariable, "58120394")
 	execute(t, "report", "--rows", realRows)
 	if len(stub.Notes) != 1 {
@@ -187,6 +188,21 @@ func TestGitLabAccountLinkNamesTheNamespaceAndNoHostname(t *testing.T) {
 	for _, leak := range []string{"gitlab.corp.example", "platform/widgets", strings.TrimPrefix(stub.Server.URL, "http://"), "58120394", "installation=gitlab%3A" + stub.Project} {
 		if strings.Contains(body, leak) {
 			t.Errorf("%q is in\n%s", leak, body)
+		}
+	}
+}
+
+func TestSelfManagedGitLabNamesNoNamespace(t *testing.T) {
+	for _, host := range []string{"gitlab.corp.example", "gitlab.com.example", "GitLab.com", ""} {
+		stub := gitLabEnvironment(t)
+		t.Setenv("CI_SERVER_HOST", host)
+		execute(t, "report", "--rows", realRows)
+		if len(stub.Notes) != 1 {
+			t.Fatalf("host %q: %d notes", host, len(stub.Notes))
+		}
+		body := stub.Notes[0].Body
+		if !strings.Contains(body, "(https://docs.costroid.com/account)") || strings.Contains(body, "installation=") {
+			t.Errorf("host %q: the link is not the docs page:\n%s", host, body)
 		}
 	}
 }
