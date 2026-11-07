@@ -30,7 +30,7 @@ func Render(w io.Writer, result Result) error {
 	err := table.Flush()
 	fmt.Fprintln(out)
 	table = tabwriter.NewWriter(out, 0, 0, columnGap, ' ', 0)
-	fmt.Fprintln(table, "DOLLARS\tcredential\tday\tledger USD\tprovider USD\tresidual\tdiff\tverdict\tattribution")
+	fmt.Fprintln(table, "DOLLARS\tcredential\tday\tledger USD\tprovider USD\tresidual\tdiff\tverdict\trounding\tattribution")
 	for _, row := range result.Rows {
 		renderDollars(table, row)
 	}
@@ -60,15 +60,28 @@ func renderDollars(w io.Writer, row Row) {
 	}
 	check := row.Dollars
 	if check.Verdict == NoBill {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t\t\tno API bill\t\n", row.Source, row.Credential, row.Day, check.Ledger, check.Provider)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t\t\tno API bill\t\t\n", row.Source, row.Credential, row.Day, check.Ledger, check.Provider)
 		return
 	}
 	verdict := "within 10%"
 	if check.Verdict == Outside {
 		verdict = "outside 10%"
 	}
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Ledger, check.Provider,
-		check.Residual, percentOf(check.Residual, check.Provider), verdict, check.attribution())
+	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Ledger, check.Provider,
+		check.Residual, percentOf(check.Residual, check.Provider), verdict, check.Rounding.verdict(), check.attribution())
+}
+
+// verdict reads the list figures' comparison in words with its row count, and
+// n/a when the provider states no list figure.
+func (r *RoundingCheck) verdict() string {
+	if r == nil {
+		return notApplicable
+	}
+	word := "outside"
+	if r.Within {
+		word = "within"
+	}
+	return fmt.Sprintf("%s, %d rows", word, r.Rows)
 }
 
 // attribution reads a residual in words: each named cause with its amount, then

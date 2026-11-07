@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,7 +109,11 @@ func (o openAI) usage(ctx context.Context, grain string, span window, report *Re
 	return pages(ctx, endpoint, query, func(current page[openAIBucket[openAIUsageResult]]) error {
 		for _, bucket := range current.Data {
 			for _, result := range bucket.Results {
-				report.addUsage(result.usage(grain, bucket.day()))
+				usage, err := result.usage(grain, bucket.day())
+				if err != nil {
+					return err
+				}
+				report.addUsage(usage)
 			}
 		}
 		return nil
@@ -116,8 +122,10 @@ func (o openAI) usage(ctx context.Context, grain string, span window, report *Re
 
 // usage maps the report's overlapping fields to disjoint classes.
 // input_tokens holds cached and cache-write tokens. The two finer fields can
-// be absent on older responses, so each falls back to the difference.
-func (r openAIUsageResult) usage(grain, day string) Usage {
+// be absent on older responses, so each falls back to the difference. A
+// class below zero means the fields do not overlap as read, and every figure
+// compared from them would be wrong, so the report is refused.
+func (r openAIUsageResult) usage(grain, day string) (Usage, error) {
 	uncached := r.InputTokens - r.InputCachedTokens - r.CacheWriteTokens
 	if r.InputUncachedTokens != nil {
 		uncached = *r.InputUncachedTokens
@@ -126,20 +134,28 @@ func (r openAIUsageResult) usage(grain, day string) Usage {
 	if r.CacheWrite30mTokens != nil {
 		write30m = *r.CacheWrite30mTokens
 	}
+	counts := map[focus.TokenClass]int64{
+		focus.InputUncached: uncached,
+		focus.CacheRead:     r.InputCachedTokens,
+		focus.CacheWrite30m: write30m,
+		focus.CacheWrite12h: r.CacheWrite12hTokens,
+		focus.Output:        r.OutputTokens,
+	}
+	tokens := make(map[focus.TokenClass]decimal.Decimal, len(counts))
+	for _, class := range slices.Sorted(maps.Keys(counts)) {
+		if counts[class] < 0 {
+			return Usage{}, fmt.Errorf("usage on %s for %s: %s reads %d tokens, below zero", day, text(r.Model), class, counts[class])
+		}
+		tokens[class] = decimal.FromInt(counts[class])
+	}
 	return Usage{
 		Credential: openAICredential(grain, r.APIKeyID, r.ProjectID),
 		Day:        day,
 		Model:      text(r.Model),
 		Tier:       r.tier(),
 		Region:     catalog.RegionGlobal,
-		Tokens: map[focus.TokenClass]decimal.Decimal{
-			focus.InputUncached: decimal.FromInt(uncached),
-			focus.CacheRead:     decimal.FromInt(r.InputCachedTokens),
-			focus.CacheWrite30m: decimal.FromInt(write30m),
-			focus.CacheWrite12h: decimal.FromInt(r.CacheWrite12hTokens),
-			focus.Output:        decimal.FromInt(r.OutputTokens),
-		},
-	}
+		Tokens:     tokens,
+	}, nil
 }
 
 func (r openAIUsageResult) tier() string {

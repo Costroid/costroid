@@ -82,13 +82,16 @@ type Key struct {
 }
 
 // Row is one reconciliation of one credential on one UTC day.
+// DataRefreshedAt is the provider's stamp on the reports that carried the day,
+// the earliest when several did, and null when the provider stamps none.
 type Row struct {
 	Key
-	State   State        `json:"state"`
-	Final   bool         `json:"final"`
-	Tokens  []TokenCheck `json:"tokens"`
-	Dollars *DollarCheck `json:"dollars"`
-	Notes   []string     `json:"notes"`
+	State           State        `json:"state"`
+	Final           bool         `json:"final"`
+	DataRefreshedAt *time.Time   `json:"data_refreshed_at"`
+	Tokens          []TokenCheck `json:"tokens"`
+	Dollars         *DollarCheck `json:"dollars"`
+	Notes           []string     `json:"notes"`
 }
 
 // TokenCheck compares one token class. Delta is Provider minus Ledger.
@@ -104,14 +107,23 @@ type TokenCheck struct {
 // is Provider minus Ledger, and it equals the sum of Causes and Unattributed.
 // OtherCost is what the report bills for anything but tokens, which the ledger
 // does not hold and the comparison leaves out.
+//
+// ProviderEffective is what the report bills for tokens, after any discount,
+// and equals Provider. ProviderList is the same charges at list price, null
+// when the report does not state it on every token line. Rounding compares
+// ProviderList with Ledger under FOCUS 1.4's rounding variance tolerance, and
+// is null when ProviderList is.
 type DollarCheck struct {
-	Verdict      DollarVerdict   `json:"verdict"`
-	Ledger       decimal.Decimal `json:"ledger"`
-	Provider     decimal.Decimal `json:"provider"`
-	OtherCost    decimal.Decimal `json:"other_cost"`
-	Residual     decimal.Decimal `json:"residual"`
-	Causes       []Cause         `json:"causes"`
-	Unattributed decimal.Decimal `json:"unattributed"`
+	Verdict           DollarVerdict    `json:"verdict"`
+	Ledger            decimal.Decimal  `json:"ledger"`
+	Provider          decimal.Decimal  `json:"provider"`
+	ProviderEffective decimal.Decimal  `json:"provider_effective"`
+	ProviderList      *decimal.Decimal `json:"provider_list"`
+	OtherCost         decimal.Decimal  `json:"other_cost"`
+	Residual          decimal.Decimal  `json:"residual"`
+	Causes            []Cause          `json:"causes"`
+	Unattributed      decimal.Decimal  `json:"unattributed"`
+	Rounding          *RoundingCheck   `json:"rounding"`
 }
 
 // Cause is the part of a residual one named cause accounts for.
@@ -222,7 +234,7 @@ func (c comparison) rows() ([]Row, error) {
 }
 
 func (c comparison) row(key Key) (Row, error) {
-	row := Row{Key: key, Final: isFinal(key.Day, c.options.Now), Notes: []string{}}
+	row := Row{Key: key, Final: isFinal(key.Day, c.options.Now), DataRefreshedAt: c.report.refreshedAt(key.Day), Notes: []string{}}
 	if !c.settled(key.Day) {
 		row.State = Pending
 		row.Notes = append(row.Notes, "the provider has not finished reporting this day")

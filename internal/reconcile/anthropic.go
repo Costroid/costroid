@@ -53,7 +53,7 @@ func (a anthropic) authorize(header http.Header) {
 }
 
 func (a anthropic) Fetch(ctx context.Context, days Range, credentials []string) (Report, error) {
-	report := Report{Source: SourceAnthropic, Unsettled: map[string]bool{}}
+	report := Report{Source: SourceAnthropic, Unsettled: map[string]bool{}, Refreshed: map[string]time.Time{}}
 	for _, grain := range grains(credentials, anthropicScopeID, anthropicKeyGrain, anthropicScope) {
 		for _, span := range days.windows(anthropicMaxSpan) {
 			if err := a.usage(ctx, grain, span, &report); err != nil {
@@ -141,7 +141,7 @@ func (a anthropic) usage(ctx context.Context, grain string, span window, report 
 	endpoint := fetch{client: a.client, endpoint: anthropicUsage, authorize: a.authorize}
 	query := anthropicQuery(span, grain, "model", "service_tier", "inference_geo", "speed")
 	return pages(ctx, endpoint, query, func(current page[anthropicUsageRow]) error {
-		report.unsettle(span, current.DataRefreshedAt)
+		report.stamp(span, current.DataRefreshedAt)
 		for _, row := range current.Data {
 			report.addUsage(row.usage(grain))
 		}
@@ -180,7 +180,7 @@ func (a anthropic) cost(ctx context.Context, grain string, span window, report *
 	endpoint := fetch{client: a.client, endpoint: anthropicCost, authorize: a.authorize}
 	query := anthropicQuery(span, grain, "cost_type")
 	return pages(ctx, endpoint, query, func(current page[anthropicCostRow]) error {
-		report.unsettle(span, current.DataRefreshedAt)
+		report.stamp(span, current.DataRefreshedAt)
 		for _, row := range current.Data {
 			cost, err := row.cost(grain)
 			if err != nil {
@@ -225,12 +225,21 @@ func parseDollars(cents string) (decimal.Decimal, error) {
 	return amount.DivPow10(centsPerDollar), nil
 }
 
-// unsettle marks the span's days past the report's own stamp. Usage after the
-// stamp is missing or partial, and a null stamp means nothing is in yet.
-func (r *Report) unsettle(span window, refreshed *time.Time) {
+// stamp keeps a page's freshness stamp for each day of its span, and marks
+// the days past it unsettled. Usage after the stamp is missing or partial, and
+// a null stamp means nothing is in yet. Where pages disagree, the earliest
+// stamp is kept, because the day's figures are no fresher than their oldest
+// page.
+func (r *Report) stamp(span window, refreshed *time.Time) {
 	for _, day := range span.days() {
 		if refreshed == nil || endOfDay(day).After(*refreshed) {
 			r.Unsettled[day] = true
+		}
+		if refreshed == nil {
+			continue
+		}
+		if kept, found := r.Refreshed[day]; !found || refreshed.Before(kept) {
+			r.Refreshed[day] = refreshed.UTC()
 		}
 	}
 }

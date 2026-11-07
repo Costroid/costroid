@@ -124,6 +124,8 @@ func (a attributes) text(keys ...string) string {
 // collector applies the allowlist while a decoder walks a payload.
 type collector struct {
 	drops map[string]int64
+	// rejected counts records that did not decode.
+	rejected int
 }
 
 func (c *collector) drop(label string) {

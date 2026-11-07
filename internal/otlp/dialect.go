@@ -48,11 +48,12 @@ const (
 // The log events that carry a request's usage.
 const (
 	eventClaudeRequest = "claude_code.api_request"
+	eventClaudeShort   = "api_request"
 	eventCursorRequest = "cursor.api.request"
 )
 
 // eventNames are the log bodies that are an event's name, not free text.
-var eventNames = set(eventClaudeRequest, "api_request", eventCursorRequest)
+var eventNames = set(eventClaudeRequest, eventClaudeShort, eventCursorRequest)
 
 // MaxTokens bounds one class of one request, far above any model's context,
 // so a sum of counts cannot overflow.
@@ -107,7 +108,7 @@ func interpret(r *record) (Usage, status) {
 func dialectOf(r *record) Dialect {
 	service := strings.ToLower(r.attrs.text("service.name"))
 	switch {
-	case r.name == eventClaudeRequest, r.attrs.text("event.name") == "api_request", service == "claude-code":
+	case r.name == eventClaudeRequest, r.attrs.text("event.name") == eventClaudeShort, service == "claude-code":
 		return ClaudeCode
 	case r.name == eventCursorRequest, strings.HasPrefix(service, "cursor"), hasKey(r, keyCursorInput):
 		return Cursor
@@ -132,6 +133,12 @@ var tokenKeys = []string{keyInput, keyOutput, keyPromptTokensOld, keyCompletionT
 func readCounts(dialect Dialect, r *record) (counts, bool, bool) {
 	switch dialect {
 	case ClaudeCode:
+		if !claudeRequestEvent(r) {
+			// A request is both an api_request event and a
+			// claude_code.llm_request span. Only the event splits its cache
+			// writes by lifetime, so it alone counts.
+			return counts{}, false, true
+		}
 		return readClaude(r)
 	case Cursor:
 		return readCursor(r)
@@ -143,6 +150,10 @@ func readCounts(dialect Dialect, r *record) (counts, bool, bool) {
 		}
 	}
 	return readStandard(r)
+}
+
+func claudeRequestEvent(r *record) bool {
+	return r.log && (r.name == eventClaudeRequest || r.name == eventClaudeShort || r.attrs.text("event.name") == eventClaudeShort)
 }
 
 type reader struct {

@@ -76,8 +76,28 @@ type jsonLog struct {
 	EventName  string         `json:"eventName"`
 	TraceID    string         `json:"traceId"`
 	SpanID     string         `json:"spanId"`
-	Body       jsonValue      `json:"body"`
+	Body       jsonBody       `json:"body"`
 	Attributes []jsonKeyValue `json:"attributes"`
+}
+
+// jsonBody is a log body. OTLP/JSON writes an AnyValue, and some senders
+// write a bare string, which reads as that string.
+type jsonBody struct {
+	jsonValue
+}
+
+// UnmarshalJSON accepts an AnyValue object or a bare string.
+func (b *jsonBody) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return err
+		}
+		b.String = &text
+		return nil
+	}
+	return json.Unmarshal(trimmed, &b.jsonValue)
 }
 
 // jsonNano reads a fixed64 timestamp, a string in OTLP/JSON.
@@ -97,12 +117,14 @@ func (n *jsonNano) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// The envelopes hold each record undecoded. A record decodes on its own, so
+// one that does not is rejected and counted, and its siblings still read.
 type jsonTraces struct {
 	ResourceSpans []struct {
 		Resource   jsonResource `json:"resource"`
 		ScopeSpans []struct {
-			Scope jsonScope  `json:"scope"`
-			Spans []jsonSpan `json:"spans"`
+			Scope jsonScope         `json:"scope"`
+			Spans []json.RawMessage `json:"spans"`
 		} `json:"scopeSpans"`
 	} `json:"resourceSpans"`
 }
@@ -111,8 +133,8 @@ type jsonLogs struct {
 	ResourceLogs []struct {
 		Resource  jsonResource `json:"resource"`
 		ScopeLogs []struct {
-			Scope      jsonScope `json:"scope"`
-			LogRecords []jsonLog `json:"logRecords"`
+			Scope      jsonScope         `json:"scope"`
+			LogRecords []json.RawMessage `json:"logRecords"`
 		} `json:"scopeLogs"`
 	} `json:"resourceLogs"`
 }
@@ -134,8 +156,13 @@ func decodeJSONTraces(body []byte, c *collector) ([]record, error) {
 		shared := c.jsonAttributes(resource.Resource.Attributes)
 		for _, scope := range resource.ScopeSpans {
 			c.jsonDiscard(scope.Scope.Attributes)
-			for i := range scope.Spans {
-				records = append(records, c.jsonSpanRecord(&scope.Spans[i], shared))
+			for _, raw := range scope.Spans {
+				var span jsonSpan
+				if err := json.Unmarshal(raw, &span); err != nil {
+					c.rejected++
+					continue
+				}
+				records = append(records, c.jsonSpanRecord(&span, shared))
 			}
 		}
 	}
@@ -171,8 +198,13 @@ func decodeJSONLogs(body []byte, c *collector) ([]record, error) {
 		shared := c.jsonAttributes(resource.Resource.Attributes)
 		for _, scope := range resource.ScopeLogs {
 			c.jsonDiscard(scope.Scope.Attributes)
-			for i := range scope.LogRecords {
-				records = append(records, c.jsonLogRecord(&scope.LogRecords[i], shared))
+			for _, raw := range scope.LogRecords {
+				var entry jsonLog
+				if err := json.Unmarshal(raw, &entry); err != nil {
+					c.rejected++
+					continue
+				}
+				records = append(records, c.jsonLogRecord(&entry, shared))
 			}
 		}
 	}

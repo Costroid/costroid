@@ -672,11 +672,33 @@ func FuzzParseJSONTraces(f *testing.F) {
 	})
 }
 
+// FuzzParseJSONLogs reads the input as a whole body, then as a sibling record
+// on either side of one valid usage record, which must survive it.
 func FuzzParseJSONLogs(f *testing.F) {
 	f.Add([]byte(`{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"1","body":{"stringValue":"claude_code.api_request"},"attributes":[{"key":"input_tokens","value":{"stringValue":"2"}},{"key":"prompt","value":{"stringValue":"SENTINEL-CONTENT-7f3a"}}]}]}]}]}`))
+	for _, sibling := range []string{
+		`{"timeUnixNano":"x"}`, `{"timeUnixNano":1.73e18}`, `{"body":"claude_code.api_request"}`, `{"body":[1]}`, `7`, `null`,
+		`{"attributes":[{"key":"request_id","value":{"stringValue":"req_keep"}},{"key":"input_tokens","value":{"stringValue":"10"}},{"key":"output_tokens","value":{"stringValue":"2"}},{"key":"cache_creation_tokens","value":{"stringValue":"100"}},{"key":"event.name","value":{"stringValue":"api_request"}},{"key":"model","value":{"stringValue":"claude-haiku-5-5"}}]}`,
+		validClaudeRecord,
+	} {
+		f.Add([]byte(sibling))
+	}
 	f.Fuzz(func(t *testing.T, body []byte) {
 		batch, err := Parse(body, JSON, Logs)
 		if err == nil {
+			assertNoContent(t, batch)
+		}
+		if !json.Valid(body) {
+			return
+		}
+		for _, records := range [][]string{{string(body), validClaudeRecord}, {validClaudeRecord, string(body)}} {
+			batch, err := Parse(claudeLogs(records...), JSON, Logs)
+			if err != nil {
+				t.Fatalf("a sibling refused the batch: %v", err)
+			}
+			if !survives(batch) {
+				t.Fatalf("the valid record was lost beside %q: %+v", body, batch)
+			}
 			assertNoContent(t, batch)
 		}
 	})

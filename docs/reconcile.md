@@ -54,6 +54,24 @@ costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-01 --reports
 
 Keep each response's body as the provider sent it, or cut to the records of the credentials you reconcile, as `scripts/accuracy -save` keeps them. A range that needs a second page, or a second provider window, cannot be saved as one file.
 
+## Amounts and rounding
+
+Each row's `dollars` holds two provider figures for the day's token charges. `provider_effective` is what the cost report bills, after any discount. `provider_list` is the same charges at list price. Anthropic states both, as `amount` and `list_amount`. OpenAI's cost report states one amount, so `provider_list` is null on an OpenAI row.
+
+`rounding` compares `provider_list` with the ledger's list cost, the same charges at the same prices, under the rounding variance tolerance of FOCUS 1.4:
+
+```text
+Tolerance = MAX(100 × Subunit, SQRT(Rows) × 0.5 × Subunit)
+```
+
+`Rows` is the number of ledger rows summed, and `Subunit` is the currency's smallest unit, 0.01 for USD. Over 5 rows a variance of USD 0.02 is within and USD 5.00 is not. Over 1,000,000 rows USD 4.50 is within and USD 15.00 is not. The bound is inclusive. Costroid compares squares, so it takes no square root and uses no float. Source: [`rounding_variance_tolerance.md` at FOCUS v1.4](https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/blob/v1.4/specification/appendix/rounding_variance_tolerance.md), retrieved 2026-11-07.
+
+A variance outside the tolerance is more than rounding. The 10% verdict and its causes still judge the day.
+
+`data_refreshed_at` is the provider's freshness stamp on the reports that carried the day, the earliest when several did. OpenAI stamps none, so it is null there.
+
+OpenAI's older usage responses leave uncached input and 30-minute writes to be derived by subtraction. A difference below zero means the fields do not overlap as read, and the run stops with the day and the model named.
+
 ## Exit codes
 
 | Code | Meaning                                  |

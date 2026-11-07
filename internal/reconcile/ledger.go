@@ -36,21 +36,31 @@ var sources = map[string]string{
 
 // ledgerRow is the part of a row reconciliation reads.
 type ledgerRow struct {
-	BillingCurrency     string            `json:"BillingCurrency"`
-	ChargeDescription   string            `json:"ChargeDescription"`
-	ChargePeriodStart   time.Time         `json:"ChargePeriodStart"`
-	ConsumedQuantity    string            `json:"ConsumedQuantity"`
-	ConsumedUnit        string            `json:"ConsumedUnit"`
-	HostProviderName    *string           `json:"HostProviderName"`
-	ListCost            string            `json:"ListCost"`
-	RegionID            *string           `json:"RegionId"`
-	ServiceProviderName string            `json:"ServiceProviderName"`
-	SkuMeter            focus.TokenClass  `json:"SkuMeter"`
-	SkuPriceID          string            `json:"SkuPriceId"`
-	SubAccountID        *string           `json:"SubAccountId"`
-	Tags                map[string]string `json:"Tags"`
-	RowID               string            `json:"x_CostroidRowId"`
-	ServiceTier         *string           `json:"x_CostroidServiceTier"`
+	BillingCurrency     string                     `json:"BillingCurrency"`
+	ChargeDescription   string                     `json:"ChargeDescription"`
+	ChargePeriodStart   time.Time                  `json:"ChargePeriodStart"`
+	ConsumedQuantity    string                     `json:"ConsumedQuantity"`
+	ConsumedUnit        string                     `json:"ConsumedUnit"`
+	HostProviderName    *string                    `json:"HostProviderName"`
+	ListCost            string                     `json:"ListCost"`
+	RegionID            *string                    `json:"RegionId"`
+	ServiceProviderName string                     `json:"ServiceProviderName"`
+	SkuMeter            focus.TokenClass           `json:"SkuMeter"`
+	SkuPriceID          string                     `json:"SkuPriceId"`
+	SubAccountID        *string                    `json:"SubAccountId"`
+	Tags                map[string]json.RawMessage `json:"Tags"`
+	RowID               string                     `json:"x_CostroidRowId"`
+	ServiceTier         *string                    `json:"x_CostroidServiceTier"`
+}
+
+// tag reads one tag. A value that is not a string reads as absent, as a tag
+// the row never set: the convention's tags are strings.
+func (r ledgerRow) tag(key string) string {
+	var value string
+	if err := json.Unmarshal(r.Tags[key], &value); err != nil {
+		return ""
+	}
+	return value
 }
 
 // Ledger is the rows of one range, totalled per credential per day.
@@ -64,8 +74,10 @@ type Ledger struct {
 }
 
 type ledgerGroup struct {
-	tokens          map[focus.TokenClass]decimal.Decimal
-	list            decimal.Decimal
+	tokens map[focus.TokenClass]decimal.Decimal
+	list   decimal.Decimal
+	// rows counts the rows summed into list.
+	rows            int64
 	billed          bool
 	assumedLifetime bool
 	measured        map[recordKey]*Usage
@@ -87,6 +99,9 @@ func ReadLedger(rows io.Reader, within Range, fallbackCredential string) (*Ledge
 		err := decoder.Decode(&row)
 		if errors.Is(err, io.EOF) {
 			return ledger, nil
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, fmt.Errorf("reconcile: the rows file ends inside row %d, so a row is missing from the total", number)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("reconcile: read row %d: %w", number, err)
@@ -118,7 +133,7 @@ func (r ledgerRow) inScope(within Range) bool {
 	if r.HostProviderName != nil && sources[*r.HostProviderName] != source {
 		return false
 	}
-	basis := focus.CostBasis(r.Tags[focus.TagCostBasis])
+	basis := focus.CostBasis(r.tag(focus.TagCostBasis))
 	if basis != focus.Measured && basis != focus.ListEquivalent {
 		return false
 	}
@@ -152,19 +167,20 @@ func (l *Ledger) add(row ledgerRow, fallbackCredential string) error {
 		l.groups[key] = group
 	}
 	group.tokens[row.SkuMeter] = group.tokens[row.SkuMeter].Add(tokens)
-	if row.Tags[focus.TagAssumedTTL] != "" || strings.Contains(row.ChargeDescription, lifetimeAssumedNote) {
+	if row.tag(focus.TagAssumedTTL) != "" || strings.Contains(row.ChargeDescription, lifetimeAssumedNote) {
 		group.assumedLifetime = true
 	}
-	if focus.CostBasis(row.Tags[focus.TagCostBasis]) == focus.Measured {
+	if focus.CostBasis(row.tag(focus.TagCostBasis)) == focus.Measured {
 		group.billed = true
 		group.list = group.list.Add(list)
+		group.rows++
 		group.addMeasured(row, tokens)
 	}
 	return nil
 }
 
 func (g *ledgerGroup) addMeasured(row ledgerRow, tokens decimal.Decimal) {
-	key := recordKey{row.Tags[focus.TagModel], row.tier(), row.region()}
+	key := recordKey{row.tag(focus.TagModel), row.tier(), row.region()}
 	record := g.measured[key]
 	if record == nil {
 		record = &Usage{Model: key.model, Tier: key.tier, Region: key.region, Tokens: map[focus.TokenClass]decimal.Decimal{}}

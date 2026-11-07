@@ -108,7 +108,10 @@ func TestAnthropicPublishedCostSampleIsCentsNotDollars(t *testing.T) {
 
 func TestOpenAIPublishedUsageSampleMapsToDisjointClasses(t *testing.T) {
 	sample := readSample[page[openAIBucket[openAIUsageResult]]](t, "openai/published-usage.json")
-	usage := sample.Data[0].Results[0].usage(openAIKeyGrain, sample.Data[0].day())
+	usage, err := sample.Data[0].Results[0].usage(openAIKeyGrain, sample.Data[0].day())
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := map[focus.TokenClass]string{
 		focus.InputUncached: "500",
 		focus.CacheRead:     "400",

@@ -25,11 +25,13 @@ const (
 func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens []TokenCheck) (DollarCheck, []string, error) {
 	cost := c.report.costOf(key)
 	check := DollarCheck{
-		Verdict:   NoBill,
-		Ledger:    group.list,
-		Provider:  cost.amount,
-		OtherCost: cost.other,
-		Causes:    []Cause{},
+		Verdict:           NoBill,
+		Ledger:            group.list,
+		Provider:          cost.amount,
+		ProviderEffective: cost.amount,
+		ProviderList:      cost.list,
+		OtherCost:         cost.other,
+		Causes:            []Cause{},
 	}
 	if !group.billed {
 		return check, []string{"every ledger row is list-equivalent, so no API bill exists to compare"}, nil
@@ -39,6 +41,13 @@ func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens [
 		check.Verdict = Within
 	}
 	check.Residual = check.Provider.Sub(check.Ledger)
+	if cost.list != nil {
+		rounding, err := roundingOf(*cost.list, group)
+		if err != nil {
+			return DollarCheck{}, nil, err
+		}
+		check.Rounding = &rounding
+	}
 	walk := walker{catalog: c.options.Catalog, source: key.Source, at: parseDay(key.Day)}
 	mine, err := walk.price(group.records())
 	if err != nil {
@@ -66,6 +75,18 @@ func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens [
 		}
 	}
 	return check, slices.Concat(mine.notes, theirs.notes), nil
+}
+
+// roundingOf compares the provider's list figure with the ledger's list cost,
+// the same charges at the same prices, so what separates them past the
+// tolerance is more than rounding.
+func roundingOf(list decimal.Decimal, group *ledgerGroup) (RoundingCheck, error) {
+	variance := list.Sub(group.list)
+	within, err := WithinRounding(currency, group.rows, variance)
+	if err != nil {
+		return RoundingCheck{}, err
+	}
+	return RoundingCheck{Currency: currency, Rows: group.rows, Variance: variance, Within: within}, nil
 }
 
 // providerHigh reports a token miss the provider's side of. Traffic the ledger

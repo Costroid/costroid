@@ -41,14 +41,25 @@ type Cost struct {
 }
 
 // Report is one source's records for a range. Unsettled names the days the
-// provider says it has not finished reporting. Lag is how long after a day's
-// end to wait when the provider stamps no such thing.
+// provider says it has not finished reporting. Refreshed holds, per day, the
+// earliest freshness stamp of the pages that carried it. Lag is how long
+// after a day's end to wait when the provider stamps no such thing.
 type Report struct {
 	Source    string
 	Usage     []Usage
 	Costs     []Cost
 	Unsettled map[string]bool
+	Refreshed map[string]time.Time
 	Lag       time.Duration
+}
+
+// refreshedAt is the day's stamp, or nil when no page stamped it.
+func (r Report) refreshedAt(day string) *time.Time {
+	stamp, found := r.Refreshed[day]
+	if !found {
+		return nil
+	}
+	return &stamp
 }
 
 func (r Report) usageOf(key Key) []Usage {
