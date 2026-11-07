@@ -244,8 +244,8 @@ that is null. --out keeps one row per source, credential and day, and a rerun
 replaces it. Rerun through the eighth day after month end, when restating stops.
 
 Exit codes of reconcile:
-  0                 no token miss
-  1                 a token miss, which is a defect
+  0                 no token miss and no price miss
+  1                 a token miss or a price miss, each a defect
   125               costroid could not read the rows or a report
 `
 
