@@ -108,6 +108,8 @@ The `read` stage. A line here ends the step with exit code 125.
 | `costroid: execution-file <path> does not exist` | The action wrote no file, often because it failed early | Read the action step's log |
 | `costroid: could not read the version of claude` | `claude` is not on the path | Keep the recipe's install step |
 | `costroid: claude <version> is older than the minimum <version>` | The installed Claude Code is older than the floor | Raise the install step's version |
+| `costroid: execution-file and codex-home are both set: set the one for the agent's action` | The step got both inputs | Keep `execution-file` for `claude-code-action` or `codex-home` for `codex-action` |
+| `costroid: codex-home <path> is not a directory: pass the codex-home the codex-action step was given` | The path names no directory, often because the `codex-action` step did not run | Pass the same `codex-home` as the `codex-action` step, and read that step's log |
 | `costroid: ingest-run needs --execution-file and --out` | `costroid ingest-run` was called without one of them | Pass both |
 | `costroid: reason reader_refused: <error>` | The execution file is not the array of messages Costroid reads, so no rows were written. The rows file is empty, and the object beside it carries the reason and the error's first line, which the report shows | Report it with the error line and the claude-code-action version |
 

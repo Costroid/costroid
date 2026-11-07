@@ -48,8 +48,8 @@ func committedRecordings(t *testing.T) []string {
 		}
 		dirs = append(dirs, found...)
 	}
-	if len(dirs) != 9 {
-		t.Fatalf("found %d committed recordings, want 9: %v", len(dirs), dirs)
+	if len(dirs) != 10 {
+		t.Fatalf("found %d committed recordings, want 10: %v", len(dirs), dirs)
 	}
 	return dirs
 }

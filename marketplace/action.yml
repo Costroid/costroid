@@ -49,6 +49,12 @@ inputs:
   execution-file:
     description: For stage read, the execution_file output of the claude-code-action step.
     default: ""
+  codex-home:
+    description: >-
+      For stage read, in place of execution-file: the codex-home of an openai/codex-action step
+      that already ended in this job. Give that step a directory made for the job, under
+      runner.temp.
+    default: ""
   show-output:
     description: >-
       true prints the agent's own stream, its reasoning and its replies, to the job
@@ -157,6 +163,7 @@ runs:
         agent-version: ${{ inputs.agent-version }}
         budget-usd: ${{ inputs.budget-usd }}
         execution-file: ${{ inputs.execution-file }}
+        codex-home: ${{ inputs.codex-home }}
         show-output: ${{ inputs.show-output }}
         api-key: ${{ inputs.api-key }}
         billing-account: ${{ inputs.billing-account }}
