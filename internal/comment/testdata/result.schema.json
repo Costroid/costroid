@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.3/result.schema.json",
-  "title": "Costroid result object, version 0.3",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.4/result.schema.json",
+  "title": "Costroid result object, version 0.4",
   "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.3"
+      "const": "costroid.result/0.4"
     },
     "check_run_id": {
       "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
@@ -40,6 +40,11 @@
     },
     "run_reason": {
       "$ref": "#/$defs/runReason"
+    },
+    "reader_error": {
+      "description": "The reader's first error line, beside the run reason reader_refused. Every character outside the allowlist is replaced by ?, and the line is cut at 160 bytes.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9 .,:;()'=_/+?-]{1,160}$"
     },
     "head_sha": {
       "description": "The head commit, lower case. Empty when the environment named none.",
@@ -156,6 +161,23 @@
           "figures": {
             "type": "array",
             "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "reader_error"
+        ]
+      },
+      "then": {
+        "required": [
+          "run_reason"
+        ],
+        "properties": {
+          "run_reason": {
+            "const": "reader_refused"
           }
         }
       }
@@ -296,10 +318,11 @@
       ]
     },
     "runReason": {
-      "description": "Why the run wrote no rows, as costroid run stated it. Present only when the run stated one. The list is closed.",
+      "description": "Why the run wrote no rows, as costroid run or costroid ingest-run stated it. Present only when the run stated one. The list is closed.",
       "enum": [
         "no_usage",
-        "concurrent_run"
+        "concurrent_run",
+        "reader_refused"
       ]
     },
     "tokenClass": {

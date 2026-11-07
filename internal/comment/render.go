@@ -29,9 +29,9 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.3 in
+	// schema names the result object's contract, result/v0.4 in
 	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.3"
+	schema = "costroid.result/0.4"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -148,6 +148,9 @@ type Input struct {
 	// RunReason is why the run wrote no rows, as the run stated it. It is
 	// shown only when the rows file holds no rows.
 	RunReason run.Reason
+	// ReaderLine is the reader's first error line, shown only with the run
+	// reason reader_refused, and cleaned again before it is.
+	ReaderLine string
 	// RunURL is the CI run's page as the environment names it, empty when it
 	// names none. A value outside runURLPattern is dropped.
 	RunURL string
@@ -180,6 +183,7 @@ type Block struct {
 	Reason         Reason        `json:"reason,omitempty"`
 	ReasonLine     int           `json:"reason_line,omitempty"`
 	RunReason      run.Reason    `json:"run_reason,omitempty"`
+	ReaderError    string        `json:"reader_error,omitempty"`
 	HeadSHA        string        `json:"head_sha"`
 	Amounts        string        `json:"amounts"`
 	Rows           int           `json:"rows"`
@@ -286,6 +290,7 @@ func (i Input) block() (string, error) {
 		Reason:         i.Reason,
 		ReasonLine:     i.ReasonLine,
 		RunReason:      i.runReason(),
+		ReaderError:    i.readerLine(),
 		HeadSHA:        i.headSHA(),
 		Amounts:        "withheld",
 		Rows:           i.Ledger.Rows,
@@ -347,6 +352,15 @@ func (i Input) runReason() run.Reason {
 		return ""
 	}
 	return i.RunReason
+}
+
+// readerLine is the reader's error line beside the reason reader_refused, and
+// empty otherwise.
+func (i Input) readerLine() string {
+	if i.runReason() != run.ReasonReaderRefused {
+		return ""
+	}
+	return run.ReaderLine(i.ReaderLine)
 }
 
 // headSHA is the head commit when it is one, and empty otherwise.
@@ -570,6 +584,8 @@ func (i Input) why() string {
 		return fmt.Sprintf("Line %d of the rows file is not a valid row, %s A partial total would read as a smaller cost.", i.ReasonLine, shows)
 	case i.Reason == InvalidRow:
 		return "A line of the rows file is not a valid row, " + shows + " A partial total would read as a smaller cost."
+	case i.readerLine() != "":
+		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. The reader's first error: `%s`.", i.RunReason, i.RunReason.Sentence(), i.readerLine())
 	case i.runReason() != "":
 		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s.", i.RunReason, i.RunReason.Sentence())
 	case i.State == NoRows:

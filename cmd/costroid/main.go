@@ -77,18 +77,21 @@ currency and basis, token counts by class, grades, the cap and what is left or
 over, and a reason when there are no figures. run then sends the agent's
 stream to stderr, and its object says why it wrote no rows when it wrote none.
 report prints the object its check run carries, byte for byte. run prints none
-when it exits 125, unless another run held the agent's state directory.
-docs/agents.md describes the object.
+when it exits 125 before it creates the rows file. docs/agents.md describes the
+object.
 
-run writes the same object beside its rows file whether or not --json is
-given: --out rows.jsonl gives rows.run.json. report reads the run's reason for
-an empty rows file from it.
+run and ingest-run write the same object beside the rows file they created,
+whether or not --json is given and whatever their exit: --out rows.jsonl gives
+rows.run.json. report reads the run's reason for an empty rows file from it,
+and a reader that refused the agent's output adds its first error line.
 
 ingest-run writes the rows of a claude-code-action run from the action's
 execution_file output, after the action ended. No budget held that run, so the
 grade reads none.
 
-report posts from CI, and selects the host from the job's variables. On GitHub
+report posts from CI, and selects the host from the job's variables. On a pull
+request it reads costroid.yml at the head of the base branch when it runs, and
+at the event's base commit when that head cannot be read. On GitHub
 Actions it posts one check run and one sticky comment, with GITHUB_TOKEN and the
 GITHUB_* variables, then writes the step's outputs and a job summary. The
 summary withholds amounts and token counts where the comment does. On GitLab CI
@@ -328,12 +331,14 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	if flags.json {
 		agentOutput = stderr
 	}
+	ci := readCI(stderr)
+	record := runRecord{out: flags.out, budget: &flags.budget, head: ci.Head, json: flags.json}
 	session, err := gatewaySession(flags)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: %v\n", errors.Join(err, rows.Close()))
+		recordRunResult(stdout, stderr, record)
 		return exitFailure
 	}
-	ci := readCI(stderr)
 	result, err := run.Run(ctx, run.Options{
 		Argv:           flags.argv,
 		Budget:         flags.budget,
@@ -350,16 +355,14 @@ func runCommand(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)
 	}
+	record.reason = result.Reason
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		var refused *run.RefusedError
-		if errors.As(err, &refused) {
-			recordRunResult(stdout, stderr, flags, ci.Head, result.Reason)
-		}
+		recordRunResult(stdout, stderr, record.failed(err))
 		return exitFailure
 	}
 	summarize(stderr, flags, pinned.Version(), result)
-	recordRunResult(stdout, stderr, flags, ci.Head, result.Reason)
+	recordRunResult(stdout, stderr, record)
 	if result.Stopped {
 		return exitBudgetStop
 	}
@@ -394,19 +397,42 @@ func runResultPath(rows string) string {
 	return strings.TrimSuffix(rows, filepath.Ext(rows)) + ".run.json"
 }
 
+// runRecord is what the result object beside the rows states about a run that
+// created its rows file, whether or not it wrote a row.
+type runRecord struct {
+	out    string
+	budget *decimal.Decimal
+	head   string
+	reason run.Reason
+	// readerLine is the reader's first error line, with reader_refused.
+	readerLine string
+	json       bool
+}
+
+// failed adds what err says about a run that ended before its rows were
+// written: a reader that refused the stream names its first error line.
+func (r runRecord) failed(err error) runRecord {
+	var reader *run.ReaderError
+	if errors.As(err, &reader) {
+		r.reason = run.ReasonReaderRefused
+		r.readerLine = run.ReaderLine(reader.Err.Error())
+	}
+	return r
+}
+
 // recordRunResult writes the result object beside the rows, where the report
 // reads the run's reason, and prints it under --json. A file that cannot be
 // written costs the report the reason and nothing else, so it is a warning.
-func recordRunResult(stdout, stderr io.Writer, flags runFlags, head string, reason run.Reason) {
-	object, err := runResult(stderr, flags, head, reason)
+func recordRunResult(stdout, stderr io.Writer, record runRecord) {
+	object, err := runResult(stderr, record)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 		return
 	}
-	if err := writeNew(runResultPath(flags.out), object+"\n"); err != nil {
+	if err := writeNew(runResultPath(record.out), object+"\n"); err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: the run's result object was not written: %v\n", err)
 	}
-	if flags.json {
+	if record.json {
 		if _, err := fmt.Fprintln(stdout, object); err != nil {
 			fmt.Fprintf(stderr, "costroid: warning: %v\n", fmt.Errorf("print the result: %w", err))
 		}
@@ -430,8 +456,8 @@ func writeNew(path, text string) error {
 // runResult is the result object of the rows the run wrote, read as the
 // report reads them, with the run's reason when it wrote none. No check has
 // concluded on them yet.
-func runResult(stderr io.Writer, flags runFlags, head string, reason run.Reason) (string, error) {
-	rows, err := readReportRows(flags.out)
+func runResult(stderr io.Writer, record runRecord) (string, error) {
+	rows, err := readReportRows(record.out)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
@@ -440,9 +466,10 @@ func runResult(stderr io.Writer, flags runFlags, head string, reason run.Reason)
 		State:       rows.state,
 		Reason:      rows.reason,
 		ReasonLine:  rows.line,
-		RunReason:   reason,
-		HeadSHA:     head,
-		Budget:      &flags.budget,
+		RunReason:   record.reason,
+		ReaderLine:  record.readerLine,
+		HeadSHA:     record.head,
+		Budget:      record.budget,
 		Amounts:     comment.AmountsShown,
 		BeforeCheck: true,
 	}

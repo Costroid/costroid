@@ -55,7 +55,7 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: run refused, reason <reason>: <error>` | Costroid did not start the agent and wrote no rows. The reason `concurrent_run` means another `costroid run` of Claude Code holds the same config directory. The first run would count the second's session as nested, and the second would count it again | Run one agent at a time per config directory, or give each run its own `CLAUDE_CONFIG_DIR` |
 | `costroid: unreadable stream line: <error>` | A line of the agent's stream was not the JSON Costroid reads. The run goes on | Check that the agent runs with the flags the recipe passes |
 | `costroid: price the run: <error>` | The run's tokens could not be priced, so the run wrote no rows | Report it with the agent's version |
-| `costroid: claude-code: the stream held no result object and no session file was found` | Claude Code ended before it reported usage, and wrote no session file | Read the agent's output file on the runner, or rerun with `show-output: true` on a private repository |
+| `costroid: reason reader_refused: <error>` | The reader refused the agent's stream, so the run wrote no rows. The rows file is empty, and the object beside it carries the reason and the error's first line, which the report shows. The error `claude-code: the stream held no result object and no session file was found` means Claude Code ended before it reported usage, and wrote no session file | Read the agent's output file on the runner, or rerun with `show-output: true` on a private repository |
 
 ## The run's summary
 
@@ -90,6 +90,7 @@ The `read` stage. A line here ends the step with exit code 125.
 | `costroid: could not read the version of claude` | `claude` is not on the path | Keep the recipe's install step |
 | `costroid: claude <version> is older than the minimum <version>` | The installed Claude Code is older than the floor | Raise the install step's version |
 | `costroid: ingest-run needs --execution-file and --out` | `costroid ingest-run` was called without one of them | Pass both |
+| `costroid: reason reader_refused: <error>` | The execution file is not the array of messages Costroid reads, so no rows were written. The rows file is empty, and the object beside it carries the reason and the error's first line, which the report shows | Report it with the error line and the claude-code-action version |
 
 ## Sending rows to a ledger
 
@@ -123,8 +124,9 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: warning: the run's result object <path> is ignored: <error>` | The object `costroid run` writes beside the rows, `costroid-rows.run.json` beside `costroid-rows.jsonl`, could not be read. The report shows no reason for an empty rows file | Keep both files in the artifact, as the action and the recipes do |
 | `costroid: warning: the run's reason <reason> is not one this release knows, so it is ignored` | A newer `costroid run` wrote a reason this report does not know | Report with the release that ran the agent |
 | `costroid: warning: the run's reason <reason> is ignored, because only an empty rows file carries one` | The rows file holds rows, or could not be read, so it says more than the run's reason | None |
-| `costroid: warning: costroid.yml: <error>` | `costroid.yml` at the base commit could not be read or parsed. A public repository's comment then withholds amounts | Give the `report` job `contents: read`, and run `costroid validate` on the file |
-| `costroid: warning: policy: read <file> at <commit>: <error>` | The policy could not read its settings at the base commit, so no rule ran and the check concludes `neutral` | Give the `report` job `contents: read` |
+| `costroid: warning: costroid.yml is read at the event's base commit <commit>, not the base branch's head: <error>` | The report could not read the head of the pull request's base branch, so it read `costroid.yml` and the workflow's history at the merge-base the event names. A setting changed on the base branch since the pull request last updated does not apply to it | Give the `report` job `contents: read`, as the recipes do |
+| `costroid: warning: costroid.yml: <error>` | `costroid.yml` at the base branch's head could not be read or parsed. A public repository's comment then withholds amounts | Give the `report` job `contents: read`, and run `costroid validate` on the file |
+| `costroid: warning: policy: read <file> at <commit>: <error>` | The policy could not read its settings at that commit, so no rule ran and the check concludes `neutral` | Give the `report` job `contents: read` |
 | `costroid: warning: policy: GITHUB_WORKFLOW_REF names no workflow file of this repository` | The report could not tell which workflow it runs from, so the warn-only period counts as running and a rule that fails warns | Run the report from the workflow file in `.github/workflows/`, as the recipes do. `policy.enforce: true` ends the period without it |
 | `costroid: warning: policy: no base commit to read the workflow's history at` | The event names no base commit, so the warn-only period counts as running | Run the recipe on `pull_request` |
 | `costroid: warning: repository visibility: <error>` | The repository's visibility could not be read, so the comment withholds amounts | Give the `report` job `contents: read` |

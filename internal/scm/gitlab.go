@@ -144,6 +144,24 @@ func (g *GitLab) findNote(ctx context.Context, mergeRequest int, author int64, m
 	return 0, fmt.Errorf("scm: merge request %d holds more than %d notes", mergeRequest, maxCommentPages*commentsPerPage)
 }
 
+// BranchHead reads the commit at the head of a branch through the repository
+// branches API.
+func (g *GitLab) BranchHead(ctx context.Context, branch string) (string, error) {
+	var answer struct {
+		Name   string `json:"name"`
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if err := g.do(ctx, http.MethodGet, g.projectPath("/repository/branches/"+url.PathEscape(branch)), nil, &answer); err != nil {
+		return "", err
+	}
+	if answer.Name != branch || !shaPattern.MatchString(answer.Commit.ID) {
+		return "", fmt.Errorf("scm: the answer for branch %s names no commit at its head", branch)
+	}
+	return answer.Commit.ID, nil
+}
+
 // ReadFile reads one file through the repository files API.
 func (g *GitLab) ReadFile(ctx context.Context, path, ref string) ([]byte, error) {
 	var file struct {

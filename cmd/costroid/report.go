@@ -33,6 +33,8 @@ const (
 	reportTimeout = 30 * time.Second
 	// settingsTimeout leaves the check time to post after a stalled read.
 	settingsTimeout = 8 * time.Second
+	// baseHeadTimeout bounds the one request that resolves the base branch.
+	baseHeadTimeout = 4 * time.Second
 )
 
 var headPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
@@ -74,8 +76,13 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 
 // pullContext is what the CI environment says about the commit.
 type pullContext struct {
-	head        string
-	base        string
+	head string
+	// base is the event's base commit, the merge-base on both hosts.
+	base string
+	// baseBranch names the base branch, and baseHead is the commit at its
+	// head when the report resolved it.
+	baseBranch  string
+	baseHead    string
 	pullRequest int
 }
 
@@ -94,17 +101,60 @@ func readPullContext() (pullContext, error) {
 		pull.pullRequest = event.PullRequest.Number
 		pull.head = cmp.Or(event.PullRequest.Head.SHA, pull.head)
 		pull.base = event.PullRequest.Base.SHA
+		pull.baseBranch = readBaseBranch(os.Getenv("GITHUB_EVENT_PATH"))
 	}
 	return pull, nil
 }
 
+// readBaseBranch reads pull_request.base.ref, which cicontext.Event does not
+// carry. A file that cannot be read names no branch.
+func readBaseBranch(path string) string {
+	var event struct {
+		PullRequest *struct {
+			Base struct {
+				Ref string `json:"ref"`
+			} `json:"base"`
+		} `json:"pull_request"`
+	}
+	if readJSON(path, &event) != nil || event.PullRequest == nil {
+		return ""
+	}
+	return event.PullRequest.Base.Ref
+}
+
 // settingsRef is the commit costroid.yml is read from. On a pull request that
-// is the base, so a pull request cannot change its own setting.
+// is the base branch's head, or the event's base when the head was not
+// resolved, so a pull request cannot change its own setting.
 func (p pullContext) settingsRef() string {
 	if p.pullRequest > 0 {
-		return p.base
+		return cmp.Or(p.baseHead, p.base)
 	}
 	return p.head
+}
+
+// resolveBaseHead reads the commit at the head of the base branch. A head that
+// cannot be read leaves the event's base, and a warning says so.
+func resolveBaseHead(ctx context.Context, host scm.Reporter, pull pullContext, stderr io.Writer) pullContext {
+	if pull.pullRequest == 0 {
+		return pull
+	}
+	head, err := resolveBranchHead(ctx, host, pull.baseBranch)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %s is read at the event's base commit %s, not the base branch's head: %v\n", configFile, pull.base, err)
+		return pull
+	}
+	pull.baseHead = head
+	return pull
+}
+
+func resolveBranchHead(ctx context.Context, host scm.Reporter, branch string) (string, error) {
+	branches, ok := host.(policy.Branches)
+	if !ok {
+		return "", errors.New("this host resolves no branch")
+	}
+	ctx, cancel := context.WithTimeout(ctx, baseHeadTimeout)
+	defer cancel()
+	return policy.BaseHead(ctx, branches, branch)
 }
 
 // rowsReading is what the rows file gave the report, and why it gave no
@@ -206,12 +256,14 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
+	stated := readRunReason(flags.rows, stderr)
 	input := comment.Input{
 		Ledger:     rows.ledger,
 		State:      rows.state,
 		Reason:     rows.reason,
 		ReasonLine: rows.line,
-		RunReason:  runReasonFor(rows.state, readRunReason(flags.rows, stderr), stderr),
+		RunReason:  runReasonFor(rows.state, stated.RunReason, stderr),
+		ReaderLine: stated.ReaderError,
 		Budget:     flags.budget,
 		RunURL:     runURL(system),
 	}
@@ -230,15 +282,23 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 // the run writes is a few kilobytes.
 const maxRunResult = 1 << 20
 
-// readRunReason reads the reason from the result object costroid run wrote
-// beside the rows. The agent's job wrote that file, as it wrote the rows, so
-// only the reason is read, and only a value from the closed list is used. A
-// run that wrote no object, as an older release does, gives no reason.
-func readRunReason(rows string, stderr io.Writer) run.Reason {
+// statedReason is what the run's result object says about a run that wrote
+// no rows. The comment cleans ReaderError again before it shows it.
+type statedReason struct {
+	RunReason   run.Reason `json:"run_reason"`
+	ReaderError string     `json:"reader_error"`
+}
+
+// readRunReason reads the reason from the result object costroid run or
+// ingest-run wrote beside the rows. The agent's job wrote that file, as it
+// wrote the rows, so only the reason and the reader's error line are read, and
+// only a reason from the closed list is used. A run that wrote no object, as
+// an older release does, gives no reason.
+func readRunReason(rows string, stderr io.Writer) statedReason {
 	path := runResultPath(rows)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return ""
+		return statedReason{}
 	}
 	if err == nil && !info.Mode().IsRegular() {
 		err = errors.New("not a regular file")
@@ -246,17 +306,15 @@ func readRunReason(rows string, stderr io.Writer) run.Reason {
 	if err == nil && info.Size() > maxRunResult {
 		err = fmt.Errorf("larger than %d bytes", maxRunResult)
 	}
-	var object struct {
-		RunReason run.Reason `json:"run_reason"`
-	}
+	var object statedReason
 	if err == nil {
 		err = readJSON(path, &object)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: the run's result object %s is ignored: %v\n", path, err)
-		return ""
+		return statedReason{}
 	}
-	return object.RunReason
+	return object
 }
 
 func readJSON(path string, into any) error {
@@ -288,9 +346,9 @@ func runReasonFor(state comment.State, reason run.Reason, stderr io.Writer) run.
 // the installation, the amounts setting, the policy's verdict and the check
 // run's id.
 func post(ctx context.Context, target reportTarget, input comment.Input, rowsPath string, stderr io.Writer) comment.Input {
-	host, pull := target.host, target.pull
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
+	host, pull := target.host, resolveBaseHead(ctx, target.host, target.pull, stderr)
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
@@ -429,7 +487,7 @@ func gitLabTarget() (reportTarget, error) {
 	}
 	return reportTarget{
 		host:         host,
-		pull:         pullContext{head: run.Head, base: run.Base, pullRequest: number},
+		pull:         pullContext{head: run.Head, base: run.Base, baseBranch: os.Getenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME"), pullRequest: number},
 		installation: project,
 		accountHost:  comment.AccountGitLab,
 	}, nil
@@ -528,9 +586,9 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, pu
 	fmt.Fprintf(stderr, "costroid: comment on pull request %d\n", pullRequest)
 }
 
-// decideVerdict evaluates the policy. The settings come from the base commit
-// and the rows from the agent's job, so the trust path is unverified. A policy
-// that cannot run leaves no verdict, and the check concludes neutral.
+// decideVerdict evaluates the policy. The settings come from the base branch's
+// head and the rows from the agent's job, so the trust path is unverified. A
+// policy that cannot run leaves no verdict, and the check concludes neutral.
 func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, rowsPath string, state comment.State, stderr io.Writer) *policy.Verdict {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
@@ -541,7 +599,7 @@ func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, row
 	verdict, err := policy.Evaluate(ctx, policy.Request{
 		Usage:  usage,
 		Trust:  policy.Unverified,
-		Config: policy.ReadConfig(ctx, host, policy.Commits{Base: pull.base, Head: pull.head, PullRequest: pull.pullRequest > 0}),
+		Config: policy.ReadConfig(ctx, host, policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0}),
 		Start:  workflowStart(ctx, host, pull, stderr),
 		At:     time.Now(),
 	})
@@ -574,7 +632,8 @@ func reportUsage(path string, state comment.State) (policy.Usage, error) {
 }
 
 // workflowStart reads when the workflow this job runs from reached the base
-// branch. A host without the history, as GitLab is here, starts no period.
+// branch, at the commit the settings are read at. A host without the history,
+// as GitLab is here, starts no period.
 func workflowStart(ctx context.Context, host scm.Reporter, pull pullContext, stderr io.Writer) policy.Start {
 	history, ok := host.(policy.History)
 	if !ok {

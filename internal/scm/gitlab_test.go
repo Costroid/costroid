@@ -249,3 +249,19 @@ func TestAMalformedProjectIsRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestGitLabBranchHeadEncodesASlashAndNamesAMissingBranch(t *testing.T) {
+	stub := scmtest.NewGitLab(t)
+	stub.Branches["release/2026-11"] = sampleSHA
+	host := gitLabAdapter(t, stub)
+	head, err := host.BranchHead(context.Background(), "release/2026-11")
+	if err != nil || head != sampleSHA {
+		t.Fatalf("head %q, err %v", head, err)
+	}
+	if !strings.HasSuffix(stub.Requests[0], "/repository/branches/release%2F2026-11") {
+		t.Errorf("request = %s", stub.Requests[0])
+	}
+	if _, err := host.BranchHead(context.Background(), "main"); !errors.Is(err, scm.ErrNotFound) {
+		t.Errorf("a missing branch: %v", err)
+	}
+}

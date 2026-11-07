@@ -39,7 +39,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
 
 ```json
 {
-  "schema": "costroid.result/0.3",
+  "schema": "costroid.result/0.4",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",

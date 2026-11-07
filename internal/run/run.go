@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -62,11 +63,15 @@ const (
 	// ReasonConcurrentRun is a run refused before its agent started, because
 	// another run held the agent's state directory.
 	ReasonConcurrentRun Reason = "concurrent_run"
+	// ReasonReaderRefused is a run whose reader refused the agent's stream or
+	// its execution file, so no usage was read.
+	ReasonReaderRefused Reason = "reader_refused"
 )
 
 var reasonSentences = map[Reason]string{
 	ReasonNoUsage:       "the agent reported no usage, so the run wrote no rows",
 	ReasonConcurrentRun: "another costroid run holds the agent's state directory, so this run did not start and wrote no rows",
+	ReasonReaderRefused: "the reader refused the agent's stream, so the run wrote no rows",
 }
 
 // Sentence is the reason in words.
@@ -86,6 +91,45 @@ func (e *RefusedError) Error() string {
 
 func (e *RefusedError) Unwrap() error {
 	return e.Err
+}
+
+// ReaderError is a reader that refused the agent's stream or its execution
+// file. No usage was read, so no rows were written.
+type ReaderError struct {
+	Err error
+}
+
+func (e *ReaderError) Error() string {
+	return "reason reader_refused: " + e.Err.Error()
+}
+
+func (e *ReaderError) Unwrap() error {
+	return e.Err
+}
+
+// maxReaderLine bounds the reader's error line a result object carries.
+const maxReaderLine = 160
+
+// readerLineCharacters is the allowlist of a reader's error line. It holds no
+// character that can close a code span, open a tag or start a mention.
+const readerLineCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:;()'=_/+-"
+
+// ReaderLine is the first line of a reader's error, as a result object and a
+// comment carry it. The error can quote the agent's stream, so every character
+// outside readerLineCharacters becomes ?, and the line is cut at maxReaderLine
+// bytes.
+func ReaderLine(text string) string {
+	first, _, _ := strings.Cut(text, "\n")
+	cleaned := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(readerLineCharacters, r) {
+			return r
+		}
+		return '?'
+	}, strings.TrimSpace(first))
+	if len(cleaned) > maxReaderLine {
+		cleaned = cleaned[:maxReaderLine]
+	}
+	return cleaned
 }
 
 // Result is what the run came to.
@@ -166,7 +210,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	report, err := session.Finish()
 	if err != nil {
-		return result, err
+		result.Reason = ReasonReaderRefused
+		return result, &ReaderError{Err: err}
 	}
 	if report.Enforcement.Grade != "" {
 		builder.enforcement = report.Enforcement

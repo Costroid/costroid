@@ -46,6 +46,8 @@ type GitLab struct {
 	Requests []string
 	// Files maps a ref, then a path, to the file at that commit.
 	Files map[string]map[string]string
+	// Branches maps a branch to the commit at its head.
+	Branches map[string]string
 	// Visibility is the project's field. Empty leaves it out of the answer.
 	Visibility string
 	nextID     int64
@@ -55,12 +57,13 @@ type GitLab struct {
 func NewGitLab(t *testing.T) *GitLab {
 	t.Helper()
 	stub := &GitLab{
-		Token:   "stub-gitlab-token",
-		Project: gitLabProject,
-		UserID:  900,
-		Fail:    map[string]int{},
-		Files:   map[string]map[string]string{},
-		nextID:  3000,
+		Token:    "stub-gitlab-token",
+		Project:  gitLabProject,
+		UserID:   900,
+		Fail:     map[string]int{},
+		Files:    map[string]map[string]string{},
+		Branches: map[string]string{},
+		nextID:   3000,
 	}
 	stub.Server = httptest.NewServer(stub)
 	t.Cleanup(stub.Server.Close)
@@ -139,6 +142,8 @@ func (s *GitLab) route(w http.ResponseWriter, r *http.Request, path string, body
 		s.updateNote(w, path, body)
 	case strings.HasPrefix(path, "/repository/files/") && r.Method == http.MethodGet:
 		s.readFile(w, r, strings.TrimPrefix(path, "/repository/files/"))
+	case strings.HasPrefix(path, "/repository/branches/") && r.Method == http.MethodGet:
+		s.readBranch(w, strings.TrimPrefix(path, "/repository/branches/"))
 	default:
 		s.message(w, http.StatusNotFound, "404 Not Found")
 	}
@@ -255,6 +260,16 @@ func (s *GitLab) readFile(w http.ResponseWriter, r *http.Request, path string) {
 		"content":   base64.StdEncoding.EncodeToString([]byte(content)),
 		"ref":       ref,
 	})
+}
+
+// readBranch answers as the repository branches API does.
+func (s *GitLab) readBranch(w http.ResponseWriter, branch string) {
+	head, found := s.Branches[branch]
+	if !found {
+		s.message(w, http.StatusNotFound, "404 Branch Not Found")
+		return
+	}
+	s.answer(w, http.StatusOK, map[string]any{"name": branch, "commit": map[string]string{"id": head}})
 }
 
 func (s *GitLab) readProject(w http.ResponseWriter) {

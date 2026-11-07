@@ -333,6 +333,29 @@ func (g *GitHub) FirstCommit(ctx context.Context, path, ref string) (time.Time, 
 	return time.Time{}, fmt.Errorf("scm: more than %d commits touched %s", maxCommitPages*commitsPerPage, path)
 }
 
+// BranchHead reads the commit at the head of a branch through the git refs
+// API. The answer must name the branch's own ref, so a prefix never matches.
+func (g *GitHub) BranchHead(ctx context.Context, branch string) (string, error) {
+	var ref struct {
+		Ref    string `json:"ref"`
+		Object struct {
+			SHA  string `json:"sha"`
+			Type string `json:"type"`
+		} `json:"object"`
+	}
+	segments := strings.Split(branch, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	if err := g.do(ctx, http.MethodGet, g.repo("/git/ref/heads/"+strings.Join(segments, "/")), nil, &ref); err != nil {
+		return "", err
+	}
+	if ref.Ref != "refs/heads/"+branch || ref.Object.Type != "commit" || !shaPattern.MatchString(ref.Object.SHA) {
+		return "", fmt.Errorf("scm: the answer for branch %s names no commit at its head", branch)
+	}
+	return ref.Object.SHA, nil
+}
+
 // ReadFile reads one file through the contents API.
 func (g *GitHub) ReadFile(ctx context.Context, path, ref string) ([]byte, error) {
 	var file struct {

@@ -1,6 +1,6 @@
 # Hold a pull request to a cost policy
 
-The `costroid` check concludes `success`, `neutral` or `failure` from a policy. The policy is a Rego pack built into the binary. [Open Policy Agent](https://www.openpolicyagent.org/) v1.22.2 evaluates it, with no network and no model. Its settings come from `costroid.yml` at the pull request's base commit.
+The `costroid` check concludes `success`, `neutral` or `failure` from a policy. The policy is a Rego pack built into the binary. [Open Policy Agent](https://www.openpolicyagent.org/) v1.22.2 evaluates it, with no network and no model. Its settings come from `costroid.yml` at the head of the pull request's base branch when the report runs.
 
 ## The rules
 
@@ -55,13 +55,17 @@ policy:
   enforce: true
 ```
 
-The report finds that commit by asking GitHub for the oldest commit on the base branch that touched the workflow file the job runs from, as `GITHUB_WORKFLOW_REF` names it. The request needs `contents: read`, which the recipes' report job already has. When the report cannot find the commit, it treats the period as running, and a rule that would fail warns. That happens on a pull request that adds the workflow, on GitLab, and when GitHub does not answer.
+The report finds that commit by asking GitHub for the oldest commit on the base branch that touched the workflow file the job runs from, as `GITHUB_WORKFLOW_REF` names it. It asks at the commit it reads `costroid.yml` at. The request needs `contents: read`, which the recipes' report job already has. When the report cannot find the commit, it treats the period as running, and a rule that would fail warns. That happens on a pull request that adds the workflow, on GitLab, and when GitHub does not answer.
 
 The second half of the period, 20 pull requests with a measured cost, needs a reader of earlier check runs. It arrives in a later release. Until then only the 7 days count.
 
-## Settings come from the base commit
+## Settings come from the base branch
 
-The report reads `costroid.yml` at the pull request's base commit, never at its head. A pull request that raises its own budget, or removes `policy.enforce`, does not change its own verdict. The comment says so on every pull request: a change to `costroid.yml` applies after the merge. On a push, the report reads the file at the commit it reports on.
+The report reads `costroid.yml` at the head of the pull request's base branch when the report runs, never at the pull request's head. A pull request that raises its own budget, or removes `policy.enforce`, does not change its own verdict. The comment says so on every pull request: a change to `costroid.yml` applies after the merge. On a push, the report reads the file at the commit it reports on.
+
+The event's base commit is not that head. GitHub sets `pull_request.base.sha` to the merge-base, and GitLab's `CI_MERGE_REQUEST_DIFF_BASE_SHA` is the merge-base too, so either moves only when the pull request updates. The report asks the host for the head of the branch the event names, `pull_request.base.ref` on GitHub and `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` on GitLab, so a budget changed on the base branch reaches every open pull request at its next report. The verdict records the commit it read as `config_ref`.
+
+When the host does not answer with that head, the report reads the file at the event's base commit, records that commit as `config_ref`, and warns on stderr: `costroid.yml is read at the event's base commit <commit>, not the base branch's head`.
 
 The workflow's `budget-usd` caps the run, and a pull request can change its own workflow. No rule reads it. Set `policy.run_budget_usd` to hold each run to a budget.
 
@@ -75,7 +79,7 @@ The check run's machine block carries the verdict under `policy`. It records eac
   "trust": "unverified",
   "pack_sha256": "<SHA-256 of the pack>",
   "config_sha256": "<SHA-256 of costroid.yml>",
-  "config_ref": "<base commit>",
+  "config_ref": "<head of the base branch>",
   "config": "found",
   "config_from_base": true,
   "evaluated_at": "2026-11-09T10:00:00Z",

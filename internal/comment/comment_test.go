@@ -192,7 +192,7 @@ func TestSumsAreExactAndNeverCrossACurrency(t *testing.T) {
 			t.Errorf("no %q in\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "0.4") {
+	if strings.Contains(body, "| USD 0.4") || strings.Contains(body, `"0.4"`) {
 		t.Errorf("a figure spans two currencies:\n%s", body)
 	}
 }

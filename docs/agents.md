@@ -1,6 +1,6 @@
 # Read a result from an agent
 
-Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the cap and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.3) in `Costroid/costroid-schemas`.
+Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the cap and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.4`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.4) in `Costroid/costroid-schemas`.
 
 ## Where the object is
 
@@ -13,7 +13,7 @@ Every Costroid report writes one result object: the figures of one run per curre
 | The pull request comment                 | A copy that names `check_run_id`. On a public repository with `comment.show_cost: false` it withholds amounts and token counts.                                         |
 | The action's `result` output             | The check run's object as one line of JSON.                                                                                                                             |
 
-Under `run --json` the agent's own stream goes to stderr, so stdout holds the object alone. `run` prints and writes no object when it exits 125, except when another run held the agent's state directory: that run never started its agent, and its object says so.
+Under `run --json` the agent's own stream goes to stderr, so stdout holds the object alone. `run` and `ingest-run` write the object whenever they created the rows file, and exit 125 does not change that: a run that another run held, or whose reader refused the agent's output, says so in its object. Before that file exists, as when a flag is missing, they write none.
 
 ## Read it for a head commit
 
@@ -94,8 +94,11 @@ When the rows file holds no rows and the run said why, `run_reason` carries the 
 | ---------------- | ---------------------------------------------------------------------------------- |
 | `no_usage`       | The agent ended and reported no usage.                                             |
 | `concurrent_run` | Another run held the agent's state directory, so this run never started its agent. |
+| `reader_refused` | The reader refused the agent's stream or its execution file, so no usage was read. |
 
-`run` writes it into the object beside the rows file. `report` reads it from there, with no flag, and the comment then states the reason in words beside its code. A reason the report does not know, from a newer run, is ignored with a warning.
+With `reader_refused`, `reader_error` carries the reader's first error line. The error can quote the agent's stream, so every character outside letters, digits, the space and `.,:;()'=_/+-` reads `?`, and the line is cut at 160 bytes.
+
+`run` and `ingest-run` write it into the object beside the rows file. `report` reads it from there, with no flag, and the comment then states the reason in words beside its code. A reason the report does not know, from a newer run, is ignored with a warning.
 
 ## In a workflow
 

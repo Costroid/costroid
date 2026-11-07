@@ -251,3 +251,35 @@ func TestFirstCommitStopsAtAThousandCommits(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestBranchHeadReadsTheBranchsOwnRef(t *testing.T) {
+	stub := scmtest.New(t)
+	stub.Branches["release/2026-11"] = movedSHA
+	host := adapter(t, stub)
+	head, err := host.BranchHead(context.Background(), "release/2026-11")
+	if err != nil || head != movedSHA {
+		t.Fatalf("head %q, err %v", head, err)
+	}
+	if !strings.HasSuffix(stub.Requests[0], "/git/ref/heads/release/2026-11") {
+		t.Errorf("request = %s", stub.Requests[0])
+	}
+	if _, err := host.BranchHead(context.Background(), "main"); !errors.Is(err, scm.ErrNotFound) {
+		t.Errorf("a missing branch: %v", err)
+	}
+}
+
+// TestBranchHeadRefusesAnotherRef answers for a branch with a ref the request
+// did not name, as a prefix match would.
+func TestBranchHeadRefusesAnotherRef(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"ref":"refs/heads/release/2026-11-hotfix","object":{"sha":%q,"type":"commit"}}`, movedSHA)
+	}))
+	defer server.Close()
+	host, err := scm.NewGitHub(scm.GitHubOptions{API: server.URL, Repository: "example/widgets", Tokens: scm.StaticToken("t"), Client: http.DefaultClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head, err := host.BranchHead(context.Background(), "release/2026-11"); err == nil {
+		t.Errorf("another ref's head %s was taken", head)
+	}
+}

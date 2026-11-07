@@ -44,7 +44,13 @@ type Stub struct {
 	Token    string
 	Comments []Comment
 	Checks   []Check
-	Files    map[string]string
+	// Files maps a path to a file at every ref, and FilesAt maps a ref, then
+	// a path, to the file at that ref alone. A ref FilesAt names reads only
+	// FilesAt.
+	Files   map[string]string
+	FilesAt map[string]map[string]string
+	// Branches maps a branch to the commit at its head.
+	Branches map[string]string
 	// Commits maps a path to the dates of the commits that touched it,
 	// newest first, as the commits API lists them.
 	Commits    map[string][]time.Time
@@ -59,7 +65,10 @@ type Stub struct {
 // New starts a stub and stops it with the test.
 func New(t *testing.T) *Stub {
 	t.Helper()
-	stub := &Stub{Token: "stub-token", Fail: map[string]int{}, Files: map[string]string{}, Commits: map[string][]time.Time{}, nextID: 1000}
+	stub := &Stub{
+		Token: "stub-token", Fail: map[string]int{}, Files: map[string]string{}, FilesAt: map[string]map[string]string{},
+		Branches: map[string]string{}, Commits: map[string][]time.Time{}, nextID: 1000,
+	}
 	stub.Server = httptest.NewServer(stub)
 	t.Cleanup(stub.Server.Close)
 	return stub
@@ -127,7 +136,9 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/commits") && r.Method == http.MethodGet:
 		s.listCommits(w, r)
 	case strings.Contains(path, "/contents/"):
-		s.readFile(w, path)
+		s.readFile(w, path, r.URL.Query().Get("ref"))
+	case strings.Contains(path, "/git/ref/heads/"):
+		s.readBranch(w, path[strings.Index(path, "/git/ref/heads/")+len("/git/ref/heads/"):])
 	case strings.Contains(path, "/pulls/"):
 		s.answer(w, map[string]any{"head": map[string]string{"sha": s.Head}, "user": map[string]string{"login": s.Author}})
 	case strings.Contains(path, "/collaborators/"):
@@ -277,15 +288,29 @@ func (s *Stub) listCommits(w http.ResponseWriter, r *http.Request) {
 	s.answer(w, listed)
 }
 
-func (s *Stub) readFile(w http.ResponseWriter, path string) {
+func (s *Stub) readFile(w http.ResponseWriter, path, ref string) {
 	name := path[strings.LastIndex(path, "/")+1:]
-	content, found := s.Files[name]
+	files, pinned := s.FilesAt[ref]
+	if !pinned {
+		files = s.Files
+	}
+	content, found := files[name]
 	if !found {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte(content))
 	s.answer(w, map[string]string{"type": "file", "encoding": "base64", "content": encoded + "\n"})
+}
+
+// readBranch answers as the git refs API does for one branch.
+func (s *Stub) readBranch(w http.ResponseWriter, branch string) {
+	head, found := s.Branches[branch]
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	s.answer(w, map[string]any{"ref": "refs/heads/" + branch, "object": map[string]string{"sha": head, "type": "commit"}})
 }
 
 func (s *Stub) readRepository(w http.ResponseWriter) {
