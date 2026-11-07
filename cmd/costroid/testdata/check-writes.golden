@@ -1,0 +1,1538 @@
+== report: a failed verdict
+-- writes
+POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1001
+POST /repos/example/widgets/issues/7/comments
+-- stderr
+costroid: warning: no approval counts: scm: no review approves the pull request's head
+costroid: check run 1001, conclusion failure
+costroid: comment on pull request 7
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d failure
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: failure.** Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs.
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
+  "conclusion": "failure",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== report: an approved failure
+-- writes
+POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1001
+POST /repos/example/widgets/issues/7/comments
+-- stderr
+costroid: check run 1001, conclusion neutral
+costroid: comment on pull request 7
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: neutral.** `reviewer` approved commit `9f2c6e1` at <time>, so the check concludes neutral. The policy's verdict stays failure, and a new push ends the approval. Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs.
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
+  "conclusion": "neutral",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== report: the host refuses the check
+-- writes
+POST /repos/example/widgets/check-runs
+POST /repos/example/widgets/issues/7/comments
+-- stderr
+costroid: warning: no approval counts: scm: no review approves the pull request's head
+costroid: check not posted: scm: POST /repos/example/widgets/check-runs answered 500
+costroid: comment on pull request 7
+== report: the host refuses the check's name
+-- writes
+POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1001
+POST /repos/example/widgets/issues/7/comments
+-- stderr
+costroid: warning: no approval counts: scm: no review approves the pull request's head
+costroid: check run 1001, conclusion failure
+costroid: warning: check run 1001 does not name itself: scm: PATCH /repos/example/widgets/check-runs/1001 answered 500
+costroid: comment on pull request 7
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d failure
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: failure.** Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs.
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "conclusion": "failure",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== follow-up: a fork's rows over an enforced budget
+-- writes
+POST /repos/example/widgets/check-runs
+-- stderr
+costroid: check run 1001, conclusion neutral
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: neutral.** Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+
+This pull request comes from a fork, and the fork's own run wrote these rows. Its check concludes neutral at most, so a rule that fails here warns and does not block a merge.
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "conclusion": "neutral",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": null,
+  "rows_file_sha256": null,
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": null,
+  "policy": {
+    "conclusion": "neutral",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "3333333333333333333333333333333333333333",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== follow-up: a fork's run left no rows
+-- writes
+POST /repos/example/widgets/check-runs
+-- stderr
+costroid: warning: lstat testdata/no-such-run/costroid-rows.jsonl: no such file or directory
+costroid: check run 1001, conclusion neutral
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
+**Verdict: neutral.** Run budget: this check read no rows, so it cannot pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
+
+No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none.
+
+Reason: `fork_no_rows`. This pull request comes from a fork, and its workflow run left no rows. The recipes run no agent on a fork's pull request. A neutral check does not block a merge.
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "conclusion": "neutral",
+  "state": "rows_unreadable",
+  "reason": "fork_no_rows",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": null,
+  "rows_file_sha256": null,
+  "amounts": "shown",
+  "rows": 0,
+  "run_identity": "unverified",
+  "figures": [],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [],
+    "models": [],
+    "models_omitted": 0,
+    "catalog_versions": [],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": null,
+  "policy": {
+    "conclusion": "neutral",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "3333333333333333333333333333333333333333",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "unproven",
+        "reason": "no_rows",
+        "limit_usd": "0.001"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== follow-up: the host refuses the check
+-- writes
+POST /repos/example/widgets/check-runs
+-- stderr
+costroid: check not posted: scm: POST /repos/example/widgets/check-runs answered 500
+== approve: an approval of the head
+-- writes
+POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1003
+-- stderr
+costroid: check run 1003, conclusion neutral
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d failure
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: failure.** Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs.
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
+  "conclusion": "failure",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+-- check 1003 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
+**Verdict: neutral.** `reviewer` approved commit `9f2c6e1` at <time>, so the check concludes neutral. The policy's verdict stays failure, and a new push ends the approval.
+
+Check run 1001 carries this report in full.
+
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1003,
+  "conclusion": "neutral",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== approve: a dismissal
+-- writes
+POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1004
+-- stderr
+costroid: warning: no approval counts: scm: no review approves the pull request's head
+costroid: check run 1004, conclusion failure
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d failure
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: failure.** Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs.
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
+  "conclusion": "failure",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+-- check 1003 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
+**Verdict: neutral.** `reviewer` approved commit `9f2c6e1` at <time>, so the check concludes neutral. The policy's verdict stays failure, and a new push ends the approval.
+
+Check run 1001 carries this report in full.
+
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1003,
+  "conclusion": "neutral",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+-- check 1004 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d failure
+**Verdict: failure.** No approval binds commit `9f2c6e1`, so the check concludes as the policy does.
+
+Check run 1003 carries this report in full.
+
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1004,
+  "conclusion": "failure",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== approve: the host refuses the check's name
+-- writes
+POST /repos/example/widgets/check-runs
+PATCH /repos/example/widgets/check-runs/1003
+-- stderr
+costroid: check run 1003, conclusion neutral
+costroid: warning: check run 1003 does not name itself: scm: PATCH /repos/example/widgets/check-runs/1003 answered 500
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d failure
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: failure.** Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs.
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
+  "conclusion": "failure",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+-- check 1003 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
+**Verdict: neutral.** `reviewer` approved commit `9f2c6e1` at <time>, so the check concludes neutral. The policy's verdict stays failure, and a new push ends the approval.
+
+Check run 1001 carries this report in full.
+
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
+  "conclusion": "neutral",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
+== approve: the host refuses the check
+-- writes
+POST /repos/example/widgets/check-runs
+-- stderr
+costroid: not posted: scm: POST /repos/example/widgets/check-runs answered 500
+-- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d failure
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+
+**Verdict: failure.** Run budget: USD 0.001619725 is over the USD 0.001 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+This is one run at commit `9f2c6e1`, not a total across runs.
+
+| Cost | Basis | Attribution | Enforcement |
+| --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+
+Unverified: the agent's job wrote these figures.
+
+Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it.
+
+Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
+
+<details>
+<summary>How USD 0.001619725 was computed</summary>
+
+| Catalog | Token class | Price id | Unit price | Tokens | Amount |
+| --- | --- | --- | --- | --- | --- |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.1.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.1.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.1.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+
+</details>
+-- text
+```json
+{
+  "schema": "costroid.result/0.6",
+  "check_run_id": 1001,
+  "conclusion": "failure",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4",
+  "rows_file_sha256": "d715038ef1bd96e53caca4eb1a73496aa81a28ef2ddb5f2ab3effc644e18aa3c",
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.1.0"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": {
+    "figures": [
+      {
+        "currency": "USD",
+        "cost_basis": "list_equivalent",
+        "list_cost": "0.001619725",
+        "reports": 1,
+        "may_repeat": false
+      }
+    ],
+    "figures_omitted": 0,
+    "capped": false,
+    "unread": 0
+  },
+  "policy": {
+    "conclusion": "failure",
+    "trust": "unverified",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "<time>",
+    "warn_only": {
+      "active": false,
+      "reason": "enforced"
+    },
+    "results": [
+      {
+        "rule": "run_budget",
+        "outcome": "fail",
+        "reason": "over_limit",
+        "limit_usd": "0.001",
+        "cost_usd": "0.001619725"
+      }
+    ],
+    "joinable_rows": 0
+  }
+}
+```
