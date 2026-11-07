@@ -90,8 +90,10 @@ inputs:
     default: ""
   platform-url:
     description: >-
-      For stage ingest, Costroid Platform's https origin, such as https://app.costroid.com. Empty
-      sends nothing there. docs/export.md says how to connect a repository.
+      For stages ingest and report, Costroid Platform's https origin, such as
+      https://app.costroid.com. Stage ingest sends the rows there, and stage report points the
+      comment's account link at it. Empty sends nothing there. docs/export.md says how to connect
+      a repository.
     default: ""
   installation-id:
     description: >-
