@@ -162,6 +162,9 @@ func checkFlows() []checkFlow {
 // to how any flow posts or names its check fails it until it is rerun with
 // -update, so the change shows in the diff of the pull request that makes it.
 func TestCheckWritesPerFlowAreUnchanged(t *testing.T) {
+	// The runner's own run would add a link and a ci_run block to every flow.
+	t.Setenv("GITHUB_RUN_ID", "")
+	t.Setenv("GITHUB_RUN_ATTEMPT", "")
 	var recorded strings.Builder
 	for _, flow := range checkFlows() {
 		t.Run(flow.name, func(t *testing.T) {
