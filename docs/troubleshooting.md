@@ -238,7 +238,7 @@ It reads the names of the repository's secrets and variables through `gh secret 
 | The agent | `warn: <agent> is not on PATH, so costroid run cannot start it on this machine, though CI installs its own` | Run the `npm install` command the line names, for a local `costroid run` |
 | | `warn: <agent> --version printed no version` | Reinstall the agent |
 | The keys | `fail: COSTROID_CREDENTIAL reads like a key, and every row would carry it` | Set it to the key's id from the provider's console, never the key |
-| Secrets | `fail: gh secret list names no repository secret <name>` | Run `gh secret set <name>`. The line names it. An organisation secret does not show in `gh secret list`, so a secret set for the organisation reads as missing here |
+| Secrets | `warn: gh secret list names no repository secret <name>; an organization or environment secret of that name is not listed here` | Run `gh secret set <name>`, unless the organization or the environment already holds it. `gh secret list` lists repository secrets only, so this is a warning, not a failure |
 | | `warn: gh is not on PATH, so doctor did not list the repository's secrets` | Install `gh`, or check the secrets the line names in the repository's settings |
 | | `warn: gh secret list failed, so doctor did not check the repository's secrets: <error>` | Run `gh auth login`, then `costroid doctor` again |
 | Variables | `warn: the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE` | Set `COSTROID_INGEST_AUDIENCE` to the audience your ledger requires, as [`docs/recipes.md`](recipes.md#send-rows-to-a-ledger) says |

@@ -38,6 +38,7 @@ var commands = []command{
 	{name: "report", short: "costroid report --rows rows.jsonl", help: reportHelp, run: withOutputs(reportCommand)},
 	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
 	{name: "init", help: initHelp, run: withoutContext(initCommand)},
+	{name: "doctor", help: doctorHelp, run: withOutputs(doctorCommand)},
 	{name: "follow-up", help: followUpHelp, run: withOutputs(followUpCommand)},
 	{name: "approve", help: approveHelp, run: withOutputs(approveCommand)},
 	{name: "reconcile", help: reconcileHelp, run: reconcileWithProvider},

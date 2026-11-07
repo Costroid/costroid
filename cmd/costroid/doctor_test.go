@@ -180,10 +180,12 @@ func TestDoctorNamesEachMissingSecretWithItsCommand(t *testing.T) {
 	host := ghHost("ANTHROPIC_API_KEY\t2026-11-01T09:00:00Z\nUNRELATED\t2026-11-01T09:00:00Z\n", "")
 
 	code, stdout, stderr := runDoctor(t, root, host)
-	if code != exitRejected {
-		t.Fatalf("exit %d, want %d for a missing secret: %s", code, exitRejected, stderr)
+	// A secret missing from the repository's list is a warning: an
+	// organization or environment secret of that name does not show there.
+	if code != 0 {
+		t.Fatalf("exit %d, want 0 for a secret only the repository list lacks: %s", code, stderr)
 	}
-	if want := "fail: gh secret list names no repository secret OPENAI_API_KEY: gh secret set OPENAI_API_KEY"; lineWith(stdout, want) != want {
+	if want := "warn: gh secret list names no repository secret OPENAI_API_KEY; an organization or environment secret of that name is not listed here: gh secret set OPENAI_API_KEY, unless the organization or the environment already holds it"; lineWith(stdout, want) != want {
 		t.Errorf("no line %q:\n%s", want, stdout)
 	}
 	if want := "ok: the repository has the secret ANTHROPIC_API_KEY"; lineWith(stdout, want) != want {

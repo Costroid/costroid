@@ -525,7 +525,7 @@ func secretLines(ctx context.Context, root string, host doctorHost, needed []str
 			lines = append(lines, ok("the repository has the secret %s", name))
 			continue
 		}
-		lines = append(lines, fail("gh secret list names no repository secret "+name, "gh secret set "+name))
+		lines = append(lines, warn("gh secret list names no repository secret "+name+"; an organization or environment secret of that name is not listed here", "gh secret set "+name+", unless the organization or the environment already holds it"))
 	}
 	return lines
 }

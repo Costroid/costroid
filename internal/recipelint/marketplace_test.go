@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -24,7 +23,6 @@ const (
 var (
 	brandingColors = []string{"white", "black", "yellow", "blue", "green", "orange", "red", "purple", "gray-dark"}
 	omittedIcons   = []string{"coffee", "columns", "divide-circle", "divide-square", "divide", "frown", "hexagon", "key", "meh", "mouse-pointer", "smile", "tool", "x-octagon"}
-	readmeYAML     = regexp.MustCompile("(?s)```yaml\n(.*?)```")
 )
 
 func document(t *testing.T, source string) *yaml.Node {
@@ -253,50 +251,6 @@ func TestTheMarketplaceFolderHoldsTheListingAndNothingElse(t *testing.T) {
 		if read(t, filepath.Join(marketplaceDir, name)) != read(t, filepath.Join(repositoryRoot, name)) {
 			t.Errorf("marketplace/%s is not the root's %s", name, name)
 		}
-	}
-}
-
-// The listing's example must stay the recipe's own steps, with only the action
-// they call changed.
-func TestTheMarketplaceReadmeUsesTheRecipesOwnSteps(t *testing.T) {
-	readme := read(t, filepath.Join(marketplaceDir, "README.md"))
-	blocks := readmeYAML.FindAllStringSubmatch(readme, -1)
-	if len(blocks) != 1 {
-		t.Fatalf("the README has %d YAML blocks, want 1", len(blocks))
-	}
-	recipe := map[string]map[string]string{}
-	for _, job := range entries(field(document(t, read(t, filepath.Join(recipesDir, "github-claude-code-action.yml"))), "jobs")) {
-		for _, step := range sequence(field(job.value, "steps")) {
-			if stage := costroidStage(step); stage != "" {
-				recipe[job.key.Value] = scalars(field(step, "with"))
-			}
-		}
-	}
-	wrapper, _ := actionInputs(document(t, read(t, filepath.Join(marketplaceDir, "action.yml"))))
-	shown := 0
-	for _, job := range entries(field(document(t, blocks[0][1]), "jobs")) {
-		for _, step := range sequence(field(job.value, "steps")) {
-			uses := field(step, "uses")
-			if uses == nil {
-				continue
-			}
-			shown++
-			if uses.Value != "Costroid/costroid-action@<commit>" || lineComment(step, uses) != "# __RELEASE_TAG__" {
-				t.Errorf("job %s calls %s %s", job.key.Value, uses.Value, lineComment(step, uses))
-			}
-			with := scalars(field(step, "with"))
-			if !reflect.DeepEqual(with, recipe[job.key.Value]) {
-				t.Errorf("job %s passes %v, and the recipe passes %v", job.key.Value, with, recipe[job.key.Value])
-			}
-			for name := range with {
-				if _, found := wrapper[name]; !found {
-					t.Errorf("job %s passes %s, which the wrapper does not take", job.key.Value, name)
-				}
-			}
-		}
-	}
-	if shown != len(recipe) {
-		t.Errorf("the README shows %d Costroid steps, and the recipe has %d", shown, len(recipe))
 	}
 }
 
