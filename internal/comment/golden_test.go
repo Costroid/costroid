@@ -33,14 +33,14 @@ const (
 // The times the golden verdicts are read at: inside the seven-day warn-only
 // period that began at goldenStart, and after it ended.
 var (
-	goldenStart    = time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
-	insidePeriod   = time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
-	afterPeriod    = time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
-	gitlabProject  = "4815162342"
-	underBudget    = "policy:\n  run_budget_usd: \"5\"\n"
-	overBudget     = "policy:\n  run_budget_usd: \"0.001\"\n"
-	amountInWords  = regexp.MustCompile(`\b[A-Z]{3} [0-9]`)
-	goldenRowsFile = filepath.Join("testdata", "rows.jsonl")
+	goldenStart     = time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	insidePeriod    = time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	afterPeriod     = time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+	gitlabNamespace = "4815162342"
+	underBudget     = "policy:\n  run_budget_usd: \"5\"\n"
+	overBudget      = "policy:\n  run_budget_usd: \"0.001\"\n"
+	amountInWords   = regexp.MustCompile(`\b[A-Z]{3} [0-9]`)
+	goldenRowsFile  = filepath.Join("testdata", "rows.jsonl")
 )
 
 // goldenVerdict evaluates the default pack over the golden rows under a
@@ -161,9 +161,13 @@ func goldenStates(t *testing.T) map[string]Input {
 	states["withheld-unsettled"] = unsettled
 
 	gitlab := neutral
-	gitlab.AccountHost, gitlab.Installation, gitlab.CheckRunID = AccountGitLab, gitlabProject, nil
+	gitlab.AccountHost, gitlab.Installation, gitlab.CheckRunID = AccountGitLab, gitlabNamespace, nil
 	states["gitlab-note"] = gitlab
 	states["gitlab-note-withheld"] = withheld(gitlab)
+
+	onPlatform := neutral
+	onPlatform.Platform, onPlatform.Repository, onPlatform.PullRequest = "https://app.costroid.com", "github.com/example/widgets", 7
+	states["platform-pull"] = onPlatform
 
 	for _, reason := range []Reason{NoRowsFile, NotAFile, UnreadRowsFile, ForkNoRows} {
 		states["no-figures-"+string(reason)] = noFigures(Unreadable, reason)

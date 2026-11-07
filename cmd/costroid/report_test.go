@@ -38,6 +38,7 @@ func reportEnvironment(t *testing.T, event string) *scmtest.Stub {
 	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
 	t.Setenv("GITHUB_EVENT_PATH", path)
 	t.Setenv(installationVariable, "")
+	t.Setenv(platformVariable, "")
 	t.Setenv("GITHUB_OUTPUT", "")
 	t.Setenv("GITHUB_STEP_SUMMARY", "")
 	return stub
@@ -82,6 +83,18 @@ func TestReportPostsOneNeutralCheckAndOneComment(t *testing.T) {
 	}
 	if id := `"check_run_id": ` + idOf(check); !strings.Contains(body, id) {
 		t.Errorf("no %q in\n%s", id, body)
+	}
+}
+
+func TestReportLinksThePullRequestOnThePlatform(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	t.Setenv(platformVariable, "https://costroid.example")
+	code, _, stderr := execute(t, "report", "--rows", realRows, "--installation-id", "58120394")
+	if code != 0 || len(stub.Comments) != 1 {
+		t.Fatalf("exit %d, %d comments: %s", code, len(stub.Comments), stderr)
+	}
+	if body := stub.Comments[0].Body; !strings.Contains(body, "(https://costroid.example/#/pulls?repo=github.com/example/widgets&pr=7)") {
+		t.Errorf("the link does not open the pull request on the platform:\n%s", body)
 	}
 }
 

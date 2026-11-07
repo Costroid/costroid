@@ -34,7 +34,7 @@ Token counts are withheld with the amounts. The rows carry them.
 
 </details>
 
-[Your account on costroid.com](https://app.costroid.com/?installation=gitlab%3A4815162342) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Your account on costroid.com](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block</summary>

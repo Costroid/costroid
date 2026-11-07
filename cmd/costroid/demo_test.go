@@ -92,7 +92,7 @@ func TestPreviewPrintsTheCommentWithoutAHost(t *testing.T) {
 		for _, want := range []string{
 			"No rule applied: `costroid.yml` on the base branch sets no budget and no threshold.",
 			"This is one run, not a total across runs.",
-			"(https://app.costroid.com/)",
+			"(https://docs.costroid.com/account)",
 			"Machine block, the check run was not posted",
 		} {
 			if !strings.Contains(stdout, want) {

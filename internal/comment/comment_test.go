@@ -721,12 +721,64 @@ func TestUnitPricesReadPerMillionTokens(t *testing.T) {
 	}
 }
 
-func TestAccountLinkNamesTheGitLabProject(t *testing.T) {
+func TestGitLabLinkNamesTheNamespaceKind(t *testing.T) {
 	input := realInput(t)
-	input.Installation, input.AccountHost = "4242", AccountGitLab
+	input.Installation, input.AccountHost = "4410287", AccountGitLab
 	body := commentOf(t, input)
-	if !strings.Contains(body, "(https://app.costroid.com/?installation=gitlab%3A4242)") {
-		t.Errorf("no link in\n%s", body)
+	if !strings.Contains(body, "(https://app.costroid.com/?installation=gitlab-namespace%3A4410287)") {
+		t.Errorf("the link does not name the namespace kind:\n%s", body)
+	}
+}
+
+func TestAccountLinkPointsAtTheDocsPageWithoutAnInstallation(t *testing.T) {
+	line := "[Your account on costroid.com](https://docs.costroid.com/account) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)\n"
+	unknownHost := realInput(t)
+	unknownHost.AccountHost = "bitbucket"
+	none := realInput(t)
+	none.Installation = ""
+	for name, input := range map[string]Input{"no installation": none, "a host with no kind": unknownHost} {
+		body := commentOf(t, input)
+		if !strings.Contains(body, line) || strings.Contains(body, "app.costroid.com") {
+			t.Errorf("%s: the account link is not the docs page:\n%s", name, body)
+		}
+	}
+}
+
+func TestPlatformURLLinksThePullRequest(t *testing.T) {
+	const link = "(https://costroid.example/#/pulls?repo=github.com/example/app&pr=42)"
+	pull := func(platform, repository string, number int) Input {
+		input := realInput(t)
+		input.Platform, input.Repository, input.PullRequest = platform, repository, number
+		return input
+	}
+	for name, input := range map[string]Input{
+		"with an installation": pull("https://costroid.example", "github.com/example/app", 42),
+		"a trailing slash":     pull("https://costroid.example/", "github.com/example/app", 42),
+	} {
+		if body := commentOf(t, input); !strings.Contains(body, link) || strings.Contains(body, "installation=") {
+			t.Errorf("%s: the link is not the pull request's page:\n%s", name, body)
+		}
+	}
+	installationLink := "(https://app.costroid.com/?installation=github%3A" + exampleInstallation + ")"
+	for name, input := range map[string]Input{
+		"plain http":          pull("http://costroid.example", "github.com/example/app", 42),
+		"a path":              pull("https://costroid.example/app", "github.com/example/app", 42),
+		"a query":             pull("https://costroid.example?x=1", "github.com/example/app", 42),
+		"a link's end":        pull("https://costroid.example)", "github.com/example/app", 42),
+		"a long origin":       pull("https://"+strings.Repeat("a", maxRunURLLength), "github.com/example/app", 42),
+		"no repository":       pull("https://costroid.example", "", 42),
+		"an escape":           pull("https://costroid.example", "github.com/example/a%26pr%3D1", 42),
+		"a second value":      pull("https://costroid.example", "github.com/example/app&pr=1", 42),
+		"upper case":          pull("https://costroid.example", "github.com/Example/app", 42),
+		"no pull request":     pull("https://costroid.example", "github.com/example/app", 0),
+		"a negative number":   pull("https://costroid.example", "github.com/example/app", -42),
+		"no platform":         pull("", "github.com/example/app", 42),
+		"a repository alone":  pull("https://costroid.example", "github.com", 42),
+		"a markdown link end": pull("https://costroid.example", "github.com/example/app)", 42),
+	} {
+		if body := commentOf(t, input); !strings.Contains(body, installationLink) || strings.Contains(body, "costroid.example") {
+			t.Errorf("%s: the link is not the installation's:\n%s", name, body)
+		}
 	}
 }
 
@@ -739,7 +791,7 @@ func TestTwoLinksCarryEqualWeightAndTheAccountLinkNamesTheInstallation(t *testin
 	for _, installation := range []string{"", "12x", "1&evil=2", "<script>"} {
 		input := realInput(t)
 		input.Installation = installation
-		if body := commentOf(t, input); !strings.Contains(body, "(https://app.costroid.com/)") {
+		if body := commentOf(t, input); !strings.Contains(body, "(https://docs.costroid.com/account)") {
 			t.Errorf("installation %q:\n%s", installation, body)
 		}
 	}

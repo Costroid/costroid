@@ -81,7 +81,7 @@ Each project access token is [its own bot user](https://docs.gitlab.com/user/pro
 
 Masking hides the token from job logs, and it does not hide it from the pipeline file. Someone who can push a branch can name `costroid-report` in their branch's `.gitlab-ci.yml` and read the token ([variable security](https://docs.gitlab.com/ci/variables/), read November 1, 2026). A protected environment stops that for anyone not allowed to deploy to it.
 
-The job reaches the instance at `CI_API_V4_URL`, on gitlab.com or self-managed. The address must be HTTPS. The job reads `costroid.yml` at `CI_MERGE_REQUEST_DIFF_BASE_SHA`, and the project's visibility from the API, where internal counts as private. The comment's account link names `gitlab:<project-id>` and never the instance's hostname.
+The job reaches the instance at `CI_API_V4_URL`, on gitlab.com or self-managed. The address must be HTTPS. The job reads `costroid.yml` at `CI_MERGE_REQUEST_DIFF_BASE_SHA`, and the project's visibility from the API, where internal counts as private. On gitlab.com the comment's account link names `gitlab-namespace:<namespace-id>`; on a self-managed instance it names no id. It never names the instance's hostname.
 
 A [resource group](https://docs.gitlab.com/ci/resource_groups/) runs one report at a time in a project (read November 1, 2026), so two pipelines cannot each post a first note.
 

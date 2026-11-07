@@ -229,6 +229,7 @@ runs:
         COSTROID_AGENT_RESULT: ${{ inputs.agent-result }}
         COSTROID_ARTIFACT_REFUSED: ${{ steps.install.outputs.refused }}
         COSTROID_ARTIFACT_REFUSED_COUNT: ${{ steps.install.outputs.refused_count }}
+        COSTROID_PLATFORM_URL: ${{ inputs.platform-url }}
       run: |
         touch "$COSTROID_ROWS"
         costroid report --rows "$COSTROID_ROWS" ${COSTROID_BUDGET_USD:+--budget-usd "$COSTROID_BUDGET_USD"}

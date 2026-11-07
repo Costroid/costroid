@@ -541,6 +541,7 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	host, pull := target.host, resolveBaseHead(ctx, target.host, target.pull, stderr)
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
+	input.Platform, input.Repository, input.PullRequest = target.platform, target.repository, pull.pullRequest
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	lifetime, earlier := readLifetime(ctx, host, pull, input, stderr)
 	input.Lifetime = lifetime
