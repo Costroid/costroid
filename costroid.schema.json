@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/costroid.schema.json",
   "title": "costroid.yml",
-  "description": "The repository's one Costroid configuration file. Every key is optional, and a repository with no file gets the defaults. The server reads this file from the pull request's base commit, never its head.",
+  "description": "The repository's one Costroid configuration file. Every key is optional, and a repository with no file gets the defaults. The report reads this file at the head of the pull request's base branch, so a pull request cannot change its own settings.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -19,7 +19,7 @@
       }
     },
     "policy": {
-      "description": "What the check holds each run to. The report reads these keys at the pull request's base commit, so a pull request cannot change its own verdict.",
+      "description": "What the check holds each run to. The report reads these keys at the head of the pull request's base branch, so a pull request cannot change its own verdict.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -78,7 +78,7 @@
       }
     },
     "approval": {
-      "description": "Who can turn a failed check neutral by approving the pull request in a review, and for how long. A review counts only on the pull request's head commit, from an account that can write to the repository and is not an App. The report and costroid approve read these keys at the base branch's head.",
+      "description": "Who can turn a failed check neutral by approving the pull request in a review, and for how long. A review counts only on the pull request's head commit, from an account that can write to the repository and is not an App. The report and costroid approve read these keys at the head of the pull request's base branch.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

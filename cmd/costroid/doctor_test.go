@@ -548,6 +548,7 @@ func TestReadmeTryItBlockIsWhatInitPrints(t *testing.T) {
 	if !found {
 		t.Fatalf("init printed no commands:\n%s", stdout)
 	}
+	printed, _, _ = strings.Cut(printed, "\n\n")
 	var want []string
 	for line := range strings.SplitSeq(strings.TrimSuffix(printed, "\n"), "\n") {
 		want = append(want, strings.TrimSpace(line))

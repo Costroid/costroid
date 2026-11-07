@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -84,8 +85,14 @@ jobs:
 
 func runInit(t *testing.T, root string, build buildInfo, recipes fs.FS, args ...string) (int, string, string) {
 	t.Helper()
+	return runInitIn(t, repository{root: root, dir: root}, build, recipes, args...)
+}
+
+// runInitIn runs init as if started in repo.dir, inside repo.root.
+func runInitIn(t *testing.T, repo repository, build buildInfo, recipes fs.FS, args ...string) (int, string, string) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := initRepository(root, build, recipes, args, &stdout, &stderr)
+	code := initRepository(func() (repository, error) { return repo, nil }, build, recipes, args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -99,11 +106,14 @@ func writeFile(t *testing.T, name, text string) {
 	}
 }
 
-// tree maps every file under root to its content.
+// tree maps every file under root to its content, outside .git.
 func tree(t *testing.T, root string) map[string]string {
 	t.Helper()
 	files := map[string]string{}
 	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, err error) error {
+		if err == nil && entry.IsDir() && entry.Name() == ".git" {
+			return filepath.SkipDir
+		}
 		if err != nil || entry.IsDir() {
 			return err
 		}
@@ -164,14 +174,16 @@ func TestInitWritesLintCleanRecipe(t *testing.T) {
 				t.Errorf("init wrote an unreleased pin: %s", note)
 			}
 		}
-		shipped := strings.Split(string(shippedRecipe(t, recipe)), "\n")
-		got := strings.Split(written, "\n")
+		_, shippedBody := recipeHeader(shippedRecipe(t, recipe))
+		_, writtenBody := recipeHeader([]byte(written))
+		shipped := strings.Split(string(shippedBody), "\n")
+		got := strings.Split(string(writtenBody), "\n")
 		if len(got) != len(shipped) {
-			t.Fatalf("init wrote %d lines, recipes/%s has %d", len(got), recipe, len(shipped))
+			t.Fatalf("init wrote %d lines under the header, recipes/%s has %d", len(got), recipe, len(shipped))
 		}
 		for i := range got {
 			if got[i] != shipped[i] && !pinLine.MatchString(shipped[i]) {
-				t.Errorf("line %d: init wrote %q where recipes/%s has %q", i+1, got[i], recipe, shipped[i])
+				t.Errorf("line %d under the header: init wrote %q where recipes/%s has %q", i+1, got[i], recipe, shipped[i])
 			}
 		}
 
@@ -218,7 +230,7 @@ func TestInitRefusesARecipeThatBreaksARule(t *testing.T) {
 }
 
 // TestInitConfigNamesEverySchemaKey holds the costroid.yml init writes to the
-// schema: every key, at its depth, commented out.
+// schema: every key this release reads, at its depth, commented out.
 func TestInitConfigNamesEverySchemaKey(t *testing.T) {
 	settings, err := commentedConfig()
 	if err != nil {
@@ -233,6 +245,9 @@ func TestInitConfigNamesEverySchemaKey(t *testing.T) {
 	walk = func(node map[string]any, depth int) {
 		properties, _ := node["properties"].(map[string]any)
 		for name, child := range properties {
+			if depth == 0 && slices.Contains(reservedKeys, name) {
+				continue
+			}
 			count++
 			line := "\n# " + strings.Repeat("  ", depth) + name + ":"
 			if !strings.Contains(string(settings), line) {
@@ -326,7 +341,7 @@ func TestInitRefusesDevWithoutRef(t *testing.T) {
 	}
 
 	t.Run("this test binary", func(t *testing.T) {
-		root := t.TempDir()
+		root := gitRepository(t)
 		t.Chdir(root)
 		var stdout, stderr bytes.Buffer
 		if code := initCommand([]string{"github", "--agent", "claude"}, &stdout, &stderr); code != exitFailure || !strings.Contains(stderr.String(), "development build") {
@@ -631,5 +646,660 @@ func TestInstallPageInitExamplesRun(t *testing.T) {
 	}
 	if ran != 3 {
 		t.Errorf("ran %d examples, want 3", ran)
+	}
+}
+
+// gitRepository makes a git repository with one empty commit, with git
+// reading no user or system settings, and returns its root as git names it.
+func gitRepository(t *testing.T) string {
+	t.Helper()
+	for name, value := range map[string]string{
+		"HOME": t.TempDir(), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.DevNull,
+		"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+		"GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
+	} {
+		t.Setenv(name, value)
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init", "--quiet", "--initial-branch=main")
+	runGit(t, root, "commit", "--quiet", "--allow-empty", "--message", "Start")
+	return root
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	output, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, output)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// printedCommands are the commands init lists as left, in order.
+func printedCommands(t *testing.T, stdout string) []string {
+	t.Helper()
+	_, list, found := strings.Cut(stdout, "These commands are left, and init ran none of them:\n")
+	if !found {
+		t.Fatalf("init printed no commands:\n%s", stdout)
+	}
+	list, _, _ = strings.Cut(list, "\n\n")
+	var commands []string
+	for line := range strings.SplitSeq(strings.TrimSuffix(list, "\n"), "\n") {
+		commands = append(commands, strings.TrimSpace(line))
+	}
+	return commands
+}
+
+func TestInitWritesAtTheRepositoryRoot(t *testing.T) {
+	root := gitRepository(t)
+	runGit(t, root, "remote", "add", "origin", "git@github.com:example/widgets.git")
+	sub := filepath.Join(root, "services", "api")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	start := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := initRepository(locateRepository, releaseBuild, costroid.Recipes, args, &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+
+	code, stdout, stderr := start("--agent", "codex")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	want := []string{filepath.Join(root, ".github", "workflows", "costroid.yml"), filepath.Join(root, configFile)}
+	if got := slices.Sorted(maps.Keys(tree(t, root))); !slices.Equal(got, want) {
+		t.Fatalf("init wrote %v, want %v", got, want)
+	}
+	if !strings.Contains(stdout, "costroid: wrote .github/workflows/costroid.yml from recipes/github-codex.yml") || strings.Contains(stdout, root) {
+		t.Errorf("stdout does not name the workflow from the root:\n%s", stdout)
+	}
+	commands := printedCommands(t, stdout)
+	if commands[0] != "cd ../.." || !slices.Contains(commands, "git add .github/workflows/costroid.yml costroid.yml") {
+		t.Errorf("the commands do not run from the root: %q", commands)
+	}
+
+	code, stdout, stderr = start("--agent", "codex", "--out", "ci.yml")
+	if code != 0 || !strings.Contains(stdout, "costroid: wrote services/api/ci.yml from ") {
+		t.Errorf("--out beside the shell: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(sub, "ci.yml")); err != nil {
+		t.Errorf("--out ci.yml is not in the directory init ran in: %v", err)
+	}
+
+	before := tree(t, root)
+	outside := filepath.Join(t.TempDir(), "costroid.yml")
+	for _, out := range []string{"../../../elsewhere.yml", outside, "../.."} {
+		code, stdout, stderr = start("--agent", "codex", "--out", out, "--force")
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, "is outside the repository") {
+			t.Errorf("--out %s: exit %d, stdout %q, stderr %q", out, code, stdout, stderr)
+		}
+	}
+	if !reflect.DeepEqual(before, tree(t, root)) {
+		t.Error("init wrote a file after refusing --out")
+	}
+	if _, err := os.Stat(outside); err == nil {
+		t.Errorf("init wrote %s, outside the repository", outside)
+	}
+}
+
+func TestInitRefusesOutsideARepository(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+	t.Chdir(dir)
+	for _, args := range [][]string{{"github", "--agent", "claude"}, {"--agent", "claude"}, {"gitlab", "--agent", "codex"}} {
+		var stdout, stderr bytes.Buffer
+		code := initRepository(locateRepository, releaseBuild, costroid.Recipes, args, &stdout, &stderr)
+		if code != exitNoRepository || stdout.Len() != 0 || stderr.String() != "costroid: init: "+errNoRepository.Error()+"\n" {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout.String(), stderr.String())
+		}
+	}
+	if strings.Count(errNoRepository.Error(), ". ") != 0 {
+		t.Errorf("the refusal is more than one sentence: %q", errNoRepository)
+	}
+	if files := tree(t, dir); len(files) != 0 {
+		t.Errorf("init wrote %v", files)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, []string{"--help"}, &stdout, &stderr); code != 0 || stderr.String() != initHelp {
+		t.Errorf("--help outside a repository: exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+func TestInitReadsTheHostFromTheRemote(t *testing.T) {
+	for _, test := range []struct {
+		remotes [][2]string
+		args    []string
+		want    string
+	}{
+		{[][2]string{{"origin", "https://github.com/example/widgets.git"}}, nil, githubHost},
+		{[][2]string{{"origin", "git@gitlab.com:example/widgets.git"}}, nil, gitlabHost},
+		{[][2]string{{"origin", "ssh://git@gitlab.example.com:2222/widgets.git"}}, nil, gitlabHost},
+		{[][2]string{{"upstream", "git@github.example.com:widgets.git"}}, nil, githubHost},
+		{[][2]string{{"fork", "https://gitlab.com/a/b"}, {"origin", "https://github.com/a/b"}}, nil, githubHost},
+		{[][2]string{{"origin", "https://github.com/example/widgets.git"}}, []string{"--host", "gitlab"}, gitlabHost},
+		{[][2]string{{"origin", "https://github.com/example/widgets.git"}}, []string{"gitlab"}, gitlabHost},
+		{nil, nil, "the repository has no remote"},
+		{[][2]string{{"origin", "https://example.com/widgets.git"}}, nil, "the remote origin names neither"},
+		{[][2]string{{"a", "https://github.com/a/b"}, {"b", "https://github.com/c/d"}}, nil, "2 remotes and none is origin"},
+		{[][2]string{{"origin", "https://github.com/a/b"}}, []string{"github", "--host", "gitlab"}, "the host is github or --host gitlab, not both"},
+	} {
+		t.Run(test.want+strings.Join(test.args, " "), func(t *testing.T) {
+			root := gitRepository(t)
+			for _, remote := range test.remotes {
+				runGit(t, root, "remote", "add", remote[0], remote[1])
+			}
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append(test.args, "--agent", "codex")...)
+			if test.want != githubHost && test.want != gitlabHost {
+				if code != exitFailure || !strings.Contains(stderr, test.want) {
+					t.Errorf("exit %d, stderr %q", code, stderr)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			if !strings.Contains(stdout, "costroid: wrote "+initOut[test.want]+" ") {
+				t.Errorf("init did not write for %s:\n%s", test.want, stdout)
+			}
+		})
+	}
+}
+
+// existingCodexReview is a team's own codex-action review workflow.
+const existingCodexReview = `name: review
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: Review this pull request.
+          codex-home: ${{ runner.temp }}/codex-home
+          allow-users: ""
+`
+
+// mentionWorkflow is a claude-code-action workflow that a mention in a
+// comment or an issue starts as well as a pull request, signed in with a
+// Claude subscription's token.
+const mentionWorkflow = `name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+`
+
+// lintRules lists the rules costroid lint finds broken in a workflow.
+func lintRules(name, workflow string) []string {
+	var rules []string
+	for _, finding := range recipelint.LintCustomer(name, []byte(workflow)).Findings {
+		rules = append(rules, finding.Rule)
+	}
+	slices.Sort(rules)
+	return rules
+}
+
+func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
+	for _, test := range []struct {
+		label, file, workflow, action, stepID, readKey, readValue string
+	}{
+		{"claude-code-action", "claude.yml", existingReview, claudeCodeAction, "claude", "execution-file", "${{ steps.claude.outputs.execution_file }}"},
+		{"codex-action", "codex.yaml", existingCodexReview, codexAction, "codex", "codex-home", "${{ runner.temp }}/codex-home"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			root := t.TempDir()
+			name := workflowDir + "/" + test.file
+			writeFile(t, filepath.Join(root, name), test.workflow)
+			writeFile(t, filepath.Join(root, workflowDir, "lint.yml"), "name: lint\non: push\njobs:\n  lint:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make lint\n")
+			before := tree(t, root)
+			code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github")
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			if !reflect.DeepEqual(before, tree(t, root)) {
+				t.Error("init wrote a file in place of the patch")
+			}
+			said := "costroid: " + name + " already runs " + test.action + ", so init prints the patch that reports from it, as --existing " + name + " does\n"
+			if !strings.HasPrefix(stderr, said) || !strings.Contains(stderr, "costroid: printed a patch for "+name+", and wrote nothing") {
+				t.Errorf("stderr does not say why init switched:\n%s", stderr)
+			}
+			patched := applyPatch(t, name, test.workflow, patch)
+			if got, was := lintRules(name, patched), lintRules(name, test.workflow); !slices.Equal(got, was) {
+				t.Errorf("costroid lint finds %v in the patched workflow, and %v before", got, was)
+			}
+			steps := decodeYAML(t, patched)["jobs"].(map[string]any)["review"].(map[string]any)["steps"].([]any)
+			agent := steps[len(steps)-2].(map[string]any)
+			read := steps[len(steps)-1].(map[string]any)
+			with, _ := read["with"].(map[string]any)
+			if agent["id"] != test.stepID || read["uses"] != costroidActionPath+"@"+testCommit || with["stage"] != "read" || with[test.readKey] != test.readValue {
+				t.Errorf("the agent's step %v, then %v", agent, read)
+			}
+		})
+	}
+
+	t.Run("an explicit agent writes its recipe", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, workflowDir, "claude.yml"), existingReview)
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude")
+		if code != 0 || !strings.Contains(stdout, "costroid: wrote .github/workflows/costroid.yml") || strings.Contains(stderr, "already runs") {
+			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+	})
+
+	for _, refusal := range []struct {
+		label string
+		files map[string]string
+		want  string
+	}{
+		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "--agent is one of claude, claude-code-action, codex, codex-action"},
+		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "--agent is one of claude, claude-code-action, codex, codex-action"},
+		{"two", map[string]string{"claude.yml": existingReview, "codex.yml": existingCodexReview}, ".github/workflows/claude.yml and .github/workflows/codex.yml each run an agent's action: name the one to report from with --existing"},
+		{"no codex-home", map[string]string{"codex.yml": strings.Replace(existingCodexReview, "          codex-home: ${{ runner.temp }}/codex-home\n", "", 1)}, "sets no codex-home"},
+	} {
+		t.Run(refusal.label, func(t *testing.T) {
+			root := t.TempDir()
+			for file, workflow := range refusal.files {
+				writeFile(t, filepath.Join(root, workflowDir, file), workflow)
+			}
+			before := tree(t, root)
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github")
+			if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+			if !reflect.DeepEqual(before, tree(t, root)) {
+				t.Error("init changed the repository")
+			}
+		})
+	}
+}
+
+func TestInitNamesTheBasisForASubscriptionWorkflow(t *testing.T) {
+	for _, test := range []struct {
+		label, workflow string
+		names           bool
+	}{
+		{"subscription", mentionWorkflow, true},
+		{"API key", strings.Replace(mentionWorkflow, "claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}", "anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}", 1), false},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, workflowDir, "claude.yml"), test.workflow)
+			for _, args := range [][]string{{"github"}, {"github", "--existing", workflowDir + "/claude.yml"}} {
+				code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, args...)
+				if code != 0 {
+					t.Fatalf("%v: exit %d, stderr %q", args, code, stderr)
+				}
+				if flat := strings.Join(strings.Fields(stderr), " "); strings.Contains(flat, subscriptionBasis) != test.names {
+					t.Errorf("%v: the basis line is there: %t, want %t:\n%s", args, !test.names, test.names, stderr)
+				}
+			}
+		})
+	}
+	if subscriptionBasis != "Figures will read List-equivalent, not billed. No subscription run has been recorded yet, so that reading is unverified." {
+		t.Errorf("the basis line reads %q", subscriptionBasis)
+	}
+}
+
+func TestInitAuthSubscriptionWritesTheOAuthRecipe(t *testing.T) {
+	root := t.TempDir()
+	code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--auth", "subscription")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	written := readFile(t, filepath.Join(root, initOut[githubHost]))
+	if strings.Count(written, "claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}\n") != 1 || strings.Contains(written, "anthropic_api_key") || strings.Contains(written, "ANTHROPIC_API_KEY") {
+		t.Errorf("the recipe does not sign in with the subscription's token alone:\n%s", written)
+	}
+	if report := recipelint.LintBytes(initOut[githubHost], []byte(written)); len(report.Findings) > 0 {
+		t.Errorf("lint-recipes rejects what init wrote: %v", report.Findings)
+	}
+	if got := lintRules(initOut[githubHost], written); len(got) > 0 {
+		t.Errorf("costroid lint finds %v in what init wrote", got)
+	}
+	commands := printedCommands(t, stdout)
+	if !slices.Contains(commands, "gh secret set CLAUDE_CODE_OAUTH_TOKEN") || slices.Contains(commands, "gh secret set ANTHROPIC_API_KEY") {
+		t.Errorf("the commands set the wrong secret: %q", commands)
+	}
+	if flat := strings.Join(strings.Fields(stdout), " "); !strings.Contains(flat, subscriptionBasis) {
+		t.Errorf("stdout does not name the basis:\n%s", stdout)
+	}
+
+	apiKey := t.TempDir()
+	if code, stdout, _ := runInit(t, apiKey, releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--auth", "api-key"); code != 0 || strings.Contains(stdout, "List-equivalent") || !strings.Contains(readFile(t, filepath.Join(apiKey, initOut[githubHost])), "anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}") {
+		t.Errorf("--auth api-key: exit %d, stdout %q", code, stdout)
+	}
+
+	for _, refusal := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"github", "--agent", "claude", "--auth", "subscription"}, "--auth subscription writes the claude-code-action recipe"},
+		{[]string{"github", "--agent", "codex-action", "--auth", "subscription"}, "--auth subscription writes the claude-code-action recipe"},
+		{[]string{"gitlab", "--agent", "claude", "--auth", "subscription"}, "--auth subscription writes the claude-code-action recipe"},
+		{[]string{"github", "--existing", "claude.yml", "--auth", "subscription"}, "--existing keeps the sign-in the workflow has"},
+		{[]string{"github", "--agent", "claude-code-action", "--auth", "oauth"}, `--auth is api-key or subscription, not "oauth"`},
+	} {
+		root := t.TempDir()
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", refusal.args, code, stdout, stderr)
+		}
+		if files := tree(t, root); len(files) != 0 {
+			t.Errorf("%v: init wrote %v", refusal.args, files)
+		}
+	}
+}
+
+func TestExistingReportJobRunsOnlyOnPullRequests(t *testing.T) {
+	for _, test := range []struct{ label, workflow, job string }{
+		{"claude-code-action on mentions", mentionWorkflow, "claude"},
+		{"claude-code-action", existingReview, "review"},
+		{"codex-action", existingCodexReview, "review"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			root := t.TempDir()
+			name := workflowDir + "/review.yml"
+			writeFile(t, filepath.Join(root, name), test.workflow)
+			code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--existing", name)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			patched := applyPatch(t, name, test.workflow, patch)
+			report := decodeYAML(t, patched)["jobs"].(map[string]any)["report"].(map[string]any)
+			if report["if"] != "always() && github.event_name == 'pull_request'" || report["needs"] != test.job {
+				t.Errorf("the report job runs on %v, after %v", report["if"], report["needs"])
+			}
+		})
+	}
+}
+
+func TestGitLabInitWritesTheInclude(t *testing.T) {
+	const entry = "- local: .gitlab/costroid.yml"
+	for _, test := range []struct {
+		label, before, after, said string
+	}{
+		{"no file", "", "include:\n  " + entry + "\n", "costroid: wrote .gitlab-ci.yml, which includes .gitlab/costroid.yml"},
+		{"no include", "stages:\n  - build\n\nbuild:\n  script: make\n", "stages:\n  - build\n\nbuild:\n  script: make\n\ninclude:\n  " + entry + "\n", "costroid: added .gitlab/costroid.yml to the include of .gitlab-ci.yml"},
+		{"no final newline", "build:\n  script: make", "build:\n  script: make\n\ninclude:\n  " + entry + "\n", "costroid: added"},
+		{"comments alone", "# Nothing yet.\n", "# Nothing yet.\n\ninclude:\n  " + entry + "\n", "costroid: added"},
+		{"a list", "include:\n  - project: example/templates\n    file: lint.yml\n  - local: ci/build.yml\n\nstages: [test]\n", "include:\n  - project: example/templates\n    file: lint.yml\n  - local: ci/build.yml\n  " + entry + "\n\nstages: [test]\n", "costroid: added"},
+		{"a list at the key's indent", "include:\n- 'ci/build.yml'\nstages: [test]\n", "include:\n- 'ci/build.yml'\n" + entry + "\nstages: [test]\n", "costroid: added"},
+		{"included", "include:\n  - local: /.gitlab/costroid.yml\n", "include:\n  - local: /.gitlab/costroid.yml\n", "costroid: .gitlab-ci.yml already includes .gitlab/costroid.yml"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			root := t.TempDir()
+			if test.label != "no file" {
+				writeFile(t, filepath.Join(root, gitlabCI), test.before)
+			}
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "gitlab", "--agent", "claude")
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			if got := readFile(t, filepath.Join(root, gitlabCI)); got != test.after {
+				t.Errorf(".gitlab-ci.yml reads\n%s\nwant\n%s", got, test.after)
+			}
+			if !strings.Contains(stdout, test.said) {
+				t.Errorf("stdout does not say %q:\n%s", test.said, stdout)
+			}
+			add := "git add .gitlab/costroid.yml costroid.yml .gitlab-ci.yml"
+			if test.label == "included" {
+				add = "git add .gitlab/costroid.yml costroid.yml"
+			}
+			if !slices.Contains(printedCommands(t, stdout), add) {
+				t.Errorf("the commands do not run %q:\n%s", add, stdout)
+			}
+			if strings.Contains(stdout, "include:") {
+				t.Errorf("init asks for the include it wrote:\n%s", stdout)
+			}
+		})
+	}
+
+	t.Run("out", func(t *testing.T) {
+		root := t.TempDir()
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "gitlab", "--agent", "codex", "--out", "ci/costroid.yml")
+		if code != 0 || readFile(t, filepath.Join(root, gitlabCI)) != "include:\n  - local: ci/costroid.yml\n" {
+			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+	})
+
+	t.Run("out over the pipeline", func(t *testing.T) {
+		root := t.TempDir()
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "gitlab", "--agent", "codex", "--out", gitlabCI)
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, "would replace the pipeline") || len(tree(t, root)) != 0 {
+			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+	})
+
+	for _, refusal := range []struct{ label, before, want string }{
+		{"not YAML", "stages: [\n", "init cannot read it as YAML"},
+		{"two documents", "a: 1\n---\nb: 2\n", "more than one YAML document"},
+		{"a list at the top", "- a\n", "not a block of keys"},
+		{"one file named", "include: ci/build.yml\n", "its include is not a list init adds to"},
+		{"a flow list", "include: [ci/build.yml]\n", "its include is not a list init adds to"},
+		{"a mapping", "include:\n  local: ci/build.yml\n", "its include is not a list init adds to"},
+	} {
+		t.Run(refusal.label, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, gitlabCI), refusal.before)
+			before := tree(t, root)
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "gitlab", "--agent", "claude")
+			flat := strings.Join(strings.Fields(stderr), " ")
+			if code != exitFailure || stdout != "" || !strings.Contains(flat, refusal.want) || !strings.Contains(flat, `so init wrote nothing: add "- local: .gitlab/costroid.yml" to its include by hand`) {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+			if !reflect.DeepEqual(before, tree(t, root)) {
+				t.Error("init changed the repository")
+			}
+		})
+	}
+}
+
+// TestGitLabPrintedCommandsRun runs the commands init prints, from the
+// directory init ran in, and finds the three files on the pushed branch.
+func TestGitLabPrintedCommandsRun(t *testing.T) {
+	root := gitRepository(t)
+	remote := t.TempDir()
+	runGit(t, remote, "init", "--quiet", "--bare")
+	runGit(t, root, "remote", "add", "origin", remote)
+	sub := filepath.Join(root, "app")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runInitIn(t, repository{root: root, dir: sub}, releaseBuild, costroid.Recipes, "--agent", "claude")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	flat := strings.Join(strings.Fields(stdout), " ")
+	if !strings.Contains(flat, "with a budget of USD 5 for each run") || strings.Contains(stdout, "COSTROID_BUDGET_USD") {
+		t.Errorf("stdout does not state the budget as an amount:\n%s", stdout)
+	}
+	script := "set -e\n" + strings.Join(printedCommands(t, stdout), "\n") + "\n"
+	command := exec.Command("sh", "-c", script)
+	command.Dir = sub
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("the printed commands failed: %v\n%s\n%s", err, script, output)
+	}
+	pushed := strings.Fields(runGit(t, remote, "ls-tree", "-r", "--name-only", "try-costroid"))
+	if want := []string{".gitlab-ci.yml", ".gitlab/costroid.yml", "costroid.yml"}; !slices.Equal(pushed, want) {
+		t.Errorf("the pushed branch holds %v, want %v", pushed, want)
+	}
+}
+
+func TestInitPrintsTheNoteAfterTheSteps(t *testing.T) {
+	code, stdout, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "github", "--agent", "claude")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	note := strings.Index(stdout, "\nnote: .github/workflows/costroid.yml:")
+	last := strings.Index(stdout, "  gh pr create --fill\n")
+	label := strings.Index(stdout, "\nBefore a first contributor's pull request:\n  gh label create costroid-agent\n")
+	if note < 0 || last < 0 || label < 0 || note < last || note < label {
+		t.Errorf("the note does not follow the steps:\n%s", stdout)
+	}
+	for line := range strings.SplitSeq(stdout, "\n") {
+		if strings.Contains(line, recipelint.RuleEgressAudit) && !strings.HasPrefix(line, "note: ") {
+			t.Errorf("a note without its prefix: %q", line)
+		}
+	}
+	if commands := printedCommands(t, stdout); slices.Contains(commands, "gh label create costroid-agent") || commands[len(commands)-1] != "gh pr create --fill" {
+		t.Errorf("the label is among the first pull request's steps: %q", commands)
+	}
+}
+
+func TestWrittenConfigLeavesOutReservedKeys(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(costroid.ConfigSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	var reserved []string
+	for name, property := range schema["properties"].(map[string]any) {
+		if strings.Contains(property.(map[string]any)["description"].(string), "Reserved:") {
+			reserved = append(reserved, name)
+		}
+	}
+	slices.Sort(reserved)
+	if want := slices.Sorted(slices.Values(reservedKeys)); !slices.Equal(reserved, want) || len(reserved) != 5 {
+		t.Errorf("the schema reserves %v, and init leaves out %v", reserved, want)
+	}
+	root := t.TempDir()
+	if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	settings := readFile(t, filepath.Join(root, configFile))
+	for _, name := range reservedKeys {
+		if strings.Contains(settings, name) {
+			t.Errorf("costroid.yml names the reserved key %s", name)
+		}
+	}
+	if strings.Contains(settings, "Reserved") || !strings.Contains(settings, "\n# policy:\n") {
+		t.Errorf("costroid.yml:\n%s", settings)
+	}
+}
+
+func TestWrittenRecipeDropsTheCopyLine(t *testing.T) {
+	everyTarget(t, func(t *testing.T, host, agent, recipe string) {
+		root := t.TempDir()
+		if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, host, "--agent", agent); code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+		written := readFile(t, filepath.Join(root, initOut[host]))
+		header, _ := recipeHeader([]byte(written))
+		shipped, _ := recipeHeader(shippedRecipe(t, recipe))
+		if !strings.Contains(shipped, "Copy ") || strings.Contains(header, "Copy ") {
+			t.Errorf("the header keeps its copy sentence: %q", header)
+		}
+		for sentence := range strings.SplitSeq(shipped, ". ") {
+			sentence = strings.TrimSuffix(sentence, ".")
+			if _, then, found := strings.Cut(sentence, ", then "); found && strings.HasPrefix(sentence, "Copy ") {
+				sentence = strings.ToUpper(then[:1]) + then[1:]
+			} else if strings.HasPrefix(sentence, "Copy ") {
+				continue
+			}
+			if !strings.Contains(header, sentence) {
+				t.Errorf("the header lost %q: %q", sentence, header)
+			}
+		}
+		for line := range strings.SplitSeq(written, "\n") {
+			if !strings.HasPrefix(line, "#") {
+				break
+			}
+			if !strings.HasPrefix(line, "# ") || len(line) > usageWidth {
+				t.Errorf("a header line %q", line)
+			}
+		}
+	})
+}
+
+// readPoint is where costroid.yml is read, in the words of every page.
+const readPoint = "the head of the pull request's base branch"
+
+func TestSchemaAndDocsNameOneReadPoint(t *testing.T) {
+	var descriptions []string
+	var walk func(node map[string]any)
+	walk = func(node map[string]any) {
+		if text, ok := node["description"].(string); ok {
+			descriptions = append(descriptions, text)
+		}
+		properties, _ := node["properties"].(map[string]any)
+		for _, child := range properties {
+			walk(child.(map[string]any))
+		}
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(costroid.ConfigSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	walk(schema)
+	stated := 0
+	for _, text := range descriptions {
+		for sentence := range strings.SplitSeq(text, ". ") {
+			if strings.Contains(sentence, "server") || strings.Contains(sentence, "base commit") {
+				t.Errorf("the schema says %q", sentence)
+			}
+			if regexp.MustCompile(`\breads?\b`).MatchString(sentence) && strings.Contains(sentence, "base") {
+				stated++
+				if !strings.Contains(sentence, readPoint) {
+					t.Errorf("the schema states another read point: %q", sentence)
+				}
+			}
+		}
+	}
+	if stated < 3 {
+		t.Errorf("the schema states the read point %d times, want the file, policy and approval", stated)
+	}
+
+	page := readFile(t, "../../docs/configuration.md")
+	sentence := regexp.MustCompile(`(?m)^[^\n]*The report reads it at [^.]*\.`).FindString(page)
+	if !strings.Contains(sentence, "The report reads it at "+readPoint) {
+		t.Errorf("docs/configuration.md states the read point as %q", sentence)
+	}
+	if strings.Contains(page, "base commit") {
+		t.Error("docs/configuration.md names the base commit")
+	}
+
+	settings, err := commentedConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, described, _ := strings.Cut(string(settings), "\n")
+	words := slices.DeleteFunc(strings.Fields(described), func(word string) bool { return word == "#" })
+	if flat := strings.Join(words, " "); !strings.Contains(flat, readPoint) || strings.Contains(flat, "server") {
+		t.Errorf("the costroid.yml init writes does not state the read point:\n%s", settings)
 	}
 }

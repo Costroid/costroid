@@ -49,7 +49,7 @@ jobs:
   # Block 2: report it on the pull request.
   report:
     needs: review
-    if: always()
+    if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
