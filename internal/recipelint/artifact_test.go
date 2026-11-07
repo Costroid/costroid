@@ -76,3 +76,28 @@ func TestDownloadIntoRunnerTempBitesTheShippedFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentCheckoutDropsCredentials(t *testing.T) {
+	const keep = "        with:\n          persist-credentials: false\n"
+	for _, change := range []edit{
+		{"no with", keep, "", RuleAgentCheckoutCredentials},
+		{"credentials kept", "persist-credentials: false", "persist-credentials: true", RuleAgentCheckoutCredentials},
+		{"another input alone", "persist-credentials: false", "fetch-depth: 0", RuleAgentCheckoutCredentials},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			expectRule(t, goodWorkflow, change)
+		})
+	}
+	for _, name := range []string{"github-claude-code.yml", "github-claude-code-action.yml", "github-codex.yml", "github-claude-code-litellm.yml"} {
+		t.Run(name, func(t *testing.T) {
+			expectRule(t, read(t, filepath.Join(recipesDir, name)), edit{"", "          persist-credentials: false\n", "", RuleAgentCheckoutCredentials})
+		})
+	}
+	reportCheckout := strings.Replace(goodWorkflow, "      checks: write\n    steps:\n", "      checks: write\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n", 1)
+	if reportCheckout == goodWorkflow {
+		t.Fatal("goodWorkflow's report job no longer has the steps this test adds a checkout to")
+	}
+	if got := rules(LintBytes("x.yml", []byte(reportCheckout)).Findings); slices.Contains(got, RuleAgentCheckoutCredentials) {
+		t.Fatalf("a checkout in a job with no agent was refused: %v", got)
+	}
+}

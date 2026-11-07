@@ -232,6 +232,7 @@ func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.N
 		minimum: minimum,
 	}, gitHubForbidden)
 	l.agentAdminKey(root, job)
+	l.agentCheckout(job)
 }
 
 // stepAgent names the agent a step starts, or nothing.

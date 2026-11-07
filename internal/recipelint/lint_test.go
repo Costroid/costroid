@@ -21,6 +21,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: npm install --global @anthropic-ai/claude-code@2.1.316
       - uses: Costroid/costroid/action@1111111111111111111111111111111111111111 # v1.0.0
         env:
