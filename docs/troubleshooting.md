@@ -215,3 +215,41 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: init wrote nothing: recipes/<recipe> breaks a rule of lint-recipes, which is a defect in costroid` | The shipped recipe failed the linter, and `init` exits 1 | Report it as a bug, with the lines printed above it |
 | `costroid: printed a patch for <file>, and wrote nothing` | `init --existing` printed the patch on stdout | Save it, and apply it with `git apply` from the repository's root |
 | `costroid: <file> already calls Costroid/costroid/action, so init has nothing to add` | The workflow already reports | None |
+
+## Checking a repository
+
+`costroid doctor` checks a repository, from its root, before a pull request runs Costroid. It prints one line per check: `ok`, `warn` or `fail`, the fact, and after `warn` or `fail` the fix. It exits 1 when a line reads `fail`, and 0 otherwise.
+
+It reads the names of the repository's secrets and variables through `gh secret list` and `gh variable list` when `gh` is on `PATH`, and whether the repository is private through `gh repo view`. It never prints a secret's value, prefix or length, and it never prints a variable's value. Without `gh` it says what it did not check.
+
+`costroid doctor --ci`, run as a step of a GitHub Actions job, adds what only the job sees: the event, whether the pull request's head is a fork, whether the job holds `id-token: write`, and the job's declared permissions.
+
+| Check | A `warn` or `fail` line | Fix |
+| ----- | ----------------------- | --- |
+| The binary | `warn: costroid <version>, and <file>:<line> pins <release>` | Install the release the workflow pins, as the [README](../README.md#install) shows |
+| | `warn: costroid <version> is a development build, which belongs to no release` | The same |
+| `costroid.yml` | `fail: costroid.yml: <problem>` | The problem is the one `costroid validate` names. [`docs/configuration.md`](configuration.md) lists each key |
+| The workflows | `warn: no workflow in .github/workflows calls Costroid's action` | Run `costroid init github --agent claude`, or another agent, as [`docs/install.md`](install.md#write-the-workflow) shows |
+| | `fail: <file>:<line>: high: <rule>: <message>`, `warn: <file>:<line>: medium: <rule>: <message>` | The finding `costroid lint` prints for that workflow. [`docs/lint.md`](lint.md) says what each rule guards |
+| Costroid's pin | `fail: <file>:<line>: Costroid/costroid/action@<ref> is not a full commit SHA` | Pin the full commit SHA of a release tag, with its version in a comment, as `costroid init` writes it. The action installs only the release its own commit belongs to |
+| | `fail: <file>:<line>: Costroid/costroid/action@<ref> is the zero SHA, which names no release` | The same |
+| | `warn: <file>:<line>: Costroid/costroid/action@<ref> records no release in its comment` | Add the release's tag after the SHA, as a comment `# v<version>` |
+| Two agents | `warn: <file> and <file> each run an agent on pull_request, so each pull request pays for 2 runs` | Keep one. To keep a workflow that runs `claude-code-action`, delete the others and add Costroid's two blocks to it, as [`docs/existing-workflow.md`](existing-workflow.md) shows |
+| The agent | `warn: <agent> is not on PATH, so costroid run cannot start it on this machine, though CI installs its own` | Run the `npm install` command the line names, for a local `costroid run` |
+| | `warn: <agent> --version printed no version` | Reinstall the agent |
+| The keys | `fail: COSTROID_CREDENTIAL reads like a key, and every row would carry it` | Set it to the key's id from the provider's console, never the key |
+| Secrets | `fail: gh secret list names no repository secret <name>` | Run `gh secret set <name>`. The line names it. An organisation secret does not show in `gh secret list`, so a secret set for the organisation reads as missing here |
+| | `warn: gh is not on PATH, so doctor did not list the repository's secrets` | Install `gh`, or check the secrets the line names in the repository's settings |
+| | `warn: gh secret list failed, so doctor did not check the repository's secrets: <error>` | Run `gh auth login`, then `costroid doctor` again |
+| Variables | `warn: the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE` | Set `COSTROID_INGEST_AUDIENCE` to the audience your ledger requires, as [`docs/recipes.md`](recipes.md#send-rows-to-a-ledger) says |
+| Visibility | `warn: <file> runs step-security/harden-runner, which needs a paid plan on a private repository` | Read [Egress in the agent's job](recipes.md#egress-in-the-agents-job), then keep the step or delete it |
+| The event, with `--ci` | `warn: the event is <event>, and costroid report posts only on pull_request` | Run the report job on `pull_request` |
+| The head, with `--ci` | `warn: the pull request's head is the fork <repository>, which receives no secrets and cannot post the check` | Add [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml), which posts the check from your repository |
+| The job, with `--ci` | `warn: job <job> of <file> declares no permissions, so it holds the repository's default token` | Declare the permissions the job needs, as the recipes do |
+
+doctor ends with one line of its own.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: doctor: <count> fail, <count> warn, <count> ok` | What doctor checked. It exits 1 when one line reads `fail` | Fix each `fail` line above it, then each `warn` line |
+| `costroid: doctor: <error>` | doctor could not run its checks, and exits 125. `--ci` outside a GitHub Actions job is one such error | Read the error. `costroid help doctor` gives the flags |
