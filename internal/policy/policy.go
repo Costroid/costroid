@@ -33,12 +33,23 @@ const (
 
 // The rules of the default pack, in the order a verdict lists them.
 const (
-	RuleRunBudget        = "run_budget"
-	RuleRunCostThreshold = "run_cost_threshold"
-	RuleAttribution      = "attribution"
+	RuleRunBudget          = "run_budget"
+	RuleRunCostThreshold   = "run_cost_threshold"
+	RuleRunIncrease        = "run_increase"
+	RuleRunIncreasePercent = "run_increase_percent"
+	RulePullRequestBudget  = "pr_budget"
+	RuleMonthlyBudget      = "monthly_budget"
+	RuleModelAllowlist     = "model_allowlist"
+	RuleAttribution        = "attribution"
 )
 
-var ruleOrder = []string{RuleRunBudget, RuleRunCostThreshold, RuleAttribution}
+var ruleOrder = []string{
+	RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent,
+	RulePullRequestBudget, RuleMonthlyBudget, RuleModelAllowlist, RuleAttribution,
+}
+
+// runCostRules hold this run's own cost to a limit, so their results carry it.
+var runCostRules = []string{RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent}
 
 // The outcomes of a rule.
 const (
@@ -57,6 +68,14 @@ const (
 	ReasonUnattributedRows = "unattributed_rows"
 	ReasonOtherCurrency    = "other_currency"
 	ReasonJoinableRows     = "joinable_rows"
+	ReasonOverBaseline     = "over_baseline"
+	ReasonNoBaseline       = "no_baseline"
+	ReasonNoLifetime       = "no_lifetime"
+	ReasonRepeatPossible   = "repeat_possible"
+	ReasonNoLedger         = "no_ledger"
+	ReasonOutsideAllowlist = "model_outside_allowlist"
+	ReasonUnreadableModel  = "unreadable_model"
+	ReasonOnAllowlist      = "models_on_allowlist"
 )
 
 var outcomes = []string{Pass, Warn, Fail, Unproven}
@@ -64,6 +83,8 @@ var outcomes = []string{Pass, Warn, Fail, Unproven}
 var reasons = []string{
 	ReasonOverLimit, ReasonWithinLimit, ReasonNoRows, ReasonUnverifiedRows,
 	ReasonUnattributedRows, ReasonOtherCurrency, ReasonJoinableRows,
+	ReasonOverBaseline, ReasonNoBaseline, ReasonNoLifetime, ReasonRepeatPossible,
+	ReasonNoLedger, ReasonOutsideAllowlist, ReasonUnreadableModel, ReasonOnAllowlist,
 }
 
 // Request is everything one evaluation reads. The pack reads no clock, so At
@@ -74,6 +95,12 @@ type Request struct {
 	Config ConfigFile
 	Start  Start
 	At     time.Time
+	// Baseline is what earlier runs of the agent cost. Nil, the increase
+	// rules cannot run.
+	Baseline *Baseline
+	// Lifetime is what the pull request's earlier runs cost. Nil, the pull
+	// request budget cannot run.
+	Lifetime *Lifetime
 }
 
 // Verdict is the pack's answer and what it was computed from.
@@ -98,15 +125,23 @@ type Verdict struct {
 	problem error
 }
 
-// Result is one rule's outcome. LimitUSD and CostUSD are amounts, so a
-// comment that withholds amounts drops them.
+// Result is one rule's outcome. LimitUSD, CostUSD and BaselineUSD are
+// amounts, so a comment that withholds amounts drops them.
 type Result struct {
 	Rule           string `json:"rule"`
 	Outcome        string `json:"outcome"`
 	Reason         string `json:"reason"`
 	HeldByWarnOnly bool   `json:"held_by_warn_only,omitempty"`
 	LimitUSD       string `json:"limit_usd,omitempty"`
-	CostUSD        string `json:"cost_usd,omitempty"`
+	// LimitPercent is the increase over the baseline a run may reach, in
+	// percent.
+	LimitPercent string `json:"limit_percent,omitempty"`
+	// CostUSD is the run's USD cost, or the pull request's for pr_budget.
+	CostUSD string `json:"cost_usd,omitempty"`
+	// BaselineUSD is the median the increase rules compare the run with.
+	BaselineUSD string `json:"baseline_usd,omitempty"`
+	// Models names the models off the allowlist, sorted, at most 10.
+	Models []string `json:"models,omitempty"`
 }
 
 // ConfigProblem says why the settings could not be used, nil when they were.
@@ -120,6 +155,7 @@ func (v Verdict) WithoutAmounts() Verdict {
 	for index := range v.Results {
 		v.Results[index].LimitUSD = ""
 		v.Results[index].CostUSD = ""
+		v.Results[index].BaselineUSD = ""
 	}
 	return v
 }
@@ -128,9 +164,7 @@ func (v Verdict) WithoutAmounts() Verdict {
 // conclude neutral, and the verdict says why. The error is for a pack that
 // could not run.
 func Evaluate(ctx context.Context, request Request) (Verdict, error) {
-	if request.Trust != TokenVerified {
-		request.Trust = Unverified
-	}
+	request.Trust = trusted(request.Trust)
 	settings, problem := request.Config.settings()
 	verdict := Verdict{
 		Conclusion:     Neutral,
@@ -154,19 +188,33 @@ func Evaluate(ctx context.Context, request Request) (Verdict, error) {
 		return Verdict{}, err
 	}
 	verdict.Conclusion = answer.Conclusion
-	verdict.Results = annotate(answer.Results, request.Usage)
+	verdict.Results = annotate(answer.Results, request, settings)
 	return verdict, nil
 }
 
-// annotate orders the results and adds the run's USD cost to each budget rule.
-func annotate(results []Result, usage Usage) []Result {
+// annotate orders the results and adds the figures each was held to: the
+// run's USD cost, the baseline's median, the pull request's total, and the
+// models off the allowlist.
+func annotate(results []Result, request Request, settings Settings) []Result {
 	slices.SortFunc(results, func(a, b Result) int {
 		return cmp.Compare(slices.Index(ruleOrder, a.Rule), slices.Index(ruleOrder, b.Rule))
 	})
-	cost, found := usage.usd()
+	cost, found := request.Usage.usd()
 	for index := range results {
-		if results[index].LimitUSD != "" && found {
-			results[index].CostUSD = cost.String()
+		result := &results[index]
+		switch {
+		case result.Reason == ReasonNoBaseline || result.Reason == ReasonNoLifetime:
+			// A rule that compared nothing was held to no figure.
+		case slices.Contains(runCostRules, result.Rule) && found:
+			result.CostUSD = cost.String()
+		case result.Rule == RulePullRequestBudget && request.Lifetime != nil:
+			result.CostUSD = request.Lifetime.total(request.Usage).String()
+		case result.Rule == RuleModelAllowlist && result.Reason == ReasonOutsideAllowlist:
+			_, _, result.Models = request.Usage.modelRows(settings)
+		}
+		increase := result.Rule == RuleRunIncrease || result.Rule == RuleRunIncreasePercent
+		if increase && result.Reason != ReasonNoBaseline && request.Baseline != nil {
+			result.BaselineUSD = request.Baseline.MedianUSD.String()
 		}
 	}
 	return results

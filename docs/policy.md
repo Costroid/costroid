@@ -4,25 +4,44 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 
 ## The rules
 
-| Rule                 | Setting in `costroid.yml`  | What it checks                                                                                                                                                       |
-| -------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run_budget`         | `policy.run_budget_usd`    | The run's cost at list, in USD, against the budget                                                                                                                   |
-| `run_cost_threshold` | `policy.max_run_cost_usd`  | The run's cost at list, in USD, against the threshold                                                                                                                |
-| `attribution`        | none                       | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `windowed`, or `exact` when the credential is a gateway key attested for their run |
+| Rule                   | Setting in `costroid.yml`     | What it checks |
+| ---------------------- | ----------------------------- | -------------- |
+| `run_budget`           | `policy.run_budget_usd`       | The run's cost at list, in USD, against the budget |
+| `run_cost_threshold`   | `policy.max_run_cost_usd`     | The run's cost at list, in USD, against the threshold |
+| `run_increase`         | `policy.max_increase_usd`     | The run's cost at list, in USD, against the median of this agent's earlier runs plus the amount set |
+| `run_increase_percent` | `policy.max_increase_percent` | The run's cost at list, in USD, against the median of this agent's earlier runs plus the percent set |
+| `pr_budget`            | `policy.pr_budget_usd`        | The pull request's total at list, in USD, this run included, against the budget |
+| `monthly_budget`       | `policy.monthly_budget_usd`   | The repository's month to date, in USD, against the budget. It reads a ledger only |
+| `model_allowlist`      | `policy.models`               | Each row's `costroid/model` tag against the list |
+| `attribution`          | none                          | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `windowed`, or `exact` when the credential is a gateway key attested for their run |
 
 A rule without its setting does not run. With no `costroid.yml`, only `attribution` runs. `attribution` warns, or says nothing. It never fails and never passes.
 
-The two budget rules compare USD amounts as exact decimals. A row in another currency is never converted.
+The budget rules compare USD amounts as exact decimals. A row in another currency is never converted, and never compared with a USD limit.
+
+Four rules read figures from outside the run. One that is set and lacks its figure concludes `unproven`, so the check cannot conclude `success`, and the comment names the rule and says why it did not run:
+
+| Rule                                   | Reads                                                         | In this release                                                                        |
+| -------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `run_increase`, `run_increase_percent` | The median of 10 or more earlier runs of the same agent        | No baseline reaches the check, so both conclude `unproven` with reason `no_baseline`   |
+| `pr_budget`                            | The total of the pull request's earlier runs, from their check runs | No total reaches the check, so it concludes `unproven` with reason `no_lifetime`  |
+| `monthly_budget`                       | The repository's month to date, from a ledger                 | No ledger reaches the check, so it concludes `unproven` with reason `no_ledger`        |
+
+`pr_budget` treats a total that may count one report twice as no proof either way: the rule concludes `unproven` with reason `repeat_possible`.
+
+`model_allowlist` takes exact model ids, and prefixes that end in `*`: `claude-*` admits `claude-sonnet-5-5`, and `claude` admits only `claude`. A row whose tag is absent, or is not a model id of at most 128 letters, digits and `._:/+-`, cannot pass the rule: it concludes `unproven` with reason `unreadable_model`. A model off the list fails the rule whatever else the rows hold, and the verdict names at most 10 such models.
 
 ## The verdict on each trust path
 
-Who wrote the rows decides what a budget rule can conclude. A row whose run identity no one checked is `unattributed`, and an `unattributed` row never satisfies a budget rule.
+Who wrote the rows decides what a rule can conclude. A row whose run identity no one checked is `unattributed`, and an `unattributed` row never satisfies a rule.
 
-| Outcome of a budget rule      | Rows the agent's job wrote (the Action path)                               | Rows a ledger checked against the job's OIDC token                            |
-| ----------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Under the budget or threshold | Cannot pass. The check concludes `neutral`: "unverified rows cannot satisfy a budget" | Passes, and the check can conclude `success`. One `unattributed` row makes it `neutral`: "unattributed rows cannot satisfy a budget" |
-| Over the budget or threshold  | Warns during the warn-only period, then fails                              | Warns during the warn-only period, then fails                                 |
-| No rows reached the check     | Cannot pass                                                                | Cannot pass                                                                   |
+| Outcome of a budget, increase or model rule | Rows the agent's job wrote (the Action path)                               | Rows a ledger checked against the job's OIDC token                            |
+| ------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`: "unverified rows cannot satisfy a budget" | Passes, and the check can conclude `success`. One `unattributed` row makes it `neutral`: "unattributed rows cannot satisfy a budget" |
+| Over the limit, or a model off the list     | Warns during the warn-only period, then fails                              | Warns during the warn-only period, then fails                                 |
+| No rows reached the check                   | Cannot pass                                                                | Cannot pass                                                                   |
+
+The earlier runs behind a baseline or a pull request's total carry a trust of their own. A rule that reads them passes only when they and this run's rows were both checked against a token. A baseline or a total that the agents' jobs wrote can show a run over its limit, never within it.
 
 | Outcome of `attribution`                         | Rows the agent's job wrote | Rows a ledger checked |
 | ------------------------------------------------ | -------------------------- | --------------------- |
@@ -31,7 +50,7 @@ Who wrote the rows decides what a budget rule can conclude. A row whose run iden
 
 On the Action path no rule can pass, so the check concludes `neutral` or `failure`, never `success`.
 
-The report stage reads a rows file that the agent's own job wrote. An agent that a prompt took over could write a smaller cost into that file. A figure from it can show that a run went over its budget. It can never show that a run stayed under.
+The report stage reads a rows file that the agent's own job wrote. An agent that a prompt took over could write a smaller cost, or another model's name, into that file. A figure from it can show that a run went over its budget or used a model off the list. It can never show that a run stayed under, or kept to the list.
 
 `costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. In this release `serve` does not call the pack: `costroid report` and `costroid policy` do, and both read a rows file.
 
@@ -71,7 +90,7 @@ The workflow's `budget-usd` caps the run, and a pull request can change its own 
 
 ## What a verdict records
 
-The check run's machine block carries the verdict under `policy`. It records each rule's outcome and reason, the warn-only period, the time of the check, the commit the settings came from, and the SHA-256 of the pack and of the `costroid.yml` bytes it read. A missing file hashes as zero bytes, and `config` reads `absent`. A file the report could not read or parse runs no rule, `config` reads `unread` or `invalid`, and the check concludes `neutral`.
+The check run's machine block carries the verdict under `policy`. It records each rule's outcome and reason, the figures the rule was held to, the warn-only period, the time of the check, the commit the settings came from, and the SHA-256 of the pack and of the `costroid.yml` bytes it read. A missing file hashes as zero bytes, and `config` reads `absent`. A file the report could not read or parse runs no rule, `config` reads `unread` or `invalid`, and the check concludes `neutral`.
 
 ```json
 "policy": {
@@ -91,7 +110,7 @@ The check run's machine block carries the verdict under `policy`. It records eac
 }
 ```
 
-The comment's copy of the block drops `limit_usd` and `cost_usd` when it withholds amounts. The check run's block keeps them. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
+A result can carry `limit_usd`, `cost_usd` and `baseline_usd`, which are amounts, `limit_percent`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. The comment's copy of the block drops `limit_usd`, `cost_usd` and `baseline_usd` when it withholds amounts. The check run's block keeps them. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
 
 ## The engine
 

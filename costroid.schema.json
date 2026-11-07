@@ -24,14 +24,51 @@
       "additionalProperties": false,
       "properties": {
         "run_budget_usd": {
-          "description": "The budget each run is held to, in USD, as a quoted decimal. A run over it warns during the warn-only period and fails after it. Rows the agent's job wrote cannot show a run under it, so on that path the rule concludes neutral at best.",
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+          "description": "The budget each run is held to, in USD, as a whole number or a quoted decimal. A run over it warns during the warn-only period and fails after it. Rows the agent's job wrote cannot show a run under it, so on that path the rule concludes neutral at best.",
+          "type": ["string", "integer"],
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "minimum": 0
         },
         "max_run_cost_usd": {
-          "description": "A ceiling on one run's cost at list, in USD, as a quoted decimal. It is held the same way as the budget.",
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+          "description": "A ceiling on one run's cost at list, in USD, as a whole number or a quoted decimal. It is held the same way as the budget.",
+          "type": ["string", "integer"],
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "minimum": 0
+        },
+        "max_increase_usd": {
+          "description": "How far a run may cost more than the median of this agent's earlier runs, in USD, as a whole number or a quoted decimal. The rule needs 10 or more earlier runs, and until a baseline reaches the check it does not run.",
+          "type": ["string", "integer"],
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "minimum": 0
+        },
+        "max_increase_percent": {
+          "description": "How far a run may cost more than the median of this agent's earlier runs, in percent, as a whole number or a quoted decimal. The rule needs 10 or more earlier runs, and until a baseline reaches the check it does not run.",
+          "type": ["string", "integer"],
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "minimum": 0
+        },
+        "pr_budget_usd": {
+          "description": "The budget a pull request's runs are held to together, in USD, as a whole number or a quoted decimal. Until the total of the pull request's earlier runs reaches the check, the rule does not run.",
+          "type": ["string", "integer"],
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "minimum": 0
+        },
+        "monthly_budget_usd": {
+          "description": "The budget the repository's runs are held to over a calendar month, in USD, as a whole number or a quoted decimal. The month to date comes only from a ledger, and none reaches the check yet, so the rule does not run.",
+          "type": ["string", "integer"],
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "minimum": 0
+        },
+        "models": {
+          "description": "The models a run may use: exact model ids, or a prefix that ends in *. A run that used another model warns during the warn-only period and fails after it.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]*\\*?$",
+            "maxLength": 128
+          }
         },
         "enforce": {
           "description": "true ends the warn-only period now, so a rule that fails fails the check. Without it the period runs for 7 days from the commit that added the workflow to the base branch.",

@@ -310,38 +310,64 @@ func TestVerdictSHAs(t *testing.T) {
 }
 
 func TestUnattributedNeverSatisfiesBudget(t *testing.T) {
-	under := "policy:\n  run_budget_usd: \"5\"\n  max_run_cost_usd: \"4\"\n  enforce: true\n"
-	forged := map[string]string{"costroid/run_identity": "token_verified", "costroid/attribution_grade": "exact"}
+	under := "policy:\n  run_budget_usd: \"5\"\n  max_run_cost_usd: 4\n  max_increase_usd: \"5\"\n  max_increase_percent: 500\n" +
+		"  pr_budget_usd: 50\n  models: [\"claude-*\"]\n  enforce: true\n"
+	rules := []string{RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent, RulePullRequestBudget, RuleModelAllowlist}
+	model := map[string]string{"costroid/model": "claude-sonnet-5-5"}
+	forged := map[string]string{"costroid/model": "claude-sonnet-5-5", "costroid/run_identity": "token_verified", "costroid/attribution_grade": "exact"}
+	verified := func(trust Trust) (*Baseline, *Lifetime) {
+		return &Baseline{Runs: 12, MedianUSD: mustAmount(t, "1"), Trust: trust}, &Lifetime{USD: mustAmount(t, "2"), Trust: trust}
+	}
+	attributed := Usage{Rows: 1, Currencies: []CurrencyUsage{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 1, Models: map[string]int{"claude-sonnet-5-5": 1}}}}
 	cases := []struct {
-		name   string
-		trust  Trust
-		usage  Usage
-		reason string
+		name    string
+		trust   Trust
+		usage   Usage
+		earlier Trust
+		reason  string
 	}{
-		{"rows the job wrote", Unverified, usageOf(t, line{"USD", "1", "key-1", nil}), ReasonUnverifiedRows},
-		{"rows the job wrote that claim a token", Unverified, usageOf(t, line{"USD", "1", "key-1", forged}), ReasonUnverifiedRows},
-		{"rows a ledger left unattributed", TokenVerified, Usage{Rows: 2, Currencies: []CurrencyUsage{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 2, UnattributedRows: 1}}}, ReasonUnattributedRows},
-		{"no rows", TokenVerified, Usage{}, ReasonNoRows},
-		{"an unknown trust", Trust("trusted"), Usage{Rows: 1, Currencies: []CurrencyUsage{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 1}}}, ReasonUnverifiedRows},
+		{"rows the job wrote", Unverified, usageOf(t, line{"USD", "1", "key-1", model}), TokenVerified, ReasonUnverifiedRows},
+		{"rows the job wrote that claim a token", Unverified, usageOf(t, line{"USD", "1", "key-1", forged}), TokenVerified, ReasonUnverifiedRows},
+		{"rows a ledger left unattributed", TokenVerified, Usage{Rows: 2, Currencies: []CurrencyUsage{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 2, UnattributedRows: 1}}}, TokenVerified, ReasonUnattributedRows},
+		{"no rows", TokenVerified, Usage{}, TokenVerified, ReasonNoRows},
+		{"an unknown trust", Trust("trusted"), attributed, TokenVerified, ReasonUnverifiedRows},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			verdict := evaluate(t, Request{Usage: tc.usage, Trust: tc.trust, Config: config(under)})
+			baseline, lifetime := verified(tc.earlier)
+			verdict := evaluate(t, Request{Usage: tc.usage, Trust: tc.trust, Config: config(under), Baseline: baseline, Lifetime: lifetime})
 			if verdict.Conclusion == Success {
 				t.Fatalf("concluded success: %+v", verdict)
 			}
-			for _, rule := range []string{RuleRunBudget, RuleRunCostThreshold} {
+			for _, rule := range rules {
 				if got := result(t, verdict, rule); got.Outcome != Unproven || got.Reason != tc.reason {
 					t.Errorf("%s: %+v, want unproven for %s", rule, got, tc.reason)
 				}
 			}
 		})
 	}
+	t.Run("earlier runs the agents' jobs wrote", func(t *testing.T) {
+		baseline, lifetime := verified(Unverified)
+		verdict := evaluate(t, Request{Usage: attributed, Trust: TokenVerified, Config: config(under), Baseline: baseline, Lifetime: lifetime})
+		if verdict.Conclusion == Success {
+			t.Fatalf("concluded success: %+v", verdict)
+		}
+		for _, rule := range []string{RuleRunIncrease, RuleRunIncreasePercent, RulePullRequestBudget} {
+			if got := result(t, verdict, rule); got.Outcome != Unproven || got.Reason != ReasonUnverifiedRows {
+				t.Errorf("%s: %+v, want unproven for unverified rows", rule, got)
+			}
+		}
+	})
 	t.Run("every row verified and attributed", func(t *testing.T) {
-		usage := Usage{Rows: 1, Currencies: []CurrencyUsage{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 1}}}
-		verdict := evaluate(t, Request{Usage: usage, Trust: TokenVerified, Config: config(under)})
-		if verdict.Conclusion != Success || result(t, verdict, RuleRunBudget).Outcome != Pass {
-			t.Errorf("verified rows under budget: %+v", verdict)
+		baseline, lifetime := verified(TokenVerified)
+		verdict := evaluate(t, Request{Usage: attributed, Trust: TokenVerified, Config: config(under), Baseline: baseline, Lifetime: lifetime})
+		if verdict.Conclusion != Success {
+			t.Errorf("verified rows under every limit: %+v", verdict)
+		}
+		for _, rule := range rules {
+			if got := result(t, verdict, rule); got.Outcome != Pass {
+				t.Errorf("%s: %+v", rule, got)
+			}
 		}
 	})
 }
@@ -442,8 +468,17 @@ func TestNoRuleConcludesNeutral(t *testing.T) {
 
 func TestSettingsRefuseWhatTheSchemaRefuses(t *testing.T) {
 	for _, body := range []string{
-		"policy:\n  run_budget_usd: 5\n",
+		"policy:\n  run_budget_usd: 5.0\n",
+		"policy:\n  run_budget_usd: -5\n",
 		"policy:\n  run_budget_usd: 0.1\n",
+		"policy:\n  pr_budget_usd: 1e3\n",
+		"policy:\n  max_increase_percent: \"12%\"\n",
+		"policy:\n  models: []\n",
+		"policy:\n  models: [\"*\"]\n",
+		"policy:\n  models: [\"claude-*-5\"]\n",
+		"policy:\n  models: [\"`claude`\"]\n",
+		"policy:\n  models: [codex, codex]\n",
+		"policy:\n  models: codex\n",
 		"policy:\n  run_budget_usd: \"-1\"\n",
 		"policy:\n  run_budget_usd: \"1e3\"\n",
 		"policy:\n  run_budget_usd: \"0.1234567890123\"\n",
@@ -460,7 +495,7 @@ func TestSettingsRefuseWhatTheSchemaRefuses(t *testing.T) {
 		}
 	}
 	settings, err := ParseSettings([]byte("comment:\n  show_cost: false\npolicy:\n  run_budget_usd: \"5.00\"\n  max_run_cost_usd: \"0.000000000001\"\n  enforce: false\n"))
-	if err != nil || settings.RunBudget.String() != "5" || settings.MaxRunCost.String() != "0.000000000001" || settings.Enforce {
+	if err != nil || settings.Amounts["run_budget_usd"].String() != "5" || settings.Amounts["max_run_cost_usd"].String() != "0.000000000001" || settings.Enforce {
 		t.Errorf("%+v, %v", settings, err)
 	}
 }

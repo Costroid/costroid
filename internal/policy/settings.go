@@ -7,6 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 
@@ -18,11 +21,14 @@ import (
 // ConfigPath is where a repository keeps its settings.
 const ConfigPath = "costroid.yml"
 
-// Settings are the policy keys of costroid.yml. A nil limit is a rule that
-// does not run.
+// Settings are the policy keys of costroid.yml. A key that is not set is a
+// rule that does not run.
 type Settings struct {
-	RunBudget  *decimal.Decimal
-	MaxRunCost *decimal.Decimal
+	// Amounts holds each amount key that is set, by its name in costroid.yml.
+	Amounts map[string]decimal.Decimal
+	// Models are the models a run may use: exact ids, or prefixes that end in
+	// *. Empty when the key is not set.
+	Models []string
 	// Enforce ends the warn-only period early.
 	Enforce bool
 }
@@ -35,7 +41,35 @@ var amountPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,12})?$`)
 // branch, which is neither the base nor the head.
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
-var amountKeys = map[string]bool{"run_budget_usd": true, "max_run_cost_usd": true}
+// modelEntryPattern is an entry of policy.models: a model id a comment may
+// print, or such an id's prefix followed by *.
+var modelEntryPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/+-]*\*?$`)
+
+// The keys under policy.
+const (
+	keyRunBudget          = "run_budget_usd"
+	keyMaxRunCost         = "max_run_cost_usd"
+	keyMaxIncrease        = "max_increase_usd"
+	keyMaxIncreasePercent = "max_increase_percent"
+	keyPullRequestBudget  = "pr_budget_usd"
+	keyMonthlyBudget      = "monthly_budget_usd"
+	keyModels             = "models"
+	keyEnforce            = "enforce"
+)
+
+// amountKeys are the keys that hold an amount, each stated the same way in the
+// schema.
+var amountKeys = []string{
+	keyRunBudget, keyMaxRunCost, keyMaxIncrease, keyMaxIncreasePercent,
+	keyPullRequestBudget, keyMonthlyBudget,
+}
+
+// Keys are the keys under policy that ParseSettings reads, sorted.
+func Keys() []string {
+	keys := append([]string{keyModels, keyEnforce}, amountKeys...)
+	slices.Sort(keys)
+	return keys
+}
 
 // ParseSettings reads the policy mapping of costroid.yml. Any key or value
 // under it that the schema refuses is an error, so a typo never runs a rule
@@ -52,21 +86,23 @@ func ParseSettings(data []byte) (Settings, error) {
 	if mapping.Kind != yaml.MappingNode {
 		return Settings{}, errors.New("policy: policy in costroid.yml is not a mapping")
 	}
-	var settings Settings
+	settings := Settings{Amounts: map[string]decimal.Decimal{}}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		key, value := mapping.Content[i].Value, mapping.Content[i+1]
 		switch {
-		case amountKeys[key]:
+		case slices.Contains(amountKeys, key):
 			amount, err := parseAmount(key, value)
 			if err != nil {
 				return Settings{}, err
 			}
-			if key == "run_budget_usd" {
-				settings.RunBudget = &amount
-			} else {
-				settings.MaxRunCost = &amount
+			settings.Amounts[key] = amount
+		case key == keyModels:
+			models, err := parseModels(value)
+			if err != nil {
+				return Settings{}, err
 			}
-		case key == "enforce":
+			settings.Models = models
+		case key == keyEnforce:
 			if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
 				return Settings{}, errors.New("policy: policy.enforce must be true or false")
 			}
@@ -91,13 +127,49 @@ func policyMapping(root *yaml.Node) *yaml.Node {
 	return nil
 }
 
-// parseAmount takes the scalar's own text, so 0.1 stays 0.1. A number YAML
-// would read as a float or an integer is refused: amounts are quoted strings.
+// parseAmount takes a quoted scalar's own text, so 0.1 stays 0.1. A YAML
+// integer is exact, so it is taken too. A number YAML reads as a float is
+// refused, because its text and its value can differ.
 func parseAmount(key string, value *yaml.Node) (decimal.Decimal, error) {
+	if value.Kind == yaml.ScalarNode && value.Tag == "!!int" {
+		var whole uint64
+		if value.Decode(&whole) == nil {
+			return decimal.Parse(strconv.FormatUint(whole, 10))
+		}
+	}
 	if value.Kind != yaml.ScalarNode || value.Tag != "!!str" || !amountPattern.MatchString(value.Value) {
-		return decimal.Decimal{}, fmt.Errorf("policy: policy.%s must be a quoted decimal of at most %d fractional digits, such as \"5.00\"", key, focus.MaxScale)
+		return decimal.Decimal{}, fmt.Errorf("policy: policy.%s must be a whole number or a quoted decimal of at most %d fractional digits, such as 5 or \"5.00\"", key, focus.MaxScale)
 	}
 	return decimal.Parse(value.Value)
+}
+
+// parseModels reads policy.models: a list of one or more distinct entries.
+func parseModels(value *yaml.Node) ([]string, error) {
+	refused := fmt.Errorf("policy: policy.models must list distinct model ids, each of at most %d characters, or prefixes that end in *", maxModelLength)
+	if value.Kind != yaml.SequenceNode || len(value.Content) == 0 {
+		return nil, refused
+	}
+	models := make([]string, 0, len(value.Content))
+	for _, entry := range value.Content {
+		if entry.Kind != yaml.ScalarNode || entry.Tag != "!!str" || len(entry.Value) > maxModelLength ||
+			!modelEntryPattern.MatchString(entry.Value) || slices.Contains(models, entry.Value) {
+			return nil, refused
+		}
+		models = append(models, entry.Value)
+	}
+	return models, nil
+}
+
+// allows says whether the list admits a model: an entry equal to it, or an
+// entry ending in * whose prefix it starts with.
+func (s Settings) allows(model string) bool {
+	for _, entry := range s.Models {
+		prefix, wildcard := strings.CutSuffix(entry, "*")
+		if model == entry || (wildcard && strings.HasPrefix(model, prefix)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ConfigState says what became of costroid.yml.

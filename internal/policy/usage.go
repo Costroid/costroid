@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
 	"slices"
 
@@ -17,9 +18,18 @@ import (
 const (
 	maxRowBytes     = 1 << 20
 	maxAmountLength = 64
+	// maxModelLength is the longest model id a comment prints.
+	maxModelLength = 128
+	// maxNamedModels bounds the models a verdict names, so a rows file with
+	// many models cannot grow the check run past what the host stores.
+	maxNamedModels = 10
 )
 
 var currencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
+
+// modelPattern is a model id a comment may print as a code span. A row whose
+// costroid/model tag is outside it has a model the check cannot read.
+var modelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/+-]*$`)
 
 // Usage is one run's rows, reduced to what the pack reads.
 type Usage struct {
@@ -39,6 +49,12 @@ type CurrencyUsage struct {
 	// request and a head commit, so a token-verified join would grade them
 	// exact.
 	JoinableRows int
+	// Models counts the rows that name each model in their costroid/model
+	// tag.
+	Models map[string]int
+	// UnreadableModels counts the rows whose costroid/model tag is absent,
+	// not a string, or not a model id.
+	UnreadableModels int
 }
 
 func (u Usage) usd() (decimal.Decimal, bool) {
@@ -56,6 +72,24 @@ func (u Usage) joinable() int {
 		count += entry.JoinableRows
 	}
 	return count
+}
+
+// modelRows counts the rows whose model the allowlist refuses and the rows
+// whose model cannot be read. outside names the refused models, sorted, at
+// most maxNamedModels of them.
+func (u Usage) modelRows(settings Settings) (refused, unreadable int, outside []string) {
+	names := map[string]bool{}
+	for _, entry := range u.Currencies {
+		unreadable += entry.UnreadableModels
+		for model, rows := range entry.Models {
+			if !settings.allows(model) {
+				refused += rows
+				names[model] = true
+			}
+		}
+	}
+	outside = slices.Sorted(maps.Keys(names))
+	return refused, unreadable, outside[:min(len(outside), maxNamedModels)]
 }
 
 type usageRow struct {
@@ -140,8 +174,13 @@ func add(totals map[string]*CurrencyUsage, line []byte) error {
 	}
 	entry, found := totals[row.BillingCurrency]
 	if !found {
-		entry = &CurrencyUsage{Currency: row.BillingCurrency}
+		entry = &CurrencyUsage{Currency: row.BillingCurrency, Models: map[string]int{}}
 		totals[row.BillingCurrency] = entry
+	}
+	if model := row.tag(focus.TagModel); len(model) <= maxModelLength && modelPattern.MatchString(model) {
+		entry.Models[model]++
+	} else {
+		entry.UnreadableModels++
 	}
 	entry.ListCost = entry.ListCost.Add(cost)
 	entry.Rows++

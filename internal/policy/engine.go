@@ -148,17 +148,26 @@ func packInput(request Request, settings Settings, warnOnly bool) map[string]any
 		})
 	}
 	limits := map[string]any{}
-	if settings.RunBudget != nil {
-		limits["run_budget_usd"] = settings.RunBudget.String()
+	for key, amount := range settings.Amounts {
+		limits[key] = amount.String()
 	}
-	if settings.MaxRunCost != nil {
-		limits["max_run_cost_usd"] = settings.MaxRunCost.String()
-	}
-	return map[string]any{
+	input := map[string]any{
 		"trust":     string(request.Trust),
 		"rows":      request.Usage.Rows,
 		"usage":     usage,
 		"settings":  limits,
 		"warn_only": warnOnly,
 	}
+	if len(settings.Models) > 0 {
+		limits[keyModels] = settings.Models
+		refused, unreadable, _ := request.Usage.modelRows(settings)
+		input["model_rows"] = map[string]any{"outside": refused, "unreadable": unreadable}
+	}
+	if baseline := baselineInput(request.Baseline, settings); baseline != nil {
+		input["baseline"] = baseline
+	}
+	if lifetime := lifetimeInput(request.Lifetime, request.Usage); lifetime != nil {
+		input["lifetime"] = lifetime
+	}
+	return input
 }

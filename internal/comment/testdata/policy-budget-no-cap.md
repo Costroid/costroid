@@ -93,7 +93,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.1.0`.
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",
-    "pack_sha256": "749c060beeef1e1d37f7412dcaa364b648738880dc3a72b6953cfc251817c1a9",
+    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
     "config_sha256": "d3cbc6bf0befd44c89f0089e36ad6998cc03013cd13de8e31bf49846be83d364",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",

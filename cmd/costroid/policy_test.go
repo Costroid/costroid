@@ -101,8 +101,8 @@ func TestPolicyRefusesWhatItCannotRead(t *testing.T) {
 			t.Errorf("%s: exit %d", name, code)
 		}
 	}
-	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", writeBaseConfig(t, "policy:\n  run_budget_usd: 5\n"))
-	if code != 0 || !strings.Contains(stdout, "is not valid") || !strings.Contains(stderr, "policy.run_budget_usd must be a quoted decimal") {
+	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", writeBaseConfig(t, "policy:\n  run_budget_usd: 5.0\n"))
+	if code != 0 || !strings.Contains(stdout, "is not valid") || !strings.Contains(stderr, "policy.run_budget_usd must be a whole number or a quoted decimal") {
 		t.Errorf("exit %d:\n%s%s", code, stdout, stderr)
 	}
 }

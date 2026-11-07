@@ -837,14 +837,23 @@ func blockVerdict(verdict *policy.Verdict, shown bool) *policy.Verdict {
 }
 
 var ruleLabels = map[string]string{
-	policy.RuleRunBudget:        "Run budget",
-	policy.RuleRunCostThreshold: "Run cost threshold",
-	policy.RuleAttribution:      "Attribution",
+	policy.RuleRunBudget:          "Run budget",
+	policy.RuleRunCostThreshold:   "Run cost threshold",
+	policy.RuleRunIncrease:        "Increase over baseline",
+	policy.RuleRunIncreasePercent: "Percent increase over baseline",
+	policy.RulePullRequestBudget:  "Pull request budget",
+	policy.RuleMonthlyBudget:      "Monthly budget",
+	policy.RuleModelAllowlist:     "Model allowlist",
+	policy.RuleAttribution:        "Attribution",
 }
 
 var limitNouns = map[string]string{
-	policy.RuleRunBudget:        "budget",
-	policy.RuleRunCostThreshold: "threshold",
+	policy.RuleRunBudget:          "budget",
+	policy.RuleRunCostThreshold:   "threshold",
+	policy.RuleRunIncrease:        "limit",
+	policy.RuleRunIncreasePercent: "limit",
+	policy.RulePullRequestBudget:  "budget",
+	policy.RuleMonthlyBudget:      "budget",
 }
 
 // verdictLine is built from the verdict's closed fields and its amounts, so
@@ -885,6 +894,18 @@ func VerdictSentences(verdict policy.Verdict, shown bool) []string {
 
 func resultSentence(result policy.Result, joinable int, shown bool) string {
 	label, noun := ruleLabels[result.Rule], limitNouns[result.Rule]
+	switch {
+	case result.Rule == policy.RuleModelAllowlist:
+		return label + ": " + allowlistSentence(result)
+	case result.Rule == policy.RuleRunIncrease || result.Rule == policy.RuleRunIncreasePercent:
+		if sentence := increaseSentence(result, shown); sentence != "" {
+			return label + ": " + sentence
+		}
+	case result.Rule == policy.RulePullRequestBudget:
+		if sentence := pullRequestSentence(result, shown); sentence != "" {
+			return label + ": " + sentence
+		}
+	}
 	amounts := shown && result.CostUSD != "" && result.LimitUSD != ""
 	switch result.Reason {
 	case policy.ReasonOverLimit:
@@ -905,12 +926,93 @@ func resultSentence(result policy.Result, joinable int, shown bool) string {
 		return label + ": this check read no rows, so it cannot pass."
 	case policy.ReasonOtherCurrency:
 		return label + ": rows in another currency are never held to a USD " + noun + ", so it cannot pass."
+	case policy.ReasonNoLedger:
+		return label + ": the month to date comes only from a ledger, and this check has none, so the rule did not run."
 	}
 	rows := "rows name"
 	if joinable == 1 {
 		rows = "row names"
 	}
 	return fmt.Sprintf("%s: %d %s a credential, a pull request and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.", label, joinable, rows)
+}
+
+// allowlistSentence names the models off the list as code spans, each through
+// the allowlist every pull request string passes.
+func allowlistSentence(result policy.Result) string {
+	switch result.Reason {
+	case policy.ReasonOutsideAllowlist:
+		names := make([]string, 0, len(result.Models))
+		for _, model := range result.Models {
+			names = append(names, Clean(model).Code())
+		}
+		switch len(names) {
+		case 0:
+			return "the run used a model that is not on the list."
+		case 1:
+			return "the run used " + names[0] + ", which is not on the list."
+		}
+		return "the run used " + strings.Join(names, ", ") + ", which are not on the list."
+	case policy.ReasonOnAllowlist:
+		return "every row names a model on the list."
+	case policy.ReasonUnreadableModel:
+		return "a row names no model this check can read, so the rule cannot pass."
+	case policy.ReasonUnverifiedRows:
+		return "unverified rows cannot show that every model was on the list."
+	case policy.ReasonUnattributedRows:
+		return "unattributed rows cannot show that every model was on the list."
+	}
+	return "this check read no rows, so it cannot pass."
+}
+
+// increaseSentence states a run against the median of earlier runs, or is
+// empty for a reason every rule states alike.
+func increaseSentence(result policy.Result, shown bool) string {
+	allowed := "the allowed increase"
+	if result.LimitPercent != "" {
+		allowed = result.LimitPercent + "%"
+	}
+	amounts := shown && result.CostUSD != "" && result.BaselineUSD != ""
+	if amounts && result.LimitUSD != "" {
+		allowed = "USD " + result.LimitUSD
+	}
+	switch result.Reason {
+	case policy.ReasonOverBaseline:
+		if amounts {
+			return fmt.Sprintf("USD %s is more than %s over the USD %s median of earlier runs.", result.CostUSD, allowed, result.BaselineUSD)
+		}
+		return fmt.Sprintf("the run is more than %s over the median of earlier runs.", allowed)
+	case policy.ReasonWithinLimit:
+		if amounts {
+			return fmt.Sprintf("USD %s is at most %s over the USD %s median of earlier runs.", result.CostUSD, allowed, result.BaselineUSD)
+		}
+		return fmt.Sprintf("the run is at most %s over the median of earlier runs.", allowed)
+	case policy.ReasonNoBaseline:
+		return fmt.Sprintf("no baseline of %d or more earlier runs reached this check, so the rule did not run.", policy.MinBaselineRuns)
+	}
+	return ""
+}
+
+// pullRequestSentence states the pull request's total against its budget, or
+// is empty for a reason every rule states alike.
+func pullRequestSentence(result policy.Result, shown bool) string {
+	amounts := shown && result.CostUSD != "" && result.LimitUSD != ""
+	switch result.Reason {
+	case policy.ReasonOverLimit:
+		if amounts {
+			return fmt.Sprintf("USD %s over this pull request's runs is over the USD %s budget.", result.CostUSD, result.LimitUSD)
+		}
+		return "this pull request's runs are over the budget."
+	case policy.ReasonWithinLimit:
+		if amounts {
+			return fmt.Sprintf("USD %s over this pull request's runs is within the USD %s budget.", result.CostUSD, result.LimitUSD)
+		}
+		return "this pull request's runs are within the budget."
+	case policy.ReasonNoLifetime:
+		return "this check read no total for the pull request's earlier runs, so the rule did not run."
+	case policy.ReasonRepeatPossible:
+		return "the pull request's total may count a report twice, so it cannot show the budget broken or kept."
+	}
+	return ""
 }
 
 // enforceNow is the one line that ends the warn-only period.
