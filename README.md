@@ -29,7 +29,7 @@ gh pr create --fill
 
 Bring your own key and your own agent. There is no account, and Costroid runs no service that your data goes to: the key stays in your repository's secrets, the rows stay in the job, and the ledger, if you run one, is yours.
 
-Besides the agent's provider, the GitHub recipes that run an agent call one third-party service. They run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) on the agent's job, which records the job's outbound calls and sends telemetry to its vendor. [`docs/recipes.md`](docs/recipes.md#egress-in-the-agents-job) says what it costs and how to drop it.
+Besides the agent's provider, the GitHub recipes that run an agent call one third-party service. They run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) on the agent's job in block mode, with its telemetry turned off, so the job reaches only the model provider, GitHub and the hosts the install needs. [`docs/recipes.md`](docs/recipes.md#egress-in-the-agents-job) lists each host and why it is there.
 
 ## Why it exists
 

@@ -1162,7 +1162,18 @@ func TestGitLabPrintedCommandsRun(t *testing.T) {
 }
 
 func TestInitPrintsTheNoteAfterTheSteps(t *testing.T) {
-	code, stdout, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "github", "--agent", "claude")
+	// The shipped recipe draws no note, so this one runs harden-runner in audit
+	// mode, which draws one.
+	shipped, err := fs.ReadFile(costroid.Recipes, "recipes/github-claude-code.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := regexp.MustCompile(`(?s)egress-policy: block\n.*?(\n      - uses: actions/checkout)`).ReplaceAll(shipped, []byte("egress-policy: audit$1"))
+	if bytes.Equal(audit, shipped) {
+		t.Fatal("the shipped recipe has no block-mode harden-runner step to turn into audit mode")
+	}
+	recipes := fstest.MapFS{"recipes/github-claude-code.yml": {Data: audit}}
+	code, stdout, stderr := runInit(t, t.TempDir(), releaseBuild, recipes, "github", "--agent", "claude")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
