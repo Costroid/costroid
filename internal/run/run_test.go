@@ -610,15 +610,21 @@ func TestEphemeralRunRecordsNoneAndIsNotStopped(t *testing.T) {
 	assertUnwatched(t, got, "--ephemeral writes no rollout file")
 }
 
-func TestUnrecordedCodexVersionRecordsNoneAndNamesTheVersion(t *testing.T) {
+func TestUnrecordedCodexVersionIsWatchedAndNamed(t *testing.T) {
 	t.Setenv(fakeVersion, "9.9.9")
-	got, log := codexRun(t, "replay", "0.000001")
-	assertUnwatched(t, got, `no recorded fixture covers Codex "9.9.9"`)
-	if progress := logged(t, log); progress[len(progress)-1] != "turn.completed" {
-		t.Errorf("progress %v", progress)
+	got, _ := codexRun(t, "replay", "5")
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.result.Enforcement.Grade != adapter.GradeWrapperWatchdog || got.result.Stopped {
+		t.Errorf("%+v", got.result)
 	}
 	if got.result.Report.AgentVersion != "9.9.9" {
 		t.Errorf("version %s", got.result.Report.AgentVersion)
+	}
+	note := "Codex 9.9.9 is not a recorded version; the rollout file passed every check"
+	if !slices.Contains(got.result.Report.Warnings, note) {
+		t.Errorf("warnings %v", got.result.Report.Warnings)
 	}
 }
 
