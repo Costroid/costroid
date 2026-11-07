@@ -1,0 +1,12 @@
+cost=0.0283136
+currency=USD
+cost_basis=measured
+tokens_input_uncached=5632
+tokens_cache_read=11264
+tokens_cache_write=0
+tokens_output=64
+enforcement_grade=wrapper-watchdog
+catalog_version=0.1.0
+check_run_id=
+conclusion=neutral
+result={"schema":"costroid.result/0.6","conclusion":"neutral","state":"reported","agent_error":null,"agent_skipped":null,"head_sha":"9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d","ci_run":null,"rows_sha256":null,"rows_file_sha256":null,"amounts":"shown","rows":4,"run_identity":"unverified","figures":[{"currency":"USD","list_cost":"0.0283136","cost_basis":"measured","attribution_grade":"unattributed","enforcement_grade":"wrapper-watchdog","rows":4,"fallback_rows":0,"tokens":{"cache_read":"11264","cached_input_reported":"11264","input_uncached":"5632","output":"64"}}],"figures_omitted":0,"cap":{"currency":"USD","amount":"0.001","enforcement_grade":"wrapper-watchdog","cost":"0.0283136","cost_basis":"measured","remainder":"0","overshoot":"0.0273136","overshoot_tokens":"16960"},"data":{"agents":["codex"],"models":["gpt-5.6-sol"],"models_omitted":0,"catalog_versions":["0.1.0"],"fallback_models":[],"fallback_models_omitted":0,"fallback_price_ids":[],"fallback_price_ids_omitted":0},"lifetime":null}
