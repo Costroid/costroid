@@ -9,7 +9,7 @@ What each agent's stream carries, as recorded on November 1, 2026. The fixtures 
 | Claude Code | `gateway-precheck` | Through a LiteLLM gateway on a key made for the run: the gateway checks the key's budget before each request. The requests in flight can pass it by the bound each row states. [`gateway.md`](gateway.md) has the design. |
 | Claude Code | `agent-flag`       | Costroid passes `--max-budget-usd`. Claude Code checks its own estimate between requests, so the request that crosses the cap still runs and is still paid. |
 | Codex       | `wrapper-watchdog` | Costroid reads Codex's rollout file during the turn, prices each request as it settles and stops the process at the cap. Requests in flight can pass it.    |
-| Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a Codex version with no recorded fixture, or a file that contradicts the stream. Nothing stops the run.  |
+| Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a file whose shape the reader does not know, or a file that contradicts the stream. Nothing stops the run.  |
 
 A recorded run with a 0.001 USD cap stopped mid-turn at 0.0283136 USD, 65 milliseconds after its first request settled. The tool the agent had started kept running, because Codex gives tools their own process group. A `none` run says why on every row. The recorded runs behind this table are below.
 
@@ -87,7 +87,7 @@ Under `costroid run --gateway`, `SubAccountId` is the id of the key made for the
 
 A Claude Code `session.id` joins a row and never earns `exact`. Anthropic's usage `session_id` is a Managed Agents id, null outside a managed session ([usage analytics](https://platform.claude.com/docs/en/api/beta/organization/analytics/usage.md), retrieved 2026-11-01), so it cannot filter Anthropic's report. `exact` rests on the credential in `SubAccountId`.
 
-`apiKeySource` was `none` on these runs. Costroid reads `none`, an absent value and any unknown value as a subscription. The API-key values in the code are unverified by a recording.
+`apiKeySource` was `none` on these runs. Costroid reads `none`, an absent value and any unknown value as a subscription. A recorded `claude -p` run on an API key, Claude Code 2.1.319, reads `ANTHROPIC_API_KEY`.
 
 ### Nested sessions
 

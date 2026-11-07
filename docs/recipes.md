@@ -31,7 +31,7 @@ Then open a test pull request. The `report` job posts the `costroid` check and t
 
 Copy [`recipes/github-codex.yml`](../recipes/github-codex.yml) to `.github/workflows/costroid.yml`, and set `CODEX_API_KEY` in place of `ANTHROPIC_API_KEY`. Everything else in the table above is the same.
 
-The recipe installs Codex 0.164.0-alpha.11.1, the one version with a recorded fixture. Any other version runs, and its grade reads `none`, because Costroid reads Codex's undocumented rollout file only at recorded versions.
+The recipe installs Codex 0.164.0-alpha.11.1. Codex 0.167.0 is recorded too. Costroid reads Codex's undocumented rollout file by its shape, not by its version: a version without a recording runs, reads per request when its file has the shape the reader knows, and the run names the version.
 
 As with Claude Code, each push runs the agent again under a budget of its own.
 

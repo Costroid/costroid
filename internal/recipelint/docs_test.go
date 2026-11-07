@@ -39,9 +39,7 @@ var (
 
 // pendingPages are pages whose release lines other changes own. Each must
 // still name another release, so the list only shrinks.
-var pendingPages = map[string]string{
-	"docs/reconcile.md": "the pull agent's image tag",
-}
+var pendingPages = map[string]string{}
 
 // pinnedRelease is the one release every recipe pins.
 func pinnedRelease(t *testing.T) string {
