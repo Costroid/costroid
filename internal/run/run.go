@@ -259,6 +259,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if billed, ok := session.(adapter.GatewayBilled); ok && held != nil {
 		billed.BilledThroughGateway()
 	}
+	session = process.sessionWithStatus(agent.Name(), plan, session)
 	builder := process.builder(agent.Name(), plan.Enforcement)
 	builder.held = held
 	result := Result{Agent: agent.Name(), Enforcement: plan.Enforcement}
@@ -291,6 +292,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if held != nil {
 		held.compareSpend(ctx, &result)
 	}
+	endStatus(session, result.Enforcement.Grade)
 	return result, nil
 }
 
