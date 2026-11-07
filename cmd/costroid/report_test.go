@@ -86,6 +86,18 @@ func TestReportPostsOneNeutralCheckAndOneComment(t *testing.T) {
 	}
 }
 
+func TestReportLinksThePullRequestOnThePlatform(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	t.Setenv(platformVariable, "https://costroid.example")
+	code, _, stderr := execute(t, "report", "--rows", realRows, "--installation-id", "58120394")
+	if code != 0 || len(stub.Comments) != 1 {
+		t.Fatalf("exit %d, %d comments: %s", code, len(stub.Comments), stderr)
+	}
+	if body := stub.Comments[0].Body; !strings.Contains(body, "(https://costroid.example/#/pulls?repo=github.com/example/widgets&pr=7)") {
+		t.Errorf("the link does not open the pull request on the platform:\n%s", body)
+	}
+}
+
 func idOf(check scmtest.Check) string {
 	encoded, err := json.Marshal(check.ID)
 	if err != nil {

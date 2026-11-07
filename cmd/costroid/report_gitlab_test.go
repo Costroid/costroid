@@ -191,6 +191,16 @@ func TestGitLabAccountLinkNamesTheNamespaceAndNoHostname(t *testing.T) {
 	}
 }
 
+func TestGitLabReportLinksTheMergeRequestOnThePlatform(t *testing.T) {
+	stub := gitLabEnvironment(t)
+	t.Setenv(platformVariable, "https://costroid.example")
+	execute(t, "report", "--rows", realRows)
+	want := "(https://costroid.example/#/pulls?repo=gitlab.corp.example/platform/widgets&pr=" + strconv.Itoa(scmtest.GitLabRequest) + ")"
+	if len(stub.Notes) != 1 || !strings.Contains(stub.Notes[0].Body, want) {
+		t.Errorf("no %q in %+v", want, stub.Notes)
+	}
+}
+
 func TestGitLabNamesTheHeadCommitAndLinksThePipeline(t *testing.T) {
 	stub := gitLabEnvironment(t)
 	t.Setenv("CI_PIPELINE_URL", "https://gitlab.corp.example/platform/widgets/-/pipelines/901")
