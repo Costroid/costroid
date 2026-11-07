@@ -23,7 +23,7 @@ Any other workflow passes with nothing said. The last line counts the files read
 
 | Severity | Rule                   | What it finds                                                                                                                                                   |
 | -------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| high     | `pull-request-target`  | `pull_request_target` starts the workflow, which hands a stranger's pull request to an agent that holds your secrets, or a job there checks out the pull request's head and runs its code beside them |
+| high     | `pull-request-target`  | `pull_request_target` starts the workflow, which hands a stranger's pull request to an agent that holds your secrets, or a job there checks out the pull request's head and runs its code beside them. GitHub blocks the event by default in public repositories from 2026-12-02, and its runs fail during the brownouts of 2026-11-09 and 2026-11-16, 16:00 to 18:00 UTC ([changelog](https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2), read 2026-11-08) |
 | high     | `comment-trigger`      | A comment, review, issue or discussion event starts the agent's job, the job's `if` tests neither `author_association` nor `github.actor`, and the agent's action does not check who started it (see below) |
 | high     | `agent-open`           | `allowed_non_write_users: "*"` or `allowed_bots: "*"` on `claude-code-action`, which lets anyone, or any bot, start the agent on your key |
 | high     | `agent-id-token`       | The agent's job holds `id-token: write`, so an injected agent can mint a token that claims your repository's identity                                          |
@@ -33,6 +33,8 @@ Any other workflow passes with nothing said. The last line counts the files read
 | medium   | `agent-open`           | `claude-code-action` names users in `allowed_non_write_users` or bots in `allowed_bots`; or `codex-action` sets `allow-users: "*"` or `allow-bots` |
 | note     | `agent-contents-write` | The agent's job can write to your code, or declares no permissions and takes the repository's default token                                                    |
 | note     | `subscription-token`   | The agent signs in with `claude_code_oauth_token` or `CLAUDE_CODE_OAUTH_TOKEN`. Costroid reports such a run's tokens at API list price as list-equivalent, never as billed |
+| note     | `agent-budget`         | A `claude-code-action` step's `claude_args` hold no `--max-budget-usd`, so no cap stops a run, whatever it spends. A line of `claude_args` that starts with `#` is a comment, and a `claude_args` that is one expression is not read |
+| note     | `egress-audit`         | `step-security/harden-runner` in the agent's job blocks nothing with `egress-policy: audit`, lets the agent reach no provider in block mode with no `allowed-endpoints`, or hides hosts behind a line break in `allowed-endpoints`, which it splits on spaces alone |
 | high     | `unreadable`           | The file is not valid YAML, so nothing in it could be judged                                                                                                    |
 
 ## Who may start the agent

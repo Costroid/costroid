@@ -1,5 +1,5 @@
-# Claude reviews a pull request: pinned actions, no id token, and a key the
-# fork's pull request never receives.
+# Claude reviews a pull request: pinned actions, no id token, a cap on each
+# run, and a key the fork's pull request never receives.
 name: review
 
 on:
@@ -22,4 +22,5 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
+          claude_args: --max-budget-usd 5
           prompt: Review this pull request.

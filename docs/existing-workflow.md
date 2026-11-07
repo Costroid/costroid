@@ -1,6 +1,6 @@
 # Report from the workflow you have
 
-A team that already runs `claude-code-action` on its pull requests can add Costroid to that workflow without replacing it. Two blocks do it: a `read` step after your Claude step, and a `report` job that waits for your job. Your step keeps its prompt, its arguments and its review, and no new secret is needed.
+A team that already runs `claude-code-action` on its pull requests can add Costroid to that workflow without replacing it. Two blocks do it: a `read` step after your Claude step, and a `report` job that waits for your job. Your step keeps its prompt, its arguments and its review, and no new secret is needed. A workflow that runs `openai/codex-action` takes the same two blocks, with one change [below](#on-openaicodex-action).
 
 ## The two blocks
 
@@ -35,6 +35,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
+          claude_args: --max-budget-usd 5
           prompt: Review this pull request.
 
       # Block 1: read what the run cost.
@@ -71,7 +72,58 @@ Your job keeps the permissions you gave it. The `read` step runs inside it and a
 
 The `report` job holds `checks: write` and `pull-requests: write`, and runs nothing your pull request wrote. It reads `costroid.yml` from the base branch.
 
-Costroid did not start the run, so no budget held it, and the comment's grade reads `none`. Your job wrote the rows, so the comment says the figures are unverified.
+Your job wrote the rows, so the comment says the figures are unverified.
+
+## Hold each run to a cap
+
+`--max-budget-usd` in `claude_args` makes Claude Code stop a run once its own estimate of the run's cost passes that figure in USD. It checks between requests, so the request that crosses the cap still runs and is still paid. [`docs/adapters.md`](adapters.md#what-the-budget-means) says what each grade holds.
+
+The `read` step cannot see your step's inputs, so it is told the cap. Give Block 1 the cap as `budget-usd`, and your step's `claude_args`, word for word, as `claude-args`. Give Block 2 the same `budget-usd`, so the comment states what is left of the cap or how far the run passed it:
+
+```diff
+       - name: Read what the run cost
+         if: always() && steps.claude.outputs.execution_file != ''
+         uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+         with:
+           stage: read
+           execution-file: ${{ steps.claude.outputs.execution_file }}
++          budget-usd: "5"
++          claude-args: --max-budget-usd 5
+           billing-account: ${{ github.repository_owner }}
+ ...
+       - uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+         with:
+           stage: report
++          budget-usd: "5"
+           agent-result: ${{ needs.review.result }}
+```
+
+The comment's grade then reads `agent-flag` when the run stopped at that cap, or ended under it by Claude Code's own total. It reads `none`, with the reason, when `budget-usd` and the flag differ, when `claude-args` holds no `--max-budget-usd`, or when the run passed the cap without a stop. Without `budget-usd` it reads `none`, because Costroid did not start the run. `costroid init github --existing` writes Block 1 without the two lines, so add them by hand.
+
+`costroid lint` prints a note for a `claude-code-action` step whose `claude_args` hold no `--max-budget-usd`.
+
+## On `openai/codex-action`
+
+`costroid init github --existing` writes the same two blocks into a workflow that runs `openai/codex-action`. Block 1 reads the run from the step's `codex-home` in place of an execution file, so your step needs a `codex-home` made for the job under `runner.temp`. Without one, `init` stops and says so. It gives the step the id `codex` if it has none, and Block 1 reads:
+
+```diff
+       - name: Review with Codex
+         uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
+         with:
+           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+           prompt: Review this pull request.
+           codex-home: ${{ runner.temp }}/codex-home
++        id: codex
++      - name: Read what the run cost
++        if: always() && steps.codex.outcome != 'skipped'
++        uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
++        with:
++          stage: read
++          codex-home: ${{ runner.temp }}/codex-home
++          billing-account: ${{ github.repository_owner }}
+```
+
+Block 2 is the `report` job above. `openai/codex-action` holds no cap Costroid can read, so the comment's grade reads `none`. The action takes only an API key, so the rows read `measured`.
 
 ## Which events report
 
