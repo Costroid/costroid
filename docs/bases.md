@@ -28,7 +28,7 @@ The amount is the tokens times the catalog's list price. A contract discount, a 
 
 A run on a subscription is not billed per token, so no invoice holds these tokens. Costroid prices them at the provider's published API rate, which says what the run would cost on an API key. The comment and the CLI always say "not billed" beside the amount. `costroid reconcile` compares the tokens and states that no API bill exists to compare the amount with.
 
-Claude Code states how a run bills in `apiKeySource`. A value that names a key reads `measured`. Any other value, `none` or no value reads `list_equivalent`, because that is the weaker claim. Codex reads `measured` when `CODEX_API_KEY` is set, and `list_equivalent` otherwise.
+Claude Code states how a run bills in `apiKeySource`. A value that names a key reads `measured`. Any other value, `none` or no value reads `list_equivalent`, because that is the weaker claim. Codex reads `measured` when `CODEX_API_KEY` is set, and `list_equivalent` otherwise. Under a gateway, both read `measured` ([below](#which-key-each-recipe-takes)).
 
 ## Billed
 
@@ -48,7 +48,7 @@ The action's `run` stage refuses to start without `api-key`, so neither recipe r
 
 [`recipes/github-claude-code-action.yml`](../recipes/github-claude-code-action.yml) passes `ANTHROPIC_API_KEY` to `claude-code-action`, and Costroid's `read` stage holds no key. The rows read `measured` when the execution file's `apiKeySource` names a key. A run that you give a subscription's token in place of the key reads `list_equivalent` by the same rule. No run on a subscription's token has been recorded, so that reading is unverified.
 
-[`recipes/github-claude-code-litellm.yml`](../recipes/github-claude-code-litellm.yml) gives the agent no provider key. Your LiteLLM proxy holds that key. The agent's job draws a key for the run. The minting job registers it with the secrets `LITELLM_MASTER_KEY` and `COSTROID_GATEWAY_SEALING_KEY` of the `costroid-gateway` environment, and the closing job deletes it with `LITELLM_MASTER_KEY`. Claude Code receives the run's key as `ANTHROPIC_AUTH_TOKEN`. The rows follow the `apiKeySource` rule above, and no recorded run shows which value Claude Code states for that token, so the basis on this path is unverified. Codex through a gateway receives the run's key as `CODEX_API_KEY`, and its rows read `measured`. [`docs/gateway.md`](gateway.md) has the setup.
+[`recipes/github-claude-code-litellm.yml`](../recipes/github-claude-code-litellm.yml) gives the agent no provider key. Your LiteLLM proxy holds that key. The agent's job draws a key for the run. The minting job registers it with the secrets `LITELLM_MASTER_KEY` and `COSTROID_GATEWAY_SEALING_KEY` of the `costroid-gateway` environment, and the closing job deletes it with `LITELLM_MASTER_KEY`. Claude Code receives the run's key as `ANTHROPIC_AUTH_TOKEN`, and Codex through a gateway receives it as `CODEX_API_KEY`. The rows of both read `measured`: the gateway bills every request per token on its own provider key, so the basis does not follow `apiKeySource` or `CODEX_API_KEY` on this path. [`docs/gateway.md`](gateway.md) has the setup.
 
 [`recipes/gitlab-ci.yml`](../recipes/gitlab-ci.yml) takes `ANTHROPIC_API_KEY` or `CODEX_API_KEY` as a CI/CD variable scoped to the `costroid-agent` environment, and `COSTROID_GITLAB_TOKEN`, scoped to `costroid-report`, for the note. Its Claude Code job runs `claude -p --bare` as well, so it needs the key. The rows read as the GitHub recipe for the same agent.
 

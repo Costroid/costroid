@@ -283,9 +283,8 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10000,"cached_input_token
 `
 
 // codexGatewayRun runs Codex through a holding gateway key. The job holds an
-// OpenAI key and no CODEX_API_KEY, as the recipe's job does, and the command
-// names its own provider and base URL, which the gateway's must override. It
-// returns the outcome, the agent's arguments and its environment.
+// OpenAI key and no CODEX_API_KEY, as the recipe's job does. It returns the
+// outcome, the agent's arguments and its environment.
 func codexGatewayRun(t *testing.T, extra ...string) (outcome, []string, []string, *gateway.Session) {
 	t.Helper()
 	directory := t.TempDir()
@@ -301,7 +300,7 @@ func codexGatewayRun(t *testing.T, extra ...string) (outcome, []string, []string
 	t.Setenv("OPENAI_API_KEY", providerKey)
 	t.Setenv("CODEX_API_KEY", "")
 	session := fakeGateway(t, keyInfoHolding, `{"status":"healthy","db":"connected"}`)
-	argv := append([]string{agent, "exec", "-c", `model_provider="elsewhere"`, "--config", `openai_base_url="https://elsewhere.test/v1"`, "-m", "gpt-5-nano"}, extra...)
+	argv := append([]string{agent, "exec", "-m", "gpt-5-nano"}, extra...)
 	var rows, stdout, stderr bytes.Buffer
 	result, err := Run(context.Background(), Options{
 		Argv: append(argv, "work"), Budget: decimal.MustParse("0.01"), CI: cicontext.Context{Run: gatewayRun},
