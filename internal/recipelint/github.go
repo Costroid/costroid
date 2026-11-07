@@ -9,6 +9,12 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// RuleEgressAudit names harden-runner in audit mode. It is a note and rejects
+// nothing: audit mode records a job's outbound calls and blocks none.
+const RuleEgressAudit = "egress-audit"
+
+const hardenRunner = "step-security/harden-runner@"
+
 var (
 	shaPin      = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+@[0-9a-f]{40}$`)
 	digestPin   = regexp.MustCompile(`^docker://[^@]+@sha256:[0-9a-f]{64}$`)
@@ -140,9 +146,21 @@ func (l *linter) step(step *yaml.Node) {
 	if uses := field(step, "uses"); uses != nil {
 		l.uses(step, uses)
 		l.downloadPath(step)
+		l.egressAudit(step, uses)
 	}
 	if run := field(step, "run"); run != nil && strings.Contains(run.Value, "${{") {
 		l.add(run, RuleExpressionInScript, "an expression in a script is a shell injection: pass it through env")
+	}
+}
+
+// egressAudit notes harden-runner in audit mode, which lets an injected agent
+// send what its job holds to any host the runner reaches.
+func (l *linter) egressAudit(step, uses *yaml.Node) {
+	if !strings.HasPrefix(strings.ToLower(uses.Value), hardenRunner) {
+		return
+	}
+	if policy := field(field(step, "with"), "egress-policy"); policy != nil && policy.Value == "audit" {
+		l.note(policy, RuleEgressAudit, "egress-policy audit records the job's outbound calls and blocks none, so an injected agent can still send what its job holds to any host the runner reaches")
 	}
 }
 

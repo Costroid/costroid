@@ -7,6 +7,12 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// The rules only a GitLab template can break.
+const (
+	RuleReportLabel  = "report-label"
+	RuleCosignCommit = "cosign-commit"
+)
+
 var (
 	imageDigest = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 	fullSHA     = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -39,6 +45,14 @@ var (
 	gitLabProviderKeys = []string{"ANTHROPIC_API_KEY", "CODEX_API_KEY"}
 	// gitLabCodeFree are the strategies that leave no checkout in the job.
 	gitLabCodeFree = map[string]bool{"none": true, "empty": true}
+
+	// gitLabLabel reads the pattern a rule holds the merge request's labels to.
+	gitLabLabel = regexp.MustCompile(`\$CI_MERGE_REQUEST_LABELS\s*[=!]~\s*(/(?:[^/\\]|\\.)*/)`)
+
+	// releaseWorkflow is the identity Costroid's releases are signed under.
+	releaseWorkflow = "Costroid/costroid/.github/workflows/release.yml"
+	// workflowSHA reads the commit a cosign check binds: a variable or a SHA.
+	workflowSHA = regexp.MustCompile(`--certificate-github-workflow-sha[= ]+"?(?:\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?|([0-9a-f]{40}))`)
 )
 
 func isGitLab(root *yaml.Node) bool {
@@ -133,6 +147,7 @@ func firstField(members []*yaml.Node, key string) *yaml.Node {
 func (l *linter) gitlabJob(root *yaml.Node, job entry) {
 	members := chain(root, job.value)
 	body := jobBody(members)
+	l.cosignCommit(job, body, mergeVariables(variableLayers(root, members)...))
 	if reportCommand.MatchString(body) {
 		l.gitlabReport(root, job, members)
 	}
@@ -218,6 +233,64 @@ func (l *linter) gitlabReport(root *yaml.Node, job entry, members []*yaml.Node) 
 		}
 	}
 	l.reportEnvironment(root, job, environmentName(members))
+	l.reportLabel(root, job, members)
+}
+
+// reportLabel holds the report to the label the agent's jobs wait for. A
+// report that runs without it posts on every merge request a note about a run
+// that never started.
+func (l *linter) reportLabel(root *yaml.Node, job entry, members []*yaml.Node) {
+	held := map[string]bool{}
+	for _, match := range gitLabLabel.FindAllStringSubmatch(text(firstField(members, "rules")), -1) {
+		held[match[1]] = true
+	}
+	for _, label := range agentLabels(root) {
+		if !held[label] {
+			l.add(job.key, RuleReportLabel, "the report's rules must test the label the agent's jobs test, %s, or a merge request without it gets a note about a run that never started", label)
+		}
+	}
+}
+
+// agentLabels lists, once each, the label patterns the agent's jobs test.
+func agentLabels(root *yaml.Node) []string {
+	var labels []string
+	seen := map[string]bool{}
+	for _, other := range entries(root) {
+		if gitLabReserved[other.key.Value] || strings.HasPrefix(other.key.Value, ".") {
+			continue
+		}
+		members := chain(root, other.value)
+		if len(agentsNamed(jobBody(members))) == 0 {
+			continue
+		}
+		for _, match := range gitLabLabel.FindAllStringSubmatch(text(firstField(members, "rules")), -1) {
+			if !seen[match[1]] {
+				seen[match[1]] = true
+				labels = append(labels, match[1])
+			}
+		}
+	}
+	return labels
+}
+
+// cosignCommit holds a check of Costroid's release signature to one commit. The
+// identity names the tag, and a tag can be moved; the commit cannot.
+func (l *linter) cosignCommit(job entry, body string, variables map[string]string) {
+	if !strings.Contains(body, "verify-blob") || !strings.Contains(body, releaseWorkflow) {
+		return
+	}
+	match := workflowSHA.FindStringSubmatch(body)
+	if match == nil {
+		l.add(job.key, RuleCosignCommit, "cosign checks the release's tag and not its commit: pass --certificate-github-workflow-sha")
+		return
+	}
+	commit := match[2]
+	if match[1] != "" {
+		commit = variables[match[1]]
+	}
+	if !fullSHA.MatchString(commit) {
+		l.add(job.key, RuleCosignCommit, "--certificate-github-workflow-sha reads %q, not a full commit SHA", commit)
+	}
 }
 
 // reportEnvironment holds the note token to the report. The token is scoped to

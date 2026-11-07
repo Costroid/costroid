@@ -4,7 +4,7 @@ These recipes run a coding agent on a pull request under a budget and record wha
 
 The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret and names no version and no checksum. [`docs/verify.md`](verify.md) says what it checks.
 
-Each GitHub recipe pins the action to the commit of `v1.0.0-alpha.4`. The action installs the release at its own commit and checks it by its signature, so a repository sets one secret, the provider key. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release.
+Each GitHub recipe pins the action to the commit of `v1.0.0-alpha.9`, and the GitLab template installs the same release. The action installs the release at its own commit and checks it by its signature, so a repository sets one secret, the provider key. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release.
 
 ## Claude Code
 
@@ -21,9 +21,11 @@ Create a label named `costroid-agent`. A maintainer applies it to let a first co
 
 The recipe installs Claude Code 2.1.316, the version Costroid's fixtures record. Raise `npm install` and `minimum-agent-version` together. Costroid passes `--max-budget-usd`, so the grade is `agent-flag`: Claude Code checks its own estimate between requests, and the request that crosses the cap still runs.
 
+Each push to the pull request runs the agent again, and each run has a budget of its own. At `budget-usd: "5"`, a pull request with ten pushes can spend USD 50 at list, and more, because the request that crosses a cap still runs.
+
 The agent runs with `--bare`, `--restricted` and `--strict-mcp-config`. These skip hooks and `CLAUDE.md`, ignore the repository's settings files and remove the tools that run commands. A recording with these three flags does not exist yet.
 
-Then open a test pull request. The `report` job posts the `costroid` check and the comment. [`docs/troubleshooting.md`](troubleshooting.md) explains each line of the job log, and [`docs/required-check.md`](required-check.md) makes the check required.
+Then open a test pull request. The `report` job posts the `costroid` check and the comment. It passes the agent job's result as `agent-result`, so when the workflow skipped the agent, for a first contributor without the label, the comment says the agent did not run. [`docs/troubleshooting.md`](troubleshooting.md) explains each line of the job log, and [`docs/required-check.md`](required-check.md) makes the check required.
 
 ## Codex
 
@@ -31,15 +33,30 @@ Copy [`recipes/github-codex.yml`](../recipes/github-codex.yml) to `.github/workf
 
 The recipe installs Codex 0.164.0-alpha.11.1, the one version with a recorded fixture. Any other version runs, and its grade reads `none`, because Costroid reads Codex's undocumented rollout file only at recorded versions.
 
+As with Claude Code, each push runs the agent again under a budget of its own.
+
 Then open a test pull request.
 
 ## GitLab CI
 
-Copy [`recipes/gitlab-ci.yml`](../recipes/gitlab-ci.yml) into your repository and `include` it as a local file.
+Copy [`recipes/gitlab-ci.yml`](../recipes/gitlab-ci.yml) into your repository, for example as `.gitlab/costroid.yml`, and include it from your `.gitlab-ci.yml`:
 
-The template pins one release in `COSTROID_VERSION`. It installs cosign at a pinned checksum, verifies that Costroid's release workflow signed the release's `SHA256SUMS`, and checks the binary against its line in that file, as [`docs/verify.md`](verify.md) describes. Nothing is set by hand except `COSTROID_CREDENTIAL`, if you reconcile. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
+```yaml
+include:
+  - local: .gitlab/costroid.yml
 
-Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Merge requests from forks never run the agent.
+# Only if your stages list has no stage named test.
+.costroid-agent:
+  stage: build
+```
+
+The agent's jobs run in the stage `test`. If your `.gitlab-ci.yml` lists its own `stages` without `test`, set `stage` on `.costroid-agent` to one of yours, as above. `costroid:ingest` and `costroid:report` run in `.post`, which every pipeline has.
+
+The template pins one release in `COSTROID_VERSION` and the commit its tag names in `COSTROID_COMMIT`. It installs cosign at a pinned checksum, verifies that Costroid's release workflow signed the release's `SHA256SUMS` at that tag and that commit, and checks the binary against its line in that file, as [`docs/verify.md`](verify.md) describes. A tag can be moved and a commit cannot, so change the two together. Nothing is set by hand except `COSTROID_CREDENTIAL`, if you reconcile. Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` too, scoped to the environment `costroid-agent`, so the key reaches the agent's job alone. `COSTROID_AGENT` picks the agent. It reads `claude` unless you set `codex`.
+
+Every merge request needs the label `costroid-agent`, because the template has no way to read whether an author is new. Without it, no Costroid job runs and no note posts. Merge requests from forks never run the agent.
+
+Each push to a labelled merge request runs the agent again, and each run has a budget of its own, `COSTROID_BUDGET_USD`.
 
 The template records the run and keeps `costroid-rows.jsonl` and the run's result object, `costroid-rows.run.json`, as artifacts. The `costroid:report` job then posts one sticky note on the merge request, the same comment a GitHub pull request gets.
 
@@ -82,11 +99,11 @@ Inside your own project, `costroid:report` holds the token, the rows artifact an
 
 ## claude-code-action
 
-`claude-code-action` runs Claude Code itself, so `costroid run` cannot wrap it. [`recipes/github-claude-code-action.yml`](../recipes/github-claude-code-action.yml) keeps your action step and adds Costroid around it: the action's `execution_file` output goes to the action's `read` stage in the same job, and a separate job posts the comment. Put your own `prompt` and `claude_args` in the review step.
+`claude-code-action` runs Claude Code itself, so `costroid run` cannot wrap it. [`recipes/github-claude-code-action.yml`](../recipes/github-claude-code-action.yml) runs its own `claude-code-action` step and adds Costroid around it: the action's `execution_file` output goes to the action's `read` stage in the same job, and a separate job posts the comment. Put your own `prompt` and `claude_args` in that review step.
 
 The recipe installs Claude Code 2.1.316, the version with a recorded fixture, and passes its path to the action, so the version is fixed. The file holds prompts and tool output. Costroid reads usage from it and nothing else, and it never leaves the job.
 
-Costroid did not start this run, so no budget held it, and the grade reads `none`. The rows come at one set per model for the whole run, so the log reads, for example, `one run, 2 models`. A real file from version 2.1.316, read on 2026-11-04, matched the run's own total to the last digit, and is kept as a fixture with its content removed.
+Costroid did not start this run, so no budget held it, and the grade reads `none`. Each push to the pull request runs the agent again, and `--max-turns` limits each run's turns, not its cost. The rows come at one set per model for the whole run, so the log reads, for example, `one run, 2 models`. A real file from version 2.1.316, read on 2026-11-04, matched the run's own total to the last digit, and is kept as a fixture with its content removed.
 
 It needs the same one secret, `ANTHROPIC_API_KEY`. Then open a test pull request.
 
@@ -109,6 +126,8 @@ Read this before you keep the step (vendor's README and `action.yml` at v2.22.3,
 - Telemetry goes to the vendor, and it can be turned off only in block mode.
 - The free tier covers public repositories on GitHub-hosted runners. Private repositories need a paid plan.
 - On a self-hosted runner without a subscription, the step does nothing.
+
+`costroid lint-recipes` prints a note for each step in audit mode. A note rejects nothing.
 
 To drop the step, delete it. Costroid does not depend on it. GitLab's recipe has no equal, so limit a GitLab runner's egress at its network.
 

@@ -1,5 +1,7 @@
 # Runs Claude Code on a pull request under a budget, then reports what it cost.
 # Copy to .github/workflows/costroid.yml. docs/recipes.md lists what it needs.
+# Each push to the pull request runs the agent again, with a budget of USD 5
+# for each run.
 name: costroid
 
 on:
@@ -96,3 +98,5 @@ jobs:
         with:
           stage: report
           budget-usd: "5"
+          # A skipped agent job then reads as skipped, not as a run with no rows.
+          agent-result: ${{ needs.agent.result }}

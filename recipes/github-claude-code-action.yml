@@ -1,6 +1,8 @@
 # Reads what a claude-code-action run cost, then reports it on the pull request.
 # For a team already on claude-code-action. Copy to .github/workflows/costroid.yml,
 # then put your own prompt and claude_args in the review step. docs/recipes.md lists what it needs.
+# Each push to the pull request runs the agent again. No budget holds a run:
+# --max-turns 10 limits its turns, not its cost.
 name: costroid
 
 on:

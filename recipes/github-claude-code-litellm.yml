@@ -1,6 +1,8 @@
 # Runs Claude Code on a pull request through your LiteLLM gateway, on a key made
 # for this run alone, then reports what it cost. Copy to .github/workflows/costroid.yml.
 # docs/gateway.md lists what it needs and how the key reaches the agent.
+# Each push to the pull request runs the agent again, on a new key with a
+# budget of USD 5.
 name: costroid
 
 on:
@@ -187,3 +189,5 @@ jobs:
         with:
           stage: report
           budget-usd: "5"
+          # A skipped agent job then reads as skipped, not as a run with no rows.
+          agent-result: ${{ needs.agent.result }}
