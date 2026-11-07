@@ -8,6 +8,7 @@
 package claudecode
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,14 @@ const (
 	SourceSessionFile = "agent_session_file"
 
 	enforcementNote = "agent-flag: client-side estimate, can pass the cap"
+
+	// oneHourCacheVariable makes Claude Code write its cache for one hour on
+	// an API key, where it writes for five minutes without it.
+	oneHourCacheVariable = "ENABLE_PROMPT_CACHING_1H"
+
+	// requestBound is the most tokens one request's input may hold. No model
+	// takes near it, and below it no sum of counts can wrap.
+	requestBound = 1_000_000_000_000
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
@@ -109,9 +118,14 @@ func (a Agent) NewSession(adapter.Plan) adapter.Session {
 	return a.newSession()
 }
 
-// newSession reads the CI system once: a runner inside one hosts one job.
+// newSession reads the CI system once: a runner inside one hosts one job. It
+// reads ENABLE_PROMPT_CACHING_1H from the environment the agent inherits.
 func (a Agent) newSession() *Session {
-	return &Session{configDir: a.configDir(), oneJob: cicontext.Detect(os.Getenv) != cicontext.NoSystem}
+	return &Session{
+		configDir:    a.configDir(),
+		oneJob:       cicontext.Detect(os.Getenv) != cicontext.NoSystem,
+		oneHourCache: os.Getenv(oneHourCacheVariable) != "",
+	}
 }
 
 func (a Agent) configDir() string {
@@ -128,25 +142,6 @@ func (a Agent) configDir() string {
 	return filepath.Join(home, ".claude")
 }
 
-type cacheCreation struct {
-	FiveMinute int64 `json:"ephemeral_5m_input_tokens"`
-	OneHour    int64 `json:"ephemeral_1h_input_tokens"`
-}
-
-type usage struct {
-	InputTokens   int64          `json:"input_tokens"`
-	OutputTokens  int64          `json:"output_tokens"`
-	CacheRead     int64          `json:"cache_read_input_tokens"`
-	CacheCreated  int64          `json:"cache_creation_input_tokens"`
-	CacheCreation *cacheCreation `json:"cache_creation"`
-	Details       struct {
-		ThinkingTokens int64 `json:"thinking_tokens"`
-	} `json:"output_tokens_details"`
-	ServiceTier  string `json:"service_tier"`
-	InferenceGeo string `json:"inference_geo"`
-	Speed        string `json:"speed"`
-}
-
 // modelUsage is the result object's total for one model, subagents included.
 type modelUsage struct {
 	InputTokens  int64 `json:"inputTokens"`
@@ -156,6 +151,8 @@ type modelUsage struct {
 	FiveMinute   int64 `json:"cacheCreationEphemeral5mInputTokens"`
 	OneHour      int64 `json:"cacheCreationEphemeral1hInputTokens"`
 	Thinking     int64 `json:"thinkingTokens"`
+	// context is the model's whole input: uncached, read and written.
+	context int64
 }
 
 // Session reads one Claude Code run.
@@ -187,6 +184,8 @@ type Session struct {
 	ranFrom, ranTo time.Time
 	// oneJob is true inside a CI system, where the runner hosts this job alone.
 	oneJob bool
+	// oneHourCache is true when ENABLE_PROMPT_CACHING_1H is set.
+	oneHourCache bool
 }
 
 // limitSubtypes are the result subtypes of a run that stopped at a limit its
@@ -349,6 +348,11 @@ func readModelUsage(raw json.RawMessage) (map[string]modelUsage, error) {
 			}
 			*field.field(&totalsOfModel) = value
 		}
+		context, err := contextInput(totalsOfModel.InputTokens, totalsOfModel.CacheRead, totalsOfModel.CacheCreated)
+		if err != nil {
+			return nil, fmt.Errorf("modelUsage %s: %w", model, err)
+		}
+		totalsOfModel.context = context
 		totals[model] = totalsOfModel
 	}
 	return totals, nil
@@ -470,6 +474,20 @@ func wholeCount(raw json.RawMessage) (int64, error) {
 	return value, nil
 }
 
+// errPastBound marks an input no request can hold. A run that states one is
+// refused, because its context tier and its figure cannot be trusted.
+var errPastBound = fmt.Errorf("the input is past the bound of %d tokens one request can hold", int64(requestBound))
+
+// contextInput is a request's whole input. A count or a sum past
+// requestBound is refused; each count is first held to the bound, so the sum
+// cannot wrap.
+func contextInput(input, read, written int64) (int64, error) {
+	if input > requestBound || read > requestBound || written > requestBound || input+read+written > requestBound {
+		return 0, fmt.Errorf("%w: input %d, cache reads %d, cache writes %d", errPastBound, input, read, written)
+	}
+	return input + read + written, nil
+}
+
 // shown is a value as an error states it, cut short so one line holds it.
 func shown(raw json.RawMessage) string {
 	const most = 32
@@ -521,7 +539,7 @@ func (s *Session) agentError() adapter.AgentError {
 
 // checkResult refuses a result no row can be built from: one that could not
 // be read, one that states usage with no per-model totals, and one whose
-// totals come to a negative class.
+// cache lifetimes sum past its written total.
 func (s *Session) checkResult() error {
 	if s.unreadResult != nil {
 		return fmt.Errorf("claude-code: the result object could not be read: %w", s.unreadResult)
@@ -534,24 +552,31 @@ func (s *Session) checkResult() error {
 		return fmt.Errorf("claude-code: the result states usage but no per-model totals; Claude Code %s is not read", version)
 	}
 	for _, model := range slices.Sorted(maps.Keys(s.totals)) {
-		tokens, _ := s.totals[model].tokens(s.keyBilled())
-		if err := tokens.Check(); err != nil {
+		if _, _, err := s.totals[model].tokens(s.unsplitWrite()); err != nil {
 			return fmt.Errorf("claude-code: the result's totals for %s do not add up: %w", model, err)
 		}
 	}
 	return nil
 }
 
+// finishRun reads the session files beside the result. A count in them past
+// the bound refuses the run. Any other count they cannot give discards them:
+// the result's totals stand, and with no result the run is refused.
 func (s *Session) finishRun() (adapter.Report, transcript, error) {
 	report := adapter.Report{SessionID: s.sessionID, AgentVersion: s.version, CostBasis: s.costBasis(), AgentError: s.agentError()}
 	if err := s.checkResult(); err != nil {
 		return report, transcript{}, err
 	}
 	run, err := s.readSessionFiles()
-	requests := run.requests
-	if err != nil {
-		report.Warnings = append(report.Warnings, err.Error())
+	switch {
+	case errors.Is(err, errPastBound):
+		return report, transcript{}, fmt.Errorf("claude-code: %w", err)
+	case err != nil && !s.sawResult:
+		return report, transcript{}, fmt.Errorf("claude-code: no result object, and the session files could not be read: %w", err)
+	case err != nil:
+		report.Warnings = append(report.Warnings, fmt.Sprintf("claude-code: the session files were not used, and the result's totals stand: %v", err))
 	}
+	requests := run.requests
 	side := s.sideModels(requests)
 	switch {
 	case len(requests) > 0 && !s.sawResult:
@@ -560,27 +585,68 @@ func (s *Session) finishRun() (adapter.Report, transcript, error) {
 		report.Warnings = append(report.Warnings, "the session files disagree with the result object; the result's per-model totals were used")
 		requests = nil
 	case len(requests) > 0:
-		requests = append(requests, s.sideRequests(side)...)
+		more, err := s.sideRequests(side)
+		if err != nil {
+			return report, run, err
+		}
+		requests = append(requests, more...)
+	}
+	if !s.sawResult {
+		reportInFlight(&report, run.inFlight)
 	}
 	if len(requests) > 0 {
+		report.Warnings = append(report.Warnings, run.warnings()...)
 		report.CostSource, report.Requests = SourceSessionFile, requests
 		return report, run, nil
 	}
 	if len(s.totals) == 0 {
-		if s.sawResult {
+		switch {
+		case s.sawResult || run.inFlight > 0:
 			return report, run, nil
+		case run.path == "":
+			return report, run, fmt.Errorf("claude-code: the stream held no result object and no session file was found")
+		default:
+			return report, run, fmt.Errorf("claude-code: the stream held no result object, and the session files hold no request")
 		}
-		return report, run, fmt.Errorf("claude-code: the stream held no result object and no session file was found")
 	}
 	if err == nil && len(report.Warnings) == 0 {
 		report.Warnings = append(report.Warnings, "no session file: one set of rows per model, for the whole run")
 	}
-	report.CostSource, report.Requests = SourceStream, s.perModel(nil)
+	perModel, err := s.perModel(nil)
+	if err != nil {
+		return report, run, err
+	}
+	report.CostSource, report.Requests = SourceStream, perModel
 	return report, run, nil
+}
+
+// reportInFlight says what a run with no result lost. A session file that
+// ends inside a line was cut while Claude Code wrote it, and that line is the
+// request in flight. No result counts it, so no row holds it.
+func reportInFlight(report *adapter.Report, inFlight int) {
+	if inFlight == 0 {
+		return
+	}
+	report.Unrecorded = inFlight
+	if inFlight == 1 {
+		report.Warnings = append(report.Warnings, "the session file ends inside a line, which is the request in flight: no result counts it, so its tokens reach no row")
+		return
+	}
+	report.Warnings = append(report.Warnings, fmt.Sprintf("%d session files end inside a line, each the request in flight: no result counts them, so their tokens reach no row", inFlight))
 }
 
 func (s *Session) keyBilled() bool {
 	return slices.Contains(keyBilledSources, s.apiKeySource)
+}
+
+// unsplitWrite is the class that takes cache writes whose lifetime the
+// source did not state: five minutes on an API key unless
+// ENABLE_PROMPT_CACHING_1H is set, and one hour on a subscription.
+func (s *Session) unsplitWrite() focus.TokenClass {
+	if s.keyBilled() && !s.oneHourCache {
+		return focus.CacheWrite5m
+	}
+	return focus.CacheWrite1h
 }
 
 func (s *Session) costBasis() focus.CostBasis {
@@ -610,20 +676,22 @@ func (s *Session) sideModels(requests []adapter.Request) map[string]bool {
 // sideRequests are one entry per side model, from the result's totals. The
 // model's whole input bounds each of its requests', so it selects the context
 // tier.
-func (s *Session) sideRequests(side map[string]bool) []adapter.Request {
-	requests := s.perModel(side)
+func (s *Session) sideRequests(side map[string]bool) ([]adapter.Request, error) {
+	requests, err := s.perModel(side)
+	if err != nil {
+		return nil, err
+	}
 	for i := range requests {
-		total := s.totals[requests[i].Model]
-		requests[i].ContextInputTokens = total.InputTokens + total.CacheRead + total.CacheCreated
+		requests[i].ContextInputTokens = s.totals[requests[i].Model].context
 		requests[i].CostSource = SourceStream
 		requests[i].Note = "a request outside the conversation: the result counts it, and no session file or stream message holds it"
 	}
-	return requests
+	return requests, nil
 }
 
 // perModel is one entry per model in the result's totals. A non-nil only
 // keeps the models it names.
-func (s *Session) perModel(only map[string]bool) []adapter.Request {
+func (s *Session) perModel(only map[string]bool) ([]adapter.Request, error) {
 	models := make([]string, 0, len(s.totals))
 	for model := range s.totals {
 		if only == nil || only[model] {
@@ -633,7 +701,10 @@ func (s *Session) perModel(only map[string]bool) []adapter.Request {
 	slices.Sort(models)
 	requests := make([]adapter.Request, 0, len(models))
 	for _, model := range models {
-		tokens, assumed := s.totals[model].tokens(s.keyBilled())
+		tokens, assumed, err := s.totals[model].tokens(s.unsplitWrite())
+		if err != nil {
+			return nil, fmt.Errorf("claude-code: the result's totals for %s do not add up: %w", model, err)
+		}
 		requests = append(requests, adapter.Request{
 			ID:           s.sessionID + ":" + model,
 			Provider:     provider,
@@ -647,10 +718,10 @@ func (s *Session) perModel(only map[string]bool) []adapter.Request {
 			AssumedWrite: assumed,
 		})
 	}
-	return requests
+	return requests, nil
 }
 
-func (m modelUsage) tokens(keyBilled bool) (adapter.Tokens, focus.TokenClass) {
+func (m modelUsage) tokens(unsplit focus.TokenClass) (adapter.Tokens, focus.TokenClass, error) {
 	tokens := adapter.Tokens{
 		InputUncached:       m.InputTokens,
 		CacheRead:           m.CacheRead,
@@ -659,22 +730,27 @@ func (m modelUsage) tokens(keyBilled bool) (adapter.Tokens, focus.TokenClass) {
 		CachedInputReported: m.CacheRead,
 	}
 	var assumed focus.TokenClass
-	tokens.CacheWrite5m, tokens.CacheWrite1h, assumed = splitWrites(m.CacheCreated, m.FiveMinute, m.OneHour, keyBilled)
-	return tokens, assumed
+	var err error
+	tokens.CacheWrite5m, tokens.CacheWrite1h, assumed, err = splitWrites(m.CacheCreated, m.FiveMinute, m.OneHour, unsplit)
+	return tokens, assumed, err
 }
 
 // splitWrites keeps the reported lifetimes. Tokens with no reported lifetime
-// are assigned by the matrix's rule: five minutes on an API key, one hour on a
-// subscription. The class that took them comes back, empty when none did.
-func splitWrites(created, fiveMinute, oneHour int64, keyBilled bool) (int64, int64, focus.TokenClass) {
-	unsplit := created - fiveMinute - oneHour
+// go to the unsplit class, which comes back as the class that took them,
+// empty when none did. Lifetimes that sum past the written total are refused.
+// The counts are never negative, so the comparisons cannot wrap.
+func splitWrites(created, fiveMinute, oneHour int64, unsplit focus.TokenClass) (int64, int64, focus.TokenClass, error) {
+	if fiveMinute > created || oneHour > created-fiveMinute {
+		return 0, 0, "", fmt.Errorf("cache writes of %d tokens for five minutes and %d for one hour pass the written total of %d", fiveMinute, oneHour, created)
+	}
+	rest := created - fiveMinute - oneHour
 	switch {
-	case unsplit == 0:
-		return fiveMinute, oneHour, ""
-	case keyBilled:
-		return fiveMinute + unsplit, oneHour, focus.CacheWrite5m
+	case rest == 0:
+		return fiveMinute, oneHour, "", nil
+	case unsplit == focus.CacheWrite5m:
+		return fiveMinute + rest, oneHour, focus.CacheWrite5m, nil
 	default:
-		return fiveMinute, oneHour + unsplit, focus.CacheWrite1h
+		return fiveMinute, oneHour + rest, focus.CacheWrite1h, nil
 	}
 }
 
@@ -706,20 +782,68 @@ func agrees(requests []adapter.Request, totals map[string]modelUsage, side map[s
 	return true
 }
 
+// sessionEnvelope is a session file line's own fields, each kept raw so that
+// a line of any shape decodes.
+type sessionEnvelope struct {
+	Type        json.RawMessage `json:"type"`
+	SessionID   json.RawMessage `json:"sessionId"`
+	IsSidechain json.RawMessage `json:"isSidechain"`
+	CWD         json.RawMessage `json:"cwd"`
+	Version     json.RawMessage `json:"version"`
+	ID          json.RawMessage `json:"id"`
+	RequestID   json.RawMessage `json:"requestId"`
+	RequestRef  json.RawMessage `json:"requestRef"`
+	Timestamp   json.RawMessage `json:"timestamp"`
+	Message     json.RawMessage `json:"message"`
+}
+
+// sessionLine is what a session file line states about itself. A field that
+// is absent or of another type reads as empty.
 type sessionLine struct {
-	Type        string `json:"type"`
-	SessionID   string `json:"sessionId"`
-	IsSidechain bool   `json:"isSidechain"`
-	CWD         string `json:"cwd"`
-	Version     string `json:"version"`
-	ID          string `json:"id"`
-	RequestID   string `json:"requestId"`
-	RequestRef  string `json:"requestRef"`
-	Timestamp   string `json:"timestamp"`
-	Message     struct {
-		Model string `json:"model"`
-		Usage usage  `json:"usage"`
-	} `json:"message"`
+	kind       string
+	sessionID  string
+	sidechain  bool
+	cwd        string
+	version    string
+	id         string
+	requestRef string
+	// requestID is kept raw, so a value that is not text is told from none.
+	requestID json.RawMessage
+	// at is zero when the line states no time that reads as RFC 3339.
+	at      time.Time
+	message json.RawMessage
+}
+
+// parseSessionLine reads a line's envelope. It is false for a line that is
+// not a JSON object, or that states no type as text.
+func parseSessionLine(raw []byte) (sessionLine, bool) {
+	var envelope sessionEnvelope
+	if json.Unmarshal(raw, &envelope) != nil {
+		return sessionLine{}, false
+	}
+	kind, ok := jsonString(envelope.Type)
+	if !ok {
+		return sessionLine{}, false
+	}
+	text := func(raw json.RawMessage) string {
+		value, _ := jsonString(raw)
+		return value
+	}
+	line := sessionLine{
+		kind:       kind,
+		sessionID:  text(envelope.SessionID),
+		sidechain:  string(envelope.IsSidechain) == "true",
+		cwd:        text(envelope.CWD),
+		version:    text(envelope.Version),
+		id:         text(envelope.ID),
+		requestRef: text(envelope.RequestRef),
+		requestID:  envelope.RequestID,
+		message:    envelope.Message,
+	}
+	if at, err := time.Parse(time.RFC3339Nano, text(envelope.Timestamp)); err == nil {
+		line.at = at
+	}
+	return line, true
 }
 
 // transcript is what the run's own session files hold.
@@ -729,6 +853,37 @@ type transcript struct {
 	// cwd is the working directory the main session file states first.
 	cwd      string
 	requests []adapter.Request
+	fileCounts
+}
+
+// fileCounts are the lines the reader passed over in a run's files.
+type fileCounts struct {
+	// skipped counts the lines whose shape the reader does not know.
+	skipped int
+	// untimed counts the responses that state no time.
+	untimed int
+	// inFlight counts the files that end inside a line.
+	inFlight int
+}
+
+func (c *fileCounts) add(other fileCounts) {
+	c.skipped += other.skipped
+	c.untimed += other.untimed
+	c.inFlight += other.inFlight
+}
+
+// warnings says what the reader passed over in files whose requests it used.
+func (c fileCounts) warnings() []string {
+	var warnings []string
+	if c.skipped > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d session file %s skipped: %s shape is not one this reader knows",
+			c.skipped, plural(c.skipped, "line was", "lines were"), plural(c.skipped, "its", "their")))
+	}
+	if c.untimed > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d %s in the session files %s no time, so %s the time of the line before it",
+			c.untimed, plural(c.untimed, "response", "responses"), plural(c.untimed, "states", "state"), plural(c.untimed, "it takes", "each takes")))
+	}
+	return warnings
 }
 
 // readSessionFiles walks the main transcript and every subagent's. Each
@@ -742,24 +897,26 @@ func (s *Session) readSessionFiles() (transcript, error) {
 	if err != nil || len(files) == 0 {
 		return transcript{}, err
 	}
-	builder := newRequestBuilder(s.keyBilled())
-	var main fileFacts
+	builder := newRequestBuilder(s.unsplitWrite())
+	run := transcript{path: files[0]}
 	for i, file := range files {
 		facts, err := builder.read(file)
 		if err != nil {
 			return transcript{}, err
 		}
 		if i == 0 {
-			main = facts
+			run.cwd = facts.cwd
 		}
+		run.add(facts.fileCounts)
 	}
-	return transcript{path: files[0], cwd: main.cwd, requests: builder.requests()}, nil
+	run.requests = builder.requests(s.window())
+	return run, nil
 }
 
 func (s *Session) sessionFiles() ([]string, error) {
 	main, err := filepath.Glob(filepath.Join(s.configDir, "projects", "*", s.sessionID+".jsonl"))
 	if err != nil {
-		return nil, fmt.Errorf("claude-code: find session file: %w", err)
+		return nil, fmt.Errorf("find session file: %w", err)
 	}
 	if len(main) == 0 {
 		return nil, nil
@@ -767,22 +924,23 @@ func (s *Session) sessionFiles() ([]string, error) {
 	directory := strings.TrimSuffix(main[0], ".jsonl")
 	subagents, err := filepath.Glob(filepath.Join(directory, "subagents", "*.jsonl"))
 	if err != nil {
-		return nil, fmt.Errorf("claude-code: find subagent files: %w", err)
+		return nil, fmt.Errorf("find subagent files: %w", err)
 	}
 	return append(main[:1:1], subagents...), nil
 }
 
 type requestBuilder struct {
-	keyBilled bool
+	// unsplit is the class that takes writes with no stated lifetime.
+	unsplit   focus.TokenClass
 	byID      map[string]*adapter.Request
 	order     []string
 	startedAt map[string]time.Time
 	refs      map[string]string
 }
 
-func newRequestBuilder(keyBilled bool) *requestBuilder {
+func newRequestBuilder(unsplit focus.TokenClass) *requestBuilder {
 	return &requestBuilder{
-		keyBilled: keyBilled,
+		unsplit:   unsplit,
 		byID:      map[string]*adapter.Request{},
 		startedAt: map[string]time.Time{},
 		refs:      map[string]string{},
@@ -791,71 +949,276 @@ func newRequestBuilder(keyBilled bool) *requestBuilder {
 
 // read adds one file's requests and returns what the file says about itself.
 func (b *requestBuilder) read(path string) (fileFacts, error) {
-	facts := fileFacts{sessions: map[string]bool{}}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return facts, fmt.Errorf("claude-code: read session file: %w", err)
+		return fileFacts{sessions: map[string]bool{}}, fmt.Errorf("read session file: %w", err)
 	}
-	for number, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "" {
+	return b.readData(data)
+}
+
+// readData adds the requests in one file's text. Only api-request and
+// assistant lines are read; a line of any other type is passed over whatever
+// its shape, and a line with no type it can read is counted. Text after the
+// last line break that does not parse is a line Claude Code was writing when
+// the run stopped: the request in flight.
+func (b *requestBuilder) readData(data []byte) (fileFacts, error) {
+	facts := fileFacts{sessions: map[string]bool{}}
+	lines := strings.Split(string(data), "\n")
+	var previous time.Time
+	for number, text := range lines {
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		var parsed sessionLine
-		if err := json.Unmarshal([]byte(line), &parsed); err != nil {
-			return facts, fmt.Errorf("claude-code: session file line %d: %w", number+1, err)
+		line, ok := parseSessionLine([]byte(text))
+		switch {
+		case !ok && number == len(lines)-1 && !json.Valid([]byte(text)):
+			facts.inFlight++
+			continue
+		case !ok:
+			facts.skipped++
+			continue
 		}
-		if err := b.add(parsed); err != nil {
-			return facts, fmt.Errorf("claude-code: session file line %d: %w", number+1, err)
+		if err := b.add(line, previous, &facts); err != nil {
+			return facts, fmt.Errorf("session file line %d: %w", number+1, err)
 		}
-		facts.observe(parsed)
+		if !line.at.IsZero() {
+			previous = line.at
+		}
+		facts.observe(line)
 	}
 	return facts, nil
 }
 
-func (b *requestBuilder) add(line sessionLine) error {
-	switch line.Type {
+// add reads one line of a type the reader reads. A response that states no
+// time takes the time of the line before it.
+func (b *requestBuilder) add(line sessionLine, previous time.Time, facts *fileFacts) error {
+	switch line.kind {
 	case "api-request":
-		at, err := time.Parse(time.RFC3339Nano, line.Timestamp)
-		if err != nil {
-			return err
-		}
-		b.startedAt[line.ID] = at
-	case "assistant":
-		if line.RequestID == "" {
+		if line.id == "" || line.at.IsZero() {
+			facts.skipped++
 			return nil
 		}
-		at, err := time.Parse(time.RFC3339Nano, line.Timestamp)
-		if err != nil {
+		b.startedAt[line.id] = line.at
+	case "assistant":
+		id, err := responseID(line.requestID)
+		if err != nil || id == "" {
 			return err
 		}
-		b.addResponse(line, at)
+		if line.at.IsZero() {
+			line.at = previous
+			facts.untimed++
+		}
+		if err := b.addResponse(id, line); err != nil {
+			return fmt.Errorf("request %s: %w", id, err)
+		}
 	}
 	return nil
 }
 
-func (b *requestBuilder) addResponse(line sessionLine, at time.Time) {
-	request, seen := b.byID[line.RequestID]
-	if !seen {
-		request = &adapter.Request{ID: line.RequestID, Provider: provider, Start: at, Grain: adapter.PerRequest}
-		b.byID[line.RequestID] = request
-		b.order = append(b.order, line.RequestID)
+// responseID is the request an assistant line answers. Empty means the line
+// answers none, as a message Claude Code writes itself does not.
+func responseID(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
 	}
-	b.refs[line.RequestID] = line.RequestRef
-	u := line.Message.Usage
-	request.Model = line.Message.Model
-	request.End = at
-	request.ServiceTier = serviceTier(u)
-	request.Region = region(u.InferenceGeo)
-	request.ContextInputTokens = u.InputTokens + u.CacheRead + u.CacheCreated
-	request.Tokens, request.AssumedWrite = b.tokens(u)
+	id, ok := jsonString(raw)
+	if !ok {
+		return "", fmt.Errorf("requestId %s is not text", shown(raw))
+	}
+	return id, nil
 }
 
-func (b *requestBuilder) tokens(u usage) (adapter.Tokens, focus.TokenClass) {
+// addResponse reads the usage of one response. A count it cannot read fails
+// the line, and a count past the bound fails it with errPastBound.
+func (b *requestBuilder) addResponse(id string, line sessionLine) error {
+	u, model, err := readResponse(line.message)
+	if err != nil {
+		return err
+	}
+	context, err := contextInput(u.InputTokens, u.CacheRead, u.CacheCreated)
+	if err != nil {
+		return err
+	}
+	tokens, assumed, err := b.tokens(u)
+	if err != nil {
+		return err
+	}
+	request, seen := b.byID[id]
+	if !seen {
+		request = &adapter.Request{ID: id, Provider: provider, Grain: adapter.PerRequest}
+		b.byID[id] = request
+		b.order = append(b.order, id)
+	}
+	b.refs[id] = line.requestRef
+	if request.Start.IsZero() {
+		request.Start = line.at
+	}
+	request.Model = model
+	request.End = line.at
+	request.ServiceTier = serviceTier(u)
+	request.Region = region(u.InferenceGeo)
+	request.ContextInputTokens = context
+	request.Tokens, request.AssumedWrite = tokens, assumed
+	return nil
+}
+
+// cacheCreation is the written tokens' stated lifetimes.
+type cacheCreation struct {
+	FiveMinute int64
+	OneHour    int64
+}
+
+// usage is one response's counts and the fields that select its price.
+type usage struct {
+	InputTokens    int64
+	OutputTokens   int64
+	CacheRead      int64
+	CacheCreated   int64
+	CacheCreation  *cacheCreation
+	ThinkingTokens int64
+	ServiceTier    string
+	InferenceGeo   string
+	Speed          string
+}
+
+// readResponse reads the model and the usage of an assistant line's message.
+// Every count is read whole. A message that is not an object, or states no
+// usage, holds no figure, and fails.
+func readResponse(raw json.RawMessage) (usage, string, error) {
+	var message struct {
+		Model json.RawMessage `json:"model"`
+		Usage json.RawMessage `json:"usage"`
+	}
+	if !isObject(raw) || json.Unmarshal(raw, &message) != nil {
+		return usage{}, "", errors.New("the message is not an object")
+	}
+	model, err := optionalText("model", message.Model)
+	if err != nil {
+		return usage{}, "", err
+	}
+	if !isObject(message.Usage) {
+		return usage{}, "", errors.New("the message states no usage object")
+	}
+	var fields struct {
+		InputTokens   json.RawMessage `json:"input_tokens"`
+		OutputTokens  json.RawMessage `json:"output_tokens"`
+		CacheRead     json.RawMessage `json:"cache_read_input_tokens"`
+		CacheCreated  json.RawMessage `json:"cache_creation_input_tokens"`
+		CacheCreation json.RawMessage `json:"cache_creation"`
+		Details       json.RawMessage `json:"output_tokens_details"`
+		ServiceTier   json.RawMessage `json:"service_tier"`
+		InferenceGeo  json.RawMessage `json:"inference_geo"`
+		Speed         json.RawMessage `json:"speed"`
+	}
+	if err := json.Unmarshal(message.Usage, &fields); err != nil {
+		return usage{}, "", fmt.Errorf("usage: %w", err)
+	}
+	var u usage
+	counts := []struct {
+		name  string
+		raw   json.RawMessage
+		value *int64
+	}{
+		{"input_tokens", fields.InputTokens, &u.InputTokens},
+		{"output_tokens", fields.OutputTokens, &u.OutputTokens},
+		{"cache_read_input_tokens", fields.CacheRead, &u.CacheRead},
+		{"cache_creation_input_tokens", fields.CacheCreated, &u.CacheCreated},
+	}
+	if u.CacheCreation, err = readCacheCreation(fields.CacheCreation); err != nil {
+		return usage{}, "", err
+	}
+	if u.ThinkingTokens, err = readThinking(fields.Details); err != nil {
+		return usage{}, "", err
+	}
+	for _, count := range counts {
+		if *count.value, err = wholeCount(count.raw); err != nil {
+			return usage{}, "", fmt.Errorf("usage %s: %w", count.name, err)
+		}
+	}
+	for _, text := range []struct {
+		name  string
+		raw   json.RawMessage
+		value *string
+	}{
+		{"service_tier", fields.ServiceTier, &u.ServiceTier},
+		{"inference_geo", fields.InferenceGeo, &u.InferenceGeo},
+		{"speed", fields.Speed, &u.Speed},
+	} {
+		if *text.value, err = optionalText("usage "+text.name, text.raw); err != nil {
+			return usage{}, "", err
+		}
+	}
+	return u, model, nil
+}
+
+// readCacheCreation reads the written tokens' stated lifetimes. Absent or
+// null states none.
+func readCacheCreation(raw json.RawMessage) (*cacheCreation, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var fields struct {
+		FiveMinute json.RawMessage `json:"ephemeral_5m_input_tokens"`
+		OneHour    json.RawMessage `json:"ephemeral_1h_input_tokens"`
+	}
+	if !isObject(raw) || json.Unmarshal(raw, &fields) != nil {
+		return nil, fmt.Errorf("usage cache_creation %s is not an object", shown(raw))
+	}
+	var lifetimes cacheCreation
+	var err error
+	if lifetimes.FiveMinute, err = wholeCount(fields.FiveMinute); err != nil {
+		return nil, fmt.Errorf("usage cache_creation ephemeral_5m_input_tokens: %w", err)
+	}
+	if lifetimes.OneHour, err = wholeCount(fields.OneHour); err != nil {
+		return nil, fmt.Errorf("usage cache_creation ephemeral_1h_input_tokens: %w", err)
+	}
+	return &lifetimes, nil
+}
+
+// readThinking reads the thinking tokens the output states. Absent or null
+// states none.
+func readThinking(raw json.RawMessage) (int64, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	var fields struct {
+		Thinking json.RawMessage `json:"thinking_tokens"`
+	}
+	if !isObject(raw) || json.Unmarshal(raw, &fields) != nil {
+		return 0, fmt.Errorf("usage output_tokens_details %s is not an object", shown(raw))
+	}
+	thinking, err := wholeCount(fields.Thinking)
+	if err != nil {
+		return 0, fmt.Errorf("usage output_tokens_details thinking_tokens: %w", err)
+	}
+	return thinking, nil
+}
+
+// isObject says whether a raw value is a JSON object.
+func isObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
+}
+
+// optionalText reads a text field. Absent and null are empty; any other value
+// that is not text fails, because the field selects a price.
+func optionalText(name string, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	value, ok := jsonString(raw)
+	if !ok {
+		return "", fmt.Errorf("%s %s is not text", name, shown(raw))
+	}
+	return value, nil
+}
+
+func (b *requestBuilder) tokens(u usage) (adapter.Tokens, focus.TokenClass, error) {
 	tokens := adapter.Tokens{
 		InputUncached:       u.InputTokens,
 		CacheRead:           u.CacheRead,
 		Output:              u.OutputTokens,
-		ReasoningOutput:     u.Details.ThinkingTokens,
+		ReasoningOutput:     u.ThinkingTokens,
 		CachedInputReported: u.CacheRead,
 	}
 	var reported cacheCreation
@@ -863,16 +1226,25 @@ func (b *requestBuilder) tokens(u usage) (adapter.Tokens, focus.TokenClass) {
 		reported = *u.CacheCreation
 	}
 	var assumed focus.TokenClass
-	tokens.CacheWrite5m, tokens.CacheWrite1h, assumed = splitWrites(u.CacheCreated, reported.FiveMinute, reported.OneHour, b.keyBilled)
-	return tokens, assumed
+	var err error
+	tokens.CacheWrite5m, tokens.CacheWrite1h, assumed, err = splitWrites(u.CacheCreated, reported.FiveMinute, reported.OneHour, b.unsplit)
+	return tokens, assumed, err
 }
 
-func (b *requestBuilder) requests() []adapter.Request {
+// requests lists the requests in the order they started. A request no line
+// timed takes the given window.
+func (b *requestBuilder) requests(from, to time.Time) []adapter.Request {
 	requests := make([]adapter.Request, 0, len(b.order))
 	for _, id := range b.order {
 		request := *b.byID[id]
 		if start, ok := b.startedAt[b.refs[id]]; ok {
 			request.Start = start
+		}
+		if request.Start.IsZero() {
+			request.Start = from
+		}
+		if request.End.IsZero() {
+			request.End = to
 		}
 		requests = append(requests, request)
 	}

@@ -39,6 +39,7 @@ func committedRecordings(t *testing.T) []string {
 	var dirs []string
 	for _, pattern := range []string{
 		"internal/adapter/claudecode/testdata/2.1.316/*",
+		"internal/adapter/claudecode/testdata/2.1.319/*",
 		"internal/adapter/codex/testdata/0.164.0-alpha.11.1/*",
 	} {
 		found, err := filepath.Glob(filepath.Join(root, pattern))
@@ -47,8 +48,8 @@ func committedRecordings(t *testing.T) []string {
 		}
 		dirs = append(dirs, found...)
 	}
-	if len(dirs) != 7 {
-		t.Fatalf("found %d committed recordings, want 7: %v", len(dirs), dirs)
+	if len(dirs) != 9 {
+		t.Fatalf("found %d committed recordings, want 9: %v", len(dirs), dirs)
 	}
 	return dirs
 }

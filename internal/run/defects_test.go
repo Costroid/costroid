@@ -86,10 +86,10 @@ func TestCodexLongContextTier(t *testing.T) {
 }
 
 const (
-	actionRun      = "../adapter/claudecode/testdata/2.1.316/execution-file/claude-execution-output.json"
-	actionSession  = "../adapter/claudecode/testdata/not-recorded/action-session/session.jsonl"
-	actionID       = "00000000-0000-4000-8000-000000000003"
-	actionRunTotal = "0.0516717"
+	actionRun      = "../adapter/claudecode/testdata/2.1.316/action-session/claude-execution-output.json"
+	actionSession  = "../adapter/claudecode/testdata/2.1.316/action-session/session.jsonl"
+	actionID       = "00000000-0000-4000-8000-000000000001"
+	actionRunTotal = "0.0391529"
 )
 
 // readActionRun reads the recorded claude-code-action run with the session
@@ -110,7 +110,7 @@ func readActionRun(t *testing.T, session string) adapter.Report {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	report, err := claudecode.Agent{ConfigDir: config}.ReadExecutionFile(file, time.Date(2026, 11, 4, 14, 46, 10, 0, time.UTC))
+	report, err := claudecode.Agent{ConfigDir: config}.ReadExecutionFile(file, time.Date(2026, 11, 7, 11, 33, 30, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestNoUnexplainedSessionWarning(t *testing.T) {
 	if len(report.Warnings) != 0 {
 		t.Fatalf("warnings %q", report.Warnings)
 	}
-	if report.CostSource != claudecode.SourceSessionFile || len(report.Requests) != 5 {
+	if report.CostSource != claudecode.SourceSessionFile || len(report.Requests) != 3 {
 		t.Fatalf("%s, %d entries", report.CostSource, len(report.Requests))
 	}
 	for _, request := range report.Requests {
@@ -154,7 +154,7 @@ func TestNoUnexplainedSessionWarning(t *testing.T) {
 	for _, row := range parseRows(t, rows.Bytes()) {
 		text, _ := row["ChargeDescription"].(string)
 		if tagOf(row, focus.TagModel) == "claude-haiku-5-5" {
-			if tagOf(row, focus.TagCostSource) != claudecode.SourceExecutionFile || !strings.Contains(text, "outside the conversation") || !strings.Contains(text, "input of 1219 tokens is within the 100000-token context tier") {
+			if tagOf(row, focus.TagCostSource) != claudecode.SourceExecutionFile || !strings.Contains(text, "outside the conversation") || !strings.Contains(text, "input of 1200 tokens is within the 100000-token context tier") {
 				t.Errorf("the side request's row: %s, %q", tagOf(row, focus.TagCostSource), text)
 			}
 		} else if tagOf(row, focus.TagCostSource) != claudecode.SourceSessionFile {
@@ -166,7 +166,7 @@ func TestNoUnexplainedSessionWarning(t *testing.T) {
 // TestASessionFileThatDisagreesStillWarns keeps the check the side model rule
 // narrows: a model the file holds must still add up to the result.
 func TestASessionFileThatDisagreesStillWarns(t *testing.T) {
-	session := strings.Replace(string(mustRead(t, actionSession)), `"output_tokens":251`, `"output_tokens":250`, 1)
+	session := strings.Replace(string(mustRead(t, actionSession)), `"output_tokens":97`, `"output_tokens":96`, 1)
 	report := readActionRun(t, session)
 	if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "disagree") {
 		t.Fatalf("warnings %q", report.Warnings)

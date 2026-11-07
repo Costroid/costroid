@@ -17,28 +17,28 @@ type fileFacts struct {
 	cwd         string
 	version     string
 	first, last time.Time
+	fileCounts
 }
 
 func (f *fileFacts) observe(line sessionLine) {
-	if line.SessionID != "" {
-		f.sessions[line.SessionID] = true
+	if line.sessionID != "" {
+		f.sessions[line.sessionID] = true
 	}
-	f.sidechain = f.sidechain || line.IsSidechain
+	f.sidechain = f.sidechain || line.sidechain
 	if f.cwd == "" {
-		f.cwd = line.CWD
+		f.cwd = line.cwd
 	}
 	if f.version == "" {
-		f.version = line.Version
+		f.version = line.version
 	}
-	at, err := time.Parse(time.RFC3339Nano, line.Timestamp)
-	if err != nil {
+	if line.at.IsZero() {
 		return
 	}
-	if f.first.IsZero() || at.Before(f.first) {
-		f.first = at
+	if f.first.IsZero() || line.at.Before(f.first) {
+		f.first = line.at
 	}
-	if at.After(f.last) {
-		f.last = at
+	if line.at.After(f.last) {
+		f.last = line.at
 	}
 }
 
@@ -128,7 +128,7 @@ func writtenBefore(file string, start time.Time) bool {
 // the window.
 func (s *Session) nestedSession(file, id, cwd string, counted map[string]bool) (adapter.Report, string) {
 	start, end := s.window()
-	builder := newRequestBuilder(s.keyBilled())
+	builder := newRequestBuilder(s.unsplitWrite())
 	facts, err := builder.read(file)
 	if err != nil {
 		return adapter.Report{}, fmt.Sprintf("session %s was not counted: %v", id, err)
@@ -160,7 +160,7 @@ func (s *Session) nestedSession(file, id, cwd string, counted map[string]bool) (
 		CostBasis:    s.costBasis(),
 		CostSource:   SourceSessionFile,
 	}
-	for _, request := range builder.requests() {
+	for _, request := range builder.requests(facts.first, last) {
 		if !counted[request.ID] {
 			counted[request.ID] = true
 			report.Requests = append(report.Requests, request)
@@ -174,7 +174,7 @@ func (s *Session) nestedSession(file, id, cwd string, counted map[string]bool) (
 func readSubagents(builder *requestBuilder, file string, last time.Time) (time.Time, error) {
 	files, err := filepath.Glob(filepath.Join(strings.TrimSuffix(file, ".jsonl"), "subagents", "*.jsonl"))
 	if err != nil {
-		return last, fmt.Errorf("claude-code: find subagent files: %w", err)
+		return last, fmt.Errorf("find subagent files: %w", err)
 	}
 	for _, path := range files {
 		facts, err := builder.read(path)

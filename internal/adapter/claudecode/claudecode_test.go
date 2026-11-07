@@ -3,6 +3,7 @@ package claudecode
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,13 +28,20 @@ func fixture(scenario, file string) string {
 // installSession lays a scenario's session files out as Claude Code does.
 func installSession(t *testing.T, scenario, sessionID string) string {
 	t.Helper()
+	return installFrom(t, filepath.Join("testdata", version, scenario), sessionID)
+}
+
+// installFrom lays the session files of a fixture directory out as Claude
+// Code does.
+func installFrom(t *testing.T, directory, sessionID string) string {
+	t.Helper()
 	config := t.TempDir()
 	project := filepath.Join(config, "projects", "-work")
 	if err := os.MkdirAll(filepath.Join(project, sessionID, "subagents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	copyFile(t, fixture(scenario, "session.jsonl"), filepath.Join(project, sessionID+".jsonl"))
-	agents, err := filepath.Glob(fixture(scenario, "subagents/*.jsonl"))
+	copyFile(t, filepath.Join(directory, "session.jsonl"), filepath.Join(project, sessionID+".jsonl"))
+	agents, err := filepath.Glob(filepath.Join(directory, "subagents", "*.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,15 +385,15 @@ func TestAPIKeyRunIsMeasured(t *testing.T) {
 }
 
 func TestUnreportedCacheLifetimeIsAssignedByRuleAndFlagged(t *testing.T) {
-	b := newRequestBuilder(false)
-	tokens, assumed := b.tokens(usage{CacheCreated: 10, CacheCreation: &cacheCreation{}})
-	if tokens.CacheWrite1h != 10 || assumed != focus.CacheWrite1h {
-		t.Errorf("subscription: %+v %v", tokens, assumed)
+	b := newRequestBuilder(focus.CacheWrite1h)
+	tokens, assumed, err := b.tokens(usage{CacheCreated: 10, CacheCreation: &cacheCreation{}})
+	if err != nil || tokens.CacheWrite1h != 10 || assumed != focus.CacheWrite1h {
+		t.Errorf("subscription: %+v %v %v", tokens, assumed, err)
 	}
-	b = newRequestBuilder(true)
-	tokens, assumed = b.tokens(usage{CacheCreated: 10})
-	if tokens.CacheWrite5m != 10 || assumed != focus.CacheWrite5m {
-		t.Errorf("api key: %+v %v", tokens, assumed)
+	b = newRequestBuilder(focus.CacheWrite5m)
+	tokens, assumed, err = b.tokens(usage{CacheCreated: 10})
+	if err != nil || tokens.CacheWrite5m != 10 || assumed != focus.CacheWrite5m {
+		t.Errorf("api key: %+v %v %v", tokens, assumed, err)
 	}
 }
 
@@ -542,11 +550,11 @@ func TestResultCountsAcceptIntegralForms(t *testing.T) {
 }
 
 func TestResultCountsTakeTheLargestWholeCount(t *testing.T) {
-	report, err := finishResult(t, `{"inputTokens":9223372036854775807,"outputTokens":"9.223372036854775807e18"}`)
+	report, err := finishResult(t, `{"outputTokens":9223372036854775807,"thinkingTokens":"9.223372036854775807e18"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := report.Requests[0].Tokens; got.InputUncached != 1<<63-1 || got.Output != 1<<63-1 {
+	if got := report.Requests[0].Tokens; got.Output != 1<<63-1 || got.ReasoningOutput != 1<<63-1 {
 		t.Errorf("%+v", got)
 	}
 }
@@ -750,7 +758,7 @@ func TestTokensCheckRefusesNegative(t *testing.T) {
 		}
 	}
 	_, err := finishResult(t, `{"inputTokens":1,"cacheCreationInputTokens":100,"cacheCreationEphemeral1hInputTokens":150}`)
-	if err == nil || !strings.Contains(err.Error(), "the result's totals for claude-haiku-5-5 do not add up") || !strings.Contains(err.Error(), "below zero") {
+	if err == nil || !strings.Contains(err.Error(), "the result's totals for claude-haiku-5-5 do not add up") || !strings.Contains(err.Error(), "pass the written total of 100") {
 		t.Errorf("lifetimes past the written total: %v", err)
 	}
 }
@@ -812,6 +820,499 @@ func FuzzClaudeFeed(f *testing.F) {
 		}
 		if len(report.Requests) != 1 || report.Requests[0].ID != "fuzz:claude-haiku-5-5" || report.Requests[0].Tokens != fuzzWant {
 			t.Fatalf("%+v", report.Requests)
+		}
+	})
+}
+
+const oneRequestID = "00000000-0000-4000-8000-000000000001"
+
+// replayWith replays a recorded scenario over its session files, with the
+// main file's text changed by edit and only the stream lines keep allows.
+func replayWith(t *testing.T, scenario, sessionID string, edit func(string) string, keep func(string) bool) (adapter.Report, error) {
+	t.Helper()
+	config := installSession(t, scenario, sessionID)
+	main := filepath.Join(config, "projects", "-work", sessionID+".jsonl")
+	data, err := os.ReadFile(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(main, []byte(edit(string(data))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := os.ReadFile(fixture(scenario, "stream.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := Agent{ConfigDir: config}.NewSession(adapter.Plan{})
+	for _, line := range strings.Split(strings.TrimSpace(string(stream)), "\n") {
+		if !keep(line) {
+			continue
+		}
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return session.Finish()
+}
+
+func everyLine(string) bool { return true }
+
+// noResult keeps every stream line but the results, as a run stopped before
+// its end streams.
+func noResult(line string) bool { return !strings.Contains(line, `"type":"result"`) }
+
+// insertAfterFirstLine puts lines after a file's first line.
+func insertAfterFirstLine(lines ...string) func(string) string {
+	return func(text string) string {
+		first, rest, _ := strings.Cut(text, "\n")
+		return first + "\n" + strings.Join(lines, "\n") + "\n" + rest
+	}
+}
+
+// passedOverTypes are the session-file line types the reader passes over,
+// each seen in a recording or in Claude Code's own files.
+var passedOverTypes = []string{
+	"ai-title", "api-request-blob", "api-request-shape", "atis-latch", "attachment", "cost-state",
+	"last-prompt", "message", "queue-operation", "summary", "tools-used", "user",
+}
+
+// recordedLineTypes are the line types in every recorded session file.
+func recordedLineTypes(t *testing.T) map[string]bool {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "*", "*", "session.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	types := map[string]bool{}
+	for _, path := range paths {
+		if strings.Contains(path, "synthetic") || strings.Contains(path, "not-recorded") {
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(mustReadFile(t, path))), "\n") {
+			var typed struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal([]byte(line), &typed); err != nil {
+				t.Fatalf("%s: %v", path, err)
+			}
+			types[typed.Type] = true
+		}
+	}
+	return types
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestSessionFileSkipsUnreadLineTypes(t *testing.T) {
+	for kind := range recordedLineTypes(t) {
+		if kind != "api-request" && kind != "assistant" && !slices.Contains(passedOverTypes, kind) {
+			t.Errorf("a recording holds the line type %q, which no case below passes over", kind)
+		}
+	}
+	want := replay(t, "one-request", oneRequestID)
+	shapes := []string{`{"role":"user","content":[{"type":"text"}]}`, `"SYNTHETIC-TEXT"`, `null`, `7`, `[1]`}
+	for _, kind := range passedOverTypes {
+		var lines []string
+		for _, shape := range shapes {
+			lines = append(lines,
+				`{"type":"`+kind+`","sessionId":"`+oneRequestID+`","message":`+shape+`}`,
+				`{"type":"`+kind+`","timestamp":12,"isSidechain":"no","message":`+shape+`}`)
+		}
+		lines = append(lines, `{"type":"`+kind+`","message":{"model":"claude-haiku-5-5","usage":{"input_tokens":-1}},"requestId":"req_synthetic_0009"}`)
+		got, err := replayWith(t, "one-request", oneRequestID, insertAfterFirstLine(lines...), everyLine)
+		if err != nil {
+			t.Errorf("%s: %v", kind, err)
+			continue
+		}
+		if got.CostSource != SourceSessionFile || !slices.Equal(got.Requests, want.Requests) || len(got.Warnings) != 0 {
+			t.Errorf("%s: %s %+v, warnings %q", kind, got.CostSource, got.Requests, got.Warnings)
+		}
+	}
+	odd := []string{`[1,2]`, `"SYNTHETIC-TEXT"`, `{"type":7,"message":{"usage":{"input_tokens":1}}}`, `{}`, `null`, `{"type":"api-request","id":"00000000-0000-4000-9000-0000000000e9"}`}
+	got, err := replayWith(t, "one-request", oneRequestID, insertAfterFirstLine(odd...), everyLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Requests, want.Requests) || !slices.Equal(got.Warnings, []string{"6 session file lines were skipped: their shape is not one this reader knows"}) {
+		t.Errorf("%+v, warnings %q", got.Requests, got.Warnings)
+	}
+}
+
+func TestEveryShapeSessionFileIsRead(t *testing.T) {
+	builder := newRequestBuilder(focus.CacheWrite5m)
+	facts, err := builder.readData(mustReadFile(t, synthetic("session", "every-shape.jsonl")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.fileCounts != (fileCounts{skipped: 6, untimed: 1, inFlight: 1}) {
+		t.Errorf("counts %+v", facts.fileCounts)
+	}
+	if facts.cwd != "/work" || facts.version != "2.1.319" || !facts.sessions["00000000-0000-4000-8000-0000000000e1"] || facts.sidechain {
+		t.Errorf("facts %+v", facts)
+	}
+	at := func(seconds int) time.Time { return time.Date(2026, 11, 7, 10, 0, seconds, 0, time.UTC) }
+	requests := builder.requests(time.Time{}, time.Time{})
+	want := []struct {
+		id         string
+		start, end time.Time
+		tokens     adapter.Tokens
+	}{
+		{"req_synthetic_0001", at(1), at(3), adapter.Tokens{InputUncached: 2, CacheRead: 100, CacheWrite5m: 40, Output: 20, ReasoningOutput: 5, CachedInputReported: 100}},
+		{"req_synthetic_0002", at(3), at(3), adapter.Tokens{InputUncached: 1, Output: 5}},
+	}
+	if len(requests) != len(want) {
+		t.Fatalf("%+v", requests)
+	}
+	for i, request := range requests {
+		w := want[i]
+		if request.ID != w.id || !request.Start.Equal(w.start) || !request.End.Equal(w.end) || request.Tokens != w.tokens || request.ServiceTier != "standard" || request.Region != "global" {
+			t.Errorf("%+v, want %+v", request, w)
+		}
+	}
+}
+
+// cutLastLine leaves a file's last line half-written, with no line break.
+func cutLastLine(text string) string {
+	text = strings.TrimSuffix(text, "\n")
+	cut := strings.LastIndex(text, "\n") + 1
+	return text[:cut+(len(text)-cut)/2]
+}
+
+// dropLastLine leaves a file without its last line.
+func dropLastLine(text string) string {
+	text = strings.TrimSuffix(text, "\n")
+	return text[:strings.LastIndex(text, "\n")+1]
+}
+
+func TestHalfWrittenLastLineIsInFlight(t *testing.T) {
+	inFlight := "the session file ends inside a line, which is the request in flight: no result counts it, so its tokens reach no row"
+	halfAssistant := func(text string) string {
+		line := strings.Split(text, "\n")[1]
+		line = strings.ReplaceAll(line, "req_fixture_0001", "req_fixture_0099")
+		return text + line[:len(line)/2]
+	}
+	want := replay(t, "one-request", oneRequestID)
+	stopped, err := replayWith(t, "one-request", oneRequestID, halfAssistant, noResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Unrecorded != 1 || !slices.Equal(stopped.Requests, want.Requests) || !slices.Contains(stopped.Warnings, inFlight) {
+		t.Errorf("no result: unrecorded %d, %+v, warnings %q", stopped.Unrecorded, stopped.Requests, stopped.Warnings)
+	}
+	finished, err := replayWith(t, "one-request", oneRequestID, halfAssistant, everyLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Unrecorded != 0 || !slices.Equal(finished.Requests, want.Requests) || len(finished.Warnings) != 0 {
+		t.Errorf("with a result: unrecorded %d, %+v, warnings %q", finished.Unrecorded, finished.Requests, finished.Warnings)
+	}
+	builder := newRequestBuilder(focus.CacheWrite5m)
+	text := string(mustReadFile(t, fixture("one-request", "session.jsonl")))
+	facts, err := builder.readData([]byte(halfAssistant(text) + "\n"))
+	if err != nil || facts.inFlight != 0 || facts.skipped != 1 {
+		t.Errorf("a cut line followed by a line break: %+v, %v", facts.fileCounts, err)
+	}
+	whole := strings.Split(text, "\n")[1]
+	builder = newRequestBuilder(focus.CacheWrite5m)
+	facts, err = builder.readData([]byte(text + strings.ReplaceAll(whole, "req_fixture_0001", "req_fixture_0099")))
+	if err != nil || facts.inFlight != 0 || len(builder.requests(time.Time{}, time.Time{})) != 2 {
+		t.Errorf("a whole last line with no line break: %+v, %v", facts.fileCounts, err)
+	}
+	onlyInFlight := func(string) string {
+		return `{"type":"assistant","requestId":"req_fixture_0099","message":{"usage":{"inp`
+	}
+	alone, err := replayWith(t, "one-request", oneRequestID, onlyInFlight, noResult)
+	if err != nil || alone.Unrecorded != 1 || len(alone.Requests) != 0 || !slices.Equal(alone.Warnings, []string{inFlight}) {
+		t.Errorf("a file whose only line is in flight: %+v, %v", alone, err)
+	}
+}
+
+// TestStoppedRunKeepsSessionRows stops the recorded subagent run inside its
+// last response: no result streamed, and the main file's last line is cut.
+// The rows the files hold are kept, and the request in flight is counted as
+// unrecorded.
+func TestStoppedRunKeepsSessionRows(t *testing.T) {
+	const sessionID = "00000000-0000-4000-8000-000000000002"
+	upToLastLine := func(text string) string { return dropLastLine(dropLastLine(text)) }
+	whole, err := replayWith(t, "subagent", sessionID, upToLastLine, noResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := replayWith(t, "subagent", sessionID, func(text string) string { return cutLastLine(dropLastLine(text)) }, noResult)
+	if err != nil {
+		t.Fatalf("a stopped run wrote no rows: %v", err)
+	}
+	if stopped.CostSource != SourceSessionFile || len(stopped.Requests) != 4 || !slices.Equal(stopped.Requests, whole.Requests) {
+		t.Errorf("%s, %+v", stopped.CostSource, stopped.Requests)
+	}
+	if stopped.Unrecorded != 1 || whole.Unrecorded != 0 {
+		t.Errorf("unrecorded %d, and %d with no line cut", stopped.Unrecorded, whole.Unrecorded)
+	}
+	if !slices.Contains(stopped.Warnings, "no result object: the session files are the only record of this run") {
+		t.Errorf("warnings %q", stopped.Warnings)
+	}
+}
+
+func TestAnUnreadableSessionCountDiscardsTheSessionFiles(t *testing.T) {
+	cases := map[string]struct{ from, to, reason string }{
+		"negative":    {`"output_tokens":4,`, `"output_tokens":-4,`, "usage output_tokens: -4 is negative"},
+		"fraction":    {`"output_tokens":4,`, `"output_tokens":4.5,`, "usage output_tokens: 4.5 is not a whole number"},
+		"text":        {`"output_tokens":4,`, `"output_tokens":"four",`, `usage output_tokens: "four" is not a number`},
+		"no usage":    {`"usage":{`, `"usage_moved":{`, "the message states no usage object"},
+		"lifetimes":   {`"ephemeral_5m_input_tokens":0}`, `"ephemeral_5m_input_tokens":1}`, "cache writes of 1 tokens for five minutes and 2986 for one hour pass the written total of 2986"},
+		"model":       {`"model":"claude-haiku-5-5"`, `"model":5`, "model 5 is not text"},
+		"request id":  {`"requestId":"req_fixture_0001"`, `"requestId":1`, "requestId 1 is not text"},
+		"string body": {`"message":{"model"`, `"message":"SYNTHETIC-TEXT","moved":{"model"`, "the message is not an object"},
+	}
+	totals := sum(replay(t, "one-request", oneRequestID).Requests)
+	for name, tc := range cases {
+		edit := func(text string) string {
+			if !strings.Contains(text, tc.from) {
+				t.Fatalf("%s: the fixture holds no %s", name, tc.from)
+			}
+			return strings.Replace(text, tc.from, tc.to, 1)
+		}
+		report, err := replayWith(t, "one-request", oneRequestID, edit, everyLine)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		wantWarning := "claude-code: the session files were not used, and the result's totals stand: session file line 2: "
+		if name != "request id" {
+			wantWarning += "request req_fixture_0001: "
+		}
+		if report.CostSource != SourceStream || sum(report.Requests) != totals || !slices.Equal(report.Warnings, []string{wantWarning + tc.reason}) {
+			t.Errorf("%s: %s %+v, warnings %q", name, report.CostSource, sum(report.Requests), report.Warnings)
+		}
+		_, err = replayWith(t, "one-request", oneRequestID, edit, noResult)
+		if err == nil || !strings.HasPrefix(err.Error(), "claude-code: no result object, and the session files could not be read: session file line 2: ") || !strings.HasSuffix(err.Error(), tc.reason) {
+			t.Errorf("%s with no result: %v", name, err)
+		}
+	}
+}
+
+func TestSplitWritesRefusesOverrun(t *testing.T) {
+	const largest = 1<<63 - 1
+	accepted := []struct {
+		created, fiveMinute, oneHour int64
+		unsplit                      focus.TokenClass
+		want5m, want1h               int64
+		assumed                      focus.TokenClass
+	}{
+		{100, 40, 60, focus.CacheWrite5m, 40, 60, ""},
+		{100, 0, 0, focus.CacheWrite5m, 100, 0, focus.CacheWrite5m},
+		{100, 30, 0, focus.CacheWrite1h, 30, 70, focus.CacheWrite1h},
+		{largest, largest, 0, focus.CacheWrite5m, largest, 0, ""},
+		{0, 0, 0, focus.CacheWrite1h, 0, 0, ""},
+	}
+	for _, tc := range accepted {
+		fiveMinute, oneHour, assumed, err := splitWrites(tc.created, tc.fiveMinute, tc.oneHour, tc.unsplit)
+		if err != nil || fiveMinute != tc.want5m || oneHour != tc.want1h || assumed != tc.assumed {
+			t.Errorf("%+v: %d %d %q %v", tc, fiveMinute, oneHour, assumed, err)
+		}
+	}
+	refused := [][3]int64{{100, 150, 0}, {100, 0, 101}, {100, 50, 51}, {0, largest, largest}, {10, largest, 0}, {largest - 1, largest, 0}}
+	for _, tc := range refused {
+		if _, _, _, err := splitWrites(tc[0], tc[1], tc[2], focus.CacheWrite5m); err == nil || !strings.Contains(err.Error(), "pass the written total") {
+			t.Errorf("%v: %v", tc, err)
+		}
+	}
+}
+
+func TestContextSumOverflowRefuses(t *testing.T) {
+	const largest = 1<<63 - 1
+	for _, counts := range [][3]int64{{1e12, 0, 0}, {0, 0, 1e12}, {4e11, 3e11, 3e11}} {
+		if total, err := contextInput(counts[0], counts[1], counts[2]); err != nil || total != 1e12 {
+			t.Errorf("%v: %d %v", counts, total, err)
+		}
+	}
+	for _, counts := range [][3]int64{{1e12 + 1, 0, 0}, {5e11, 5e11, 1}, {largest, largest, largest}, {2, 9223372036854775000, 0}, {0, 0, largest}} {
+		if _, err := contextInput(counts[0], counts[1], counts[2]); !errors.Is(err, errPastBound) {
+			t.Errorf("%v: %v", counts, err)
+		}
+	}
+	huge := func(text string) string {
+		return strings.Replace(text, `"cache_read_input_tokens":649`, `"cache_read_input_tokens":9223372036854775000`, 1)
+	}
+	_, err := replayWith(t, "one-request", oneRequestID, huge, everyLine)
+	want := "claude-code: session file line 2: request req_fixture_0001: the input is past the bound of 1000000000000 tokens one request can hold: input 2, cache reads 9223372036854775000, cache writes 2986"
+	if err == nil || err.Error() != want {
+		t.Errorf("the session file: %v", err)
+	}
+	_, err = replayWith(t, "one-request", oneRequestID, huge, noResult)
+	if err == nil || err.Error() != want {
+		t.Errorf("the session file with no result: %v", err)
+	}
+	_, err = finishResult(t, `{"inputTokens":2,"cacheReadInputTokens":9223372036854775000}`)
+	if err == nil || err.Error() != "claude-code: the result object could not be read: modelUsage claude-haiku-5-5: the input is past the bound of 1000000000000 tokens one request can hold: input 2, cache reads 9223372036854775000, cache writes 0" {
+		t.Errorf("the result: %v", err)
+	}
+}
+
+// oneHourRun reads the synthetic one-hour-cache run, with or without its
+// session file, as the given apiKeySource.
+func oneHourRun(t *testing.T, withFile bool, apiKeySource string) adapter.Report {
+	t.Helper()
+	const sessionID = "00000000-0000-4000-8000-0000000000e2"
+	config := t.TempDir()
+	if withFile {
+		project := filepath.Join(config, "projects", "-work")
+		if err := os.MkdirAll(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		copyFile(t, synthetic("session", "one-hour-cache.jsonl"), filepath.Join(project, sessionID+".jsonl"))
+	}
+	session := Agent{ConfigDir: config}.NewSession(adapter.Plan{})
+	stream := string(mustReadFile(t, synthetic("session", "one-hour-cache-stream.jsonl")))
+	stream = strings.ReplaceAll(stream, `"apiKeySource":"ANTHROPIC_API_KEY"`, `"apiKeySource":"`+apiKeySource+`"`)
+	for _, line := range strings.Split(strings.TrimSpace(stream), "\n") {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := session.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+func TestOneHourCachingEnv(t *testing.T) {
+	cases := []struct {
+		name, variable, apiKeySource string
+		class                        focus.TokenClass
+	}{
+		{"an API key", "", "ANTHROPIC_API_KEY", focus.CacheWrite5m},
+		{"an API key with the variable", "1", "ANTHROPIC_API_KEY", focus.CacheWrite1h},
+		{"an API key with the variable as text", "true", "ANTHROPIC_API_KEY", focus.CacheWrite1h},
+		{"a subscription", "", "none", focus.CacheWrite1h},
+		{"a subscription with the variable", "1", "none", focus.CacheWrite1h},
+	}
+	for _, tc := range cases {
+		t.Setenv(oneHourCacheVariable, tc.variable)
+		for _, withFile := range []bool{true, false} {
+			report := oneHourRun(t, withFile, tc.apiKeySource)
+			wantSource := SourceStream
+			if withFile {
+				wantSource = SourceSessionFile
+			}
+			if len(report.Requests) != 1 || report.CostSource != wantSource {
+				t.Fatalf("%s, file %v: %s %+v", tc.name, withFile, report.CostSource, report.Requests)
+			}
+			request := report.Requests[0]
+			want := adapter.Tokens{InputUncached: 2, CacheRead: 1000, Output: 30, CachedInputReported: 1000}
+			if tc.class == focus.CacheWrite5m {
+				want.CacheWrite5m = 500
+			} else {
+				want.CacheWrite1h = 500
+			}
+			if request.Tokens != want || request.AssumedWrite != tc.class {
+				t.Errorf("%s, file %v: %+v, assumed %q", tc.name, withFile, request.Tokens, request.AssumedWrite)
+			}
+		}
+	}
+}
+
+// TestNewestRecordedRunReadsWithNoWarning reads Claude Code 2.1.319's
+// recorded run, the newest release recorded, with its session file. It reads
+// with no warning, and its per-request counts add up to the result's.
+func TestNewestRecordedRunReadsWithNoWarning(t *testing.T) {
+	directory := filepath.Join("testdata", "2.1.319", "current")
+	session := Agent{ConfigDir: installFrom(t, directory, oneRequestID)}.NewSession(adapter.Plan{})
+	stream := strings.TrimSpace(string(mustReadFile(t, filepath.Join(directory, "stream.jsonl"))))
+	for _, line := range strings.Split(stream, "\n") {
+		if err := session.Feed([]byte(line), recorded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := session.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Warnings) != 0 || report.CostSource != SourceSessionFile || report.AgentVersion != "2.1.319" || report.CostBasis != focus.Measured {
+		t.Fatalf("%s %s %s, warnings %q", report.CostSource, report.AgentVersion, report.CostBasis, report.Warnings)
+	}
+	if len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRequest || report.Requests[0].ID != "req_fixture_0001" {
+		t.Fatalf("%+v", report.Requests)
+	}
+	var result struct {
+		ModelUsage map[string]providerTotals `json:"modelUsage"`
+	}
+	lines := strings.Split(stream, "\n")
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil {
+		t.Fatal(err)
+	}
+	totals := result.ModelUsage["claude-haiku-5-5"]
+	want := adapter.Tokens{
+		InputUncached: totals.InputTokens, CacheRead: totals.CacheRead, CacheWrite5m: totals.FiveMinute, CacheWrite1h: totals.OneHour,
+		Output: totals.OutputTokens, ReasoningOutput: totals.Thinking, CachedInputReported: totals.CacheRead,
+	}
+	if got := sum(report.Requests); got != want || want.CacheWrite5m+want.CacheWrite1h != totals.CacheCreated || want.InputUncached == 0 {
+		t.Errorf("rows %+v, result %+v", got, want)
+	}
+}
+
+// passedOverLine is a line of a type the reader passes over, in a shape no
+// recording holds.
+const passedOverLine = `{"type":"attachment","message":"SYNTHETIC-TEXT","requestId":"req_synthetic_0009","timestamp":12}`
+
+// readSessionData reads one file's text into a new builder.
+func readSessionData(data []byte) ([]adapter.Request, fileFacts, error) {
+	builder := newRequestBuilder(focus.CacheWrite5m)
+	facts, err := builder.readData(data)
+	return builder.requests(time.Time{}, time.Time{}), facts, err
+}
+
+// FuzzSessionFile reads any text as a session file, seeded with every
+// recorded and synthetic session file. No text may panic the reader; a file
+// that reads holds no negative class and no input past the bound; and a line
+// of a type the reader passes over, added at the end, changes nothing it read.
+func FuzzSessionFile(f *testing.F) {
+	for _, pattern := range []string{"*/*/session.jsonl", "*/*/subagents/*.jsonl", "synthetic/session/*.jsonl"} {
+		paths, err := filepath.Glob(filepath.Join("testdata", pattern))
+		if err != nil {
+			f.Fatal(err)
+		}
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				f.Fatal(err)
+			}
+			f.Add(data)
+		}
+	}
+	f.Add([]byte(`{"type":"assistant","requestId":"r","message":{"usage":{"cache_creation_input_tokens":1,"cache_creation":{"ephemeral_1h_input_tokens":2}}}}`))
+	f.Add([]byte(`{"type":"assistant","requestId":"r","message":{"usage":{"input_tokens":1e12,"cache_read_input_tokens":1}}}`))
+	f.Add([]byte(`{"type":"assistant","requestId":"r","message":{"usage":{"output_tokens":-1}}}`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		requests, facts, err := readSessionData(data)
+		if err == nil {
+			for _, request := range requests {
+				if err := request.Tokens.Check(); err != nil {
+					t.Fatalf("%s: %v", request.ID, err)
+				}
+				if request.ContextInputTokens < 0 || request.ContextInputTokens > requestBound {
+					t.Fatalf("%s: input %d", request.ID, request.ContextInputTokens)
+				}
+			}
+		}
+		appended := append(append(slices.Clone(data), '\n'), passedOverLine+"\n"...)
+		again, againFacts, againErr := readSessionData(appended)
+		if (err == nil) != (againErr == nil) || (err != nil && err.Error() != againErr.Error()) {
+			t.Fatalf("an added line changed the error: %v, then %v", err, againErr)
+		}
+		if err == nil && !slices.Equal(requests, again) {
+			t.Fatalf("an added line changed the requests: %+v, then %+v", requests, again)
+		}
+		if err == nil && againFacts.skipped < facts.skipped {
+			t.Fatalf("skipped %d, then %d", facts.skipped, againFacts.skipped)
 		}
 	})
 }

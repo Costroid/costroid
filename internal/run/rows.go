@@ -59,6 +59,9 @@ func (b rowBuilder) rows(report adapter.Report) ([]focus.Row, error) {
 func (b rowBuilder) sessionRows(report adapter.Report, notes []string) ([]focus.Row, error) {
 	var rows []focus.Row
 	for _, request := range report.Requests {
+		if err := request.Tokens.Check(); err != nil {
+			return nil, fmt.Errorf("run: request %s: %w", request.ID, err)
+		}
 		for _, count := range request.Tokens.Counts() {
 			row, err := b.row(report, request, count, notes)
 			if err != nil {
