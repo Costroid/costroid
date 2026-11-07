@@ -2,6 +2,27 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.10 (2026-11-07)
+
+### Breaking changes
+
+- The result object is `costroid.result/0.6`. It adds `rows_sha256` and `rows_file_sha256`, which name the rows a report was built from, a `lifetime` object with the pull request's total, the policy's new rule names, and the run reason `artifact_refused`.
+- `costroid validate` refuses an amount written as a float, such as `5.0`, as the policy does. Write `5` or `"5.00"`.
+- The GitLab template runs `costroid:report` and `costroid:ingest` in the `.post` stage, follows the agent's label rule, and pins `COSTROID_COMMIT` beside `COSTROID_VERSION`. Copy the template again.
+- `costroid` with no command prints a short usage. `costroid help <command>` prints one command's flags.
+
+### What you can now do
+
+- Read what the run cost first: the comment and the check open with the figure, its basis and its grade.
+- See the pull request's total across its runs, one line per currency and basis, read from the earlier `costroid` checks. Repeated reports are counted once.
+- Hold a pull request to a budget across its runs (`policy.pr_budget_usd`), a model allowlist (`policy.models`), and an increase in USD or percent. Budgets accept whole numbers.
+- Approve a failing check with a pull-request review from a writer who is not the author. `recipes/github-approval.yml` re-posts the check as `neutral`, naming the approver.
+- Write the workflow with `costroid init`, pinned to the release the binary belongs to, and add Costroid to an existing workflow with `costroid init --existing`.
+- Lint your own agent workflows with `costroid lint`: an agent reachable by an untrusted actor is a high finding. `claude-code-action`'s own check of who triggered it counts as a guard.
+- Measure `openai/codex-action` runs with `recipes/github-codex-action.yml`. The action takes the key from `CODEX_API_KEY` or `OPENAI_API_KEY`.
+- Print the comment for a rows file with `costroid report --preview`, or a recorded run's with `costroid demo`.
+- Trust that a run leaves nothing behind: on Linux, `costroid run` kills and reaps every process the agent left, `setsid` children included.
+
 ## 1.0.0-alpha.9 (2026-11-07)
 
 ### Breaking changes
