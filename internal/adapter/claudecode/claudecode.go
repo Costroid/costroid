@@ -178,7 +178,10 @@ type Session struct {
 	// skipped counts the lines whose shape this reader does not know.
 	skipped int
 	// answered names every model an assistant message on the stream came from.
-	answered    map[string]bool
+	answered map[string]bool
+	// routes holds, per model, the tiers and regions its assistant messages
+	// on the stream stated.
+	routes      map[string]*route
 	first, last time.Time
 	// ranFrom and ranTo are when the agent's process ran, when known.
 	ranFrom, ranTo time.Time
@@ -270,14 +273,19 @@ func (s *Session) readAssistant(line []byte) {
 		return
 	}
 	var message struct {
-		Model string `json:"model"`
+		Model string          `json:"model"`
+		Usage json.RawMessage `json:"usage"`
 	}
 	// A message that is not an object names no model; the line still counts.
 	if json.Unmarshal(assistant.Message, &message) == nil && message.Model != "" {
 		if s.answered == nil {
-			s.answered = map[string]bool{}
+			s.answered, s.routes = map[string]bool{}, map[string]*route{}
 		}
 		s.answered[message.Model] = true
+		if s.routes[message.Model] == nil {
+			s.routes[message.Model] = &route{tiers: map[string]bool{}, regions: map[string]bool{}}
+		}
+		s.routes[message.Model].observe(message.Usage)
 	}
 	if len(assistant.Error) > 0 && string(assistant.Error) != "null" {
 		class, _ := jsonString(assistant.Error)
@@ -673,24 +681,114 @@ func (s *Session) sideModels(requests []adapter.Request) map[string]bool {
 	return side
 }
 
-// sideRequests are one entry per side model, from the result's totals. The
-// model's whole input bounds each of its requests', so it selects the context
-// tier.
+// sideRequests are one entry per side model, from the result's totals. No
+// stream message names a side model, and the note says so in place of the
+// note on a tier no message stated.
 func (s *Session) sideRequests(side map[string]bool) ([]adapter.Request, error) {
 	requests, err := s.perModel(side)
 	if err != nil {
 		return nil, err
 	}
 	for i := range requests {
-		requests[i].ContextInputTokens = s.totals[requests[i].Model].context
 		requests[i].CostSource = SourceStream
 		requests[i].Note = "a request outside the conversation: the result counts it, and no session file or stream message holds it"
 	}
 	return requests, nil
 }
 
+// route is what one model's assistant messages on the stream stated about
+// where they ran: the service tier, fast mode read as the fast tier, and the
+// inference region.
+type route struct {
+	tiers, regions map[string]bool
+}
+
+// observe reads one message's usage. The stream's counts are placeholders,
+// so only the routing fields are read, and a field that is not text states
+// nothing.
+func (r *route) observe(raw json.RawMessage) {
+	var fields struct {
+		ServiceTier  json.RawMessage `json:"service_tier"`
+		InferenceGeo json.RawMessage `json:"inference_geo"`
+		Speed        json.RawMessage `json:"speed"`
+	}
+	if !isObject(raw) || json.Unmarshal(raw, &fields) != nil {
+		return
+	}
+	tier, tierStated := jsonString(fields.ServiceTier)
+	speed, speedStated := jsonString(fields.Speed)
+	if tierStated || speedStated {
+		r.tiers[serviceTier(usage{ServiceTier: tier, Speed: speed})] = true
+	}
+	if geo, ok := jsonString(fields.InferenceGeo); ok {
+		r.regions[region(geo)] = true
+	}
+}
+
+// settle is the tier and region one model's whole-run rows take, with a note
+// when the stream does not state them alone. Fast mode or a residency stated
+// on any message prices the whole run: exact when every message stated it,
+// an upper bound when some did not. Neither ever reads under the run.
+func (r *route) settle() (tier, where, note string) {
+	if r == nil {
+		r = &route{}
+	}
+	tier, tierNote, tierStated := r.tier()
+	where, regionNote, regionStated := r.region()
+	switch {
+	case !tierStated && !regionStated:
+		return tier, where, "no stream message states this model's service tier or region, so the standard tier and global price it"
+	case !tierStated:
+		tierNote = "no stream message states this model's service tier, so the standard tier prices it"
+	case !regionStated:
+		regionNote = "no stream message states this model's region, so global prices it"
+	}
+	return tier, where, joinNotes(tierNote, regionNote)
+}
+
+func (r *route) tier() (tier, note string, stated bool) {
+	tiers := slices.Sorted(maps.Keys(r.tiers))
+	switch {
+	case len(tiers) == 0:
+		return catalog.TierStandard, "", false
+	case r.tiers[catalog.TierFast] && len(tiers) > 1:
+		return catalog.TierFast, "fast mode shows on some of this model's stream messages, so the fast tier prices all of them, an upper bound", true
+	case len(tiers) == 1:
+		return tiers[0], "", true
+	}
+	return catalog.TierStandard, fmt.Sprintf("the stream states the %s tiers for this model, and one total cannot split them, so the standard tier prices it", strings.Join(tiers, " and ")), true
+}
+
+func (r *route) region() (where, note string, stated bool) {
+	if len(r.regions) == 0 {
+		return catalog.RegionGlobal, "", false
+	}
+	var resident []string
+	for _, where := range slices.Sorted(maps.Keys(r.regions)) {
+		if where != catalog.RegionGlobal {
+			resident = append(resident, where)
+		}
+	}
+	switch {
+	case len(resident) == 0:
+		return catalog.RegionGlobal, "", true
+	case len(resident) == 1 && r.regions[catalog.RegionGlobal]:
+		return resident[0], fmt.Sprintf("data residency in %s shows on some of this model's stream messages, so it prices all of them, an upper bound", resident[0]), true
+	case len(resident) == 1:
+		return resident[0], "", true
+	}
+	return catalog.RegionGlobal, fmt.Sprintf("the stream states the regions %s for this model, and one total cannot split them, so global prices it", strings.Join(resident, " and ")), true
+}
+
+// joinNotes joins the notes that say something, as a row's description does.
+func joinNotes(notes ...string) string {
+	return strings.Join(slices.DeleteFunc(notes, func(note string) bool { return note == "" }), "; ")
+}
+
 // perModel is one entry per model in the result's totals. A non-nil only
-// keeps the models it names.
+// keeps the models it names. The model's whole input bounds each of its
+// requests', so it selects the context tier as an upper bound. The tier and
+// region are what the model's stream messages stated.
 func (s *Session) perModel(only map[string]bool) ([]adapter.Request, error) {
 	models := make([]string, 0, len(s.totals))
 	for model := range s.totals {
@@ -705,17 +803,20 @@ func (s *Session) perModel(only map[string]bool) ([]adapter.Request, error) {
 		if err != nil {
 			return nil, fmt.Errorf("claude-code: the result's totals for %s do not add up: %w", model, err)
 		}
+		tier, where, note := s.routes[model].settle()
 		requests = append(requests, adapter.Request{
-			ID:           s.sessionID + ":" + model,
-			Provider:     provider,
-			Model:        model,
-			Start:        s.first,
-			End:          s.last,
-			ServiceTier:  catalog.TierStandard,
-			Region:       catalog.RegionGlobal,
-			Grain:        adapter.PerRun,
-			Tokens:       tokens,
-			AssumedWrite: assumed,
+			ID:                 s.sessionID + ":" + model,
+			Provider:           provider,
+			Model:              model,
+			Start:              s.first,
+			End:                s.last,
+			ServiceTier:        tier,
+			Region:             where,
+			ContextInputTokens: s.totals[model].context,
+			Grain:              adapter.PerRun,
+			Tokens:             tokens,
+			AssumedWrite:       assumed,
+			Note:               note,
 		})
 	}
 	return requests, nil

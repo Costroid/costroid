@@ -172,7 +172,7 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 			return focus.Row{}, err
 		}
 		charge.Price = &focus.Price{SkuPriceID: price.SkuPriceID, PricingUnit: price.PricingUnit, ListUnitPrice: price.ListUnitPrice}
-		charge.Notes = priceNotes(price, request)
+		charge.Notes = priceNotes(price, request, count.Class)
 	}
 	if b.enforcement.Grade == adapter.GradeGatewayPrecheck && b.held != nil {
 		bound, err := overshootBound(b.catalog, b.held.grant, request)
@@ -198,10 +198,13 @@ func (b rowBuilder) credentialID() string {
 	return b.credential
 }
 
-func priceNotes(price catalog.Price, request adapter.Request) []string {
+func priceNotes(price catalog.Price, request adapter.Request, class focus.TokenClass) []string {
 	var notes []string
 	if price.Fallback {
 		notes = append(notes, focus.NoteFallback)
+	}
+	if price.CacheMultiplier != nil {
+		notes = append(notes, price.CacheMultiplier.CacheNote(class))
 	}
 	if price.ResidencyMultiplier != nil {
 		notes = append(notes, focus.ResidencyNote(*price.ResidencyMultiplier, request.Region))
@@ -218,13 +221,15 @@ func priceNotes(price catalog.Price, request adapter.Request) []string {
 // tierNote says how far the context tier of an entry coarser than a request
 // holds. The entry's whole input bounds each request's in it: at or below the
 // matched tier's top, every request is in that tier; above a tier's floor, a
-// request may be below it, and the price is an upper bound.
+// request may be below it, and the price is an upper bound. An entry with
+// input and no stated whole input has an unknown tier, and says so.
 func tierNote(price catalog.Price, request adapter.Request) string {
+	tokens := request.Tokens
 	switch {
 	case request.Grain == adapter.PerRequest:
 		return ""
-	case request.ContextInputTokens == 0:
-		return fmt.Sprintf("one %s's total, so the lowest context tier applies", request.Grain)
+	case request.ContextInputTokens == 0 && tokens.InputUncached+tokens.CacheRead+tokens.CacheWrite5m+tokens.CacheWrite1h+tokens.CacheWrite30m > 0:
+		return fmt.Sprintf("one %s's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read under", request.Grain)
 	case price.ContextTierMin != nil:
 		return fmt.Sprintf("one %s's input of %d tokens passes the %d-token context tier boundary, and its requests' own inputs are unknown, so the tier above prices it as an upper bound", request.Grain, request.ContextInputTokens, *price.ContextTierMin)
 	case price.ContextTierMax != nil:
