@@ -228,3 +228,18 @@ func TestCustomerFindingPrintsItsSeverity(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// TestShippedRecipesPassTheCustomerProfile keeps a team that copies a recipe
+// free of findings under costroid lint --strict.
+func TestShippedRecipesPassTheCustomerProfile(t *testing.T) {
+	report, err := LintWith([]string{recipesDir}, Options{Profile: Customer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Agents == 0 {
+		t.Fatal("judged no recipe")
+	}
+	if found := slices.Concat(report.Findings, report.Notes); len(found) != 0 {
+		t.Fatalf("findings: %v", found)
+	}
+}
