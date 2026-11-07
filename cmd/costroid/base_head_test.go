@@ -93,7 +93,7 @@ func TestPolicyReadsTheBaseBranchHead(t *testing.T) {
 		if len(reads) == 0 || len(requestsWith(reads, "ref="+baseHead)) != len(reads) {
 			t.Errorf("costroid.yml was read at %v", reads)
 		}
-		history := requestsWith(stub.Requests, "/commits?")
+		history := requestsWith(stub.Requests, "/widgets/commits?")
 		if len(history) == 0 || len(requestsWith(history, "sha="+baseHead)) != len(history) {
 			t.Errorf("the warn-only period's start was read at %v", history)
 		}

@@ -35,9 +35,13 @@ type Pull struct {
 	HeadSHA        string
 	HeadRepository string
 	HeadBranch     string
+	// Commits are the pull request's commits, oldest first, as GitHub lists
+	// them.
+	Commits []string
 }
 
-// Check is a stored check run.
+// Check is a stored check run. App is the slug of the App that posted it, the
+// stub's own App when it was posted through the stub.
 type Check struct {
 	ID         int64
 	Name       string
@@ -45,6 +49,7 @@ type Check struct {
 	Conclusion string
 	Summary    string
 	Text       string
+	App        string
 }
 
 // Stub is one repository on a fake GitHub.
@@ -57,6 +62,9 @@ type Stub struct {
 	Token    string
 	Comments []Comment
 	Checks   []Check
+	// CheckLists maps a commit to a recorded answer of GitHub's list of its
+	// check runs, which the stub serves as it is in place of Checks.
+	CheckLists map[string][]byte
 	// Files maps a path to a file at every ref, and FilesAt maps a ref, then
 	// a path, to the file at that ref alone. A ref FilesAt names reads only
 	// FilesAt.
@@ -86,7 +94,7 @@ func New(t *testing.T) *Stub {
 	t.Helper()
 	stub := &Stub{
 		Token: "stub-token", Fail: map[string]int{}, Files: map[string]string{}, FilesAt: map[string]map[string]string{},
-		Branches: map[string]string{}, Commits: map[string][]time.Time{},
+		Branches: map[string]string{}, Commits: map[string][]time.Time{}, CheckLists: map[string][]byte{},
 		App: "github-actions", nextID: 1000,
 	}
 	stub.Server = httptest.NewServer(stub)
@@ -145,6 +153,10 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/pulls"):
 		s.answer(w, []any{})
+	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/check-runs"):
+		s.listChecks(w, r)
+	case r.Method == http.MethodGet && strings.Contains(path, "/pulls/") && strings.HasSuffix(path, "/commits"):
+		s.listPullCommits(w, r)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls"):
 		s.listPulls(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/branches-where-head"):
@@ -196,7 +208,7 @@ func (s *Stub) postCheck(w http.ResponseWriter, body []byte) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
-	check := Check{s.next(), request.Name, request.HeadSHA, request.Conclusion, request.Output.Summary, request.Output.Text}
+	check := Check{s.next(), request.Name, request.HeadSHA, request.Conclusion, request.Output.Summary, request.Output.Text, s.App}
 	s.Checks = append(s.Checks, check)
 	w.WriteHeader(http.StatusCreated)
 	s.answer(w, map[string]any{"id": check.ID, "app": map[string]string{"slug": s.App}})
@@ -243,6 +255,81 @@ func (s *Stub) listPulls(w http.ResponseWriter, r *http.Request) {
 		listed = append(listed, map[string]any{"number": pull.Number, "state": pull.State, "head": head})
 	}
 	s.answer(w, listed)
+}
+
+// listChecks answers as GitHub's list of a commit's check runs does, filtered
+// by name, from a recorded answer when the commit has one.
+func (s *Stub) listChecks(w http.ResponseWriter, r *http.Request) {
+	sha := commitOf(r.URL.Path)
+	if recorded, found := s.CheckLists[sha]; found {
+		if _, err := w.Write(recorded); err != nil {
+			panic(fmt.Sprintf("scmtest: %v", err))
+		}
+		return
+	}
+	size, page, ok := paging(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var matched []Check
+	for _, check := range s.Checks {
+		if check.HeadSHA == sha && check.Name == r.URL.Query().Get("check_name") {
+			matched = append(matched, check)
+		}
+	}
+	listed := []map[string]any{}
+	for index := (page - 1) * size; index >= 0 && index < len(matched) && index < page*size; index++ {
+		check := matched[index]
+		listed = append(listed, map[string]any{
+			"id": check.ID, "name": check.Name, "head_sha": check.HeadSHA, "status": "completed", "conclusion": check.Conclusion,
+			"output": map[string]string{"summary": check.Summary, "text": check.Text}, "app": map[string]string{"slug": check.App},
+		})
+	}
+	s.answer(w, map[string]any{"total_count": len(matched), "check_runs": listed})
+}
+
+// listPullCommits answers as GitHub's list of a pull request's commits does,
+// which stops at 250.
+func (s *Stub) listPullCommits(w http.ResponseWriter, r *http.Request) {
+	size, page, ok := paging(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	segments := strings.Split(r.URL.Path, "/")
+	number, err := strconv.Atoi(segments[len(segments)-2])
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	index := slices.IndexFunc(s.Pulls, func(pull Pull) bool { return pull.Number == number })
+	if index < 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	commits := s.Pulls[index].Commits[:min(len(s.Pulls[index].Commits), maxPullCommits)]
+	listed := []map[string]string{}
+	for at := (page - 1) * size; at >= 0 && at < len(commits) && at < page*size; at++ {
+		listed = append(listed, map[string]string{"sha": commits[at]})
+	}
+	s.answer(w, listed)
+}
+
+// maxPullCommits is the most commits GitHub lists for a pull request.
+const maxPullCommits = 250
+
+// paging reads per_page and page.
+func paging(r *http.Request) (int, int, bool) {
+	size, err := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if err != nil {
+		return 0, 0, false
+	}
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil {
+		return 0, 0, false
+	}
+	return size, page, true
 }
 
 // listBranchesAt answers with every branch whose head is the commit.

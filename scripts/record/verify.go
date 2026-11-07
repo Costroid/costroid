@@ -25,6 +25,9 @@ const (
 type manifest struct {
 	Recorded bool   `json:"recorded"`
 	Agent    string `json:"agent"`
+	// Host names the API whose answers a recording holds, in place of an
+	// agent.
+	Host     string `json:"host,omitempty"`
 	Version  string `json:"version"`
 	Scenario string `json:"scenario,omitempty"`
 	Run      string `json:"run,omitempty"`
@@ -65,8 +68,11 @@ func (m manifest) problems() []string {
 	if !m.Recorded {
 		found = append(found, "recorded is not true")
 	}
-	if m.Agent != agentClaudeCode && m.Agent != agentCodex {
+	switch {
+	case m.Host == "" && m.Agent != agentClaudeCode && m.Agent != agentCodex:
 		found = append(found, "agent is neither claude-code nor codex")
+	case m.Host != "" && (m.Host != hostGitHub || m.Agent != ""):
+		found = append(found, "host is not github, or names an agent beside it")
 	}
 	for name, word := range map[string]string{"version": m.Version, "scenario": m.Scenario, "run": m.Run, "costroid": m.Costroid} {
 		if (word != "" || name == "version") && !safeWord.MatchString(word) {
@@ -189,8 +195,19 @@ func verifyLine(line *value, needles []string) []string {
 			return
 		}
 		if kind, ok := idPaths[path]; ok {
-			if v.kind == kindString && !kind.fixture.MatchString(v.text) {
+			text, isID := kind.text(v)
+			if isID && !kind.fixture.MatchString(text) || kind.numeric && v.kind == kindString {
 				found = append(found, path+" is not a synthetic "+kind.name+" id")
+			}
+			return
+		}
+		if root, ok := embeddedResults[path]; ok {
+			object, isObject := fencedObject(v.text)
+			switch {
+			case isObject:
+				walk(object, root)
+			case v.kind != kindString || v.text != placeholderContent:
+				found = append(found, path+" is not a fenced result object")
 			}
 			return
 		}

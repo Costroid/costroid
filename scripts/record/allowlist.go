@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -266,21 +267,45 @@ const (
 )
 
 // idKind is one family of identifiers and the synthetic form the fixtures use.
+// A numeric kind's ids are JSON numbers, and the others' are strings.
 type idKind struct {
 	name    string
 	fixture *regexp.Regexp
 	format  string
+	numeric bool
+}
+
+// text is v as an id of this kind, false when v is not one.
+func (k *idKind) text(v *value) (string, bool) {
+	switch {
+	case k.numeric && v.isNumber():
+		return v.raw, true
+	case !k.numeric && v.kind == kindString:
+		return v.text, true
+	}
+	return "", false
+}
+
+// value is a synthetic id as JSON of this kind.
+func (k *idKind) value(synthetic string) *value {
+	if k.numeric {
+		return &value{kind: kindLiteral, raw: synthetic}
+	}
+	return stringValue(synthetic)
 }
 
 var (
-	sessionIDs  = idKind{"session", regexp.MustCompile(`^00000000-0000-4000-8000-([0-9]{12})$`), "00000000-0000-4000-8000-%012d"}
-	requestRefs = idKind{"request reference", regexp.MustCompile(`^00000000-0000-4000-9000-([0-9]{12})$`), "00000000-0000-4000-9000-%012d"}
-	requestIDs  = idKind{"request", regexp.MustCompile(`^req_fixture_([0-9]{4,})$`), "req_fixture_%04d"}
-	messageIDs  = idKind{"message", regexp.MustCompile(`^(?:msg_fixture_|example-message-)([0-9]+)$`), "msg_fixture_%04d"}
-	toolUseIDs  = idKind{"tool use", regexp.MustCompile(`^toolu_fixture_([0-9]{4,})$`), "toolu_fixture_%04d"}
-	responseIDs = idKind{"response", regexp.MustCompile(`^response-([0-9]+)$`), "response-%d"}
-	turnIDs     = idKind{"turn", regexp.MustCompile(`^turn-([0-9]+)$`), "turn-%d"}
-	itemIDs     = idKind{"item", regexp.MustCompile(`^item_([0-9]+)$`), "item_%d"}
+	sessionIDs  = idKind{"session", regexp.MustCompile(`^00000000-0000-4000-8000-([0-9]{12})$`), "00000000-0000-4000-8000-%012d", false}
+	requestRefs = idKind{"request reference", regexp.MustCompile(`^00000000-0000-4000-9000-([0-9]{12})$`), "00000000-0000-4000-9000-%012d", false}
+	requestIDs  = idKind{"request", regexp.MustCompile(`^req_fixture_([0-9]{4,})$`), "req_fixture_%04d", false}
+	messageIDs  = idKind{"message", regexp.MustCompile(`^(?:msg_fixture_|example-message-)([0-9]+)$`), "msg_fixture_%04d", false}
+	toolUseIDs  = idKind{"tool use", regexp.MustCompile(`^toolu_fixture_([0-9]{4,})$`), "toolu_fixture_%04d", false}
+	responseIDs = idKind{"response", regexp.MustCompile(`^response-([0-9]+)$`), "response-%d", false}
+	turnIDs     = idKind{"turn", regexp.MustCompile(`^turn-([0-9]+)$`), "turn-%d", false}
+	itemIDs     = idKind{"item", regexp.MustCompile(`^item_([0-9]+)$`), "item_%d", false}
+	checkRunIDs = idKind{"check run", regexp.MustCompile(`^9000([0-9]{4})$`), "9000%04d", true}
+	ciRunIDs    = idKind{"workflow run", regexp.MustCompile(`^8000([0-9]{4})$`), "8000%04d", true}
+	commitIDs   = idKind{"commit", regexp.MustCompile(`^0{32}([0-9]{8})$`), "%040d", false}
 )
 
 // idPaths are the kept keys that hold an identifier. Each is replaced by its
@@ -304,6 +329,14 @@ var idPaths = map[string]*idKind{
 	"payload.response_id": &responseIDs,
 	"payload.turn_id":     &turnIDs,
 	"item.id":             &itemIDs,
+
+	// GitHub's list of a commit's check runs, and the result object in each.
+	"check_runs[].id":          &checkRunIDs,
+	"check_runs[].head_sha":    &commitIDs,
+	"result.check_run_id":      &checkRunIDs,
+	"result.head_sha":          &commitIDs,
+	"result.ci_run.id":         &ciRunIDs,
+	"result.policy.config_ref": &commitIDs,
 }
 
 // modelKeyParents hold one object per model, keyed by the model's name.
@@ -320,7 +353,7 @@ var allowed = newAllowlist()
 
 func newAllowlist() allowlist {
 	list := allowlist{kept: map[string]bool{}, containers: map[string]bool{}}
-	for _, path := range keptPaths {
+	for _, path := range slices.Concat(keptPaths, checkRunPaths) {
 		list.kept[path] = true
 		for i := range path {
 			if path[i] == '.' || strings.HasPrefix(path[i:], "[]") {
@@ -332,6 +365,9 @@ func newAllowlist() allowlist {
 		list.kept[path] = true
 	}
 	for path := range idPaths {
+		list.kept[path] = true
+	}
+	for path := range embeddedResults {
 		list.kept[path] = true
 	}
 	return list

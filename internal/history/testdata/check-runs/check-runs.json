@@ -1,0 +1,21 @@
+{
+  "total_count": 1,
+  "check_runs": [
+    {
+      "id": 90000001,
+      "name": "costroid",
+      "head_sha": "0000000000000000000000000000000000000001",
+      "status": "completed",
+      "conclusion": "neutral",
+      "started_at": "2026-11-07T12:09:19Z",
+      "completed_at": "2026-11-07T12:09:19Z",
+      "output": {
+        "title": "Verdict: neutral",
+        "text": "```json\n{\n  \"schema\": \"costroid.result/0.5\",\n  \"check_run_id\": 90000001,\n  \"conclusion\": \"neutral\",\n  \"state\": \"reported\",\n  \"agent_error\": null,\n  \"agent_skipped\": false,\n  \"head_sha\": \"0000000000000000000000000000000000000001\",\n  \"ci_run\": {\n    \"id\": 80000001,\n    \"attempt\": 1\n  },\n  \"amounts\": \"shown\",\n  \"rows\": 19,\n  \"run_identity\": \"unverified\",\n  \"figures\": [\n    {\n      \"currency\": \"USD\",\n      \"list_cost\": \"0.1309884\",\n      \"cost_basis\": \"measured\",\n      \"attribution_grade\": \"unattributed\",\n      \"enforcement_grade\": \"none\",\n      \"rows\": 19,\n      \"fallback_rows\": 0,\n      \"tokens\": {\n        \"cache_read\": \"49665\",\n        \"cache_write_5m\": \"11988\",\n        \"cached_input_reported\": \"49665\",\n        \"input_uncached\": \"1225\",\n        \"output\": \"3067\",\n        \"reasoning_output\": \"1254\"\n      }\n    }\n  ],\n  \"figures_omitted\": 0,\n  \"cap\": null,\n  \"data\": {\n    \"agents\": [\n      \"claude-code\"\n    ],\n    \"models\": [\n      \"claude-haiku-5-5\",\n      \"claude-opus-5-5\"\n    ],\n    \"models_omitted\": 0,\n    \"catalog_versions\": [\n      \"0.1.0\"\n    ],\n    \"fallback_models\": [],\n    \"fallback_models_omitted\": 0,\n    \"fallback_price_ids\": [],\n    \"fallback_price_ids_omitted\": 0\n  },\n  \"policy\": {\n    \"conclusion\": \"neutral\",\n    \"trust\": \"unverified\",\n    \"pack_sha256\": \"749c060beeef1e1d37f7412dcaa364b648738880dc3a72b6953cfc251817c1a9\",\n    \"config_sha256\": \"3c72d76da03278e3d3a09f645982de29e87babaa0399335c3d6dd1e828701bbd\",\n    \"config_ref\": \"0000000000000000000000000000000000000002\",\n    \"config\": \"found\",\n    \"config_from_base\": true,\n    \"evaluated_at\": \"2026-11-07T12:09:19Z\",\n    \"warn_only\": {\n      \"active\": true,\n      \"reason\": \"in_period\",\n      \"started\": \"2026-11-04T14:16:40Z\",\n      \"ends\": \"2026-11-11T14:16:40Z\"\n    },\n    \"results\": [\n      {\n        \"rule\": \"run_budget\",\n        \"outcome\": \"unproven\",\n        \"reason\": \"unverified_rows\",\n        \"limit_usd\": \"0.5\",\n        \"cost_usd\": \"0.1309884\"\n      }\n    ],\n    \"joinable_rows\": 0\n  }\n}\n```"
+      },
+      "app": {
+        "slug": "github-actions"
+      }
+    }
+  ]
+}

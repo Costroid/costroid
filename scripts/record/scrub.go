@@ -200,12 +200,19 @@ func (s *scrubber) reserve(v *value, path string) {
 	case kindObject:
 		for i, key := range v.keys {
 			p := child(path, key)
-			if kind, ok := idPaths[p]; ok && v.items[i].kind == kindString {
-				if match := kind.fixture.FindStringSubmatch(v.items[i].text); match != nil {
-					n, _ := strconv.Atoi(match[1])
-					ids := s.idMap(kind)
-					ids.raw[v.items[i].text] = v.items[i].text
-					ids.next = max(ids.next, n+1)
+			if kind, ok := idPaths[p]; ok {
+				if text, isID := kind.text(v.items[i]); isID {
+					if match := kind.fixture.FindStringSubmatch(text); match != nil {
+						n, _ := strconv.Atoi(match[1])
+						ids := s.idMap(kind)
+						ids.raw[text] = text
+						ids.next = max(ids.next, n+1)
+					}
+				}
+			}
+			if root, ok := embeddedResults[p]; ok && v.items[i].kind == kindString {
+				if object, ok := fencedObject(v.items[i].text); ok {
+					s.reserve(object, root)
 				}
 			}
 			s.reserve(v.items[i], p)
@@ -300,10 +307,18 @@ func (s *scrubber) member(v *value, path string) *value {
 		return stringValue(placeholder)
 	}
 	if kind, ok := idPaths[path]; ok {
-		if v.kind != kindString {
+		text, isID := kind.text(v)
+		switch {
+		case !isID && kind.numeric && v.kind == kindString:
+			s.report.dropped[path]++
+			return nil
+		case !isID:
 			return v
 		}
-		return stringValue(s.mapID(kind, v.text))
+		return kind.value(s.mapID(kind, text))
+	}
+	if root, ok := embeddedResults[path]; ok {
+		return s.embedded(v, path, root)
 	}
 	if allowed.kept[path] {
 		return s.scrub(v, path)

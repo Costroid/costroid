@@ -63,6 +63,24 @@ type ForkHeads interface {
 	BranchesAt(ctx context.Context, sha string) ([]string, error)
 }
 
+// ListedCheck is one completed check run as a commit's list gives it.
+type ListedCheck struct {
+	ID   int64
+	Text string
+}
+
+// History reads what earlier reports posted on a pull request.
+type History interface {
+	// PullCommits lists the pull request's commits, oldest first. Capped says
+	// the list reached the most the host lists, so later commits can be
+	// missing from it.
+	PullCommits(ctx context.Context, number int) (commits []string, capped bool, err error)
+	// CheckRuns lists the commit's completed check runs named name that
+	// GitHub Actions or the App this token belongs to posted. No other App's
+	// check run is listed, whatever its name.
+	CheckRuns(ctx context.Context, sha, name string) ([]ListedCheck, error)
+}
+
 // Reporter is what a report needs from one repository on one source-code host.
 type Reporter interface {
 	// PostCheck returns the check's id. A host without one answers ErrNoCheck.

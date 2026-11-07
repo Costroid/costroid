@@ -37,7 +37,10 @@ run's content: keep it on the machine that made it.
 
 scrub writes RAW, cut to the allowlist, to a new directory. A working
 directory reads /work, an agent's text @content and a prompt @prompt. Every
-key it drops is printed by name, never by value.
+key it drops is printed by name, never by value. The allowlist also holds
+GitHub's list of a commit's check runs, which a manifest.json naming the host
+github marks in place of an agent. The scrub keeps the result object in each
+check run and gives every id and commit a synthetic form.
 
 verify exits 1 and names each problem when DIR holds a key outside the
 allowlist, an id in no synthetic form, a credential, a home, runner or

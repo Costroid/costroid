@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,8 +35,15 @@ const (
 	pullsPerPage   = 100
 	// maxPullPages bounds a list of open pull requests at 1,000.
 	maxPullPages = 10
-	// actionsLogin is the account GitHub Actions' own token posts as.
-	actionsLogin = "github-actions[bot]"
+	// maxPullCommits is the most commits GitHub lists for a pull request.
+	maxPullCommits   = 250
+	checkRunsPerPage = 100
+	// maxCheckRunPages bounds a commit's list of check runs of one name at 300.
+	maxCheckRunPages = 3
+	// actionsApp is GitHub Actions' App, and actionsLogin the account its own
+	// token posts as.
+	actionsApp   = "github-actions"
+	actionsLogin = actionsApp + botSuffix
 	// botSuffix ends the login of a GitHub App's account. A person's login
 	// cannot hold a bracket.
 	botSuffix = "[bot]"
@@ -516,4 +524,70 @@ func (g *GitHub) CanWrite(ctx context.Context, login string) (bool, error) {
 		return false, err
 	}
 	return answer.Permission == "admin" || answer.Permission == "write", nil
+}
+
+// PullCommits pages through the pull request's commits, oldest first. GitHub
+// lists 250 at most, and a list that reaches 250 is capped.
+func (g *GitHub) PullCommits(ctx context.Context, number int) ([]string, bool, error) {
+	var commits []string
+	for page := 1; len(commits) < maxPullCommits; page++ {
+		var answer []struct {
+			SHA string `json:"sha"`
+		}
+		query := url.Values{"per_page": {strconv.Itoa(commitsPerPage)}, "page": {strconv.Itoa(page)}}
+		if err := g.do(ctx, http.MethodGet, g.repo(fmt.Sprintf("/pulls/%d/commits?%s", number, query.Encode())), nil, &answer); err != nil {
+			return nil, false, err
+		}
+		for _, commit := range answer {
+			if !shaPattern.MatchString(commit.SHA) {
+				return nil, false, fmt.Errorf("scm: pull request %d lists a commit that is not a full SHA", number)
+			}
+			commits = append(commits, commit.SHA)
+		}
+		if len(answer) < commitsPerPage {
+			break
+		}
+	}
+	return commits, len(commits) >= maxPullCommits, nil
+}
+
+// CheckRuns lists the commit's completed check runs named name, every
+// attempt included, that GitHub Actions or this token's own App posted.
+func (g *GitHub) CheckRuns(ctx context.Context, sha, name string) ([]ListedCheck, error) {
+	if !shaPattern.MatchString(sha) {
+		return nil, errors.New("scm: the commit is not a full SHA")
+	}
+	apps := []string{actionsApp, strings.TrimSuffix(g.ownLogin(), botSuffix)}
+	var checks []ListedCheck
+	for page := 1; page <= maxCheckRunPages; page++ {
+		var answer struct {
+			TotalCount int `json:"total_count"`
+			CheckRuns  []struct {
+				ID     int64  `json:"id"`
+				Status string `json:"status"`
+				App    *struct {
+					Slug string `json:"slug"`
+				} `json:"app"`
+				Output struct {
+					Text string `json:"text"`
+				} `json:"output"`
+			} `json:"check_runs"`
+		}
+		query := url.Values{
+			"check_name": {name}, "filter": {"all"},
+			"per_page": {strconv.Itoa(checkRunsPerPage)}, "page": {strconv.Itoa(page)},
+		}
+		if err := g.do(ctx, http.MethodGet, g.repo("/commits/"+sha+"/check-runs?"+query.Encode()), nil, &answer); err != nil {
+			return nil, err
+		}
+		for _, run := range answer.CheckRuns {
+			if run.Status == "completed" && run.App != nil && slices.Contains(apps, run.App.Slug) {
+				checks = append(checks, ListedCheck{ID: run.ID, Text: run.Output.Text})
+			}
+		}
+		if len(answer.CheckRuns) < checkRunsPerPage || page*checkRunsPerPage >= answer.TotalCount {
+			return checks, nil
+		}
+	}
+	return nil, fmt.Errorf("scm: more than %d check runs named %s are on commit %s", maxCheckRunPages*checkRunsPerPage, name, sha)
 }

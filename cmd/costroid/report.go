@@ -516,13 +516,14 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
+	lifetime := readLifetime(ctx, host, pull, input, stderr)
 	input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, stderr)
 	input.CheckRunID = postCheck(ctx, host, input, stderr)
 	if input.CheckRunID != nil {
 		input.IDInCheck = nameCheck(ctx, host, input, stderr)
 	}
 	if pull.pullRequest > 0 {
-		postComment(ctx, host, input, pull.pullRequest, stderr)
+		postComment(ctx, host, input, lifetime, pull.pullRequest, stderr)
 	}
 	return input
 }
@@ -737,8 +738,8 @@ func readConfig(ctx context.Context, host scm.Reporter, ref string) (comment.Con
 	return comment.ParseConfig(data)
 }
 
-func postComment(ctx context.Context, host scm.Reporter, input comment.Input, pullRequest int, stderr io.Writer) {
-	body, err := comment.Comment(input)
+func postComment(ctx context.Context, host scm.Reporter, input comment.Input, lifetime *comment.Lifetime, pullRequest int, stderr io.Writer) {
+	body, err := comment.CommentWithLifetime(input, lifetime)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: comment not posted: %v\n", err)
 		return

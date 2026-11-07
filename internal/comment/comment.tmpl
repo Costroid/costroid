@@ -94,6 +94,7 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 
 {{template "facts" .}}
 
+{{range .Lifetime}}{{.}}{{"\n\n"}}{{end -}}
 [Your account on costroid.com]({{.AccountURL}}) · [Export to your FinOps platform or warehouse]({{.ExportURL}})
 
 <details>
