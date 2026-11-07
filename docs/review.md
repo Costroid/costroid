@@ -6,7 +6,7 @@ It is off by default. Nothing posts the answer unless the workflow turns it on.
 
 ## Turn it on
 
-Add `post-review: "true"` to every step of the workflow that uses `Costroid/costroid/action`: the agent's step (`stage: run` or `stage: read`), the report's step and the ingest step. The report and ingest steps refuse an artifact that holds the answer when they are not told to expect it, and the report's check then fails with `artifact_refused`.
+Add `post-review: "true"` to two steps that use `Costroid/costroid/action`: the agent's step (`stage: run` or `stage: read`) and the report's step. A report's step without it refuses an artifact that holds the answer, and its check fails with `artifact_refused`. The ingest step needs nothing: it reads the rows alone, takes an artifact that holds the answer whatever `post-review` says, and deletes the answer unread.
 
 ```yaml
         with:
@@ -41,7 +41,7 @@ It says the text is the agent's own answer from its run on the head commit, and 
 - Control characters and the characters that reverse the direction of text show as `�`.
 - The comment shows the first 30000 bytes of the answer, and a line says when it cut. The artifact keeps up to 1 MiB.
 
-When the agent's job kept no answer, the comment says so, so an answer from an earlier commit never stands for a later one. The agent's job's log says why.
+When the agent's job kept no answer, no comment is created. If an earlier run posted an answer, that comment is edited to say this run kept none, so an answer from an earlier commit never stands for a later one. The agent's job's log says why.
 
 ## What it does not do
 

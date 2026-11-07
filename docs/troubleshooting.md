@@ -294,15 +294,19 @@ doctor ends with one line of its own.
 
 With `post-review: "true"`, the action runs `costroid review --keep` in the agent's job and `costroid review --post` in the report's job. [`docs/review.md`](review.md) says what the comment shows. Neither step fails its job: `--keep` exits 0 when the run left no answer, its step continues on an error, and `--post` exits 0 whatever the host answers.
 
-The answer travels as `costroid-review.md` in the `costroid-rows` artifact. A report or ingest step without `post-review: "true"` refuses an artifact that holds it, with the refused artifact's line in [Installing the binary](#installing-the-binary), and the report's check fails.
+The answer travels as `costroid-review.md` in the `costroid-rows` artifact. A report step without `post-review: "true"` refuses an artifact that holds it, with the refused artifact's line in [Installing the binary](#installing-the-binary), and the report's check fails. An ingest step takes it whatever `post-review` says, deletes it unread and sends the rows.
 
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
 | `costroid: kept the agent's answer, <count> bytes, for the review comment` | The agent's job kept the run's final answer, and nothing else it wrote | None |
-| `costroid: no answer was kept, so the review comment will say the job kept none: <error>` | The run ended without an answer: it stopped at its cap, its last turn failed, or it never finished. The error says which. In stage `run` with `show-output: true`, the agent's stream went to the log and not to a file, so there is nothing to read | None, when the error names a cap or a failed turn. In stage `run`, leave `show-output` false |
+| `costroid: no answer was kept: <error>` | The run ended without an answer: it stopped at its cap, its last turn failed, or it never finished. The error says which. In stage `run` with `show-output: true`, the agent's stream went to the log and not to a file, so there is nothing to read | None, when the error names a cap or a failed turn. In stage `run`, leave `show-output` false |
 | `costroid: warning: the answer is <count> bytes, so its first <count> were kept` | The answer is longer than 1 MiB. The comment shows its first 30000 bytes in any case | None |
-| `costroid: the agent's job kept no answer, so the review comment says so` | The artifact holds no `costroid-review.md`, so the comment says the job kept none. The agent's job's log says why | Read the agent's job's log. Set `post-review: "true"` on the agent's step as well |
-| `costroid: warning: the kept answer was not read, so the review comment says the job kept none: <error>` | `costroid-review.md` could not be read, or is not a plain file | Read the error |
+| `costroid: the agent's job kept no answer` | The artifact holds no `costroid-review.md`. A line below says what was done instead. The agent's job's log says why | Read the agent's job's log. Set `post-review: "true"` on the agent's step as well |
+| `costroid: warning: the kept answer was not read: <error>` | `costroid-review.md` could not be read, or is not a plain file, so the run counts as one with no answer | Read the error |
+| `costroid: no answer to post, and the pull request holds no earlier answer` | The run kept no answer, and no earlier run posted one, so no comment was created | None |
+| `costroid: the earlier answer now says this run kept none` | The run kept no answer, so the comment an earlier run posted was edited to say so | None |
+| `costroid: warning: the earlier answer was not replaced: <error>` | The run kept no answer, and the host refused the look for an earlier comment or its edit. An earlier answer can still show on the pull request | Give the report's job `pull-requests: write`, as the recipes do |
+| `costroid: no answer to post, and this host cannot look for an earlier one` | The run kept no answer, on a host where Costroid cannot find an earlier answer without writing, so nothing was posted | None |
 | `costroid: posted the agent's answer in a comment of its own` | The comment was posted, or the one an earlier run posted was edited | None |
 | `costroid: warning: the agent's answer was not posted: <error>` | The host refused the comment. A fork's pull request gets a read-only token, so this is expected there | Give the report's job `pull-requests: write`, as the recipes do |
 | `costroid: not posted: review posts on the pull_request event, and this run's event is <event>` | On GitHub Actions, the answer is posted on the `pull_request` event only, as the report is | Run the report's job on `pull_request` |

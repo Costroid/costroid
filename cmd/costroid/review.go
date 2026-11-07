@@ -16,6 +16,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/cicontext"
 	reviewcomment "github.com/Costroid/costroid/internal/review"
+	"github.com/Costroid/costroid/internal/scm"
 )
 
 const reviewHelp = `Usage:
@@ -45,10 +46,10 @@ that ended without an answer, at a cap or on an error, leaves no file at
 --post runs in the report's job. It reads FILE as data, up to 1 MiB, and posts
 one comment of its own, or edits the one an earlier run posted. The comment
 fences the answer as plain text, so no link, mention, image or HTML in it
-renders, cuts it to 30000 bytes and says the words are the agent's. A missing
-FILE posts a comment that says the agent's job kept no answer. Like report, it
-exits 0 whatever the host answers, and outside GitHub Actions and GitLab CI it
-refuses and exits 125.
+renders, cuts it to 30000 bytes and says the words are the agent's. With no
+answer in FILE, it creates no comment, and edits an earlier run's to say this
+run kept none. Like report, it exits 0 whatever the host answers, and outside
+GitHub Actions and GitLab CI it refuses and exits 125.
 `
 
 // answerSource is one kind of file an answer is read from.
@@ -166,7 +167,7 @@ func keepAnswer(flags reviewFlags, stderr io.Writer) int {
 	}
 	text, err := flags.source.read(flags.path, flags.since)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: no answer was kept, so the review comment will say the job kept none: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: no answer was kept: %v\n", err)
 		return 0
 	}
 	if len(text) > reviewcomment.MaxFileBytes {
@@ -205,10 +206,13 @@ func postAnswer(ctx context.Context, path string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
 		return 0
 	}
-	body := reviewcomment.Render(reviewcomment.Answer{Text: readKeptAnswer(path, stderr), Head: target.pull.head})
+	answer := reviewcomment.Answer{Text: readKeptAnswer(path, stderr), Head: target.pull.head}
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
-	if err := target.host.UpsertComment(ctx, target.pull.pullRequest, reviewcomment.Marker, body); err != nil {
+	if text, _ := reviewcomment.Clean(answer.Text); text == "" {
+		return replaceEarlierAnswer(ctx, target, answer, stderr)
+	}
+	if err := target.host.UpsertComment(ctx, target.pull.pullRequest, reviewcomment.Marker, reviewcomment.Render(answer)); err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: the agent's answer was not posted: %v\n", err)
 		return 0
 	}
@@ -216,11 +220,36 @@ func postAnswer(ctx context.Context, path string, stderr io.Writer) int {
 	return 0
 }
 
+// replaceEarlierAnswer handles a run that kept no answer. It creates no
+// comment, and edits the one an earlier run posted to say this run kept none,
+// so an earlier answer never stands for a later commit.
+func replaceEarlierAnswer(ctx context.Context, target reportTarget, answer reviewcomment.Answer, stderr io.Writer) int {
+	finder, ok := target.host.(scm.CommentFinder)
+	if !ok {
+		fmt.Fprintln(stderr, "costroid: no answer to post, and this host cannot look for an earlier one")
+		return 0
+	}
+	found, err := finder.HasComment(ctx, target.pull.pullRequest, reviewcomment.Marker)
+	if err == nil && !found {
+		fmt.Fprintln(stderr, "costroid: no answer to post, and the pull request holds no earlier answer")
+		return 0
+	}
+	if err == nil {
+		err = target.host.UpsertComment(ctx, target.pull.pullRequest, reviewcomment.Marker, reviewcomment.Render(answer))
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the earlier answer was not replaced: %v\n", err)
+		return 0
+	}
+	fmt.Fprintln(stderr, "costroid: the earlier answer now says this run kept none")
+	return 0
+}
+
 // readKeptAnswer reads the kept answer, empty when there is none to read.
 func readKeptAnswer(path string, stderr io.Writer) string {
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintln(stderr, "costroid: the agent's job kept no answer, so the review comment says so")
+		fmt.Fprintln(stderr, "costroid: the agent's job kept no answer")
 		return ""
 	}
 	if err == nil && !info.Mode().IsRegular() {
@@ -231,7 +260,7 @@ func readKeptAnswer(path string, stderr io.Writer) string {
 		data, err = readAtMost(path, reviewcomment.MaxFileBytes)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: the kept answer was not read, so the review comment says the job kept none: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: warning: the kept answer was not read: %v\n", err)
 		return ""
 	}
 	return string(data)

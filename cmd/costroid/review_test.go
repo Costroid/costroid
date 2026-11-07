@@ -170,7 +170,7 @@ func TestKeepLeavesNoFileForARunWithNoAnswer(t *testing.T) {
 				t.Fatal(err)
 			}
 			code, _, stderr := execute(t, "review", "--keep", "--from", from, "--out", out)
-			if code != 0 || !strings.Contains(stderr, "costroid: no answer was kept, so the review comment will say the job kept none: ") {
+			if code != 0 || !strings.Contains(stderr, "costroid: no answer was kept: ") {
 				t.Fatalf("exit %d: %s", code, stderr)
 			}
 			if _, err := os.Stat(out); !os.IsNotExist(err) {
@@ -332,6 +332,10 @@ func TestSecondCommentIsEditedInPlace(t *testing.T) {
 
 func TestPostReadsTheKeptFileAsDataUpToItsCap(t *testing.T) {
 	stub := reportEnvironment(t, pullRequestEvent())
+	huge := keptFile(t, strings.Repeat("x", 3*reviewcomment.MaxFileBytes))
+	if code, _, stderr := execute(t, "review", "--post", "--file", huge); code != 0 || len(stub.Comments) != 1 || !strings.Contains(stub.Comments[0].Body, "runs past 30000 bytes") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
 	link := filepath.Join(t.TempDir(), "costroid-review.md")
 	if err := os.Symlink(keptFile(t, "a secret elsewhere"), link); err != nil {
 		t.Fatal(err)
@@ -340,8 +344,36 @@ func TestPostReadsTheKeptFileAsDataUpToItsCap(t *testing.T) {
 	if code != 0 || !strings.Contains(stderr, "is not a plain file") || strings.Contains(stub.Comments[0].Body, "secret") {
 		t.Fatalf("exit %d, body %q: %s", code, stub.Comments[0].Body, stderr)
 	}
-	huge := keptFile(t, strings.Repeat("x", 3*reviewcomment.MaxFileBytes))
-	if code, _, stderr := execute(t, "review", "--post", "--file", huge); code != 0 || !strings.Contains(stub.Comments[0].Body, "runs past 30000 bytes") {
+}
+
+// A run that kept no answer creates no comment: a pull request whose runs
+// never answered shows Costroid's report alone. An earlier answer is edited to
+// say this run kept none, so it never stands for a later commit.
+func TestPostWithoutAnswerCreatesNoComment(t *testing.T) {
+	stub := reportEnvironment(t, pullRequestEvent())
+	stub.Comments = []scmtest.Comment{{ID: 1, Body: reviewcomment.Marker + "\nmine", Login: "octocat"}}
+	for name, file := range map[string]string{
+		"no file":     filepath.Join(t.TempDir(), "absent.md"),
+		"blank lines": keptFile(t, "\n \t\n"),
+	} {
+		code, _, stderr := execute(t, "review", "--post", "--file", file)
+		if code != 0 || len(stub.Comments) != 1 || len(stub.Writes()) != 0 ||
+			!strings.Contains(stderr, "costroid: no answer to post, and the pull request holds no earlier answer") {
+			t.Fatalf("%s: exit %d, comments %+v, writes %v: %s", name, code, stub.Comments, stub.Writes(), stderr)
+		}
+	}
+	if code, _, stderr := execute(t, "review", "--post", "--file", keptFile(t, keptAnswer)); code != 0 || len(stub.Comments) != 2 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	code, _, stderr := execute(t, "review", "--post", "--file", filepath.Join(t.TempDir(), "absent.md"))
+	want := reviewcomment.Render(reviewcomment.Answer{Head: headCommit})
+	if code != 0 || len(stub.Comments) != 2 || stub.Comments[1].Body != want || stub.Comments[0].Body != reviewcomment.Marker+"\nmine" ||
+		!strings.Contains(stderr, "costroid: the earlier answer now says this run kept none") {
+		t.Fatalf("exit %d, comments %+v: %s", code, stub.Comments, stderr)
+	}
+	stub.Fail["GET /comments"] = 500
+	if code, _, stderr := execute(t, "review", "--post", "--file", filepath.Join(t.TempDir(), "absent.md")); code != 0 ||
+		!strings.Contains(stderr, "costroid: warning: the earlier answer was not replaced: ") {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 }

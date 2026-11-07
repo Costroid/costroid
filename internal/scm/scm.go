@@ -96,6 +96,13 @@ type Reporter interface {
 	Visibility(ctx context.Context) (Visibility, error)
 }
 
+// CommentFinder finds a sticky comment without writing one.
+type CommentFinder interface {
+	// HasComment reports whether the token's own account wrote a comment on
+	// the pull request that opens with marker.
+	HasComment(ctx context.Context, pullRequest int, marker string) (bool, error)
+}
+
 // Host is one repository a person can approve a change on.
 type Host interface {
 	Reporter

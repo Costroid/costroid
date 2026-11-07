@@ -109,9 +109,10 @@ inputs:
   post-review:
     description: >-
       true posts the agent's own answer as a second comment, fenced as plain text, apart from the
-      report's. It is off by default. Set it on every Costroid step of the workflow: the agent's
-      step keeps the answer as a third file in the rows artifact, and the report and ingest steps
-      refuse that file unless it is set. docs/review.md says what the comment shows.
+      report's. It is off by default. Set it on the agent's step, which keeps the answer as a third
+      file in the rows artifact, and on the report's step, which refuses that file unless it is
+      set. The ingest step takes the file whatever this says and deletes it unread.
+      docs/review.md says what the comment shows.
     default: "false"
 
 outputs:
