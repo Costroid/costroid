@@ -39,6 +39,12 @@ cosign verify ghcr.io/costroid/costroid@sha256:<digest> \
 
 Image signatures need cosign 3. The release workflow also attaches the image's SPDX SBOM to the image as a signed attestation of type `spdxjson`.
 
+## A retried signature
+
+The release workflow tries each `cosign` call up to three times. Every attempt signs afresh, with a new key and certificate, so it writes a new entry to Rekor, Sigstore's transparency log. An upload that times out can still write its entry, and cosign's own retry of that upload then fails with HTTP 409 because the entry exists. The workflow's next attempt sends a different entry, so it never meets that conflict.
+
+The earlier entry stays in the log and belongs to no bundle the release carries. The checks on this page read the bundles and the image's signatures, so an extra entry changes none of them. An image whose signing ran more than once carries more than one signature, and `cosign verify` passes when one of them matches the identity.
+
 ## What the action checks
 
 The action pinned by its commit installs the release whose tag points at that commit. It reads the commit from the path the runner checked it out to, `_actions/Costroid/costroid/<commit>/action`, which holds it even when another action calls this one, and falls back to `github.action_ref`. Before it trusts `SHA256SUMS`, it runs `cosign verify-blob` with the identity above for that tag and with `--certificate-github-workflow-sha` set to that commit, so the signature must come from a release built from the commit the workflow pinned. It then checks the binary against its line, and installs nothing when either check fails. cosign itself comes from `sigstore/cosign-installer`, pinned by SHA in the action as in the release workflow.

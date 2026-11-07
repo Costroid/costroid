@@ -30,13 +30,64 @@ jobs:
       - name: Install staticcheck
         run: go install "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION"
       - name: Run the checks
-        run: make check
+        run: make test
       - name: Lint the recipes
         run: go run ./cmd/costroid lint-recipes recipes action/action.yml
       - name: Validate an example configuration
         run: |
           printf 'comment:\n  show_cost: false\n' > costroid.yml
           go run ./cmd/costroid validate costroid.yml
+
+  race:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Run the tests under the race detector
+        run: go test -short -race -count=1 ./...
+
+  # The per-PR view's timing gate has a job of its own, so a slow runner reads
+  # as a bench failure and never as a failed check.
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Time the per-PR view on one million rows
+        run: make bench-view
+
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Install the libraries Ubuntu's shellcheck links against
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libffi8 libgmp10 libnuma1
+      - name: Report vulnerabilities, shell findings and workflow findings
+        run: make lint
 
   e2e:
     runs-on: ubuntu-24.04

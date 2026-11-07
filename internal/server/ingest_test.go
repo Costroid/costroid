@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -909,29 +909,40 @@ func TestAGzipBombIsCappedAfterInflation(t *testing.T) {
 	got.want(t, http.StatusRequestEntityTooLarge)
 }
 
+// TestAGzipBombInflatesNoFurtherThanTheCap sends a gzip body whose checksum
+// fails only after it inflates past the cap by inflateMargin bytes. A read
+// stopped at the cap never reaches the checksum and answers too large; a read
+// that inflated as far as the checksum answers malformed, and fails here.
 func TestAGzipBombInflatesNoFurtherThanTheCap(t *testing.T) {
+	const inflateMargin = 1 << 20
 	var buffer bytes.Buffer
 	zipper := gzip.NewWriter(&buffer)
-	if _, err := zipper.Write(make([]byte, 4*maxBodyBytes)); err != nil {
+	if _, err := zipper.Write(make([]byte, maxBodyBytes+1+inflateMargin)); err != nil {
 		t.Fatal(err)
 	}
 	if err := zipper.Close(); err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/rows", &buffer)
+	bomb := buffer.Bytes()
+	// The gzip trailer is the CRC-32 of the inflated bytes, then their length.
+	bomb[len(bomb)-8] ^= 0xff
+	if len(bomb) >= maxBodyBytes {
+		t.Fatalf("the bomb is %d bytes compressed, so the cap on the raw body would refuse it first", len(bomb))
+	}
+	inflater, err := gzip.NewReader(bytes.NewReader(bomb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inflated, err := io.Copy(io.Discard, inflater)
+	if !errors.Is(err, gzip.ErrChecksum) || inflated != maxBodyBytes+1+inflateMargin {
+		t.Fatalf("the bomb inflated %d bytes and ended with %v, want %d bytes and a bad checksum", inflated, err, maxBodyBytes+1+inflateMargin)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/rows", bytes.NewReader(bomb))
 	request.Header.Set("Content-Encoding", "gzip")
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	_, err := readBody(httptest.NewRecorder(), request)
-	runtime.ReadMemStats(&after)
+	_, err = readBody(httptest.NewRecorder(), request)
 	var typed *refusal
 	if !errors.As(err, &typed) || typed.code != codeBodyTooLarge {
-		t.Fatalf("got %v", err)
-	}
-	// io.ReadAll allocates about twice what it reads, so a read stopped at the
-	// cap stays under three caps, and the whole bomb would pass eight.
-	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 3*maxBodyBytes {
-		t.Fatalf("allocated %d bytes reading a body capped at %d", allocated, maxBodyBytes)
+		t.Fatalf("got %v, want %s from a read that stopped within %d bytes past the cap", err, codeBodyTooLarge, inflateMargin)
 	}
 }
 

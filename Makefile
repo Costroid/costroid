@@ -2,15 +2,18 @@ VERSION ?= dev
 COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-.PHONY: check check-short bench-view bench-ingest fuzz fixture build image e2e e2e-bite
+.PHONY: check test check-short bench-view bench-ingest fuzz fixture build image e2e e2e-bite lint lint-vulnerabilities lint-shell lint-workflows
 
 # Runs everything, with Postgres in Docker. A missing Docker fails this target.
-check:
+check: test
+	$(MAKE) bench-view
+
+# Runs check without the timing gate, which CI runs as a job of its own.
+test:
 	@$(GOFILES_CHECK)
 	go vet -tags e2e ./...
 	staticcheck -tags e2e ./...
 	go test -count=1 ./...
-	$(MAKE) bench-view
 
 # Runs everything that needs no Docker.
 check-short:
@@ -66,3 +69,48 @@ e2e:
 # Proves e2e fails, at every step that states the figure, when a price moves.
 e2e-bite:
 	./e2e/price-bite.sh
+
+# The lint tools, each pinned by version and checksum and installed under
+# bin/lint on first use. The go command checks each Go module against the
+# checksum database at sum.golang.org. shellcheck is Ubuntu 26.04's amd64 build,
+# checked against the SHA-256 that the archive's signed index lists; the
+# checksum, not the transport, is the check.
+LINT_BIN = $(CURDIR)/bin/lint
+ACTIONLINT_VERSION = v1.7.12
+GOVULNCHECK_VERSION = v1.1.4
+SHELLCHECK_DEB = shellcheck_0.11.0-2_amd64.deb
+SHELLCHECK_SHA256 = 06990eaf21b5dfa3d855e492f7ca2d6fcacf63b490a73a545850c50cf7af2bce
+SHELLCHECK_URL = http://archive.ubuntu.com/ubuntu/pool/universe/s/shellcheck/$(SHELLCHECK_DEB)
+ACTIONLINT = $(LINT_BIN)/actionlint-$(ACTIONLINT_VERSION)/actionlint
+GOVULNCHECK = $(LINT_BIN)/govulncheck-$(GOVULNCHECK_VERSION)/govulncheck
+SHELLCHECK = $(LINT_BIN)/$(SHELLCHECK_DEB:.deb=)/shellcheck
+GO_INSTALL_CHECKED = GOSUMDB=sum.golang.org GONOSUMDB= GOPRIVATE= GOINSECURE= GOBIN=$(@D) go install
+
+# Reports known vulnerabilities in code the module calls, shell findings in the
+# scripts, and workflow findings, with shellcheck run on every step's script.
+lint: lint-vulnerabilities lint-shell lint-workflows
+
+lint-vulnerabilities: $(GOVULNCHECK)
+	$(GOVULNCHECK) ./...
+
+lint-shell: $(SHELLCHECK)
+	$(SHELLCHECK) action/*.sh e2e/*.sh scripts/*.sh
+
+lint-workflows: $(ACTIONLINT) $(SHELLCHECK)
+	$(ACTIONLINT) -shellcheck=$(SHELLCHECK) -pyflakes= .github/workflows/*.yml recipes/github-*.yml
+
+$(ACTIONLINT):
+	$(GO_INSTALL_CHECKED) github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+
+$(GOVULNCHECK):
+	$(GO_INSTALL_CHECKED) golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+
+$(SHELLCHECK):
+	mkdir -p $(@D)
+	curl -fsSL --retry 3 -o $(@D)/$(SHELLCHECK_DEB) $(SHELLCHECK_URL)
+	echo '$(SHELLCHECK_SHA256)  $(@D)/$(SHELLCHECK_DEB)' | sha256sum --check --strict
+	dpkg-deb --fsys-tarfile $(@D)/$(SHELLCHECK_DEB) | tar -xO ./usr/bin/shellcheck >$@.partial
+	rm $(@D)/$(SHELLCHECK_DEB)
+	chmod +x $@.partial
+	$@.partial --version
+	mv $@.partial $@
