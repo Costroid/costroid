@@ -361,13 +361,14 @@ const (
 	failNoReconciliation = "nothing reconciled"
 	failPending          = "pending"
 	failTokens           = "token miss"
+	failPrices           = "price miss"
 	failNoBill           = "no API bill"
 	failDollars          = "dollar miss"
 )
 
-// judge reads one reconciliation row. Tokens pass only as `reconcile` judged
-// them. Dollars pass within 10%, or within 10% once the named causes are
-// taken out of the residual.
+// judge reads one reconciliation row. Tokens and prices pass only as
+// `reconcile` judged them. Dollars pass within 10%, or within 10% once the
+// named causes are taken out of the residual.
 func judge(row reconciledRow) (line, error) {
 	judged := line{day: row.Day, tokens: row.Tokens, dollars: row.Dollars}
 	switch reconcile.State(row.State) {
@@ -376,6 +377,8 @@ func judge(row reconciledRow) (line, error) {
 		return judged, nil
 	case reconcile.TokensMiss:
 		judged.failures = append(judged.failures, failTokens)
+	case reconcile.PriceMiss:
+		judged.failures = append(judged.failures, failPrices)
 	case reconcile.Matched:
 	default:
 		return line{}, fmt.Errorf("unknown state %q", row.State)

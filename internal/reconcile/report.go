@@ -32,12 +32,24 @@ type Usage struct {
 // Cost is one line of a cost report in USD. Tokens is false for a line that
 // bills anything else. List is the same line at list price, where the provider
 // states one.
+//
+// Label is the provider's own name for a line the report splits by token
+// type, and empty on a line it does not split. Class is the token class the
+// label names, and empty when it names none Costroid reads. Model, Tier and
+// Region place the line where the report states them. ListFigure is the
+// figure a price is proven from, as the report wrote it.
 type Cost struct {
 	Credential string
 	Day        string
 	Amount     decimal.Decimal
 	List       *decimal.Decimal
 	Tokens     bool
+	Label      string
+	Class      focus.TokenClass
+	Model      string
+	Tier       string
+	Region     string
+	ListFigure *Stated
 }
 
 // Report is one source's records for a range. Unsettled names the days the
@@ -70,6 +82,16 @@ func (r Report) usageOf(key Key) []Usage {
 		}
 	}
 	return records
+}
+
+func (r Report) costLines(key Key) []Cost {
+	var lines []Cost
+	for _, cost := range r.Costs {
+		if cost.Credential == key.Credential && cost.Day == key.Day {
+			lines = append(lines, cost)
+		}
+	}
+	return lines
 }
 
 // costTotal is one credential's day. List is nil unless every token line

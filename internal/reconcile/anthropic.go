@@ -18,7 +18,9 @@ import (
 // The Usage and Cost Analytics API. The legacy cost report groups by workspace
 // and description only, so it cannot answer per API key.
 // https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api
-// retrieved 2026-11-01.
+// retrieved 2026-11-01. The cost report's token types:
+// https://platform.claude.com/docs/en/api/beta/organization/analytics/cost
+// retrieved 2026-11-07.
 const (
 	anthropicUsage   = "https://api.anthropic.com/v1/organizations/analytics/usage"
 	anthropicCost    = "https://api.anthropic.com/v1/organizations/analytics/cost"
@@ -89,6 +91,16 @@ type anthropicGroup struct {
 	InferenceGeo *string `json:"inference_geo"`
 	Speed        *string `json:"speed"`
 	CostType     *string `json:"cost_type"`
+	TokenType    *string `json:"token_type"`
+}
+
+// anthropicTokenTypes maps the cost report's token types to classes.
+var anthropicTokenTypes = map[string]focus.TokenClass{
+	"uncached_input_tokens":                    focus.InputUncached,
+	"cache_read_input_tokens":                  focus.CacheRead,
+	"cache_creation.ephemeral_5m_input_tokens": focus.CacheWrite5m,
+	"cache_creation.ephemeral_1h_input_tokens": focus.CacheWrite1h,
+	"output_tokens":                            focus.Output,
 }
 
 func (g anthropicGroup) credential(grain string) string {
@@ -100,8 +112,12 @@ func (g anthropicGroup) credential(grain string) string {
 
 // tier joins two report dimensions into the catalog's one: fast mode is a tier
 // on the sheet and a speed on the report. A row with no tier was served
-// standard.
+// standard. Priority is read first, because its tokens carry no cost at any
+// speed.
 func (g anthropicGroup) tier() string {
+	if text(g.ServiceTier) == tierPriority {
+		return tierPriority
+	}
 	if text(g.Speed) == speedFast {
 		return speedFast
 	}
@@ -194,9 +210,12 @@ type anthropicCostRow struct {
 	} `json:"cost"`
 }
 
+// cost asks for the dimensions usage is read by, then splits each row by cost
+// type and token type, which do not count toward the report's limit of five.
+// Each token line then joins one usage row by model and class.
 func (a anthropic) cost(ctx context.Context, grain string, span window, report *Report) error {
 	endpoint := fetch{client: a.client, endpoint: anthropicCost, authorize: a.authorize}
-	query := anthropicQuery(span, grain, "cost_type")
+	query := anthropicQuery(span, grain, "model", "service_tier", "inference_geo", "speed", "cost_type", "token_type")
 	return pages(ctx, endpoint, query, func(current page[anthropicCostRow]) error {
 		report.stamp(span, current.DataRefreshedAt)
 		for _, row := range current.Data {
@@ -224,12 +243,18 @@ func (r anthropicCostRow) cost(grain string) (Cost, error) {
 		Amount:     amount,
 		Tokens:     text(r.Group.CostType) == costTypeTokens,
 	}
+	if r.Group.TokenType != nil {
+		cost.Label = *r.Group.TokenType
+		cost.Class = anthropicTokenTypes[cost.Label]
+		cost.Model, cost.Tier, cost.Region = text(r.Group.Model), r.Group.tier(), r.Group.region()
+	}
 	if r.Cost.ListAmount != nil {
-		list, err := parseDollars(*r.Cost.ListAmount)
+		list, err := stated(*r.Cost.ListAmount, centsPerDollar)
 		if err != nil {
 			return Cost{}, fmt.Errorf("list_amount: %w", err)
 		}
-		cost.List = &list
+		cost.List = &list.Value
+		cost.ListFigure = &list
 	}
 	return cost, nil
 }

@@ -173,7 +173,7 @@ func TestAnthropicRequestsCarryTheBetaHeaderAndAnExclusiveEnd(t *testing.T) {
 	if strings.Join(query["group_by[]"], ",") != "api_key_id,model,service_tier,inference_geo,speed" {
 		t.Errorf("group_by %v", query["group_by[]"])
 	}
-	if strings.Join(cost.URL.Query()["group_by[]"], ",") != "api_key_id,cost_type" {
+	if strings.Join(cost.URL.Query()["group_by[]"], ",") != "api_key_id,model,service_tier,inference_geo,speed,cost_type,token_type" {
 		t.Errorf("cost group_by %v", cost.URL.Query()["group_by[]"])
 	}
 }

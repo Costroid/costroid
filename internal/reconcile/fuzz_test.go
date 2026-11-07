@@ -137,7 +137,7 @@ func assertReport(t *testing.T, report Report) {
 func assertResult(t *testing.T, result Result) {
 	t.Helper()
 	for _, row := range result.Rows {
-		if !slices.Contains([]State{Matched, TokensMiss, Pending}, row.State) {
+		if !slices.Contains([]State{Matched, TokensMiss, PriceMiss, Pending}, row.State) {
 			t.Fatalf("a row in state %q", row.State)
 		}
 		if row.Dollars == nil {
@@ -163,8 +163,8 @@ func assertResult(t *testing.T, result Result) {
 // panics on a day, an amount or a cursor the provider wrote.
 func FuzzProviderReport(f *testing.F) {
 	for which, pairs := range [][][2]string{
-		{{"usage.json", "cost-shared.json"}, {"usage-refreshing.json", "cost-refreshing.json"}, {"usage-page-1.json", "cost-at-list.json"}, {"usage-us.json", "cost-us.json"}, {"usage-batch.json", "cost-priority.json"}},
-		{{"usage.json", "costs.json"}, {"usage-older-response.json", "costs-scientific.json"}, {"usage-twelve-hour-writes.json", "costs-at-list.json"}, {"usage-priority.json", "costs-batch.json"}, {"empty.json", "empty.json"}},
+		{{"usage.json", "cost-shared.json"}, {"usage-refreshing.json", "cost-refreshing.json"}, {"usage-page-1.json", "cost-at-list.json"}, {"usage-us.json", "cost-us.json"}, {"usage-batch.json", "cost-priority.json"}, {"usage-tiny-day.json", "cost-tiny-day-output-nine-percent-over.json"}, {"usage-priority.json", "cost-priority-by-token-type.json"}},
+		{{"usage.json", "costs.json"}, {"usage-older-response.json", "costs-scientific.json"}, {"usage-twelve-hour-writes.json", "costs-at-list.json"}, {"usage-priority.json", "costs-batch.json"}, {"empty.json", "empty.json"}, {"usage.json", "costs-line-items.json"}},
 	} {
 		source := []string{"anthropic", "openai"}[which]
 		for _, pair := range pairs {

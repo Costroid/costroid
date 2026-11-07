@@ -36,6 +36,7 @@ func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens [
 	if !group.billed {
 		return check, []string{"every ledger row is list-equivalent, so no API bill exists to compare"}, nil
 	}
+	check.Classes = c.classDollars(key, group)
 	check.Verdict = Outside
 	if within(check.Ledger, check.Provider, DollarTolerancePercent) {
 		check.Verdict = Within
