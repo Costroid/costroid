@@ -20,43 +20,48 @@ import (
 	"time"
 )
 
-const usage = `Usage:
-  go run ./scripts/record collect --agent claude-code|codex --out DIR [--scenario NAME]
+// usage names every agent the registry holds where the commands take one.
+var usage = fmt.Sprintf(`Usage:
+  go run ./scripts/record collect --agent AGENT --out DIR [--scenario NAME]
       [--stream FILE] [--execution-file FILE] [--home DIR] [--fresh-home] [--costroid REF]
   go run ./scripts/record scrub --out DIR [--prompt-file FILE]... RAW
   go run ./scripts/record verify [--prompt-file FILE]... DIR
-  go run ./scripts/record local --agent claude-code|codex --scenario NAME --out DIR
+  go run ./scripts/record local --agent AGENT --scenario NAME --out DIR
       [--prompt-file FILE]... -- <agent command>
   go run ./scripts/record fixture --run ID --scenario NAME [--repo OWNER/NAME] [--from DIR]
+
+AGENT is %s.
 
 collect reads the agent's stream for the run's session or thread, then copies
 that session's files from --home: CLAUDE_CONFIG_DIR or CODEX_HOME by default.
 --fresh-home says the directory was made for this run, as on a CI runner, so
-its other sessions are the run's nested ones. The raw directory holds the
-run's content: keep it on the machine that made it.
+its other sessions are the run's nested ones. For gh-aw, --home is the
+directory gh run download wrote the run's agent or usage artifact to, and
+collect copies its token-usage.jsonl. The raw directory holds the run's
+content: keep it on the machine that made it.
 
-scrub writes RAW, cut to the allowlist, to a new directory. A working
+scrub writes RAW, cut to its agent's allowlist, to a new directory. A working
 directory reads /work, an agent's text @content and a prompt @prompt. Every
 key it drops is printed by name, never by value. The allowlist also holds
 GitHub's list of a commit's check runs, which a manifest.json naming the host
 github marks in place of an agent. The scrub keeps the result object in each
 check run and gives every id and commit a synthetic form.
 
-verify exits 1 and names each problem when DIR holds a key outside the
-allowlist, an id in no synthetic form, a credential, a home, runner or
+verify exits 1 and names each problem when DIR holds a key outside its
+agent's allowlist, an id in no synthetic form, a credential, a home, runner or
 temporary path, or the text of a --prompt-file. It prints ok otherwise.
 
 local runs the agent command with its stdout as the stream, then collects
 only the session that stream names and its subagents. Other sessions in the
 agent's directory are never opened. It scrubs into --out and verifies; the
-raw files are removed either way.
+raw files are removed either way. Its AGENT is %s.
 
 fixture downloads the artifact recording-NAME of a recording workflow run
 with gh, or reads --from, verifies it again, and places it under
 internal/adapter/<adapter>/testdata/<agent version>/NAME/ with a README.
 
 Exit codes: 0 done, 1 verify refused the recording, 125 the command failed.
-`
+`, agentList(agents, "or"), agentList(streamAgents(), "or"))
 
 const (
 	exitRefused = 1
@@ -144,8 +149,12 @@ func runCollect(_ context.Context, args []string, getenv func(string) string, _ 
 	if *out == "" || set.NArg() > 0 {
 		return errors.New("collect takes --out and no arguments")
 	}
+	entry, err := agentFor(*agent)
+	if err != nil {
+		return err
+	}
 	if *home == "" {
-		dir, err := agentHome(*agent, getenv)
+		dir, err := entry.home(getenv)
 		if err != nil {
 			return err
 		}
@@ -220,14 +229,15 @@ func runLocal(_ context.Context, args []string, getenv func(string) string, stdi
 	if err := set.Parse(args); err != nil {
 		return err
 	}
-	if *out == "" || !safeWord.MatchString(*scenario) || adapterDirectory[*agent] == "" {
-		return errors.New("local takes --agent claude-code or codex, --out and a --scenario that is a plain word")
+	entry, err := agentFor(*agent)
+	if *out == "" || !safeWord.MatchString(*scenario) || err != nil || entry.stream == "" {
+		return fmt.Errorf("local takes --agent %s, --out and a --scenario that is a plain word", agentList(streamAgents(), "or"))
 	}
 	prompts, err := readPrompts(promptFiles)
 	if err != nil {
 		return err
 	}
-	home, err := agentHome(*agent, getenv)
+	home, err := entry.home(getenv)
 	if err != nil {
 		return err
 	}

@@ -344,16 +344,27 @@ var modelKeyParents = []string{"modelUsage", "model_usage_since_last_result"}
 
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,99}$`)
 
+// allowlist is what one kind of recording keeps: the keys it keeps as they
+// are, the keys whose value a placeholder replaces, the keys that hold an id,
+// and the keys whose string is a fenced result object.
 type allowlist struct {
-	kept       map[string]bool
-	containers map[string]bool
+	kept         map[string]bool
+	containers   map[string]bool
+	placeholders map[string]string
+	ids          map[string]*idKind
+	embedded     map[string]string
 }
 
-var allowed = newAllowlist()
+// sessionAllowlist holds Claude Code's and Codex's files and GitHub's list of
+// a commit's check runs.
+var sessionAllowlist = newAllowlist(slices.Concat(keptPaths, checkRunPaths), placeholders, idPaths, embeddedResults)
 
-func newAllowlist() allowlist {
-	list := allowlist{kept: map[string]bool{}, containers: map[string]bool{}}
-	for _, path := range slices.Concat(keptPaths, checkRunPaths) {
+func newAllowlist(paths []string, replaced map[string]string, ids map[string]*idKind, embedded map[string]string) *allowlist {
+	list := &allowlist{
+		kept: map[string]bool{}, containers: map[string]bool{},
+		placeholders: replaced, ids: ids, embedded: embedded,
+	}
+	for _, path := range paths {
 		list.kept[path] = true
 		for i := range path {
 			if path[i] == '.' || strings.HasPrefix(path[i:], "[]") {
@@ -361,13 +372,13 @@ func newAllowlist() allowlist {
 			}
 		}
 	}
-	for path := range placeholders {
+	for path := range replaced {
 		list.kept[path] = true
 	}
-	for path := range idPaths {
+	for path := range ids {
 		list.kept[path] = true
 	}
-	for path := range embeddedResults {
+	for path := range embedded {
 		list.kept[path] = true
 	}
 	return list

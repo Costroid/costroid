@@ -19,6 +19,7 @@ const (
 
 	agentClaudeCode = "claude-code"
 	agentCodex      = "codex"
+	agentGhAw       = "gh-aw"
 )
 
 // manifest marks a directory as a recording and says what it records.
@@ -69,9 +70,11 @@ func (m manifest) problems() []string {
 		found = append(found, "recorded is not true")
 	}
 	switch {
-	case m.Host == "" && m.Agent != agentClaudeCode && m.Agent != agentCodex:
-		found = append(found, "agent is neither claude-code nor codex")
-	case m.Host != "" && (m.Host != hostGitHub || m.Agent != ""):
+	case m.Host == "":
+		if _, err := agentFor(m.Agent); err != nil {
+			found = append(found, "agent is not one of "+agentList(agents, "or"))
+		}
+	case m.Host != hostGitHub || m.Agent != "":
 		found = append(found, "host is not github, or names an agent beside it")
 	}
 	for name, word := range map[string]string{"version": m.Version, "scenario": m.Scenario, "run": m.Run, "costroid": m.Costroid} {
@@ -102,6 +105,10 @@ var forbidden = []struct {
 // commit. It reads every file under dir; an empty list means it is.
 func verifyDirectory(dir string, prompts []string) ([]string, error) {
 	needles := promptNeedles(prompts)
+	// A recording no readable manifest marks is held to Claude Code's and
+	// Codex's list; the manifest's own problems are noted when it is reached.
+	recorded, _ := readManifest(dir)
+	list := allowlistOf(recorded.Agent)
 	var found []string
 	note := func(name, problem string) { found = append(found, name+": "+problem) }
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
@@ -140,7 +147,7 @@ func verifyDirectory(dir string, prompts []string) ([]string, error) {
 				note(name, fmt.Sprintf("%d lines are not JSON", file.unread))
 			}
 			for i, line := range file.lines {
-				for _, problem := range verifyLine(line, needles) {
+				for _, problem := range verifyLine(line, list, needles) {
 					note(fmt.Sprintf("%s:%d", name, i+1), problem)
 				}
 			}
@@ -176,7 +183,7 @@ func scanText(text string, needles []string) []string {
 
 // verifyLine checks one line's keys against the allowlist, its ids against
 // their synthetic forms and its decoded strings against the prompt.
-func verifyLine(line *value, needles []string) []string {
+func verifyLine(line *value, list *allowlist, needles []string) []string {
 	if line.kind != kindObject {
 		return []string{"is not a JSON object"}
 	}
@@ -188,20 +195,20 @@ func verifyLine(line *value, needles []string) []string {
 				found = append(found, printable(path)+" "+problem)
 			}
 		}
-		if _, ok := placeholders[path]; ok {
+		if _, ok := list.placeholders[path]; ok {
 			if v.kind != kindString && v.raw != "null" {
 				found = append(found, path+" is neither a string nor null")
 			}
 			return
 		}
-		if kind, ok := idPaths[path]; ok {
+		if kind, ok := list.ids[path]; ok {
 			text, isID := kind.text(v)
 			if isID && !kind.fixture.MatchString(text) || kind.numeric && v.kind == kindString {
 				found = append(found, path+" is not a synthetic "+kind.name+" id")
 			}
 			return
 		}
-		if root, ok := embeddedResults[path]; ok {
+		if root, ok := list.embedded[path]; ok {
 			object, isObject := fencedObject(v.text)
 			switch {
 			case isObject:
@@ -211,7 +218,7 @@ func verifyLine(line *value, needles []string) []string {
 			}
 			return
 		}
-		if allowed.kept[path] {
+		if list.kept[path] {
 			walk(v, path)
 			return
 		}
@@ -236,7 +243,7 @@ func verifyLine(line *value, needles []string) []string {
 				check(item, path+"[]")
 			}
 		case kindString:
-			if allowed.containers[path] && v.text != placeholderContent {
+			if list.containers[path] && v.text != placeholderContent {
 				found = append(found, "content at "+printable(path))
 			}
 		}
