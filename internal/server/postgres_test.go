@@ -65,8 +65,8 @@ func TestPostgresThePerPullRequestViewIsDerivedFromTheRows(t *testing.T) {
 	w := postgresWorld(t)
 	w.rows(w.token(), statingHead(t, readFile(t, goldenRows))).want(t, http.StatusOK)
 	view := w.view(t, w.token(), acmeRepo, acmePull)
-	if !view.Budget.Evidence || len(view.Budget.Spend) != 1 {
-		t.Fatalf("%+v", view.Budget)
+	if view.Budget.Evidence || view.Budget.Basis != budgetBasisAgent || len(view.Budget.Spend) != 1 {
+		t.Fatalf("token-verified agent counts read as evidence: %+v", view.Budget)
 	}
 	if got := view.Budget.Spend[0]; got.Currency != "USD" || got.ListCost != goldenTotal {
 		t.Fatalf("%+v", got)
@@ -240,7 +240,7 @@ func TestPostgresUnattributedRowsNeverReachABudget(t *testing.T) {
 
 	w.rows(w.token(), readFile(t, goldenRows)).want(t, http.StatusOK)
 	view = w.view(t, acmeKey, acmeRepo, acmePull)
-	if !view.Budget.Evidence || view.Budget.Spend[0].ListCost != goldenTotal {
+	if view.Budget.Basis != budgetBasisAgent || view.Budget.Spend[0].ListCost != goldenTotal {
 		t.Fatalf("the unattributed row moved a budget: %+v", view.Budget)
 	}
 }

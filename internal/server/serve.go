@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -49,7 +50,8 @@ Environment:
   COSTROID_DATABASE_URL            the application role's connection
   COSTROID_MIGRATION_DATABASE_URL  the owner role's connection; when set,
                                    migrations run before the service starts
-  COSTROID_OIDC_AUDIENCE           the audience CI tokens must name
+  COSTROID_OIDC_AUDIENCE           the audience CI tokens must name, never
+                                   GitHub's default, https://github.com/<owner>
   COSTROID_PSEUDONYM_KEY           at least 32 bytes in base64, the master key
                                    for per-tenant address pseudonyms
   COSTROID_EGRESS_ALLOW            hosts for the egress allowlist, comma-separated
@@ -172,6 +174,9 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := ownAudience(audience); err != nil {
+		return err
+	}
 	key, err := pseudonymKey()
 	if err != nil {
 		return err
@@ -199,14 +204,20 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	gate := egress.New(options.egressAllow, counters)
 	issuers := issuersOf(options)
 	logAllowlist(logger, gate, issuers)
-	service := New(Config{
+	config := Config{
 		Ledger:             ledger,
 		Verifier:           oidc.NewVerifier(audience, gate.Client(keySetTimeout), nil, issuers...),
 		Catalog:            pinned,
 		PseudonymKey:       key,
 		GatewayEnvironment: cmp.Or(os.Getenv(envGatewayEnv), defaultGatewayEnvironment),
 		Logger:             logger,
-	})
+	}
+	// The store keeps the gateway's attested spend once it implements
+	// SpendLedger. Until then no spend is measured.
+	if spend, keeps := any(ledger).(SpendLedger); keeps {
+		config.Spend = spend
+	}
+	service := New(config)
 	background, stop := context.WithCancel(ctx)
 	flushed := make(chan struct{})
 	go func() {
@@ -217,6 +228,22 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	stop()
 	<-flushed
 	return err
+}
+
+// ownAudience refuses GitHub's default audience, the URL of the repository's
+// owner on github.com. A workflow that asks for a token without naming an
+// audience gets that one, whatever service it meant the token for, so a token
+// minted for any other service would pass here too.
+func ownAudience(audience string) error {
+	text := strings.ToLower(strings.TrimSpace(audience))
+	if !strings.Contains(text, "://") {
+		text = "https://" + text
+	}
+	parsed, err := url.Parse(text)
+	if err == nil && (parsed.Hostname() == "github.com" || parsed.Hostname() == "www.github.com") {
+		return fmt.Errorf("%s is GitHub's default audience, which a token for any other service also carries. Set an audience of this service's own, such as https://costroid.example", envAudience)
+	}
+	return nil
 }
 
 func issuersOf(options serveOptions) []oidc.Issuer {

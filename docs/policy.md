@@ -43,7 +43,7 @@ Who wrote the rows decides what a rule can conclude. A row whose run identity no
 
 | Outcome of a budget, increase or model rule | Rows the agent's job wrote (the Action path)                               | Rows a ledger checked against the job's OIDC token                            |
 | ------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`: "unverified rows cannot satisfy a budget" | Passes, and the check can conclude `success`. One `unattributed` row makes it `neutral`: "unattributed rows cannot satisfy a budget" |
+| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`: "unverified rows cannot satisfy a budget" | A model rule passes. A budget or increase rule passes only when the gateway's attested count or a provider's report stands behind the rows' spend. On the agent's own token counts it concludes `unproven` with reason `unmeasured_spend`, and the check `neutral`. One `unattributed` row keeps any rule from passing |
 | Over the limit, or a model off the list     | Warns during the warn-only period, then fails                              | Warns during the warn-only period, then fails                                 |
 | No rows reached the check                   | Cannot pass                                                                | Cannot pass                                                                   |
 
@@ -58,7 +58,9 @@ On the Action path no rule can pass, so the check concludes `neutral` or `failur
 
 The report stage reads a rows file that the agent's own job wrote. An agent that a prompt took over could write a smaller cost, or another model's name, into that file. A figure from it can show that a run went over its budget or used a model off the list. It can never show that a run stayed under, or kept to the list.
 
-`costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. In this release `serve` does not call the pack: `costroid report` and `costroid policy` do, and both read a rows file.
+`costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. A token proves which run sent a row, not the token counts on it, which the agent's job wrote. So on the second column a budget needs the gateway's own count for a key minted for the run, which `costroid gateway close` attests, or a provider's report.
+
+`serve` answers the second column at `POST /v1/pulls/{pr}/verdict`, over a pull request's rows in its ledger. Its answer covers the pull request, so the run rules conclude `unproven` there. [`docs/serve.md`](serve.md#the-verdict) gives the request and the answer. `costroid report` and `costroid policy` read a rows file, and do not ask `serve`.
 
 ## From the rules to the conclusion
 

@@ -20,6 +20,8 @@ export COSTROID_PSEUDONYM_KEY="$(openssl rand -base64 32)"
 costroid serve --addr :8080 --bind github.com:example
 ```
 
+`COSTROID_OIDC_AUDIENCE` names this service. The service refuses to start on GitHub's default audience, any URL on `github.com` such as `https://github.com/example`. A workflow that requests a token without naming an audience gets that one, so a token meant for any other service would pass here too. GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc) gives the repository owner's URL as the default. That page was not re-read on 2026-11-07, so the statement is unverified here.
+
 `--bind` gives an SCM owner to this instance's tenant. `--gitlab-host` trusts one more GitLab instance. GitHub Actions and gitlab.com are trusted by default, and their keys still need their hosts on the egress allowlist. [`docs/install.md`](install.md) has the list and its report.
 
 Migrations run forward only. The service refuses a migration edited after it was applied, and a database ahead of the binary.
@@ -30,10 +32,12 @@ Migrations run forward only. The service refuses a migration edited after it was
 | ------------------------ | --------------------------------------------------------------------- |
 | `POST /v1/rows`          | The JSON lines `costroid run --out` writes                            |
 | `POST /v1/credentials`   | A minting job's attestation of a gateway key                          |
+| `POST /v1/credentials/{key}/spend` | A closing job's attestation of what the gateway counted on the key |
 | `POST /otlp/v1/logs`     | OTLP/HTTP logs, protobuf or JSON                                      |
 | `POST /otlp/v1/traces`   | OTLP/HTTP traces, protobuf or JSON                                    |
 | `POST /otlp/v1/metrics`  | Accepted and not read, so an exporter of all three signals sees no error |
 | `GET /v1/pulls/{pr}`     | One pull request's lines and budget spend, with `?repo=host/owner/name` |
+| `POST /v1/pulls/{pr}/verdict` | The policy's verdict on that pull request's rows, with `?repo=host/owner/name` |
 | `GET /healthz`           | 204                                                                   |
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to `https://<host>/otlp`.
@@ -78,7 +82,16 @@ A stated head that differs from the token's `sha` on a `pull_request` run is exp
 
 A sender may lower an `exact` row to `windowed`. It cannot raise a row. Postgres holds the last line as well: a `CHECK` refuses an unverified row with any other grade, and `budget_eligible` is a generated column.
 
-A budget rule reads `budget.spend` in the per-PR answer. While no eligible row exists, `budget.evidence` is false and `budget.spend` is empty.
+A budget rule reads `budget` in the per-PR answer. `budget.spend` adds up the eligible rows' list cost per currency. `budget.basis` says what stands behind that spend, and `budget.evidence` is true only for the last two:
+
+| `budget.basis`     | When                                                                                                   |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| `none`             | No eligible row exists. `budget.spend` is empty                                                        |
+| `agent_counts`     | The rows are token-verified, and their token counts are the agent's job's own                          |
+| `gateway_measured` | The gateway's attested count covers every eligible row, each in USD. `budget.gateway_usd` holds it     |
+| `reconciled`       | A provider's report wrote every eligible row                                                           |
+
+A CI token proves which run sent a row. It does not prove the row's token counts, which the agent's job wrote. So a token-verified row is a budget's evidence only when the gateway's own count, or a provider's report, stands behind its spend. No path stores a provider's report in this release.
 
 `totals` in the same answer adds up every row of the pull request, one figure per currency and cost basis. It is a reading, so an unverified row counts, and a budget rule never reads it.
 
@@ -109,6 +122,47 @@ The environment's protection rules are what make an attestation trustworthy. The
 GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc) lists the `environment` claim. It was not re-read on 2026-11-07, and no real token from an environment job has been read, so the claim's presence on that job is unverified.
 
 `credential_basis` records the outcome on each row: `minted` for an attested key, `stated` otherwise, and empty when the row names no credential. Postgres refuses an `exact` row whose basis is not `minted`. Rows stored before this rule keep their grade.
+
+## The gateway's count
+
+`costroid gateway close` holds the gateway's admin key in the gateway's environment. Once the run is over, it can read what the gateway counted on the run's key and attest it under its own OIDC token:
+
+```json
+{"repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1", "currency": "USD", "spend": "0.412"}
+```
+
+It posts the body to `POST /v1/credentials/{key}/spend`, where `{key}` is the key's 64-character id. The service stores the figure only when all of these hold:
+
+- the bearer is a CI token whose `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`;
+- the token's repository, run and attempt equal the body's;
+- the key is attested as minted for that run and attempt;
+- `currency` is `USD`, the only currency the service takes for the count, and `spend` is a decimal of zero or more with at most 12 fractional digits.
+
+A refusal answers `403` with `ATTESTATION_FORBIDDEN` for the first, `403` with `JOIN_KEY_MISMATCH` for the second, `409` with `JOIN_KEY_MISMATCH` for the third, and `400` with `BODY_MALFORMED` for the fourth. A key's spend is the largest figure attested for it, because a gateway's count only grows. A smaller figure later answers `204` and changes nothing.
+
+The store does not keep the figure in this release. Until it does, the path answers `501` with `SPEND_NOT_KEPT`, every token-verified spend reads `agent_counts`, and no budget on it passes. `costroid gateway close` does not post the figure yet.
+
+The gateway counts what passed through it, at its own prices. Spend on a credential that bypassed it is not in the count. In the LiteLLM recipe, the agent's job holds no provider key, only the run's key.
+
+## The verdict
+
+`POST /v1/pulls/{pr}/verdict` runs the policy pack over the pull request's rows in this ledger. The service holds no SCM token, so the caller states what only the repository can tell:
+
+```json
+{"config": "<costroid.yml at the base commit, in base64>", "config_ref": "<the base commit>", "workflow_added": "2026-11-01T10:00:00Z", "workflow_not_on_base": false, "measured_pull_requests": 4}
+```
+
+An absent `config` is a base commit with no `costroid.yml`. An absent `workflow_added` is a start the caller could not read, and the warn-only period keeps running. `measured_pull_requests` counts the repository's pull requests with a measured cost. At 20 the warn-only period ends, whichever of that and its 7 days comes first, and `warn_only` then reads `ended` with no `ends`. A count can only end the period early, so a caller that overstates it holds its own pull requests to the policy sooner. A CI token asks for its own repository only, and the answer uses the service's clock.
+
+The answer holds `budget`, as the per-PR view has it, and the verdict under `policy`, in the shape [`docs/policy.md`](policy.md) gives:
+
+- `trust` is `token_verified` only when every row of the pull request is.
+- `evidence` names what stands behind token-verified spend: `agent_counts`, `gateway_measured` or `reconciled`. Only the last two let a budget rule pass. On `agent_counts`, a budget rule that would pass concludes `unproven` with reason `unmeasured_spend`.
+- `pr_budget` is held to the larger of the rows' USD list cost and the gateway's count.
+- The answer covers the whole pull request, never one run. `run_budget`, `run_cost_threshold`, `run_increase` and `run_increase_percent` conclude `unproven` with reason `no_run_rows`.
+- `monthly_budget` concludes `unproven` with reason `no_ledger`, because the pack reads no month to date yet.
+
+Over a limit, the agent's own counts are enough: a rule that fails on them fails here too.
 
 ## Prices
 

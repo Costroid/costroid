@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -53,12 +54,34 @@ type currencySpend struct {
 	ListCost string `json:"list_cost"`
 }
 
-// budgetView is the only part of the answer a budget rule may read. Evidence
-// is false while no token-verified, attributed row exists, and such a pull
-// request has no spend for a rule to pass.
+// The bases a budget's evidence can rest on.
+const (
+	budgetBasisNone       = "none"
+	budgetBasisAgent      = "agent_counts"
+	budgetBasisGateway    = "gateway_measured"
+	budgetBasisReconciled = "reconciled"
+)
+
+// budgetView is the only part of the answer a budget rule may read. Spend is
+// the eligible rows' list cost, which the agent's job counted. Evidence is
+// true only when something other than the agent stands behind that spend:
+// the gateway's own count for keys minted for the rows' runs, or a
+// provider's report. GatewayUSD is the gateway's count, present on gateway
+// evidence. A pull request with no eligible row has no spend for a rule to
+// pass.
 type budgetView struct {
-	Evidence bool            `json:"evidence"`
-	Spend    []currencySpend `json:"spend"`
+	Evidence   bool            `json:"evidence"`
+	Basis      string          `json:"basis"`
+	Spend      []currencySpend `json:"spend"`
+	GatewayUSD string          `json:"gateway_usd,omitempty"`
+}
+
+// measuredSpend is what the store holds of the gateway's attested spend for
+// one pull request. kept is false when the store keeps none.
+type measuredSpend struct {
+	kept bool
+	rows int64
+	usd  decimal.Decimal
 }
 
 type pullRequestView struct {
@@ -74,7 +97,11 @@ func (s *Server) pullRequest(ctx context.Context, tenant store.TenantID, repo, p
 	if err != nil {
 		return pullRequestView{}, err
 	}
-	view := pullRequestView{Repository: repo, PullRequest: pr, Lines: make([]viewLine, 0, len(lines)), Totals: totalsOf(lines), Budget: budgetOf(lines)}
+	measured, err := s.measuredSpend(ctx, tenant, repo, pr)
+	if err != nil {
+		return pullRequestView{}, err
+	}
+	view := pullRequestView{Repository: repo, PullRequest: pr, Lines: make([]viewLine, 0, len(lines)), Totals: totalsOf(lines), Budget: budgetOf(lines, measured)}
 	for i := range lines {
 		view.Lines = append(view.Lines, viewLineOf(&lines[i]))
 	}
@@ -101,18 +128,39 @@ func totalsOf(lines []store.Line) []basisTotal {
 	return totals
 }
 
+// measuredSpend reads the gateway's attested spend for a pull request, none
+// when the store keeps no such thing.
+func (s *Server) measuredSpend(ctx context.Context, tenant store.TenantID, repo, pr string) (measuredSpend, error) {
+	if s.Spend == nil {
+		return measuredSpend{}, nil
+	}
+	rows, usd, err := s.Spend.GatewaySpend(ctx, tenant, repo, pr)
+	if err != nil {
+		return measuredSpend{}, fmt.Errorf("server: read the gateway's spend: %w", err)
+	}
+	return measuredSpend{kept: true, rows: rows, usd: usd}, nil
+}
+
 // budgetOf sums list cost per currency over eligible lines only. Informational
-// lines carry zero, so they never move the figure.
-func budgetOf(lines []store.Line) budgetView {
-	budget := budgetView{Spend: []currencySpend{}}
+// lines carry zero, so they never move the figure. The basis is reconciled
+// when a provider's report wrote every eligible line, and gateway_measured
+// when the gateway's attested count covers every eligible row and each is in
+// USD, the currency of the count. Anything less is agent counts.
+func budgetOf(lines []store.Line, measured measuredSpend) budgetView {
+	budget := budgetView{Basis: budgetBasisNone, Spend: []currencySpend{}}
 	totals := map[string]decimal.Decimal{}
 	var order []string
+	var eligible int64
+	found, reconciled, inUSD := false, true, true
 	for i := range lines {
 		line := &lines[i]
 		if !line.BudgetEligible {
 			continue
 		}
-		budget.Evidence = true
+		found = true
+		eligible += line.Rows
+		reconciled = reconciled && line.CostSource == sourceProviderReport
+		inUSD = inUSD && line.Currency == "USD"
 		if _, seen := totals[line.Currency]; !seen {
 			order = append(order, line.Currency)
 		}
@@ -120,6 +168,15 @@ func budgetOf(lines []store.Line) budgetView {
 	}
 	for _, code := range order {
 		budget.Spend = append(budget.Spend, currencySpend{Currency: code, ListCost: totals[code].String()})
+	}
+	switch {
+	case !found:
+	case reconciled:
+		budget.Basis, budget.Evidence = budgetBasisReconciled, true
+	case measured.kept && inUSD && measured.rows == eligible && measured.usd.Sign() >= 0:
+		budget.Basis, budget.Evidence, budget.GatewayUSD = budgetBasisGateway, true, measured.usd.String()
+	default:
+		budget.Basis = budgetBasisAgent
 	}
 	return budget
 }

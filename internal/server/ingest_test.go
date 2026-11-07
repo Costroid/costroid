@@ -1062,16 +1062,16 @@ func line(currency, list string, eligible bool) store.Line {
 func TestABudgetReadsEligibleLinesOnlyAndNeverAddsCurrencies(t *testing.T) {
 	got := budgetOf([]store.Line{
 		line("EUR", "1", true), line("USD", "2", true), line("USD", "4", false), line("USD", "8", true),
-	})
-	want := budgetView{Evidence: true, Spend: []currencySpend{{"EUR", "1"}, {"USD", "10"}}}
+	}, measuredSpend{})
+	want := budgetView{Basis: budgetBasisAgent, Spend: []currencySpend{{"EUR", "1"}, {"USD", "10"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
 	}
 }
 
 func TestUnattributedLinesAreNoEvidenceForABudget(t *testing.T) {
-	got := budgetOf([]store.Line{line("USD", "4", false)})
-	if got.Evidence || len(got.Spend) != 0 {
+	got := budgetOf([]store.Line{line("USD", "4", false)}, measuredSpend{})
+	if got.Evidence || len(got.Spend) != 0 || got.Basis != budgetBasisNone {
 		t.Fatalf("got %+v", got)
 	}
 }

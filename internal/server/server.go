@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/store"
 )
@@ -33,6 +34,23 @@ type Ledger interface {
 	MintedCredentials(ctx context.Context, tenant store.TenantID, keys []string) (map[string]store.MintedCredential, error)
 }
 
+// SpendLedger keeps what costroid gateway close attests: the gateway's own
+// count of a minted key's spend, in USD. The count is the gateway's, so it
+// stands as a budget's evidence where the token counts on the rows cannot.
+// While the store does not keep it, Config.Spend is nil, no spend is measured
+// and no budget on token-verified rows passes.
+type SpendLedger interface {
+	// AttestSpend records a key's USD spend. The key is attested as minted for
+	// the run named. A key's spend is the largest figure attested for it,
+	// because a gateway's count only grows.
+	AttestSpend(ctx context.Context, tenant store.TenantID, key store.MintedCredential, usd decimal.Decimal) error
+	// GatewaySpend reads the pull request's measured spend. Rows counts its
+	// budget-eligible rows whose credential is a key minted for the row's own
+	// run, with credential_basis minted, and whose spend a close job attested.
+	// USD adds up the attested spend of those keys, each key once.
+	GatewaySpend(ctx context.Context, tenant store.TenantID, repo, pr string) (rows int64, usd decimal.Decimal, err error)
+}
+
 // TokenVerifier checks a CI OIDC token.
 type TokenVerifier interface {
 	Verify(ctx context.Context, token string) (oidc.Identity, error)
@@ -48,8 +66,11 @@ type Config struct {
 	// GatewayEnvironment is the GitHub environment whose jobs may attest a
 	// minted credential. Empty trusts none, and then no row reads exact.
 	GatewayEnvironment string
-	Now                func() time.Time
-	Logger             *slog.Logger
+	// Spend keeps the gateway's attested spend. Nil, the service refuses a
+	// spend attestation and treats every token-verified spend as agent counts.
+	Spend  SpendLedger
+	Now    func() time.Time
+	Logger *slog.Logger
 }
 
 // Server handles ingest and the view.
@@ -75,10 +96,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("POST /v1/rows", s.handleRows)
 	mux.HandleFunc("POST /v1/credentials", s.handleCredentials)
+	mux.HandleFunc("POST /v1/credentials/{key}/spend", s.handleSpend)
 	mux.HandleFunc("POST /otlp/v1/traces", s.handleTraces)
 	mux.HandleFunc("POST /otlp/v1/logs", s.handleLogs)
 	mux.HandleFunc("POST /otlp/v1/metrics", s.handleMetrics)
 	mux.HandleFunc("GET /v1/pulls/{pr}", s.handlePullRequest)
+	mux.HandleFunc("POST /v1/pulls/{pr}/verdict", s.handleVerdict)
 	return mux
 }
 
@@ -111,6 +134,7 @@ const (
 	codeWrongRepo    = "REPOSITORY_FORBIDDEN"
 	codeBadQuery     = "QUERY_INVALID"
 	codeEgress       = "EGRESS_REFUSED"
+	codeNoSpend      = "SPEND_NOT_KEPT"
 	codeInternal     = "INTERNAL"
 )
 

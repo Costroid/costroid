@@ -3,6 +3,9 @@
 package e2e
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -75,5 +78,75 @@ func TestAPolicyHoldsTheRecordedRunToItsBudget(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestServeHoldsAPullRequestToItsPolicyFromItsOwnRows asks the service in its
+// container for the verdict on the rows it stored under an ingest key. Those
+// rows are unverified, so no budget passes on them however far under it they
+// are, and a run rule cannot be read from a pull request's total. A spend
+// attestation needs a CI token from the gateway's environment.
+func TestServeHoldsAPullRequestToItsPolicyFromItsOwnRows(t *testing.T) {
+	services := compose(t)
+	key := services.createKey()
+	job := newWorkspace(t)
+	runAgent(t, job)
+	sendRows(t, services, key, job)
+
+	config := "policy:\n  pr_budget_usd: \"5\"\n  run_budget_usd: \"5\"\n"
+	body, err := json.Marshal(map[string]any{
+		"config":         base64.StdEncoding.EncodeToString([]byte(config)),
+		"config_ref":     base,
+		"workflow_added": time.Now().Add(-8 * 24 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, data := services.request(http.MethodPost, "/v1/pulls/"+pull+"/verdict?repo="+repository, key, body)
+	if status != http.StatusOK {
+		t.Fatalf("POST the verdict: %d %s", status, data)
+	}
+	type result struct {
+		Rule, Outcome, Reason string
+		CostUSD               string `json:"cost_usd"`
+	}
+	var answer struct {
+		Budget struct {
+			Evidence bool
+			Basis    string
+		}
+		Policy struct {
+			Conclusion, Trust, Evidence string
+			ConfigRef                   string `json:"config_ref"`
+			Results                     []result
+		}
+	}
+	if err := json.Unmarshal(data, &answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer.Policy.Conclusion != "neutral" || answer.Policy.Trust != "unverified" || answer.Policy.Evidence != "" || answer.Policy.ConfigRef != base {
+		t.Errorf("the verdict on an ingest key's rows: %s", data)
+	}
+	if answer.Budget.Evidence || answer.Budget.Basis != "none" {
+		t.Errorf("an ingest key's rows reached a budget: %s", data)
+	}
+	want := map[string]result{
+		"pr_budget":  {"pr_budget", "unproven", "unverified_rows", recordedTotal},
+		"run_budget": {"run_budget", "unproven", "no_run_rows", ""},
+	}
+	for _, got := range answer.Policy.Results {
+		if got != want[got.Rule] {
+			t.Errorf("%s: got %+v, want %+v", got.Rule, got, want[got.Rule])
+		}
+		delete(want, got.Rule)
+	}
+	if len(want) != 0 {
+		t.Errorf("no result for %v: %s", want, data)
+	}
+
+	spend := []byte(`{"repository":"` + repository + `","run_id":"` + runID + `","run_attempt":"1","currency":"USD","spend":"0.5"}`)
+	status, data = services.request(http.MethodPost, "/v1/credentials/"+strings.Repeat("a", 64)+"/spend", key, spend)
+	if status != http.StatusForbidden || !strings.Contains(string(data), "ATTESTATION_FORBIDDEN") {
+		t.Errorf("a spend attestation under an ingest key: %d %s", status, data)
 	}
 }
