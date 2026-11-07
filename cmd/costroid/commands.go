@@ -42,6 +42,7 @@ var commands = []command{
 	{name: "export", help: exportHelp, run: exportCommand},
 	{name: "policy", help: policyHelp, run: withOutputs(policyCommand)},
 	{name: "validate", short: "costroid validate [costroid.yml]", help: validateHelp, run: withoutContext(validateCommand)},
+	{name: "lint", short: "costroid lint [--strict] [paths]", help: lintHelp, run: withoutContext(lintCommand)},
 	{name: "lint-recipes", help: lintRecipesHelp, run: withoutContext(lintRecipes)},
 	{name: "gateway", run: withOutputs(gatewayCommand)},
 	{name: "serve", run: func(ctx context.Context, args []string, std stdio) int { return server.Main(ctx, args, std.stderr) }},

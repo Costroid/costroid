@@ -5,6 +5,7 @@ Usage:
   costroid report --rows rows.jsonl
   costroid demo
   costroid validate [costroid.yml]
+  costroid lint [--strict] [paths]
   costroid help <command>
   costroid --version
 
