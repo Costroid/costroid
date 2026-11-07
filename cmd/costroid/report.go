@@ -507,13 +507,17 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	lifetime, earlier := readLifetime(ctx, host, pull, input, stderr)
 	input.Lifetime = lifetime
 	if input.Refused == nil {
-		input.Verdict = decideVerdict(ctx, host, pull, rowsPath, input.State, earlier, measuredReports(lifetime), stderr)
+		input.Verdict = decideVerdict(ctx, host, verdictRequest{
+			commits:  policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0},
+			start:    func(ctx context.Context) policy.Start { return workflowStart(ctx, host, pull, stderr) },
+			rowsPath: rowsPath,
+			state:    input.State,
+			earlier:  earlier,
+			measured: measuredReports(lifetime),
+		}, stderr)
 		input.Approval = reportApproval(ctx, host, pull, input.Verdict, stderr)
 	}
-	input.CheckRunID = postCheck(ctx, host, input, stderr)
-	if input.CheckRunID != nil {
-		input.IDInCheck = nameCheck(ctx, host, input, stderr)
-	}
+	input = postInputCheck(ctx, host, input, stderr)
 	if pull.pullRequest > 0 {
 		postComment(ctx, host, input, lifetime, pull.pullRequest, stderr)
 	}
@@ -590,46 +594,6 @@ func printResult(stdout io.Writer, input comment.Input) error {
 	return nil
 }
 
-// postCheck runs before the comment, because the comment names its id.
-func postCheck(ctx context.Context, host scm.Reporter, input comment.Input, stderr io.Writer) *int64 {
-	output, err := comment.Check(input)
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
-		return nil
-	}
-	id, err := host.PostCheck(ctx, scm.CheckRun{
-		Name:       comment.CheckName,
-		HeadSHA:    input.HeadSHA,
-		Conclusion: input.Conclusion(),
-		Title:      output.Title,
-		Summary:    output.Summary,
-		Text:       output.Text,
-		Completed:  time.Now(),
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
-		return nil
-	}
-	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", id, input.Conclusion())
-	return &id
-}
-
-// nameCheck writes the check run's id into its own result object. GitHub
-// assigns the id when the check is created, so it takes a second request. The
-// check keeps the object it was created with when that request fails.
-func nameCheck(ctx context.Context, host scm.Reporter, input comment.Input, stderr io.Writer) bool {
-	input.IDInCheck = true
-	output, err := comment.Check(input)
-	if err == nil {
-		err = host.UpdateCheck(ctx, *input.CheckRunID, scm.CheckRun{Title: output.Title, Summary: output.Summary, Text: output.Text})
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: check run %d does not name itself: %v\n", *input.CheckRunID, err)
-		return false
-	}
-	return true
-}
-
 // resolveAmounts applies the comment.show_cost rule. When the setting or the visibility
 // cannot be read, a repository not known to be private withholds amounts. It
 // spends part of the report's time at most, so the check still posts.
@@ -681,39 +645,6 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, li
 		return
 	}
 	fmt.Fprintf(stderr, "costroid: comment on pull request %d\n", pullRequest)
-}
-
-// decideVerdict evaluates the policy. The settings come from the base branch's
-// head and the rows from the agent's job, so the trust path is unverified.
-// earlier is what the pull request's earlier runs cost, nil when it could not
-// be read, and then the pull request budget does not run. measured counts the
-// pull request's reports with a measured figure, and at the twentieth the
-// warn-only period ends. A policy that cannot run leaves no verdict, and the
-// check concludes neutral.
-func decideVerdict(ctx context.Context, host scm.Reporter, pull pullContext, rowsPath string, state comment.State, earlier *policy.Lifetime, measured int, stderr io.Writer) *policy.Verdict {
-	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
-	defer cancel()
-	usage, err := reportUsage(rowsPath, state)
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-	}
-	verdict, err := policy.Evaluate(ctx, policy.Request{
-		Usage:                usage,
-		Trust:                policy.Unverified,
-		Config:               policy.ReadConfig(ctx, host, policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0}),
-		Start:                workflowStart(ctx, host, pull, stderr),
-		At:                   time.Now(),
-		Lifetime:             earlier,
-		MeasuredPullRequests: measured,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-		return nil
-	}
-	if problem := verdict.ConfigProblem(); problem != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
-	}
-	return &verdict
 }
 
 // measuredReports counts the pull request's reports with a measured figure,

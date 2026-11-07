@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/comment"
@@ -232,10 +231,24 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input.Amounts = resolveAmounts(ctx, host, pull.base, stderr)
-	verdict := followUpVerdict(ctx, host, pull, workflow, rowsPath, input.State, stderr)
+	// The settings come from the default branch's commit, the one the
+	// follow-up runs from, and the warn-only period starts from the agent's
+	// workflow file on that branch.
+	verdict := decideVerdict(ctx, host, verdictRequest{
+		commits: policy.Commits{Base: pull.base, Head: pull.head, PullRequest: true},
+		start: func(ctx context.Context) policy.Start {
+			return finishedWorkflowStart(ctx, host, workflow, pull.base, stderr)
+		},
+		rowsPath: rowsPath,
+		state:    input.State,
+	}, stderr)
 	capped := capAtNeutral(verdict)
 	input.Verdict = verdict
-	input.CheckRunID = postFollowUpCheck(ctx, host, input, capped, stderr)
+	id, err := postCheck(ctx, host, input.HeadSHA, input.Conclusion(), inputCheck(input, forkSentences(input, capped)...), stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
+	}
+	input.CheckRunID = id
 	return input
 }
 
@@ -248,33 +261,6 @@ func capAtNeutral(verdict *policy.Verdict) bool {
 	}
 	verdict.Conclusion = policy.Neutral
 	return true
-}
-
-// followUpVerdict holds the rows to the settings on the default branch's
-// commit, the one the follow-up runs from, and starts the warn-only period
-// from the agent's workflow file on that branch.
-func followUpVerdict(ctx context.Context, host scm.Reporter, pull pullContext, workflow, rowsPath string, state comment.State, stderr io.Writer) *policy.Verdict {
-	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
-	defer cancel()
-	usage, err := reportUsage(rowsPath, state)
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-	}
-	verdict, err := policy.Evaluate(ctx, policy.Request{
-		Usage:  usage,
-		Trust:  policy.Unverified,
-		Config: policy.ReadConfig(ctx, host, policy.Commits{Base: pull.base, Head: pull.head, PullRequest: true}),
-		Start:  finishedWorkflowStart(ctx, host, workflow, pull.base, stderr),
-		At:     time.Now(),
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-		return nil
-	}
-	if problem := verdict.ConfigProblem(); problem != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
-	}
-	return &verdict
 }
 
 // finishedWorkflowStart reads the history of the workflow file the finished
@@ -299,34 +285,15 @@ func finishedWorkflowStart(ctx context.Context, host scm.Reporter, workflow, bas
 	return start
 }
 
-// postFollowUpCheck posts the check. When a fork's run left no rows, the
-// summary ends with the reason, and when the cap held the verdict, with the
-// cap.
-func postFollowUpCheck(ctx context.Context, host scm.Reporter, input comment.Input, capped bool, stderr io.Writer) *int64 {
-	output, err := comment.Check(input)
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
-		return nil
-	}
+// forkSentences end the summary of a fork's check: the reason when the fork's
+// run left no rows, and the cap when it held the verdict at neutral.
+func forkSentences(input comment.Input, capped bool) []string {
+	var sentences []string
 	if input.Reason == comment.ForkNoRows {
-		output.Summary += "\n\n" + forkNoRowsSentence
+		sentences = append(sentences, forkNoRowsSentence)
 	}
 	if capped {
-		output.Summary += "\n\n" + forkCapSentence
+		sentences = append(sentences, forkCapSentence)
 	}
-	id, err := host.PostCheck(ctx, scm.CheckRun{
-		Name:       comment.CheckName,
-		HeadSHA:    input.HeadSHA,
-		Conclusion: input.Conclusion(),
-		Title:      output.Title,
-		Summary:    output.Summary,
-		Text:       output.Text,
-		Completed:  time.Now(),
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
-		return nil
-	}
-	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", id, input.Conclusion())
-	return &id
+	return sentences
 }

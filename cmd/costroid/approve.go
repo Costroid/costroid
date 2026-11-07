@@ -175,31 +175,18 @@ func reconclude(ctx context.Context, host approvalHost, pull pullContext, number
 	if block.Conclusion != nil && *block.Conclusion == conclusion {
 		return fmt.Errorf("check run %d already concludes %s", previous, conclusion)
 	}
-	output, err := comment.Reconclude(block, approval, previous)
+	render := func(id *int64) (comment.CheckOutput, error) {
+		named := block
+		if id != nil {
+			named.CheckRunID = id
+		}
+		return comment.Reconclude(named, approval, previous)
+	}
+	id, err := postCheck(ctx, host, current.HeadSHA, conclusion, render, stderr)
 	if err != nil {
 		return err
 	}
-	id, err := host.PostCheck(ctx, scm.CheckRun{
-		Name:       comment.CheckName,
-		HeadSHA:    current.HeadSHA,
-		Conclusion: conclusion,
-		Title:      output.Title,
-		Summary:    output.Summary,
-		Text:       output.Text,
-		Completed:  time.Now(),
-	})
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", id, conclusion)
-	block.CheckRunID = &id
-	named, err := comment.Reconclude(block, approval, previous)
-	if err == nil {
-		err = host.UpdateCheck(ctx, id, scm.CheckRun{Title: named.Title, Summary: named.Summary, Text: named.Text})
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: check run %d does not name itself: %v\n", id, err)
-	}
+	nameCheck(ctx, host, *id, render, stderr)
 	return nil
 }
 
