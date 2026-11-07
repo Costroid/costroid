@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
 
@@ -254,6 +255,114 @@ func TestExecutionFileWithAnUnreadableResultSaysSo(t *testing.T) {
 	_, err := readExecution(t, `[`+executionInit+`,{"type":"result","modelUsage":{"claude-haiku-5-5":{"inputTokens":10.5}}}]`)
 	if err == nil || !strings.Contains(err.Error(), "the result object could not be read") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// budgetStopFile is the recording of a claude-code-action run with
+// claude_args --max-turns 5 --max-budget-usd 0.0001. Claude Code stopped it
+// with error_max_budget_usd once its own total, USD 0.0001285, passed the cap.
+const budgetStopFile = "testdata/2.1.316/action-budget-stop/claude-execution-output.json"
+
+// recordedArgs are the claude_args that recording's step was given.
+const recordedArgs = "--max-turns 5 --max-budget-usd 0.0001"
+
+func usd(text string) *decimal.Decimal {
+	value := decimal.MustParse(text)
+	return &value
+}
+
+func readBudgetStop(t *testing.T, stated Cap) adapter.Enforcement {
+	t.Helper()
+	file, err := os.Open(budgetStopFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	report, err := Agent{ConfigDir: t.TempDir()}.ReadCappedExecutionFile(file, recorded, stated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report.Enforcement
+}
+
+func TestRecordedBudgetStopGradesAgentFlag(t *testing.T) {
+	for _, stated := range []Cap{
+		{USD: usd("0.0001")},
+		{USD: usd("0.000100")},
+		{USD: usd("0.0001"), Args: recordedArgs},
+	} {
+		got := readBudgetStop(t, stated)
+		if got.Grade != adapter.GradeAgentFlag || got.Note != enforcementNote {
+			t.Errorf("cap %s, claude-args %q: %+v", stated.USD, stated.Args, got)
+		}
+	}
+	got := readBudgetStop(t, Cap{})
+	if got.Grade != adapter.GradeNone || got.Note != "none: the run stopped at its own --max-budget-usd, and no cap was stated to hold it to" {
+		t.Errorf("with no cap: %+v", got)
+	}
+}
+
+// executionEnding is a run that ended with result, read with the stated cap.
+func executionEnding(t *testing.T, result string, stated Cap) adapter.Enforcement {
+	t.Helper()
+	report, err := Agent{ConfigDir: t.TempDir()}.ReadCappedExecutionFile(strings.NewReader(`[`+executionInit+`,`+result+`]`), recorded, stated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report.Enforcement
+}
+
+const (
+	endedUnder  = `{"type":"result","subtype":"success","total_cost_usd":0.0420,"session_id":"s","modelUsage":{"claude-haiku-5-5":{"inputTokens":1,"outputTokens":2}}}`
+	endedOver   = `{"type":"result","subtype":"success","total_cost_usd":5.25,"session_id":"s","modelUsage":{"claude-haiku-5-5":{"inputTokens":1,"outputTokens":2}}}`
+	stoppedBare = `{"type":"result","subtype":"error_max_budget_usd","is_error":true,"total_cost_usd":5.25,"session_id":"s","modelUsage":{"claude-haiku-5-5":{"inputTokens":1,"outputTokens":2}}}`
+)
+
+func TestCapThatDiffersFromTheFlagGradesNone(t *testing.T) {
+	stopped := readBudgetStop(t, Cap{USD: usd("5"), Args: "--max-budget-usd 5"})
+	if stopped.Grade != adapter.GradeNone || stopped.Note != "none: the stated cap is USD 5 and --max-budget-usd is USD 0.0001; the cap and the flag differ" {
+		t.Errorf("a stop at another cap: %+v", stopped)
+	}
+	under := executionEnding(t, endedUnder, Cap{USD: usd("0.5"), Args: "--max-budget-usd 1"})
+	if under.Grade != adapter.GradeNone || under.Note != "none: the stated cap is USD 0.5 and --max-budget-usd is USD 1; the cap and the flag differ" {
+		t.Errorf("a run under both: %+v", under)
+	}
+}
+
+func TestRunUnderItsStatedFlagGradesAgentFlag(t *testing.T) {
+	for _, args := range []string{
+		"--max-turns 10 --max-budget-usd 5",
+		"--max-budget-usd=5.00",
+		"--max-budget-usd 1\n--max-budget-usd 5",
+		"# --max-budget-usd 1\n--model 'claude haiku' --max-budget-usd \"5\"",
+	} {
+		got := executionEnding(t, endedUnder, Cap{USD: usd("5"), Args: args})
+		if got.Grade != adapter.GradeAgentFlag || got.Note != enforcementNote {
+			t.Errorf("claude-args %q: %+v", args, got)
+		}
+	}
+}
+
+func TestCapWithNothingToHoldItToGradesNone(t *testing.T) {
+	for _, tc := range []struct {
+		name, result, args, note string
+	}{
+		{"no flag stated", endedUnder, "--max-turns 10", "none: the stated cap is USD 5, and the stated claude_args hold no --max-budget-usd, so nothing shows a flag held the run"},
+		{"no claude-args", endedUnder, "", "none: the stated cap is USD 5, and no claude_args were stated, so nothing shows a flag held the run"},
+		{"a flag with no figure", endedUnder, "--max-budget-usd --max-turns 5", `none: --max-budget-usd reads "" in the stated claude_args, which is not a plain decimal`},
+		{"a figure that is not plain", endedUnder, "--max-budget-usd 5e0", `none: --max-budget-usd reads "5e0" in the stated claude_args, which is not a plain decimal`},
+		{"an unclosed quote", endedUnder, "--max-budget-usd '5", "none: the stated claude_args cannot be read: a ' quote is not closed"},
+		{"a total past the cap", endedOver, "--max-budget-usd 5", "none: the run's own total of USD 5.25 passed USD 5 without a budget stop, so the flag did not hold it"},
+		{"no total", executionResult, "--max-budget-usd 5", "none: the run did not stop at its budget, and its result states no total_cost_usd, so nothing shows it ended under USD 5"},
+		{"a stop that names no figure", stoppedBare, "", "none: the run stopped at its budget, and neither its result nor the stated claude_args give the figure"},
+	} {
+		got := executionEnding(t, tc.result, Cap{USD: usd("5"), Args: tc.args})
+		if got.Grade != adapter.GradeNone || got.Note != tc.note {
+			t.Errorf("%s: %+v", tc.name, got)
+		}
+	}
+	if got := executionEnding(t, stoppedBare, Cap{USD: usd("5"), Args: "--max-budget-usd 5"}); got.Grade != adapter.GradeAgentFlag {
+		t.Errorf("a stop that names no figure, with the flag stated: %+v", got)
 	}
 }
 

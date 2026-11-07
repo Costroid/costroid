@@ -175,7 +175,7 @@ What the runs showed:
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `costroid/cost_source` | `execution_file`, or `agent_session_file` when the runner still holds session files that agree. A request outside the conversation reads `execution_file` either way |
 | Grain                  | One set of rows per model, unless those session files agree. Then one row per request, and one set per model for requests outside the conversation                   |
-| Grade                  | `none`. Costroid did not start the run, and the file states no budget                                                                                                |
+| Grade                  | `agent-flag` when `--max-budget-usd` in the step's `claude_args` equals the cap the read step is given; otherwise `none`, with the reason                             |
 | Charge period          | The messages' own timestamps. With none, the file's save time back by the result's `duration_ms`                                                                     |
 | Basis                  | `measured` when `apiKeySource` names a key, otherwise `list_equivalent`                                                                                              |
 

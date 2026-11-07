@@ -45,10 +45,11 @@ func TestCustomerWorkflows(t *testing.T) {
 		"high-pull-request-target.yml": {
 			"high " + RulePullRequestTarget,
 			"high " + RulePullRequestTarget,
+			"note " + RuleAgentBudget,
 		},
 		"high-comment-trigger.yml": {"high " + RuleCommentTrigger},
-		"high-agent-open.yml":      {"high " + RuleAgentOpen},
-		"high-id-token.yml":        {"high " + RuleAgentIDToken},
+		"high-agent-open.yml":      {"high " + RuleAgentOpen, "note " + RuleAgentBudget},
+		"high-id-token.yml":        {"high " + RuleAgentIDToken, "note " + RuleAgentBudget},
 		"high-expression.yml":      {"high " + RuleExpressionInScript},
 		"medium.yml": {
 			"medium " + RuleAgentOpen,
@@ -102,7 +103,7 @@ func TestTwoBlockExampleIsClean(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("findings: %v", slices.Concat(report.Findings, report.Notes))
 	}
-	for _, block := range []string{"stage: read", "stage: report", "needs: review", "id: claude", "steps.claude.outputs.execution_file"} {
+	for _, block := range []string{"stage: read", "stage: report", "needs: review", "id: claude", "steps.claude.outputs.execution_file", "claude_args: --max-budget-usd 5"} {
 		if !strings.Contains(blocks[0][1], block) {
 			t.Errorf("the example lacks %q", block)
 		}
@@ -265,12 +266,112 @@ func TestLintDocListsEveryCustomerRule(t *testing.T) {
 		}
 	}
 	seen["note "+RuleAgentContentWrite] = true
+	seen["note "+RuleEgressAudit] = true
 	for line := range seen {
 		severity, rule, _ := strings.Cut(line, " ")
 		row := regexp.MustCompile(`(?m)^\| ` + severity + ` +\| ` + "`" + regexp.QuoteMeta(rule) + "`")
 		if !row.MatchString(doc) {
 			t.Errorf("docs/lint.md has no %s row for %s", severity, rule)
 		}
+	}
+}
+
+// TestCodeActionStepWithoutBudgetWarns takes clean.yml's cap away in each
+// way a workflow can lose it, and keeps it in each way it can be written.
+func TestCodeActionStepWithoutBudgetWarns(t *testing.T) {
+	source := read(t, filepath.Join(customerDir, "clean.yml"))
+	const capped = "          claude_args: --max-budget-usd 5\n"
+	const fix = "add --max-budget-usd and your cap in USD to claude_args, such as --max-budget-usd 5"
+	for _, test := range []struct {
+		name, args string
+		warns      bool
+	}{
+		{"no claude_args", "", true},
+		{"other flags", "          claude_args: --max-turns 10\n", true},
+		{"a commented flag", "          claude_args: |\n            # --max-budget-usd 5\n            --max-turns 10\n", true},
+		{"a longer flag name", "          claude_args: --max-budget-usd-total 5\n", true},
+		{"the flag", capped, false},
+		{"the flag with =", "          claude_args: --max-budget-usd=5\n", false},
+		{"the flag on its own line", "          claude_args: |\n            --max-turns 10\n            --max-budget-usd ${{ env.COSTROID_BUDGET_USD }}\n", false},
+		{"one expression", "          claude_args: ${{ inputs.claude_args }}\n", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			edited := strings.Replace(source, capped, test.args, 1)
+			if !strings.Contains(source, capped) || (test.args != capped && edited == source) {
+				t.Fatal("the edit changed nothing")
+			}
+			report := LintCustomer("x.yml", []byte(edited))
+			var notes []Finding
+			for _, note := range report.Notes {
+				if note.Rule == RuleAgentBudget {
+					notes = append(notes, note)
+				}
+			}
+			switch {
+			case !test.warns && len(notes) != 0:
+				t.Fatalf("notes: %v", notes)
+			case test.warns && (len(notes) != 1 || notes[0].Severity != Note || !strings.HasSuffix(notes[0].Message, ": "+fix)):
+				t.Fatalf("notes: %v", notes)
+			}
+			if len(report.Findings) != 0 {
+				t.Fatalf("a missing cap fails the command: %v", report.Findings)
+			}
+		})
+	}
+}
+
+// TestPullRequestTargetNamesTheBlockDate holds the event's finding to the
+// dates of GitHub's change, as its changelog of 2026-11-02 states them.
+func TestPullRequestTargetNamesTheBlockDate(t *testing.T) {
+	report, _ := lintCustomerFile(t, "high-pull-request-target.yml")
+	var messages []string
+	for _, finding := range report.Findings {
+		if finding.Rule == RulePullRequestTarget && strings.HasPrefix(finding.Message, "pull_request_target runs the agent") {
+			messages = append(messages, finding.Message)
+		}
+	}
+	if len(messages) != 1 {
+		t.Fatalf("event findings: %q", messages)
+	}
+	for _, part := range []string{"blocks it by default in public repositories from 2026-12-02", "brownouts on 2026-11-09 and 2026-11-16, 16:00 to 18:00 UTC", ": use pull_request"} {
+		if !strings.Contains(messages[0], part) {
+			t.Errorf("the finding lacks %q: %s", part, messages[0])
+		}
+	}
+	if doc := read(t, lintDoc); !strings.Contains(doc, "2026-12-02") || !strings.Contains(doc, "2026-11-09 and 2026-11-16, 16:00 to 18:00 UTC") {
+		t.Error("docs/lint.md does not name the dates")
+	}
+}
+
+// TestCustomerNotesEgressGaps puts harden-runner in clean.yml's agent job in
+// each way that leaves its egress open or broken, and in block mode with a
+// list, which says nothing.
+func TestCustomerNotesEgressGaps(t *testing.T) {
+	source := read(t, filepath.Join(customerDir, "clean.yml"))
+	const steps = "    steps:\n"
+	const harden = "      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3\n        with:\n"
+	for _, test := range []struct {
+		name, with string
+		notes      int
+	}{
+		{"audit", "          egress-policy: audit\n", 1},
+		{"block with no list", "          egress-policy: block\n", 1},
+		{"a list with a line break", "          egress-policy: block\n          allowed-endpoints: |\n            api.anthropic.com:443\n            github.com:443\n", 1},
+		{"block with a list", "          egress-policy: block\n          allowed-endpoints: >-\n            api.anthropic.com:443\n            github.com:443\n", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			edited := strings.Replace(source, steps, steps+harden+test.with, 1)
+			if edited == source {
+				t.Fatal("the edit changed nothing")
+			}
+			report := LintCustomer("x.yml", []byte(edited))
+			if got := rules(report.Notes); len(got) != test.notes || (test.notes == 1 && got[0] != RuleEgressAudit) {
+				t.Fatalf("notes: %v", report.Notes)
+			}
+			if len(report.Findings) != 0 {
+				t.Fatalf("an egress gap fails the command: %v", report.Findings)
+			}
+		})
 	}
 }
 

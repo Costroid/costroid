@@ -169,7 +169,7 @@ report:
         agent-result: ${{ needs.review.result }}
 ```
 
-Your step keeps its prompt and its review, and no new secret is needed. Costroid did not start the run, so no budget held it, and the comment's grade reads `none`. [docs/existing-workflow.md](https://github.com/Costroid/costroid/blob/__RELEASE_TAG__/docs/existing-workflow.md) shows a whole workflow with both blocks.
+Your step keeps its prompt and its review, and no new secret is needed. Costroid did not start the run. When your step's `claude_args` holds `--max-budget-usd` and the read step is given the same figure, the comment's grade reads `agent-flag`; otherwise it reads `none`. [docs/existing-workflow.md](https://github.com/Costroid/costroid/blob/__RELEASE_TAG__/docs/existing-workflow.md) shows a whole workflow with both blocks.
 
 ## The commit to pin
 

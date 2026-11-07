@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Reads an agent's run that already ended: a claude-code-action run from its
 # execution file, or an openai/codex-action run from its codex-home. Costroid
-# did not start it, so no budget held it and the grade reads none.
+# did not start it, so the grade reads none unless budget-usd states the cap
+# the step gave Claude Code, and the run shows that cap held it.
 set -euo pipefail
 
 fail() {
@@ -38,6 +39,8 @@ if [[ -n $floor ]]; then
 fi
 
 args+=(--out "$COSTROID_ROWS")
+[[ -n ${COSTROID_BUDGET_USD:-} ]] && args+=(--cap-usd "$COSTROID_BUDGET_USD")
+[[ -n ${COSTROID_CLAUDE_ARGS:-} ]] && args+=(--claude-args "$COSTROID_CLAUDE_ARGS")
 [[ -n ${COSTROID_BILLING_ACCOUNT:-} ]] && args+=(--billing-account "$COSTROID_BILLING_ACCOUNT")
 [[ -n ${COSTROID_CREDENTIAL:-} ]] && args+=(--credential "$COSTROID_CREDENTIAL")
 exec costroid ingest-run "${args[@]}"

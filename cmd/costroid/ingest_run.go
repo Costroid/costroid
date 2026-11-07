@@ -15,6 +15,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/run"
 )
 
@@ -24,6 +25,8 @@ type ingestRunFlags struct {
 	since   time.Time
 	out     string
 	account accountFlags
+	// cap is what the workflow states about the cap the run was held to.
+	cap claudecode.Cap
 }
 
 // sourceKind is one kind of thing a finished run leaves that ingest-run reads.
@@ -37,13 +40,15 @@ type sourceKind struct {
 	what string
 	// since says the kind takes --since.
 	since bool
-	open  func(path string, since time.Time) (endedRun, error)
+	// capped says the kind takes --cap-usd and --claude-args.
+	capped bool
+	open   func(path string, since time.Time) (endedRun, error)
 }
 
 // sourceKinds is every source ingest-run reads, one row each. ingest-run
 // reads exactly one, however it is named.
 var sourceKinds = []sourceKind{
-	{name: "execution-file", alias: true, what: "the execution_file output of anthropics/claude-code-action", open: openExecutionFile},
+	{name: "execution-file", alias: true, what: "the execution_file output of anthropics/claude-code-action", capped: true, open: openExecutionFile},
 	{name: "codex-home", alias: true, what: "the codex-home given to openai/codex-action", since: true, open: openCodexHome},
 }
 
@@ -93,7 +98,7 @@ func parseIngestRun(args []string, stderr io.Writer) (ingestRunFlags, error) {
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	var sources sourcesFlag
 	set.Func("from", "KIND=PATH, the source to read", sources.from)
-	var sinceKinds []sourceKind
+	var sinceKinds, cappedKinds []sourceKind
 	for i := range sourceKinds {
 		kind := &sourceKinds[i]
 		if kind.alias {
@@ -102,8 +107,13 @@ func parseIngestRun(args []string, stderr io.Writer) (ingestRunFlags, error) {
 		if kind.since {
 			sinceKinds = append(sinceKinds, *kind)
 		}
+		if kind.capped {
+			cappedKinds = append(cappedKinds, *kind)
+		}
 	}
 	since := set.String("since", "", "when the job started, in RFC 3339")
+	capUSD := set.String("cap-usd", "", "the cap the workflow held the run to, in USD")
+	claudeArgs := set.String("claude-args", "", "the claude_args the claude-code-action step was given")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
 	account := addAccountFlags(set)
 	if err := set.Parse(args); err != nil {
@@ -121,6 +131,10 @@ func parseIngestRun(args []string, stderr io.Writer) (ingestRunFlags, error) {
 		return ingestRunFlags{}, fmt.Errorf("ingest-run needs --from KIND=PATH and --out, with KIND one of %s", kindNames(sourceKinds, "or"))
 	case *since != "" && !given[0].kind.since:
 		return ingestRunFlags{}, fmt.Errorf("ingest-run takes --since only with %s", kindNames(sinceKinds, "or"))
+	case (*capUSD != "" || *claudeArgs != "") && !given[0].kind.capped:
+		return ingestRunFlags{}, fmt.Errorf("ingest-run takes --cap-usd and --claude-args only with %s", kindNames(cappedKinds, "or"))
+	case *claudeArgs != "" && *capUSD == "":
+		return ingestRunFlags{}, errors.New("ingest-run takes --claude-args only with --cap-usd, the cap they are held to")
 	}
 	flags := ingestRunFlags{source: given[0], out: *out, account: account}
 	if *since != "" {
@@ -129,6 +143,13 @@ func parseIngestRun(args []string, stderr io.Writer) (ingestRunFlags, error) {
 			return ingestRunFlags{}, fmt.Errorf("ingest-run takes --since as an RFC 3339 time, not %q", *since)
 		}
 		flags.since = at
+	}
+	if *capUSD != "" {
+		amount, err := decimal.Parse(*capUSD)
+		if err != nil || amount.Sign() <= 0 {
+			return ingestRunFlags{}, fmt.Errorf("ingest-run takes --cap-usd as a USD figure above 0, not %q", *capUSD)
+		}
+		flags.cap = claudecode.Cap{USD: &amount, Args: *claudeArgs}
 	}
 	if err := account.check(); err != nil {
 		return ingestRunFlags{}, err
@@ -146,10 +167,16 @@ type endedRun interface {
 	close() error
 }
 
-// openEndedRun opens what the flags name. Nothing is written before it is
-// open, so a path that names nothing leaves no rows file.
+// openEndedRun opens what the flags name, and gives an execution file the
+// cap the workflow states. Nothing is written before it is open, so a path
+// that names nothing leaves no rows file.
 func openEndedRun(flags ingestRunFlags) (endedRun, error) {
-	return flags.source.kind.open(flags.source.path, flags.since)
+	ended, err := flags.source.kind.open(flags.source.path, flags.since)
+	if execution, ok := ended.(openedExecution); ok && err == nil {
+		execution.stated = flags.cap
+		return execution, nil
+	}
+	return ended, err
 }
 
 func openCodexHome(dir string, since time.Time) (endedRun, error) {
@@ -182,11 +209,12 @@ func (h codexHome) read() (adapter.Report, error) {
 
 func (codexHome) close() error { return nil }
 
-// openedExecution is the file claude-code-action wrote, open, and when it was
-// saved.
+// openedExecution is the file claude-code-action wrote, open, when it was
+// saved, and the cap the workflow states for its run.
 type openedExecution struct {
-	file  *os.File
-	saved time.Time
+	file   *os.File
+	saved  time.Time
+	stated claudecode.Cap
 }
 
 func openExecutionFile(path string, _ time.Time) (endedRun, error) {
@@ -208,7 +236,7 @@ func (e openedExecution) close() error { return e.file.Close() }
 // read reads the file. A file the reader refuses is a run.ReaderError, so its
 // first line can reach the report.
 func (e openedExecution) read() (adapter.Report, error) {
-	report, err := claudecode.Agent{}.ReadExecutionFile(e.file, e.saved)
+	report, err := claudecode.Agent{}.ReadCappedExecutionFile(e.file, e.saved, e.stated)
 	if err != nil {
 		return adapter.Report{}, &run.ReaderError{Err: err}
 	}
@@ -253,7 +281,7 @@ func ingestRun(flags ingestRunFlags, stderr io.Writer) error {
 		return err
 	}
 	ci := readCI(stderr)
-	record := runRecord{out: flags.out, head: ci.Head}
+	record := runRecord{out: flags.out, budget: flags.cap.USD, head: ci.Head}
 	result, err := recordEndedRun(flags, pinned, ci, ended, rows)
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)

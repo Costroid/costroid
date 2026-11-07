@@ -22,6 +22,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
+          claude_args: --max-budget-usd 5
           prompt: Review this pull request.
 
       # Block 1: read what the run cost.

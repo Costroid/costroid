@@ -20,12 +20,13 @@ const (
 
 // The rules only the customer profile names. It also names
 // RulePullRequestTarget, RuleAgentIDToken, RuleExpressionInScript,
-// RuleUnpinned, RuleAgentPromptInput and RuleUnreadable.
+// RuleUnpinned, RuleAgentPromptInput, RuleEgressAudit and RuleUnreadable.
 const (
 	RuleCommentTrigger    = "comment-trigger"
 	RuleAgentOpen         = "agent-open"
 	RuleAgentContentWrite = "agent-contents-write"
 	RuleSubscriptionToken = "subscription-token"
+	RuleAgentBudget       = "agent-budget"
 )
 
 var (
@@ -46,6 +47,13 @@ var (
 
 	// headRef is a checkout ref that names the pull request's own code.
 	headRef = regexp.MustCompile(`github\.event\.pull_request\.head\b|github\.head_ref\b|refs/pull/`)
+
+	// budgetFlag is Claude Code's cap on a run, as a word of claude_args.
+	budgetFlag = regexp.MustCompile(`(?:^|\s)--max-budget-usd(?:[\s=]|$)`)
+
+	// wholeExpression is an input that is one expression, whose value lint
+	// cannot read.
+	wholeExpression = regexp.MustCompile(`^\$\{\{[^}]*\}\}$`)
 )
 
 // subscriptionInput and subscriptionVariable carry a Claude subscription's
@@ -129,7 +137,7 @@ func (l *linter) customerEvents(on *yaml.Node) (target bool, texts []string) {
 	check := func(node *yaml.Node, name string) {
 		if name == "pull_request_target" {
 			target = true
-			l.flag(node, High, RulePullRequestTarget, "pull_request_target runs the agent with this repository's secrets on a pull request anyone can open: use pull_request")
+			l.flag(node, High, RulePullRequestTarget, "pull_request_target runs the agent with this repository's secrets on a pull request anyone can open, and GitHub blocks it by default in public repositories from 2026-12-02, with runs failing in its brownouts on 2026-11-09 and 2026-11-16, 16:00 to 18:00 UTC: use pull_request")
 		}
 		if textEvents[name] {
 			texts = append(texts, name)
@@ -174,8 +182,20 @@ func (l *linter) customerAgentJob(root *yaml.Node, agent customerAgent, texts []
 		l.flag(job.key, High, RuleCommentTrigger, "%s can start job %s, and its if tests neither author_association nor the actor, so nothing in the workflow limits who starts the agent on your key", strings.Join(texts, ", "), job.key.Value)
 	}
 	for _, step := range sequence(field(job.value, "steps")) {
-		if uses := field(step, "uses"); uses != nil && !customerPinned(uses.Value) {
+		uses := field(step, "uses")
+		if uses == nil {
+			continue
+		}
+		if !customerPinned(uses.Value) {
 			l.flag(uses, Medium, RuleUnpinned, "%s is not pinned to a full commit SHA, so whoever moves the tag changes what runs beside your key", uses.Value)
+		}
+		if isHardenRunner(uses) {
+			if node, message := egressGap(step); node != nil {
+				l.flag(node, Note, RuleEgressAudit, "%s", message)
+			}
+		}
+		if agentAction(step) == claudeCodeAction {
+			l.agentBudget(step, uses)
 		}
 	}
 	if match := gitHubForbidden.FindString(text(field(job.value, "steps"))); match != "" {
@@ -195,6 +215,28 @@ func (l *linter) customerAgentJob(root *yaml.Node, agent customerAgent, texts []
 	if node := subscriptionToken(root, job, agent.step); node != nil {
 		l.flag(node, Note, RuleSubscriptionToken, "the agent signs in with a Claude subscription's token, so Costroid reports its tokens at API list price as list-equivalent, never as billed")
 	}
+}
+
+// agentBudget notes a claude-code-action step whose claude_args give Claude
+// Code no --max-budget-usd. A line that starts with # is a comment, as the
+// action reads claude_args, and an input that is one expression is not read.
+func (l *linter) agentBudget(step, uses *yaml.Node) {
+	args := field(field(step, "with"), "claude_args")
+	if args != nil && wholeExpression.MatchString(strings.TrimSpace(args.Value)) {
+		return
+	}
+	var lines []string
+	if args != nil {
+		for line := range strings.SplitSeq(args.Value, "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+				lines = append(lines, line)
+			}
+		}
+	}
+	if budgetFlag.MatchString(strings.Join(lines, "\n")) {
+		return
+	}
+	l.flag(firstOf(args, uses), Note, RuleAgentBudget, "claude_args give Claude Code no --max-budget-usd, so no cap stops a run, whatever it spends: add --max-budget-usd and your cap in USD to claude_args, such as --max-budget-usd 5")
 }
 
 // customerPinned accepts a full commit SHA, an image digest, and an action in

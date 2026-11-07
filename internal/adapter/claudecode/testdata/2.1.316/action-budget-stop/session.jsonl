@@ -1,0 +1,13 @@
+{"type":"ai-title","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"type":"queue-operation","timestamp":"2026-11-07T22:27:56.387Z","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"type":"queue-operation","timestamp":"2026-11-07T22:27:56.392Z","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"text"}]},"uuid":"00000000-0000-4000-8000-000000000004","timestamp":"2026-11-07T22:27:57.587Z","cwd":"/work","sessionId":"00000000-0000-4000-8000-000000000001","version":"2.1.316"}
+{"isSidechain":false,"type":"attachment","uuid":"00000000-0000-4000-8000-000000000005","timestamp":"2026-11-07T22:27:57.586Z","cwd":"/work","sessionId":"00000000-0000-4000-8000-000000000001","version":"2.1.316"}
+{"isSidechain":false,"type":"attachment","uuid":"00000000-0000-4000-8000-000000000006","timestamp":"2026-11-07T22:27:57.586Z","cwd":"/work","sessionId":"00000000-0000-4000-8000-000000000001","version":"2.1.316"}
+{"isSidechain":false,"type":"attachment","uuid":"00000000-0000-4000-8000-000000000007","timestamp":"2026-11-07T22:27:57.586Z","cwd":"/work","sessionId":"00000000-0000-4000-8000-000000000001","version":"2.1.316"}
+{"isSidechain":false,"type":"attachment","uuid":"00000000-0000-4000-8000-000000000008","timestamp":"2026-11-07T22:27:57.586Z","cwd":"/work","sessionId":"00000000-0000-4000-8000-000000000001","version":"2.1.316"}
+{"isSidechain":false,"type":"attachment","uuid":"00000000-0000-4000-8000-000000000009","timestamp":"2026-11-07T22:27:57.586Z","cwd":"/work","sessionId":"00000000-0000-4000-8000-000000000001","version":"2.1.316"}
+{"isSidechain":false,"type":"attachment","uuid":"00000000-0000-4000-8000-000000000010","timestamp":"2026-11-07T22:27:57.586Z","cwd":"/work","sessionId":"00000000-0000-4000-8000-000000000001","version":"2.1.316"}
+{"type":"last-prompt","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"type":"atis-latch","sessionId":"00000000-0000-4000-8000-000000000001"}
+{"type":"cost-state","sessionId":"00000000-0000-4000-8000-000000000001","totalCostUSD":0.00012849999999999998,"modelUsage":{"claude-haiku-5-5":{"inputTokens":1200,"outputTokens":17,"thinkingTokens":0,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"cacheCreationEphemeral5mInputTokens":0,"cacheCreationEphemeral1hInputTokens":0,"webSearchRequests":0,"costUSD":0.00012849999999999998}}}
