@@ -177,11 +177,19 @@ and a reader that refused the agent's output adds its first error line.
 `
 
 const ingestRunHelp = `Usage:
-  costroid ingest-run --execution-file F --out rows.jsonl [--billing-account ID] [--credential ID]
+  costroid ingest-run --from KIND=PATH --out rows.jsonl [--since T] [--billing-account ID] [--credential ID]
 
-ingest-run writes the rows of a claude-code-action run from the action's
-execution_file output, after the action ended. No budget held that run, so the
-grade reads none.
+ingest-run writes the rows of an agent's run after the run ended, from what
+the run left at PATH. KIND is one of:
+
+  execution-file  the execution_file output of anthropics/claude-code-action
+  codex-home      the codex-home given to openai/codex-action
+
+--since, with codex-home, is when the job started, in RFC 3339: a file last
+written before it belongs to an earlier job and is not read. --execution-file F
+and --codex-home D read as --from execution-file=F and --from codex-home=D.
+ingest-run reads one source. Costroid did not start the run, so no budget held
+it, and the grade reads none.
 
 ` + accountHelp + `
 ` + ciHelp + `
