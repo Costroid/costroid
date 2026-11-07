@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("on: push\njobs:\n  agent:\n    steps:\n      - uses: Costroid/costroid/action@v1\n        with:\n          agent: aider\n")

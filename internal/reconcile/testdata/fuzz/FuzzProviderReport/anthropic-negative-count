@@ -1,0 +1,4 @@
+go test fuzz v1
+byte('\x00')
+[]byte("{\"data\":[{\"starting_at\":\"2026-10-14T00:00:00Z\",\"group\":{\"api_key_id\":\"apikey_01ExampleCi\"},\"usage\":{\"output_tokens\":-1}}]}")
+[]byte("{\"data\":[]}")
