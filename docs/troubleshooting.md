@@ -148,6 +148,29 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: this job has no id-token permission, so no run token can name the run: give the job id-token: write` | On GitHub Actions the batch goes with the job's OIDC token, and the job cannot ask for one | Give the `ingest` job `id-token: write` |
 | `costroid: outside GitHub Actions, export needs --batch-id` | Only a GitHub Actions run gives a batch id | Pass `--batch-id` |
 
+## Connecting to Costroid Platform
+
+`costroid connect`, which binds the job's owner to the integration token's tenant. [`docs/connect.md`](connect.md) gives the job.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: <installation> is bound to tenant <tenant>, proven at <time>` | The platform took the job's proof, and the binding is current for 7 days after that time | None |
+| `costroid: <installation> is bound to tenant <tenant>, proven at <time>, so no proof was sent` | The binding was proven less than 20 hours ago, so the command sent nothing | None |
+| `costroid: Costroid Platform refused the proof for <installation>: <status> <code>. <sentence>` | The platform refused the proof and bound nothing. The command exits 1 | Do what the sentence says. [`docs/connect.md`](connect.md#what-connect-prints) lists each code's sentence |
+| `costroid: Costroid Platform refused the identity request: <status> <code>. <sentence>` | The platform refused the token before any proof was sent. The command exits 1 | `AUTH_TOKEN_INVALID`: create a token on Costroid Platform. `AUTH_TOKEN_SCOPE`: give it `identity:read` and `installations:write` |
+| `costroid: this job has no id-token permission, so it cannot prove its owner: give the job id-token: write` | On GitHub Actions the proof is the job's OIDC token, and the job cannot ask for one | Give the connect job `id-token: write` |
+| `costroid: no proof: <error>` | GitHub refused the job's request for its OIDC token | Run the job again |
+| `costroid: COSTROID_PLATFORM_PROOF is empty, so this job has no proof: give the job an ID token of that name with aud <audience>` | On GitLab CI the job's `id_tokens` set no token of that name | Add the `id_tokens` block [`docs/connect.md`](connect.md#on-gitlab-ci) shows, with the audience the line names |
+| `costroid: COSTROID_PLATFORM_PROOF does not hold an ID token: set it only through the job's id_tokens` | The variable holds something other than a signed token, often a value set by hand | Remove the variable from the project's settings, and keep the job's `id_tokens` |
+| `costroid: GITHUB_REPOSITORY_OWNER_ID is <value>, not an owner's number` | The variable GitHub sets is absent or changed | Run the command in a GitHub Actions job, and do not set the variable by hand |
+| `costroid: CI_PROJECT_NAMESPACE_ID is <value>, not a namespace's number` | The variable GitLab sets is absent or changed | Run the command in a GitLab CI job, and do not set the variable by hand |
+| `costroid: --installation-id is <id>, and this job runs under <installation>: a job proves only its own owner` | The flag names another owner than the job's | Drop `--installation-id` in CI, where the job's own variables name the owner |
+| `costroid: --installation-id must be github-owner:<id> or gitlab-namespace:<id>, the ids a CI job proves` | The flag holds a GitHub App installation or another form | Pass the owner's or the namespace's id in one of the two forms |
+| `costroid: outside GitHub Actions and GitLab CI, connect needs --installation-id, and only reads whether it is bound` | The command ran on a machine, with no installation named | Pass `--installation-id`, or run the command in CI |
+| `costroid: <installation> has no binding to tenant <tenant> proven in the last 20 hours, and outside GitHub Actions and GitLab CI no proof exists: run connect in a scheduled job` | Outside CI, the command found no current binding and has no proof to send. It exits 125 | Run the command in a scheduled job, as [`docs/connect.md`](connect.md) shows |
+| `costroid: the answer of Costroid Platform to the proof for <installation> shows no active binding` | The platform answered 200 with a body that is not an active binding of that installation | Report it with the release that ran |
+| `costroid: connect needs --platform-url` | No platform was named | Pass `--platform-url https://app.costroid.com` |
+
 ## Posting the report
 
 `costroid report` exits 0 once it finds a CI system, whatever the host answers, so a failed post never fails the job.
