@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -21,7 +25,15 @@ const (
 	testRequestToken     = "request-token"
 	testTenant           = "org_01JEXAMPLE0001"
 	testInstallation     = "github-owner:7204411"
+	// testRun and testRepository are the run and repository the example
+	// rows name.
+	testRun        = "16873409921"
+	testRepository = "example/widgets"
 )
+
+// testPace asks for a verdict at once and gives up after 5 s, so no test
+// waits as a CI job would.
+var testPace = verdictPace{interval: time.Millisecond, limit: 5 * time.Second}
 
 // exampleRows and exampleCSV are focus-row/v0.3's examples, which the focus
 // package's tests hold to the schemas' copy.
@@ -38,12 +50,45 @@ type platformStub struct {
 	status int
 	body   string
 	header http.Header
+	// verdicts answer GET /exports/{batch_id} in turn, each a status and a
+	// body. Once they run out, the batch has ingested.
+	verdicts []turn
 
 	mu       sync.Mutex
 	exports  []*http.Request
 	bodies   [][]byte
 	audience []string
 	identity []string
+	asked    int
+}
+
+type turn struct {
+	status int
+	body   string
+}
+
+// ingested is the contract's example of a batch that ingested, with its rows
+// and dropped entries counted.
+func ingested(rows, dropped int) turn {
+	return turn{http.StatusOK, `{"batch_id":"903114-16873409921-1","installation_id":"github-owner:7204411","status":"ingested","sha256":"3f7a9c10d2e84b6655a1c0f97e2d4b18c6a35f0e9d7b2c41a8e6f3051d9c7b24","focus_version":"1.4","received_at":"2026-10-14T09:40:03Z","rows":` + itoa(rows) + `,"dropped_tag_keys":` + itoa(dropped) + `,"failure":null}`}
+}
+
+func pending(status string) turn {
+	return turn{http.StatusOK, `{"batch_id":"903114-16873409921-1","status":"` + status + `","rows":null,"dropped_tag_keys":null,"failure":null}`}
+}
+
+func failed(code string) turn {
+	return turn{http.StatusOK, `{"batch_id":"903114-16873409921-1","status":"failed","rows":null,"dropped_tag_keys":null,"failure":{"code":` + quote(code) + `,"message":"::error::forged"}}`}
+}
+
+func itoa(n int) string {
+	data, _ := json.Marshal(n)
+	return string(data)
+}
+
+func quote(text string) string {
+	data, _ := json.Marshal(text)
+	return string(data)
 }
 
 func newPlatformStub(t *testing.T, status int, body string) *platformStub {
@@ -78,18 +123,27 @@ func (s *platformStub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(s.status)
 		w.Write([]byte(s.body))
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, integrationPath+"/exports/"):
+		answer := ingested(11, 0)
+		if s.asked < len(s.verdicts) {
+			answer = s.verdicts[s.asked]
+		}
+		s.asked++
+		w.WriteHeader(answer.status)
+		w.Write([]byte(answer.body))
 	default:
 		http.Error(w, "", http.StatusNotFound)
 	}
 }
 
 // githubEnv is a GitHub Actions job with id-token: write, run 16873409921's
-// first attempt in repository 903114.
+// first attempt in repository 903114, example/widgets.
 func (s *platformStub) githubEnv() map[string]string {
 	return map[string]string{
 		"GITHUB_ACTIONS":                 "true",
+		"GITHUB_REPOSITORY":              testRepository,
 		"GITHUB_REPOSITORY_ID":           "903114",
-		"GITHUB_RUN_ID":                  "16873409921",
+		"GITHUB_RUN_ID":                  testRun,
 		"GITHUB_RUN_ATTEMPT":             "1",
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   s.server.URL + "/oidc?api-version=2.0",
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": testRequestToken,
@@ -101,7 +155,7 @@ func (s *platformStub) export(t *testing.T, env map[string]string, extra ...stri
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	args := append([]string{"--rows", exampleRows, "--platform-url", s.server.URL, "--installation-id", testInstallation}, extra...)
-	code := export(context.Background(), args, s.server.Client(), func(name string) string { return env[name] }, &stdout, &stderr)
+	code := export(context.Background(), args, s.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
 	for _, secret := range []string{testIntegrationToken, testRunToken, testRequestToken} {
 		if strings.Contains(stdout.String()+stderr.String(), secret) {
 			t.Fatalf("the output holds a token: %s%s", stdout.String(), stderr.String())
@@ -116,14 +170,11 @@ func TestExportSendsTheContractHeaders(t *testing.T) {
 	if code != 0 || len(stub.exports) != 1 {
 		t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr)
 	}
-	want, err := os.ReadFile(exampleCSV)
-	if err != nil {
-		t.Fatal(err)
-	}
+	want := exampleWithWindowedUnverified(t)
 	sum := sha256.Sum256(want)
 	request, body := stub.exports[0], stub.bodies[0]
 	if !bytes.Equal(body, want) {
-		t.Error("the body is not the rows as the schemas' CSV example")
+		t.Errorf("the body is not the rows as the schemas' CSV example, its two windowed rows unverified:\n%s", body)
 	}
 	for name, value := range map[string]string{
 		"Authorization":            "Bearer " + testIntegrationToken,
@@ -143,9 +194,29 @@ func TestExportSendsTheContractHeaders(t *testing.T) {
 	if len(stub.identity) != 1 || stub.identity[0] != "Bearer "+testIntegrationToken {
 		t.Errorf("the identity request: %q", stub.identity)
 	}
-	if line := "costroid: batch 903114-16873409921-1, 11 rows, sha256 " + hex.EncodeToString(sum[:]) + ": accepted for ingest\n"; stdout != line {
-		t.Errorf("stdout %q", stdout)
+	wantOut := "costroid: batch 903114-16873409921-1, 11 rows, sha256 " + hex.EncodeToString(sum[:]) + ": accepted for ingest\n" +
+		"costroid: 9 of 11 rows name run 16873409921 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n" +
+		"costroid: batch 903114-16873409921-1 ingested, 11 rows\n" +
+		"costroid: pull request 1423 of github.com/example/widgets: " + stub.server.URL + "/#/pulls?repo=github.com/example/widgets&pr=1423\n"
+	if stdout != wantOut {
+		t.Errorf("stdout %q, want %q", stdout, wantOut)
 	}
+}
+
+// exampleWithWindowedUnverified is the schemas' CSV example as export sends
+// it from the run the rows name: byte for byte, but for the Tags cells of the
+// two windowed rows, which read unverified and unattributed in their place.
+func exampleWithWindowedUnverified(t *testing.T) []byte {
+	t.Helper()
+	example, err := os.ReadFile(exampleCSV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const windowedRow = `""costroid/attribution_grade"":""windowed"",""costroid/enforcement_grade"":""provider"",""costroid/run_identity"":""token_verified""`
+	if n := bytes.Count(example, []byte(windowedRow)); n != 2 {
+		t.Fatalf("the example holds %d windowed rows, want 2", n)
+	}
+	return bytes.ReplaceAll(example, []byte(windowedRow), []byte(`""costroid/attribution_grade"":""unattributed"",""costroid/enforcement_grade"":""provider"",""costroid/run_identity"":""unverified""`))
 }
 
 // Outside GitHub Actions no run token exists, so the batch goes without one.
@@ -158,7 +229,7 @@ func TestExportOutsideGitHubSendsNoRunToken(t *testing.T) {
 	if got := stub.exports[0].Header.Values("Costroid-Run-Token"); len(got) != 0 {
 		t.Errorf("a run token went: %q", got)
 	}
-	if !strings.HasSuffix(stdout, ": already held, so nothing changed\n") {
+	if !strings.Contains(stdout, ": already held, so nothing changed\n") {
 		t.Errorf("stdout %q", stdout)
 	}
 }
@@ -270,7 +341,7 @@ func TestExportWithNoRowsSendsNothing(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	env := stub.githubEnv()
 	args := []string{"--rows", empty, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
-	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, &stdout, &stderr)
+	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
 	if code != 0 || len(stub.exports) != 0 || stdout.String() != "costroid: "+empty+" holds no rows, so nothing was sent\n" {
 		t.Fatalf("exit %d, %d exports: %s%s", code, len(stub.exports), stdout.String(), stderr.String())
 	}
@@ -308,6 +379,267 @@ func TestExportHelpNamesEveryFlag(t *testing.T) {
 	for _, name := range []string{"--rows", "--platform-url", "--installation-id", "--batch-id", platformTokenVariable} {
 		if !strings.Contains(exportHelp, name) {
 			t.Errorf("the help does not name %s", name)
+		}
+	}
+}
+
+// sentIdentities reads the Tags cell of each row in a batch's CSV and returns
+// each row's run identity and attribution grade.
+func sentIdentities(t *testing.T, body []byte) [][2]string {
+	t.Helper()
+	records, err := csv.NewReader(bytes.NewReader(body)).ReadAll()
+	if err != nil || len(records) < 2 {
+		t.Fatalf("the body is not a CSV of rows: %v", err)
+	}
+	column := slices.Index(records[0], "Tags")
+	var identities [][2]string
+	for _, record := range records[1:] {
+		var tags map[string]string
+		if err := json.Unmarshal([]byte(record[column]), &tags); err != nil {
+			t.Fatal(err)
+		}
+		identities = append(identities, [2]string{tags["costroid/run_identity"], tags["costroid/attribution_grade"]})
+	}
+	return identities
+}
+
+// writeRows writes the example rows with each row's Tags changed by edit, and
+// returns the file's path.
+func writeRows(t *testing.T, edit func(row int, tags map[string]string)) string {
+	t.Helper()
+	data, err := os.ReadFile(exampleRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	for row, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var fields map[string]any
+		if err := json.Unmarshal(line, &fields); err != nil {
+			t.Fatal(err)
+		}
+		tags := map[string]string{}
+		for key, value := range fields["Tags"].(map[string]any) {
+			tags[key] = value.(string)
+		}
+		edit(row, tags)
+		fields["Tags"] = tags
+		encoded, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.Write(append(encoded, '\n'))
+	}
+	path := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestExportStampsOnlyItsRun sends rows as costroid run writes them, every one
+// unverified, under a run token. Only a row naming this run and this
+// repository, joined by its run and not by a time window, goes as
+// token_verified. Without a run token no row does.
+func TestExportStampsOnlyItsRun(t *testing.T) {
+	rows := writeRows(t, func(row int, tags map[string]string) {
+		tags["costroid/run_identity"], tags["costroid/attribution_grade"] = "unverified", "unattributed"
+		switch row {
+		case 1:
+			tags["costroid/workflow_run_id"] = "16873409922"
+		case 2:
+			tags["costroid/repo"] = "github.com/example/gadgets"
+		case 3:
+			tags["costroid/attribution_grade"] = "windowed"
+		}
+	})
+	want := [][2]string{{"token_verified", "unattributed"}}
+	for range 3 {
+		want = append(want, [2]string{"unverified", "unattributed"})
+	}
+	for range 7 {
+		want = append(want, [2]string{"token_verified", "unattributed"})
+	}
+
+	stub := newPlatformStub(t, http.StatusAccepted, `{"status":"accepted"}`)
+	code, stdout, stderr := stub.export(t, stub.githubEnv(), "--rows", rows)
+	if code != 0 || len(stub.exports) != 1 || stub.exports[0].Header.Get("Costroid-Run-Token") != testRunToken {
+		t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr)
+	}
+	if got := sentIdentities(t, stub.bodies[0]); !slices.Equal(got, want) {
+		t.Errorf("sent %v, want %v", got, want)
+	}
+	if line := "costroid: 8 of 11 rows name run 16873409921 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n"; !strings.Contains(stdout, line) {
+		t.Errorf("stdout %q", stdout)
+	}
+
+	// The same run's variables, outside GitHub Actions: no run token goes, so
+	// no row claims one.
+	outside := map[string]string{platformTokenVariable: testIntegrationToken, "GITHUB_RUN_ID": testRun, "GITHUB_REPOSITORY": testRepository}
+	code, stdout, stderr = stub.export(t, outside, "--rows", rows, "--batch-id", "nightly")
+	if code != 0 || len(stub.exports) != 2 || len(stub.exports[1].Header.Values("Costroid-Run-Token")) != 0 {
+		t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr)
+	}
+	for _, identity := range sentIdentities(t, stub.bodies[1]) {
+		if identity != [2]string{"unverified", "unattributed"} {
+			t.Errorf("without a run token a row went as %v", identity)
+		}
+	}
+	if strings.Contains(stdout, "token_verified") {
+		t.Errorf("stdout %q", stdout)
+	}
+}
+
+// TestExportLeavesForkRowsUnverified sends a fork's rows from the follow-up
+// workflow, whose run is not the run the rows name. The rows claim
+// token_verified and exact, and every one goes as unverified and
+// unattributed, so the batch cannot fail ROW_IDENTITY_MISMATCH.
+func TestExportLeavesForkRowsUnverified(t *testing.T) {
+	stub := newPlatformStub(t, http.StatusAccepted, `{"status":"accepted"}`)
+	env := stub.githubEnv()
+	env["GITHUB_RUN_ID"] = "16873409999"
+	code, stdout, stderr := stub.export(t, env)
+	if code != 0 || len(stub.exports) != 1 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	identities := sentIdentities(t, stub.bodies[0])
+	if len(identities) != 11 {
+		t.Fatalf("%d rows went", len(identities))
+	}
+	for _, identity := range identities {
+		if identity != [2]string{"unverified", "unattributed"} {
+			t.Errorf("a fork's row went as %v", identity)
+		}
+	}
+	if line := "costroid: 0 of 11 rows name run 16873409999 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n"; !strings.Contains(stdout, line) {
+		t.Errorf("stdout %q", stdout)
+	}
+}
+
+// TestExportReadsTheIngestVerdict waits on GET /exports/{batch_id} after the
+// platform took a batch: an ingested batch prints its link, a failed one its
+// code alone and exits 1, and no verdict within the wait warns and exits 0.
+func TestExportReadsTheIngestVerdict(t *testing.T) {
+	for name, check := range map[string]struct {
+		verdicts []turn
+		limit    time.Duration
+		code     int
+		stdout   []string
+		stderr   string
+	}{
+		"failed after two polls": {
+			verdicts: []turn{pending("accepted"), pending("ingesting"), failed("ROW_IDENTITY_MISMATCH")},
+			code:     exitRejected,
+			stderr:   "costroid: batch 903114-16873409921-1 failed on ingest: ROW_IDENTITY_MISMATCH. Costroid Platform stored none of its rows\n",
+		},
+		"a failure code outside the contract": {
+			verdicts: []turn{failed("row_identity\n::error::forged")},
+			code:     exitRejected,
+			stderr:   "costroid: batch 903114-16873409921-1 failed on ingest: with no failure code. Costroid Platform stored none of its rows\n",
+		},
+		"ingested": {
+			verdicts: []turn{pending("ingesting"), ingested(11, 2)},
+			stdout: []string{
+				"costroid: batch 903114-16873409921-1 ingested, 11 rows\n",
+				"costroid: Costroid Platform dropped 2 Tags entries outside costroid/, and stored the rows without them\n",
+				"costroid: pull request 1423 of github.com/example/widgets: ",
+			},
+		},
+		"no verdict in the wait": {
+			verdicts: slices.Repeat([]turn{pending("ingesting")}, 1000),
+			limit:    50 * time.Millisecond,
+			stderr:   "costroid: warning: batch 903114-16873409921-1 has no verdict after 0 s. The platform took batch 903114-16873409921-1, and states its verdict at GET /exports/903114-16873409921-1\n",
+		},
+		"a refused verdict request": {
+			verdicts: []turn{{http.StatusForbidden, `{"error":{"code":"AUTH_TOKEN_SCOPE","message":"x"}}`}},
+			stderr:   "costroid: warning: Costroid Platform refused the verdict request for batch 903114-16873409921-1: 403 AUTH_TOKEN_SCOPE. The platform took batch 903114-16873409921-1, and states its verdict at GET /exports/903114-16873409921-1\n",
+		},
+		"a server error is asked again": {
+			verdicts: []turn{{http.StatusBadGateway, ``}, ingested(11, 0)},
+			stdout:   []string{"costroid: batch 903114-16873409921-1 ingested, 11 rows\n"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newPlatformStub(t, http.StatusAccepted, `{"batch_id":"903114-16873409921-1","status":"accepted"}`)
+			stub.verdicts = check.verdicts
+			pace := testPace
+			if check.limit != 0 {
+				pace.limit = check.limit
+			}
+			var stdout, stderr bytes.Buffer
+			env := stub.githubEnv()
+			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, pace, &stdout, &stderr)
+			if code != check.code || stderr.String() != check.stderr {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+			for _, line := range check.stdout {
+				if !strings.Contains(stdout.String(), line) {
+					t.Errorf("stdout %q lacks %q", stdout.String(), line)
+				}
+			}
+			if strings.Contains(stdout.String()+stderr.String(), "::error::forged") {
+				t.Error("the platform's message reached the log")
+			}
+			if stub.asked == 0 {
+				t.Error("export never asked for the verdict")
+			}
+		})
+	}
+}
+
+// A batch the send already settled is not asked for again.
+func TestExportTakesTheVerdictInTheAnswer(t *testing.T) {
+	stub := newPlatformStub(t, http.StatusOK, ingested(11, 0).body)
+	code, stdout, stderr := stub.export(t, stub.githubEnv())
+	if code != 0 || stub.asked != 0 || !strings.Contains(stdout, "ingested, 11 rows\n") {
+		t.Fatalf("exit %d, asked %d times: %s%s", code, stub.asked, stdout, stderr)
+	}
+}
+
+// TestExportWarnsWhenNotBound: a 409 INSTALLATION_NOT_BOUND took nothing
+// because the tenant has not bound the installation, so export names costroid
+// connect, keeps the rows and exits 0. Another 409 still fails.
+func TestExportWarnsWhenNotBound(t *testing.T) {
+	before, err := os.ReadFile(exampleRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := newPlatformStub(t, http.StatusConflict, `{"error":{"code":"INSTALLATION_NOT_BOUND","message":"::error::forged"}}`)
+	code, stdout, stderr := stub.export(t, stub.githubEnv())
+	want := "costroid: warning: Costroid Platform refused batch 903114-16873409921-1: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as docs/connect.md shows, and " + exampleRows + " is kept to send again\n"
+	if code != 0 || stdout != "" || stderr != want || stub.asked != 0 {
+		t.Fatalf("exit %d, asked %d, stdout %q, stderr %q", code, stub.asked, stdout, stderr)
+	}
+	if after, err := os.ReadFile(exampleRows); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("the rows file changed: %v", err)
+	}
+
+	busy := newPlatformStub(t, http.StatusConflict, `{"error":{"code":"EXPORT_BATCH_BUSY","message":""}}`)
+	if code, _, stderr := busy.export(t, busy.githubEnv()); code != exitRejected || strings.Contains(stderr, "costroid connect") {
+		t.Errorf("EXPORT_BATCH_BUSY: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestExportAcceptsLoopbackHTTP reaches a platform on plain http at
+// 127.0.0.1, as the end-to-end harness serves it, and refuses plain http to
+// any other host, localhost included.
+func TestExportAcceptsLoopbackHTTP(t *testing.T) {
+	stub := &platformStub{status: http.StatusAccepted, body: `{"status":"accepted"}`, header: http.Header{}}
+	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
+	t.Cleanup(stub.server.Close)
+	if !strings.HasPrefix(stub.server.URL, "http://127.0.0.1:") {
+		t.Fatalf("the stub listens at %s", stub.server.URL)
+	}
+	code, stdout, stderr := stub.export(t, map[string]string{platformTokenVariable: testIntegrationToken}, "--batch-id", "e2e-1")
+	if code != 0 || len(stub.exports) != 1 || !strings.Contains(stdout, "ingested, 11 rows") {
+		t.Fatalf("exit %d, %d exports: %s%s", code, len(stub.exports), stdout, stderr)
+	}
+	if origin, err := platformOrigin("http://[::1]:8787"); err != nil || origin != "http://[::1]:8787" {
+		t.Errorf("[::1]: %q, %v", origin, err)
+	}
+	for _, address := range []string{"http://example.com", "http://localhost:8787", "http://10.0.0.1:8787", "http://127.0.0.1.example.com", "ftp://127.0.0.1"} {
+		if origin, err := platformOrigin(address); err == nil {
+			t.Errorf("%s was taken as %s", address, origin)
 		}
 	}
 }

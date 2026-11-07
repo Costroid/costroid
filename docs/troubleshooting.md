@@ -139,8 +139,15 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
-| `costroid: batch <id>, <count> rows, sha256 <digest>: accepted for ingest` | The platform took the batch. It states the batch's verdict at `GET /exports/{batch_id}` | None |
+| `costroid: batch <id>, <count> rows, sha256 <digest>: accepted for ingest` | The platform took the batch. The command then asks for its verdict for up to 60 s | None |
 | `costroid: batch <id>, <count> rows, sha256 <digest>: already held, so nothing changed` | These bytes were sent before under this batch id | None |
+| `costroid: <count> of <count> rows name run <run> of <repository>, so they went as token_verified and the rest as unverified` | On GitHub Actions a row goes as `token_verified` only when it names this run and this repository and its join is not `windowed`. A fork's rows, sent from the follow-up's run, all go as `unverified` | None. [`docs/export.md`](export.md#what-a-row-claims) says what each claim proves |
+| `costroid: batch <id> ingested, <count> rows` | The platform stored the batch's rows | None |
+| `costroid: Costroid Platform dropped <count> Tags entries outside costroid/, and stored the rows without them` | The rows carried tags outside the `costroid/` prefix, which the platform never keeps | None |
+| `costroid: pull request <number> of <repository>: <link>` | The pull request's page on Costroid Platform, one line for each pull request the rows name | Open the link |
+| `costroid: batch <id> failed on ingest: <code>. Costroid Platform stored none of its rows` | The platform took the batch and then refused it whole. The command exits 1 | The contract's [failed batches](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#failed-batches) say what each code means |
+| `costroid: warning: batch <id> has no verdict after <seconds> s. The platform took batch <id>, and states its verdict at GET /exports/<id>` | The batch was still ingesting when the wait ended. The command exits 0 | Read the batch on Costroid Platform later |
+| `costroid: warning: Costroid Platform refused <batch>: <status> <code>. The tenant holds no binding of <installation>: run costroid connect, as docs/connect.md shows, and <path> is kept to send again` | 409 `INSTALLATION_NOT_BOUND`: the integration token's tenant has not bound the owner the rows came through, or its binding was revoked or displaced. Nothing was stored. The command exits 0 | Add [`recipes/github-connect.yml`](../recipes/github-connect.yml), as [`docs/connect.md`](connect.md) shows, then run the agent's workflow again |
 | `costroid: <path> holds no rows, so nothing was sent` | The rows file is empty | Read the agent job's log |
 | `costroid: warning: Costroid Platform refused <batch>: <status> <code>. Nothing in the rows is wrong, and <path> is kept to send again` | 402 `PLAN_WRITES_REFUSED`: the tenant's plan does not allow writes at present. 429 and a `QUOTA_` code: a quota is spent, and the line adds the seconds to wait. The command exits 0 | Send the rows again later. The artifact keeps them for 7 days |
 | `costroid: warning: Costroid Platform's export quota is <state>` | `approaching` past 80% of a quota, or `exhausted` | Send fewer batches, or wait for the next UTC day |
