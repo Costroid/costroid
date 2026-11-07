@@ -236,17 +236,15 @@ func TestModelComesFromTheCommandThenTheConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := map[string][]string{
-		"gpt-6-sol":  {"codex", "exec", "-m", "gpt-6-sol", "hi"},
-		"gpt-6-luna": {"codex", "exec", "--model=gpt-6-luna", "hi"},
-		"gpt-5.5":    {"codex", "exec", "-c", `model="gpt-5.5"`, "hi"},
+		"gpt-6-sol":   {"codex", "exec", "-m", "gpt-6-sol", "hi"},
+		"gpt-6-luna":  {"codex", "exec", "--model=gpt-6-luna", "hi"},
+		"gpt-5.5":     {"codex", "exec", "-c", `model="gpt-5.5"`, "hi"},
+		"gpt-5.6-sol": {"codex", "exec", "hi"},
 	}
 	for want, argv := range cases {
-		if got := modelFromArgs(argv); got != want {
+		if got := modelFrom(argv, config); got != want {
 			t.Errorf("%v: %q", argv, got)
 		}
-	}
-	if got := modelFromConfig(config); got != "gpt-5.6-sol" {
-		t.Errorf("config: %q", got)
 	}
 }
 
@@ -255,7 +253,7 @@ func TestConfigWithoutATopLevelModelNamesNone(t *testing.T) {
 	if err := os.WriteFile(config, []byte("[profiles.x]\nmodel = \"no\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := modelFromConfig(config); got != "" {
+	if got := modelFrom([]string{"codex", "exec", "hi"}, config); got != UnknownModel {
 		t.Errorf("got %q", got)
 	}
 }

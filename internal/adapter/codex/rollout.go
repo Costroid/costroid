@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -22,9 +21,16 @@ import (
 // tailInterval is how often the rollout file is read during a run.
 const tailInterval = 50 * time.Millisecond
 
-// supportedVersions lists the Codex versions with a recorded rollout fixture.
-// The format is undocumented, so another version's file is not read.
-var supportedVersions = []string{"0.164.0-alpha.11.1"}
+// recordedVersion is the Codex version the recipes pin.
+const recordedVersion = "0.164.0-alpha.11.1"
+
+// recordedVersions lists the Codex versions with a recorded rollout fixture.
+// The format is undocumented, so any version's file is read only while it
+// keeps the shape the reader checks line by line: a session_meta that names a
+// version before any usage, a running total that never falls and moves by
+// each request, requests whose counts add up, and, at the end, a total that
+// agrees with the stream's. Another version reads with a note.
+var recordedVersions = []string{recordedVersion, "0.167.0"}
 
 var threadPattern = regexp.MustCompile(`^[0-9A-Za-z-]+$`)
 
@@ -68,11 +74,13 @@ type tokenInfo struct {
 // reading, and the run keeps what had settled before it.
 type rolloutLog struct {
 	// thread names the stand-in id of a request the file gives no id.
-	thread   string
-	opened   bool
-	version  string
-	model    string
-	start    time.Time
+	thread  string
+	opened  bool
+	version string
+	model   string
+	start   time.Time
+	// tasks counts the task_started events, one per turn.
+	tasks    int
 	settled  usage
 	requests []adapter.Request
 	problem  string
@@ -125,6 +133,9 @@ func (s *Session) follow(file *rolloutFile) ([]adapter.Request, bool) {
 	gained := s.subagents.read(s.home, thread, since)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.log.opened {
+		s.rolloutModified = file.modified
+	}
 	s.log.opened = true
 	if err != nil {
 		s.log.refuse("the rollout file could not be read")
@@ -237,14 +248,12 @@ func (l *rolloutLog) applyEntry(entry rolloutEntry, model string) error {
 
 func (l *rolloutLog) applyMeta(meta sessionMeta) {
 	l.version = meta.CLIVersion
-	if !slices.Contains(supportedVersions, meta.CLIVersion) {
-		l.refuse(fmt.Sprintf("no recorded fixture covers Codex %q, so its rollout file is not read", meta.CLIVersion))
-	}
 }
 
 func (l *rolloutLog) applyEvent(message eventMessage, at time.Time, model string) {
 	switch message.Type {
 	case "task_started":
+		l.tasks++
 		l.start = at
 		l.sent = at
 	case "token_count":
@@ -260,6 +269,14 @@ func (l *rolloutLog) applyEvent(message eventMessage, at time.Time, model string
 func (l *rolloutLog) settle(total, last usage, id string, at time.Time, model string) {
 	if l.version == "" {
 		l.refuse("the rollout file names no Codex version")
+		return
+	}
+	if total.negative() != nil {
+		l.refuse("a rollout running total holds a count below zero")
+		return
+	}
+	if last.negative() != nil {
+		l.refuse("a rollout usage record holds a count below zero")
 		return
 	}
 	if total == l.settled {
@@ -310,6 +327,8 @@ func (l *rolloutLog) request(id string, last usage, tokens adapter.Tokens, at ti
 type rolloutFile struct {
 	file    *os.File
 	partial []byte
+	// modified is when the file was last written, as it stood when opened.
+	modified time.Time
 }
 
 // open finds sessions/<year>/<month>/<day>/rollout-<time>-<thread>.jsonl. The
@@ -325,6 +344,9 @@ func (f *rolloutFile) open(home, thread string) bool {
 	file, err := os.Open(filepath.Join(home, filepath.FromSlash(found[0])))
 	if err != nil {
 		return false
+	}
+	if info, err := file.Stat(); err == nil {
+		f.modified = info.ModTime()
 	}
 	f.file = file
 	return true

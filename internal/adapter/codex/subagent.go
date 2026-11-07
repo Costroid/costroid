@@ -141,13 +141,17 @@ func firstMeta(name string, since time.Time) (sessionMeta, bool) {
 	return meta, true
 }
 
-// settled adds every subagent's running total.
-func (a *subagents) settled() usage {
+// settled adds every subagent's running total. It reports false when the
+// sum passes the largest count an int64 holds.
+func (a *subagents) settled() (usage, bool) {
 	var total usage
 	for _, sub := range a.files {
-		total = total.plus(sub.log.settled)
+		var ok bool
+		if total, ok = total.plus(sub.log.settled); !ok {
+			return usage{}, false
+		}
 	}
-	return total
+	return total, true
 }
 
 // inFlight counts the requests the subagents' files show sent and unsettled,
