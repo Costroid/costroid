@@ -23,7 +23,7 @@ Any other workflow passes with nothing said. The last line counts the files read
 
 | Severity | Rule                   | What it finds                                                                                                                                                   |
 | -------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| high     | `pull-request-target`  | `pull_request_target` starts the workflow, or a job there checks out the pull request's head. Either runs code a stranger wrote beside your secrets              |
+| high     | `pull-request-target`  | `pull_request_target` starts the workflow, which hands a stranger's pull request to an agent that holds your secrets, or a job there checks out the pull request's head and runs its code beside them |
 | high     | `comment-trigger`      | A comment, review, issue or discussion event starts the agent's job, and the job's `if` tests neither `author_association` nor `github.actor`                     |
 | high     | `agent-id-token`       | The agent's job holds `id-token: write`, so an injected agent can mint a token that claims your repository's identity                                          |
 | high     | `expression-in-script` | A `run` script holds `${{ }}`. The runner pastes the value into the shell before it runs, so the value can run commands. Pass it through `env`                  |
