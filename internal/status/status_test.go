@@ -220,3 +220,47 @@ func TestAgentsPageStatusExamplesMatchTheSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusReadSaysWhenNoFileExists(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "costroid-status.json")
+	env := map[string]string{FileVariable: path}
+	getenv := func(name string) string { return env[name] }
+
+	var missing *NoFileError
+	if _, err := Read(getenv); !errors.As(err, &missing) || missing.Path != path {
+		t.Fatalf("no file read as %v", err)
+	}
+	if _, err := Read(func(string) string { return "" }); !errors.As(err, &missing) || missing.Path != "" {
+		t.Fatalf("no path read as %v", err)
+	}
+
+	written := wideStatus(7)
+	if err := Write(path, written); err != nil {
+		t.Fatal(err)
+	}
+	read, err := Read(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *read.Requests != 7 || len(read.Spend) != 200 || read.Spend[0].ListCost.String() != "7" || read.Cap.Remainder.String() != "5" || !read.UpdatedAt.Equal(written.UpdatedAt) {
+		t.Errorf("read back %+v", read)
+	}
+
+	for name, content := range map[string]string{
+		"half a file":       `{"schema":"costroid.status/0.1","state":"run`,
+		"another version":   `{"schema":"costroid.status/0.2"}`,
+		"an amount as JSON": `{"schema":"costroid.status/0.1","cap":{"currency":"USD","amount":5}}`,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Read(getenv); err == nil || errors.As(err, &missing) {
+			t.Errorf("%s read as %v, want an error that is not a missing file", name, err)
+		}
+	}
+	env[FileVariable] = directory
+	if _, err := Read(getenv); err == nil || errors.As(err, &missing) {
+		t.Errorf("a directory read as %v, want an error that is not a missing file", err)
+	}
+}

@@ -292,6 +292,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if held != nil {
 		held.compareSpend(ctx, &result)
 	}
+	endStatus(session, result.Enforcement.Grade)
 	return result, nil
 }
 

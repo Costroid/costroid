@@ -7,7 +7,9 @@ package status
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -157,4 +159,99 @@ func writeAndClose(file *os.File, data []byte) error {
 		return fmt.Errorf("status: close %s: %w", file.Name(), err)
 	}
 	return nil
+}
+
+// NoFileError is a status file that does not exist: no costroid run has
+// started an agent that writes it in this job. An empty Path is an environment
+// that names no status file.
+type NoFileError struct {
+	Path string
+}
+
+func (e *NoFileError) Error() string {
+	if e.Path == "" {
+		return fmt.Sprintf("no status file: %s and RUNNER_TEMP are unset, so no costroid run writes one", FileVariable)
+	}
+	return fmt.Sprintf("no status file at %s: no costroid run has started an agent in this job", e.Path)
+}
+
+// Read reads the status file where Path says it is. A file that does not
+// exist is a *NoFileError; any other failure, a file that cannot be read or
+// is not a status of this version, is an error of its own.
+func Read(getenv func(string) string) (Status, error) {
+	path := Path(getenv)
+	if path == "" {
+		return Status{}, &NoFileError{}
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Status{}, &NoFileError{Path: path}
+	}
+	if err != nil {
+		return Status{}, fmt.Errorf("status: %w", err)
+	}
+	var read Status
+	if err := json.Unmarshal(data, &read); err != nil {
+		return Status{}, fmt.Errorf("status: read %s: %w", path, err)
+	}
+	if read.Schema != Schema {
+		return Status{}, fmt.Errorf("status: %s is %q, and this release reads %s", path, read.Schema, Schema)
+	}
+	return read, nil
+}
+
+// UnmarshalJSON reads an entry whose amount is a decimal string.
+func (s *Spend) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Currency  string           `json:"currency"`
+		CostBasis *focus.CostBasis `json:"cost_basis"`
+		ListCost  string           `json:"list_cost"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	cost, err := decimal.Parse(wire.ListCost)
+	if err != nil {
+		return fmt.Errorf("list_cost: %w", err)
+	}
+	*s = Spend{Currency: wire.Currency, CostBasis: wire.CostBasis, ListCost: cost}
+	return nil
+}
+
+// UnmarshalJSON reads a cap whose amounts are decimal strings or null.
+func (c *Cap) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Currency  string  `json:"currency"`
+		Amount    string  `json:"amount"`
+		Remainder *string `json:"remainder"`
+		Overshoot *string `json:"overshoot"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	amount, err := decimal.Parse(wire.Amount)
+	if err != nil {
+		return fmt.Errorf("amount: %w", err)
+	}
+	remainder, err := optionalAmount(wire.Remainder)
+	if err != nil {
+		return fmt.Errorf("remainder: %w", err)
+	}
+	overshoot, err := optionalAmount(wire.Overshoot)
+	if err != nil {
+		return fmt.Errorf("overshoot: %w", err)
+	}
+	*c = Cap{Currency: wire.Currency, Amount: amount, Remainder: remainder, Overshoot: overshoot}
+	return nil
+}
+
+func optionalAmount(text *string) (*decimal.Decimal, error) {
+	if text == nil {
+		return nil, nil
+	}
+	amount, err := decimal.Parse(*text)
+	if err != nil {
+		return nil, err
+	}
+	return &amount, nil
 }

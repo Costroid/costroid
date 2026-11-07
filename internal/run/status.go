@@ -49,6 +49,15 @@ func (o Options) sessionWithStatus(agent string, plan adapter.Plan, session adap
 	return reporting
 }
 
+// endStatus writes the grade the run earned once its rows were checked into the
+// run's last status, so the file never states a grade above the result
+// object's. A session that writes no status file is left as it is.
+func endStatus(session adapter.Session, grade string) {
+	if reporting, ok := session.(interface{ earned(string) }); ok {
+		reporting.earned(grade)
+	}
+}
+
 // statusFile is a run's status file and what it last said. Writes come from
 // the agent's stdout and from the watch, so one is made at a time.
 type statusFile struct {
@@ -120,6 +129,18 @@ func (f *statusFile) end(report adapter.Report, read bool) error {
 	}
 	f.write()
 	return f.problem
+}
+
+// earned rewrites the last status with the grade the run earned, when it
+// differs from the one the file states.
+func (f *statusFile) earned(grade string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if grade == "" || grade == f.grade {
+		return
+	}
+	f.grade = grade
+	f.write()
 }
 
 // write sets the cap and the time, and replaces the file. The first failure is
@@ -218,6 +239,10 @@ func (s *statusSession) Finish() (adapter.Report, error) {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("the status file could not be written: %v", problem))
 	}
 	return report, err
+}
+
+func (s *statusSession) earned(grade string) {
+	s.file.earned(grade)
 }
 
 // RunWindow passes the agent's process window to a session that counts other

@@ -569,3 +569,23 @@ func TestAgentsPageStatusExampleIsWhatTheRunWrites(t *testing.T) {
 		t.Errorf("the page shows\n%s\nand the run wrote\n%s", example[1], data)
 	}
 }
+
+func TestStatusFileEndsWithTheEarnedGrade(t *testing.T) {
+	for _, tc := range []struct {
+		name, keyInfo, readiness string
+	}{
+		{"the gateway's store failed", keyInfoHolding, `{"status":"healthy","db":"disconnected"}`},
+		{"the run passed the overshoot bound", keyInfoWith("0.0001", "100"), `{"status":"healthy","db":"connected"}`},
+		{"the gateway held the run", keyInfoHolding, `{"status":"healthy","db":"connected"}`},
+	} {
+		path := statusPath(t)
+		got, _ := gatewayRunWith(t, fakeGateway(t, tc.keyInfo, tc.readiness))
+		if got.err != nil {
+			t.Fatalf("%s: %v", tc.name, got.err)
+		}
+		parsed, data := readStatusFile(t, path)
+		if parsed["state"] != "ended" || parsed["enforcement_grade"] != got.result.Enforcement.Grade {
+			t.Errorf("%s: the result reads %s and the status file %s", tc.name, got.result.Enforcement.Grade, data)
+		}
+	}
+}

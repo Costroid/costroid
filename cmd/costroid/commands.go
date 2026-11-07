@@ -33,7 +33,7 @@ type stdio struct {
 }
 
 var commands = []command{
-	{name: "run", short: "costroid run --budget-usd N --out rows.jsonl -- <agent command>", help: runHelp, run: runCommand},
+	{name: "run", short: "costroid run --budget-usd N --out rows.jsonl -- <agent command>", help: runHelp + "\n" + statusFileHelp, run: runCommand},
 	{name: "ingest-run", help: ingestRunHelp, run: func(_ context.Context, args []string, std stdio) int { return ingestRunCommand(args, std.stderr) }},
 	{name: "report", short: "costroid report --rows rows.jsonl", help: reportHelp, run: withOutputs(reportCommand)},
 	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
@@ -175,6 +175,12 @@ const resultFileHelp = `run and ingest-run write the same object beside the rows
 whether or not --json is given and whatever their exit: --out rows.jsonl gives
 rows.run.json. report reads the run's reason for an empty rows file from it,
 and a reader that refused the agent's output adds its first error line.
+`
+
+const statusFileHelp = `While the agent works, run writes a status file: what the run has spent so
+far, its cap, what is left and what holds it. It is COSTROID_STATUS_FILE, or
+costroid-status.json in RUNNER_TEMP when that is unset; with neither set, run
+writes none. docs/agents.md describes the file.
 `
 
 const ingestRunHelp = `Usage:
