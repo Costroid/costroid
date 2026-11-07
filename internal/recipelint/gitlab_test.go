@@ -165,3 +165,46 @@ func TestGitLabCosignBindsTheCommit(t *testing.T) {
 		t.Fatalf("a literal commit is refused: %v", got)
 	}
 }
+
+const (
+	reportExitCodes = "  allow_failure:\n    exit_codes: [3]\n"
+	gateRule        = "    - if: $COSTROID_GITLAB_TOKEN && $COSTROID_GATE\n      when: always\n"
+	openRule        = "    - if: $COSTROID_GITLAB_TOKEN\n      when: always\n      allow_failure: true\n"
+	gateFlag        = "${COSTROID_GATE:+--exit-on-verdict}"
+)
+
+// With COSTROID_GATE set, the report's job fails the pipeline on a failure
+// verdict, exit 1, and passes with a warning on a neutral one, exit 3. Without
+// it, the job's rule allows every failure, and the report is not asked for an
+// exit code.
+func TestGitLabRecipeAllowsOnlyThree(t *testing.T) {
+	source, root := gitLabTemplate(t)
+	report := source[strings.Index(source, "costroid:report:"):]
+	for _, want := range []string{reportExitCodes, gateRule + openRule, gateFlag} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the report's job does not hold %q", want)
+		}
+	}
+	job := field(root, "costroid:report")
+	if codes := sequence(field(field(job, "allow_failure"), "exit_codes")); len(codes) != 1 || codes[0].Value != neutralExit {
+		t.Errorf("the report's job may fail on %v", text(codes...))
+	}
+	if got := findingRules(source); len(got) != 0 {
+		t.Fatalf("rules: %v", got)
+	}
+	for _, change := range []edit{
+		{"exit 1 too", reportExitCodes, "  allow_failure:\n    exit_codes: [1, 3]\n", RuleReportExitCodes},
+		{"exit 1 alone", reportExitCodes, "  allow_failure:\n    exit_codes: 1\n", RuleReportExitCodes},
+		{"another code", reportExitCodes, "  allow_failure:\n    exit_codes: [3, 137]\n", RuleReportExitCodes},
+		{"no code", reportExitCodes, "  allow_failure:\n    exit_codes: []\n", RuleReportExitCodes},
+		{"a nested list", reportExitCodes, "  allow_failure:\n    exit_codes: [[3]]\n", RuleReportExitCodes},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			expectRule(t, source, change)
+		})
+	}
+	scalar := strings.Replace(source, reportExitCodes, "  allow_failure:\n    exit_codes: 3\n", 1)
+	if got := findingRules(scalar); len(got) != 0 {
+		t.Fatalf("exit_codes: 3 is refused: %v", got)
+	}
+}

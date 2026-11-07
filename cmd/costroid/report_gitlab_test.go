@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
 
@@ -333,5 +335,145 @@ func TestGitHubStaysSelectedInsideGitHubActions(t *testing.T) {
 	execute(t, "report", "--rows", realRows)
 	if len(github.Comments) != 1 || len(gitlab.Requests) != 0 {
 		t.Errorf("%d comments, gitlab saw %v", len(github.Comments), gitlab.Requests)
+	}
+}
+
+// liftedBudget is the setting a merge request writes into its own head, which
+// would let the run pass if the report read it.
+const liftedBudget = "policy:\n  run_budget_usd: \"500\"\n"
+
+// gitLabGate is a merge request whose base branch's head holds config, while
+// the merge-base holds a budget the run is under and the merge request's head
+// lifts the budget. A verdict from config proves the report read the base
+// branch's head.
+func gitLabGate(t *testing.T, config string) *scmtest.GitLab {
+	t.Helper()
+	stub := gitLabEnvironment(t)
+	t.Setenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", baseBranch)
+	stub.Branches[baseBranch] = baseHead
+	stub.Files[baseCommit] = map[string]string{configFile: underBudget}
+	stub.Files[headCommit] = map[string]string{configFile: liftedBudget}
+	stub.Files[baseHead] = map[string]string{}
+	if config != "" {
+		stub.Files[baseHead][configFile] = config
+	}
+	stub.Visibility = "private"
+	return stub
+}
+
+// noteConclusion reads the conclusion and the verdict from the one note.
+func noteConclusion(t *testing.T, stub *scmtest.GitLab) (string, policy.Verdict) {
+	t.Helper()
+	if len(stub.Notes) != 1 {
+		t.Fatalf("%d notes", len(stub.Notes))
+	}
+	return blockVerdict(t, stub.Notes[0].Body)
+}
+
+func TestGitLabExitOnVerdictFailure(t *testing.T) {
+	stub := gitLabGate(t, enforcedOver)
+	code, _, stderr := execute(t, "report", "--rows", realRows, "--exit-on-verdict")
+	if code != exitVerdictFailure || !strings.Contains(stderr, "costroid: the verdict is failure, so the report exits 1\n") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	conclusion, verdict := noteConclusion(t, stub)
+	if conclusion != policy.Failure || verdict.ConfigRef != baseHead {
+		t.Errorf("conclusion %s, config read at %s", conclusion, verdict.ConfigRef)
+	}
+	t.Run("the note is refused", func(t *testing.T) {
+		stub := gitLabGate(t, enforcedOver)
+		stub.Fail["POST /notes"] = http.StatusForbidden
+		code, _, stderr := execute(t, "report", "--rows", realRows, "--exit-on-verdict")
+		if code != exitVerdictFailure || !strings.Contains(stderr, "comment not posted") {
+			t.Errorf("exit %d: %s", code, stderr)
+		}
+	})
+}
+
+func TestGitLabExitOnVerdictNeutralIsThree(t *testing.T) {
+	cases := map[string]struct {
+		config string
+		setup  func(t *testing.T)
+		check  func(t *testing.T, stub *scmtest.GitLab, stderr string)
+	}{
+		"the warn-only period holds a failure": {config: overBudget, check: func(t *testing.T, stub *scmtest.GitLab, _ string) {
+			conclusion, verdict := noteConclusion(t, stub)
+			held := slices.ContainsFunc(verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly })
+			if conclusion != policy.Neutral || !verdict.WarnOnly.Active || !held {
+				t.Errorf("conclusion %s, verdict %+v", conclusion, verdict)
+			}
+		}},
+		"no rule is set": {check: func(t *testing.T, stub *scmtest.GitLab, _ string) {
+			if conclusion, verdict := noteConclusion(t, stub); conclusion != policy.Neutral || len(verdict.Results) != 0 {
+				t.Errorf("conclusion %s, results %+v", conclusion, verdict.Results)
+			}
+		}},
+		"the report cannot reach the host": {
+			config: enforcedOver,
+			setup:  func(t *testing.T) { t.Setenv(gitLabTokenVariable, "") },
+			check: func(t *testing.T, stub *scmtest.GitLab, stderr string) {
+				if !strings.Contains(stderr, "costroid: not posted: ") || len(stub.Requests) != 0 {
+					t.Errorf("stderr %s, requests %v", stderr, stub.Requests)
+				}
+			},
+		},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			stub := gitLabGate(t, test.config)
+			if test.setup != nil {
+				test.setup(t)
+			}
+			code, _, stderr := execute(t, "report", "--rows", realRows, "--exit-on-verdict")
+			if code != exitVerdictNeutral || !strings.Contains(stderr, "costroid: the verdict is neutral, so the report exits 3\n") {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			test.check(t, stub, stderr)
+		})
+	}
+}
+
+func TestReportExitsZeroWithoutOptIn(t *testing.T) {
+	t.Run("gitlab without the flag", func(t *testing.T) {
+		stub := gitLabGate(t, enforcedOver)
+		code, _, stderr := execute(t, "report", "--rows", realRows)
+		if code != 0 || strings.Contains(stderr, "so the report exits") {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		if conclusion, _ := noteConclusion(t, stub); conclusion != policy.Failure {
+			t.Errorf("conclusion %s, want the failure the exit code leaves out", conclusion)
+		}
+	})
+	t.Run("github with the flag", func(t *testing.T) {
+		stub := reportEnvironment(t, pullRequestEvent())
+		stub.Files[configFile] = enforcedOver
+		code, _, stderr := execute(t, "report", "--rows", realRows, "--exit-on-verdict")
+		want := "costroid: warning: --exit-on-verdict applies on GitLab CI only. On GitHub Actions the costroid check is the gate, so the report exits 0\n"
+		if code != 0 || !strings.Contains(stderr, want) {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		if len(stub.Checks) != 1 || stub.Checks[0].Conclusion != policy.Failure {
+			t.Errorf("checks = %+v", stub.Checks)
+		}
+	})
+}
+
+func TestVerdictExitGivesEachConclusionItsCode(t *testing.T) {
+	for conclusion, want := range map[string]int{
+		policy.Success: 0,
+		policy.Failure: exitVerdictFailure,
+		policy.Neutral: exitVerdictNeutral,
+		"":             exitVerdictNeutral,
+	} {
+		if got := verdictExit(conclusion); got != want {
+			t.Errorf("verdictExit(%q) = %d, want %d", conclusion, got, want)
+		}
+	}
+}
+
+func TestExitOnVerdictRefusesPreview(t *testing.T) {
+	code, stdout, stderr := execute(t, "report", "--preview", "--exit-on-verdict", "--rows", realRows)
+	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "report takes --preview or --exit-on-verdict, not both") {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

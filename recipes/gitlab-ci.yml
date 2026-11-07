@@ -138,10 +138,14 @@ costroid:ingest:
           --header 'Content-Type: application/x-ndjson' \
           --data-binary @costroid-rows.jsonl "$COSTROID_INGEST_URL"
 
+# With COSTROID_GATE set, the report's exit code is the gate: 1 on a failure
+# verdict fails the pipeline, and 3 on a neutral one shows a warning. Without
+# it, the report never fails the pipeline. docs/gitlab.md has the details.
 costroid:report:
   extends: .costroid-install
   stage: .post
-  allow_failure: true
+  allow_failure:
+    exit_codes: [3]
   timeout: 5 minutes
   resource_group: costroid-report
   environment:
@@ -160,8 +164,13 @@ costroid:report:
       when: never
     - if: $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID
       when: never
+    - if: $COSTROID_GITLAB_TOKEN && $COSTROID_GATE
+      when: always
     - if: $COSTROID_GITLAB_TOKEN
       when: always
+      allow_failure: true
   script:
     - touch costroid-rows.jsonl
-    - costroid report --rows costroid-rows.jsonl --budget-usd "$COSTROID_BUDGET_USD"
+    - >-
+      costroid report --rows costroid-rows.jsonl --budget-usd "$COSTROID_BUDGET_USD"
+      ${COSTROID_GATE:+--exit-on-verdict}

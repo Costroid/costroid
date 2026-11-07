@@ -9,9 +9,14 @@ import (
 
 // The rules only a GitLab template can break.
 const (
-	RuleReportLabel  = "report-label"
-	RuleCosignCommit = "cosign-commit"
+	RuleReportLabel     = "report-label"
+	RuleCosignCommit    = "cosign-commit"
+	RuleReportExitCodes = "report-exit-codes"
 )
+
+// neutralExit is the exit code of costroid report --exit-on-verdict on a
+// neutral verdict, the one code the report's job may fail on and pass.
+const neutralExit = "3"
 
 var (
 	imageDigest = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
@@ -234,6 +239,24 @@ func (l *linter) gitlabReport(root *yaml.Node, job entry, members []*yaml.Node) 
 	}
 	l.reportEnvironment(root, job, environmentName(members))
 	l.reportLabel(root, job, members)
+	l.reportExitCodes(members)
+}
+
+// reportExitCodes holds the codes the report's job may fail on to a neutral
+// verdict's. Any other code there would let a failure verdict, exit 1, or a
+// report that could not run pass the pipeline as a warning.
+func (l *linter) reportExitCodes(members []*yaml.Node) {
+	codes := field(firstField(members, "allow_failure"), "exit_codes")
+	if codes == nil {
+		return
+	}
+	var listed []string
+	for _, code := range sequence(codes) {
+		listed = append(listed, code.Value)
+	}
+	if len(listed) != 1 || listed[0] != neutralExit {
+		l.add(codes, RuleReportExitCodes, "the report's job may fail on exit codes [%s]: list %s alone, so a failure verdict, exit 1, fails the pipeline", strings.Join(listed, ", "), neutralExit)
+	}
 }
 
 // reportLabel holds the report to the label the agent's jobs wait for. A
