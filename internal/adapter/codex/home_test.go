@@ -115,7 +115,7 @@ func TestCodexActionHome(t *testing.T) {
 	if report.Enforcement.Grade != adapter.GradeNone || !strings.Contains(report.Enforcement.Note, "Costroid did not start this run") {
 		t.Errorf("enforcement %+v", report.Enforcement)
 	}
-	if report.CostBasis != focus.ListEquivalent || report.CostSource != costSourceRollout {
+	if report.CostBasis != focus.Measured || report.CostSource != costSourceRollout {
 		t.Errorf("basis %s, source %s", report.CostBasis, report.CostSource)
 	}
 	if report.SessionID != actionThread || report.AgentVersion != recordedVersion {
@@ -260,6 +260,33 @@ func agentSteps(t *testing.T) []step {
 		t.Fatal(err)
 	}
 	return workflow.Jobs["agent"].Steps
+}
+
+// openai/codex-action takes only an API key, its openai-api-key input, and the
+// recipe gives it one from a secret. A run read from the action's Codex home
+// billed to that key, so it reads measured, whatever key the reading's own
+// environment holds.
+func TestCodexActionReadsMeasured(t *testing.T) {
+	var codex *step
+	steps := agentSteps(t)
+	for i := range steps {
+		if strings.HasPrefix(steps[i].Uses, "openai/codex-action@") {
+			codex = &steps[i]
+		}
+	}
+	if codex == nil || !regexp.MustCompile(`^\$\{\{ secrets\.[A-Z_]+ \}\}$`).MatchString(codex.With["openai-api-key"]) {
+		t.Fatalf("the recipe's codex-action step takes no API key from a secret: %+v", codex)
+	}
+	for _, key := range []string{"", "sk-test"} {
+		t.Setenv("CODEX_API_KEY", key)
+		report, err := Agent{}.ReadHome(homeWith(t, rollout{actionThread, fixture(t, actionFixture), actionEnd}), actionJobStart)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.CostBasis != focus.Measured {
+			t.Errorf("with CODEX_API_KEY %q the codex-action run reads %s", key, report.CostBasis)
+		}
+	}
 }
 
 // The codex-action recipe passes the linter under both profiles, and states

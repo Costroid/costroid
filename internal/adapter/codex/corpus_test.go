@@ -43,7 +43,7 @@ type corpusRead struct {
 // against the totals it states, which needs no entry here.
 var codexCorpus = map[string]corpusRead{
 	"0.164.0-alpha.11.1/action": {
-		source: costSourceRollout, basis: focus.ListEquivalent, model: "gpt-6.1-sol", requests: 2, grade: adapter.GradeNone,
+		source: costSourceRollout, basis: focus.Measured, model: "gpt-6.1-sol", requests: 2, grade: adapter.GradeNone,
 		tokens: adapter.Tokens{InputUncached: 6, CacheRead: 10770, CacheWrite30m: 10958, Output: 84, CachedInputReported: 10770},
 	},
 	"0.164.0-alpha.11.1/exec": {

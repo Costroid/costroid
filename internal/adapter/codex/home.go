@@ -33,8 +33,8 @@ const homeSlack = time.Minute
 // the reading is refused. A zero since reads every file.
 //
 // Costroid did not start this run, so no budget held it: the grade is none. The
-// files do not say how the run billed, so the rows read list_equivalent, the
-// weaker claim.
+// files do not say how the run billed, but openai/codex-action runs Codex only
+// on an API key, its openai-api-key input, so the rows read measured.
 func (Agent) ReadHome(home string, since time.Time) (adapter.Report, error) {
 	info, err := os.Stat(home)
 	if err != nil {
@@ -123,7 +123,7 @@ func (r *homeReading) nothingRead(home string) error {
 // the session, and every thread's requests are rows.
 func (r *homeReading) report() adapter.Report {
 	report := adapter.Report{
-		CostBasis:   focus.ListEquivalent,
+		CostBasis:   focus.Measured,
 		CostSource:  costSourceRollout,
 		Enforcement: adapter.Enforcement{Grade: adapter.GradeNone, Note: homeNote},
 	}

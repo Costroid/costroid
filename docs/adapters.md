@@ -150,6 +150,8 @@ The grade is decided when the run ends:
 
 A `none` run is never stopped, and every row says why. Its id is `<thread>:turn:<n>`.
 
+The basis follows the key Codex runs on. Under `costroid run`, rows read `measured` when `CODEX_API_KEY` is set and `list_equivalent` otherwise. Codex refused a key given only as `OPENAI_API_KEY` in a recorded run (GitHub Actions run 42379804344, scenario `codex-openai-key`), and the action's `run` stage passes a key it finds under that name to Codex as `CODEX_API_KEY`. `costroid ingest-run --codex-home` reads a run of `openai/codex-action`, which takes only an API key, its `openai-api-key` input, so those rows read `measured`.
+
 A turn row takes its context tier from the turn's whole input, which no request in the turn can pass. At or below the sheet's boundary, 272000 input tokens on the pinned OpenAI sheet, every request in the turn is in the lowest tier, so that tier is each request's own. Above it, the stream cannot say which requests passed the boundary, so the tier above prices the whole turn and the row says the figure is an upper bound. A turn of several requests that each stayed below the boundary is then priced above its bill. The boundary is read from the sheet, never from the code.
 
 What the runs showed:
