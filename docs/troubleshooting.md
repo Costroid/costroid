@@ -4,10 +4,13 @@ Every line Costroid prints starts with `costroid:`. This page lists each one wit
 
 ## Installing the binary
 
-The action's first step installs the binary. A line here other than the first ends the step with exit code 1.
+The action installs the binary in every stage. In stages `report` and `ingest` it fetches the rows first. A line here other than the first ends the step with exit code 1.
 
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
+| `costroid: stage is empty: set it to one of the stages below` | The step names no `stage`. The action has no default stage, because `all` gives the agent's job the report's permissions. Six lines follow, one per stage, each with what it does | Set `stage` as the recipes do: `run` or `read` in the agent's job, and `ingest` and `report` in jobs of their own |
+| `costroid: stage '<stage>' is not one of the stages below` | `stage` holds a value the action does not have. Stage names are lower case | The same |
+| `costroid: the costroid-rows artifact holds <count> entries besides the rows and the run object, so nothing was installed: <entries>` | In stage `report` or `ingest`, the artifact from the agent's job holds a file or a folder besides `costroid-rows.jsonl` and `costroid-rows.run.json`, or one of those two is not a plain file. The `run` and `read` stages keep those two files and nothing else, so a step in the agent's job added the rest. Nothing from the artifact is used, and the report does not post. The line names up to ten entries, with any character outside letters, digits, `.`, `_`, `/` and `-` shown as `?` | Find the step in the agent's job that wrote into the artifact, and keep that job at `contents: read` with no other upload named `costroid-rows` |
 | `costroid: installing <version>, the release at this action's commit, checked by its signature` | The action found the release its own commit belongs to, and cosign accepted the signature on its `SHA256SUMS` | None |
 | `costroid: the action's ref '<ref>' is not a commit SHA: pin Costroid/costroid/action to the full commit SHA of a release tag, as the recipes do, or set both version and sha256` | Neither the action's checkout path nor its ref holds a commit. The action reads its commit from the path the runner checked it out to, `_actions/Costroid/costroid/<commit>/action`, then from `github.action_ref`. A workflow that names the action by a branch, a tag or a local path gives neither. An action that calls this one from its own steps gets an empty ref, so the path has to name the commit | Pin the action to a release's commit, as [`docs/recipes.md`](recipes.md#pins) lists, or pass `version` and `sha256` |
 | `costroid: <commit> is not the commit of a release of Costroid/costroid: pin Costroid/costroid/action to the full commit SHA of a release tag, as the recipes do, or set both version and sha256` | No release tag points at the pinned commit, so no signed binary exists for it | The same |
@@ -41,11 +44,11 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
 | `costroid: agent must be claude or codex, got '<agent>'` | The `agent` input names another agent | Set `agent` to `claude` or `codex` |
-| `costroid: prompt is empty` | The `prompt` input is empty | Write the prompt into the recipe as a literal |
-| `costroid: budget-usd is empty` | No budget was given | Set `budget-usd` |
-| `costroid: api-key is empty` | The secret did not reach the step | Set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` on the repository. A fork's pull request receives no secrets |
-| `costroid: minimum-agent-version is empty` | No version floor was given | Set `minimum-agent-version` to the version the recipe installs |
-| `costroid: could not read the version of <agent>` | The agent is not installed, or `--version` printed no version | Keep the recipe's install step before this one |
+| `costroid: the run stage needs these inputs, which are empty: <inputs>` | Each input the line names is empty. One line names all of them | Set each. Write `prompt` into the recipe as a literal. An empty `api-key` means the secret did not reach the step: set `ANTHROPIC_API_KEY` or `CODEX_API_KEY` on the repository. A fork's pull request receives no secrets. Set `minimum-agent-version` to the version the recipe installs |
+| `costroid: agent-version must be a release number, got '<version>'` | `agent-version` is not a number such as `2.1.316` | Drop the leading `v`, or leave it empty for the version the recipes install |
+| `costroid: <agent> is not on this runner, so the action installs <package>` | No step before this one installed the agent, so the action runs `npm install --global` at `agent-version`, or at the version the recipes install when it is empty | None. Set `agent-version` to install another version |
+| `costroid: could not install <package>` | npm failed, or the runner has no npm. npm's own lines above it say why | Use a runner with Node.js, or install the agent in a step before this one, as the recipes do |
+| `costroid: could not read the version of <agent>` | `--version` printed no version | Check the agent's install step |
 | `costroid: <agent> <version> is older than the minimum <version>` | The installed agent is older than the floor | Raise the install step's version, or lower the floor to a version the recipe records |
 | `costroid: the agent's output is in <path> on this runner, not in this log. show-output: true prints it.` | The agent's own stream went to a file on the runner, so the log does not show its reasoning or replies | None. On a private repository, set `show-output: true` to see it |
 | `costroid: run needs --budget-usd, --out and an agent command after --` | `costroid run` was called without one of them | Pass all three |
@@ -101,6 +104,7 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: ingest-url is empty, so no rows were sent` | No ledger is named | Set `COSTROID_INGEST_URL`, or drop the job |
 | `costroid: the run left no rows` | The agent's job wrote no rows | Read the agent job's log |
 | `costroid: this job has no id-token permission` | The job cannot ask for an OIDC token | Give the `ingest` job `id-token: write`, and that job alone |
+| `costroid: this runner has no /usr/bin/curl or no /usr/bin/jq, so no rows were sent` | On a GitHub runner, the `ingest` stage calls the system's own `curl` and `jq` by those paths, so no program a step put on `PATH` handles the job's OIDC token | Use a runner image with both at those paths |
 | `costroid: GitHub issued no OIDC token` | GitHub refused the token request | Run the job again |
 | `costroid: the ledger refused the rows` | The ledger answered an error or could not be reached | Read the ledger's log. [`docs/serve.md`](serve.md) lists its refusals |
 

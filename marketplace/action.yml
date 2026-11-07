@@ -14,8 +14,9 @@ inputs:
       way. ingest sends those rows to a ledger. report posts the check and the comment. all does
       run and report in one job, which gives the agent's job the report's permissions, so the
       recipes never use it. install installs costroid and does nothing else, so a later step
-      can run it, as the fork follow-up recipe does.
-    default: all
+      can run it, as the fork follow-up recipe does. It has no default, and an empty stage
+      fails the step with the list of stages.
+    required: true
   version:
     description: >-
       The costroid release to install, without the leading v. Leave it and sha256 empty to
@@ -35,6 +36,12 @@ inputs:
     default: ""
   minimum-agent-version:
     description: The lowest agent version this run accepts.
+    default: ""
+  agent-version:
+    description: >-
+      For stage run, the agent version to install when the agent is not on the runner. Empty
+      installs the version this release's recipes install. An agent already on the runner is
+      used as it is, held to minimum-agent-version.
     default: ""
   budget-usd:
     description: The run's budget in USD.
@@ -125,6 +132,7 @@ runs:
         prompt: ${{ inputs.prompt }}
         agent-args: ${{ inputs.agent-args }}
         minimum-agent-version: ${{ inputs.minimum-agent-version }}
+        agent-version: ${{ inputs.agent-version }}
         budget-usd: ${{ inputs.budget-usd }}
         execution-file: ${{ inputs.execution-file }}
         show-output: ${{ inputs.show-output }}

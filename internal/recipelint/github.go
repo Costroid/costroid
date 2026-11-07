@@ -139,6 +139,7 @@ func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node,
 func (l *linter) step(step *yaml.Node) {
 	if uses := field(step, "uses"); uses != nil {
 		l.uses(step, uses)
+		l.downloadPath(step)
 	}
 	if run := field(step, "run"); run != nil && strings.Contains(run.Value, "${{") {
 		l.add(run, RuleExpressionInScript, "an expression in a script is a shell injection: pass it through env")
@@ -254,8 +255,6 @@ func stepAgent(step *yaml.Node) string {
 	return ""
 }
 
-// costroidStage reads the stage of a step that uses Costroid's action. The
-// action's default is all, so a step that states none runs the agent.
 // mintsKeys reports whether a step runs costroid gateway mint, which attests
 // the key it registers under the job's OIDC token. The token names the job's
 // environment, and only that name lets the ledger take the attestation.
@@ -263,6 +262,10 @@ func mintsKeys(step *yaml.Node) bool {
 	return strings.Contains(scalarField(step, "run"), "costroid gateway mint")
 }
 
+// costroidStage reads the stage of a step that uses Costroid's action. The
+// action has no default stage, so a step that states none fails at start. It
+// is read as all, the stage that runs the agent, so the agent's rules still
+// hold its job.
 func costroidStage(step *yaml.Node) string {
 	ref, _, _ := strings.Cut(scalarField(step, "uses"), "@")
 	if !strings.EqualFold(ref, costroidAction) {

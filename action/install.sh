@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Installs one released costroid binary and refuses it unless its SHA-256 matches.
+# It first refuses a stage the action does not have and, in stages report and
+# ingest, an artifact that holds anything but the rows and the run object.
 # Given no version and no sha256, it installs the release whose tag points at
 # this action's commit, and takes the SHA-256 from that release's SHA256SUMS
 # once cosign shows the release workflow signed it at that tag and commit.
@@ -16,6 +18,54 @@ fail() {
   echo "costroid: $1" >&2
   exit 1
 }
+
+# check_stage refuses an empty or unknown stage and lists every stage, one line
+# each, because the action has no default stage. The action always sets
+# COSTROID_STAGE, empty when the workflow gives none. Run by itself, with the
+# variable unset, the script installs, as stage install does.
+check_stage() {
+  case ${COSTROID_STAGE-install} in
+    run | read | ingest | report | install | all) return ;;
+    "") echo "costroid: stage is empty: set it to one of the stages below" >&2 ;;
+    *) echo "costroid: stage '$COSTROID_STAGE' is not one of the stages below" >&2 ;;
+  esac
+  cat >&2 <<'STAGES'
+  run      installs and runs the agent, then keeps its rows as an artifact
+  read     reads a claude-code-action run that already ended, then keeps its rows
+  ingest   sends the kept rows to a ledger
+  report   posts the check and the comment from the kept rows
+  install  installs costroid and does nothing else
+  all      runs the agent and the report in one job, so the agent holds the report's permissions
+STAGES
+  exit 1
+}
+
+# check_rows refuses the costroid-rows artifact unless each entry in it is one
+# of the two files the run stage keeps, as a plain file. The agent's job chose
+# the names, so the first ten are printed with anything outside A-Z, a-z, 0-9,
+# ., _, / and - as ?. No artifact at all leaves an empty directory, and the
+# report then says the run left no rows.
+check_rows() {
+  local LC_ALL=C dir=$RUNNER_TEMP/costroid-rows-in entry kind count=0 names=""
+  mkdir -p "$dir"
+  while IFS= read -r -d '' entry && IFS= read -r -d '' kind; do
+    if [[ $kind == f && ($entry == costroid-rows.jsonl || $entry == costroid-rows.run.json) ]]; then
+      continue
+    fi
+    count=$((count + 1))
+    if ((count <= 10)); then
+      names+="${names:+, }${entry//[^A-Za-z0-9._\/-]/?}"
+    fi
+  done < <(find "$dir" -mindepth 1 -printf '%P\0%y\0')
+  if ((count > 0)); then
+    fail "the costroid-rows artifact holds $count entries besides the rows and the run object, so nothing was installed: $names"
+  fi
+}
+
+check_stage
+case ${COSTROID_STAGE-install} in
+  report | ingest) check_rows ;;
+esac
 
 case $(uname -m) in
   x86_64) arch=amd64 ;;
