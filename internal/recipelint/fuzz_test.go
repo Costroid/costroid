@@ -32,17 +32,20 @@ func seedWorkflows(f *testing.F) {
 		f.Add(data)
 	}
 	for _, document := range []string{
-		"", "---\n", "--- \n...\n---\n", "a: &a [*a, *a]\nb: *a\n", "on: push\njobs: [\n", "jobs: {}\non: {}\n", "runs: ~\n", "- 1\n",
+		"", "---\n", "--- \n...\n---\n", "a: &a [*a, *a]\nb: *a\n", "on: push\njobs: [\n", "jobs: {}\non: {}\n", "runs: ~\n", "- 1\n", "on:\njobs:\r 0:",
 	} {
 		f.Add([]byte(document))
 	}
 }
 
+// yamlBreaks are the line breaks the YAML parser counts lines by.
+var yamlBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n")
+
 // assertFindings holds a report to what a reader of the lint's output needs:
 // every finding names the file, a line in it and a rule, on one line.
 func assertFindings(t *testing.T, path string, data []byte, report Report) {
 	t.Helper()
-	lines := strings.Count(string(data), "\n") + 1
+	lines := strings.Count(yamlBreaks.Replace(string(data)), "\n") + 1
 	for _, finding := range append(append([]Finding{}, report.Findings...), report.Notes...) {
 		if finding.Path != path || finding.Rule == "" || finding.Line < 1 || finding.Line > lines {
 			t.Fatalf("a finding at %s:%d of a file of %d lines, rule %q", finding.Path, finding.Line, lines, finding.Rule)
