@@ -114,6 +114,7 @@ func ingestRun(flags ingestRunFlags, stderr io.Writer) error {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)
 	}
 	record.reason = result.Reason
+	record.agentError, record.ciRun = result.AgentError, ciRunFromEnvironment(os.Getenv)
 	if err != nil {
 		recordRunResult(io.Discard, stderr, record.failed(err))
 		return err

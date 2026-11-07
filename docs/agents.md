@@ -108,7 +108,7 @@ Three fields say how the agent's job ended and which run wrote the object. Each 
 | `agent_skipped` | `true` when the CI system skipped the agent's job, with the reason `agent_skipped`; `false` when the job ran                                                                                 |
 | `ci_run`        | `{"id": ..., "attempt": ...}` from `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`, a claim the environment makes                                                                                    |
 
-An agent can fail after some requests, so `agent_error` can sit beside figures. With no rows it comes with the run reason `agent_error`. This release writes all three as null.
+An agent can fail after some requests, so `agent_error` can sit beside figures. With no rows it comes with the run reason `agent_error`. This release fills all three. `costroid ingest-run` fills `agent_error` and `ci_run` as `costroid run` does.
 
 ## In a workflow
 

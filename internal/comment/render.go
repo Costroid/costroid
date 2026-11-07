@@ -671,7 +671,7 @@ func (i Input) why() string {
 	case i.Reason == InvalidRow:
 		return "A line of the rows file is not a valid row, " + shows + " A partial total would read as a smaller cost."
 	case i.Reason == AgentSkipped:
-		return "The agent did not run on this pull request: its author needs the `costroid-agent` label."
+		return "The agent did not run on this pull request: the workflow skipped its job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request."
 	case i.readerLine() != "":
 		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. The reader's first error: `%s`.", i.RunReason, i.RunReason.Sentence(), i.readerLine())
 	case i.agentError() != "":
