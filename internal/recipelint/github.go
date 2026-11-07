@@ -191,10 +191,11 @@ func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node,
 		gateway = gateway || attestsKeys(step)
 	}
 	granted := grants(permissions)
+	l.platform(job, steps, granted)
 	if agent == "" {
 		attests := gateway && namesEnvironment(job.value)
-		if granted["id-token"] == "write" && !ingest && !attests {
-			l.add(job.key, RuleIDTokenScope, "id-token: write belongs on the ingest job, and on a job that mints or closes gateway keys in an environment")
+		if granted["id-token"] == "write" && !ingest && !attests && !slices.ContainsFunc(steps, connects) {
+			l.add(job.key, RuleIDTokenScope, "id-token: write belongs on the ingest job, the connect job, and a job that mints or closes gateway keys in an environment")
 		}
 		return
 	}
