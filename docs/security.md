@@ -18,3 +18,11 @@ Three of these rest on GitHub's behaviour and are unverified on a real fork's pu
 `costroid lint-recipes` refuses a `workflow_run` workflow that checks out code, names the pull request's head in a step, fetches code in a script, runs an agent, uses an action from disk, downloads an artifact without a directory of its own, or names that directory anywhere but `costroid follow-up --rows`. It also refuses a follow-up job that writes anything but checks, and one that runs `costroid follow-up` without `pull-requests: read`.
 
 A fork can still write any rows it likes into its own run. Those rows are unverified, and the check concludes `neutral` at most, so they never block a merge and never pass a budget rule. It can name its own workflow `costroid` to start the follow-up, which then posts the same kind of check on its own head commit. It can push a commit that heads a branch of your repository to a branch of its own, and the follow-up then posts nothing. It can push the head commit of another fork's pull request to a branch of its own, and the follow-up then posts a `neutral` check on that commit. It can upload a large artifact. The follow-up downloads it, refuses a rows file past 8 MiB, and stops at the job's 5-minute timeout.
+
+## A branch of your repository
+
+A pull request from a branch of your repository runs the agent's workflow as that branch holds it, with your repository's secrets and a token the workflow can give write access. Anyone who can push a branch can therefore change what the workflow does on their pull request: raise the action's `budget-usd`, drop a step, or post a check named `costroid` with any conclusion, `success` included. GitHub records that check as posted by the GitHub Actions app, as it records the report job's.
+
+The settings are out of that reach: the report reads `costroid.yml` on the base branch, never on the pull request's head. The check is not. A required `costroid` check is as strong as your trust in everyone who can push a branch, and [`docs/required-check.md`](required-check.md#what-a-required-check-holds-against) says what it does and does not block.
+
+A check that a branch cannot post has to come from a GitHub App other than GitHub Actions, named as the check's source in the ruleset. Costroid ships no such App.

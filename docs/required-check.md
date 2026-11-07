@@ -1,6 +1,6 @@
 # Require the check
 
-The report job posts one check run named `costroid` on the pull request's head commit. It concludes `success`, `neutral` or `failure` from the policy that `costroid.yml` sets on the base branch, read at its head when the report runs. [`docs/policy.md`](policy.md) says how each is reached. With no policy set, it concludes `neutral`.
+The report job posts one check run named `costroid` on the pull request's head commit. It concludes `success`, `neutral` or `failure` from the policy that `costroid.yml` sets on the base branch, read at its head when the report runs. [`docs/policy.md`](policy.md) says how each is reached. With no policy set, it concludes `neutral`. With the recipes it never concludes `success`, because the agent's own job wrote the rows, and a figure from them can show that a run went over its budget, never that it stayed under.
 
 GitHub counts `neutral` as passing. "Required status checks must have a `successful`, `skipped`, or `neutral` status" ([About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), read 2026-11-04). A required check blocks a merge only when it concludes `failure`: a run over its budget or threshold after the 7-day warn-only period. Until then, requiring it makes a merge wait until the report job has posted.
 
@@ -15,7 +15,7 @@ Costroid has not run on a fork's pull request yet. The first case is read from G
 
 ## A fork's pull request
 
-[`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml) posts the check for a fork's pull request. Copy it to `.github/workflows/costroid-follow-up.yml` on the default branch, beside the agent's recipe. It starts on `workflow_run` when the workflow named `costroid` completes, and its one job runs in your repository with your repository's token.
+[`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml) posts the check for a fork's pull request. Copy it to `.github/workflows/costroid-follow-up.yml` on the default branch, beside the agent's recipe. It starts on `workflow_run` when the workflow named `costroid` completes, and its one job runs in your repository with your repository's token. That job reads your open pull requests, with `pull-requests: read`, to find the fork's.
 
 The follow-up finds the fork's pull request by the branch the finished run names. It posts only when exactly one open pull request from that branch has the run's head commit as its head, and no branch of your repository has that commit as its head. Otherwise it posts nothing, and its log says why in a line that starts `costroid: not posted:`. A required `costroid` check then waits.
 
@@ -27,13 +27,13 @@ When it posts, a fork's pull request gets one `costroid` check on its head commi
 | Rows, because you let an agent run on forks | `neutral`, never `failure` or `success` | The fork's own run wrote the rows. A rule they fail warns, and the summary ends with the reason. An unverified row never satisfies a budget rule. [`docs/policy.md`](policy.md) has the table |
 | A rows file over 8 MiB | `neutral`, with the reason `rows_file_unread` | The follow-up does not read a file past its cap |
 
-A `neutral` check passes a required check, so a fork's pull request can merge. The check's machine block reads `no_rows_file` when no rows arrived, because the result object's list of reasons has no fork entry yet.
+A `neutral` check passes a required check, so a fork's pull request can merge. When no rows arrived, the check's machine block carries the same reason, `fork_no_rows`.
 
 The follow-up reads `costroid.yml` at your default branch's latest commit, the commit it runs from. The warn-only period counts from the commit that added the agent's workflow file to that branch. A branch of your own repository gets nothing from the follow-up, because the report job in the agent's workflow posts its check.
 
 The follow-up checks out no code and runs nothing the fork's run left behind. [`docs/security.md`](security.md#a-forks-pull-request) says how, and what a fork can still do.
 
-The recipe pins Costroid's action to the zero SHA, because no release holds `costroid follow-up` yet, so it fails at start until a release is pinned. It has run against a stub of GitHub's API, not on a real fork's pull request. Unverified: whether GitHub runs the follow-up while a first-time contributor's workflow waits for a maintainer's approval.
+The follow-up has run against a stub of GitHub's API, not on a real fork's pull request. Unverified: whether GitHub runs the follow-up while a first-time contributor's workflow waits for a maintainer's approval.
 
 ## Require it
 
@@ -47,6 +47,14 @@ The recipe pins Costroid's action to the zero SHA, because no release holds `cos
 The steps follow [Creating rulesets for a repository](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository), read 2026-11-04. A branch protection rule that requires `costroid` does the same.
 
 The check that a job's name creates, such as `report`, is a different check. Require `costroid`, the check the job posts.
+
+## What a required check holds against
+
+The report job posts the `costroid` check with the workflow's `GITHUB_TOKEN`, so GitHub records it as posted by the GitHub Actions app. On a pull request from a branch of your repository, GitHub runs the workflow file as that branch holds it. Anyone who can push a branch can edit the workflow there, ask for `checks: write` as the report job does, and post a check named `costroid` with any conclusion, `success` included. GitHub shows that check as it shows the report job's: the same name, from the same app.
+
+So with the recipes, a required `costroid` check blocks a pull request whose run went over its budget. It does not block someone who can push a branch and edits the workflow to post a check of their own. Since the recipes never conclude `success`, a `costroid` check that reads `success` was posted by something other than the report job. Read every change under `.github/workflows/` in a pull request before you merge it. A fork's pull request cannot post this way, because its token is read-only.
+
+A check that a branch cannot post has to come from a GitHub App other than GitHub Actions, one that the ruleset names as the check's source. Costroid ships no such App. Unverified: that a ruleset which names an App refuses a `costroid` check posted by GitHub Actions. No such ruleset has been tested.
 
 ## GitLab
 

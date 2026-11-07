@@ -2,7 +2,9 @@
 
 Costroid is the cost check for pull requests. It runs a coding agent under a budget, records what the run cost per token class as FOCUS rows, and posts the figure on the pull request.
 
-Bring your own key and your own agent. No account, and nothing leaves your CI: the key stays in your repository's secrets, the rows stay in the job, and the ledger, if you run one, is yours.
+Bring your own key and your own agent. There is no account, and Costroid runs no service that your data goes to: the key stays in your repository's secrets, the rows stay in the job, and the ledger, if you run one, is yours.
+
+Besides the agent's provider, the GitHub recipes that run an agent call one third-party service. They run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) on the agent's job, which records the job's outbound calls and sends telemetry to its vendor. [`docs/recipes.md`](docs/recipes.md#egress-in-the-agents-job) says what it costs and how to drop it.
 
 ## Why it exists
 
@@ -10,13 +12,18 @@ An agent's own cost field is an estimate, and a budget flag can be weaker than i
 
 ## Install
 
-`1.0.0-alpha.9` is the latest release, a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.9) and check it:
+The commands below install `1.0.0-alpha.9`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.9), check it, and put it on your `PATH`:
 
 ```sh
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.9/costroid-linux-amd64
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.9/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
+chmod +x costroid-linux-amd64
+sudo mv costroid-linux-amd64 /usr/local/bin/costroid
+costroid version
 ```
+
+The last line prints `costroid 1.0.0-alpha.9, catalog 0.1.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
 
 Each file is signed with cosign, keyless, by this repository's release workflow. To check a signature, with cosign 3 or later:
 
@@ -28,7 +35,7 @@ cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
 
 [`docs/verify.md`](docs/verify.md) checks the image as well.
 
-In GitHub Actions, the action installs the release its own commit belongs to and checks it by its signature, so a repository sets one secret, the provider key. The same action is listed on the [GitHub Marketplace](https://github.com/marketplace/actions/costroid-cost-check) as `Costroid/costroid-action`. To build from a checkout instead, with Go 1.27 or later:
+In GitHub Actions, the action installs the release its own commit belongs to and checks it by its signature. The Claude Code and Codex recipes then need one secret, the provider's API key. [`docs/bases.md`](docs/bases.md#which-key-each-recipe-takes) lists what each recipe takes, and what its figures read as a result. The same action is listed on the [GitHub Marketplace](https://github.com/marketplace/actions/costroid-cost-check) as `Costroid/costroid-action`. To build from a checkout instead, with Go 1.27 or later:
 
 ```sh
 make build
@@ -37,6 +44,8 @@ make build
 To keep rows in your own ledger, [`docs/install.md`](docs/install.md) has the container, Compose and Helm shapes.
 
 ## First command
+
+The first command runs Claude Code, so it needs Claude Code installed and signed in, with a Claude subscription or an `ANTHROPIC_API_KEY`.
 
 ```sh
 costroid run --budget-usd 5 --out rows.jsonl -- claude -p "Fix the failing test."
@@ -76,6 +85,8 @@ That row is shortened. A full row has every column of the [row contract](https:/
 | Take the rows to a warehouse              | [`docs/export.md`](docs/export.md)               |
 | Verify a release                          | [`docs/verify.md`](docs/verify.md)               |
 | See what a budget grade means             | [`docs/adapters.md`](docs/adapters.md)           |
+| See what a cost basis promises            | [`docs/bases.md`](docs/bases.md)                 |
+| See what changed in each release          | [`CHANGELOG.md`](CHANGELOG.md)                   |
 
 ## Licence
 

@@ -26,7 +26,7 @@ Who wrote the rows decides what a budget rule can conclude. A row whose run iden
 
 | Outcome of `attribution`                         | Rows the agent's job wrote | Rows a ledger checked |
 | ------------------------------------------------ | -------------------------- | --------------------- |
-| An `unattributed` row where `exact` was possible | Warns                      | Warns                 |
+| An `unattributed` row that names a credential, a pull request and a head commit | Warns | Warns |
 | Otherwise                                        | No result                  | No result             |
 
 On the Action path no rule can pass, so the check concludes `neutral` or `failure`, never `success`.
