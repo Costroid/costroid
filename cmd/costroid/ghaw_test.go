@@ -105,7 +105,10 @@ func TestGhAwStatedCreditsNeverAddToUSD(t *testing.T) {
 		if code != 0 || strings.Count(stdout, line) != 1 {
 			t.Fatalf("exit %d, no %q once in\n%s%s", code, line, stdout, previewErr)
 		}
-		comments[credits] = strings.Replace(strings.Replace(stdout, line, "", 1), `"quantity": "`+credits+`"`, "", 1)
+		// The two reports run a moment apart, and each states when it was
+		// evaluated, to the second.
+		comment := evaluatedAt.ReplaceAllString(stdout, `"evaluated_at": ""`)
+		comments[credits] = strings.Replace(strings.Replace(comment, line, "", 1), `"quantity": "`+credits+`"`, "", 1)
 	}
 	if comments["3"] != comments["3000001"] {
 		t.Errorf("the AI credits changed the comment beyond their line:\n%s\n%s", comments["3"], comments["3000001"])
@@ -304,3 +307,5 @@ func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 		}
 	}
 }
+
+var evaluatedAt = regexp.MustCompile(`"evaluated_at": "[^"]*"`)
