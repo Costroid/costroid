@@ -322,6 +322,7 @@ func ingestRun(flags ingestRunFlags, stderr io.Writer) error {
 	}
 	record.reason = result.Reason
 	record.agentError, record.ciRun = result.AgentError, ciRunFromEnvironment(os.Getenv)
+	record.agentStated = result.Report.AgentStated
 	if err != nil {
 		recordRunResult(io.Discard, stderr, record.failed(err))
 		return err

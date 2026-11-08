@@ -74,14 +74,40 @@ func ingestGhAw(t *testing.T, artifact string) (rows, object []byte, stderr stri
 
 // TestGhAwStatedCreditsNeverAddToUSD prices a gh-aw run from its tokens alone.
 // The same records with AI-credit figures a million times larger write the
-// same rows, the same object and the same USD line; only gh-aw's own line,
-// which names its unit, differs.
+// same rows, the same USD line, and the same object and comment but for
+// gh-aw's own figure, which names its unit.
 func TestGhAwStatedCreditsNeverAddToUSD(t *testing.T) {
 	clearCI(t)
 	rows, object, stderr := ingestGhAw(t, copyArtifact(t, "1.5"))
 	larger, largerObject, largerStderr := ingestGhAw(t, copyArtifact(t, "1500000.5"))
-	if !bytes.Equal(rows, larger) || !bytes.Equal(object, largerObject) {
-		t.Error("the AI credits changed the rows or the run's object")
+	if !bytes.Equal(rows, larger) {
+		t.Error("the AI credits changed the rows")
+	}
+	if want := strings.Replace(string(object), `"quantity": "3"`, `"quantity": "3000001"`, 1); want == string(object) || want != string(largerObject) {
+		t.Errorf("the AI credits changed the run's object beyond agent_stated:\n%s\n%s", object, largerObject)
+	}
+	comments := map[string]string{}
+	for credits, rowsFile := range map[string][]byte{"3": rows, "3000001": larger} {
+		path := filepath.Join(t.TempDir(), "rows.jsonl")
+		objectFile := object
+		if credits != "3" {
+			objectFile = largerObject
+		}
+		if err := os.WriteFile(path, rowsFile, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(runResultPath(path), objectFile, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, stdout, previewErr := execute(t, "report", "--preview", "--rows", path)
+		line := "gh-aw stated " + credits + " AI credits for this run. Costroid does not convert credits."
+		if code != 0 || strings.Count(stdout, line) != 1 {
+			t.Fatalf("exit %d, no %q once in\n%s%s", code, line, stdout, previewErr)
+		}
+		comments[credits] = strings.Replace(strings.Replace(stdout, line, "", 1), `"quantity": "`+credits+`"`, "", 1)
+	}
+	if comments["3"] != comments["3000001"] {
+		t.Errorf("the AI credits changed the comment beyond their line:\n%s\n%s", comments["3"], comments["3000001"])
 	}
 	var total decimal.Decimal
 	for _, line := range strings.Split(strings.TrimSpace(string(rows)), "\n") {
@@ -117,7 +143,7 @@ func TestIngestRunRefusesAGhAwArtifactWithAnExtraEntry(t *testing.T) {
 	}
 	out := filepath.Join(t.TempDir(), "rows.jsonl")
 	code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+artifact, "--out", out)
-	if code != exitFailure || !strings.Contains(stderr, "the usage artifact holds costroid, which gh-aw does not write there") {
+	if code != exitFailure || !strings.Contains(stderr, "the usage artifact holds costroid, which gh-aw v1.2.1 does not write there") {
 		t.Errorf("exit %d: %s", code, stderr)
 	}
 	if rows, err := os.ReadFile(out); err != nil || len(rows) != 0 {

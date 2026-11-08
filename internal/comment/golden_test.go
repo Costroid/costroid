@@ -125,6 +125,26 @@ func manyFigures(t *testing.T) Input {
 	return input
 }
 
+// ghAwInput is the rows ingest-run wrote for the gh-aw usage artifact in
+// internal/adapter/ghaw/testdata/not-recorded/claude, with the AI credits its
+// run object states. gh-aw's workflow sets no budget for the report.
+func ghAwInput(t *testing.T) Input {
+	t.Helper()
+	file, err := os.Open(filepath.Join("testdata", "gh-aw-rows.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	ledger, err := ReadRows(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := realInput(t)
+	input.Ledger, input.Budget = ledger, nil
+	input.AgentStated = &adapter.Stated{Unit: adapter.UnitAICredits, Quantity: "7.47", Source: "gh-aw"}
+	return input
+}
+
 // goldenStates names every state the goldens hold. A state's name is its
 // directory under testdata/golden.
 func goldenStates(t *testing.T) map[string]Input {
@@ -228,6 +248,10 @@ func goldenStates(t *testing.T) map[string]Input {
 	failed := neutral
 	failed.AgentError = adapter.AgentErrorRateLimit
 	states["agent-error-beside-figures"] = failed
+
+	credits := ghAwInput(t)
+	states["gh-aw-stated-credits"] = credits
+	states["gh-aw-stated-credits-withheld"] = withheld(credits)
 
 	states[policyBudgetNoCap] = policyBudgetWithoutCap(t)
 	return states

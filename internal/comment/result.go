@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/run"
 )
@@ -47,6 +49,9 @@ type Block struct {
 	// Lifetime is the pull request's total as the comment states it, null
 	// off a pull request and when amounts are withheld.
 	Lifetime *BlockLifetime `json:"lifetime"`
+	// AgentStated is the agent's own figure for the run, in its own unit,
+	// null when it states none and when amounts are withheld.
+	AgentStated *BlockAgentStated `json:"agent_stated"`
 	// Policy is the verdict, without its amounts when amounts are withheld.
 	Policy *policy.Verdict `json:"policy,omitempty"`
 }
@@ -68,6 +73,14 @@ type BlockLifetimeFigure struct {
 	ListCost  string `json:"list_cost"`
 	Reports   int    `json:"reports"`
 	MayRepeat bool   `json:"may_repeat"`
+}
+
+// BlockAgentStated is a figure the agent stated about its own run, in its own
+// unit. Costroid never converts it and never adds it to an amount.
+type BlockAgentStated struct {
+	Unit     string `json:"unit"`
+	Quantity string `json:"quantity"`
+	Source   string `json:"source"`
 }
 
 // BlockAgentError names an agent's error by its class from a closed list,
@@ -208,6 +221,9 @@ func (i Input) block() (string, error) {
 		block.Amounts = "shown"
 		block.Cap = i.capCheck().block()
 		block.Lifetime = i.Lifetime.block()
+		if stated := i.agentStated(); stated != nil {
+			block.AgentStated = &BlockAgentStated{Unit: stated.Unit, Quantity: stated.Quantity, Source: stated.Source}
+		}
 	}
 	block.Policy = blockVerdict(i.Verdict, shown)
 	encoded, err := json.MarshalIndent(block, "", "  ")
@@ -231,36 +247,85 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 	return ApprovedConclusion(b.verdict(), approval, b.HeadSHA)
 }
 
-// schemaV05 is the version before the one this release writes. A pull
-// request whose newest check a release that wrote it posted can still be
-// approved, so ParseResult reads it. It holds every field of the current
-// version but rows_sha256, rows_file_sha256 and lifetime.
-const schemaV05 = "costroid.result/0.5"
+// The versions before the one this release writes. A pull request whose
+// newest check a release that wrote one of them posted can still be approved,
+// so ParseResult reads them. 0.6 holds every field of the current version but
+// agent_stated, and 0.5 holds none of rows_sha256, rows_file_sha256 and
+// lifetime either.
+const (
+	schemaV05 = "costroid.result/0.5"
+	schemaV06 = "costroid.result/0.6"
+)
 
 // readSchemas are the versions ParseResult reads.
-var readSchemas = []string{schemaV05, schema}
+var readSchemas = []string{schemaV05, schemaV06, schema}
 
-// blockV05 is a Block as costroid.result/0.5 holds it. Its fields hide the
-// Block's fields of the same names, which 0.5 does not hold, and stay nil, so
-// the object leaves them out.
+// blockV06 is a Block as costroid.result/0.6 holds it. Its field hides the
+// Block's field of the same name, which 0.6 does not hold, and stays nil, so
+// the object leaves it out.
+type blockV06 struct {
+	Block
+	AgentStated *struct{} `json:"agent_stated,omitempty"`
+}
+
+// blockV05 is a Block as costroid.result/0.5 holds it, as blockV06 is.
 type blockV05 struct {
 	Block
 	RowsSHA256     *struct{} `json:"rows_sha256,omitempty"`
 	RowsFileSHA256 *struct{} `json:"rows_file_sha256,omitempty"`
 	Lifetime       *struct{} `json:"lifetime,omitempty"`
+	AgentStated    *struct{} `json:"agent_stated,omitempty"`
 }
 
 // encode writes the object as its own version lays it out.
 func (b Block) encode() (string, error) {
 	var object any = b
-	if b.Schema == schemaV05 {
+	switch b.Schema {
+	case schemaV05:
 		object = blockV05{Block: b}
+	case schemaV06:
+		object = blockV06{Block: b}
 	}
 	encoded, err := json.MarshalIndent(object, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("comment: encode block: %w", err)
 	}
 	return string(encoded), nil
+}
+
+// statedUnits and statedSources are the closed lists of result/v0.7: the
+// units an agent's own figure is stated in and the agents that state one.
+var (
+	statedUnits   = []string{adapter.UnitAICredits}
+	statedSources = []string{"gh-aw"}
+	// statedQuantity is result/v0.7's statedQuantity: every digit the agent
+	// wrote, as a decimal string.
+	statedQuantity = regexp.MustCompile(`^[0-9]{1,26}(\.[0-9]{1,32})?$`)
+)
+
+// KnownStated reports a figure whose unit, source and quantity result/v0.7
+// holds. Any other is dropped, so the object never states it.
+func KnownStated(stated adapter.Stated) bool {
+	return slices.Contains(statedUnits, stated.Unit) && slices.Contains(statedSources, stated.Source) && statedQuantity.MatchString(stated.Quantity)
+}
+
+// agentStated is the agent's own figure when result/v0.7 holds it, nil
+// otherwise.
+func (i Input) agentStated() *adapter.Stated {
+	if i.AgentStated == nil || !KnownStated(*i.AgentStated) {
+		return nil
+	}
+	return i.AgentStated
+}
+
+// agentStatedLine states the agent's own figure on a line of its own, apart
+// from every amount, and nothing when amounts are withheld.
+func (i Input) agentStatedLine(shown bool) string {
+	stated := i.agentStated()
+	if stated == nil || !shown {
+		return ""
+	}
+	return fmt.Sprintf("%s stated %s AI credits for this run. Costroid does not convert credits.", stated.Source, stated.Quantity)
 }
 
 // ParseResult reads the fenced result object a check run's text carries. It
@@ -283,7 +348,7 @@ func ParseResult(text string) (Block, error) {
 		return Block{}, fmt.Errorf("comment: read the result object: %w", err)
 	}
 	if !slices.Contains(readSchemas, block.Schema) {
-		return Block{}, fmt.Errorf("comment: the result object's schema is %q, and this release reads %s", string(Clean(block.Schema)), strings.Join(readSchemas, " and "))
+		return Block{}, fmt.Errorf("comment: the result object's schema is %q, and this release reads %s", string(Clean(block.Schema)), strings.Join(readSchemas[:len(readSchemas)-1], ", ")+" and "+readSchemas[len(readSchemas)-1])
 	}
 	if again, err := block.encode(); err == nil && again == object {
 		return block, nil

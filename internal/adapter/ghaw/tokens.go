@@ -18,7 +18,7 @@ const (
 )
 
 // copilotNote says how a Copilot request's rows were priced.
-const copilotNote = "Copilot served this request; priced at the list rate of the model's own provider"
+const copilotNote = "Copilot served this request; priced at the list rate of the model's own provider; how its input counts cached tokens is unverified"
 
 // request maps one record. priced is false when the catalog holds no sheet
 // for the record's provider, so no row can state a price for it.

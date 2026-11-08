@@ -31,6 +31,10 @@
 {{.AgentError}}
 
 {{end -}}
+{{if .AgentStated -}}
+{{.AgentStated}}
+
+{{end -}}
 Unverified: the agent's job wrote these figures.
 
 {{if .FiguresOmitted -}}

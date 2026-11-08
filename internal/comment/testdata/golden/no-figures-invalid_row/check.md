@@ -14,7 +14,7 @@ Line 3 of the rows file is not a valid row, so this report shows no figures. A p
 
 ```json
 {
-  "schema": "costroid.result/0.6",
+  "schema": "costroid.result/0.7",
   "conclusion": "neutral",
   "state": "rows_unreadable",
   "reason": "invalid_row",
@@ -41,6 +41,7 @@ Line 3 of the rows file is not a valid row, so this report shows no figures. A p
     "fallback_price_ids": [],
     "fallback_price_ids_omitted": 0
   },
-  "lifetime": null
+  "lifetime": null,
+  "agent_stated": null
 }
 ```

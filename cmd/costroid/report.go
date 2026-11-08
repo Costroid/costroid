@@ -338,6 +338,7 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 		RunReason:      runReasonFor(rows.state, stated.RunReason, stderr),
 		ReaderLine:     stated.ReaderError,
 		AgentError:     agentErrorFor(stated.AgentError, stderr),
+		AgentStated:    agentStatedFor(stated.AgentStated, stderr),
 		Budget:         flags.budget,
 		RowsSHA256:     rows.rowsSHA256,
 		RowsFileSHA256: rows.fileSHA256,
@@ -422,6 +423,15 @@ type statedReason struct {
 	RunReason   run.Reason        `json:"run_reason"`
 	ReaderError string            `json:"reader_error"`
 	AgentError  *statedAgentError `json:"agent_error"`
+	AgentStated *statedFigure     `json:"agent_stated"`
+}
+
+// statedFigure is the agent's own figure for the run, in its own unit, as the
+// run's object states it.
+type statedFigure struct {
+	Unit     string `json:"unit"`
+	Quantity string `json:"quantity"`
+	Source   string `json:"source"`
 }
 
 // statedAgentError is the class of error the run says its agent ended in.
@@ -431,9 +441,9 @@ type statedAgentError struct {
 
 // readRunReason reads the reason from the result object costroid run or
 // ingest-run wrote beside the rows. The agent's job wrote that file, as it
-// wrote the rows, so only the reason, the reader's error line and the agent's
-// error class are read, and only a reason or a class from its closed list is
-// used. A run that wrote no object, as an older release does, gives no
+// wrote the rows, so only the reason, the reader's error line, the agent's
+// error class and the agent's own figure are read, and only a reason, a class
+// or a figure from its closed list is used. A run that wrote no object, as an older release does, gives no
 // reason.
 func readRunReason(rows string, stderr io.Writer) statedReason {
 	path := runResultPath(rows)
@@ -477,6 +487,21 @@ func agentErrorFor(stated *statedAgentError, stderr io.Writer) adapter.AgentErro
 		return ""
 	}
 	return class
+}
+
+// agentStatedFor keeps the agent's own figure when its unit, source and
+// quantity are ones this release states. It is copied as the run stated it,
+// and never converted.
+func agentStatedFor(stated *statedFigure, stderr io.Writer) *adapter.Stated {
+	if stated == nil {
+		return nil
+	}
+	figure := adapter.Stated{Unit: stated.Unit, Quantity: stated.Quantity, Source: stated.Source}
+	if !comment.KnownStated(figure) {
+		fmt.Fprintln(stderr, "costroid: warning: the run's object states a figure of the agent's own in a unit or from a source this release does not know, so it is ignored")
+		return nil
+	}
+	return &figure
 }
 
 // The results GitHub Actions states for a job a report needs.

@@ -35,7 +35,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
 
 ```json
 {
-  "schema": "costroid.result/0.6",
+  "schema": "costroid.result/0.7",
   "check_run_id": 16873409921,
   "conclusion": "success",
   "state": "reported",
@@ -77,6 +77,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
+  "agent_stated": null,
   "policy": {
     "conclusion": "success",
     "trust": "token_verified",

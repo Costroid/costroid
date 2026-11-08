@@ -67,6 +67,9 @@ var creditsPattern = regexp.MustCompile(`^[0-9]{1,26}(\.[0-9]{1,32})?$`)
 // noneNote is the grade's note when the artifact does not state the cap.
 const noneNote = "none: Costroid did not start this run, so no budget held it"
 
+// knownVersion is the gh-aw release knownFiles was read from.
+const knownVersion = "v1.2.1"
+
 // knownFiles is every file gh-aw v1.2.1's conclusion job puts in the usage
 // artifact, by its path inside the artifact. A downloaded artifact that holds
 // any other entry is refused, so a follow-up job reads exactly what gh-aw
@@ -202,13 +205,13 @@ func checkEntries(dir fs.FS) error {
 			return fmt.Errorf("gh-aw: read the usage artifact: %w", err)
 		case entry.IsDir():
 			if name != "." && !slices.ContainsFunc(knownFiles, func(known string) bool { return strings.HasPrefix(known, name+"/") }) {
-				return fmt.Errorf("gh-aw: the usage artifact holds the directory %s, which gh-aw does not write there", name)
+				return fmt.Errorf("gh-aw: the usage artifact holds the directory %s, which gh-aw %s does not write there", name, knownVersion)
 			}
 			return nil
 		case !entry.Type().IsRegular():
 			return fmt.Errorf("gh-aw: the usage artifact's %s is not a plain file", name)
 		case !slices.Contains(knownFiles, name):
-			return fmt.Errorf("gh-aw: the usage artifact holds %s, which gh-aw does not write there", name)
+			return fmt.Errorf("gh-aw: the usage artifact holds %s, which gh-aw %s does not write there", name, knownVersion)
 		}
 		return nil
 	})

@@ -41,7 +41,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
 
 ```json
 {
-  "schema": "costroid.result/0.6",
+  "schema": "costroid.result/0.7",
   "conclusion": "neutral",
   "state": "reported",
   "agent_error": null,
@@ -121,6 +121,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
     "capped": true,
     "unread": 1
   },
+  "agent_stated": null,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",
