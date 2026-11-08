@@ -48,6 +48,8 @@ var allowed = set(
 	"cache_creation_5m_tokens", "cache_creation_1h_tokens",
 	keyCodexReasoning,
 	keyCursorInput, keyCursorOutput, keyCursorCacheRead, keyCursorCacheCreation, "cursor.conversation.id",
+	keyGeminiInput, keyGeminiOutput, keyGeminiCached, keyGeminiThoughts,
+	keyGeminiTool, keyGeminiTotal,
 )
 
 // namedContent lists the content fields the specification and the agents name.

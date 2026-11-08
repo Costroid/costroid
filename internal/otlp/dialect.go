@@ -23,6 +23,7 @@ const (
 	Copilot    Dialect = "copilot"
 	Cursor     Dialect = "cursor"
 	OpenCode   Dialect = "opencode"
+	Gemini     Dialect = "gemini"
 )
 
 // Attribute keys the dialects read.
@@ -44,17 +45,32 @@ const (
 	keyCursorOutput        = "cursor.api.request.output_tokens"
 	keyCursorCacheRead     = "cursor.api.request.cache_read_tokens"
 	keyCursorCacheCreation = "cursor.api.request.cache_creation_tokens"
+
+	keyGeminiInput    = "input_token_count"
+	keyGeminiOutput   = "output_token_count"
+	keyGeminiCached   = "cached_content_token_count"
+	keyGeminiThoughts = "thoughts_token_count"
+	keyGeminiTool     = "tool_token_count"
+	keyGeminiTotal    = "total_token_count"
 )
 
 // The log events that carry a request's usage.
 const (
-	eventClaudeRequest = "claude_code.api_request"
-	eventClaudeShort   = "api_request"
-	eventCursorRequest = "cursor.api.request"
+	eventClaudeRequest  = "claude_code.api_request"
+	eventClaudeShort    = "api_request"
+	eventCursorRequest  = "cursor.api.request"
+	eventGeminiResponse = "gemini_cli.api_response"
 )
+
+// serviceGemini is Gemini CLI's service.name and gen_ai.agent.name.
+const serviceGemini = "gemini-cli"
 
 // eventNames are the log bodies that are an event's name, not free text.
 var eventNames = set(eventClaudeRequest, eventClaudeShort, eventCursorRequest)
+
+// NoteTotalDisagrees marks a request whose stated total is not the sum of its
+// counts. The server logs a warning for each such request.
+const NoteTotalDisagrees = "the agent's total token count is not the sum of its counts, so this figure may read low or high"
 
 // MaxTokens bounds one class of one request, far above any model's context,
 // so a sum of counts cannot overflow.
@@ -63,6 +79,7 @@ const MaxTokens = 1_000_000_000_000
 const (
 	providerAnthropic = "anthropic"
 	providerOpenAI    = "openai"
+	providerGoogle    = "google"
 	tierFast          = "fast"
 	tierStandard      = "standard"
 )
@@ -84,6 +101,7 @@ type counts struct {
 	inclusive bool
 	// subscriptionTTL means an unsplit write on a subscription lasts an hour.
 	subscriptionTTL bool
+	notes           []string
 }
 
 // interpret maps one record to usage, or reports it carries none.
@@ -119,6 +137,8 @@ func dialectOf(r *record) Dialect {
 		return Copilot
 	case strings.HasPrefix(service, "opencode"):
 		return OpenCode
+	case r.attrs.text("event.name") == eventGeminiResponse, service == serviceGemini, r.attrs.text("gen_ai.agent.name") == serviceGemini:
+		return Gemini
 	}
 	return Standard
 }
@@ -149,6 +169,8 @@ func readCounts(dialect Dialect, r *record) (counts, bool, bool) {
 			// matrix names the span, so the log is left out to count once.
 			return counts{}, false, true
 		}
+	case Gemini:
+		return readGemini(r)
 	}
 	return readStandard(r)
 }
@@ -222,6 +244,33 @@ func readCursor(r *record) (counts, bool, bool) {
 	}, true, d.ok
 }
 
+// readGemini reads Gemini CLI's api_response event. Its prompt count holds the
+// cached tokens and leaves out the tool results the model reads, and its
+// output leaves out the thoughts, which Google bills as output. The total is
+// the sum of prompt, output, tool results and thoughts.
+func readGemini(r *record) (counts, bool, bool) {
+	if !hasKey(r, keyGeminiInput) && !hasKey(r, keyGeminiOutput) {
+		// A response is also a gen_ai.client.inference.operation.details log
+		// and an llm_call span, which state gen_ai.usage.* without cached
+		// tokens or thoughts. The api_response event alone counts.
+		return counts{}, false, true
+	}
+	d := reader{r: r, ok: true}
+	prompt, candidates := d.int(keyGeminiInput), d.int(keyGeminiOutput)
+	thoughts, tool := d.int(keyGeminiThoughts), d.int(keyGeminiTool)
+	c := counts{
+		input:     prompt + tool,
+		output:    candidates + thoughts,
+		cacheRead: d.int(keyGeminiCached),
+		reasoning: thoughts,
+		inclusive: true,
+	}
+	if hasKey(r, keyGeminiTotal) && d.int(keyGeminiTotal) != prompt+candidates+thoughts+tool {
+		c.notes = append(c.notes, NoteTotalDisagrees)
+	}
+	return c, true, d.ok
+}
+
 func readStandard(r *record) (counts, bool, bool) {
 	present := false
 	for _, key := range tokenKeys {
@@ -253,7 +302,7 @@ func usageShell(dialect Dialect, r *record) Usage {
 		ServiceTier:      tierStandard,
 		Session:          r.attrs.text("gen_ai.conversation.id", "session.id", "cursor.conversation.id"),
 		Agent:            agentOf(dialect, r),
-		AgentVersion:     r.attrs.text("gen_ai.agent.version", "service.version", "app.version"),
+		AgentVersion:     agentVersion(dialect, r),
 		CostBasis:        costBasis(r),
 		EnforcementGrade: r.attrs.text("costroid.enforcement_grade"),
 		Repo:             r.attrs.text("vcs.repository.url.full"),
@@ -296,6 +345,15 @@ func costBasis(r *record) focus.CostBasis {
 	return focus.ListEquivalent
 }
 
+// agentVersion leaves Gemini CLI's service.version out, because it holds the
+// version of Node.js that runs the agent.
+func agentVersion(dialect Dialect, r *record) string {
+	if dialect == Gemini {
+		return r.attrs.text("gen_ai.agent.version")
+	}
+	return r.attrs.text("gen_ai.agent.version", "service.version", "app.version")
+}
+
 var nameRepair = regexp.MustCompile(`[^a-z0-9]+`)
 
 func agentOf(dialect Dialect, r *record) string {
@@ -316,6 +374,8 @@ func providerOf(dialect Dialect, r *record, model string) string {
 		return providerAnthropic
 	case Codex:
 		return providerOpenAI
+	case Gemini:
+		return providerGoogle
 	}
 	switch strings.ToLower(r.attrs.text("gen_ai.provider.name", "gen_ai.system")) {
 	case providerAnthropic:
@@ -344,8 +404,8 @@ func standInID(r *record) string {
 		strconv.FormatUint(r.start, 10), r.name,
 		r.attrs.text("gen_ai.conversation.id", "session.id", "cursor.conversation.id"),
 		r.attrs.text("model", "gen_ai.response.model", "gen_ai.request.model"),
-		r.attrs.text("input_tokens", keyCursorInput, keyInput),
-		r.attrs.text("output_tokens", keyCursorOutput, keyOutput),
+		r.attrs.text("input_tokens", keyCursorInput, keyInput, keyGeminiInput),
+		r.attrs.text("output_tokens", keyCursorOutput, keyOutput, keyGeminiOutput),
 	} {
 		sum.Write([]byte(part))
 		sum.Write([]byte{0})
@@ -378,6 +438,7 @@ func (u *Usage) applyCounts(c counts) bool {
 	u.add(focus.Output, c.output)
 	u.add(focus.ReasoningOutput, c.reasoning)
 	u.add(focus.CachedInputReported, c.cacheRead)
+	u.Notes = append(u.Notes, c.notes...)
 	if u.Dialect == OpenCode {
 		u.Notes = append(u.Notes, "OpenCode telemetry reports no cache writes, so any are counted as uncached input")
 	}
