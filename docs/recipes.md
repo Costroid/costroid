@@ -151,7 +151,7 @@ Each list names what its own job's steps call. They were read on 2026-11-08 from
 | `github.com` | `actions/checkout`. The install step lists Costroid's tags and downloads its release, and `sigstore/cosign-installer` and `oven-sh/setup-bun` download theirs | All five |
 | `api.github.com` | `claude-code-action` reads the pull request, and `codex-action` checks the actor's access | `github-claude-code-action`, `github-codex-action` |
 | `results-receiver.actions.githubusercontent.com`, `productionresultssa*.blob.core.windows.net` | `actions/upload-artifact`, which keeps the rows | All five |
-| `release-assets.githubusercontent.com` | github.com answers a release download with a redirect to this host. `curl -I` on `v1.0.0-alpha.11`'s `SHA256SUMS` showed it on 2026-11-08 | All five |
+| `release-assets.githubusercontent.com` | github.com answers a release download with a redirect to this host. `curl -I` on a release's `SHA256SUMS` showed it on 2026-11-08 | All five |
 | `tuf-repo-cdn.sigstore.dev` | cosign reads Sigstore's trusted root here before it checks the release's signature (`tuf.DefaultMirror` in [`sigstore-go`](https://github.com/sigstore/sigstore-go/blob/main/pkg/tuf/options.go)) | All five |
 | `registry.npmjs.org` | npm installs the agent at its pinned version, and Bun installs `claude-code-action`'s packages | All five |
 
