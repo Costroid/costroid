@@ -20,6 +20,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 // sheetPrice asks the pinned sheet for one gpt-5.6-sol class at a context size.
@@ -402,7 +403,7 @@ func TestEmptyRunReasonCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, result := range map[string]Result{"a run": silent.result, "a recorded run": empty} {
-		if result.Rows != 0 || result.Reason != ReasonNoUsage {
+		if result.Rows != 0 || result.Reason != reason.NoUsage {
 			t.Errorf("%s: %d rows, reason %q", name, result.Rows, result.Reason)
 		}
 		said := false
@@ -416,7 +417,7 @@ func TestEmptyRunReasonCode(t *testing.T) {
 	if len(silent.rows) != 0 || recorded.Len() != 0 {
 		t.Errorf("%d rows, %d bytes", len(silent.rows), recorded.Len())
 	}
-	if ReasonNoUsage.Sentence() == "" || ReasonConcurrentRun.Sentence() == "" {
+	if reason.NoUsage.Sentence() == "" || reason.ConcurrentRun.Sentence() == "" {
 		t.Error("a reason has no sentence")
 	}
 	spent, _ := codexRun(t, "replay", "5")
@@ -454,10 +455,10 @@ func TestConcurrentAgentsRefused(t *testing.T) {
 
 	inner := runAgent(t, argv, "5", pinned(t))
 	var refused *RefusedError
-	if !errors.As(inner.err, &refused) || refused.Reason != ReasonConcurrentRun || !errors.Is(inner.err, adapter.ErrClaimed) {
+	if !errors.As(inner.err, &refused) || refused.Reason != reason.ConcurrentRun || !errors.Is(inner.err, adapter.ErrClaimed) {
 		t.Errorf("the second run: %v", inner.err)
 	}
-	if inner.result.Reason != ReasonConcurrentRun || len(inner.rows) != 0 {
+	if inner.result.Reason != reason.ConcurrentRun || len(inner.rows) != 0 {
 		t.Errorf("the second run: reason %q, %d rows", inner.result.Reason, len(inner.rows))
 	}
 	if err := os.Remove(hold); err != nil {

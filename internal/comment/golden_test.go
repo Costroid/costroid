@@ -14,8 +14,8 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/reconcile"
-	"github.com/Costroid/costroid/internal/run"
 )
 
 // goldenDir holds one directory per comment state, each with the four things
@@ -98,13 +98,13 @@ func noFigures(state State, reason Reason) Input {
 }
 
 // emptyRun is a run that wrote an empty rows file and stated why.
-func emptyRun(reason run.Reason) Input {
+func emptyRun(why reason.Reason) Input {
 	input := noFigures(NoRows, EmptyRowsFile)
-	input.RunReason = reason
-	switch reason {
-	case run.ReasonAgentError:
+	input.RunReason = why
+	switch why {
+	case reason.AgentError:
 		input.AgentError = adapter.AgentErrorAuthentication
-	case run.ReasonReaderRefused:
+	case reason.ReaderRefused:
 		input.ReaderLine = "claude-code: the execution file ends inside its array"
 	}
 	return input
@@ -218,8 +218,8 @@ func goldenStates(t *testing.T) map[string]Input {
 	yes := true
 	skipped.AgentSkipped = &yes
 	states["no-figures-"+string(AgentSkipped)] = skipped
-	for _, reason := range []run.Reason{run.ReasonNoUsage, run.ReasonConcurrentRun, run.ReasonReaderRefused, run.ReasonAgentError} {
-		states["empty-run-"+string(reason)] = emptyRun(reason)
+	for _, why := range []reason.Reason{reason.NoUsage, reason.ConcurrentRun, reason.ReaderRefused, reason.AgentError} {
+		states["empty-run-"+string(why)] = emptyRun(why)
 	}
 
 	stopped := capInput(codexStoppedLedger(t), "0.001")

@@ -14,6 +14,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 // feedLog is a session that keeps every line it is fed and refuses each one
@@ -123,7 +124,7 @@ func TestAgentErrorReasonAndItsLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "reason agent_error: the agent ended with authentication_failed: check the API key the agent runs with, the api-key input in the action"
-	if result.Reason != ReasonAgentError || result.AgentError != adapter.AgentErrorAuthentication || !slices.Contains(result.Report.Warnings, want) {
+	if result.Reason != reason.AgentError || result.AgentError != adapter.AgentErrorAuthentication || !slices.Contains(result.Report.Warnings, want) {
 		t.Errorf("reason %q, class %q, warnings %q", result.Reason, result.AgentError, result.Report.Warnings)
 	}
 	spent := recordedReport()
@@ -141,11 +142,11 @@ func TestAgentErrorReasonAndItsLine(t *testing.T) {
 		adapter.AgentErrorAuthentication, adapter.AgentErrorBilling, adapter.AgentErrorRateLimit,
 		adapter.AgentErrorInvalidRequest, adapter.AgentErrorServer, adapter.AgentErrorUnknown,
 	} {
-		if AgentErrorFix(class) == "" {
+		if reason.AgentErrorFix(class) == "" {
 			t.Errorf("%s has no fix", class)
 		}
 	}
-	if AgentErrorFix("agent_crashed") != "" {
+	if reason.AgentErrorFix("agent_crashed") != "" {
 		t.Error("a class outside the list has a fix")
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/Costroid/costroid/internal/comment"
-	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/vcs"
 )
 
@@ -59,7 +59,7 @@ func FuzzReportInput(f *testing.F) {
 		if input.RunReason != "" && (input.RunReason.Sentence() == "" || input.State != comment.NoRows) {
 			t.Fatalf("the run reason %q came through beside state %v", input.RunReason, input.State)
 		}
-		if input.AgentError != "" && run.AgentErrorFix(input.AgentError) == "" {
+		if input.AgentError != "" && reason.AgentErrorFix(input.AgentError) == "" {
 			t.Fatalf("the agent error %q is not on the list", input.AgentError)
 		}
 		for _, amounts := range []comment.Amounts{comment.AmountsShown, comment.AmountsOff} {

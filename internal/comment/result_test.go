@@ -142,7 +142,7 @@ func TestEveryRunReasonIsInTheSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	comment := sourceConstants(t, ".")
-	run := sourceConstants(t, filepath.Join("..", "run"))
+	reasons := sourceConstants(t, filepath.Join("..", "reason"))
 	rules := sourceConstants(t, filepath.Join("..", "policy"))
 	for _, list := range []struct {
 		name    string
@@ -150,7 +150,7 @@ func TestEveryRunReasonIsInTheSchema(t *testing.T) {
 		enum    []string
 	}{
 		{"reason", comment.typed["Reason"], schema.Defs.Reason.Enum},
-		{"run_reason", append(run.typed["Reason"], comment.typed["run.Reason"]...), schema.Defs.RunReason.Enum},
+		{"run_reason", append(reasons.typed["Reason"], comment.typed["reason.Reason"]...), schema.Defs.RunReason.Enum},
 		{"policy.results[].reason", rules.prefixed("Reason"), schema.Defs.Policy.Properties.Results.Items.Properties.Reason.Enum},
 		{"policy.warn_only.reason", rules.prefixed("Period"), schema.Defs.Policy.Properties.WarnOnly.Properties.Reason.Enum},
 	} {

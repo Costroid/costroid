@@ -27,6 +27,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 const defaultGrace = 5 * time.Second
@@ -58,53 +59,6 @@ type Options struct {
 	Gateway *gateway.Session
 }
 
-// Reason says why a run wrote no rows. Its values are a closed list, each
-// with one sentence, so a reader of an empty rows file can name the cause.
-type Reason string
-
-// The reasons a run writes no rows.
-const (
-	// ReasonNoUsage is a run whose agent ended and reported no usage.
-	ReasonNoUsage Reason = "no_usage"
-	// ReasonConcurrentRun is a run refused before its agent started, because
-	// another run held the agent's state directory.
-	ReasonConcurrentRun Reason = "concurrent_run"
-	// ReasonReaderRefused is a run whose reader refused the agent's stream or
-	// its execution file, so no usage was read.
-	ReasonReaderRefused Reason = "reader_refused"
-	// ReasonAgentError is a run whose agent ended in an error before it
-	// reported any usage. The run's result names the error's class.
-	ReasonAgentError Reason = "agent_error"
-)
-
-var reasonSentences = map[Reason]string{
-	ReasonNoUsage:       "the agent reported no usage, so the run wrote no rows",
-	ReasonConcurrentRun: "another costroid run holds the agent's state directory, so this run did not start and wrote no rows",
-	ReasonReaderRefused: "the reader refused the agent's stream, so the run wrote no rows",
-	ReasonAgentError:    "the agent ended in an error before it reported usage, so the run wrote no rows",
-}
-
-// agentErrorFixes says what to do about each class of agent error.
-var agentErrorFixes = map[adapter.AgentError]string{
-	adapter.AgentErrorAuthentication: "check the API key the agent runs with, the api-key input in the action",
-	adapter.AgentErrorBilling:        "check the credit balance of the provider account the API key belongs to",
-	adapter.AgentErrorRateLimit:      "run the job again later, or raise the API key's rate limit with the provider",
-	adapter.AgentErrorInvalidRequest: "check the model name and the arguments the agent runs with",
-	adapter.AgentErrorServer:         "run the job again, because the provider failed the request",
-	adapter.AgentErrorUnknown:        "run the agent alone with the same arguments to read its error",
-}
-
-// AgentErrorFix says what to do about an agent error of the class given,
-// empty for a class outside the closed list.
-func AgentErrorFix(class adapter.AgentError) string {
-	return agentErrorFixes[class]
-}
-
-// AgentErrorLine is an agent error's class and its fix, in one line.
-func AgentErrorLine(class adapter.AgentError) string {
-	return fmt.Sprintf("the agent ended with %s: %s", class, AgentErrorFix(class))
-}
-
 // installLines are the commands that install each agent at the version this
 // release's recipes install.
 var installLines = map[string]string{
@@ -126,14 +80,9 @@ func (e *MissingAgentError) Unwrap() error {
 	return e.Err
 }
 
-// Sentence is the reason in words.
-func (r Reason) Sentence() string {
-	return reasonSentences[r]
-}
-
 // RefusedError is a run that never started its agent, and why.
 type RefusedError struct {
-	Reason Reason
+	Reason reason.Reason
 	Err    error
 }
 
@@ -159,32 +108,6 @@ func (e *ReaderError) Unwrap() error {
 	return e.Err
 }
 
-// maxReaderLine bounds the reader's error line a result object carries.
-const maxReaderLine = 160
-
-// readerLineCharacters is the allowlist of a reader's error line. It holds no
-// character that can close a code span, open a tag or start a mention.
-const readerLineCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:;()'=_/+-"
-
-// ReaderLine is the first line of a reader's error, as a result object and a
-// comment carry it. The error can quote the agent's stream, so every character
-// outside readerLineCharacters becomes ?, and the line is cut at maxReaderLine
-// bytes.
-func ReaderLine(text string) string {
-	first, _, _ := strings.Cut(text, "\n")
-	cleaned := strings.Map(func(r rune) rune {
-		if strings.ContainsRune(readerLineCharacters, r) {
-			return r
-		}
-		return '?'
-	}, strings.TrimSpace(first))
-	if len(cleaned) > maxReaderLine {
-		cleaned = cleaned[:maxReaderLine]
-	}
-	return cleaned
-}
-
-// Result is what the run came to.
 type Result struct {
 	Agent       string
 	AgentExit   int
@@ -194,7 +117,7 @@ type Result struct {
 	Rows        int
 	ListTotal   decimal.Decimal
 	// Reason is set when the run wrote no rows.
-	Reason Reason
+	Reason reason.Reason
 	// AgentError is the class of error the agent ended in, empty when it
 	// ended in none. It can sit beside rows: an agent can fail after it has
 	// made requests.
@@ -403,7 +326,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	report, err := session.Finish()
 	if err != nil {
-		result.Reason = ReasonReaderRefused
+		result.Reason = reason.ReaderRefused
 		return result, &ReaderError{Err: err}
 	}
 	if report.Enforcement.Grade != "" {
@@ -440,7 +363,7 @@ func claim(agent adapter.Agent) (func(), error) {
 	}
 	release, err := exclusive.Claim()
 	if errors.Is(err, adapter.ErrClaimed) {
-		return nil, &RefusedError{Reason: ReasonConcurrentRun, Err: err}
+		return nil, &RefusedError{Reason: reason.ConcurrentRun, Err: err}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("run: %w", err)
@@ -469,13 +392,13 @@ func (o Options) record(result *Result, builder rowBuilder, report adapter.Repor
 	result.AgentError = report.AgentError
 	switch {
 	case len(rows) == 0 && report.AgentError != "":
-		result.Reason = ReasonAgentError
-		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", ReasonAgentError, AgentErrorLine(report.AgentError)))
+		result.Reason = reason.AgentError
+		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", reason.AgentError, reason.AgentErrorLine(report.AgentError)))
 	case len(rows) == 0:
-		result.Reason = ReasonNoUsage
-		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", ReasonNoUsage, ReasonNoUsage.Sentence()))
+		result.Reason = reason.NoUsage
+		report.Warnings = append(report.Warnings, fmt.Sprintf("reason %s: %s", reason.NoUsage, reason.NoUsage.Sentence()))
 	case report.AgentError != "":
-		report.Warnings = append(report.Warnings, AgentErrorLine(report.AgentError)+"; the rows hold the requests it made before")
+		report.Warnings = append(report.Warnings, reason.AgentErrorLine(report.AgentError)+"; the rows hold the requests it made before")
 	}
 	result.Report = report
 	written := sha256.New()

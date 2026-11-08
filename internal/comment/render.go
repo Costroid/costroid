@@ -23,7 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
-	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/vcs"
 )
 
@@ -80,7 +80,7 @@ const (
 // ArtifactRefused is the run reason a report states when the action refused
 // the artifact that carried the rows, because it held more than the rows and
 // the run object. Nothing in that artifact is read.
-const ArtifactRefused run.Reason = "artifact_refused"
+const ArtifactRefused reason.Reason = "artifact_refused"
 
 // maxRefusedEntries is how many of a refused artifact's entries the action
 // names, and maxRefusedName the longest name the comment repeats.
@@ -205,7 +205,7 @@ type Input struct {
 	ReasonLine int
 	// RunReason is why the run wrote no rows, as the run stated it. It is
 	// shown only when the rows file holds no rows.
-	RunReason run.Reason
+	RunReason reason.Reason
 	// ReaderLine is the reader's first error line, shown only with the run
 	// reason reader_refused, and cleaned again before it is.
 	ReaderLine string
@@ -338,13 +338,13 @@ func (i Input) refusedLine() string {
 // file holds no rows, or artifact_refused on a report whose artifact the
 // action refused. Beside rows, outside the list, beside a skipped agent, or
 // agent_error without a class from its list, it is dropped.
-func (i Input) runReason() run.Reason {
+func (i Input) runReason() reason.Reason {
 	switch {
 	case i.refused():
 		return ArtifactRefused
 	case i.State != NoRows || i.Reason == AgentSkipped || i.RunReason.Sentence() == "":
 		return ""
-	case i.RunReason == run.ReasonAgentError && run.AgentErrorFix(i.AgentError) == "":
+	case i.RunReason == reason.AgentError && reason.AgentErrorFix(i.AgentError) == "":
 		return ""
 	}
 	return i.RunReason
@@ -353,10 +353,10 @@ func (i Input) runReason() run.Reason {
 // agentError is the agent's error class from the closed list, beside figures
 // or with the run reason agent_error, and empty otherwise.
 func (i Input) agentError() adapter.AgentError {
-	if run.AgentErrorFix(i.AgentError) == "" {
+	if reason.AgentErrorFix(i.AgentError) == "" {
 		return ""
 	}
-	if i.State != Reported && i.runReason() != run.ReasonAgentError {
+	if i.State != Reported && i.runReason() != reason.AgentError {
 		return ""
 	}
 	return i.AgentError
@@ -433,10 +433,10 @@ func (l *Lifetime) block() *BlockLifetime {
 // readerLine is the reader's error line beside the reason reader_refused, and
 // empty otherwise.
 func (i Input) readerLine() string {
-	if i.runReason() != run.ReasonReaderRefused {
+	if i.runReason() != reason.ReaderRefused {
 		return ""
 	}
-	return run.ReaderLine(i.ReaderLine)
+	return reason.ReaderLine(i.ReaderLine)
 }
 
 // headSHA is the head commit when it is one, and empty otherwise.
@@ -777,7 +777,7 @@ func (i Input) why() string {
 	case i.readerLine() != "":
 		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. The reader's first error: `%s`.", i.RunReason, i.RunReason.Sentence(), i.readerLine())
 	case i.agentError() != "":
-		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. It ended with `%s`: %s.", i.RunReason, i.RunReason.Sentence(), i.AgentError, run.AgentErrorFix(i.AgentError))
+		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. It ended with `%s`: %s.", i.RunReason, i.RunReason.Sentence(), i.AgentError, reason.AgentErrorFix(i.AgentError))
 	case i.runReason() != "":
 		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s.", i.RunReason, i.RunReason.Sentence())
 	case i.State == NoRows:
@@ -792,7 +792,7 @@ func (i Input) agentErrorBesideFigures() string {
 	if i.State != Reported || i.agentError() == "" {
 		return ""
 	}
-	return fmt.Sprintf("The agent ended with `%s` after the requests these figures cover: %s.", i.AgentError, run.AgentErrorFix(i.AgentError))
+	return fmt.Sprintf("The agent ended with `%s` after the requests these figures cover: %s.", i.AgentError, reason.AgentErrorFix(i.AgentError))
 }
 
 // fallbackSentence names the models the catalog does not price and the

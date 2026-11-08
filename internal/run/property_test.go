@@ -17,6 +17,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 // propertyRecording is one recorded run a line is mutated in: a Claude Code
@@ -389,7 +390,7 @@ func checkOneBadLine(t *testing.T, where string, base baselineRun, recording pro
 	assertNoNegative(t, where, rows)
 	if err != nil {
 		var refused *ReaderError
-		if !errors.As(err, &refused) || result.Reason != ReasonReaderRefused || len(rows) != 0 || ReaderLine(err.Error()) == "" {
+		if !errors.As(err, &refused) || result.Reason != reason.ReaderRefused || len(rows) != 0 || reason.ReaderLine(err.Error()) == "" {
 			t.Fatalf("%s: the run failed with %v, reason %q, %d rows", where, err, result.Reason, len(rows))
 		}
 		return "refused with a reason"

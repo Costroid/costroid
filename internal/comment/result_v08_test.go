@@ -18,7 +18,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
-	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 // resultSchemaPath is result/v0.8 of Costroid/costroid-schemas, copied.
@@ -92,7 +92,7 @@ func emittedBlocks(t *testing.T) map[string]string {
 	before := realInput(t)
 	before.BeforeCheck = true
 	add("run before a check", before, true)
-	refused := Input{State: NoRows, Reason: EmptyRowsFile, RunReason: run.ReasonReaderRefused, ReaderLine: "the result object could not be read", BeforeCheck: true, Amounts: AmountsShown}
+	refused := Input{State: NoRows, Reason: EmptyRowsFile, RunReason: reason.ReaderRefused, ReaderLine: "the result object could not be read", BeforeCheck: true, Amounts: AmountsShown}
 	add("reader refused", refused, true)
 	add("no rows file", Input{State: Unreadable, Reason: NoRowsFile, Amounts: AmountsShown}, true)
 	add("fork with no rows", Input{State: Unreadable, Reason: ForkNoRows, Amounts: AmountsShown}, true)
