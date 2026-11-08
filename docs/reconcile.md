@@ -70,7 +70,7 @@ Keep each response's body as the provider sent it, or cut to the records of the 
 
 A row is dated by the start of its charge period. A row that covers a whole run or turn and crosses 00:00 UTC puts all its tokens on its first day, while the provider dates each request by when it was served. Each day then misses on its own.
 
-When a day misses and a row in the file ran past midnight on the same credential, `reconcile` compares the days that row spans as one. If every class matches within 1% over those days together, each day reads `matched` and its `span` names the cause `run_spans_days` with the first and last day. The first day's row holds the joined token comparison, and a later day's row holds none. Each day's dollar residual names `run_spans_days` for the tokens that moved, priced at the standard tier through the pinned catalog. If the days miss together too, each day keeps its own verdict.
+When a day misses and a row in the file ran past midnight on the same credential, `reconcile` compares the days that row spans as one. If every class matches within 1% over those days together, each day reads `matched` and its `span` names the cause `run_spans_days` with the first and last day. The first day's row holds the joined token comparison and the joined dollars by class, and a later day's row holds none. Each day's dollar residual names `run_spans_days` for the tokens that moved, priced at the standard tier through the pinned catalog. If the days miss together too, each day keeps its own verdict.
 
 The days are joined only when every one of them is in the range and reported. Otherwise the day reads `pending`, and its note names the range to reconcile or the day the provider has not finished. Half a run is not a miss.
 

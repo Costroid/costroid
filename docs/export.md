@@ -1,6 +1,6 @@
 # Export the rows
 
-Costroid records what a run cost as FOCUS rows. This page lists every way those rows leave Costroid today, and names what does not exist yet.
+Costroid records what a run cost as FOCUS rows. This page lists every way those rows leave Costroid today, and names what does not exist yet. [`docs/otlp.md`](otlp.md) sends them as OpenTelemetry traces.
 
 ## The rows file
 

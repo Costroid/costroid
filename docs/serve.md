@@ -237,7 +237,7 @@ Where the table says the lifetime is assumed, a row that took those tokens carri
 
 A request's rows from OTLP and from the result stream share row ids when both carry the provider's request id, so a run sent both ways counts once.
 
-Telemetry does not say how a run is billed, so an OTLP row is `list_equivalent` unless the wrapper sets `costroid.cost_basis=measured` in `OTEL_RESOURCE_ATTRIBUTES`. `costroid.enforcement_grade` works the same way.
+Telemetry does not say how a run is billed, so an OTLP row is `list_equivalent` unless the wrapper sets `costroid.cost_basis=measured` (or `costroid.cost.basis`, as `costroid emit-otlp` writes it) in `OTEL_RESOURCE_ATTRIBUTES`. `costroid.enforcement_grade` works the same way.
 
 ## Tenants
 
