@@ -255,6 +255,7 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 const (
 	schemaV05 = "costroid.result/0.5"
 	schemaV06 = "costroid.result/0.6"
+	schemaV07 = "costroid.result/0.7"
 )
 
 // readSchemas are the versions ParseResult reads.
@@ -350,6 +351,9 @@ func ParseResult(text string) (Block, error) {
 	if !slices.Contains(readSchemas, block.Schema) {
 		return Block{}, fmt.Errorf("comment: the result object's schema is %q, and this release reads %s", string(Clean(block.Schema)), strings.Join(readSchemas[:len(readSchemas)-1], ", ")+" and "+readSchemas[len(readSchemas)-1])
 	}
+	if added, ok := newerValue(object, block); ok {
+		return Block{}, fmt.Errorf("comment: the result object holds %s, which only %s defines, so it is not one %s holds, and this release writes %s", added.name, added.version, block.Schema, schema)
+	}
 	if again, err := block.encode(); err == nil && again == object {
 		return block, nil
 	}
@@ -357,6 +361,80 @@ func ParseResult(text string) (Block, error) {
 		return Block{}, fmt.Errorf("comment: the result object is not one %s holds, and this release writes %s", block.Schema, schema)
 	}
 	return Block{}, errors.New("comment: the result object is not one this release writes")
+}
+
+// addedValue is a value a version after 0.5 defines, and the first version
+// that defines it.
+type addedValue struct {
+	name, version string
+}
+
+// The rules and reasons of policy.results that result/v0.6 added.
+var (
+	rulesAddedIn06 = []string{
+		policy.RuleRunIncrease, policy.RuleRunIncreasePercent, policy.RulePullRequestBudget,
+		policy.RuleMonthlyBudget, policy.RuleModelAllowlist,
+	}
+	reasonsAddedIn06 = []string{
+		policy.ReasonOverBaseline, policy.ReasonNoBaseline, policy.ReasonNoLifetime, policy.ReasonRepeatPossible,
+		policy.ReasonNoLedger, policy.ReasonOutsideAllowlist, policy.ReasonUnreadableModel, policy.ReasonOnAllowlist,
+	}
+	// fieldsAdded are the top-level fields a later version added. Each is
+	// present in every object of that version, null or not.
+	fieldsAdded = []addedValue{
+		{"rows_sha256", schemaV06}, {"rows_file_sha256", schemaV06}, {"lifetime", schemaV06}, {"agent_stated", schemaV07},
+	}
+)
+
+// newerValue is the first value the object holds that only a version after
+// its own defines. An object holding one was not written by a release of its
+// version, so ParseResult names the value it refuses for.
+func newerValue(object string, block Block) (addedValue, bool) {
+	own := slices.Index(readSchemas, block.Schema)
+	for _, added := range addedValues(object, block) {
+		if slices.Index(readSchemas, added.version) > own {
+			return added, true
+		}
+	}
+	return addedValue{}, false
+}
+
+// addedValues lists the values the object holds that a version after 0.5
+// added: a top-level field, the run reason artifact_refused, and a rule, a
+// reason or a field of policy.results.
+func addedValues(object string, block Block) []addedValue {
+	var found []addedValue
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(object), &fields) == nil {
+		for _, added := range fieldsAdded {
+			if _, ok := fields[added.name]; ok {
+				found = append(found, addedValue{"the field " + added.name, added.version})
+			}
+		}
+	}
+	if block.RunReason == ArtifactRefused {
+		found = append(found, addedValue{"the run reason " + string(ArtifactRefused), schemaV06})
+	}
+	if block.Policy == nil {
+		return found
+	}
+	for _, result := range block.Policy.Results {
+		if slices.Contains(rulesAddedIn06, result.Rule) {
+			found = append(found, addedValue{"the rule " + result.Rule, schemaV06})
+		}
+		if slices.Contains(reasonsAddedIn06, result.Reason) {
+			found = append(found, addedValue{"the reason " + result.Reason, schemaV06})
+		}
+		for _, field := range []struct {
+			name string
+			set  bool
+		}{{"limit_percent", result.LimitPercent != ""}, {"baseline_usd", result.BaselineUSD != ""}, {"models", len(result.Models) > 0}} {
+			if field.set {
+				found = append(found, addedValue{"the field policy.results." + field.name, schemaV06})
+			}
+		}
+	}
+	return found
 }
 
 // Reconclude renders a check that repeats an earlier check run's result
