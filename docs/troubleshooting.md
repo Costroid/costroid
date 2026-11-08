@@ -396,3 +396,18 @@ The answer travels as `costroid-review.md` in the `costroid-rows` artifact. A re
 | `costroid: warning: the agent's answer was not posted: <error>` | The host refused the comment. A fork's pull request gets a read-only token, so this is expected there | Give the report's job `pull-requests: write`, as the recipes do |
 | `costroid: not posted: review posts on the pull_request event, and this run's event is <event>` | On GitHub Actions, the answer is posted on the `pull_request` event only, as the report is | Run the report's job on `pull_request` |
 | `costroid: review refused: neither GitHub Actions nor GitLab CI was detected` | `costroid review --post` ran outside CI. It exits 125 | Run it in the report's job |
+
+## Sending spans over OTLP
+
+`costroid emit-otlp`, which sends a rows file to an OpenTelemetry Collector or backend as traces. Its lines print the endpoint's scheme, host and path only, never its user information, its query or a header.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: sent <count> spans for <count> rows to <endpoint>` | The endpoint took every span: one per model request | None |
+| `costroid: <path> holds no rows, so nothing was sent` | The rows file is empty | Read the agent job's log |
+| `costroid: emit-otlp needs --rows, and takes no argument` | No rows file was named, or an argument was given. The command exits 125 | Pass `--rows` with the file `costroid run` wrote |
+| `costroid: <endpoint> answered HTTP <status> to <count> spans, so they were not taken; <count> spans went before them` | The endpoint refused a request, after up to three tries for 429, 502, 503 and 504. The spans of earlier requests were taken. The command exits 1 | For 401 or 403, check `OTEL_EXPORTER_OTLP_HEADERS`. For 404, check the endpoint: `OTEL_EXPORTER_OTLP_ENDPOINT` takes `v1/traces` appended, and `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as it is. A 3xx is never followed, so that no header goes to another host |
+| `costroid: <endpoint> refused <count> of <count> spans: <message>` | The endpoint took the requests and answered a partial success. The message is the endpoint's own. The command exits 1 | Read the message |
+| `costroid: warning: OTEL_EXPORTER_OTLP_<name> holds <value>, which is not <kind>, so emit-otlp reads it as unset` | A protocol, timeout or compression the exporter specification does not define. Its default applies: `http/protobuf`, 10000 ms, no compression | Set a value the line names |
+| `costroid: warning: OTEL_EXPORTER_OTLP_<name> holds an entry that is not key=value, so emit-otlp leaves the entry out` | An entry of `OTEL_EXPORTER_OTLP_HEADERS` or `OTEL_EXPORTER_OTLP_TRACES_HEADERS` has no `=`, an empty key, a key HTTP cannot carry, a control character or a bad percent escape. The value is never printed, because headers hold credentials | Write each header as `key=value`, with commas between them and a space in a value as `%20` |
+| `costroid: OTEL_EXPORTER_OTLP_<name> is grpc, and emit-otlp sends OTLP over HTTP: set it to http/protobuf or http/json` | `OTEL_EXPORTER_OTLP_PROTOCOL` or `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` names gRPC, which `emit-otlp` does not send. The command exits 125 | Set the protocol to `http/protobuf`, and point the endpoint at the collector's HTTP port, 4318 by default |
