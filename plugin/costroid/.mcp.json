@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "costroid": {
+      "command": "costroid",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "costroid",
+  "version": "0.1.0",
+  "description": "Reads what an agent's run on a pull request cost and how the costroid check concluded, through the read-only tools of costroid mcp.",
+  "author": {
+    "name": "The Costroid Authors",
+    "url": "https://github.com/Costroid"
+  },
+  "homepage": "https://github.com/Costroid/costroid/tree/main/plugin/costroid",
+  "repository": "https://github.com/Costroid/costroid",
+  "license": "Apache-2.0",
+  "keywords": ["cost", "finops", "focus", "pull-request", "ci"]
+}
