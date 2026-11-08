@@ -514,3 +514,58 @@ func TestRowStartingAfterTheSheetDateHoldsFromItsStart(t *testing.T) {
 		t.Error("a row and the row that replaces it overlap")
 	}
 }
+
+// TestARequestBeforeTheSheetDateIsPricedByItsRow holds that a request made
+// before the default release's sheet date is priced by that release's row for
+// its model, not by the fallback: a row that starts on its sheet's date holds
+// from any earlier day.
+func TestARequestBeforeTheSheetDateIsPricedByItsRow(t *testing.T) {
+	c := pinned(t)
+	for _, day := range []string{"2026-10-01", "2026-11-01", "2026-11-06", "2026-11-07"} {
+		at, err := time.Parse(dayLayout, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := query("openai", "gpt-6.1-sol", focus.Output)
+		q.At = at
+		got, err := c.Lookup(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Fallback || got.SkuPriceID != "openai:gpt-6.1-sol:global:standard:to-272000:output" || got.ListUnitPrice.Cmp(decimal.MustParse("10.00")) != 0 {
+			t.Errorf("%s: %s at %s, fallback %t", day, got.SkuPriceID, got.ListUnitPrice, got.Fallback)
+		}
+	}
+}
+
+// TestAnEndedPromotionFallsToTheFallbackNotAnOlderRelease holds that once a
+// promotion row of the default release ends with no row after it, the
+// fallback prices the class: the page no longer guarantees the price, and an
+// older release's open-ended copy of the promotion is not read in its place.
+func TestAnEndedPromotionFallsToTheFallbackNotAnOlderRelease(t *testing.T) {
+	q := query("openai", "gpt-5.6-sol", focus.Output)
+	q.At = time.Date(2026, 11, 30, 23, 0, 0, 0, time.UTC)
+	c := pinned(t)
+	last, err := c.Lookup(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last.Fallback || last.ListUnitPrice.Cmp(decimal.MustParse("20.00")) != 0 {
+		t.Errorf("2026-11-30: %s at %s", last.SkuPriceID, last.ListUnitPrice)
+	}
+	q.At = time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	after, err := c.Lookup(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.Fallback || after.SkuPriceID != "openai:fallback:output" || after.ListUnitPrice.Cmp(decimal.MustParse("600.00")) != 0 {
+		t.Errorf("2026-12-01: %s at %s, fallback %t", after.SkuPriceID, after.ListUnitPrice, after.Fallback)
+	}
+	older, err := embedded(t, "0.1.0").Lookup(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if older.Fallback || older.ListUnitPrice.Cmp(decimal.MustParse("20.00")) != 0 {
+		t.Errorf("release 0.1.0 no longer holds the open-ended promotion row this test guards against: %+v", older)
+	}
+}
