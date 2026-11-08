@@ -53,7 +53,8 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: could not read the version of <agent>` | `--version` printed no version | Check the agent's install step |
 | `costroid: <agent> <version> is older than the minimum <version>` | The installed agent is older than the floor | Raise the install step's version, or lower the floor to a version the recipe records |
 | `costroid: the agent's output is in <path> on this runner, not in this log. show-output: true prints it.` | The agent's own stream went to a file on the runner, so the log does not show its reasoning or replies | None. On a private repository, set `show-output: true` to see it |
-| `costroid: run needs <arguments>` | `costroid run` was called without the arguments the line names, from `--budget-usd`, `--out` and an agent command after `--` | Pass each one the line names |
+| `costroid: run needs <arguments>` | `costroid run` was called without the arguments the line names, from `--budget-usd` and an agent command after `--`. Costroid never assumes a budget | Pass each one the line names |
+| `costroid: no --out was given, so the rows go to costroid-rows.jsonl in the working directory` | `costroid run` names its rows file as the action's `run` stage does. The run's object goes beside it, as `costroid-rows.run.json`. A file of either name is replaced | Pass `--out` to name another file |
 | `costroid: --budget-usd must be above 0` | The budget is zero or negative | Pass a positive amount |
 | `costroid: --credential takes the key's id, never the key: this value reads like a key` | The credential looks like a provider key | Pass the key's id from the provider's console, never the key |
 | `costroid: run: no adapter for <command>: costroid runs claude and codex` | The command after `--` is not `claude` or `codex` | Run one of those two |
@@ -269,6 +270,7 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: warning: --budget-usd <amount> is ignored, because the run's result object states no cap, so the report states none: it states the cap the run or the read step was given` | The `read` step was given no cap, and the report's step was | On `claude-code-action`, give `budget-usd` to the `read` step, beside `claude-args`. Drop it from the report's step. Costroid holds no cap on an `openai/codex-action` run |
 | `costroid: warning: the run's result object states a cap that is not an amount in USD above 0, so the report states no cap` | The result object beside the rows holds a cap in another currency, or an amount that is not above 0. The agent's job wrote that file, so the report does not take it | Read what wrote the object. `costroid run` and `costroid ingest-run` write a cap in USD |
 | `costroid: warning: <error>` | The event file or the rows file could not be read. The check and the comment still post and say so | Read the reason |
+| `costroid: preview: no rows file at <path>. costroid run writes one at --out, and costroid demo shows a comment without one` | `report --preview` was given a rows path with no file at it. It prints no comment and exits 125. A preview with `--agent-result skipped` prints the comment for a skipped agent instead | Run `costroid run` first, or pass the path it wrote |
 
 ## costroid.yml
 

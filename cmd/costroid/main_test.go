@@ -182,7 +182,6 @@ func TestRunRefusesAMissingOrZeroBudget(t *testing.T) {
 		{"run", "--out", out, "--", "claude", "-p", "x"},
 		{"run", "--budget-usd", "0", "--out", out, "--", "claude", "-p", "x"},
 		{"run", "--budget-usd", "1e3", "--out", out, "--", "claude", "-p", "x"},
-		{"run", "--budget-usd", "1", "--", "claude", "-p", "x"},
 		{"run", "--budget-usd", "1", "--out", out},
 	} {
 		if code, _, _ := execute(t, args...); code != exitFailure {
@@ -225,7 +224,7 @@ func TestBareCommandPrintsShortUsage(t *testing.T) {
 	if lines := strings.Count(stdout, "\n"); lines > maxUsageLines {
 		t.Errorf("the short usage has %d lines", lines)
 	}
-	for _, line := range []string{"  costroid run --budget-usd N --out rows.jsonl -- <agent command>\n", "  costroid report --rows rows.jsonl\n", "  costroid validate [costroid.yml]\n", "  costroid help <command>\n", "  costroid --version\n"} {
+	for _, line := range []string{"  costroid run --budget-usd N -- <agent command>\n", "  costroid report --rows rows.jsonl\n", "  costroid validate [costroid.yml]\n", "  costroid help <command>\n", "  costroid --version\n"} {
 		if !strings.Contains(stdout, line) {
 			t.Errorf("the short usage lacks %q", line)
 		}

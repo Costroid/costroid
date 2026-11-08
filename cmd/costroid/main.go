@@ -113,11 +113,14 @@ func (a accountFlags) check() error {
 }
 
 const runHelp = `Usage:
-  costroid run --budget-usd N --out rows.jsonl [--agent NAME]
+  costroid run --budget-usd N [--out FILE] [--agent NAME]
                [--billing-account ID] [--credential ID]
                [--gateway URL --gateway-key-file F] [--json] -- <agent command>
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
+
+--out names the file the rows go to. Without it, run writes
+costroid-rows.jsonl in the working directory and says so on stderr.
 
 --agent names the agent when the command's name does not: claude-code or codex
 for a command that starts the agent through npx, bunx or node, with the flags
@@ -173,7 +176,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	set.Usage = func() { fmt.Fprint(stderr, runHelp) }
 	budget := set.String("budget-usd", "", "the run's budget in USD")
 	agent := set.String("agent", "", "the agent, when the command's name does not say: "+strings.Join(run.Agents, ", "))
-	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
+	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines: "+defaultRowsFile+" when not given")
 	asJSON := set.Bool("json", false, "print the result object on stdout, and the agent's stream on stderr")
 	gatewayURL := set.String("gateway", os.Getenv(gatewayURLVar), "the LiteLLM gateway the agent runs through")
 	keyFile := set.String("gateway-key-file", os.Getenv(gatewayKeyFileVar), "the file costroid gateway request wrote the run's key to")
@@ -187,7 +190,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	if *agent != "" && !slices.Contains(run.Agents, *agent) {
 		return runFlags{}, fmt.Errorf("--agent takes %s, not %q", strings.Join(run.Agents, ", "), *agent)
 	}
-	if missing := missingRunArguments(*budget, *out, set.NArg()); missing != "" {
+	if missing := missingRunArguments(*budget, set.NArg()); missing != "" {
 		return runFlags{}, errors.New("run needs " + missing)
 	}
 	amount, err := decimal.Parse(*budget)
@@ -200,21 +203,26 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	if err := account.check(); err != nil {
 		return runFlags{}, err
 	}
+	if *out == "" {
+		*out = defaultRowsFile
+		fmt.Fprintf(stderr, "costroid: no --out was given, so the rows go to %s in the working directory\n", defaultRowsFile)
+	}
 	return runFlags{
 		agent: *agent, budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON,
 		gateway: *gatewayURL, gatewayKeyFile: *keyFile,
 	}, nil
 }
 
+// defaultRowsFile is where run writes the rows when --out names no file: the
+// name the action's run stage gives them.
+const defaultRowsFile = "costroid-rows.jsonl"
+
 // missingRunArguments names each of run's required arguments that is absent,
 // empty when none is.
-func missingRunArguments(budget, out string, commandWords int) string {
+func missingRunArguments(budget string, commandWords int) string {
 	var missing []string
 	if budget == "" {
 		missing = append(missing, "--budget-usd")
-	}
-	if out == "" {
-		missing = append(missing, "--out")
 	}
 	if commandWords == 0 {
 		missing = append(missing, "an agent command after --")

@@ -35,7 +35,7 @@ type stdio struct {
 }
 
 var commands = []command{
-	{name: "run", short: "costroid run --budget-usd N --out rows.jsonl -- <agent command>", help: runHelp, run: runCommand},
+	{name: "run", short: "costroid run --budget-usd N -- <agent command>", help: runHelp, run: runCommand},
 	{name: "ingest-run", help: ingestRunHelp, run: func(_ context.Context, args []string, std stdio) int { return ingestRunCommand(args, std.stderr) }},
 	{name: "report", short: "costroid report --rows rows.jsonl", help: reportHelp, run: withOutputs(reportCommand)},
 	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
@@ -374,13 +374,26 @@ Exit codes of version:
 `
 
 const demoHelp = `Usage:
-  costroid demo
+  costroid demo [--state STATE] [--markdown]
 
 demo prints the comment Costroid posts on a pull request, built from the rows of
-a recorded claude-code-action run. It reads nothing and posts nothing.
+a recorded run, as plain text for a terminal. It reads nothing and posts
+nothing.
+
+--state picks the comment:
+  neutral           a recorded claude-code-action run that nothing held to a
+                    budget (the default)
+  capped            a recorded Codex run that costroid stopped at a USD 0.001
+                    cap, and what it spent past it
+  failure           the claude-code-action run over a USD 0.01 run budget, after
+                    the seven days in which a broken rule only warns
+  skipped           a pull request on which the workflow skipped the agent
+
+--markdown prints the comment as the Markdown report posts, with the machine
+block the check run carries.
 
 Exit codes of demo:
   0                 printed
-  125               an argument was given, or costroid could not build the
-                    comment
+  125               an argument or an unknown --state was given, or costroid
+                    could not build the comment
 `

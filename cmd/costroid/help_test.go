@@ -22,7 +22,7 @@ import (
 var flagSources = []string{".", filepath.Join("..", "..", "internal", "server")}
 
 // flagless are the commands that define no flag.
-var flagless = []string{"approve", "demo", "validate", "lint-recipes", "version"}
+var flagless = []string{"approve", "validate", "lint-recipes", "version"}
 
 // computedFlags gives the names of flags a command defines from a table of its
 // own, rather than as a literal.
