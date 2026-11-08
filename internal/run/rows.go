@@ -220,13 +220,19 @@ func priceNotes(price catalog.Price, request adapter.Request, class focus.TokenC
 
 // tierNote says how far the context tier of an entry coarser than a request
 // holds. The entry's whole input bounds each request's in it: at or below the
-// matched tier's top, every request is in that tier; above a tier's floor, a
-// request may be below it, and the price is an upper bound. An entry with
-// input and no stated whole input has an unknown tier, and says so.
+// matched tier's top, every request is in that tier. Past a tier's floor the
+// sum says nothing about any one request. A per-run entry states an input
+// past a floor only when the agent's own figure puts its tokens in that tier,
+// and states none when the figure puts them in the lowest tier or in neither.
+// Its own note says which, so this one says nothing. Any other entry past a
+// floor is priced at the tier above as an upper bound, and one with input and
+// no stated whole input has an unknown tier.
 func tierNote(price catalog.Price, request adapter.Request) string {
 	tokens := request.Tokens
 	switch {
 	case request.Grain == adapter.PerRequest:
+		return ""
+	case request.Grain == adapter.PerRun && (request.ContextInputTokens == 0 || price.ContextTierMin != nil):
 		return ""
 	case request.ContextInputTokens == 0 && tokens.InputUncached+tokens.CacheRead+tokens.CacheWrite5m+tokens.CacheWrite1h+tokens.CacheWrite30m > 0:
 		return fmt.Sprintf("one %s's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read under", request.Grain)

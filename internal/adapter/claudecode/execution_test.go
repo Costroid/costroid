@@ -407,3 +407,121 @@ func FuzzReadExecutionFile(f *testing.F) {
 		}
 	})
 }
+
+// actionWithSession reads an execution file the way ingest-run does, beside
+// the session files of the given recording, changed by edit, as the runner
+// left them. Each read is outside CI, with no one-hour cache variable.
+func actionWithSession(t *testing.T, execution []byte, recording, sessionID string, edit func(string) string) adapter.Report {
+	t.Helper()
+	outsideCI(t)
+	t.Setenv(oneHourCacheVariable, "")
+	config := installFrom(t, recording, sessionID)
+	path := filepath.Join(config, "projects", "-work", sessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(edit(string(mustReadFile(t, path)))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Agent{ConfigDir: config}.ReadExecutionFile(bytes.NewReader(execution), corpusSaved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+// sdkExecutionFile is the TypeScript Agent SDK recording's messages as
+// claude-code-action writes them, one JSON array. The action runs the same
+// SDK, and its conversation and its request outside the conversation both
+// ran on claude-haiku-5-5, the shape of a claude-code-action run on that
+// model.
+func sdkExecutionFile(t *testing.T) []byte {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(string(mustReadFile(t, filepath.Join(sdkTS, "stream.jsonl")))), "\n")
+	return []byte("[" + strings.Join(lines, ",\n") + "]")
+}
+
+func unchanged(text string) string { return text }
+
+// TestActionSessionFilesAgreeWithTheResult reads claude-code-action's file
+// beside the session files the runner holds. Claude Code counts a request
+// outside the conversation in the result and writes it in no session file:
+// on claude-haiku-5-5 beside a claude-opus-5-5 conversation in the action
+// recording, and on the conversation's own claude-haiku-5-5 in the Agent SDK
+// recording. Both read per request from the files, each request at its own
+// context tier, and the request outside the conversation is one entry of its
+// own, read from the result, with no warning. The rows add up to the
+// result's totals.
+func TestActionSessionFilesAgreeWithTheResult(t *testing.T) {
+	cases := []struct {
+		name, recording, outsideModel string
+		execution                     []byte
+		perRequest                    int
+		outside                       adapter.Tokens
+	}{
+		{"a side model", "testdata/2.1.316/action-session", "claude-haiku-5-5",
+			mustReadFile(t, "testdata/2.1.316/action-session/claude-execution-output.json"), 2, adapter.Tokens{InputUncached: 1200, Output: 17}},
+		{"the conversation's own model", sdkTS, "claude-haiku-5-5",
+			sdkExecutionFile(t), 2, adapter.Tokens{InputUncached: 1200, Output: 23}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := actionWithSession(t, tc.execution, tc.recording, sdkSession, unchanged)
+			if len(report.Warnings) != 0 {
+				t.Errorf("warnings %q", report.Warnings)
+			}
+			if report.CostSource != SourceSessionFile || len(report.Requests) != tc.perRequest+1 {
+				t.Fatalf("%s, %d entries", report.CostSource, len(report.Requests))
+			}
+			for _, request := range report.Requests[:tc.perRequest] {
+				if request.Grain != adapter.PerRequest || request.ContextInputTokens != request.Tokens.InputUncached+request.Tokens.CacheRead+request.Tokens.CacheWrite5m+request.Tokens.CacheWrite1h {
+					t.Errorf("%s: grain %s, context %d", request.ID, request.Grain, request.ContextInputTokens)
+				}
+			}
+			outside := report.Requests[tc.perRequest]
+			if outside.Model != tc.outsideModel || outside.Grain != adapter.PerRun || outside.Tokens != tc.outside || outside.CostSource != SourceExecutionFile ||
+				!strings.Contains(outside.Note, "outside the conversation") {
+				t.Errorf("%+v", outside)
+			}
+			var messages []json.RawMessage
+			if err := json.Unmarshal(tc.execution, &messages); err != nil {
+				t.Fatal(err)
+			}
+			stated, written := statedTotals(t, messages)
+			read := sum(report.Requests)
+			if read.CacheWrite5m+read.CacheWrite1h != written {
+				t.Errorf("cache writes %d, the result states %d", read.CacheWrite5m+read.CacheWrite1h, written)
+			}
+			read.CacheWrite5m, read.CacheWrite1h = 0, 0
+			if read != stated {
+				t.Errorf("tokens %+v, the result states %+v", read, stated)
+			}
+		})
+	}
+}
+
+// TestSessionFilesThatAreNotCompleteDoNotStandBesideTheResult holds that
+// session files which cannot show they hold every request of the
+// conversation give way to the result's per-model totals when the result
+// counts more than they hold: files with a request they announce and no
+// response to it, a file that ends inside a line, and an excess that reads
+// the cache, as only a conversation's requests do.
+func TestSessionFilesThatAreNotCompleteDoNotStandBesideTheResult(t *testing.T) {
+	const unanswered = `{"type":"api-request","sessionId":"00000000-0000-4000-8000-000000000001","id":"00000000-0000-4000-9000-0000000000f1","timestamp":"2026-11-08T04:14:53.900Z","version":"2.1.316","querySource":"sdk"}`
+	cases := map[string]struct {
+		execution []byte
+		edit      func(string) string
+	}{
+		"an announced request with no response": {sdkExecutionFile(t), func(text string) string { return text + unanswered + "\n" }},
+		"a file that ends inside a line":        {sdkExecutionFile(t), func(text string) string { return text + `{"type":"assistant","requestId":"req_fixture_0003","mess` }},
+		"an excess that reads the cache":        {bytes.Replace(sdkExecutionFile(t), []byte(`"cacheReadInputTokens":1522`), []byte(`"cacheReadInputTokens":1600`), 1), unchanged},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			report := actionWithSession(t, tc.execution, sdkTS, sdkSession, tc.edit)
+			if report.CostSource != SourceExecutionFile || len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRun {
+				t.Fatalf("%s, %+v", report.CostSource, report.Requests)
+			}
+			if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "the session files disagree with the result object") {
+				t.Errorf("warnings %q", report.Warnings)
+			}
+		})
+	}
+}
