@@ -1,9 +1,12 @@
 package recipelint
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -199,4 +202,57 @@ func TestPluginAllowsOnlyReadTools(t *testing.T) {
 		}
 		expectPluginRule(t, report, RulePluginWrites, pluginDir+"/"+pluginServers)
 	})
+}
+
+// TestRecipeGivesTheAgentThePluginsServer holds the costroid run recipe to the
+// plugin: --bare loads no plugin, so the recipe names the plugin's own server
+// with --mcp-config and allows only tools that read. Each line is one
+// argument, as run-agent.sh reads them, and the prompt follows the last, so the last must be a flag that
+// takes no value: --mcp-config and --allowedTools would read the prompt as one
+// of theirs.
+func TestRecipeGivesTheAgentThePluginsServer(t *testing.T) {
+	documents, err := parse([]byte(read(t, filepath.Join(recipesDir, "github-claude-code.yml"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args []string
+	for _, job := range entries(field(documents[0], "jobs")) {
+		for _, step := range sequence(field(job.value, "steps")) {
+			if costroidStage(step) == "run" {
+				for _, line := range strings.Split(scalarField(field(step, "with"), "agent-args"), "\n") {
+					if line != "" {
+						args = append(args, line)
+					}
+				}
+			}
+		}
+	}
+	value := func(flag string) string {
+		at := slices.Index(args, flag)
+		if at < 0 || at+1 >= len(args) {
+			t.Fatalf("the run step's agent-args give no %s: %q", flag, args)
+		}
+		return args[at+1]
+	}
+
+	var given, shipped map[string]any
+	if err := json.Unmarshal([]byte(value("--mcp-config")), &given); err != nil {
+		t.Fatalf("--mcp-config: %v", err)
+	}
+	if err := json.Unmarshal([]byte(read(t, filepath.Join(repositoryRoot, pluginDir, pluginServers))), &shipped); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(given, shipped) {
+		t.Errorf("--mcp-config gives %v, and the plugin's %s %v", given, pluginServers, shipped)
+	}
+
+	for _, tool := range strings.Split(value("--allowedTools"), ",") {
+		server, name, _ := strings.Cut(strings.TrimPrefix(tool, "mcp__"), "__")
+		if !strings.HasPrefix(tool, "mcp__") || !slices.Contains(costroidReadTools[server], name) {
+			t.Errorf("--allowedTools allows %s, which is not a read tool of the plugin's server", tool)
+		}
+	}
+	if last := args[len(args)-1]; !slices.Contains([]string{"--bare", "--restricted", "--strict-mcp-config"}, last) {
+		t.Errorf("agent-args end in %s, and the prompt that follows could be read as its value", last)
+	}
 }

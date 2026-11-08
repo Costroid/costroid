@@ -20,3 +20,7 @@ The plugin starts its server as `costroid mcp`, so the `costroid` binary must be
 ## What it reads
 
 `/costroid:status` reads the status file `costroid run` writes while the agent works. Outside such a run there is no file, and the command says so. `/costroid:result` reads the result object from the check run, never from the pull request comment. [`docs/agents.md`](https://github.com/Costroid/costroid/blob/main/docs/agents.md) describes both objects.
+
+## In CI
+
+`claude -p --bare` loads no plugin. [`recipes/github-claude-code.yml`](https://github.com/Costroid/costroid/blob/main/recipes/github-claude-code.yml) gives the agent the plugin's server with `--mcp-config`, from the `costroid` binary the action installs, and allows its `run_status` tool alone. `run_status` reads the status file that `costroid run` writes while the agent works.

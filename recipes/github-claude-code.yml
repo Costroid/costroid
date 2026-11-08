@@ -67,7 +67,15 @@ jobs:
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           billing-account: ${{ github.repository_owner }}
           credential: ${{ vars.COSTROID_CREDENTIAL }}
+          # --bare loads no plugin, so --mcp-config names the costroid plugin's
+          # server, costroid mcp, from the binary the action installs.
+          # --allowedTools lets the agent call run_status, which reads this
+          # run's status file and nothing else.
           agent-args: |
+            --mcp-config
+            {"mcpServers":{"costroid":{"command":"costroid","args":["mcp"]}}}
+            --allowedTools
+            mcp__costroid__run_status
             --bare
             --restricted
             --strict-mcp-config
