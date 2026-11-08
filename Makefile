@@ -2,7 +2,7 @@ VERSION ?= dev
 COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-.PHONY: check test check-short bench-view bench-ingest fuzz fixture build image notice e2e e2e-bite lint lint-vulnerabilities lint-shell lint-workflows
+.PHONY: check test check-short bench-view bench-ingest fuzz fixture build image notice e2e e2e-bite lint lint-vulnerabilities lint-shell lint-workflows lint-deadcode
 
 # Runs everything, with Postgres in Docker. A missing Docker fails this target.
 check: test
@@ -83,18 +83,21 @@ e2e-bite:
 # checksum, not the transport, is the check.
 LINT_BIN = $(CURDIR)/bin/lint
 ACTIONLINT_VERSION = v1.7.12
+DEADCODE_VERSION = v0.52.0
 GOVULNCHECK_VERSION = v1.9.0
 SHELLCHECK_DEB = shellcheck_0.11.0-2_amd64.deb
 SHELLCHECK_SHA256 = 06990eaf21b5dfa3d855e492f7ca2d6fcacf63b490a73a545850c50cf7af2bce
 SHELLCHECK_URL = http://archive.ubuntu.com/ubuntu/pool/universe/s/shellcheck/$(SHELLCHECK_DEB)
 ACTIONLINT = $(LINT_BIN)/actionlint-$(ACTIONLINT_VERSION)/actionlint
+DEADCODE = $(LINT_BIN)/deadcode-$(DEADCODE_VERSION)/deadcode
 GOVULNCHECK = $(LINT_BIN)/govulncheck-$(GOVULNCHECK_VERSION)/govulncheck
 SHELLCHECK = $(LINT_BIN)/$(SHELLCHECK_DEB:.deb=)/shellcheck
 GO_INSTALL_CHECKED = GOSUMDB=sum.golang.org GONOSUMDB= GOPRIVATE= GOINSECURE= GOBIN=$(@D) go install
 
 # Reports known vulnerabilities in code the module calls, shell findings in the
-# scripts, and workflow findings, with shellcheck run on every step's script.
-lint: lint-vulnerabilities lint-shell lint-workflows
+# scripts, workflow findings, with shellcheck run on every step's script, and
+# functions no program reaches.
+lint: lint-vulnerabilities lint-shell lint-workflows lint-deadcode
 
 lint-vulnerabilities: $(GOVULNCHECK)
 	$(GOVULNCHECK) ./...
@@ -105,8 +108,37 @@ lint-shell: $(SHELLCHECK)
 lint-workflows: $(ACTIONLINT) $(SHELLCHECK)
 	$(ACTIONLINT) -shellcheck=$(SHELLCHECK) -pyflakes= .github/workflows/*.yml recipes/github-*.yml
 
+# Fails on a function that no program of the module reaches and .deadcode-allow
+# does not name, and on a name in .deadcode-allow that a program now reaches.
+# Each line of the list is the date it was added, the function as
+# package.Name under the module, and the change that will call it. Packages
+# named *test hold helpers that only tests call, and are not judged.
+lint-deadcode: $(DEADCODE)
+	$(DEADCODE) -f '{{range .Funcs}}{{$$.Path}}.{{.Name}}{{"\n"}}{{end}}' ./... >$(LINT_BIN)/deadcode.found
+	awk ' \
+		FILENAME == ARGV[1] { \
+			if (/^(#.*)?$$/) next; \
+			if ($$1 !~ /^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$$/ || NF < 3) { \
+				printf ".deadcode-allow:%d: want a date, a function and the change that calls it\n", FNR; bad = 1 \
+			} \
+			allowed[$$2] = FNR; next \
+		} \
+		{ sub(/^github\.com\/Costroid\/costroid\//, "") } \
+		/^([a-z0-9_]+\/)*[a-z0-9_]*test\./ { next } \
+		{ found[$$0] = 1 } \
+		!($$0 in allowed) { print "unreachable and not in .deadcode-allow: " $$0; bad = 1 } \
+		END { \
+			for (name in allowed) if (!(name in found)) { \
+				printf ".deadcode-allow:%d: %s is reached now; remove the line\n", allowed[name], name; bad = 1 \
+			} \
+			exit bad \
+		}' .deadcode-allow $(LINT_BIN)/deadcode.found
+
 $(ACTIONLINT):
 	$(GO_INSTALL_CHECKED) github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+
+$(DEADCODE):
+	$(GO_INSTALL_CHECKED) golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
 
 $(GOVULNCHECK):
 	$(GO_INSTALL_CHECKED) golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)

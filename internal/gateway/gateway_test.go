@@ -270,7 +270,7 @@ func expiring(expires string) KeyInfo {
 func TestAKeyThatHoldsTheRunGrantsGatewayPrecheck(t *testing.T) {
 	expect := Expect{Budget: decimal.MustParse("0.01"), Run: "42", Now: time.Date(2026, 11, 6, 20, 0, 0, 0, time.UTC)}
 	grant := Inspect("sk-x", info("0.01", "42"), expect)
-	if !grant.Holds() || grant.MaxParallel != 1 || grant.MaxRequestTokens != 20000 || grant.KeyID != KeyID("sk-x") {
+	if len(grant.Problems) > 0 || grant.MaxParallel != 1 || grant.MaxRequestTokens != 20000 || grant.KeyID != KeyID("sk-x") {
 		t.Fatalf("grant %+v", grant)
 	}
 	for name, broken := range map[string]KeyInfo{
@@ -282,7 +282,7 @@ func TestAKeyThatHoldsTheRunGrantsGatewayPrecheck(t *testing.T) {
 		"no parallel limit":       func() KeyInfo { k := info("0.01", "42"); k.MaxParallel = nil; return k }(),
 		"no largest request":      func() KeyInfo { k := info("0.01", "42"); delete(k.Metadata, MetaMaxRequestTokens); return k }(),
 	} {
-		if Inspect("sk-x", broken, expect).Holds() {
+		if len(Inspect("sk-x", broken, expect).Problems) == 0 {
 			t.Errorf("%s still grants gateway-precheck", name)
 		}
 	}
@@ -451,7 +451,7 @@ func TestSpendWithinFloatTolerance(t *testing.T) {
 func TestExpiryForms(t *testing.T) {
 	expect := Expect{Budget: decimal.MustParse("0.01"), Run: "42", Now: time.Date(2026, 11, 6, 20, 0, 0, 0, time.UTC)}
 	for _, form := range []string{`"2026-11-06T21:00:00.320000+00:00"`, `"2026-11-06T21:00:00Z"`, `"2026-11-06T23:00:00+02:30"`} {
-		if grant := Inspect("sk-x", expiring(form), expect); !grant.Holds() {
+		if grant := Inspect("sk-x", expiring(form), expect); len(grant.Problems) > 0 {
 			t.Errorf("%s: %v", form, grant.Problems)
 		}
 	}

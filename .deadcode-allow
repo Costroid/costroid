@@ -1,0 +1,31 @@
+# Functions that no program of this module calls yet, each with the date it
+# was listed and the change that will call it. make lint-deadcode fails on an
+# unreached function missing here, and on a line whose function is reached.
+# A line still here when its change is dropped goes, with its function.
+#
+# The catalog's Sigstore bundles, catalog.Signatures, are a variable, which
+# deadcode does not judge. Only tests read them until the binary verifies the
+# catalog against Sigstore's trusted root.
+
+2026-11-08 internal/scm.AppJWT the GitHub App's key signer and app create
+2026-11-08 internal/scm.AppTokens.Token the GitHub App's key signer and app create
+2026-11-08 internal/scm.Approval.Holds the GitHub App's webhook route, on the approve button
+2026-11-08 internal/scm.Approve the GitHub App's webhook route, on the approve button
+2026-11-08 internal/scm.RequestFrom the GitHub App's webhook route, on the approve button
+2026-11-08 internal/scm.ParseEvent the GitHub App's webhook route
+2026-11-08 internal/scm.eventPayload.checkRun the GitHub App's webhook route
+2026-11-08 internal/scm.eventPayload.common the GitHub App's webhook route
+2026-11-08 internal/scm.eventPayload.pullRequest the GitHub App's webhook route
+2026-11-08 internal/scm.NewLimiter the GitHub App's webhook route
+2026-11-08 internal/scm.NewMemoryDeliveries the GitHub App's webhook route
+2026-11-08 internal/scm.MemoryDeliveries.Claim the GitHub App's webhook route
+2026-11-08 internal/scm.MemoryDeliveries.Release the GitHub App's webhook route
+2026-11-08 internal/scm.NewQueue the GitHub App's webhook route
+2026-11-08 internal/scm.Queue.Offer the GitHub App's webhook route
+2026-11-08 internal/scm.Queue.Run the GitHub App's webhook route
+2026-11-08 internal/scm.Verify the GitHub App's webhook route
+2026-11-08 internal/scm.Webhook.ServeHTTP the GitHub App's webhook route
+2026-11-08 internal/scm.Webhook.enqueue the GitHub App's webhook route
+2026-11-08 internal/scm.Webhook.status the GitHub App's webhook route
+2026-11-08 internal/scm.outsideWindow the GitHub App's webhook route
+2026-11-08 internal/scm.readBody the GitHub App's webhook route
