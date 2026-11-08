@@ -4,28 +4,28 @@ GitHub Agentic Workflows (gh-aw) runs Claude, Codex or Copilot in a workflow it 
 
 ## Read a run
 
-Download the run's `usage` artifact into an empty directory, then read the directory. `RUN_ID` is the gh-aw run's id, as `gh run list --workflow <workflow>` lists it:
+Download the run's `usage` and `info` artifacts, then read the `usage` directory. `RUN_ID` is the gh-aw run's id, as `gh run list --workflow <workflow>` lists it. Given two names, `gh run download` writes each artifact to a directory of that name:
 
 ```sh
-gh run download "$RUN_ID" --name usage --dir gh-aw-usage
-costroid ingest-run --from gh-aw=gh-aw-usage --out costroid-rows.jsonl
+gh run download "$RUN_ID" --name usage --name info --dir gh-aw
+costroid ingest-run --from gh-aw=gh-aw/usage --out costroid-rows.jsonl
 ```
 
-The first lines it prints, for the artifact in [`internal/adapter/ghaw/testdata/not-recorded/claude`](../internal/adapter/ghaw/testdata/not-recorded/claude), which was written by hand:
+The first lines it prints, for the run recorded in [`internal/adapter/ghaw/testdata/0.29.0/codex`](../internal/adapter/ghaw/testdata/0.29.0/codex), gh-aw v1.0.1 running Codex 0.164.0 on 2026-11-08:
 
 ```text
 costroid: gh-aw, 5 requests
-costroid: 15 rows in costroid-rows.jsonl, catalog 0.3.0
-costroid: USD 0.04974 at list, Measured
+costroid: 18 rows in costroid-rows.jsonl, catalog 0.3.0
+costroid: USD 0.0370553 at list, Measured
 costroid: none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw
-costroid: gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits.
+costroid: gh-aw stated 3.70553 AI credits for this run. Costroid does not convert credits.
 ```
 
 `costroid report --preview --rows costroid-rows.jsonl` then prints the comment those rows would get. [`docs/troubleshooting.md`](troubleshooting.md#reading-a-gh-aw-run) lists every line this source prints.
 
 ## Post the check on the pull request
 
-[`recipes/github-gh-aw-follow-up.yml`](../recipes/github-gh-aw-follow-up.yml) runs on `workflow_run` after your gh-aw workflow, so no gh-aw file is edited. It downloads the run's `usage` artifact into an empty directory under `runner.temp`, reads it with `costroid ingest-run --from gh-aw`, and posts the `costroid` check with `costroid follow-up --ingested`. Copy it to `.github/workflows/costroid-gh-aw.yml` on the default branch, and put your gh-aw workflow's name, the `name:` line of its lock file, in `workflows:`.
+[`recipes/github-gh-aw-follow-up.yml`](../recipes/github-gh-aw-follow-up.yml) runs on `workflow_run` after your gh-aw workflow, so no gh-aw file is edited. It downloads the run's `usage` and `info` artifacts into two empty directories under `runner.temp`, reads them with `costroid ingest-run --from gh-aw`, and posts the `costroid` check with `costroid follow-up --ingested`. Copy it to `.github/workflows/costroid-gh-aw.yml` on the default branch, and put your gh-aw workflow's name, the `name:` line of its lock file, in `workflows:`.
 
 `costroid report` posts on the `pull_request` event alone, so the follow-up posts the check. `--ingested` says the rows were written in the follow-up's own job: it then posts for a pull request from a branch of your repository, which has no report job of its own, and reads the run's object beside the rows for the reason and gh-aw's credits. A fork's pull request gets a check that concludes `neutral` at most, as every fork's does. gh-aw runs no workflow on a fork's pull request unless its `forks:` field names the fork (https://github.github.com/gh-aw/reference/fork-support/, read 2026-11-08).
 
@@ -35,15 +35,17 @@ The check and the comment state gh-aw's credits on a line of their own, under th
 
 ## What is read
 
-The `usage` artifact as gh-aw v1.2.1's conclusion job uploads it (`actions/setup/sh/collect_usage_artifact_files.sh` in `github/gh-aw`, read 2026-11-08). Three of its files are read, and nothing else:
+gh-aw uploads two artifacts this reads. Its conclusion job uploads `usage`, and its activation job uploads `info`, which holds `aw_info.json` alone (`pkg/workflow/notify_comment.go` and `pkg/workflow/compiler_activation_outputs.go` in `github/gh-aw`, read at v1.0.1, v1.2.0 and v1.2.1 on 2026-11-08). Three files are read, and nothing else:
 
 | File | What it holds |
 | --- | --- |
-| `agent/token_usage.jsonl` | The agent job's records, copied byte for byte from the proxy's `token-usage.jsonl` |
-| `detection/token_usage.jsonl` | The threat detection job's records. It is empty when that job made no request |
-| `aw_info.json` | The AI-credit cap the workflow was compiled with, as `model_config.max_ai_credits` |
+| `agent/token_usage.jsonl` in `usage` | The agent job's records, copied byte for byte from the proxy's `token-usage.jsonl` |
+| `detection/token_usage.jsonl` in `usage` | The threat detection job's records. It is empty when that job made no request |
+| `aw_info.json` in `info` | The AI-credit cap the workflow was compiled with, as `model_config.max_ai_credits` |
 
-The run wrote the artifact, so it is read as data and nothing in it is run. An artifact that holds a file or a directory gh-aw does not put there, or a link in place of a file, is refused, and no row is written. A gh-aw release that adds a file to the artifact is refused the same way until Costroid's list names the file. The refusal names the entry and the gh-aw release the list was read from, v1.2.1, and the check states it as the reason `reader_refused`.
+`ingest-run --from gh-aw=DIR` reads the `info` artifact from the directory named `info` beside `DIR`, where `gh run download` puts it. Without that directory the run is read all the same, and its note names no cap. For some workflows, Copilot's among them, gh-aw also puts `aw_info.json` in `usage`, and it is read there too. When the two state different caps, the note names neither, and a warning says so.
+
+The run wrote both artifacts, so they are read as data and nothing in them is run. An artifact that holds a file or a directory gh-aw does not put there, or a link in place of a file, is refused, and no row is written. The `usage` artifact may hold the 25 files the upload step of gh-aw v1.0.1 to v1.2.1 names; v1.2.0 added `evals/evals_status.json` to v1.0.1's 24. A gh-aw release that adds a file is refused the same way until Costroid's list names the file. The refusal names the entry and the releases the list was read from, `gh-aw v1.0.1 to v1.2.1`, and the check states it as the reason `reader_refused`.
 
 ## How a record becomes rows
 
@@ -76,12 +78,16 @@ gh-aw runs Claude on `ANTHROPIC_API_KEY` and Codex on `OPENAI_API_KEY` or `CODEX
 
 ## Grade
 
-The grade is `none`. Costroid did not start the run and minted no cap. gh-aw's proxy holds a run to its own cap of AI credits, priced by gh-aw, and the note names the cap `aw_info.json` states. A cap that gh-aw's admission lowers while the run starts is not in `aw_info.json`. Without `aw_info.json` the note reads `none: Costroid did not start this run, so no budget held it`.
+The grade is `none`. Costroid did not start the run and minted no cap. gh-aw's proxy holds a run to its own cap of AI credits, priced by gh-aw, and the note names the cap `aw_info.json` states. The comment's Enforcement cell then reads `none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw, not by Costroid`. A cap that gh-aw's admission lowers while the run starts is not in `aw_info.json`. Without `aw_info.json` the note reads `none: Costroid did not start this run, so no budget held it`.
 
 ## gh-aw's AI credits
 
 gh-aw prices each request in its own unit, AI credits, and each record states the run's total so far as `ai_credits_total`. The run's figure is the last total of the agent job's records added to the last of the threat detection job's, with every digit gh-aw wrote. Costroid states it on its own line and never converts it or adds it to a USD figure. When the threat detection job made requests and states no credits, the run's total is unknown, and no figure is printed.
 
+gh-aw states "One AIC equals $0.01 USD" (https://github.com/github/gh-aw/blob/v1.0.1/docs/src/content/docs/reference/cost-management.md, read 2026-11-08). gh-aw prices from its own table, and Costroid from its catalog. On the recorded run the two agree to every digit: 3.70553 AI credits and USD 0.0370553. That is one run of one model, so it is a match observed, not a rule.
+
 ## What is verified
 
-No gh-aw run has been recorded yet. The reading follows gh-aw's published schema and its source at the releases named above, and the tests run on artifacts written by hand. The two Codex requests in [`internal/adapter/ghaw/testdata/not-recorded/codex`](../internal/adapter/ghaw/testdata/not-recorded/codex) are those of the recorded Codex 0.167.0 run, written as the proxy states OpenAI's usage, and they price to the USD 0.0350276 that recording states.
+[`internal/adapter/ghaw/testdata/0.29.0/codex`](../internal/adapter/ghaw/testdata/0.29.0/codex) is a recorded run: gh-aw v1.0.1 running Codex 0.164.0 behind firewall v0.29.0, with `max-ai-credits: 10`, on 2026-11-08. It holds the run's two record files and its `aw_info.json`, cut to the keys Costroid keeps by `scripts/record`. Its records state `_schema` `token-usage/v0.29.0`, and its `aw_info.json` states firewall `v0.29.0`. A test holds its 18 rows to USD 0.0370553 and gh-aw's figure to 3.70553 AI credits.
+
+No Claude or Copilot run has been recorded. The Claude and Copilot readings follow gh-aw's published schema and its source at the releases named above, and their tests run on artifacts written by hand. The two Codex requests in [`internal/adapter/ghaw/testdata/not-recorded/codex`](../internal/adapter/ghaw/testdata/not-recorded/codex) are those of the recorded Codex 0.167.0 run, written as the proxy states OpenAI's usage, and they price to the USD 0.0350276 that recording states.

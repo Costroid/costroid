@@ -1,0 +1,13 @@
+{
+  "engine_id": "codex",
+  "model": "",
+  "version": "0.164.0",
+  "agent_version": "0.164.0",
+  "firewall_enabled": true,
+  "awf_version": "v0.29.0",
+  "cli_version": "v1.0.1",
+  "model_config": {
+    "max_ai_credits_source": "frontmatter",
+    "max_ai_credits": 10
+  }
+}

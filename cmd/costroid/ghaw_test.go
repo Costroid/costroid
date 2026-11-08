@@ -18,6 +18,27 @@ import (
 // internal/adapter/ghaw/testdata/not-recorded/README.md says.
 const ghawArtifact = "../../internal/adapter/ghaw/testdata/not-recorded/claude"
 
+// recordedGhAw is dogfood run 42469416753, gh-aw v1.0.1 running Codex with
+// max-ai-credits: 10, recorded with its usage and info artifacts side by side
+// as gh run download writes them.
+const recordedGhAw = "../../internal/adapter/ghaw/testdata/0.29.0/codex"
+
+// downloadRecordedGhAw lays the recorded run's usage artifact out under a new
+// directory as gh run download RUN -n usage -n info does, with its info
+// artifact beside it when info is true, and returns the directory.
+func downloadRecordedGhAw(t *testing.T, info bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	names := []string{"usage/agent/token_usage.jsonl", "usage/detection/token_usage.jsonl"}
+	if info {
+		names = append(names, "info/aw_info.json")
+	}
+	for _, name := range names {
+		copyInto(t, filepath.Join(recordedGhAw, filepath.FromSlash(name)), filepath.Join(dir, filepath.FromSlash(name)))
+	}
+	return dir
+}
+
 // creditsField matches both AI-credit figures of a token-usage record.
 var creditsField = regexp.MustCompile(`"ai_credits_(this_response|total)":[0-9.]+`)
 
@@ -147,7 +168,7 @@ func TestIngestRunRefusesAGhAwArtifactWithAnExtraEntry(t *testing.T) {
 	}
 	out := filepath.Join(t.TempDir(), "rows.jsonl")
 	code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+artifact, "--out", out)
-	if code != exitFailure || !strings.Contains(stderr, "the usage artifact holds costroid, which gh-aw v1.2.1 does not write there") {
+	if code != exitFailure || !strings.Contains(stderr, "the usage artifact holds costroid, which gh-aw v1.0.1 to v1.2.1 do not write there") {
 		t.Errorf("exit %d: %s", code, stderr)
 	}
 	if rows, err := os.ReadFile(out); err != nil || len(rows) != 0 {
@@ -156,17 +177,21 @@ func TestIngestRunRefusesAGhAwArtifactWithAnExtraEntry(t *testing.T) {
 }
 
 // TestGhAwDocShowsWhatIngestRunPrints runs the command docs/gh-aw.md shows on
-// the artifact it names, and finds every line the page quotes.
+// the recorded run it names, downloaded as the page says, and finds every line
+// the page quotes.
 func TestGhAwDocShowsWhatIngestRunPrints(t *testing.T) {
 	clearCI(t)
 	page, err := os.ReadFile("../../docs/gh-aw.md")
 	if err != nil {
 		t.Fatal(err)
 	}
+	download := docBlock(t, string(page), "sh", "gh run download")
 	command, printed := docBlock(t, string(page), "sh", "costroid ingest-run"), docBlock(t, string(page), "text", "costroid: gh-aw,")
-	artifact := copyArtifact(t, "")
+	if download != `gh run download "$RUN_ID" --name usage --name info --dir gh-aw` {
+		t.Fatalf("the page downloads with %q, and the test lays the artifacts out as gh-aw/usage and gh-aw/info", download)
+	}
 	dir := t.TempDir()
-	if err := os.Rename(artifact, filepath.Join(dir, "gh-aw-usage")); err != nil {
+	if err := os.Rename(downloadRecordedGhAw(t, true), filepath.Join(dir, "gh-aw")); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
@@ -270,7 +295,7 @@ func TestGhAwFollowUpNamesTheRefusedArtifact(t *testing.T) {
 	if code != 0 || len(stub.Checks) != 1 {
 		t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
 	}
-	if text := stub.Checks[0].Text; !strings.Contains(text, `"run_reason": "reader_refused"`) || !strings.Contains(text, "which gh-aw v1.2.1 does not write there") {
+	if text := stub.Checks[0].Text; !strings.Contains(text, `"run_reason": "reader_refused"`) || !strings.Contains(text, "which gh-aw v1.0.1 to v1.2.1 do not write there") {
 		t.Errorf("the check does not name the refusal:\n%s", text)
 	}
 }
@@ -305,6 +330,71 @@ func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 		if !strings.Contains(stdout, want) || strings.Contains(stdout, other) {
 			t.Errorf("aw_info.json stated %t, and the comment's cell is not %q:\n%s", stated, want, stdout)
 		}
+	}
+}
+
+// TestGhAwReadsTheInfoArtifactsCap reads the recorded run's cap from its info
+// artifact, downloaded beside its usage artifact, and the comment's
+// Enforcement cell names the 10 AI credits gh-aw's proxy held it to. Without
+// the info artifact the cell reads as any run at grade none. An info artifact
+// that holds another file, or a file in its place, is refused.
+func TestGhAwReadsTheInfoArtifactsCap(t *testing.T) {
+	clearCI(t)
+	const capped = "| none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw, not by Costroid |"
+	const plain = "| none: nothing held the run to a budget |"
+	for _, info := range []bool{true, false} {
+		out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
+		code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(downloadRecordedGhAw(t, info), "usage"), "--out", out)
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		const note = "costroid: none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw\n"
+		if strings.Contains(stderr, note) != info {
+			t.Errorf("with the info artifact %t, ingest-run printed:\n%s", info, stderr)
+		}
+		code, stdout, stderr := execute(t, "report", "--preview", "--rows", out)
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		want, other := capped, plain
+		if !info {
+			want, other = plain, capped
+		}
+		if !strings.Contains(stdout, want) || strings.Contains(stdout, other) {
+			t.Errorf("with the info artifact %t, the comment's cell is not %q:\n%s", info, want, stdout)
+		}
+	}
+	for name, tc := range map[string]struct {
+		plant func(dir string) error
+		want  string
+	}{
+		"a second file in the info artifact": {
+			plant: func(dir string) error {
+				return os.WriteFile(filepath.Join(dir, "info", "run.sh"), []byte("#!/bin/sh\n"), 0o755)
+			},
+			want: "the info artifact holds run.sh, which gh-aw v1.0.1 to v1.2.1 do not write there",
+		},
+		"a file in the info artifact's place": {
+			plant: func(dir string) error {
+				return os.WriteFile(filepath.Join(dir, "info"), []byte("{}"), 0o644)
+			},
+			want: "the info beside the usage artifact is not a directory",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := downloadRecordedGhAw(t, name != "a file in the info artifact's place")
+			if err := tc.plant(dir); err != nil {
+				t.Fatal(err)
+			}
+			out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
+			code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(dir, "usage"), "--out", out)
+			if code != exitFailure || !strings.Contains(stderr, tc.want) {
+				t.Errorf("exit %d: %s", code, stderr)
+			}
+			if rows, err := os.ReadFile(out); err != nil || len(rows) != 0 {
+				t.Errorf("rows %q, %v", rows, err)
+			}
+		})
 	}
 }
 

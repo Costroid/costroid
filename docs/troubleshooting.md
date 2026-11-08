@@ -138,15 +138,20 @@ The `read` stage. A line here ends the step with exit code 125.
 | `costroid: warning: <count> requests in <file> are left out: the catalog holds no price for provider <provider>` | Records from a provider the catalog does not price, such as `gemini`, wrote no row | None. The rows hold every other request |
 | `costroid: warning: <requests> Copilot served bill by subscription and the rest bill a key, so every row reads list_equivalent, the weaker claim` | The run mixed Copilot with a provider's key | None |
 | `costroid: warning: <file> states no AI credits, so the run's credits are not stated` | The threat detection job made requests and stated no credits, so gh-aw's total for the run is unknown | None |
+| `costroid: warning: the usage artifact's aw_info.json states a cap of <count> AI credits and the info artifact's <count>, so no cap is named` | The two copies of `aw_info.json` disagree, so the note names no cap | None. Report it with the gh-aw version |
 
 The errors after `reason reader_refused:` for a gh-aw run:
 
 | Error | Meaning | Fix |
 | ----- | ------- | --- |
 | `gh-aw: the usage artifact holds no agent/token_usage.jsonl: download the usage artifact of a gh-aw run whose firewall was on` | The artifact holds no agent records. The firewall's proxy writes them, so a workflow with the firewall off writes none | Turn the firewall on in the workflow, or read a run that had it on |
-| `gh-aw: the usage artifact holds <entry>, which gh-aw <version> does not write there` | The directory holds a file the named gh-aw release does not put in the usage artifact, so none of it was read. A newer gh-aw that adds a file gets this error too | Download into an empty directory. If the file is gh-aw's own, report it with the gh-aw version |
-| `gh-aw: the usage artifact holds the directory <entry>, which gh-aw <version> does not write there` | The same, for a directory | The same |
+| `gh-aw: the usage artifact holds <entry>, which gh-aw v1.0.1 to v1.2.1 do not write there` | The directory holds a file the named gh-aw releases do not put in the usage artifact, so none of it was read. A newer gh-aw that adds a file gets this error too | Download into an empty directory. If the file is gh-aw's own, report it with the gh-aw version |
+| `gh-aw: the usage artifact holds the directory <entry>, which gh-aw v1.0.1 to v1.2.1 do not write there` | The same, for a directory | The same |
 | `gh-aw: the usage artifact's <entry> is not a plain file` | A link or another special file stands where gh-aw writes a file | Download into an empty directory |
+| `gh-aw: the info artifact holds <entry>, which gh-aw v1.0.1 to v1.2.1 do not write there` | The `info` directory beside the usage artifact holds more than `aw_info.json`, so none of the run was read | Download the `info` artifact into an empty directory named `info` beside the usage artifact's |
+| `gh-aw: the info artifact's aw_info.json is not a plain file` | A link or another special file stands where gh-aw writes `aw_info.json` | The same |
+| `gh-aw: the info beside the usage artifact is not a directory: download the run's info artifact into a directory of its own` | A file or a link named `info` sits beside the usage artifact's directory | Remove it, or download the usage artifact into a directory with nothing else beside it |
+| `gh-aw: <file> states max_ai_credits <value>, which is not a count of credits above 0` | `aw_info.json` in the usage artifact, or `info/aw_info.json`, states a cap Costroid cannot read | Report it with the gh-aw version |
 | `gh-aw: request_id <id> appears in <file> and <file>` | Two records name one request, and a row's id is built from its request's | Report it with the gh-aw version |
 | `gh-aw: <file> line <number>: <problem>` | A record breaks the token-usage schema in a field Costroid reads, so none of the run was read | Report it with the line's `_schema` |
 

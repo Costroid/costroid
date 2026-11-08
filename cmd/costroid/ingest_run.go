@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -221,23 +222,49 @@ func openGhAwUsage(dir string, _ time.Time) (endedRun, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("gh-aw %s is not a directory: download the run's usage artifact into a directory of its own", dir)
 	}
-	return ghawUsage{dir: dir}, nil
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	return ghawUsage{dir: dir, info: filepath.Join(filepath.Dir(absolute), ghaw.InfoArtifact)}, nil
 }
 
-// ghawUsage is the usage artifact of a gh-aw run, downloaded. The run wrote
-// it, so it is read as data and nothing in it is run.
+// ghawUsage is the usage artifact of a gh-aw run, downloaded, and the
+// directory beside it that its info artifact is read from, where gh run
+// download puts it when it downloads both. The run wrote them, so they are
+// read as data and nothing in them is run.
 type ghawUsage struct {
-	dir string
+	dir  string
+	info string
 }
 
 func (ghawUsage) agent() string { return ghaw.Name }
 
 func (u ghawUsage) read() (adapter.Report, error) {
-	report, err := ghaw.ReadUsage(os.DirFS(u.dir))
+	info, err := u.infoArtifact()
+	if err != nil {
+		return adapter.Report{}, &run.ReaderError{Err: err}
+	}
+	report, err := ghaw.ReadUsage(os.DirFS(u.dir), info)
 	if err != nil {
 		return adapter.Report{}, &run.ReaderError{Err: err}
 	}
 	return report, nil
+}
+
+// infoArtifact is the info directory beside the usage artifact, nil when there
+// is none. A link or a file in its place is refused.
+func (u ghawUsage) infoArtifact() (fs.FS, error) {
+	info, err := os.Lstat(u.info)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("gh-aw: read the info artifact: %w", err)
+	case !info.IsDir():
+		return nil, fmt.Errorf("gh-aw: the %s beside the usage artifact is not a directory: download the run's info artifact into a directory of its own", ghaw.InfoArtifact)
+	}
+	return os.DirFS(u.info), nil
 }
 
 func (ghawUsage) close() error { return nil }

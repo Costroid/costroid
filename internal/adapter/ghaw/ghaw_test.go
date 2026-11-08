@@ -28,7 +28,7 @@ var (
 
 func readArtifact(t *testing.T, dir string) adapter.Report {
 	t.Helper()
-	report, err := ghaw.ReadUsage(os.DirFS(dir))
+	report, err := ghaw.ReadUsage(os.DirFS(dir), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestGhAwCodexInputMapping(t *testing.T) {
 // cannot hold the tokens it says were cached.
 func TestGhAwOpenAIInputBelowItsCacheIsRefused(t *testing.T) {
 	artifact := artifactWith(record("openai", "gpt-6.1-sol", `"input_tokens":10,"cache_read_tokens":11`))
-	if _, err := ghaw.ReadUsage(artifact); err == nil || !strings.Contains(err.Error(), "line 1") {
+	if _, err := ghaw.ReadUsage(artifact, nil); err == nil || !strings.Contains(err.Error(), "line 1") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -225,7 +225,7 @@ func TestGhAwStatedCreditsStayApart(t *testing.T) {
 	if stated == nil || *stated != (adapter.Stated{Unit: "AIC", Quantity: "7.47", Source: "gh-aw"}) {
 		t.Errorf("stated %+v, want 6.52 AIC from the agent's job and 0.95 from detection", stated)
 	}
-	float, err := ghaw.ReadUsage(artifactWith(record("anthropic", "claude-sonnet-5", `"input_tokens":1,"ai_credits_total":4.830000000000001`)))
+	float, err := ghaw.ReadUsage(artifactWith(record("anthropic", "claude-sonnet-5", `"input_tokens":1,"ai_credits_total":4.830000000000001`)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestGhAwStatedCreditsStayApart(t *testing.T) {
 	}
 	artifact := artifactWith(record("anthropic", "claude-sonnet-5", `"input_tokens":1`))
 	artifact["detection/token_usage.jsonl"] = &fstest.MapFile{Data: []byte(record("anthropic", "claude-sonnet-5", `"request_id":"msg_detect","input_tokens":1,"ai_credits_total":0.5`) + "\n")}
-	report, err := ghaw.ReadUsage(artifact)
+	report, err := ghaw.ReadUsage(artifact, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestGhAwStatedCreditsStayApart(t *testing.T) {
 	}
 	artifact = artifactWith(record("anthropic", "claude-sonnet-5", `"input_tokens":1,"ai_credits_total":2`))
 	artifact["detection/token_usage.jsonl"] = &fstest.MapFile{Data: []byte(record("anthropic", "claude-sonnet-5", `"request_id":"msg_detect","input_tokens":1`) + "\n")}
-	report, err = ghaw.ReadUsage(artifact)
+	report, err = ghaw.ReadUsage(artifact, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestGhAwGradeIsNoneWithTheProxyNote(t *testing.T) {
 		}
 	}
 	artifact := artifactWith(record("anthropic", "claude-sonnet-5", `"input_tokens":1`))
-	unstated, err := ghaw.ReadUsage(artifact)
+	unstated, err := ghaw.ReadUsage(artifact, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestGhAwGradeIsNoneWithTheProxyNote(t *testing.T) {
 		t.Errorf("with no aw_info.json, enforcement %+v", unstated.Enforcement)
 	}
 	artifact["aw_info.json"] = &fstest.MapFile{Data: []byte(`{"model_config":{"max_ai_credits":"ten"}}`)}
-	if _, err := ghaw.ReadUsage(artifact); err == nil {
+	if _, err := ghaw.ReadUsage(artifact, nil); err == nil {
 		t.Error("a cap that is not a count was read")
 	}
 }
@@ -293,15 +293,15 @@ func TestGhAwFollowUpRefusesAnExtraArtifactEntry(t *testing.T) {
 			for path, file := range extra {
 				artifact[path] = file
 			}
-			if _, err := ghaw.ReadUsage(artifact); err == nil {
+			if _, err := ghaw.ReadUsage(artifact, nil); err == nil {
 				t.Error("the artifact was read")
 			}
 		})
 	}
-	if _, err := ghaw.ReadUsage(os.DirFS(claudeArtifact)); err != nil {
+	if _, err := ghaw.ReadUsage(os.DirFS(claudeArtifact), nil); err != nil {
 		t.Errorf("the artifact as gh-aw writes it was refused: %v", err)
 	}
-	if _, err := ghaw.ReadUsage(fstest.MapFS{"aw_info.json": &fstest.MapFile{Data: []byte("{}")}}); err == nil || !strings.Contains(err.Error(), "agent/token_usage.jsonl") {
+	if _, err := ghaw.ReadUsage(fstest.MapFS{"aw_info.json": &fstest.MapFile{Data: []byte("{}")}}, nil); err == nil || !strings.Contains(err.Error(), "agent/token_usage.jsonl") {
 		t.Errorf("an artifact with no agent records: %v", err)
 	}
 }
@@ -315,7 +315,7 @@ func TestGhAwCopilotPricesAsListEquivalent(t *testing.T) {
 		record("copilot", "gpt-6.1-sol", `"request_id":"copilot-2","input_tokens":5,"cache_read_tokens":100`),
 		record("gemini", "gemini-3-pro", `"request_id":"gemini-1","input_tokens":40`),
 	)
-	report, err := ghaw.ReadUsage(artifact)
+	report, err := ghaw.ReadUsage(artifact, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestGhAwCopilotPricesAsListEquivalent(t *testing.T) {
 		record("copilot", "claude-sonnet-5", `"request_id":"copilot-1","input_tokens":1`),
 		record("anthropic", "claude-sonnet-5", `"request_id":"key-1","input_tokens":1`),
 	)
-	if report, err = ghaw.ReadUsage(artifact); err != nil {
+	if report, err = ghaw.ReadUsage(artifact, nil); err != nil {
 		t.Fatal(err)
 	}
 	if report.CostBasis != focus.ListEquivalent || !hasWarning(report, "the weaker claim") {
@@ -368,13 +368,13 @@ func TestGhAwRefusesARecordItCannotRead(t *testing.T) {
 		"credits below zero":     record("anthropic", "claude-sonnet-5", `"ai_credits_total":-0.5`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := ghaw.ReadUsage(artifactWith(line)); err == nil {
+			if _, err := ghaw.ReadUsage(artifactWith(line), nil); err == nil {
 				t.Error("the record was read")
 			}
 		})
 	}
 	twice := record("anthropic", "claude-sonnet-5", `"request_id":"msg_twice","input_tokens":1`)
-	if _, err := ghaw.ReadUsage(artifactWith(twice, twice)); err == nil || !strings.Contains(err.Error(), "msg_twice") {
+	if _, err := ghaw.ReadUsage(artifactWith(twice, twice), nil); err == nil || !strings.Contains(err.Error(), "msg_twice") {
 		t.Errorf("one request id twice: %v", err)
 	}
 }
