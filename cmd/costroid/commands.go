@@ -236,6 +236,7 @@ const reportHelp = `Usage:
   costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID]
                   [--agent-result RESULT] [--json] [--exit-on-verdict]
   costroid report --preview --rows rows.jsonl
+  costroid report --recorded RUN_ID,DATE --rows rows.jsonl
 
 report posts from CI, and selects the host from the job's variables. On a pull
 request it reads costroid.yml at the head of the base branch when it runs, and
@@ -262,6 +263,14 @@ request, in place of a report with no rows.
 --preview prints, as Markdown, the comment report would post for the rows, and
 reads and posts nothing on any host. Its verdict holds the rows to costroid.yml
 in the working directory, as costroid policy does.
+
+--recorded says the rows are a recorded run's, not the pull request's: CI run
+RUN_ID's, recorded on DATE, written YYYY-MM-DD. The check, the comment and the
+job summary open with a line that says so, without the head commit, and the
+result object names the run under recorded. The pull request's total neither
+reads these figures nor counts them. On the workflow_run event of a fork's
+pull request, whose own run holds a read-only token, report posts the check
+and the comment there, on the one open pull request follow-up would find.
 
 --json prints on stdout the result object the check run carries, byte for
 byte: the conclusion, figures per currency and basis, token counts by class,

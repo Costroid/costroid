@@ -227,7 +227,7 @@ func assertPreview(t *testing.T, stdout string) {
 	if !strings.HasPrefix(stdout, comment.Marker+"\n### Costroid\n\nThis run cost USD "+demoTotal+" at list (Measured). Nothing held it to a budget.\n\n**Verdict: neutral.**") {
 		t.Errorf("the preview does not open as the comment does:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "```json\n{\n  \"schema\": \"costroid.result/0.7\"") {
+	if !strings.Contains(stdout, "```json\n{\n  \"schema\": \"costroid.result/0.8\"") {
 		t.Errorf("no machine block in\n%s", stdout)
 	}
 }

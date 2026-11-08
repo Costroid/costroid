@@ -49,7 +49,7 @@ GitHub lists at most 250 commits of a pull request, so these totals can leave ou
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",
@@ -131,6 +131,7 @@ GitHub lists at most 250 commits of a pull request, so these totals can leave ou
     "unread": 1
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",

@@ -14,7 +14,7 @@ The agent did not run on this pull request: the workflow skipped its job, as the
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "agent_skipped",
@@ -41,6 +41,7 @@ The agent did not run on this pull request: the workflow skipped its job, as the
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
-  "agent_stated": null
+  "agent_stated": null,
+  "recorded": null
 }
 ```

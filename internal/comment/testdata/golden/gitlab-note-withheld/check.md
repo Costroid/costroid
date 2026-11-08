@@ -41,7 +41,7 @@ Token counts are withheld with the amounts. The rows carry them.
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "neutral",
   "state": "reported",
   "agent_error": null,
@@ -102,6 +102,7 @@ Token counts are withheld with the amounts. The rows carry them.
   },
   "lifetime": null,
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",

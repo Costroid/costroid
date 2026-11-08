@@ -43,7 +43,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -109,6 +109,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -179,7 +180,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "reported",
@@ -245,6 +246,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -325,7 +327,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "failure",
   "state": "reported",
   "agent_error": null,
@@ -390,6 +392,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -460,7 +463,7 @@ This pull request comes from a fork, and the fork's own run wrote these rows. It
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "reported",
@@ -513,6 +516,7 @@ This pull request comes from a fork, and the fork's own run wrote these rows. It
   },
   "lifetime": null,
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",
@@ -557,7 +561,7 @@ Reason: `fork_no_rows`. This pull request comes from a fork, and its workflow ru
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "rows_unreadable",
@@ -586,6 +590,7 @@ Reason: `fork_no_rows`. This pull request comes from a fork, and its workflow ru
   },
   "lifetime": null,
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",
@@ -658,7 +663,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -724,6 +729,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -758,7 +764,7 @@ Check run 1001 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1003,
   "conclusion": "neutral",
   "state": "reported",
@@ -824,6 +830,7 @@ Check run 1001 carries this report in full.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -893,7 +900,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -959,6 +966,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -993,7 +1001,7 @@ Check run 1001 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1003,
   "conclusion": "neutral",
   "state": "reported",
@@ -1059,6 +1067,7 @@ Check run 1001 carries this report in full.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -1093,7 +1102,7 @@ Check run 1003 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1004,
   "conclusion": "failure",
   "state": "reported",
@@ -1159,6 +1168,7 @@ Check run 1003 carries this report in full.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -1228,7 +1238,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -1294,6 +1304,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -1328,7 +1339,7 @@ Check run 1001 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "reported",
@@ -1394,6 +1405,7 @@ Check run 1001 carries this report in full.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
@@ -1461,7 +1473,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -1527,6 +1539,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
     "unread": 0
   },
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",

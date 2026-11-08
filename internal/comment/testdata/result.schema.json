@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.7/result.schema.json",
-  "title": "Costroid result object, version 0.7",
-  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, the agent's own figure in its own unit, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.8/result.schema.json",
+  "title": "Costroid result object, version 0.8",
+  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, the agent's own figure in its own unit, the recorded run a report shows in place of the pull request's own, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.7"
+      "const": "costroid.result/0.8"
     },
     "check_run_id": {
       "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
@@ -152,6 +152,17 @@
           "$ref": "#/$defs/agentStated"
         }
       ]
+    },
+    "recorded": {
+      "description": "The recorded run whose rows the figures are, in place of the pull request's own: the CI run that wrote them and the day it was recorded. Null on a report on the pull request's own rows. A copy that withholds amounts states it too.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/recorded"
+        }
+      ]
     }
   },
   "required": [
@@ -172,7 +183,8 @@
     "rows_sha256",
     "rows_file_sha256",
     "lifetime",
-    "agent_stated"
+    "agent_stated",
+    "recorded"
   ],
   "additionalProperties": false,
   "allOf": [
@@ -546,6 +558,26 @@
       "required": [
         "id",
         "attempt"
+      ],
+      "additionalProperties": false
+    },
+    "recorded": {
+      "description": "A run recorded earlier. run_id is the CI run that wrote the rows, GITHUB_RUN_ID on GitHub Actions, and date the day it was recorded.",
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "date": {
+          "description": "YYYY-MM-DD.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+        }
+      },
+      "required": [
+        "run_id",
+        "date"
       ],
       "additionalProperties": false
     },

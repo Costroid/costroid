@@ -33,7 +33,7 @@ const (
 var schemas = append([]string{"costroid.result/0.3", "costroid.result/0.4", "costroid.result/0.5"}, digestSchemas...)
 
 // digestSchemas are the result objects that state the digest of their rows.
-var digestSchemas = []string{"costroid.result/0.6", "costroid.result/0.7"}
+var digestSchemas = []string{"costroid.result/0.6", "costroid.result/0.7", "costroid.result/0.8"}
 
 // usd is the one currency the policy's pull request budget is held in.
 const usd = "USD"
@@ -110,7 +110,8 @@ func parseText(text string) (Report, error) {
 
 // CheckRunBlocks reads the result objects of the costroid check runs on one
 // commit, every attempt included. unread counts the check runs whose object
-// Parse refused.
+// Parse refused. A report on a recorded run's rows is left out: no run of
+// this pull request spent its figures.
 func CheckRunBlocks(ctx context.Context, host scm.History, sha string) (reports []Report, unread int, err error) {
 	checks, err := host.CheckRuns(ctx, sha, comment.CheckName)
 	if err != nil {
@@ -120,6 +121,9 @@ func CheckRunBlocks(ctx context.Context, host scm.History, sha string) (reports 
 		report, err := parseText(check.Text)
 		if err != nil {
 			unread++
+			continue
+		}
+		if report.Block.Recorded != nil {
 			continue
 		}
 		report.CheckRun = check.ID

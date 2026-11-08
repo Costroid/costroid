@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -30,9 +31,9 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.7 in
+	// schema names the result object's contract, result/v0.8 in
 	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.7"
+	schema = "costroid.result/0.8"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -248,6 +249,41 @@ type Input struct {
 	// artifact or fetched none. A refusal fails the check whatever the
 	// policy or an approval says, and only on a report with no figures.
 	Refused *RefusedArtifact
+	// Recorded names the recorded run whose rows the report shows in place
+	// of the pull request's own, nil for a report on the pull request's own
+	// rows. One that names no run or no calendar date is dropped.
+	Recorded *Recorded
+}
+
+// Recorded is a run recorded earlier, as costroid report --recorded names it.
+type Recorded struct {
+	// RunID is the CI run that wrote the rows, from 1.
+	RunID int64
+	// Date is the day the run was recorded, as YYYY-MM-DD.
+	Date string
+}
+
+// recorded is the recorded run when it names a run and a calendar date, and
+// nil otherwise.
+func (i Input) recorded() *Recorded {
+	if i.Recorded == nil || i.Recorded.RunID < 1 {
+		return nil
+	}
+	if _, err := time.Parse(time.DateOnly, i.Recorded.Date); err != nil {
+		return nil
+	}
+	recorded := *i.Recorded
+	return &recorded
+}
+
+// recordedLine opens a report on a recorded run's rows, so no reader takes
+// its figures for the pull request's.
+func (i Input) recordedLine() string {
+	recorded := i.recorded()
+	if recorded == nil {
+		return ""
+	}
+	return fmt.Sprintf("These figures are a recorded run's, workflow run %d on %s, not this pull request's.", recorded.RunID, recorded.Date)
 }
 
 // Comment renders the sticky comment. Its block is a copy of the check's that
@@ -463,6 +499,9 @@ type traceLine struct {
 
 type view struct {
 	Marker string
+	// Recorded opens a report on a recorded run's rows. It is empty on a
+	// report on the pull request's own rows.
+	Recorded string
 	// FirstLine states the figure with its basis and grade, before the
 	// verdict. It is empty when the report has no figures.
 	FirstLine  string
@@ -511,10 +550,11 @@ func (i Input) view() view {
 	shown := i.Amounts == AmountsShown
 	result := view{
 		Marker:         Marker,
+		Recorded:       i.recordedLine(),
 		FirstLine:      i.firstLine(shown),
 		Conclusion:     i.Conclusion(),
 		VerdictLine:    i.verdictLine(shown),
-		RunLine:        runLine(i.HeadSHA, i.RunURL),
+		RunLine:        runLine(i.runCommit(), i.RunURL),
 		Why:            i.why(),
 		AgentError:     i.agentErrorBesideFigures(),
 		AgentStated:    i.agentStatedLine(shown),
@@ -691,6 +731,15 @@ func listed(items []string, omitted int) string {
 		return strings.Join(items, "")
 	}
 	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+}
+
+// runCommit is the commit the run line names: none on a recorded run's
+// report, whose rows came from no commit of this pull request.
+func (i Input) runCommit() string {
+	if i.recorded() != nil {
+		return ""
+	}
+	return i.HeadSHA
 }
 
 // runLine names the commit and links the run only when each is well formed.

@@ -1,6 +1,6 @@
 # Read a result from an agent
 
-Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the cap and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.7`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.7) in `Costroid/costroid-schemas`.
+Every Costroid report writes one result object: the figures of one run per currency and basis, the token counts by class, the grades, the cap and what is left or over. An agent reads that object, never the comment's prose. Its contract is [`result/v0.8`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.8) in `Costroid/costroid-schemas`.
 
 ## Where the object is
 
@@ -156,6 +156,8 @@ Three fields say how the agent's job ended and which run wrote the object. Each 
 An agent can fail after some requests, so `agent_error` can sit beside figures. With no rows it comes with the run reason `agent_error`. This release fills all three. `costroid ingest-run` fills `agent_error` and `ci_run` as `costroid run` does.
 
 `agent_stated` is a figure the agent states about its own run, in its own unit, null when it states none and in a copy that withholds amounts. gh-aw states its AI credits: `{"unit": "AIC", "quantity": "7.47", "source": "gh-aw"}`. Costroid never converts it and never adds it to `figures`, `cap` or `lifetime`. [`docs/gh-aw.md`](gh-aw.md) says how the quantity is read.
+
+`recorded` names a recorded run whose rows the figures are, in place of the pull request's own: `{"run_id": 42368537950, "date": "2026-11-07"}`. `costroid report --recorded` fills it, and the comment then opens with a line that says the figures are that run's, not the pull request's. It is null on every other report. The pull request's total never counts a recorded report.
 
 ## Read the run's status
 

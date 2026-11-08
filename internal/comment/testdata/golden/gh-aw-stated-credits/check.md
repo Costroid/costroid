@@ -41,7 +41,7 @@ Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "neutral",
   "state": "reported",
   "agent_error": null,
@@ -95,6 +95,7 @@ Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog
     "unit": "AIC",
     "quantity": "7.47",
     "source": "gh-aw"
-  }
+  },
+  "recorded": null
 }
 ```
