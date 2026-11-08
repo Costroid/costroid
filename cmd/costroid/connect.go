@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/Costroid/costroid/internal/gateway"
@@ -29,6 +30,13 @@ const (
 	proofAudience       = "https://app.costroid.com/tenants/"
 	githubOwnerKind     = "github-owner:"
 	gitlabNamespaceKind = "gitlab-namespace:"
+	// keysUnavailable is the platform's refusal when it cannot read the CI
+	// system's keys. The same proof can be sent again inside its window.
+	keysUnavailable = "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
+	// maxKeysWait is the longest Retry-After connect waits before its one
+	// retry, so the proof is still inside its window when it is sent again.
+	// The platform asks for 60 seconds.
+	maxKeysWait = 120 * time.Second
 )
 
 var (
@@ -53,13 +61,16 @@ asks GitHub for the job's OIDC token with the tenant's audience, which needs
 id-token: write. On GitLab CI it is gitlab-namespace: and
 CI_PROJECT_NAMESPACE_ID, and the proof is the job's ID token in
 COSTROID_PLATFORM_PROOF, which id_tokens sets with the tenant's audience.
+connect binds a GitLab namespace only when CI_SERVER_HOST is gitlab.com.
 --installation-id states the same id, and connect refuses any other. Outside
 both, --installation-id is needed, and connect only reads whether it is bound.
 
 The platform takes a proof from a scheduled run or a push to a protected
 branch. A binding stays current for 7 days after its last proof, so a daily
 schedule keeps it. When the installation was proven in the last 20 hours,
-connect sends nothing. The token and the proof are never printed.
+connect sends nothing. When the platform cannot read the CI system's keys,
+connect sends the proof once more after the Retry-After the platform names,
+when that is 120 seconds or less. The token and the proof are never printed.
 docs/connect.md gives the job.
 
 Exit codes of connect:
@@ -106,10 +117,29 @@ func connectCommand(ctx context.Context, args []string, std stdio) int {
 		Timeout:       platformTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return connect(ctx, args, client, os.Getenv, time.Now, std.stdout, std.stderr)
+	return connect(ctx, args, client, os.Getenv, connectClock{now: time.Now, wait: waitFor}, std.stdout, std.stderr)
 }
 
-func connect(ctx context.Context, args []string, client *http.Client, getenv func(string) string, now func() time.Time, stdout, stderr io.Writer) int {
+// connectClock is the time connect reads and how it waits before a retry.
+type connectClock struct {
+	now  func() time.Time
+	wait func(context.Context, time.Duration) error
+}
+
+// waitFor returns after the duration, or with the context's error when it
+// ends first.
+func waitFor(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func connect(ctx context.Context, args []string, client *http.Client, getenv func(string) string, clock connectClock, stdout, stderr io.Writer) int {
 	flags, err := parseConnect(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -124,7 +154,7 @@ func connect(ctx context.Context, args []string, client *http.Client, getenv fun
 		return exitFailure
 	}
 	target := platform{client: client, base: flags.base, token: getenv(platformTokenVariable)}
-	bound, err := bind(ctx, target, job, now)
+	bound, err := bind(ctx, target, job, clock, stderr)
 	var refused *refusal
 	switch {
 	case err == nil:
@@ -181,6 +211,9 @@ func connectJob(given string, getenv func(string) string) (ciJob, error) {
 		}
 		job = ciJob{installation: githubOwnerKind + owner, proof: githubProof(getenv)}
 	case getenv("GITLAB_CI") == "true":
+		if host := getenv("CI_SERVER_HOST"); host != gitLabDotCom {
+			return ciJob{}, fmt.Errorf("CI_SERVER_HOST is %q, and Costroid Platform binds a GitLab namespace only on gitlab.com, because a self-managed instance's namespace ids are not unique", host)
+		}
 		namespace := getenv("CI_PROJECT_NAMESPACE_ID")
 		if !installationNumber.MatchString(namespace) {
 			return ciJob{}, fmt.Errorf("CI_PROJECT_NAMESPACE_ID is %q, not a namespace's number", namespace)
@@ -228,7 +261,7 @@ func gitlabProof(getenv func(string) string) func(context.Context, *http.Client,
 
 // bind leaves a binding proven in the last 20 hours as it is, and sends one
 // proof otherwise.
-func bind(ctx context.Context, target platform, job ciJob, now func() time.Time) (binding, error) {
+func bind(ctx context.Context, target platform, job ciJob, clock connectClock, stderr io.Writer) (binding, error) {
 	if !integrationTokenPattern.MatchString(target.token) {
 		return binding{}, errors.New("COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform")
 	}
@@ -236,7 +269,7 @@ func bind(ctx context.Context, target platform, job ciJob, now func() time.Time)
 	if err != nil {
 		return binding{}, err
 	}
-	if held, ok := identity.current(job.installation, now()); ok {
+	if held, ok := identity.current(job.installation, clock.now()); ok {
 		return held, nil
 	}
 	named := binding{installation: job.installation, tenant: identity.Tenant.ID}
@@ -248,10 +281,38 @@ func bind(ctx context.Context, target platform, job ciJob, now func() time.Time)
 		return named, err
 	}
 	sent, err := target.sendProof(ctx, job.installation, identity.Tenant.ID, proof)
+	if pause, ok := retryAfterKeys(err); ok {
+		fmt.Fprintf(stderr, "costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(pause.Seconds()))
+		if err := clock.wait(ctx, pause); err != nil {
+			return named, fmt.Errorf("wait to send the proof again: %w", err)
+		}
+		sent, err = target.sendProof(ctx, job.installation, identity.Tenant.ID, proof)
+	}
 	if err != nil {
 		return named, err
 	}
 	return sent, nil
+}
+
+// retryAfterKeys is the wait before the one retry when err is the refusal
+// for unreadable keys, with a Retry-After connect honours.
+func retryAfterKeys(err error) (time.Duration, bool) {
+	var refused *refusal
+	if !errors.As(err, &refused) || refused.code != keysUnavailable {
+		return 0, false
+	}
+	return keysWait(refused.retryAfter)
+}
+
+// keysWait is the wait Retry-After asks for, in whole seconds. It is not ok
+// when the value is absent, unreadable or past maxKeysWait, and connect then
+// stops with the refusal instead of waiting.
+func keysWait(retryAfter string) (time.Duration, bool) {
+	seconds, err := strconv.Atoi(retryAfter)
+	if err != nil || seconds < 1 || seconds > int(maxKeysWait/time.Second) {
+		return 0, false
+	}
+	return time.Duration(seconds) * time.Second, true
 }
 
 // identityAnswer is the part of GET /identity that connect reads.
