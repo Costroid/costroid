@@ -2,7 +2,7 @@
 
 | Basis | Catalog | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| List-equivalent, not billed | `0.2.0` | unattributed | agent-flag: client-side estimate, can pass the cap |
+| List-equivalent, not billed | `0.3.0` | unattributed | agent-flag: client-side estimate, can pass the cap |
 
 Unverified: the agent's job wrote these figures.
 
