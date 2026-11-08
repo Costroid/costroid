@@ -25,7 +25,7 @@ jobs:
       # Reads the pull request's head, author and reviews.
       pull-requests: read
     steps:
-      - uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
+      - uses: Costroid/costroid/action@61dac375b64017cbc42a5878603268577a49058c # v1.0.0-alpha.13
         with:
           stage: install
       - name: Post the check with the approval

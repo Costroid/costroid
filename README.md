@@ -6,7 +6,7 @@ Costroid is the cost check for pull requests. An agent's own cost figure is an e
 
 ## Install
 
-The recipes pin `1.0.0-alpha.12`: [install it](docs/install.md).
+The recipes pin `1.0.0-alpha.13`: [install it](docs/install.md).
 
 ## Add it to the workflow you have
 

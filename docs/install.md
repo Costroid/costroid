@@ -4,27 +4,27 @@
 
 ## The binary
 
-The commands below install `1.0.0-alpha.12`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.12), check it against `SHA256SUMS`, and put it on your `PATH`:
+The commands below install `1.0.0-alpha.13`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.13), check it against `SHA256SUMS`, and put it on your `PATH`:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.12/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.12/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.13/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.13/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 chmod +x costroid-linux-amd64
 sudo mv costroid-linux-amd64 /usr/local/bin/costroid
 costroid version
 ```
 
-The last line prints `costroid 1.0.0-alpha.12, catalog 0.1.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
+The last line prints `costroid 1.0.0-alpha.13, catalog 0.3.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
 
 ## The signature
 
 Each file is signed with cosign, keyless, by this repository's release workflow. To check the binary's signature, with cosign 3 or later:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.12/costroid-linux-amd64.sigstore.json
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.13/costroid-linux-amd64.sigstore.json
 cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.12 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.13 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com /usr/local/bin/costroid
 ```
 
@@ -35,10 +35,10 @@ The identity is the release workflow at the release's tag, so a file signed by a
 With Go 1.27 or later:
 
 ```sh
-go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.12
+go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.13
 ```
 
-`go install` builds from the module's source, so the build carries no release number: `costroid version` prints `costroid dev, catalog 0.1.0`. `init` refuses such a build, because it cannot tell which release to pin. Pass it the commit of `v1.0.0-alpha.12` with `--action-ref 8defbe00a23afb0f3a07130e24087cb8b9b68ed0`, or install the binary above.
+`go install` builds from the module's source, so the build carries no release number: `costroid version` prints `costroid dev, catalog 0.1.0`. `init` refuses such a build, because it cannot tell which release to pin. Pass it the commit of `v1.0.0-alpha.13` with `--action-ref 61dac375b64017cbc42a5878603268577a49058c`, or install the binary above.
 
 To build from a checkout instead, run `make build`. That build belongs to no release either.
 
@@ -85,7 +85,7 @@ The CLI needs no server: `costroid run` and `costroid report` work from a job al
 
 The image is one static binary on a non-root user, with no shell. It runs the service, and every other `costroid` command, from one tag. `docs/serve.md` has what the service does.
 
-The Compose file and the chart still default to the image of the first release. The commands below run `1.0.0-alpha.12`, the release the recipes pin.
+The Compose file and the chart still default to the image of the first release. The commands below run `1.0.0-alpha.13`, the release the recipes pin.
 
 ## Docker Compose
 
@@ -96,7 +96,7 @@ export COSTROID_APP_PASSWORD="$(openssl rand -hex 32)"
 export COSTROID_PSEUDONYM_KEY="$(openssl rand -base64 32)"
 export COSTROID_OIDC_AUDIENCE=https://costroid.example
 export COSTROID_BIND=github.com:example
-export COSTROID_IMAGE=ghcr.io/costroid/costroid:1.0.0-alpha.12
+export COSTROID_IMAGE=ghcr.io/costroid/costroid:1.0.0-alpha.13
 docker compose -f deploy/compose.yaml up -d
 ```
 
@@ -105,7 +105,7 @@ The service listens on `127.0.0.1:8080`. Put your own TLS in front of it, and se
 ## Helm
 
 ```sh
-helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.12 \
+helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.13 \
   --set oidcAudience=https://costroid.example --set 'bindings={github.com:example}'
 ```
 
@@ -120,7 +120,7 @@ To use your own Postgres, create the two roles [`docs/serve.md`](serve.md) lists
 | `pseudonym-key`          | At least 32 bytes in base64       |
 
 ```sh
-helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.12 --set postgres.enabled=false --set existingSecret=costroid-connections \
+helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.13 --set postgres.enabled=false --set existingSecret=costroid-connections \
   --set oidcAudience=https://costroid.example --set 'bindings={github.com:example}'
 ```
 
