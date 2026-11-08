@@ -1,0 +1,18 @@
+{
+  "name": "costroid",
+  "owner": {
+    "name": "The Costroid Authors",
+    "url": "https://github.com/Costroid"
+  },
+  "metadata": {
+    "description": "The Claude Code plugin that reads what an agent's run on a pull request cost."
+  },
+  "plugins": [
+    {
+      "name": "costroid",
+      "source": "./plugin/costroid",
+      "version": "0.1.0",
+      "description": "Reads what an agent's run on a pull request cost and how the costroid check concluded, through the read-only tools of costroid mcp."
+    }
+  ]
+}
