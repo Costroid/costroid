@@ -55,6 +55,10 @@ The settings are read from costroid.yml at the head of the base branch. A
 review on a fork's pull request runs with a read-only token, so approve posts
 nothing there. Like report, it exits 0 whatever the host answers, and outside
 GitHub Actions it refuses and exits 125. docs/approval.md has the workflow.
+
+Exit codes of approve:
+  0                 approve ran, whatever the host answered
+  125               GitHub Actions was not detected, or an argument was given
 `
 
 // reviewEvent is the part of a pull_request_review event approve reads.

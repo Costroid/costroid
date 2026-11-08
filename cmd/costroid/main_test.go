@@ -196,8 +196,8 @@ func TestTheEgressCommandIsDispatched(t *testing.T) {
 	if code := dispatch(context.Background(), []string{"egress", "--help"}, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "costroid egress report [--json]") {
-		t.Fatalf("stderr %q", stderr.String())
+	if !strings.Contains(stdout.String(), "costroid egress report [--json]") {
+		t.Fatalf("stdout %q", stdout.String())
 	}
 }
 
@@ -216,22 +216,22 @@ const maxUsageLines = 16
 
 func TestBareCommandPrintsShortUsage(t *testing.T) {
 	code, stdout, stderr := execute(t)
-	if code != exitFailure || stdout != "" {
-		t.Fatalf("exit %d, stdout %q", code, stdout)
+	if code != exitUsage || stderr != "" {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if stderr != usage.String() {
-		t.Errorf("stderr is not the short usage:\n%s", stderr)
+	if stdout != usage.String() {
+		t.Errorf("stdout is not the short usage:\n%s", stdout)
 	}
-	if lines := strings.Count(stderr, "\n"); lines > maxUsageLines {
+	if lines := strings.Count(stdout, "\n"); lines > maxUsageLines {
 		t.Errorf("the short usage has %d lines", lines)
 	}
 	for _, line := range []string{"  costroid run --budget-usd N --out rows.jsonl -- <agent command>\n", "  costroid report --rows rows.jsonl\n", "  costroid validate [costroid.yml]\n", "  costroid help <command>\n", "  costroid --version\n"} {
-		if !strings.Contains(stderr, line) {
+		if !strings.Contains(stdout, line) {
 			t.Errorf("the short usage lacks %q", line)
 		}
 	}
 	for _, entry := range commands {
-		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(entry.name) + `\b`).MatchString(stderr) {
+		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(entry.name) + `\b`).MatchString(stdout) {
 			t.Errorf("the short usage does not name %s", entry.name)
 		}
 	}

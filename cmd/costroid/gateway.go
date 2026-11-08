@@ -19,15 +19,17 @@ import (
 	"github.com/Costroid/costroid/internal/gateway"
 )
 
-const gatewayUsage = `costroid gateway gives one CI run its own key on a LiteLLM proxy.
-
-Usage:
+const gatewayUsage = `Usage:
   costroid gateway keygen --out FILE
   costroid gateway public-key
   costroid gateway request --out DIR
-  costroid gateway mint --url URL --budget-usd N --lifetime-minutes N --max-request-tokens N [--max-parallel-requests N]
-                        [--repository-daily-cap-usd N] [--author-daily-cap-usd N] [--request FILE]
+  costroid gateway mint --url URL --budget-usd N --lifetime-minutes N
+                        --max-request-tokens N [--max-parallel-requests N]
+                        [--repository-daily-cap-usd N]
+                        [--author-daily-cap-usd N] [--request FILE]
   costroid gateway close --url URL [--retry-after DURATION]
+
+gateway gives one CI run its own key on a LiteLLM proxy.
 
 keygen draws a sealing key pair at random. It writes the private half to FILE,
 which must not exist, for this user alone, and prints the public half. Store
@@ -39,10 +41,10 @@ from the admin key.
 public-key prints the public half of the sealing key in
 COSTROID_GATEWAY_SEALING_KEY, to check the repository variable against it.
 
-request runs in the agent's job. It draws the run's key, writes it to DIR/key
-for this user alone, and writes DIR/` + gateway.RequestFile + `, the key sealed to
-COSTROID_GATEWAY_PUBLIC_KEY for this repository, run and attempt. It prints the
-key's id, never the key.
+request runs in the agent's job. It draws the run's key and writes it to
+DIR/key for this user alone. It writes DIR/` + gateway.RequestFile + `, the
+key sealed to COSTROID_GATEWAY_PUBLIC_KEY for this repository, run and
+attempt. It prints the key's id, never the key.
 
 mint runs in a job that holds COSTROID_GATEWAY_SEALING_KEY and
 COSTROID_GATEWAY_ADMIN_KEY and never runs the agent. It opens the request, from
@@ -55,12 +57,16 @@ job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
 Only an attested key lets the run's rows read exact.
 --repository-daily-cap-usd puts the key in a team for the repository with that
 budget per day, and --author-daily-cap-usd in a user for the pull request's
-author with that budget per day.
+author with that budget per day. The pull request, its head commit and its
+author come from the event file GITHUB_EVENT_PATH names. When mint cannot read
+it, it warns and names the file: the key then names none of the three, and no
+author's budget applies.
 
 close deletes the run's key by its alias, and prints deleted, or absent when no
 key was left. Run it when the job ends, also on failure. When it finds no key,
-mint may still be waiting for the request, so close waits --retry-after, 13
-minutes by default, and deletes once more. When COSTROID_INGEST_URL is set,
+mint may still be waiting for the request, so close waits --retry-after, no
+time by default, and deletes once more. The recipe runs close after mint, so
+it waits none. When COSTROID_INGEST_URL is set,
 close first reads what the gateway counted on the key, waiting up to 30 seconds
 for the figure to settle, and after the delete attests it to that ledger under
 the job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
@@ -68,7 +74,9 @@ Only an attested count lets a budget on the run's rows pass.
 
 The gateway's URL must be https, except on localhost and 127.0.0.1.
 
-Exit codes: 0 done, 125 not done.
+Exit codes of gateway:
+  0                 done
+  125               not done, and the line on stderr says why
 `
 
 const (
@@ -306,11 +314,11 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
-	ci, _ := cicontext.Read(os.Getenv)
+	ci, author := mintEvent(os.Getenv, stderr)
 	mint := gateway.Mint{
 		Client: gateway.NewClient(flags.url), AdminKey: admin, SealingKey: strings.TrimSpace(sealing), Run: binding, Request: request,
 		Budget: flags.budget, Lifetime: flags.lifetime, MaxParallel: flags.parallel, MaxRequestTokens: flags.requestTokens,
-		PullRequest: ci.PullRequest, Head: ci.Head, Author: eventAuthor(os.Getenv("GITHUB_EVENT_PATH")), Caps: flags.caps,
+		PullRequest: ci.PullRequest, Head: ci.Head, Author: author, Caps: flags.caps,
 	}
 	id, err := mint.Register(ctx)
 	if err != nil {
@@ -367,6 +375,20 @@ func readMintRequest(ctx context.Context, path string, binding gateway.Binding) 
 	waitCtx, cancel := context.WithTimeout(ctx, artifactWait)
 	defer cancel()
 	return artifacts.Wait(waitCtx, requestArtifact+binding.Attempt)
+}
+
+// mintEvent reads the pull request, its head and its author from the run's
+// event file. A file that cannot be read leaves all three out of the key and
+// lets no author's budget apply, so mint warns, naming the file, and goes on:
+// the key still holds the run to its own budget.
+func mintEvent(getenv func(string) string, stderr io.Writer) (cicontext.Context, string) {
+	path := getenv("GITHUB_EVENT_PATH")
+	ci, err := cicontext.Read(getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the event file %q could not be read, so the key names no pull request, head commit or author, and no author's budget applies: %v\n", path, err)
+		return ci, ""
+	}
+	return ci, eventAuthor(path)
 }
 
 // eventAuthor reads the pull request's author from the event file, or nothing.

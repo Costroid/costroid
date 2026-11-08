@@ -27,6 +27,8 @@ import (
 )
 
 const (
+	// exitUsage is a command line that names no command, as with no argument.
+	exitUsage      = 2
 	exitBudgetStop = 124
 	exitFailure    = 125
 
@@ -52,14 +54,14 @@ func main() {
 func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	std := stdio{stdin: stdin, stdout: stdout, stderr: stderr}
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return exitFailure
+		fmt.Fprint(stdout, usage)
+		return exitUsage
 	}
 	switch name := args[0]; {
 	case name == "help":
-		return helpCommand(ctx, args[1:], std)
+		return helpCommand(args[1:], std)
 	case isHelpFlag(name):
-		return helpCommand(ctx, nil, std)
+		return helpCommand(nil, std)
 	case name == "--version":
 		return versionCommand(ctx, nil, std)
 	}
@@ -67,7 +69,7 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if !ok {
 		return unknownCommand(args[0], stderr)
 	}
-	if entry.help != "" && len(args) > 1 && isHelpFlag(args[1]) {
+	if len(args) > 1 && isHelpFlag(args[1]) {
 		fmt.Fprint(stdout, entry.help)
 		return 0
 	}
@@ -111,7 +113,9 @@ func (a accountFlags) check() error {
 }
 
 const runHelp = `Usage:
-  costroid run --budget-usd N --out rows.jsonl [--agent NAME] [--billing-account ID] [--credential ID] [--gateway URL --gateway-key-file F] [--json] -- <agent command>
+  costroid run --budget-usd N --out rows.jsonl [--agent NAME]
+               [--billing-account ID] [--credential ID]
+               [--gateway URL --gateway-key-file F] [--json] -- <agent command>
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 
@@ -128,17 +132,24 @@ maxBudgetUsd. A codex-sdk run stops the program at the cap, as codex exec does.
 --gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
 the run's own key, which costroid gateway request drew and costroid gateway
 mint registered. Without them, COSTROID_GATEWAY_URL and
-COSTROID_GATEWAY_KEY_FILE do. run waits for the key, reads it back, and gives the
-agent the gateway's URL and the key in place of any provider credential. The
-key's id fills SubAccountId. The rows read gateway-precheck when the key has a
-budget at or under --budget-usd, an expiry, a parallel-request limit, a largest
-request and this run's id, and when the gateway's store answered before, during
-and after the run. Otherwise they read none and say why. costroid gateway help
-describes the other steps.
+COSTROID_GATEWAY_KEY_FILE do. run waits for the key, reads it back, and gives
+the agent the gateway's URL and the key in place of any provider credential.
+The key's id fills SubAccountId. The rows read gateway-precheck when the key
+has a budget at or under --budget-usd, an expiry, a parallel-request limit, a
+largest request and this run's id, and when the gateway's store answered
+before, during and after the run. Otherwise they read none and say why.
+costroid gateway help describes the other steps.
 
 ` + ciHelp + `
-` + jsonHelp + `
+--json prints one result object on stdout when run ends: figures per currency
+and basis, token counts by class, grades, the cap and what is left or over, and
+a reason when there are no figures. The agent's stream then goes to stderr,
+and the object says why run wrote no rows when it wrote none. run prints no
+object when it exits 125 before it creates the rows file. docs/agents.md
+describes the object.
+
 ` + resultFileHelp + `
+` + statusFileHelp + `
 Exit codes of run:
   the agent's own   the run finished, or the agent stopped itself
   124               costroid stopped the agent at the cap
