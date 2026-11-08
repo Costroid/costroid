@@ -1,6 +1,7 @@
 package otlp
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"regexp"
@@ -266,7 +267,8 @@ func usageShell(dialect Dialect, r *record) Usage {
 	if r.attrs.text("speed") == tierFast {
 		usage.ServiceTier = tierFast
 	}
-	usage.ID = requestID(r)
+	usage.RequestID = r.attrs.text("request_id", "gen_ai.response.id")
+	usage.ID = cmp.Or(usage.RequestID, standInID(r))
 	return usage
 }
 
@@ -322,12 +324,10 @@ func providerOf(dialect Dialect, r *record, model string) string {
 	return ""
 }
 
-// requestID prefers the id the provider's request carries, which lets the
-// same request's rows from the result stream and from OTLP collapse by row id.
-func requestID(r *record) string {
-	if id := r.attrs.text("request_id", "gen_ai.response.id"); id != "" {
-		return id
-	}
+// standInID names a record that carries no provider request id. The
+// provider's id is preferred, because it lets the same request's rows from
+// the result stream and from OTLP collapse by row id.
+func standInID(r *record) string {
 	if r.spanID != "" {
 		return "span:" + r.traceID + ":" + r.spanID
 	}

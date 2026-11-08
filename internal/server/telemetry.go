@@ -133,6 +133,7 @@ func chargeOf(usage *otlp.Usage, count otlp.Count, batchDrops map[string]int64, 
 	}
 	return charge{
 		rowID:        focus.RowIdentity(usage.ID, count.Class),
+		requestID:    usage.RequestID,
 		provider:     usage.Provider,
 		model:        usage.Model,
 		serviceTier:  usage.ServiceTier,
