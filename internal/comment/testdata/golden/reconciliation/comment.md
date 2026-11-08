@@ -23,20 +23,20 @@ Last reconciliation of `apikey_02Example`: 2026-11-05, a token class missed the 
 
 Last reconciliation of `apikey_03Example`: 2026-11-05, the provider had not finished reporting the day.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.2.0`.
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 
 <details>
 <summary>How USD 0.001619725 was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.2.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
-| `0.2.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
-| `0.2.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
-| `0.2.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
-| `0.2.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
-| `0.2.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
-| `0.2.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
+| `0.3.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
+| `0.3.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 15605 | USD 0.00015605 |
+| `0.3.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 3495 | USD 0.000436875 |
+| `0.3.0` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.2 per 1,000,000 tokens | 4450 | USD 0.00089 |
+| `0.3.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 272 | USD 0.000136 |
+| `0.3.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | USD 0 |
+| `0.3.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | USD 0 |
 
 </details>
 
@@ -100,7 +100,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.2.0`.
     ],
     "models_omitted": 0,
     "catalog_versions": [
-      "0.2.0"
+      "0.3.0"
     ],
     "fallback_models": [],
     "fallback_models_omitted": 0,

@@ -59,19 +59,21 @@ func embedded(t *testing.T, version string) *Catalog {
 	return c
 }
 
-// TestEmbeddedReleaseCarriesTheThreeSheets holds that a run prices with
-// release 0.2.0 and its Anthropic, OpenAI and Google sheets, and that release
-// 0.1.0, embedded beside it, still parses on its own with its two sheets.
-func TestEmbeddedReleaseCarriesTheThreeSheets(t *testing.T) {
+// TestEmbeddedReleaseCarriesTheFiveSheets holds that a run prices with
+// release 0.3.0 and its Anthropic, OpenAI, Google, GitHub Copilot and Cursor
+// sheets, and that releases 0.2.0 and 0.1.0, embedded beside it, still parse
+// on their own with three sheets and two.
+func TestEmbeddedReleaseCarriesTheFiveSheets(t *testing.T) {
 	releases := []struct {
 		catalog   *Catalog
 		version   string
 		providers map[string]string
 	}{
-		{pinned(t), "0.2.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}},
+		{pinned(t), "0.3.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "github-copilot": "GitHub", "cursor": "Cursor"}},
+		{embedded(t, "0.2.0"), "0.2.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}},
 		{embedded(t, "0.1.0"), "0.1.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI"}},
 	}
-	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0"}) {
+	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0", "0.3.0"}) {
 		t.Errorf("the binary carries releases %v", versions)
 	}
 	for _, release := range releases {
@@ -567,5 +569,64 @@ func TestAnEndedPromotionFallsToTheFallbackNotAnOlderRelease(t *testing.T) {
 	}
 	if older.Fallback || older.ListUnitPrice.Cmp(decimal.MustParse("20.00")) != 0 {
 		t.Errorf("release 0.1.0 no longer holds the open-ended promotion row this test guards against: %+v", older)
+	}
+}
+
+// TestRerouteDayPricesTheSuccessor holds Google's reroute of Gemini 2.5 Pro
+// to Gemini 3.8 Flash from 2026-12-01: a 2.5 Pro request on 2026-11-30 is
+// priced at 2.5 Pro's own row, in its context tier, and one on 2026-12-01 at
+// the price 3.8 Flash's row states that day, whatever its context, under the
+// 2.5 Pro row the catalog carries for the reroute. Neither is the fallback.
+func TestRerouteDayPricesTheSuccessor(t *testing.T) {
+	cases := []struct {
+		class focus.TokenClass
+		own   [2]string
+		flash string
+	}{
+		{focus.InputUncached, [2]string{"1.25", "2.50"}, "0.75"},
+		{focus.Output, [2]string{"10.00", "15.00"}, "3.75"},
+		{focus.CacheRead, [2]string{"0.125", "0.25"}, "0.075"},
+	}
+	ownTiers := [2]string{"to-200000", "over-200000"}
+	c := pinned(t)
+	before := time.Date(2026, 11, 30, 23, 59, 59, 0, time.UTC)
+	reroute := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	checked := 0
+	for _, tc := range cases {
+		successor := query("google", "gemini-3.8-flash", tc.class)
+		successor.At = reroute
+		flash, err := c.Lookup(successor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "google:gemini-3.8-flash:global:standard:all:" + string(tc.class); flash.Fallback || flash.SkuPriceID != want || flash.ListUnitPrice.Cmp(decimal.MustParse(tc.flash)) != 0 {
+			t.Fatalf("3.8 Flash %s on 2026-12-01: %s at %s, fallback %t; want %s at %s", tc.class, flash.SkuPriceID, flash.ListUnitPrice, flash.Fallback, want, tc.flash)
+		}
+		for tier, input := range []int64{200000, 200001} {
+			q := query("google", "gemini-2.5-pro", tc.class)
+			q.ContextInputTokens = input
+			q.At = before
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := "google:gemini-2.5-pro:global:standard:" + ownTiers[tier] + ":" + string(tc.class)
+			if got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(tc.own[tier])) != 0 {
+				t.Errorf("2.5 Pro %s at %d input tokens on 2026-11-30: %s at %s, fallback %t; want %s at %s", tc.class, input, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, tc.own[tier])
+			}
+			q.At = reroute
+			got, err = c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id = "google:gemini-2.5-pro:global:standard:all:" + string(tc.class) + ":from-2026-12-01"
+			if got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(flash.ListUnitPrice) != 0 {
+				t.Errorf("2.5 Pro %s at %d input tokens on 2026-12-01: %s at %s, fallback %t; want %s at 3.8 Flash's %s", tc.class, input, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, flash.ListUnitPrice)
+			}
+			checked++
+		}
+	}
+	if checked != 6 {
+		t.Errorf("%d lookups checked", checked)
 	}
 }
