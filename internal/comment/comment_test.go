@@ -1103,7 +1103,7 @@ func TestAWithheldTraceShowsClassesAndSaysWhereTheCountsAre(t *testing.T) {
 				if found := regexp.MustCompile(`[A-Z]{3} [0-9]`).FindString(text); found != "" || strings.Contains(text, " per ") || strings.Contains(text, "| Tokens |") {
 					t.Errorf("%s %s: a price, an amount or a count %q in\n%s", host, where, found, text)
 				}
-				for _, want := range []string{"<summary>Token classes behind line 1</summary>", "| `0.1.0` | `cache_read` |\n", sentence} {
+				for _, want := range []string{"<summary>Token classes behind line 1</summary>", "| `0.2.0` | `cache_read` |\n", sentence} {
 					if !strings.Contains(text, want) {
 						t.Errorf("%s %s: no %q in\n%s", host, where, want, text)
 					}

@@ -53,11 +53,11 @@ var runCorpus = map[string]corpusRows{
 	// gpt-5.6-sol at 4.00, 0.40 and 20.00 USD per million: 5875 uncached,
 	// 28032 cached input and 111 output tokens.
 	"codex/0.164.0-alpha.11.1/exec": {rows: 8, total: "0.0369328", grade: adapter.GradeWrapperWatchdog},
-	// The stream alone names no model, so the fallback prices it, at 30.00,
-	// 1.00 and 180.00 USD per million: 7246 uncached, 44928 cached input and
+	// The stream alone names no model, so the fallback prices it, at 150.00,
+	// 12.00 and 600.00 USD per million: 7246 uncached, 44928 cached input and
 	// 116 output tokens. The plan refuses this command; the corpus reads the
 	// recording all the same.
-	"codex/0.164.0-alpha.11.1/resume":  {rows: 4, total: "0.283188", fallback: 3, grade: adapter.GradeNone},
+	"codex/0.164.0-alpha.11.1/resume":  {rows: 4, total: "1.695636", fallback: 3, grade: adapter.GradeNone},
 	"codex/0.164.0-alpha.11.1/stopped": {rows: 4, total: "0.0283136", grade: adapter.GradeWrapperWatchdog},
 	"codex/0.167.0/stopped":            {rows: 8, total: "0.0350276", grade: adapter.GradeWrapperWatchdog},
 	// Stopped at --max-budget-usd 0.0001. Its one model, claude-haiku-5-5, had

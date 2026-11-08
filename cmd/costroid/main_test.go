@@ -171,7 +171,7 @@ func TestBillingAccountPastTheContractsLimitIsRefused(t *testing.T) {
 
 func TestVersionNamesTheBinaryAndTheCatalog(t *testing.T) {
 	code, stdout, _ := execute(t, "version")
-	if code != 0 || !regexp.MustCompile(`^costroid \S+, catalog 0\.1\.0\n$`).MatchString(stdout) {
+	if code != 0 || !regexp.MustCompile(`^costroid \S+, catalog 0\.2\.0\n$`).MatchString(stdout) {
 		t.Errorf("exit %d, %q", code, stdout)
 	}
 }
