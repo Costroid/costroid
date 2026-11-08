@@ -1,7 +1,6 @@
 package policy
 
 import (
-	"bufio"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -16,7 +15,6 @@ import (
 )
 
 const (
-	maxRowBytes     = 1 << 20
 	maxAmountLength = 64
 	// maxModelLength is the longest model id a comment prints.
 	maxModelLength = 128
@@ -93,18 +91,15 @@ func (u Usage) modelRows(settings Settings) (refused, unreadable int, outside []
 }
 
 type usageRow struct {
-	BillingCurrency string                     `json:"BillingCurrency"`
-	ListCost        string                     `json:"ListCost"`
-	SubAccountID    *string                    `json:"SubAccountId"`
-	Tags            map[string]json.RawMessage `json:"Tags"`
+	BillingCurrency string     `json:"BillingCurrency"`
+	ListCost        string     `json:"ListCost"`
+	SubAccountID    *string    `json:"SubAccountId"`
+	Tags            focus.Tags `json:"Tags"`
 }
 
 // tag reads a string tag, empty when it is absent or not a string.
 func (r usageRow) tag(key string) string {
-	var value string
-	if json.Unmarshal(r.Tags[key], &value) != nil {
-		return ""
-	}
+	value, _ := r.Tags.Text(key)
 	return value
 }
 
@@ -126,24 +121,18 @@ func (r usageRow) joinable() bool {
 // smaller cost.
 func ReadUsage(source io.Reader) (Usage, error) {
 	totals := map[string]*CurrencyUsage{}
-	scanner := bufio.NewScanner(source)
-	scanner.Buffer(nil, maxRowBytes)
 	rows := 0
-	line := 1
-	for ; scanner.Scan(); line++ {
-		if len(scanner.Bytes()) == 0 {
-			continue
-		}
-		if err := add(totals, scanner.Bytes()); err != nil {
-			return Usage{}, fmt.Errorf("policy: rows line %d: %w", line, err)
-		}
+	err := focus.EachLine(source, func(line []byte) error {
 		rows++
-	}
-	err := scanner.Err()
-	if errors.Is(err, bufio.ErrTooLong) {
-		return Usage{}, fmt.Errorf("policy: rows line %d is past %d bytes", line, maxRowBytes)
-	}
-	if err != nil {
+		return add(totals, line)
+	})
+	var fault *focus.LineError
+	switch {
+	case errors.As(err, &fault) && errors.Is(fault.Err, focus.ErrLongLine):
+		return Usage{}, fmt.Errorf("policy: rows line %d is past %d bytes", fault.Line, focus.MaxLineBytes)
+	case errors.As(err, &fault):
+		return Usage{}, fmt.Errorf("policy: rows line %d: %w", fault.Line, fault.Err)
+	case err != nil:
 		return Usage{}, fmt.Errorf("policy: read rows: %w", err)
 	}
 	usage := Usage{Rows: rows}

@@ -1,7 +1,6 @@
 package comment
 
 import (
-	"bufio"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -17,7 +16,6 @@ import (
 )
 
 const (
-	maxRowBytes     = 1 << 20
 	maxAmountLength = 64
 	// maxFigures and maxNames bound the table and the block, so a rows file of
 	// any size renders to a comment of a few kilobytes.
@@ -123,36 +121,26 @@ func (e *RowError) Unwrap() error {
 }
 
 type row struct {
-	BillingCurrency   string                     `json:"BillingCurrency"`
-	ChargePeriodStart string                     `json:"ChargePeriodStart"`
-	ChargePeriodEnd   string                     `json:"ChargePeriodEnd"`
-	ListCost          string                     `json:"ListCost"`
-	ListUnitPrice     string                     `json:"ListUnitPrice"`
-	PricingQuantity   string                     `json:"PricingQuantity"`
-	PricingUnit       string                     `json:"PricingUnit"`
-	ConsumedQuantity  string                     `json:"ConsumedQuantity"`
-	SkuMeter          string                     `json:"SkuMeter"`
-	SkuPriceID        string                     `json:"SkuPriceId"`
-	ChargeDescription string                     `json:"ChargeDescription"`
-	Tags              map[string]json.RawMessage `json:"Tags"`
-	CatalogVersion    *string                    `json:"x_CostroidCatalogVersion"`
-}
-
-// tag reads a string tag. A user tag may hold another type, and the costroid/
-// tags read here are strings by contract.
-func (r row) tag(key string) (string, error) {
-	var value string
-	if err := json.Unmarshal(r.Tags[key], &value); err != nil {
-		return "", fmt.Errorf("tag %s: %w", key, err)
-	}
-	return value, nil
+	BillingCurrency   string     `json:"BillingCurrency"`
+	ChargePeriodStart string     `json:"ChargePeriodStart"`
+	ChargePeriodEnd   string     `json:"ChargePeriodEnd"`
+	ListCost          string     `json:"ListCost"`
+	ListUnitPrice     string     `json:"ListUnitPrice"`
+	PricingQuantity   string     `json:"PricingQuantity"`
+	PricingUnit       string     `json:"PricingUnit"`
+	ConsumedQuantity  string     `json:"ConsumedQuantity"`
+	SkuMeter          string     `json:"SkuMeter"`
+	SkuPriceID        string     `json:"SkuPriceId"`
+	ChargeDescription string     `json:"ChargeDescription"`
+	Tags              focus.Tags `json:"Tags"`
+	CatalogVersion    *string    `json:"x_CostroidCatalogVersion"`
 }
 
 // proxyCap is the cap a gh-aw row's description states its proxy held the run
 // to, empty for any other row. The note is matched, and only its digits are
 // kept.
 func (r row) proxyCap() string {
-	if agent, err := r.tag(focus.TagAgent); err != nil || agent != ghaw.Name {
+	if agent, err := r.Tags.Text(focus.TagAgent); err != nil || agent != ghaw.Name {
 		return ""
 	}
 	limit, _ := ghaw.ProxyCap(r.ChargeDescription)
@@ -246,20 +234,10 @@ func ReadRows(source io.Reader) (Ledger, error) {
 		fallbackPrices:   map[Data]struct{}{},
 		fallbackCatalogs: map[Data]struct{}{},
 	}
-	scanner := bufio.NewScanner(source)
-	scanner.Buffer(nil, maxRowBytes)
-	line := 1
-	for ; scanner.Scan(); line++ {
-		if len(scanner.Bytes()) == 0 {
-			continue
-		}
-		if err := total.add(scanner.Bytes()); err != nil {
-			return Ledger{}, &RowError{Line: line, Err: err}
-		}
-	}
-	err := scanner.Err()
-	if errors.Is(err, bufio.ErrTooLong) {
-		return Ledger{}, &RowError{Line: line, Err: fmt.Errorf("the line is past %d bytes", maxRowBytes)}
+	err := focus.EachLine(source, total.add)
+	var fault *focus.LineError
+	if errors.As(err, &fault) {
+		return Ledger{}, &RowError{Line: fault.Line, Err: fault.Err}
 	}
 	if err != nil {
 		return Ledger{}, fmt.Errorf("comment: read rows: %w", err)
@@ -336,8 +314,8 @@ func (t *tally) logRequest(key spendKey, parsed row, priced Trace) {
 	if log.overflow {
 		return
 	}
-	session, _ := parsed.tag(focus.TagSessionID)
-	model, _ := parsed.tag(focus.TagModel)
+	session, _ := parsed.Tags.Text(focus.TagSessionID)
+	model, _ := parsed.Tags.Text(focus.TagModel)
 	request := requestKey{parsed.ChargePeriodStart, parsed.ChargePeriodEnd, session, model}
 	if len(log.requests) == 0 || request != log.current || log.classes[priced.Class] {
 		if len(log.requests) == maxRequests {
@@ -467,7 +445,7 @@ func (r row) key() (figureKey, error) {
 }
 
 func (r row) closedTag(key string, vocabulary []string) (string, error) {
-	value, err := r.tag(key)
+	value, err := r.Tags.Text(key)
 	if err != nil {
 		return "", err
 	}
@@ -478,10 +456,10 @@ func (r row) closedTag(key string, vocabulary []string) (string, error) {
 }
 
 func (t *tally) note(parsed row) {
-	if agent, err := parsed.tag(focus.TagAgent); err == nil {
+	if agent, err := parsed.Tags.Text(focus.TagAgent); err == nil {
 		t.agents[Clean(agent)] = struct{}{}
 	}
-	if model, err := parsed.tag(focus.TagModel); err == nil {
+	if model, err := parsed.Tags.Text(focus.TagModel); err == nil {
 		t.models[Clean(model)] = struct{}{}
 	}
 	if parsed.CatalogVersion != nil {
@@ -492,7 +470,7 @@ func (t *tally) note(parsed row) {
 // noteFallback keeps what the fallback sentence names. A row without a model
 // tag still counts, as a model not shown.
 func (t *tally) noteFallback(parsed row) {
-	model, err := parsed.tag(focus.TagModel)
+	model, err := parsed.Tags.Text(focus.TagModel)
 	if err != nil {
 		model = string(notShown)
 	}
