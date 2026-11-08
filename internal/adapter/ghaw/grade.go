@@ -21,8 +21,30 @@ type runInfoFile struct {
 }
 
 // statedLimit is the AI-credit cap aw_info.json states for the run, nil when
-// the artifact holds no aw_info.json or it states no cap.
-func statedLimit(dir fs.FS) (*decimal.Decimal, error) {
+// neither artifact holds an aw_info.json that states one. gh-aw's activation
+// job uploads aw_info.json as the info artifact, and its conclusion job copies
+// it into the usage artifact only for some workflows, so either may hold it.
+// Two caps that differ name neither, and the warning says so.
+func statedLimit(usage, info fs.FS) (*decimal.Decimal, string, error) {
+	limit, err := readLimit(usage, runInfo)
+	if err != nil || info == nil {
+		return limit, "", err
+	}
+	other, err := readLimit(info, InfoArtifact+"/"+runInfo)
+	switch {
+	case err != nil:
+		return nil, "", err
+	case limit == nil:
+		return other, "", nil
+	case other != nil && limit.Cmp(*other) != 0:
+		return nil, fmt.Sprintf("the usage artifact's aw_info.json states a cap of %s AI credits and the info artifact's %s, so no cap is named", limit, other), nil
+	}
+	return limit, "", nil
+}
+
+// readLimit is the cap the aw_info.json in dir states, nil when dir holds
+// none or it states none. name is the file as an error names it.
+func readLimit(dir fs.FS, name string) (*decimal.Decimal, error) {
 	data, err := readAll(dir, runInfo)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -34,14 +56,14 @@ func statedLimit(dir fs.FS) (*decimal.Decimal, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&info); err != nil {
-		return nil, fmt.Errorf("gh-aw: read %s: %w", runInfo, err)
+		return nil, fmt.Errorf("gh-aw: read %s: %w", name, err)
 	}
 	if info.ModelConfig == nil || info.ModelConfig.MaxAICredits == "" {
 		return nil, nil
 	}
 	limit, err := decimal.Parse(info.ModelConfig.MaxAICredits.String())
 	if err != nil || limit.Sign() <= 0 {
-		return nil, fmt.Errorf("gh-aw: %s states max_ai_credits %s, which is not a count of credits above 0", runInfo, info.ModelConfig.MaxAICredits)
+		return nil, fmt.Errorf("gh-aw: %s states max_ai_credits %s, which is not a count of credits above 0", name, info.ModelConfig.MaxAICredits)
 	}
 	return &limit, nil
 }

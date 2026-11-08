@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      # Downloads the usage artifact the finished run kept.
+      # Downloads the usage and info artifacts the finished run kept.
       actions: read
       checks: write
       # Reads costroid.yml at the default branch's commit.
@@ -29,14 +29,23 @@ jobs:
       pull-requests: read
     steps:
       # gh-aw's run wrote these files. costroid reads three of them as data,
-      # refuses the artifact if it holds anything gh-aw does not put there, and
-      # no step runs anything from them.
+      # refuses an artifact that holds anything gh-aw does not put there, and
+      # no step runs anything from them. The info artifact goes to info beside
+      # the usage artifact, where costroid ingest-run reads the run's cap.
       - name: Fetch the finished run's usage
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: usage
           path: ${{ runner.temp }}/gh-aw-usage
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Fetch the finished run's info
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: info
+          path: ${{ runner.temp }}/info
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
       - uses: Costroid/costroid/action@bd747c80573f04fc03cbd37873f2678a2aad0aa2 # v1.0.0-alpha.14

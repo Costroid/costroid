@@ -1,5 +1,7 @@
 package main
 
+import "slices"
+
 // ghawPaths are the keys of gh-aw's token-usage records, and nothing else:
 // every property of token-usage.schema.json in the v0.29.8 release of
 // github/gh-aw-firewall (SHA-256 6d58ec9ea230d8889bb6ca03320317838334eabda752ef7abe597e33f511509d,
@@ -80,9 +82,25 @@ var ghawPaths = []string{
 // model_fallback.reason is a closed list and stays.
 var ghawFreeText = []string{"model_fallback.failures[].reason"}
 
+// ghawInfoPaths are the keys of aw_info.json a recording keeps: the releases
+// the run used and the cap its proxy held it to. The file also names the
+// repository, the workflow, the commit and the person who started the run,
+// and a recording drops them.
+var ghawInfoPaths = []string{
+	"engine_id",
+	"version",
+	"agent_version",
+	"cli_version",
+	"awf_version",
+	"firewall_enabled",
+	"model_config",
+	"model_config.max_ai_credits",
+	"model_config.max_ai_credits_source",
+}
+
 // ghawIDs are the keys of a token-usage record that hold an identifier.
 var ghawIDs = map[string]*idKind{
 	"request_id": &requestIDs,
 }
 
-var ghawAllowlist = newAllowlist(ghawPaths, nil, ghawIDs, nil)
+var ghawAllowlist = newAllowlist(slices.Concat(ghawPaths, ghawInfoPaths), nil, ghawIDs, nil)

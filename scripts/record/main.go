@@ -36,9 +36,10 @@ collect reads the agent's stream for the run's session or thread, then copies
 that session's files from --home: CLAUDE_CONFIG_DIR or CODEX_HOME by default.
 --fresh-home says the directory was made for this run, as on a CI runner, so
 its other sessions are the run's nested ones. For gh-aw, --home is the
-directory gh run download wrote the run's agent or usage artifact to, and
-collect copies its token-usage.jsonl. The raw directory holds the run's
-content: keep it on the machine that made it.
+directory gh run download RUN -n usage -n info wrote to, and collect copies
+the records of both jobs and the info artifact's aw_info.json; given the agent
+artifact instead, it copies its token-usage.jsonl. The raw directory holds the
+run's content: keep it on the machine that made it.
 
 scrub writes RAW, cut to its agent's allowlist, to a new directory. A working
 directory reads /work, an agent's text @content and a prompt @prompt. Every

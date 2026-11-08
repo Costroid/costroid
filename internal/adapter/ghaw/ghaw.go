@@ -26,6 +26,11 @@ import (
 // Name is the costroid/agent tag of a gh-aw run's rows.
 const Name = "gh-aw"
 
+// InfoArtifact is the name of the artifact gh-aw's activation job uploads
+// aw_info.json under, and the directory gh run download writes it to when it
+// downloads more than one artifact, beside the usage artifact's.
+const InfoArtifact = "info"
+
 const (
 	// agentUsage holds the agent job's records. The conclusion job copies the
 	// proxy's token-usage.jsonl here byte for byte.
@@ -67,13 +72,16 @@ var creditsPattern = regexp.MustCompile(`^[0-9]{1,26}(\.[0-9]{1,32})?$`)
 // noneNote is the grade's note when the artifact does not state the cap.
 const noneNote = "none: Costroid did not start this run, so no budget held it"
 
-// knownVersion is the gh-aw release knownFiles was read from.
-const knownVersion = "v1.2.1"
+// knownReleases names the gh-aw releases knownFiles was read from.
+const knownReleases = "gh-aw v1.0.1 to v1.2.1"
 
-// knownFiles is every file gh-aw v1.2.1's conclusion job puts in the usage
-// artifact, by its path inside the artifact. A downloaded artifact that holds
-// any other entry is refused, so a follow-up job reads exactly what gh-aw
-// wrote there and nothing a run added.
+// knownFiles is every file the usage artifact holds as gh-aw's conclusion job
+// uploads it, by its path inside the artifact: the path list of
+// buildUsageArtifactUploadStep in pkg/workflow/notify_comment.go of
+// github/gh-aw, read at the tags v1.0.1, v1.2.0 and v1.2.1 on 2026-11-08.
+// v1.2.0 added evals/evals_status.json, and the other 24 are the same in all
+// three. A downloaded artifact that holds any other entry is refused, so a
+// follow-up job reads exactly what gh-aw wrote there and nothing a run added.
 var knownFiles = []string{
 	"aw_session.jsonl",
 	runInfo,
@@ -140,23 +148,30 @@ type usageFile struct {
 }
 
 // ReadUsage reads a gh-aw run from the usage artifact gh run download wrote to
-// dir. Each record of the agent job and of the threat detection job is one
+// usage, and the run's info artifact, downloaded to info, nil when there is
+// none. Each record of the agent job and of the threat detection job is one
 // request. The run's AI credits, gh-aw's own figure, go to AgentStated and
-// never into a request.
+// never into a request. The cap gh-aw's proxy held the run to is read from
+// aw_info.json in either artifact.
 //
 // Costroid did not start the run, so the grade is none. gh-aw runs Claude and
 // Codex on an API key alone, so their rows read measured. Copilot bills by
 // subscription, so its rows read list_equivalent, and a run with both reads
 // list_equivalent, the weaker claim.
-func ReadUsage(dir fs.FS) (adapter.Report, error) {
-	if err := checkEntries(dir); err != nil {
+func ReadUsage(usage, info fs.FS) (adapter.Report, error) {
+	if err := checkEntries(usage); err != nil {
 		return adapter.Report{}, err
 	}
-	agent, err := readFile(dir, agentUsage, "")
+	if info != nil {
+		if err := checkInfoEntries(info); err != nil {
+			return adapter.Report{}, err
+		}
+	}
+	agent, err := readFile(usage, agentUsage, "")
 	if err != nil {
 		return adapter.Report{}, err
 	}
-	detection, err := readFile(dir, detectionUsage, detectionNote)
+	detection, err := readFile(usage, detectionUsage, detectionNote)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return adapter.Report{}, err
 	}
@@ -167,7 +182,7 @@ func ReadUsage(dir fs.FS) (adapter.Report, error) {
 	if err := uniqueIDs(files); err != nil {
 		return adapter.Report{}, err
 	}
-	limit, err := statedLimit(dir)
+	limit, warning, err := statedLimit(usage, info)
 	if err != nil {
 		return adapter.Report{}, err
 	}
@@ -175,6 +190,9 @@ func ReadUsage(dir fs.FS) (adapter.Report, error) {
 		CostBasis:   focus.Measured,
 		CostSource:  costSource,
 		Enforcement: enforcement(limit),
+	}
+	if warning != "" {
+		report.Warnings = append(report.Warnings, warning)
 	}
 	copilot := 0
 	for _, file := range files {
@@ -205,13 +223,32 @@ func checkEntries(dir fs.FS) error {
 			return fmt.Errorf("gh-aw: read the usage artifact: %w", err)
 		case entry.IsDir():
 			if name != "." && !slices.ContainsFunc(knownFiles, func(known string) bool { return strings.HasPrefix(known, name+"/") }) {
-				return fmt.Errorf("gh-aw: the usage artifact holds the directory %s, which gh-aw %s does not write there", name, knownVersion)
+				return fmt.Errorf("gh-aw: the usage artifact holds the directory %s, which %s do not write there", name, knownReleases)
 			}
 			return nil
 		case !entry.Type().IsRegular():
 			return fmt.Errorf("gh-aw: the usage artifact's %s is not a plain file", name)
 		case !slices.Contains(knownFiles, name):
-			return fmt.Errorf("gh-aw: the usage artifact holds %s, which gh-aw %s does not write there", name, knownVersion)
+			return fmt.Errorf("gh-aw: the usage artifact holds %s, which %s do not write there", name, knownReleases)
+		}
+		return nil
+	})
+}
+
+// checkInfoEntries refuses an info artifact that holds anything but
+// aw_info.json, the one file gh-aw's activation job uploads under the name
+// info, or holds it as anything but a plain file.
+func checkInfoEntries(dir fs.FS) error {
+	return fs.WalkDir(dir, ".", func(name string, entry fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return fmt.Errorf("gh-aw: read the info artifact: %w", err)
+		case name == ".":
+			return nil
+		case name != runInfo:
+			return fmt.Errorf("gh-aw: the info artifact holds %s, which %s do not write there", name, knownReleases)
+		case !entry.Type().IsRegular():
+			return fmt.Errorf("gh-aw: the info artifact's %s is not a plain file", name)
 		}
 		return nil
 	})

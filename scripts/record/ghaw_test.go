@@ -93,9 +93,10 @@ func pathsOf(v *value, path string, into map[string]bool) {
 }
 
 func TestGhAwAllowlistDropsUnknownFields(t *testing.T) {
-	// The list is the schema less its free text: ghawRecord holds every
-	// property, and the list keeps every key ghawRecord holds but those in
-	// ghawFreeText, and no other.
+	// The list is the schema less its free text, and aw_info.json's kept
+	// keys: ghawRecord holds every property, and the list keeps every key
+	// ghawRecord holds but those in ghawFreeText, those of ghawInfoPaths, and
+	// no other.
 	line, err := parseValue([]byte(ghawRecord))
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +108,9 @@ func TestGhAwAllowlistDropsUnknownFields(t *testing.T) {
 			t.Errorf("ghawRecord holds no %s", path)
 		}
 		delete(recordPaths, path)
+	}
+	for _, path := range ghawInfoPaths {
+		recordPaths[path] = true
 	}
 	if !sameSet(recordPaths, ghawAllowlist.kept) {
 		t.Errorf("the gh-aw allowlist is not the schema's properties:\n list %v\nrecord %v", sortedSet(ghawAllowlist.kept), sortedSet(recordPaths))
@@ -240,4 +244,102 @@ func sortedSet(m map[string]bool) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+// ghawInfoRecord is an aw_info.json as gh-aw's activation job writes it, with
+// values written by hand, the run's repository, commit and actor among them.
+const ghawInfoRecord = `{"engine_id":"codex","engine_name":"Codex","model":"","version":"0.164.0","agent_version":"0.164.0",` +
+	`"workflow_name":"` + plantedPrompt + `","repository":"someone/private-repo","sha":"6f564c419a6029e3f08ba2e1a208fbc1d7d41a89",` +
+	`"actor":"someone","run_id":19283746501,"firewall_enabled":true,"awf_version":"v0.29.0","cli_version":"v1.0.1",` +
+	`"model_config":{"routing":{"enabled":false},"max_ai_credits_source":"frontmatter","max_ai_credits":10}}`
+
+// TestGhAwRecordsTheUsageAndInfoArtifacts collects a run as gh run download
+// RUN -n usage -n info writes it: the records of both jobs and aw_info.json,
+// and no other file of the artifacts. The scrub keeps the run's releases and
+// its cap, drops its repository, commit, actor and workflow, and verify
+// refuses aw_info.json unscrubbed.
+func TestGhAwRecordsTheUsageAndInfoArtifacts(t *testing.T) {
+	home := t.TempDir()
+	write(t, filepath.Join(home, "usage", "agent", "token_usage.jsonl"), ghawRecord)
+	write(t, filepath.Join(home, "usage", "detection", "token_usage.jsonl"))
+	write(t, filepath.Join(home, "usage", "aw_session.jsonl"), `{"type":"user","text":"`+plantedPrompt+`"}`)
+	write(t, filepath.Join(home, "usage", "activity", "summary.json"), `{"tool_calls":[{"tool_name":"create_issue"}]}`)
+	write(t, filepath.Join(home, "info", "aw_info.json"), ghawInfoRecord)
+	collected := filepath.Join(t.TempDir(), "collected")
+	var stderr bytes.Buffer
+	if code := run(context.Background(), []string{"collect", "--agent", agentGhAw, "--home", home, "--out", collected}, os.Getenv, nil, io.Discard, &stderr); code != 0 {
+		t.Fatalf("collect exited %d: %s", code, stderr.String())
+	}
+	files, err := readRecording(collected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, file := range files {
+		names = append(names, file.name)
+	}
+	slices.Sort(names)
+	if want := []string{"info/aw_info.json", "usage/agent/token_usage.jsonl", "usage/detection/token_usage.jsonl"}; !slices.Equal(names, want) {
+		t.Fatalf("collect kept %q, want %q", names, want)
+	}
+
+	out := filepath.Join(t.TempDir(), "scrubbed")
+	report, err := scrubDirectory(collected, out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"engine_name", "workflow_name", "repository", "sha", "actor", "run_id", "model_config.routing"} {
+		if report.dropped[path] != 1 {
+			t.Errorf("the scrub dropped %s %d times, want once", path, report.dropped[path])
+		}
+	}
+	want := "{\n" + `  "engine_id": "codex",
+  "model": "",
+  "version": "0.164.0",
+  "agent_version": "0.164.0",
+  "firewall_enabled": true,
+  "awf_version": "v0.29.0",
+  "cli_version": "v1.0.1",
+  "model_config": {
+    "max_ai_credits_source": "frontmatter",
+    "max_ai_credits": 10
+  }
+}
+`
+	if got, _ := os.ReadFile(filepath.Join(out, "info", "aw_info.json")); string(got) != want {
+		t.Errorf("scrubbed aw_info.json\n got %s\nwant %s", got, want)
+	}
+	if problems, err := verifyDirectory(out, []string{plantedPrompt}); err != nil || len(problems) > 0 {
+		t.Errorf("the scrubbed recording fails verify: %v %v", problems, err)
+	}
+	entry, err := agentFor(agentGhAw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scrubbed, err := readRecording(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total := entry.total(scrubbed); !strings.Contains(total, "1.37 AI credits, the `ai_credits_total` of the last line in `usage/agent/token_usage.jsonl`") {
+		t.Errorf("the README states %q", total)
+	}
+
+	unscrubbed := filepath.Join(t.TempDir(), "unscrubbed")
+	write(t, filepath.Join(unscrubbed, "info", "aw_info.json"), ghawInfoRecord)
+	m, err := readManifest(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManifest(unscrubbed, m); err != nil {
+		t.Fatal(err)
+	}
+	problems, err := verifyDirectory(unscrubbed, []string{plantedPrompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"repository", "sha", "actor", "workflow_name"} {
+		if !slices.Contains(problems, "info/aw_info.json:1: key outside the allowlist: "+path) {
+			t.Errorf("verify did not refuse %s: %v", path, problems)
+		}
+	}
 }
