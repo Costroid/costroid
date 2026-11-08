@@ -136,6 +136,14 @@ func (s *platformStub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// timesAsked reads how often the verdict was asked for, under the lock: a
+// request the export stopped waiting for can still be in serve.
+func (s *platformStub) timesAsked() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.asked
+}
+
 // githubEnv is a GitHub Actions job with id-token: write, run 16873409921's
 // first attempt in repository 903114, example/widgets.
 func (s *platformStub) githubEnv() map[string]string {
@@ -580,7 +588,7 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 			if strings.Contains(stdout.String()+stderr.String(), "::error::forged") {
 				t.Error("the platform's message reached the log")
 			}
-			if stub.asked == 0 {
+			if stub.timesAsked() == 0 {
 				t.Error("export never asked for the verdict")
 			}
 		})
@@ -591,8 +599,8 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 func TestExportTakesTheVerdictInTheAnswer(t *testing.T) {
 	stub := newPlatformStub(t, http.StatusOK, ingested(11, 0).body)
 	code, stdout, stderr := stub.export(t, stub.githubEnv())
-	if code != 0 || stub.asked != 0 || !strings.Contains(stdout, "ingested, 11 rows\n") {
-		t.Fatalf("exit %d, asked %d times: %s%s", code, stub.asked, stdout, stderr)
+	if asked := stub.timesAsked(); code != 0 || asked != 0 || !strings.Contains(stdout, "ingested, 11 rows\n") {
+		t.Fatalf("exit %d, asked %d times: %s%s", code, asked, stdout, stderr)
 	}
 }
 
@@ -607,8 +615,8 @@ func TestExportWarnsWhenNotBound(t *testing.T) {
 	stub := newPlatformStub(t, http.StatusConflict, `{"error":{"code":"INSTALLATION_NOT_BOUND","message":"::error::forged"}}`)
 	code, stdout, stderr := stub.export(t, stub.githubEnv())
 	want := "costroid: warning: Costroid Platform refused batch 903114-16873409921-1: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as docs/connect.md shows, and " + exampleRows + " is kept to send again\n"
-	if code != 0 || stdout != "" || stderr != want || stub.asked != 0 {
-		t.Fatalf("exit %d, asked %d, stdout %q, stderr %q", code, stub.asked, stdout, stderr)
+	if asked := stub.timesAsked(); code != 0 || stdout != "" || stderr != want || asked != 0 {
+		t.Fatalf("exit %d, asked %d, stdout %q, stderr %q", code, asked, stdout, stderr)
 	}
 	if after, err := os.ReadFile(exampleRows); err != nil || !bytes.Equal(after, before) {
 		t.Fatalf("the rows file changed: %v", err)
