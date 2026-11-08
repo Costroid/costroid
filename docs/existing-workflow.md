@@ -41,7 +41,7 @@ jobs:
       # Block 1: read what the run cost.
       - name: Read what the run cost
         if: always() && steps.claude.outputs.execution_file != ''
-        uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+        uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
         with:
           stage: read
           execution-file: ${{ steps.claude.outputs.execution_file }}
@@ -58,7 +58,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+      - uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
         with:
           stage: report
           agent-result: ${{ needs.review.result }}
@@ -83,7 +83,7 @@ The `read` step cannot see your step's inputs, so it is told the cap. Give Block
 ```diff
        - name: Read what the run cost
          if: always() && steps.claude.outputs.execution_file != ''
-         uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+         uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
          with:
            stage: read
            execution-file: ${{ steps.claude.outputs.execution_file }}
@@ -91,7 +91,7 @@ The `read` step cannot see your step's inputs, so it is told the cap. Give Block
 +          claude-args: --max-budget-usd 5
            billing-account: ${{ github.repository_owner }}
  ...
-       - uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+       - uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
          with:
            stage: report
 +          budget-usd: "5"
@@ -116,7 +116,7 @@ The comment's grade then reads `agent-flag` when the run stopped at that cap, or
 +        id: codex
 +      - name: Read what the run cost
 +        if: always() && steps.codex.outcome != 'skipped'
-+        uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
++        uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
 +        with:
 +          stage: read
 +          codex-home: ${{ runner.temp }}/codex-home

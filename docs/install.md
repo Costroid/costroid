@@ -39,7 +39,7 @@ The CLI needs no server: `costroid run` and `costroid report` work from a job al
 
 The image is one static binary on a non-root user, with no shell. It runs the service, and every other `costroid` command, from one tag. `docs/serve.md` has what the service does.
 
-The Compose file and the chart still default to the image of the first release. The commands below run `1.0.0-alpha.11`, the release the recipes pin.
+The Compose file and the chart still default to the image of the first release. The commands below run `1.0.0-alpha.12`, the release the recipes pin.
 
 ## Docker Compose
 
@@ -50,7 +50,7 @@ export COSTROID_APP_PASSWORD="$(openssl rand -hex 32)"
 export COSTROID_PSEUDONYM_KEY="$(openssl rand -base64 32)"
 export COSTROID_OIDC_AUDIENCE=https://costroid.example
 export COSTROID_BIND=github.com:example
-export COSTROID_IMAGE=ghcr.io/costroid/costroid:1.0.0-alpha.11
+export COSTROID_IMAGE=ghcr.io/costroid/costroid:1.0.0-alpha.12
 docker compose -f deploy/compose.yaml up -d
 ```
 
@@ -59,7 +59,7 @@ The service listens on `127.0.0.1:8080`. Put your own TLS in front of it, and se
 ## Helm
 
 ```sh
-helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.11 \
+helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.12 \
   --set oidcAudience=https://costroid.example --set 'bindings={github.com:example}'
 ```
 
@@ -74,7 +74,7 @@ To use your own Postgres, create the two roles [`docs/serve.md`](serve.md) lists
 | `pseudonym-key`          | At least 32 bytes in base64       |
 
 ```sh
-helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.11 --set postgres.enabled=false --set existingSecret=costroid-connections \
+helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.12 --set postgres.enabled=false --set existingSecret=costroid-connections \
   --set oidcAudience=https://costroid.example --set 'bindings={github.com:example}'
 ```
 

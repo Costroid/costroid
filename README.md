@@ -37,24 +37,24 @@ An agent's own cost field is an estimate, and a budget flag can be weaker than i
 
 ## Install
 
-The commands below install `1.0.0-alpha.11`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.11), check it, and put it on your `PATH`:
+The commands below install `1.0.0-alpha.12`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.12), check it, and put it on your `PATH`:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.11/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.11/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.12/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.12/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 chmod +x costroid-linux-amd64
 sudo mv costroid-linux-amd64 /usr/local/bin/costroid
 costroid version
 ```
 
-The last line prints `costroid 1.0.0-alpha.11, catalog 0.1.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
+The last line prints `costroid 1.0.0-alpha.12, catalog 0.1.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
 
 Each file is signed with cosign, keyless, by this repository's release workflow. To check a signature, with cosign 3 or later:
 
 ```sh
 cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.11 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.12 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com costroid-linux-amd64
 ```
 
