@@ -184,8 +184,16 @@ func (*SDKSession) Feed([]byte, time.Time) error {
 }
 
 // RunWindow records when the program ran. Only a session inside it counts.
+//
+// The run takes both ends from the system's wall clock, the clock Claude Code
+// dates each session line by. Claude Code states a line's time in whole
+// milliseconds, cut down, so a line written in the run's first millisecond
+// reads up to 1 ms before the run's start. The start is therefore taken down
+// to its whole millisecond: that is the window's only slack, under 1 ms. The
+// end needs none: a line's time never reads later than when it was written,
+// and every line is written before the program ends.
 func (s *SDKSession) RunWindow(start, end time.Time) {
-	s.from, s.to = start, end
+	s.from, s.to = start.Truncate(time.Millisecond), end
 }
 
 // BilledThroughGateway reads the run as key-billed: the gateway bills every
