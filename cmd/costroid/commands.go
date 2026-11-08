@@ -54,6 +54,8 @@ var commands = []command{
 	{name: "keys", run: withOutputs(server.KeysMain)},
 	{name: "egress", run: withOutputs(server.EgressMain)},
 	{name: "version", help: versionHelp, run: versionCommand},
+	{name: "result", help: resultHelp, run: withOutputs(resultCommand)},
+	{name: "mcp", help: mcpHelp, run: mcpCommand},
 }
 
 func withOutputs(fn func(ctx context.Context, args []string, stdout, stderr io.Writer) int) runner {
