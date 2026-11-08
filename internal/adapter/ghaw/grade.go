@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"regexp"
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -45,13 +46,30 @@ func statedLimit(dir fs.FS) (*decimal.Decimal, error) {
 	return &limit, nil
 }
 
+// proxyNoteFormat is the grade's note when the artifact states the cap, and
+// proxyNotePattern reads the cap back from the description of a row that
+// carries it.
+const proxyNoteFormat = "none: gh-aw's proxy held this run to %s AI credits, priced by gh-aw"
+
+var proxyNotePattern = regexp.MustCompile(`(?:^|; )none: gh-aw's proxy held this run to ([0-9]{1,26}(?:\.[0-9]{1,32})?) AI credits, priced by gh-aw(?:;|$)`)
+
+// ProxyCap is the AI-credit cap a gh-aw row's description states, as the
+// grade's note wrote it, and false when it states none.
+func ProxyCap(description string) (string, bool) {
+	match := proxyNotePattern.FindStringSubmatch(description)
+	if match == nil {
+		return "", false
+	}
+	return match[1], true
+}
+
 // enforcement is the run's grade. Costroid did not start the run and minted no
 // cap, so the grade is none whatever cap gh-aw's proxy held. Its note names
 // that cap when the artifact states it.
 func enforcement(limit *decimal.Decimal) adapter.Enforcement {
 	note := noneNote
 	if limit != nil {
-		note = fmt.Sprintf("none: gh-aw's proxy held this run to %s AI credits, priced by gh-aw", limit)
+		note = fmt.Sprintf(proxyNoteFormat, limit)
 	}
 	return adapter.Enforcement{Grade: adapter.GradeNone, Note: note}
 }

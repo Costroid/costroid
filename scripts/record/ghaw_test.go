@@ -93,14 +93,21 @@ func pathsOf(v *value, path string, into map[string]bool) {
 }
 
 func TestGhAwAllowlistDropsUnknownFields(t *testing.T) {
-	// The list is the schema: ghawRecord holds every property, and the list
-	// keeps every key ghawRecord holds and no other.
+	// The list is the schema less its free text: ghawRecord holds every
+	// property, and the list keeps every key ghawRecord holds but those in
+	// ghawFreeText, and no other.
 	line, err := parseValue([]byte(ghawRecord))
 	if err != nil {
 		t.Fatal(err)
 	}
 	recordPaths := map[string]bool{}
 	pathsOf(line, "", recordPaths)
+	for _, path := range ghawFreeText {
+		if !recordPaths[path] {
+			t.Errorf("ghawRecord holds no %s", path)
+		}
+		delete(recordPaths, path)
+	}
 	if !sameSet(recordPaths, ghawAllowlist.kept) {
 		t.Errorf("the gh-aw allowlist is not the schema's properties:\n list %v\nrecord %v", sortedSet(ghawAllowlist.kept), sortedSet(recordPaths))
 	}
@@ -134,7 +141,12 @@ func TestGhAwAllowlistDropsUnknownFields(t *testing.T) {
 			t.Errorf("the scrub dropped %s %d times, want once", path, report.dropped[path])
 		}
 	}
-	scrubbedRecord := strings.Replace(ghawRecord, "msg_01PlantedRequest", "req_fixture_0001", 1)
+	for _, path := range ghawFreeText {
+		if report.dropped[path] != 2 {
+			t.Errorf("the scrub dropped %s %d times, want once in each record", path, report.dropped[path])
+		}
+	}
+	scrubbedRecord := strings.Replace(strings.Replace(ghawRecord, "msg_01PlantedRequest", "req_fixture_0001", 1), `"reason":"upstream_5xx","status":529}]`, `"status":529}]`, 1)
 	want := scrubbedRecord + "\n" + scrubbedRecord + "\n"
 	if got, _ := os.ReadFile(filepath.Join(out, ghawUsageFile)); string(got) != want {
 		t.Errorf("scrubbed\n got %s\nwant %s", got, want)
@@ -157,7 +169,7 @@ func TestGhAwAllowlistDropsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range append(slices.Clone(ghawUnknownInSchemaObjects), "prompt", "messages", "headers", "cwd", "token_usage_detail") {
+	for _, path := range slices.Concat(ghawUnknownInSchemaObjects, ghawFreeText, []string{"prompt", "messages", "headers", "cwd", "token_usage_detail"}) {
 		if !slices.Contains(problems, ghawUsageFile+":1: key outside the allowlist: "+path) {
 			t.Errorf("verify did not refuse %s: %v", path, problems)
 		}

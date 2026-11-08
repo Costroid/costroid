@@ -271,3 +271,36 @@ func TestGhAwFollowUpNamesTheRefusedArtifact(t *testing.T) {
 		t.Errorf("the check does not name the refusal:\n%s", text)
 	}
 }
+
+// TestGhAwCommentNamesTheProxyCap shows, in the comment's Enforcement cell of
+// a gh-aw run, the AI-credit cap gh-aw's proxy held the run to, in place of
+// the note that nothing held it. Without aw_info.json the artifact states no
+// cap, and the cell reads as any run at grade none.
+func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
+	clearCI(t)
+	const capped = "| none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw, not by Costroid |"
+	const plain = "| none: nothing held the run to a budget |"
+	artifact := copyArtifact(t, "")
+	for _, stated := range []bool{true, false} {
+		if !stated {
+			if err := os.Remove(filepath.Join(artifact, "aw_info.json")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
+		if code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+artifact, "--out", out); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		code, stdout, stderr := execute(t, "report", "--preview", "--rows", out)
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		want, other := capped, plain
+		if !stated {
+			want, other = plain, capped
+		}
+		if !strings.Contains(stdout, want) || strings.Contains(stdout, other) {
+			t.Errorf("aw_info.json stated %t, and the comment's cell is not %q:\n%s", stated, want, stdout)
+		}
+	}
+}

@@ -539,7 +539,7 @@ func (i Input) view() view {
 			Basis:       basisLabels[figure.Basis],
 			Attribution: figure.Attribution,
 			Enforcement: figure.Enforcement,
-			Note:        enforcementNotes[figure.Enforcement],
+			Note:        figureNote(figure, shown),
 		}
 		if figure.FallbackRows > 0 {
 			line.Mark = fallbackMark
@@ -658,6 +658,16 @@ func (i Input) firstLine(shown bool) string {
 		line = "This run was priced " + listed(clauses, 0) + "."
 	}
 	return line + " " + heldSentence(weakestGrade(i.Ledger.Figures))
+}
+
+// figureNote says how far a figure's grade held. A gh-aw figure at grade none
+// names the cap gh-aw's proxy held the run to, which Costroid did not set and
+// does not price; a withheld copy leaves the cap out with the amounts.
+func figureNote(figure Figure, shown bool) string {
+	if figure.Enforcement == "none" && figure.ProxyCap != "" && shown {
+		return fmt.Sprintf("gh-aw's proxy held this run to %s AI credits, priced by gh-aw, not by Costroid", figure.ProxyCap)
+	}
+	return enforcementNotes[figure.Enforcement]
 }
 
 // heldSentence says what held the run to its cap, by the weakest grade.

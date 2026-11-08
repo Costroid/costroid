@@ -3,8 +3,8 @@ package main
 // ghawPaths are the keys of gh-aw's token-usage records, and nothing else:
 // every property of token-usage.schema.json in the v0.29.8 release of
 // github/gh-aw-firewall (SHA-256 6d58ec9ea230d8889bb6ca03320317838334eabda752ef7abe597e33f511509d,
-// read 2026-11-07). The schema admits other keys; a recording drops them. The
-// request id is kept under ghawIDs.
+// read 2026-11-07) but those in ghawFreeText. The schema admits other keys; a
+// recording drops them. The request id is kept under ghawIDs.
 var ghawPaths = []string{
 	"_schema",
 	"timestamp",
@@ -40,7 +40,6 @@ var ghawPaths = []string{
 	"model_fallback.failures[]",
 	"model_fallback.failures[].provider",
 	"model_fallback.failures[].model",
-	"model_fallback.failures[].reason",
 	"model_fallback.failures[].status",
 	"model_fallback.attempt",
 	"model_fallback.reason",
@@ -75,6 +74,11 @@ var ghawPaths = []string{
 	"ai_credits_this_response",
 	"ai_credits_total",
 }
+
+// ghawFreeText are the schema's properties that a recording drops: the schema
+// gives them no list of values, so they can hold any text an upstream wrote.
+// model_fallback.reason is a closed list and stays.
+var ghawFreeText = []string{"model_fallback.failures[].reason"}
 
 // ghawIDs are the keys of a token-usage record that hold an identifier.
 var ghawIDs = map[string]*idKind{
