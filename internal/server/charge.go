@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -82,6 +83,8 @@ type charge struct {
 	notes        []string
 	// assumedTTL is costroid/assumed_ttl, empty on a stated lifetime.
 	assumedTTL string
+	// named holds the tags a caller names, by tag.
+	named map[string]string
 
 	// Join keys as the sender stated them. Empty means not stated.
 	repo, pr, sha, run string
@@ -312,6 +315,7 @@ func tagsOf(c *charge, joined joinResult) map[string]string {
 			tags[key] = value
 		}
 	}
+	maps.Copy(tags, c.named)
 	return tags
 }
 

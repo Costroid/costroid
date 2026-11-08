@@ -1,15 +1,15 @@
 package comment
 
-import "regexp"
+import "github.com/Costroid/costroid/internal/focus"
 
 // maxDataLength caps any string that came from the pull request.
-const maxDataLength = 128
+const maxDataLength = focus.MaxDataLength
 
 // notShown stands in for a string that failed the allowlist. The whole string
 // is replaced, because a partly cleaned string can still mean something.
 const notShown Data = "not-shown"
 
-var dataPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/+_-]*$`)
+var dataPattern = focus.DataPattern
 
 // Data is a string that originated in the pull request. Clean is the only way
 // to make one from untrusted text, and the allowlist holds no character that

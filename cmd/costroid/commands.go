@@ -201,6 +201,7 @@ writes none. docs/agents.md describes the file.
 const ingestRunHelp = `Usage:
   costroid ingest-run --from KIND=PATH --out rows.jsonl [--since T]
                       [--billing-account ID] [--credential ID]
+                      [--tag KEY=VALUE]... [--focus-profile strict]
   costroid ingest-run --from execution-file=F --out rows.jsonl --cap-usd N
                       [--claude-args TEXT]
 
@@ -224,6 +225,7 @@ claude_args stating it; otherwise it reads none, with the reason. The result
 object states the cap.
 
 ` + accountHelp + `
+` + rowFlagsHelp + `
 ` + ciHelp + `
 ` + resultFileHelp + `
 Exit codes of ingest-run:

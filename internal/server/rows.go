@@ -417,6 +417,26 @@ func (f rowFields) applyTags(c *charge, tags map[string]string, drops map[string
 	c.weakJoin = tags[focus.TagAttributionGrade] == gradeWindowed
 	c.session = optionalTag(tags[focus.TagSessionID], sessionTag, drops)
 	c.agentVersion = optionalTag(tags[focus.TagAgentVersion], versionTag, drops)
+	return f.namedTags(c, tags)
+}
+
+// namedTags keeps the tags a caller names, each held to the rule the command
+// line holds it to. A value that misses it refuses the row, and the refusal
+// never repeats the value.
+func (f rowFields) namedTags(c *charge, tags map[string]string) error {
+	for _, tag := range focus.NamedTags {
+		value, stated := tags[tag]
+		if !stated {
+			continue
+		}
+		if err := focus.CheckNamedTag(tag, value); err != nil {
+			return invalidRow(f.line, tag+" "+err.Error())
+		}
+		if c.named == nil {
+			c.named = map[string]string{}
+		}
+		c.named[tag] = value
+	}
 	return nil
 }
 
@@ -447,6 +467,7 @@ var definedTags = columnSet(
 	"costroid/repo", "costroid/pr", "costroid/commit_sha", "costroid/workflow_run_id", focus.TagSessionID,
 	focus.TagAgent, focus.TagAgentVersion, focus.TagModel, focus.TagCostSource, focus.TagCostBasis,
 	focus.TagAttributionGrade, focus.TagEnforcementGrade, focus.TagRunIdentity, focus.TagAssumedTTL,
+	focus.TagWorkItem, focus.TagArm, focus.TagTeam,
 )
 
 func (f rowFields) readOvershoot(c *charge) error {

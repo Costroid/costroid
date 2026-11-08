@@ -37,9 +37,6 @@ const (
 	credentialVariable     = "COSTROID_CREDENTIAL"
 	// maxAccount is the row contract's limit on a text column.
 	maxAccount = 512
-	// secretKeyPrefix opens every provider key this product reads. A key pasted
-	// as a credential would otherwise reach every row and every ledger.
-	secretKeyPrefix = "sk-"
 )
 
 // version is set at link time.
@@ -107,7 +104,7 @@ func (a accountFlags) check() error {
 	if utf8.RuneCountInString(*a.credential) > maxAccount {
 		return fmt.Errorf("--credential must be at most %d characters", maxAccount)
 	}
-	if strings.HasPrefix(*a.credential, secretKeyPrefix) {
+	if focus.ReadsLikeKey(*a.credential) {
 		return errors.New("--credential takes the key's id, never the key: this value reads like a key")
 	}
 	return nil
@@ -116,6 +113,7 @@ func (a accountFlags) check() error {
 const runHelp = `Usage:
   costroid run --budget-usd N [--out FILE] [--agent NAME]
                [--billing-account ID] [--credential ID]
+               [--tag KEY=VALUE]... [--focus-profile strict]
                [--gateway URL --gateway-key-file F] [--json] -- <agent command>
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
@@ -133,6 +131,7 @@ unless a gateway holds it, because the budget sits in the program's own
 maxBudgetUsd. A codex-sdk run stops the program at the cap, as codex exec does.
 
 ` + accountHelp + `
+` + rowFlagsHelp + `
 --gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
 the run's own key, which costroid gateway request drew and costroid gateway
 mint registered. Without them, COSTROID_GATEWAY_URL and
@@ -165,8 +164,10 @@ type runFlags struct {
 	budget  decimal.Decimal
 	out     string
 	account accountFlags
-	argv    []string
-	json    bool
+	// shape is what --tag and --focus-profile add to every row.
+	shape focus.Shape
+	argv  []string
+	json  bool
 	// gateway and gatewayKeyFile are both set, or neither.
 	gateway, gatewayKeyFile string
 }
@@ -181,6 +182,7 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	gatewayURL := set.String("gateway", os.Getenv(gatewayURLVar), "the LiteLLM gateway the agent runs through")
 	keyFile := set.String("gateway-key-file", os.Getenv(gatewayKeyFileVar), "the file costroid gateway request wrote the run's key to")
 	account := addAccountFlags(set)
+	shaping := addRowFlags(set)
 	if err := parseFlags(set, args, runHelp, stdout, stderr); err != nil {
 		return runFlags{}, err
 	}
@@ -203,12 +205,16 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	if err := account.check(); err != nil {
 		return runFlags{}, err
 	}
+	shape, err := shaping.shape()
+	if err != nil {
+		return runFlags{}, err
+	}
 	if *out == "" {
 		*out = defaultRowsFile
 		fmt.Fprintf(stderr, "costroid: no --out was given, so the rows go to %s in the working directory\n", defaultRowsFile)
 	}
 	return runFlags{
-		agent: *agent, budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON,
+		agent: *agent, budget: amount, out: *out, account: account, shape: shape, argv: set.Args(), json: *asJSON,
 		gateway: *gatewayURL, gatewayKeyFile: *keyFile,
 	}, nil
 }
@@ -291,7 +297,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		BillingAccount: *flags.account.billing,
 		Credential:     *flags.account.credential,
 		CI:             ci,
-		Rows:           rows,
+		Rows:           focus.Shaped(rows, flags.shape),
 		Stdin:          stdin,
 		Stdout:         agentOutput,
 		Stderr:         stderr,
