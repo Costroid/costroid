@@ -15,7 +15,7 @@ The first lines it prints, for the artifact in [`internal/adapter/ghaw/testdata/
 
 ```text
 costroid: gh-aw, 5 requests
-costroid: 15 rows in costroid-rows.jsonl, catalog 0.2.0
+costroid: 15 rows in costroid-rows.jsonl, catalog 0.3.0
 costroid: USD 0.04974 at list, Measured
 costroid: none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw
 costroid: gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits.
