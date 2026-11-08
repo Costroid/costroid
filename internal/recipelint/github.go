@@ -380,6 +380,7 @@ func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.N
 		text:    text(steps),
 		env:     mergeVariables(field(root, "env"), field(job.value, "env"), field(step, "env")),
 		minimum: minimum,
+		action:  costroidStage(step) != "",
 	}, gitHubForbidden)
 	l.agentAdminKey(root, job)
 	l.agentCheckout(job)
@@ -399,7 +400,8 @@ var openingInputs = map[string][]string{
 
 // stepAgent names the agent a step starts, or nothing. A claude-code-action
 // step starts Claude whether its prompt input or a @claude mention in a
-// comment gives it the task, so the mention workflow is an agent workflow.
+// comment gives it the task, so the mention workflow is an agent workflow. A
+// script names the agent by costroid run --agent, or by its command.
 func stepAgent(step *yaml.Node) string {
 	switch agentAction(step) {
 	case claudeCodeAction:

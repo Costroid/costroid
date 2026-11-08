@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,7 +48,11 @@ const (
 	zeroSHA                = "0000000000000000000000000000000000000000"
 	claudeAgent            = "claude"
 	codexAgent             = "codex"
+	claudeCodeAgent        = "claude-code"
+	claudeSDKAgent         = "claude-code-sdk"
+	codexSDKAgent          = "codex-sdk"
 	codexContentFlag       = "otel.log_user_prompt=false"
+	codexSDKContentFlag    = "log_user_prompt = false under [otel] in CODEX_HOME/config.toml"
 	minimumVersionInput    = "minimum-agent-version"
 	minimumVersionVariable = "MINIMUM_AGENT_VERSION"
 	maximumAliasDepth      = 64
@@ -65,10 +68,47 @@ var claudeContentFlags = []string{
 	"OTEL_LOG_RAW_API_BODIES",
 }
 
-var agentInstall = map[string]*regexp.Regexp{
-	claudeAgent: regexp.MustCompile(`@anthropic-ai/claude-code@[0-9]+\.[0-9]+\.[0-9]+`),
-	codexAgent:  regexp.MustCompile(`@openai/codex@[0-9]+\.[0-9]+\.[0-9]+`),
+var (
+	claudeRelease = regexp.MustCompile(`@anthropic-ai/claude-code@[0-9]+\.[0-9]+\.[0-9]+`)
+	codexRelease  = regexp.MustCompile(`@openai/codex@[0-9]+\.[0-9]+\.[0-9]+`)
+	// lockInstall installs a program's packages at the versions its lock file
+	// pins, the agent's among them, and fails when the lock file disagrees.
+	lockInstall = regexp.MustCompile(`\bnpm\s+ci\b`)
+	// codexConfigFlag is the line of Codex's config.toml that keeps prompts
+	// out of its telemetry. No command line reaches the Codex an SDK starts.
+	// A script that writes the file can hold it after a printf's \n, so no
+	// word boundary is asked for before it.
+	codexConfigFlag = regexp.MustCompile(`log_user_prompt\s*=\s*false\b`)
+)
+
+// agentKind is what the rules hold an agent to: the provider whose content
+// flags and host it has, the install that fixes its version, and whether its
+// job states the lowest version it accepts. A program that runs an agent
+// through its SDK takes the agent from its lock file, so nothing checks a
+// floor.
+type agentKind struct {
+	provider string
+	install  *regexp.Regexp
+	minimum  bool
 }
+
+// agentKinds holds every agent a step can name: claude and codex as the
+// action's agent input and as the commands claude -p and codex exec, and each
+// value of costroid run --agent.
+var agentKinds = map[string]agentKind{
+	claudeAgent:     {provider: claudeAgent, install: claudeRelease, minimum: true},
+	claudeCodeAgent: {provider: claudeAgent, install: claudeRelease, minimum: true},
+	claudeSDKAgent:  {provider: claudeAgent, install: lockInstall},
+	codexAgent:      {provider: codexAgent, install: codexRelease, minimum: true},
+	codexSDKAgent:   {provider: codexAgent, install: lockInstall},
+}
+
+// actionAgents are the values the action's agent input takes, and runAgents
+// the values costroid run --agent takes.
+var (
+	actionAgents = []string{claudeAgent, codexAgent}
+	runAgents    = []string{claudeCodeAgent, claudeSDKAgent, codexAgent, codexSDKAgent}
+)
 
 // Finding is one line of a file and the rule it breaks. A note uses the same
 // shape and rejects nothing. Severity is set by the customer profile alone.
@@ -272,52 +312,73 @@ func breaksLine(r rune) bool {
 	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
 }
 
-// agentRun is one agent job, read the same way on either CI system.
+// agentRun is one agent job, read the same way on either CI system. action
+// is set when Costroid's action starts the agent, which takes fewer agents
+// than costroid run does.
 type agentRun struct {
 	node    *yaml.Node
 	agent   string
 	text    string
 	env     map[string]string
 	minimum string
+	action  bool
 }
 
 // checkAgent applies the rules both CI systems share. An agent the lint has no
 // rules for is the one finding, because none of the rules can be judged.
 func (l *linter) checkAgent(run agentRun, forbidden *regexp.Regexp) {
-	install, known := agentInstall[run.agent]
+	kind, known := agentKinds[run.agent]
+	takes := runAgents
+	if run.action {
+		takes = actionAgents
+		known = known && slices.Contains(actionAgents, run.agent)
+	}
 	if !known {
-		l.add(run.node, RuleUnknownAgent, "the agent %q is not one Costroid runs: it runs %s", run.agent, strings.Join(slices.Sorted(maps.Keys(agentInstall)), " or "))
+		l.add(run.node, RuleUnknownAgent, "the agent %q is not one Costroid runs: it runs %s", run.agent, orList(takes))
 		return
 	}
-	if !install.MatchString(run.text) {
+	switch {
+	case !kind.install.MatchString(run.text) && kind.minimum:
 		l.add(run.node, RuleAgentVersion, "%s is not installed at an exact version", run.agent)
+	case !kind.install.MatchString(run.text):
+		l.add(run.node, RuleAgentVersion, "%s's program is not installed at the versions its lock file pins: install its packages with npm ci", run.agent)
 	}
-	if !strings.Contains(run.text, run.minimum) {
+	if kind.minimum && !strings.Contains(run.text, run.minimum) {
 		l.add(run.node, RuleAgentVersion, "%s states no minimum version in %s", run.agent, run.minimum)
 	}
 	if match := forbidden.FindString(run.text); match != "" {
 		l.add(run.node, RuleAgentPromptInput, "%s reaches the agent's job, and the PR's author or a comment controls it", match)
 	}
-	for _, flag := range contentFlagsOff(run) {
+	for _, flag := range contentFlagsOff(run, kind) {
 		l.add(run.node, RuleAgentContentFlags, "%s", flag)
 	}
 }
 
-func contentFlagsOff(run agentRun) []string {
+func contentFlagsOff(run agentRun, kind agentKind) []string {
 	var missing []string
-	switch run.agent {
-	case claudeAgent:
+	switch {
+	case kind.provider == claudeAgent:
 		for _, name := range claudeContentFlags {
 			if run.env[name] != "0" {
 				missing = append(missing, name+" must be set to 0 on the agent")
 			}
 		}
-	case codexAgent:
-		if !strings.Contains(run.text, codexContentFlag) {
-			missing = append(missing, "codex needs "+codexContentFlag)
+	case run.agent == codexSDKAgent:
+		if !codexConfigFlag.MatchString(run.text) {
+			missing = append(missing, codexSDKAgent+" needs "+codexSDKContentFlag)
 		}
+	case !strings.Contains(run.text, codexContentFlag):
+		missing = append(missing, run.agent+" needs "+codexContentFlag)
 	}
 	return missing
+}
+
+// orList joins names as a sentence does: a, b or c.
+func orList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
 
 // resolve follows aliases.
@@ -424,19 +485,56 @@ func mergeVariables(nodes ...*yaml.Node) map[string]string {
 	return merged
 }
 
-// agentsNamed lists the agents a text starts, in a stable order.
+// agentsNamed lists the agents a text starts, in a stable order: each one
+// costroid run --agent names, then claude -p and codex exec, unless an agent
+// named already runs on that provider.
 func agentsNamed(body string) []string {
-	var agents []string
-	if claudeCommand.MatchString(body) {
-		agents = append(agents, claudeAgent)
-	}
-	if codexCommand.MatchString(body) {
-		agents = append(agents, codexAgent)
+	agents := runAgentNames(body)
+	for _, command := range []struct {
+		agent   string
+		pattern *regexp.Regexp
+	}{{claudeAgent, claudeCommand}, {codexAgent, codexCommand}} {
+		named := slices.ContainsFunc(agents, func(agent string) bool { return agentKinds[agent].provider == command.agent })
+		if !named && command.pattern.MatchString(body) {
+			agents = append(agents, command.agent)
+		}
 	}
 	return agents
+}
+
+// runAgentNames lists the values of --agent in each costroid run command of a
+// script. A backslash at a line's end continues the command. Its options end
+// at --, where the program's own arguments start, or at a shell operator.
+func runAgentNames(script string) []string {
+	var names []string
+	for line := range strings.SplitSeq(strings.ReplaceAll(script, "\\\n", " "), "\n") {
+		for _, at := range costroidRun.FindAllStringIndex(line, -1) {
+			if name, found := agentOption(strings.Fields(line[at[1]:])); found && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// agentOption reads --agent NAME or --agent=NAME from a command's options.
+func agentOption(words []string) (string, bool) {
+	for i, word := range words {
+		if word == "--" || strings.ContainsAny(word[:1], ";&|") {
+			break
+		}
+		if name, found := strings.CutPrefix(word, "--agent="); found {
+			return strings.Trim(name, `"'`), true
+		}
+		if word == "--agent" && i+1 < len(words) {
+			return strings.Trim(words[i+1], `"'`), true
+		}
+	}
+	return "", false
 }
 
 var (
 	claudeCommand = regexp.MustCompile(`\bclaude\s+(-p|--print)\b`)
 	codexCommand  = regexp.MustCompile(`\bcodex\s+exec\b`)
+	costroidRun   = regexp.MustCompile(`\bcostroid[ \t]+run\b`)
 )

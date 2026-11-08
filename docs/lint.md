@@ -15,7 +15,8 @@ A workflow is judged when one of its jobs has an agent step:
 - a step that uses `anthropics/claude-code-action`, whether its `prompt` input or a `@claude` mention gives it the task;
 - a step that uses `openai/codex-action`;
 - a step that uses Costroid's action with stage `run` or `all`;
-- a script that runs `claude -p`, `claude --print` or `codex exec`.
+- a script that runs `claude -p`, `claude --print` or `codex exec`;
+- a script that runs `costroid run --agent`, such as a program on the Claude Agent SDK or the Codex SDK ([docs/sdk.md](sdk.md)).
 
 Any other workflow passes with nothing said. The last line counts the files read and the workflows judged.
 
