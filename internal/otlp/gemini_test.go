@@ -1,6 +1,7 @@
 package otlp
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -16,17 +17,25 @@ import (
 
 // The Gemini fixtures are built from Gemini CLI's telemetry source at
 // v0.67.0, not recorded from a run. The response's prompt holds 12000 tokens,
-// 8000 of them cached; it wrote 300 candidate tokens and 450 thoughts.
+// 8000 of them cached; its tool results add 600 more. It wrote 300 candidate
+// tokens and 450 thoughts, and its total is 13350.
 const (
 	geminiLogs  = "api-response-logs.from-source.json"
 	geminiSpans = "llm-call-span.from-source.json"
 )
 
-func parseGemini(t *testing.T, name string, signal Signal) Batch {
+// parseGemini reads a fixture, after each old and new pair of edits.
+func parseGemini(t *testing.T, name string, signal Signal, edits ...string) Batch {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join("testdata", "gemini", name))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for i := 0; i+1 < len(edits); i += 2 {
+		if !bytes.Contains(body, []byte(edits[i])) {
+			t.Fatalf("%s holds no %s", name, edits[i])
+		}
+		body = bytes.Replace(body, []byte(edits[i]), []byte(edits[i+1]), 1)
 	}
 	batch, err := Parse(body, JSON, signal)
 	if err != nil {
@@ -80,14 +89,42 @@ func TestGeminiSpanAndOperationLogCountNothing(t *testing.T) {
 func TestGeminiCachedIsNotUncached(t *testing.T) {
 	usage := one(t, parseGemini(t, geminiLogs, Logs))
 	assertClasses(t, usage.Counts, map[focus.TokenClass]int64{
-		focus.InputUncached:       4000,
+		focus.InputUncached:       4000 + 600,
 		focus.CacheRead:           8000,
 		focus.Output:              750,
 		focus.ReasoningOutput:     450,
 		focus.CachedInputReported: 8000,
 	})
-	if usage.ContextInputTokens != 12000 {
-		t.Errorf("context %d, want the prompt's 12000", usage.ContextInputTokens)
+	if usage.ContextInputTokens != 12000+600 {
+		t.Errorf("context %d, want the prompt's 12000 and the tool results' 600", usage.ContextInputTokens)
+	}
+}
+
+func TestGeminiToolTokensArePricedAsInput(t *testing.T) {
+	noTool := one(t, parseGemini(t, geminiLogs, Logs,
+		`"tool_token_count", "value": {"intValue": "600"}`, `"tool_token_count", "value": {"intValue": "0"}`,
+		`"intValue": "13350"`, `"intValue": "12750"`))
+	withTool := one(t, parseGemini(t, geminiLogs, Logs))
+	added := classes(withTool.Counts)[focus.InputUncached] - classes(noTool.Counts)[focus.InputUncached]
+	if added != 600 {
+		t.Fatalf("600 tool tokens added %d uncached input tokens", added)
+	}
+	if len(withTool.Notes) != 0 || len(noTool.Notes) != 0 {
+		t.Fatalf("a total that agrees drew notes %v and %v", withTool.Notes, noTool.Notes)
+	}
+}
+
+func TestGeminiTotalThatDisagreesIsNoted(t *testing.T) {
+	for name, total := range map[string]string{"under the counts": "13000", "over the counts": "14000", "unreported": "0"} {
+		t.Run(name, func(t *testing.T) {
+			usage := one(t, parseGemini(t, geminiLogs, Logs, `"intValue": "13350"`, `"intValue": "`+total+`"`))
+			if !slices.Equal(usage.Notes, []string{NoteTotalDisagrees}) {
+				t.Fatalf("notes %v", usage.Notes)
+			}
+			if classes(usage.Counts)[focus.InputUncached] != 4600 {
+				t.Fatalf("a disagreeing total changed the counts: %v", classes(usage.Counts))
+			}
+		})
 	}
 }
 

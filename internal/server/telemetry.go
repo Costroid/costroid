@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -81,7 +82,24 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request, signal 
 		s.fail(w, r, err)
 		return
 	}
+	s.warnDisagreeingTotals(batch.Usage)
 	s.answerTelemetry(w, r, batch.Rejected+rejected)
+}
+
+// warnDisagreeingTotals logs each stored request whose agent states a total
+// that is not the sum of its counts. The request's rows carry the same note.
+func (s *Server) warnDisagreeingTotals(usages []otlp.Usage) {
+	for i := range usages {
+		usage := &usages[i]
+		if validUsage(usage) && slices.Contains(usage.Notes, otlp.NoteTotalDisagrees) {
+			s.Logger.Warn("telemetry total is not the sum of its counts", "request", usage.ID, "agent", usage.Agent)
+		}
+	}
+}
+
+// validUsage reports whether a request's model and agent fit their tags.
+func validUsage(usage *otlp.Usage) bool {
+	return modelTag.MatchString(usage.Model) && agentTag.MatchString(usage.Agent)
 }
 
 func encodingOf(r *http.Request) otlp.Encoding {
@@ -108,7 +126,7 @@ func chargesOf(batch otlp.Batch, now func() time.Time) ([]charge, int) {
 	rejected := 0
 	for i := range batch.Usage {
 		usage := &batch.Usage[i]
-		if !modelTag.MatchString(usage.Model) || !agentTag.MatchString(usage.Agent) {
+		if !validUsage(usage) {
 			rejected++
 			continue
 		}

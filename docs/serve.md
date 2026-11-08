@@ -245,10 +245,20 @@ The Gemini CLI dialect is built from Gemini CLI's telemetry source at tag `v0.67
 | `cached_content_token_count` | `cachedContentTokenCount`                          | `cache_read`                                                  |
 | `output_token_count`         | `candidatesTokenCount`                             | `output`                                                      |
 | `thoughts_token_count`       | `thoughtsTokenCount`                               | `output`, and repeated in `reasoning_output`                  |
+| `tool_token_count`           | `toolUsePromptTokenCount`                          | `input_uncached`, beside the prompt's uncached tokens         |
+| `total_token_count`          | `totalTokenCount`                                  | Not priced. Checked against the sum of the prompt, output, thoughts and tool counts |
 
-[`types.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/telemetry/types.ts) sets each count, and [`loggingContentGenerator.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/core/loggingContentGenerator.ts) names the model. The prompt count holds the cached tokens: Gemini CLI's own statistics take uncached input as the prompt count less the cached count ([`uiTelemetry.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/telemetry/uiTelemetry.ts)). They list thoughts apart from output ([`ModelStatsDisplay.tsx`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/cli/src/ui/components/ModelStatsDisplay.tsx)), and the catalog's Google sheet bills thinking tokens as output, so thoughts are added to `output`. That `candidatesTokenCount` leaves thoughts out is unverified: no run was recorded.
+[`types.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/telemetry/types.ts) sets each count, and [`loggingContentGenerator.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/core/loggingContentGenerator.ts) names the model. The counts come from `@google/genai` 1.30.0, the version Gemini CLI pins, whose [`types.ts`](https://github.com/googleapis/js-genai/blob/v1.30.0/src/types.ts) says three things:
 
-`tool_token_count` is not read, so a tool-use prompt's tokens reach no row. Gemini CLI writes the version of Node.js that runs it as `service.version`, so its rows name no agent version. Every Gemini CLI request is priced on the Google sheet, whose source is the Gemini API's price page, including a request made through Vertex AI.
+- The prompt count includes the cached content's tokens "when `cached_content` is set". Gemini CLI's own statistics also take uncached input as the prompt count less the cached count ([`uiTelemetry.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/telemetry/uiTelemetry.ts)).
+- The tool-use count is "the number of tokens in the results from tool executions, which are provided back to the model as input".
+- The total "is the sum of `prompt_token_count`, `candidates_token_count`, `tool_use_prompt_token_count`, and `thoughts_token_count`". So the prompt count leaves the tool results out, and the candidates count leaves the thoughts out.
+
+The catalog's Google sheet bills thinking tokens as output, so thoughts are added to `output`. Tool results are input the model reads, so they price as `input_uncached` and count toward the request's context tier. Whether Google bills them at the input price is not stated on the sheet.
+
+Each request's four counts are checked against its total, with the cached tokens counted once, inside the prompt. When the two differ, each of the request's rows says the figure may read low or high, and `serve` logs one warning naming the request. The rows are stored either way. Gemini CLI writes a total of 0 when the response states none, so such a request carries the note too.
+
+Gemini CLI writes the version of Node.js that runs it as `service.version`, so its rows name no agent version. Every Gemini CLI request is priced on the Google sheet, whose source is the Gemini API's price page, including a request made through Vertex AI.
 
 Where the table says the lifetime is assumed, a row that took those tokens carries `costroid/assumed_ttl`.
 

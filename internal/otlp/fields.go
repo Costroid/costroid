@@ -49,6 +49,7 @@ var allowed = set(
 	keyCodexReasoning,
 	keyCursorInput, keyCursorOutput, keyCursorCacheRead, keyCursorCacheCreation, "cursor.conversation.id",
 	keyGeminiInput, keyGeminiOutput, keyGeminiCached, keyGeminiThoughts,
+	keyGeminiTool, keyGeminiTotal,
 )
 
 // namedContent lists the content fields the specification and the agents name.

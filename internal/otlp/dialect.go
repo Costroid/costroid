@@ -50,6 +50,8 @@ const (
 	keyGeminiOutput   = "output_token_count"
 	keyGeminiCached   = "cached_content_token_count"
 	keyGeminiThoughts = "thoughts_token_count"
+	keyGeminiTool     = "tool_token_count"
+	keyGeminiTotal    = "total_token_count"
 )
 
 // The log events that carry a request's usage.
@@ -65,6 +67,10 @@ const serviceGemini = "gemini-cli"
 
 // eventNames are the log bodies that are an event's name, not free text.
 var eventNames = set(eventClaudeRequest, eventClaudeShort, eventCursorRequest)
+
+// NoteTotalDisagrees marks a request whose stated total is not the sum of its
+// counts. The server logs a warning for each such request.
+const NoteTotalDisagrees = "the agent's total token count is not the sum of its counts, so this figure may read low or high"
 
 // MaxTokens bounds one class of one request, far above any model's context,
 // so a sum of counts cannot overflow.
@@ -95,6 +101,7 @@ type counts struct {
 	inclusive bool
 	// subscriptionTTL means an unsplit write on a subscription lasts an hour.
 	subscriptionTTL bool
+	notes           []string
 }
 
 // interpret maps one record to usage, or reports it carries none.
@@ -237,8 +244,10 @@ func readCursor(r *record) (counts, bool, bool) {
 	}, true, d.ok
 }
 
-// readGemini reads Gemini CLI's api_response event. Its input holds the cached
-// tokens, and its output leaves out the thoughts, which Google bills as output.
+// readGemini reads Gemini CLI's api_response event. Its prompt count holds the
+// cached tokens and leaves out the tool results the model reads, and its
+// output leaves out the thoughts, which Google bills as output. The total is
+// the sum of prompt, output, tool results and thoughts.
 func readGemini(r *record) (counts, bool, bool) {
 	if !hasKey(r, keyGeminiInput) && !hasKey(r, keyGeminiOutput) {
 		// A response is also a gen_ai.client.inference.operation.details log
@@ -247,14 +256,19 @@ func readGemini(r *record) (counts, bool, bool) {
 		return counts{}, false, true
 	}
 	d := reader{r: r, ok: true}
-	thoughts := d.int(keyGeminiThoughts)
-	return counts{
-		input:     d.int(keyGeminiInput),
-		output:    d.int(keyGeminiOutput) + thoughts,
+	prompt, candidates := d.int(keyGeminiInput), d.int(keyGeminiOutput)
+	thoughts, tool := d.int(keyGeminiThoughts), d.int(keyGeminiTool)
+	c := counts{
+		input:     prompt + tool,
+		output:    candidates + thoughts,
 		cacheRead: d.int(keyGeminiCached),
 		reasoning: thoughts,
 		inclusive: true,
-	}, true, d.ok
+	}
+	if hasKey(r, keyGeminiTotal) && d.int(keyGeminiTotal) != prompt+candidates+thoughts+tool {
+		c.notes = append(c.notes, NoteTotalDisagrees)
+	}
+	return c, true, d.ok
 }
 
 func readStandard(r *record) (counts, bool, bool) {
@@ -424,6 +438,7 @@ func (u *Usage) applyCounts(c counts) bool {
 	u.add(focus.Output, c.output)
 	u.add(focus.ReasoningOutput, c.reasoning)
 	u.add(focus.CachedInputReported, c.cacheRead)
+	u.Notes = append(u.Notes, c.notes...)
 	if u.Dialect == OpenCode {
 		u.Notes = append(u.Notes, "OpenCode telemetry reports no cache writes, so any are counted as uncached input")
 	}
