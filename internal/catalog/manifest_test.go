@@ -102,6 +102,12 @@ const (
 	actionsIssuer     = "https://token.actions.githubusercontent.com"
 )
 
+// releaseIdentity is the certificate identity the catalog's release workflow
+// signs with at a release's tag.
+func releaseIdentity(version string) string {
+	return catalogRepository + "/.github/workflows/release.yml@refs/tags/v" + version
+}
+
 // Fulcio's certificate extensions, as
 // https://github.com/sigstore/fulcio/blob/main/docs/oid-info.md lists them.
 // The first issuer extension holds the bare string; the others hold a DER
@@ -266,14 +272,15 @@ func extensionText(t *testing.T, cert *x509.Certificate, oid asn1.ObjectIdentifi
 // The transparency log entry the bundle carries must name the same digest,
 // signature and certificate.
 //
-// It does not prove the bundle authentic. The certificate is not chained to
+// It does not prove the bundle authentic: the certificate is not chained to
 // Sigstore's root, and neither the log entry's inclusion proof and signed
-// checkpoint nor the timestamp is verified, because the binary carries no
-// Sigstore trust root and the module no Sigstore verifier.
+// checkpoint nor the timestamp is verified here. CI's catalog-signature job
+// verifies all of them with cosign, and
+// TestCISignatureJobNamesTheEmbeddedRelease holds that job to this release.
 func TestBundleNamesTheCatalogReleaseWorkflow(t *testing.T) {
 	for _, version := range slices.Sorted(maps.Keys(signedReleases)) {
 		sums, b, cert := signedFiles(t, version)
-		identity := catalogRepository + "/.github/workflows/release.yml@refs/tags/v" + version
+		identity := releaseIdentity(version)
 		if len(cert.URIs) != 1 || cert.URIs[0].String() != identity {
 			t.Errorf("release %s bundle certificate names %v, want %s", version, cert.URIs, identity)
 		}
