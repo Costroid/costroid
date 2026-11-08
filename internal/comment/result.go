@@ -10,20 +10,20 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/policy"
-	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 // Block is the result object, the machine-readable block. Strings under Data
 // originate in the pull request.
 type Block struct {
-	Schema      string     `json:"schema"`
-	CheckRunID  *int64     `json:"check_run_id,omitempty"`
-	Conclusion  *string    `json:"conclusion"`
-	State       State      `json:"state"`
-	Reason      Reason     `json:"reason,omitempty"`
-	ReasonLine  int        `json:"reason_line,omitempty"`
-	RunReason   run.Reason `json:"run_reason,omitempty"`
-	ReaderError string     `json:"reader_error,omitempty"`
+	Schema      string        `json:"schema"`
+	CheckRunID  *int64        `json:"check_run_id,omitempty"`
+	Conclusion  *string       `json:"conclusion"`
+	State       State         `json:"state"`
+	Reason      Reason        `json:"reason,omitempty"`
+	ReasonLine  int           `json:"reason_line,omitempty"`
+	RunReason   reason.Reason `json:"run_reason,omitempty"`
+	ReaderError string        `json:"reader_error,omitempty"`
 	// AgentError is the class of error the agent ended with, null when the
 	// run stated none.
 	AgentError *BlockAgentError `json:"agent_error"`

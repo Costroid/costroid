@@ -25,7 +25,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
-	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/vcs"
 )
@@ -490,7 +490,7 @@ const maxRunResult = 1 << 20
 // no rows, about the error its agent ended in, and about the cap it was given.
 // The comment cleans ReaderError again before it shows it.
 type statedReason struct {
-	RunReason   run.Reason        `json:"run_reason"`
+	RunReason   reason.Reason     `json:"run_reason"`
 	ReaderError string            `json:"reader_error"`
 	AgentError  *statedAgentError `json:"agent_error"`
 	AgentStated *statedFigure     `json:"agent_stated"`
@@ -565,7 +565,7 @@ func agentErrorFor(stated *statedAgentError, stderr io.Writer) adapter.AgentErro
 		return ""
 	}
 	class := adapter.AgentError(stated.Class)
-	if run.AgentErrorFix(class) == "" {
+	if reason.AgentErrorFix(class) == "" {
 		fmt.Fprintf(stderr, "costroid: warning: the agent's error class %q is not one this release knows, so it is ignored\n", stated.Class)
 		return ""
 	}
@@ -626,7 +626,7 @@ func withAgentResult(input comment.Input, result string, stderr io.Writer) comme
 // runReasonFor keeps the run's reason for an empty rows file. A reason this
 // release does not know, from a newer run, is ignored, and so is one beside a
 // rows file that is not empty, which says more than the reason does.
-func runReasonFor(state comment.State, reason run.Reason, stderr io.Writer) run.Reason {
+func runReasonFor(state comment.State, reason reason.Reason, stderr io.Writer) reason.Reason {
 	switch {
 	case reason == "":
 		return ""

@@ -5,18 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 // propertyRecording is one recorded run a line is mutated in: a Claude Code
@@ -204,11 +209,22 @@ func runFiles(t *testing.T, recording propertyRecording, files map[string][]byte
 			t.Fatal(err)
 		}
 	}
-	t.Setenv(fakeMode, "replay")
-	t.Setenv(fakeLog, filepath.Join(config, "argv"))
 	t.Setenv("COSTROID_FAKE_STREAM", filepath.Join(config, streamFile))
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
-	return runArgv(t, agentNamed(t, "claude"), "-p", "work")
+	return runArgv(t, streamingClaude(t), "-p", "work")
+}
+
+// streamingClaude is a fake claude that prints the stream file
+// COSTROID_FAKE_STREAM names and does nothing else, which is all a replay
+// needs. A shell script starts in a few milliseconds, where the test binary
+// as the fake takes about thirty.
+func streamingClaude(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexec cat \"$COSTROID_FAKE_STREAM\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func runCodexFiles(t *testing.T, files map[string][]byte) (Result, []map[string]any, error) {
@@ -352,13 +368,55 @@ func statesAReason(base, mutated Result) bool {
 // reason: a refusal that writes no rows and names the reader's line, or a
 // warning the recording does not give. No row it writes holds a negative
 // quantity or amount.
+//
+// Each change starts an agent, and the environment names its files, so the
+// changes cannot run in parallel inside one process. The test splits them
+// into shares and runs each share in a test binary of its own, at once.
 func TestOneBadLine(t *testing.T) {
 	outsideCIForRun(t)
 	t.Setenv("ENABLE_PROMPT_CACHING_1H", "")
-	tally := map[string]int{}
-	for _, recording := range propertyRecordings {
+	if share := os.Getenv(oneBadLineShare); share != "" {
+		runOneBadLineShare(t, share)
+		return
+	}
+	tally, ran, total := map[string]int{}, 0, 0
+	for _, shareTally := range runOneBadLineShares(t, min(runtime.GOMAXPROCS(0), maxOneBadLineShares)) {
+		for outcome, count := range shareTally {
+			tally[outcome] += count
+			ran += count
+		}
+	}
+	eachOneBadLineChange(t, func(oneBadLineChange) { total++ })
+	if ran != total {
+		t.Errorf("the shares ran %d changes of %d", ran, total)
+	}
+	t.Logf("outcomes over every change: %v", tally)
+}
+
+const (
+	// oneBadLineShare tells a test binary TestOneBadLine starts which share
+	// of the changes to run, as index/count.
+	oneBadLineShare = "COSTROID_ONE_BAD_LINE_SHARE"
+	// oneBadLineTally names the file a share writes its outcomes to.
+	oneBadLineTally = "COSTROID_ONE_BAD_LINE_TALLY"
+	// maxOneBadLineShares bounds the test binaries running at once.
+	maxOneBadLineShares = 32
+)
+
+// oneBadLineChange is one value of one line of a recording changed.
+type oneBadLineChange struct {
+	recording int
+	where     string
+	files     map[string][]byte
+	changes   func(request string) bool
+}
+
+// eachOneBadLineChange calls do with every change TestOneBadLine makes, in
+// the same order on every call.
+func eachOneBadLineChange(t *testing.T, do func(oneBadLineChange)) {
+	t.Helper()
+	for number, recording := range propertyRecordings {
 		files := recordedFiles(t, recording)
-		base := runBaseline(t, recording, files)
 		ties := requestLines(t, files)
 		for _, name := range slices.Sorted(maps.Keys(files)) {
 			lines := bytes.Split(files[name], []byte("\n"))
@@ -368,17 +426,109 @@ func TestOneBadLine(t *testing.T) {
 				}
 				changes := touched(name, line, ties)
 				for _, change := range lineVariants(t, line, index) {
-					where := fmt.Sprintf("%s/%s:%d %s %s", filepath.Base(recording.dir), name, index+1, change.path, change.kind)
 					mutated := slices.Clone(lines)
 					mutated[index] = encodeLine(change.value)
 					edited := maps.Clone(files)
 					edited[name] = bytes.Join(mutated, []byte("\n"))
-					tally[checkOneBadLine(t, where, base, recording, edited, changes)]++
+					do(oneBadLineChange{
+						recording: number,
+						where:     fmt.Sprintf("%s/%s:%d %s %s", filepath.Base(recording.dir), name, index+1, change.path, change.kind),
+						files:     edited,
+						changes:   changes,
+					})
 				}
 			}
 		}
 	}
-	t.Logf("outcomes over every change: %v", tally)
+}
+
+// runOneBadLineShares starts count test binaries, each running one share of
+// the changes, and returns each share's outcomes. A share that fails fails
+// the test with its output.
+func runOneBadLineShares(t *testing.T, count int) []map[string]int {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	args := []string{"-test.run=^TestOneBadLine$", "-test.count=1", "-test.short=" + strconv.FormatBool(testing.Short())}
+	if timeout := flag.Lookup("test.timeout"); timeout != nil {
+		args = append(args, "-test.timeout="+timeout.Value.String())
+	}
+	outputs, errs := make([][]byte, count), make([]error, count)
+	var group sync.WaitGroup
+	for index := range count {
+		group.Go(func() {
+			command := exec.Command(self, args...)
+			command.Env = append(os.Environ(),
+				fmt.Sprintf("%s=%d/%d", oneBadLineShare, index, count),
+				oneBadLineTally+"="+filepath.Join(dir, strconv.Itoa(index)+".json"))
+			outputs[index], errs[index] = command.CombinedOutput()
+		})
+	}
+	group.Wait()
+	tallies := make([]map[string]int, 0, count)
+	for index := range count {
+		if errs[index] != nil {
+			t.Errorf("share %d of %d: %v\n%s", index, count, errs[index], outputs[index])
+			continue
+		}
+		var tally map[string]int
+		if err := json.Unmarshal(mustRead(t, filepath.Join(dir, strconv.Itoa(index)+".json")), &tally); err != nil {
+			t.Fatalf("share %d of %d: %v", index, count, err)
+		}
+		tallies = append(tallies, tally)
+	}
+	return tallies
+}
+
+// oneBadLineCost is how long a change takes to run, in Claude Code runs. A
+// Codex run waits on the rollout file's tail, read every 50 ms, and takes
+// about five.
+func oneBadLineCost(change oneBadLineChange) int {
+	if propertyRecordings[change.recording].agent == "codex" {
+		return 5
+	}
+	return 1
+}
+
+// runOneBadLineShare runs the share of the changes named index/count, by
+// their cost, and writes its outcomes where oneBadLineTally names. A share
+// is a run of consecutive changes, so few recordings need their own run.
+func runOneBadLineShare(t *testing.T, share string) {
+	t.Helper()
+	var index, count int
+	if _, err := fmt.Sscanf(share, "%d/%d", &index, &count); err != nil || index < 0 || index >= count {
+		t.Fatalf("share %q is not index/count", share)
+	}
+	total := 0
+	eachOneBadLineChange(t, func(change oneBadLineChange) { total += oneBadLineCost(change) })
+	from, to := total*index/count, total*(index+1)/count
+	tally := map[string]int{}
+	bases := map[int]baselineRun{}
+	spent := 0
+	eachOneBadLineChange(t, func(change oneBadLineChange) {
+		start := spent
+		spent += oneBadLineCost(change)
+		if start < from || start >= to {
+			return
+		}
+		recording := propertyRecordings[change.recording]
+		base, ok := bases[change.recording]
+		if !ok {
+			base = runBaseline(t, recording, recordedFiles(t, recording))
+			bases[change.recording] = base
+		}
+		tally[checkOneBadLine(t, change.where, base, recording, change.files, change.changes)]++
+	})
+	data, err := json.Marshal(tally)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv(oneBadLineTally), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // checkOneBadLine runs one changed recording and holds it to TestOneBadLine's
@@ -389,7 +539,7 @@ func checkOneBadLine(t *testing.T, where string, base baselineRun, recording pro
 	assertNoNegative(t, where, rows)
 	if err != nil {
 		var refused *ReaderError
-		if !errors.As(err, &refused) || result.Reason != ReasonReaderRefused || len(rows) != 0 || ReaderLine(err.Error()) == "" {
+		if !errors.As(err, &refused) || result.Reason != reason.ReaderRefused || len(rows) != 0 || reason.ReaderLine(err.Error()) == "" {
 			t.Fatalf("%s: the run failed with %v, reason %q, %d rows", where, err, result.Reason, len(rows))
 		}
 		return "refused with a reason"

@@ -20,7 +20,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
-	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 const (
@@ -420,13 +420,13 @@ func runJSON(t *testing.T, claude string) (int, string, string) {
 // run and report --json say it in words and as its code.
 func TestEmptyRunReasonInJSONAndComment(t *testing.T) {
 	cases := []struct {
-		reason   run.Reason
+		reason   reason.Reason
 		code     int
 		start    func(t *testing.T) string
 		sentence string
 	}{
-		{run.ReasonNoUsage, 0, silentClaude, "This report shows no figures. Reason `no_usage`: the agent reported no usage, so the run wrote no rows."},
-		{run.ReasonConcurrentRun, exitFailure, func(t *testing.T) string {
+		{reason.NoUsage, 0, silentClaude, "This report shows no figures. Reason `no_usage`: the agent reported no usage, so the run wrote no rows."},
+		{reason.ConcurrentRun, exitFailure, func(t *testing.T) string {
 			claude := silentClaude(t)
 			release, err := claudecode.Agent{}.Claim()
 			if err != nil {

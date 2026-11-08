@@ -23,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
+	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/run"
 )
 
@@ -348,7 +349,7 @@ type runRecord struct {
 	out    string
 	budget *decimal.Decimal
 	head   string
-	reason run.Reason
+	reason reason.Reason
 	// readerLine is the reader's first error line, with reader_refused.
 	readerLine string
 	// agentError is the class of error the agent ended in, empty for none.
@@ -366,8 +367,8 @@ type runRecord struct {
 func (r runRecord) failed(err error) runRecord {
 	var reader *run.ReaderError
 	if errors.As(err, &reader) {
-		r.reason = run.ReasonReaderRefused
-		r.readerLine = run.ReaderLine(reader.Err.Error())
+		r.reason = reason.ReaderRefused
+		r.readerLine = reason.ReaderLine(reader.Err.Error())
 	}
 	return r
 }
