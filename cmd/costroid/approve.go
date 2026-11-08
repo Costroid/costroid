@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/comment"
+	"github.com/Costroid/costroid/internal/history"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
 )
@@ -167,10 +166,14 @@ func reconclude(ctx context.Context, host approvalHost, pull pullContext, number
 		return fmt.Errorf("read the pull request: %w", err)
 	}
 	approval := findApproval(ctx, host, pull.settingsRef(), current, now, stderr)
-	previous, block, err := newestCheck(ctx, host, current.HeadSHA)
+	newest, err := history.Newest(ctx, host, current.HeadSHA)
+	if errors.Is(err, history.ErrNoCheck) {
+		return fmt.Errorf("no costroid check is on commit %s yet, and the report applies an approval when it posts", current.HeadSHA)
+	}
 	if err != nil {
 		return err
 	}
+	previous, block := newest.CheckRun, newest.Block
 	conclusion := block.ApprovedConclusion(approval)
 	if block.Conclusion != nil && *block.Conclusion == conclusion {
 		return fmt.Errorf("check run %d already concludes %s", previous, conclusion)
@@ -188,27 +191,6 @@ func reconclude(ctx context.Context, host approvalHost, pull pullContext, number
 	}
 	nameCheck(ctx, host, *id, render, stderr)
 	return nil
-}
-
-// newestCheck reads the result object of the newest costroid check run on
-// the commit. GitHub numbers check runs in the order they are created.
-func newestCheck(ctx context.Context, host scm.History, head string) (int64, comment.Block, error) {
-	checks, err := host.CheckRuns(ctx, head, comment.CheckName)
-	if err != nil {
-		return 0, comment.Block{}, fmt.Errorf("read the check runs on %s: %w", head, err)
-	}
-	if len(checks) == 0 {
-		return 0, comment.Block{}, fmt.Errorf("no costroid check is on commit %s yet, and the report applies an approval when it posts", head)
-	}
-	newest := slices.MaxFunc(checks, func(a, b scm.ListedCheck) int { return cmp.Compare(a.ID, b.ID) })
-	block, err := comment.ParseResult(newest.Text)
-	if err != nil {
-		return 0, comment.Block{}, fmt.Errorf("check run %d: %w", newest.ID, err)
-	}
-	if block.HeadSHA != head {
-		return 0, comment.Block{}, fmt.Errorf("check run %d reports commit %s, not the head", newest.ID, string(comment.Clean(block.HeadSHA)))
-	}
-	return newest.ID, block, nil
 }
 
 // findApproval returns the approval of the head that passes every rule, or

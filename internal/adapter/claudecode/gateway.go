@@ -20,6 +20,10 @@ const (
 // it above the project's and the user's settings files.
 const settingsFlag = "--settings"
 
+// keyHelperSetting names a shell command whose output Claude Code sends as
+// its key. Empty, Claude Code runs no helper.
+const keyHelperSetting = "apiKeyHelper"
+
 // cloudFlags start the session on a machine other than the one the run
 // starts, which holds none of the run's environment.
 var cloudFlags = []string{"--cloud", "--remote", "--environment"}
@@ -57,8 +61,11 @@ func (Agent) GatewayArgs(string) []string {
 // variable at a time. Of several --settings it reads the last alone. So the
 // file holds the command's own last --settings, every key as written, with
 // the gateway's base URL, the run's key, no API key and no other provider set
-// in its env. The run places its arguments after every option the command
-// holds. The file is new, and only the run's user can read it.
+// in its env, and an empty apiKeyHelper. A repository's .claude/settings.json
+// can name a helper, which Claude Code runs and whose output it sends as
+// x-api-key beside the run's bearer token, so the run's file names none. The
+// run places its arguments after every option the command holds. The file is
+// new, and only the run's user can read it.
 func (Agent) GatewaySettings(argv []string, base, key string) (args []string, remove func() error, err error) {
 	settings := map[string]json.RawMessage{}
 	if value, ok := lastSettings(argv); ok {
@@ -66,7 +73,7 @@ func (Agent) GatewaySettings(argv []string, base, key string) (args []string, re
 			return nil, nil, err
 		}
 	}
-	data, err := withGatewayEnv(settings, base, key)
+	data, err := withGateway(settings, base, key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -85,10 +92,11 @@ func (Agent) GatewaySettings(argv []string, base, key string) (args []string, re
 	return []string{settingsFlag, file.Name()}, remove, nil
 }
 
-// withGatewayEnv is settings with every routing variable in its env set: the
+// withGateway is settings with every routing variable in its env set: the
 // base URL to the gateway, the bearer token to the run's key, and every other
-// to empty, which Claude Code reads as unset. Its other variables stay.
-func withGatewayEnv(settings map[string]json.RawMessage, base, key string) ([]byte, error) {
+// to empty, which Claude Code reads as unset. Its other variables stay. The
+// key helper is set empty, so none runs.
+func withGateway(settings map[string]json.RawMessage, base, key string) ([]byte, error) {
 	var env map[string]json.RawMessage
 	if raw, ok := settings["env"]; ok {
 		if err := json.Unmarshal(raw, &env); err != nil {
@@ -115,6 +123,7 @@ func withGatewayEnv(settings map[string]json.RawMessage, base, key string) ([]by
 		return nil, err
 	}
 	settings["env"] = merged
+	settings[keyHelperSetting] = json.RawMessage(`""`)
 	return json.Marshal(settings)
 }
 

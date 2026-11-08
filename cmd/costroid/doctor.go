@@ -657,7 +657,7 @@ func platformLines(ctx context.Context, root string, host doctorHost) []finding 
 	if !slices.Contains(scopes.Scopes, "identity:read") {
 		return lines
 	}
-	return append(lines, bindingLine(ctx, root, host, target))
+	return append(lines, bindingLines(ctx, root, host, target)...)
 }
 
 // tokenAnswer is the part of GET /tokens/current that doctor reads. The
@@ -705,21 +705,32 @@ func scopeLine(token tokenAnswer) finding {
 	return warn(held+", and lacks "+joinNames(lacks), "create one with "+joinNames(tokenScopes)+", as docs/connect.md says")
 }
 
-// bindingLine states the binding of the installation a CI job of this
-// repository proves, as GET /identity lists it.
-func bindingLine(ctx context.Context, root string, host doctorHost, target platform) finding {
+// bindingLines state the binding of the installation a CI job of this
+// repository proves, as GET /identity lists it, and on a line of its own a
+// binding of the same owner made through the GitHub App.
+func bindingLines(ctx context.Context, root string, host doctorHost, target platform) []finding {
 	installation, err := ownerInstallation(ctx, root, host)
 	if err != nil {
 		fix := "run doctor where gh can read the repository, or as a step of the connect job"
 		if strings.Contains(err.Error(), ghNoRemote) {
 			fix = ghFix(err)
 		}
-		return warn("doctor did not read the binding, because it could not name the repository's owner: "+err.Error(), fix)
+		return []finding{warn("doctor did not read the binding, because it could not name the repository's owner: "+err.Error(), fix)}
 	}
 	identity, err := target.identity(ctx)
 	if err != nil {
-		return platformFailure("the identity request", err)
+		return []finding{platformFailure("the identity request", err)}
 	}
+	lines := []finding{bindingLine(installation, identity, host.now())}
+	if app, found := identity.app(installation); found {
+		lines = append(lines, ok("tenant %s also holds owner %s through the GitHub App installation %s, proven at %s", identity.Tenant.ID, app.owner, app.id, app.provenAt.UTC().Format(time.RFC3339)))
+	}
+	return lines
+}
+
+// bindingLine states the binding of the installation, which only a job's
+// proof makes.
+func bindingLine(installation string, identity identityAnswer, now time.Time) finding {
 	tenant := identity.Tenant.ID
 	var ended *installationAnswer
 	for index, held := range identity.Installations {
@@ -735,7 +746,7 @@ func bindingLine(ctx context.Context, root string, host doctorHost, target platf
 			return warn(fmt.Sprintf("tenant %s lists %s as active, with no time it was proven", tenant, installation), connectFix)
 		}
 		at := proven.UTC().Format(time.RFC3339)
-		if host.now().Sub(proven) >= bindingCurrentFor {
+		if now.Sub(proven) >= bindingCurrentFor {
 			return warn(fmt.Sprintf("%s is bound to tenant %s, last proven at %s, more than 7 days ago, so another tenant's proof can displace it", installation, tenant, at), connectFix)
 		}
 		return ok("%s is bound to tenant %s, proven at %s", installation, tenant, at)

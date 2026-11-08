@@ -49,11 +49,15 @@ costroid:connect:
 
 Then add a daily pipeline schedule on the default branch, and keep that branch protected. The platform takes a proof from a pipeline on a protected ref whose source is `push`, `web` or `schedule`.
 
+`connect` binds a namespace only when `CI_SERVER_HOST` is `gitlab.com`. GitLab states that this variable is "the host of the GitLab instance URL, without protocol or port" ([predefined variables](https://docs.gitlab.com/ci/variables/predefined_variables/), read 2026-11-08). A self-managed instance numbers its own namespaces, so its ids are not unique, and the contract takes no proof it issues. There `connect` stops with one line and sends nothing.
+
 When `COSTROID_PLATFORM_PROOF` is empty, `connect` stops and prints the audience to set, with the tenant's id in it.
 
 ## When it sends nothing
 
 A binding by a job's proof is current for 7 days after its last proof. When `GET /identity` lists the installation active and proven less than 20 hours ago, `connect` prints that it is bound and sends no proof. The daily run renews the binding, and a push on the same day costs one request.
+
+A binding made through the GitHub App does not save the proof. The contract names it `github:` and the App installation's id, and `GET /identity` gives the owner's account id in its `owner_id`. The platform takes a batch only under the exact installation it names, and the recipes send their rows under `github-owner:`. So `connect` proves `github-owner:` whatever App binding the tenant holds of the same owner. The contract binds both kinds of id to one tenant side by side. `costroid doctor` states the `github-owner:` binding, and an App binding of the same owner on a line of its own.
 
 Outside GitHub Actions and GitLab CI no proof exists. There `connect` needs `--installation-id`, and only reads whether the installation is bound:
 
@@ -81,6 +85,8 @@ Each line starts with `costroid:`. A refusal names the platform's status and cod
 | `INSTALLATION_PROOF_KEYS_UNAVAILABLE` | The platform could not read the CI system's keys, so run the job again. |
 | `AUTH_TOKEN_INVALID` | The integration token is unknown, expired or revoked, so create one on Costroid Platform. |
 | `AUTH_TOKEN_SCOPE` | The integration token needs identity:read and installations:write. |
+
+The platform answers `INSTALLATION_PROOF_KEYS_UNAVAILABLE` when it cannot read the CI system's keys, and the same proof can be sent again inside its window. `connect` sends it once more after the platform's `Retry-After`, which is 60 seconds today, and prints that it does. It waits at most 120 seconds. A `Retry-After` that is longer, absent or not a number of seconds ends the command with the sentence above, and so does a second refusal.
 
 A code outside this table gets a sentence that points here, and the contract's [refusals](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#refusals) say what it means. [`docs/troubleshooting.md`](troubleshooting.md#connecting-to-costroid-platform) lists every other line.
 

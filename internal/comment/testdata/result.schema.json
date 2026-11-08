@@ -888,7 +888,9 @@
                   "no_ledger",
                   "model_outside_allowlist",
                   "unreadable_model",
-                  "models_on_allowlist"
+                  "models_on_allowlist",
+                  "unmeasured_spend",
+                  "no_run_rows"
                 ]
               },
               "held_by_warn_only": {

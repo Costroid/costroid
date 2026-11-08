@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,9 +32,15 @@ type connectStub struct {
 	// installations is the identity answer's list, as JSON.
 	installations string
 	// status and body are the answer to a proof. A 200 without a body echoes
-	// an active binding of the path's installation.
+	// an active binding of the path's installation. When refusals is set,
+	// each of its answers is given to one proof, in order, before status.
 	status int
 	body   string
+	// retryAfter is the Retry-After header of a refusal, when set.
+	retryAfter string
+	refusals   []string
+	// waits are the pauses connect asked for.
+	waits []time.Duration
 
 	mu        sync.Mutex
 	identity  int
@@ -83,6 +91,16 @@ func (s *connectStub) serve(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		installation := strings.TrimPrefix(r.URL.Path, installationsPath)
 		s.proofs = append(s.proofs, sentProof{path: installation, authorization: r.Header.Get("Authorization"), contentType: r.Header.Get("Content-Type"), body: body})
+		if s.retryAfter != "" {
+			w.Header().Set("Retry-After", s.retryAfter)
+		}
+		if len(s.refusals) > 0 {
+			code := s.refusals[0]
+			s.refusals = s.refusals[1:]
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":{"code":"` + code + `","message":"the platform's own words"}}`))
+			return
+		}
 		w.WriteHeader(s.status)
 		if s.status == http.StatusOK && s.body == "" {
 			owner := installation[strings.Index(installation, ":")+1:]
@@ -113,6 +131,7 @@ func (s *connectStub) githubEnv() map[string]string {
 func gitlabEnv() map[string]string {
 	return map[string]string{
 		"GITLAB_CI":               "true",
+		"CI_SERVER_HOST":          "gitlab.com",
 		"CI_PROJECT_NAMESPACE_ID": testNamespace,
 		proofVariable:             testGitLabProof,
 		platformTokenVariable:     testIntegrationToken,
@@ -123,7 +142,13 @@ func (s *connectStub) connect(t *testing.T, env map[string]string, extra ...stri
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	args := append([]string{"--platform-url", s.server.URL}, extra...)
-	code := connect(context.Background(), args, s.server.Client(), func(name string) string { return env[name] }, func() time.Time { return connectNow }, &stdout, &stderr)
+	pause := func(_ context.Context, d time.Duration) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.waits = append(s.waits, d)
+		return nil
+	}
+	code := connect(context.Background(), args, s.server.Client(), func(name string) string { return env[name] }, connectClock{now: func() time.Time { return connectNow }, wait: pause}, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -325,6 +350,174 @@ func TestConnectGitLabNamesTheAudienceItNeeds(t *testing.T) {
 	want := "costroid: COSTROID_PLATFORM_PROOF is empty, so this job has no proof: give the job an ID token of that name with aud " + testAudience + "\n"
 	if code != exitFailure || stderr != want || len(stub.proofs) != 0 {
 		t.Errorf("exit %d, %d proofs, stderr %q, want %q", code, len(stub.proofs), stderr, want)
+	}
+}
+
+// TestConnectRefusesSelfManagedGitLab stops a GitLab job that is not on
+// gitlab.com before it asks the platform anything. Only gitlab.com's
+// namespace ids are unique, so only they bind.
+func TestConnectRefusesSelfManagedGitLab(t *testing.T) {
+	for _, host := range []string{"gitlab.example.com", "", "GitLab.com", "gitlab.com.example.net"} {
+		t.Run(host, func(t *testing.T) {
+			stub := newConnectStub(t)
+			env := gitlabEnv()
+			env["CI_SERVER_HOST"] = host
+			code, stdout, stderr := stub.connect(t, env)
+			want := "costroid: CI_SERVER_HOST is \"" + host + "\", and Costroid Platform binds a GitLab namespace only on gitlab.com, because a self-managed instance's namespace ids are not unique\n"
+			if code != exitFailure || stdout != "" || stderr != want {
+				t.Errorf("exit %d, stdout %q, stderr %q, want stderr %q", code, stdout, stderr, want)
+			}
+			if stub.identity != 0 || len(stub.proofs) != 0 {
+				t.Errorf("%d identity requests and %d proofs, want none", stub.identity, len(stub.proofs))
+			}
+		})
+	}
+}
+
+// TestConnectRetriesOnceWhenKeysAreUnavailable sends the same proof a second
+// time after the platform's Retry-After, when that is 120 seconds or less,
+// and never a third time. Past 120 seconds, absent or unreadable, it stops
+// with the refusal's sentence.
+func TestConnectRetriesOnceWhenKeysAreUnavailable(t *testing.T) {
+	const keys = "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
+	for _, tc := range []struct {
+		name, retryAfter string
+		refusals         []string
+		gitlab           bool
+		// wait is the pause before the retry, zero when there is none.
+		wait time.Duration
+		code int
+	}{
+		{name: "bound on the retry", retryAfter: "5", refusals: []string{keys}, wait: 5 * time.Second},
+		{name: "a GitLab job bound on the retry", retryAfter: "1", refusals: []string{keys}, gitlab: true, wait: time.Second},
+		{name: "the platform's 60 seconds", retryAfter: "60", refusals: []string{keys}, wait: 60 * time.Second},
+		{name: "120 seconds", retryAfter: "120", refusals: []string{keys}, wait: 120 * time.Second},
+		{name: "past 120 seconds", retryAfter: "121", refusals: []string{keys}, code: exitRejected},
+		{name: "no Retry-After", refusals: []string{keys}, code: exitRejected},
+		{name: "a Retry-After that is not seconds", retryAfter: "Sun, 08 Nov 2026 09:01:00 GMT", refusals: []string{keys}, code: exitRejected},
+		{name: "refused again", retryAfter: "2", refusals: []string{keys, keys, keys}, wait: 2 * time.Second, code: exitRejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newConnectStub(t)
+			stub.retryAfter, stub.refusals = tc.retryAfter, tc.refusals
+			env, installation, proof := stub.githubEnv(), "github-owner:"+testOwner, testRunToken
+			if tc.gitlab {
+				env, installation, proof = gitlabEnv(), "gitlab-namespace:"+testNamespace, testGitLabProof
+			}
+			code, stdout, stderr := stub.connect(t, env)
+			if code != tc.code {
+				t.Fatalf("exit %d, want %d: %s", code, tc.code, stderr)
+			}
+			sends, want, waits := 1, "", []time.Duration(nil)
+			if tc.wait > 0 {
+				sends, waits = 2, []time.Duration{tc.wait}
+				want = fmt.Sprintf("costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(tc.wait.Seconds()))
+			}
+			if len(stub.proofs) != sends {
+				t.Fatalf("%d proofs, want %d", len(stub.proofs), sends)
+			}
+			for _, sent := range stub.proofs {
+				if string(sent.body) != `{"proof":"`+proof+`"}` {
+					t.Errorf("a proof's body is %s, want the same proof each time", sent.body)
+				}
+			}
+			if len(stub.audiences) > 1 {
+				t.Errorf("the OIDC token was asked %d times, want once", len(stub.audiences))
+			}
+			if !slices.Equal(stub.waits, waits) {
+				t.Errorf("waits %v, want %v", stub.waits, waits)
+			}
+			if tc.code == exitRejected {
+				want += "costroid: Costroid Platform refused the proof for " + installation + ": 503 " + keys + ". The platform could not read the CI system's keys, so run the job again.\n"
+			} else if stdout != "costroid: "+installation+" is bound to tenant "+testTenant+", proven at 2026-11-08T08:59:30Z\n" {
+				t.Errorf("stdout %q", stdout)
+			}
+			if stderr != want {
+				t.Errorf("stderr %q, want %q", stderr, want)
+			}
+		})
+	}
+}
+
+// appEntry is an identity entry for a binding made through the GitHub App,
+// as integration/v0.2's Installation.app-attestation.json states one.
+func appEntry(owner, status string, provenAt time.Time) string {
+	return `{"id":"github:58120394","tenant_id":"` + testTenant + `","owner_id":"` + owner + `","status":"` + status +
+		`","proof_kind":"app_attestation","bound_at":"2026-08-01T08:02:11Z","proven_at":"` + provenAt.Format(time.RFC3339) + `","ended_at":null}`
+}
+
+// TestConnectProvesTheOwnerBesideAnAppBinding sends the job's proof for
+// github-owner:, which the recipes export under, whatever App binding the
+// tenant holds of the same owner. Only that exact binding, active and proven
+// in the last 20 hours, saves the proof. doctor states the github-owner:
+// binding as it stands, and the App binding on a line of its own.
+func TestConnectProvesTheOwnerBesideAnAppBinding(t *testing.T) {
+	appProven := connectNow.Add(-90 * 24 * time.Hour)
+	app := appEntry(testOwner, "active", appProven)
+	owner := "github-owner:" + testOwner
+	fresh := connectNow.Add(-time.Hour)
+	entries := func(list ...string) string { return "[" + strings.Join(list, ",") + "]" }
+	inner := func(list string) string { return strings.TrimSuffix(strings.TrimPrefix(list, "["), "]") }
+	for _, tc := range []struct {
+		name, installations string
+		proofs              int
+	}{
+		{name: "the App alone", installations: entries(app), proofs: 1},
+		{name: "the App beside a stale proof", installations: entries(inner(activeInstallation(owner, connectNow.Add(-8*24*time.Hour))), app), proofs: 1},
+		{name: "the App beside a proof older than 20 hours", installations: entries(inner(activeInstallation(owner, connectNow.Add(-21*time.Hour))), app), proofs: 1},
+		{name: "the App beside a fresh proof", installations: entries(inner(activeInstallation(owner, fresh)), app), proofs: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newConnectStub(t)
+			stub.installations = tc.installations
+			code, stdout, stderr := stub.connect(t, stub.githubEnv())
+			if code != 0 || stderr != "" {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if len(stub.proofs) != tc.proofs {
+				t.Fatalf("%d proofs, want %d", len(stub.proofs), tc.proofs)
+			}
+			want := "costroid: " + owner + " is bound to tenant " + testTenant + ", proven at 2026-11-08T08:59:30Z\n"
+			if tc.proofs == 0 {
+				want = "costroid: " + owner + " is bound to tenant " + testTenant + ", proven at " + fresh.Format(time.RFC3339) + ", so no proof was sent\n"
+			} else if stub.proofs[0].path != owner {
+				t.Errorf("the proof went to /installations/%s, want %s", stub.proofs[0].path, owner)
+			}
+			if stdout != want {
+				t.Errorf("stdout %q, want %q", stdout, want)
+			}
+		})
+	}
+
+	stub := newConnectStub(t)
+	stub.installations = entries(app)
+	env := map[string]string{platformTokenVariable: testIntegrationToken}
+	if code, _, stderr := stub.connect(t, env, "--installation-id", owner); code != exitFailure || !strings.HasPrefix(stderr, "costroid: "+owner+" has no binding to tenant ") {
+		t.Errorf("outside CI beside an App binding: exit %d, stderr %q", code, stderr)
+	}
+
+	appLine := "ok: tenant " + testTenant + " also holds owner " + testOwner + " through the GitHub App installation github:58120394, proven at " + appProven.Format(time.RFC3339)
+	for _, tc := range []struct {
+		name, installations, owned string
+		app                        bool
+	}{
+		{"the App alone", entries(app), "warn: tenant " + testTenant + " holds no binding of " + owner + ", so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND", true},
+		{"the App beside a stale proof", entries(inner(activeInstallation(owner, connectNow.Add(-8*24*time.Hour))), app), "warn: " + owner + " is bound to tenant " + testTenant + ", last proven at 2026-10-31T09:00:00Z, more than 7 days ago", true},
+		{"a revoked App", entries(appEntry(testOwner, "revoked", appProven)), "warn: tenant " + testTenant + " holds no binding of " + owner, false},
+		{"the App of another owner", entries(appEntry("1", "active", appProven)), "warn: tenant " + testTenant + " holds no binding of " + owner, false},
+	} {
+		t.Run("doctor reads "+tc.name, func(t *testing.T) {
+			stub := newDoctorPlatform(t)
+			stub.installations = tc.installations
+			root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+			_, stdout, stderr := runDoctor(t, root, stub.platformHost("ANTHROPIC_API_KEY\nCOSTROID_PLATFORM_TOKEN\n"))
+			if lineWith(stdout, tc.owned) == "" {
+				t.Errorf("no line starts %q:\n%s%s", tc.owned, stdout, stderr)
+			}
+			if got := lineWith(stdout, appLine) == appLine; got != tc.app {
+				t.Errorf("the App line is there: %v, want %v:\n%s", got, tc.app, stdout)
+			}
+		})
 	}
 }
 
