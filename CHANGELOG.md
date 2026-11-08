@@ -2,6 +2,19 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.16 (2026-11-09)
+
+### What you can now do
+
+- Label a run's rows: `costroid run` and `ingest-run` take `--tag work_item=ENG-142`, `--tag arm=b` and `--tag team=platform`, written to `Tags` as `costroid/<key>`. Any other key, a value outside the allowlist or a value shaped like a secret exits 125. `costroid serve` stores rows carrying the three tags. [`docs/tags.md`](docs/tags.md) has the rules.
+- Merge Costroid's rows with your provider's own FOCUS data without counting a run twice: `--focus-profile strict` writes `BilledCost` and `EffectiveCost` as 0 and carries the figure in `x_CostroidMeasuredCost`. The default rows are unchanged; send those to Costroid Platform. [`docs/focus-profile.md`](docs/focus-profile.md) says why.
+- Send Gemini CLI's telemetry to `costroid serve`: its `gemini_cli.api_response` logs are priced, with cached tokens as cache reads, thinking tokens as output and tool results as input. A request whose counts do not add up to Gemini's own total carries a note that its figure may read low or high. This dialect is built from Gemini CLI's source at v0.67.0, not from a recorded run.
+- The row contracts `tags/v0.3` and `focus-row/v0.4` are published in [Costroid/costroid-schemas](https://github.com/Costroid/costroid-schemas).
+
+### Fixes
+
+- `costroid reconcile` and the accuracy page print one percentage: a provider figure of zero reads `n/a`, and a negative one keeps its sign.
+
 ## 1.0.0-alpha.15 (2026-11-08)
 
 ### Breaking changes
