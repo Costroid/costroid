@@ -65,7 +65,7 @@ func checkText(t *testing.T, figures ...comment.Figure) string {
 
 // withSchema rewrites the object's schema, as another release wrote it.
 func withSchema(text, schema string) string {
-	return strings.Replace(text, `"schema": "costroid.result/0.7"`, `"schema": "`+schema+`"`, 1)
+	return strings.Replace(text, `"schema": "costroid.result/0.8"`, `"schema": "`+schema+`"`, 1)
 }
 
 // withDigest writes a rows digest into the object.
@@ -283,7 +283,26 @@ func TestLifetimeDropsRepeatsByDigest(t *testing.T) {
 	})
 }
 
-// TestLifetimeNeverAddsTheAgentsOwnFigure reads a result/v0.7 object that
+// TestLifetimeLeavesOutARecordedRunsReport posts a report on a recorded run's
+// rows beside one on this pull request's own. The recorded figures were spent
+// on no commit here, so the total neither counts them nor calls them unread.
+func TestLifetimeLeavesOutARecordedRunsReport(t *testing.T) {
+	stub := scmtest.New(t)
+	pullWith(stub, secondCommit, thirdCommit)
+	recordedText := strings.Replace(checkText(t, figure("USD", "measured", "0.0391529")), `"recorded": null`, `"recorded": {"run_id": 42368537950, "date": "2026-11-07"}`, 1)
+	if !strings.Contains(recordedText, `"run_id": 42368537950`) {
+		t.Fatal("the object states no recorded run")
+	}
+	posted(stub, secondCommit, recordedText)
+	posted(stub, secondCommit, checkText(t, figure("USD", "measured", "0.1")))
+	totals := readWith(t, stub, thirdCommit, digestedReport(t, otherDigest, figure("USD", "measured", "0.05")))
+	assertFigures(t, totals.Lifetime.Figures, want{"USD", "measured", "0.15", 2, true})
+	if totals.Lifetime.Unread != 0 || totals.Earlier.USD.String() != "0.1" {
+		t.Errorf("unread %d, earlier %+v: the recorded report was counted", totals.Lifetime.Unread, totals.Earlier)
+	}
+}
+
+// TestLifetimeNeverAddsTheAgentsOwnFigure reads a result/v0.8 object that
 // states gh-aw's AI credits and adds up its USD figure alone.
 func TestLifetimeNeverAddsTheAgentsOwnFigure(t *testing.T) {
 	text := checkText(t, figure("USD", "measured", "0.1"))
@@ -335,7 +354,7 @@ func TestLifetimeLeavesOutWhatItCannotAddUp(t *testing.T) {
 	posted(stub, secondCommit, text)
 	for _, unread := range []string{
 		withSchema(text, "costroid.result/0.2"),
-		withSchema(text, "costroid.result/0.8"),
+		withSchema(text, "costroid.result/0.9"),
 		strings.Replace(text, `"amounts": "shown"`, `"amounts": "withheld"`, 1),
 		strings.Replace(text, `"figures_omitted": 0`, `"figures_omitted": 1`, 1),
 		strings.Replace(text, `"currency": "USD"`, `"currency": "usd"`, 1),

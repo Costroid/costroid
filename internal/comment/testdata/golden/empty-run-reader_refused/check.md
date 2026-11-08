@@ -14,7 +14,7 @@ This report shows no figures. Reason `reader_refused`: the reader refused the ag
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "empty_rows_file",
@@ -43,6 +43,7 @@ This report shows no figures. Reason `reader_refused`: the reader refused the ag
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
-  "agent_stated": null
+  "agent_stated": null,
+  "recorded": null
 }
 ```

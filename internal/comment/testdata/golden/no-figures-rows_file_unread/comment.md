@@ -14,7 +14,7 @@ The rows file could not be read, so this report shows no figures.
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "rows_unreadable",
@@ -42,7 +42,8 @@ The rows file could not be read, so this report shows no figures.
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
-  "agent_stated": null
+  "agent_stated": null,
+  "recorded": null
 }
 ```
 

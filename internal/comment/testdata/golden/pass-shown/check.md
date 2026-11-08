@@ -35,7 +35,7 @@ Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`.
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "success",
   "state": "reported",
   "agent_error": null,
@@ -90,6 +90,7 @@ Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`.
   },
   "lifetime": null,
   "agent_stated": null,
+  "recorded": null,
   "policy": {
     "conclusion": "success",
     "trust": "token_verified",

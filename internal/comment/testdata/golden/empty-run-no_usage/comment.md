@@ -14,7 +14,7 @@ This report shows no figures. Reason `no_usage`: the agent reported no usage, so
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "no_rows",
@@ -43,7 +43,8 @@ This report shows no figures. Reason `no_usage`: the agent reported no usage, so
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
-  "agent_stated": null
+  "agent_stated": null,
+  "recorded": null
 }
 ```
 

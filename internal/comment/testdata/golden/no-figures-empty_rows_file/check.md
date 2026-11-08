@@ -14,7 +14,7 @@ The rows file holds no rows, so this report shows no figures. Either the agent p
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "empty_rows_file",
@@ -41,6 +41,7 @@ The rows file holds no rows, so this report shows no figures. Either the agent p
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
-  "agent_stated": null
+  "agent_stated": null,
+  "recorded": null
 }
 ```

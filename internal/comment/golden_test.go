@@ -273,6 +273,12 @@ func goldenStates(t *testing.T) map[string]Input {
 
 	states[policyBudgetNoCap] = policyBudgetWithoutCap(t)
 
+	// A recorded run's figures, shown on a pull request that spent nothing.
+	recorded := neutral
+	recorded.Recorded = &Recorded{RunID: 42368537950, Date: "2026-11-07"}
+	states["recorded-run"] = recorded
+	states["recorded-run-withheld"] = withheld(recorded)
+
 	// A report states no cap for a run nothing held. A preview compares the
 	// cost with the cap it was given, and names the costroid.yml it read.
 	states["no-cap-held"] = unheldInput(t, policy.ConfigFile{})

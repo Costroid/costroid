@@ -89,6 +89,9 @@ type reportFlags struct {
 	exitOnVerdict bool
 	// budgetEmpty says --budget-usd was given empty, so it is no budget.
 	budgetEmpty bool
+	// recorded names the recorded run whose rows --rows holds, nil when the
+	// rows are the pull request's own.
+	recorded *comment.Recorded
 }
 
 func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
@@ -101,6 +104,7 @@ func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	asJSON := set.Bool("json", false, "print the result object on stdout")
 	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
 	exitOnVerdict := set.Bool("exit-on-verdict", false, "on GitLab CI, exit 1 on a failure verdict and 3 on a neutral one")
+	recorded := set.String("recorded", "", "RUN_ID,DATE: the rows are the recorded run RUN_ID's from DATE, not the pull request's")
 	if err := parseFlags(set, args, reportHelp, stdout, stderr); err != nil {
 		return reportFlags{}, err
 	}
@@ -127,7 +131,26 @@ func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	if flags.budget, flags.budgetEmpty, err = parseBudget(set, *budget); err != nil {
 		return reportFlags{}, err
 	}
+	if *recorded != "" {
+		if flags.recorded, err = parseRecorded(*recorded); err != nil {
+			return reportFlags{}, err
+		}
+	}
 	return flags, nil
+}
+
+// parseRecorded reads --recorded: a CI run's id from 1 and the day it was
+// recorded, apart by a comma.
+func parseRecorded(value string) (*comment.Recorded, error) {
+	id, date, found := strings.Cut(value, ",")
+	runID, err := strconv.ParseInt(id, 10, 64)
+	if err == nil && found {
+		_, err = time.Parse(time.DateOnly, date)
+	}
+	if !found || err != nil || runID < 1 {
+		return nil, fmt.Errorf("--recorded takes RUN_ID,DATE, such as 42368537950,2026-11-07, not %q", value)
+	}
+	return &comment.Recorded{RunID: runID, Date: date}, nil
 }
 
 // rowsReading is what the rows file gave the report, and why it gave no
@@ -270,6 +293,9 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		flags.exitOnVerdict = false
 	}
 	if system == cicontext.GitHubActions {
+		if flags.recorded != nil && os.Getenv("GITHUB_EVENT_NAME") == followUpTrigger {
+			return reportRecordedOnFork(ctx, flags, stdout, stderr)
+		}
 		if refusal := eventRefusal(os.Getenv("GITHUB_EVENT_NAME")); refusal != "" {
 			fmt.Fprintf(stderr, "costroid: %s\n", refusal)
 			return 0
@@ -293,6 +319,35 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	code := verdictExit(conclusion)
 	fmt.Fprintf(stderr, "costroid: the verdict is %s, so the report exits %d\n", conclusion, code)
 	return code
+}
+
+// reportRecordedOnFork posts a recorded run's report on a fork's pull request
+// from a workflow_run job. The fork's own run holds a read-only token, and
+// this job holds the base repository's. The finished run's head commit is
+// bound to the fork's one open pull request as follow-up binds it, and the
+// settings are read at the default branch, which this job runs from.
+func reportRecordedOnFork(ctx context.Context, flags reportFlags, stdout, stderr io.Writer) int {
+	repository := os.Getenv("GITHUB_REPOSITORY")
+	input := rowsInput(flags, stderr)
+	input.RunURL = runURL(cicontext.GitHubActions)
+	input.CIRun = ciRunFromEnvironment(os.Getenv)
+	finished, head, err := finishedPullRun(followUpTrigger, os.Getenv("GITHUB_EVENT_PATH"), repository, false)
+	input.HeadSHA = head
+	pull := pullContext{head: head, base: os.Getenv("GITHUB_SHA"), baseBranch: os.Getenv("GITHUB_REF_NAME")}
+	var host scm.Reporter
+	if err == nil {
+		host, err = hostFromEnvironment(pull)
+	}
+	if err == nil {
+		pull.pullRequest, err = confirmForkPull(ctx, host, finished, repository)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+	} else {
+		input = post(ctx, reportTarget{host: host, pull: pull, installation: flags.installation, platform: os.Getenv(platformVariable), repository: checkedRepository()}, input, flags.rows, stderr)
+	}
+	publish(input, flags.json, stdout, stderr)
+	return 0
 }
 
 // The exit codes of report --exit-on-verdict. The GitLab recipe allows the job
@@ -340,6 +395,7 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 		Budget:         runCap(flags, stated, stderr),
 		RowsSHA256:     rows.rowsSHA256,
 		RowsFileSHA256: rows.fileSHA256,
+		Recorded:       flags.recorded,
 	}
 	return withAgentResult(input, flags.agentResult, stderr)
 }
@@ -597,7 +653,13 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.AccountHost = target.accountHost
 	input.Platform, input.Repository, input.PullRequest = target.platform, target.repository, pull.pullRequest
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
-	lifetime, earlier := readLifetime(ctx, host, pull, input, stderr)
+	// A recorded run's figures were spent on no commit of this pull request,
+	// so they join no total.
+	var lifetime *comment.Lifetime
+	var earlier *policy.Lifetime
+	if input.Recorded == nil {
+		lifetime, earlier = readLifetime(ctx, host, pull, input, stderr)
+	}
 	input.Lifetime = lifetime
 	if input.Refused == nil {
 		input.Verdict = decideVerdict(ctx, host, verdictRequest{

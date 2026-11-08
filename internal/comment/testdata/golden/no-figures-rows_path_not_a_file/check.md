@@ -14,7 +14,7 @@ The rows path is not a regular file, so this report did not read it and shows no
 
 ```json
 {
-  "schema": "costroid.result/0.7",
+  "schema": "costroid.result/0.8",
   "conclusion": "neutral",
   "state": "rows_unreadable",
   "reason": "rows_path_not_a_file",
@@ -41,6 +41,7 @@ The rows path is not a regular file, so this report did not read it and shows no
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
-  "agent_stated": null
+  "agent_stated": null,
+  "recorded": null
 }
 ```

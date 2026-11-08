@@ -52,6 +52,10 @@ type Block struct {
 	// AgentStated is the agent's own figure for the run, in its own unit,
 	// null when it states none and when amounts are withheld.
 	AgentStated *BlockAgentStated `json:"agent_stated"`
+	// Recorded names the recorded run whose rows the figures are, in place of
+	// the pull request's own, null on a report on the pull request's rows.
+	// A withheld copy states it too: it is no amount.
+	Recorded *BlockRecorded `json:"recorded"`
 	// Policy is the verdict, without its amounts when amounts are withheld.
 	Policy *policy.Verdict `json:"policy,omitempty"`
 }
@@ -81,6 +85,13 @@ type BlockAgentStated struct {
 	Unit     string `json:"unit"`
 	Quantity string `json:"quantity"`
 	Source   string `json:"source"`
+}
+
+// BlockRecorded is the recorded run a report's figures are: the CI run that
+// wrote its rows and the day it was recorded.
+type BlockRecorded struct {
+	RunID int64  `json:"run_id"`
+	Date  string `json:"date"`
 }
 
 // BlockAgentError names an agent's error by its class from a closed list,
@@ -182,6 +193,7 @@ func (i Input) block() (string, error) {
 		AgentError:     i.blockAgentError(),
 		AgentSkipped:   i.agentSkipped(),
 		HeadSHA:        i.headSHA(),
+		Recorded:       i.blockRecorded(),
 		CIRun:          i.ciRun(),
 		RowsSHA256:     i.rowsDigest(),
 		RowsFileSHA256: digestOrNil(i.RowsFileSHA256),
@@ -233,6 +245,14 @@ func (i Input) block() (string, error) {
 	return string(encoded), nil
 }
 
+func (i Input) blockRecorded() *BlockRecorded {
+	recorded := i.recorded()
+	if recorded == nil {
+		return nil
+	}
+	return &BlockRecorded{RunID: recorded.RunID, Date: recorded.Date}
+}
+
 // verdict is the policy's conclusion, neutral when no policy ran.
 func (b Block) verdict() string {
 	if b.Policy == nil {
@@ -249,33 +269,42 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 
 // The versions before the one this release writes. A pull request whose
 // newest check a release that wrote one of them posted can still be approved,
-// so ParseResult reads them. 0.6 holds every field of the current version but
-// agent_stated, and 0.5 holds none of rows_sha256, rows_file_sha256 and
-// lifetime either.
+// so ParseResult reads them. 0.7 holds every field of the current version but
+// recorded, 0.6 holds no agent_stated either, and 0.5 holds none of
+// rows_sha256, rows_file_sha256 and lifetime as well.
 const (
 	schemaV05 = "costroid.result/0.5"
 	schemaV06 = "costroid.result/0.6"
 	schemaV07 = "costroid.result/0.7"
+	schemaV08 = "costroid.result/0.8"
 )
 
 // readSchemas are the versions ParseResult reads.
-var readSchemas = []string{schemaV05, schemaV06, schema}
+var readSchemas = []string{schemaV05, schemaV06, schemaV07, schema}
 
-// blockV06 is a Block as costroid.result/0.6 holds it. Its field hides the
-// Block's field of the same name, which 0.6 does not hold, and stays nil, so
+// blockV07 is a Block as costroid.result/0.7 holds it. Its field hides the
+// Block's field of the same name, which 0.7 does not hold, and stays nil, so
 // the object leaves it out.
+type blockV07 struct {
+	Block
+	Recorded *struct{} `json:"recorded,omitempty"`
+}
+
+// blockV06 is a Block as costroid.result/0.6 holds it, as blockV07 is.
 type blockV06 struct {
 	Block
 	AgentStated *struct{} `json:"agent_stated,omitempty"`
+	Recorded    *struct{} `json:"recorded,omitempty"`
 }
 
-// blockV05 is a Block as costroid.result/0.5 holds it, as blockV06 is.
+// blockV05 is a Block as costroid.result/0.5 holds it, as blockV07 is.
 type blockV05 struct {
 	Block
 	RowsSHA256     *struct{} `json:"rows_sha256,omitempty"`
 	RowsFileSHA256 *struct{} `json:"rows_file_sha256,omitempty"`
 	Lifetime       *struct{} `json:"lifetime,omitempty"`
 	AgentStated    *struct{} `json:"agent_stated,omitempty"`
+	Recorded       *struct{} `json:"recorded,omitempty"`
 }
 
 // encode writes the object as its own version lays it out.
@@ -286,6 +315,8 @@ func (b Block) encode() (string, error) {
 		object = blockV05{Block: b}
 	case schemaV06:
 		object = blockV06{Block: b}
+	case schemaV07:
+		object = blockV07{Block: b}
 	}
 	encoded, err := json.MarshalIndent(object, "", "  ")
 	if err != nil {
@@ -386,6 +417,7 @@ var (
 	// present in every object of that version, null or not.
 	fieldsAdded = []addedValue{
 		{"rows_sha256", schemaV06}, {"rows_file_sha256", schemaV06}, {"lifetime", schemaV06}, {"agent_stated", schemaV07},
+		{"recorded", schemaV08},
 	}
 )
 
