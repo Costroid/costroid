@@ -2,10 +2,13 @@ package catalog
 
 import (
 	"errors"
+	"io/fs"
+	"slices"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	catalogdata "github.com/Costroid/costroid/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
@@ -25,15 +28,102 @@ func query(provider, model string, class focus.TokenClass) Query {
 	return Query{Provider: provider, Model: model, Class: class, ServiceTier: TierStandard, Region: RegionGlobal, At: requestDay}
 }
 
-func TestEmbeddedReleaseCarriesTheTwoSheets(t *testing.T) {
-	c := pinned(t)
-	if c.Version() != "0.1.0" {
-		t.Errorf("version %s", c.Version())
+// embeddedVersions are the releases the binary carries, one directory each.
+func embeddedVersions(t *testing.T) []string {
+	t.Helper()
+	entries, err := fs.ReadDir(catalogdata.Sheets, ".")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for provider, name := range map[string]string{"anthropic": "Anthropic", "openai": "OpenAI"} {
-		got, err := c.ServiceProviderName(provider)
-		if err != nil || got != name {
-			t.Errorf("%s: %q %v", provider, got, err)
+	var versions []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			versions = append(versions, entry.Name())
+		}
+	}
+	return versions
+}
+
+// embedded parses one release the binary carries, as Load parses the one a
+// run prices with.
+func embedded(t *testing.T, version string) *Catalog {
+	t.Helper()
+	release, err := fs.Sub(catalogdata.Sheets, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse(version, release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestEmbeddedReleaseCarriesTheThreeSheets holds that a run prices with
+// release 0.2.0 and its Anthropic, OpenAI and Google sheets, and that release
+// 0.1.0, embedded beside it, still parses on its own with its two sheets.
+func TestEmbeddedReleaseCarriesTheThreeSheets(t *testing.T) {
+	releases := []struct {
+		catalog   *Catalog
+		version   string
+		providers map[string]string
+	}{
+		{pinned(t), "0.2.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}},
+		{embedded(t, "0.1.0"), "0.1.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI"}},
+	}
+	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0"}) {
+		t.Errorf("the binary carries releases %v", versions)
+	}
+	for _, release := range releases {
+		c := release.catalog
+		if c.Version() != release.version || len(c.sheets) != len(release.providers) {
+			t.Errorf("release %s holds %d sheets, want %s with %d", c.Version(), len(c.sheets), release.version, len(release.providers))
+		}
+		for provider, name := range release.providers {
+			got, err := c.ServiceProviderName(provider)
+			if err != nil || got != name {
+				t.Errorf("%s %s: %q %v", release.version, provider, got, err)
+			}
+		}
+	}
+}
+
+// TestGeminiProLongContextTier holds that a Gemini Pro request whose input
+// passes 200,000 tokens is priced at the long-context rows, and one at the
+// threshold at the rows below it, for every class the sheet prices by tier.
+func TestGeminiProLongContextTier(t *testing.T) {
+	cases := []struct {
+		model       string
+		class       focus.TokenClass
+		under, over string
+	}{
+		{"gemini-3.1-pro-preview", focus.InputUncached, "2.00", "4.00"},
+		{"gemini-3.1-pro-preview", focus.Output, "12.00", "18.00"},
+		{"gemini-3.1-pro-preview", focus.CacheRead, "0.20", "0.40"},
+		{"gemini-2.5-pro", focus.InputUncached, "1.25", "2.50"},
+		{"gemini-2.5-pro", focus.Output, "10.00", "15.00"},
+		{"gemini-2.5-pro", focus.CacheRead, "0.125", "0.25"},
+	}
+	c := pinned(t)
+	for _, tc := range cases {
+		for _, tier := range []struct {
+			input int64
+			sku   string
+			price string
+		}{
+			{200000, "to-200000", tc.under},
+			{200001, "over-200000", tc.over},
+		} {
+			q := query("google", tc.model, tc.class)
+			q.ContextInputTokens = tier.input
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sku := "google:" + tc.model + ":global:standard:" + tier.sku + ":" + string(tc.class)
+			if got.Fallback || got.SkuPriceID != sku || got.ListUnitPrice.Cmp(decimal.MustParse(tier.price)) != 0 {
+				t.Errorf("%s %s at %d input tokens: %s at %s, want %s at %s", tc.model, tc.class, tier.input, got.SkuPriceID, got.ListUnitPrice, sku, tier.price)
+			}
 		}
 	}
 }
@@ -97,6 +187,7 @@ func TestEveryClassAnAdapterEmitsHasAFallback(t *testing.T) {
 	classes := map[string][]focus.TokenClass{
 		"anthropic": {focus.InputUncached, focus.CacheRead, focus.CacheWrite5m, focus.CacheWrite1h, focus.Output},
 		"openai":    {focus.InputUncached, focus.CacheRead, focus.CacheWrite30m, focus.Output},
+		"google":    {focus.InputUncached, focus.CacheRead, focus.Output},
 	}
 	for provider, list := range classes {
 		for _, class := range list {
@@ -189,20 +280,21 @@ func TestDataResidencyMultipliesThePublishedPrice(t *testing.T) {
 }
 
 func TestEveryPublishedPriceFitsTheRowScaleForAnyTokenCount(t *testing.T) {
-	c := pinned(t)
 	const tokenScale = 6
-	for provider, s := range c.sheets {
-		for i := range s.Rows {
-			r := &s.Rows[i]
-			if r.ListUnitPrice == "" {
-				continue
-			}
-			price, err := decimal.Parse(r.ListUnitPrice)
-			if err != nil {
-				t.Fatalf("%s %s: %v", provider, r.SkuPriceID, err)
-			}
-			if price.Scale()+1+tokenScale > focus.MaxScale {
-				t.Errorf("%s has %d fractional digits", r.SkuPriceID, price.Scale())
+	for _, version := range embeddedVersions(t) {
+		for provider, s := range embedded(t, version).sheets {
+			for i := range s.Rows {
+				r := &s.Rows[i]
+				if r.ListUnitPrice == "" {
+					continue
+				}
+				price, err := decimal.Parse(r.ListUnitPrice)
+				if err != nil {
+					t.Fatalf("%s %s %s: %v", version, provider, r.SkuPriceID, err)
+				}
+				if price.Scale()+1+tokenScale > focus.MaxScale {
+					t.Errorf("%s: %s has %d fractional digits", version, r.SkuPriceID, price.Scale())
+				}
 			}
 		}
 	}
@@ -218,77 +310,6 @@ func TestSheetWithoutAFallbackRowIsAnErrorNotAZero(t *testing.T) {
 	if !errors.Is(err, ErrNoPrice) {
 		t.Errorf("err = %v", err)
 	}
-}
-
-// knownExcess lists, per release, the unit_price rows the release's own
-// fallback does not bound. Release 0.1.0's fallbacks were the highest
-// standard-tier, short-context prices of the models then current, so the
-// retired Opus 4 and 4.1 rows, the long-context and fast tiers of some OpenAI
-// models, and o1-pro pass them. A later release takes the maximum over every
-// row and lists none.
-var knownExcess = map[string][]string{
-	"0.1.0": {
-		"anthropic:claude-opus-4-1-20250805:global:standard:all:input_uncached",
-		"anthropic:claude-opus-4-1-20250805:global:standard:all:cache_write_5m",
-		"anthropic:claude-opus-4-1-20250805:global:standard:all:cache_write_1h",
-		"anthropic:claude-opus-4-1-20250805:global:standard:all:cache_read",
-		"anthropic:claude-opus-4-1-20250805:global:standard:all:output",
-		"anthropic:claude-opus-4-20250514:global:standard:all:input_uncached",
-		"anthropic:claude-opus-4-20250514:global:standard:all:cache_write_5m",
-		"anthropic:claude-opus-4-20250514:global:standard:all:cache_write_1h",
-		"anthropic:claude-opus-4-20250514:global:standard:all:cache_read",
-		"anthropic:claude-opus-4-20250514:global:standard:all:output",
-		"openai:gpt-6-astra:global:standard:over-272000:cache_read",
-		"openai:gpt-6-astra:global:standard:over-272000:cache_write_30m",
-		"openai:gpt-6-astra:global:standard:over-272000:cache_write_12h",
-		"openai:gpt-5.5-pro:global:standard:over-272000:input_uncached",
-		"openai:gpt-5.5-pro:global:standard:over-272000:output",
-		"openai:gpt-5.4-pro:global:standard:over-272000:input_uncached",
-		"openai:gpt-5.4-pro:global:standard:over-272000:output",
-		"openai:gpt-4o:global:standard:all:cache_read",
-		"openai:o1:global:standard:all:cache_read",
-		"openai:o1-pro:global:standard:all:input_uncached",
-		"openai:o1-pro:global:standard:all:output",
-		"openai:o1-pro:global:batch:all:input_uncached",
-		"openai:o1-pro:global:batch:all:output",
-		"openai:gpt-6-astra:global:fast:over-272000:input_uncached",
-		"openai:gpt-6-astra:global:fast:to-272000:cache_read",
-		"openai:gpt-6-astra:global:fast:over-272000:cache_read",
-		"openai:gpt-6-astra:global:fast:to-272000:cache_write_30m",
-		"openai:gpt-6-astra:global:fast:over-272000:cache_write_30m",
-		"openai:gpt-6-astra:global:fast:to-272000:cache_write_12h",
-		"openai:gpt-6-astra:global:fast:over-272000:cache_write_12h",
-		"openai:gpt-5.6-sol:global:fast:over-272000:cache_read",
-		"openai:gpt-5.6-sol:global:fast:over-272000:cache_write_30m",
-		"openai:gpt-5.6-sol:global:fast:over-272000:cache_write_12h",
-		"openai:gpt-5.5:global:fast:to-272000:cache_read",
-		"openai:gpt-4o:global:fast:all:cache_read",
-		"openai:gpt-6-astra:global:ultrafast:to-272000:input_uncached",
-		"openai:gpt-6-astra:global:ultrafast:over-272000:input_uncached",
-		"openai:gpt-6-astra:global:ultrafast:to-272000:output",
-		"openai:gpt-6-astra:global:ultrafast:over-272000:output",
-		"openai:gpt-6-astra:global:ultrafast:to-272000:cache_read",
-		"openai:gpt-6-astra:global:ultrafast:over-272000:cache_read",
-		"openai:gpt-6-astra:global:ultrafast:to-272000:cache_write_30m",
-		"openai:gpt-6-astra:global:ultrafast:over-272000:cache_write_30m",
-		"openai:gpt-6-astra:global:ultrafast:to-272000:cache_write_12h",
-		"openai:gpt-6-astra:global:ultrafast:over-272000:cache_write_12h",
-		"openai:gpt-6.1-sol:global:ultrafast:over-272000:cache_read",
-		"openai:gpt-6.1-sol:global:ultrafast:to-272000:cache_write_30m",
-		"openai:gpt-6.1-sol:global:ultrafast:over-272000:cache_write_30m",
-		"openai:gpt-6.1-sol:global:ultrafast:to-272000:cache_write_12h",
-		"openai:gpt-6.1-sol:global:ultrafast:over-272000:cache_write_12h",
-		"openai:gpt-5.6-cyber:global:standard:to-272000:cache_read",
-		"openai:gpt-5.6-cyber:global:standard:to-272000:cache_write_30m",
-		"openai:gpt-5.6-cyber:global:standard:to-272000:cache_write_12h",
-		"openai:gpt-5.5-cyber:global:standard:to-272000:cache_read",
-		"openai:gpt-6-rosalind:global:standard:to-272000:cache_read",
-		"openai:gpt-6-rosalind:global:standard:over-272000:cache_read",
-		"openai:gpt-6-rosalind:global:standard:to-272000:cache_write_30m",
-		"openai:gpt-6-rosalind:global:standard:over-272000:cache_write_30m",
-		"openai:gpt-6-rosalind:global:standard:to-272000:cache_write_12h",
-		"openai:gpt-6-rosalind:global:standard:over-272000:cache_write_12h",
-	},
 }
 
 // classPrice is one price a sheet answers for one class.
@@ -351,47 +372,36 @@ func firstDay(t *testing.T, r *row) time.Time {
 	return day
 }
 
-// TestFallbackBoundsEveryPrice holds that each embedded sheet's fallback for
-// a class is at or above every price the sheet states or composes for that
-// class, so a model or tier the sheet does not name is never priced under one
-// it does. A class with no fallback row is refused, not priced, and is not
-// held here. The release's known excess is listed above, and each listed row
-// must still exceed, so the list cannot outlive the release it names.
+// TestFallbackBoundsEveryPrice holds that each sheet's fallback for a class
+// is at or above every price the sheet states or composes for that class, so
+// a model or tier the sheet does not name is never priced under one it does.
+// A class with no fallback row is refused, not priced, and is not held here.
+// It holds every embedded release but 0.1.0, which was published before the
+// fallback had to bound every row; a published release never changes.
 func TestFallbackBoundsEveryPrice(t *testing.T) {
-	c := pinned(t)
-	excess := map[string]bool{}
-	for _, id := range knownExcess[c.Version()] {
-		excess[id] = false
-	}
 	checked := 0
-	for provider, s := range c.sheets {
-		fallbacks := map[string]decimal.Decimal{}
-		for i := range s.Rows {
-			if r := &s.Rows[i]; r.RowType == "fallback" {
-				fallbacks[r.TokenClass] = decimal.MustParse(r.ListUnitPrice)
-			}
+	for _, version := range embeddedVersions(t) {
+		if version == "0.1.0" {
+			continue
 		}
-		for _, price := range everyPrice(t, c, provider, s) {
-			class := price.class
-			bound, ok := fallbacks[class]
-			if !ok {
-				continue
+		c := embedded(t, version)
+		for provider, s := range c.sheets {
+			fallbacks := map[string]decimal.Decimal{}
+			for i := range s.Rows {
+				if r := &s.Rows[i]; r.RowType == "fallback" {
+					fallbacks[r.TokenClass] = decimal.MustParse(r.ListUnitPrice)
+				}
 			}
-			checked++
-			_, listed := excess[price.SkuPriceID]
-			switch over := price.ListUnitPrice.Cmp(bound) > 0; {
-			case over && listed:
-				excess[price.SkuPriceID] = true
-			case over:
-				t.Errorf("%s at %s passes the %s fallback of %s", price.SkuPriceID, price.ListUnitPrice, class, bound)
-			case listed:
-				t.Errorf("%s at %s is listed as known excess but is within the fallback of %s", price.SkuPriceID, price.ListUnitPrice, bound)
+			for _, price := range everyPrice(t, c, provider, s) {
+				bound, ok := fallbacks[price.class]
+				if !ok {
+					continue
+				}
+				checked++
+				if price.ListUnitPrice.Cmp(bound) > 0 {
+					t.Errorf("%s: %s at %s passes the %s fallback of %s", version, price.SkuPriceID, price.ListUnitPrice, price.class, bound)
+				}
 			}
-		}
-	}
-	for id, seen := range excess {
-		if !seen {
-			t.Errorf("%s is listed as known excess of release %s and no such price exists", id, c.Version())
 		}
 	}
 	if checked == 0 {
@@ -426,28 +436,29 @@ func (s *sheet) overlapsInDays(a, b *row) bool {
 	return true
 }
 
-// TestNoTwoPriceRowsOverlap holds that no two unit_price rows of an embedded
-// sheet can answer one query: none share a model, tier, region and class with
+// TestNoTwoPriceRowsOverlap holds that no two unit_price rows of a sheet of
+// any embedded release can answer one query: none share a model, tier, region and class with
 // context tiers and days that meet. The lookup takes the first row that
 // answers, so an overlap would price by row order.
 func TestNoTwoPriceRowsOverlap(t *testing.T) {
-	c := pinned(t)
 	pairs := 0
-	for _, s := range c.sheets {
-		for i := range s.Rows {
-			a := &s.Rows[i]
-			if a.RowType != "unit_price" {
-				continue
-			}
-			for j := i + 1; j < len(s.Rows); j++ {
-				b := &s.Rows[j]
-				if b.RowType != "unit_price" || a.ModelID != b.ModelID || a.ServiceTier != b.ServiceTier ||
-					a.RegionID != b.RegionID || a.TokenClass != b.TokenClass {
+	for _, version := range embeddedVersions(t) {
+		for _, s := range embedded(t, version).sheets {
+			for i := range s.Rows {
+				a := &s.Rows[i]
+				if a.RowType != "unit_price" {
 					continue
 				}
-				pairs++
-				if overlapsInContext(a, b) && s.overlapsInDays(a, b) {
-					t.Errorf("%s and %s answer the same query", a.SkuPriceID, b.SkuPriceID)
+				for j := i + 1; j < len(s.Rows); j++ {
+					b := &s.Rows[j]
+					if b.RowType != "unit_price" || a.ModelID != b.ModelID || a.ServiceTier != b.ServiceTier ||
+						a.RegionID != b.RegionID || a.TokenClass != b.TokenClass {
+						continue
+					}
+					pairs++
+					if overlapsInContext(a, b) && s.overlapsInDays(a, b) {
+						t.Errorf("%s: %s and %s answer the same query", version, a.SkuPriceID, b.SkuPriceID)
+					}
 				}
 			}
 		}
