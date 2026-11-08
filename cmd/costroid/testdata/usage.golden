@@ -12,5 +12,5 @@ Usage:
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 
 Other commands: ingest-run, init, doctor, follow-up, approve, reconcile, export,
-connect, review, policy, lint-recipes, version, result, mcp.
+connect, review, policy, lint-recipes, version, result, mcp, emit-otlp.
 Ledger commands: gateway, serve, keys, egress.
