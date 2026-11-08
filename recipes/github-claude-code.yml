@@ -52,7 +52,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: git diff "$BASE...$HEAD" > pull-request.diff
       - name: Run Claude Code under the budget
-        uses: Costroid/costroid/action@97a11e753887ab43d5b636bfd20a4a4623312062 # v1.0.0-alpha.15
+        uses: Costroid/costroid/action@71f78608338cf638de738c3fd366049863696139 # v1.0.0-alpha.16
         env:
           OTEL_LOG_USER_PROMPTS: "0"
           OTEL_LOG_ASSISTANT_RESPONSES: "0"
@@ -103,7 +103,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@97a11e753887ab43d5b636bfd20a4a4623312062 # v1.0.0-alpha.15
+      - uses: Costroid/costroid/action@71f78608338cf638de738c3fd366049863696139 # v1.0.0-alpha.16
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -125,7 +125,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@97a11e753887ab43d5b636bfd20a4a4623312062 # v1.0.0-alpha.15
+      - uses: Costroid/costroid/action@71f78608338cf638de738c3fd366049863696139 # v1.0.0-alpha.16
         with:
           stage: report
           # A skipped agent job then reads as skipped, not as a run with no rows.
