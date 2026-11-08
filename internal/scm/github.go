@@ -317,6 +317,13 @@ func (g *GitHub) UpsertComment(ctx context.Context, pullRequest int, marker, bod
 	return g.do(ctx, http.MethodPatch, g.repo(fmt.Sprintf("/issues/comments/%d", id)), content, nil)
 }
 
+// HasComment reports whether the token's own account wrote a comment that
+// opens with marker, as UpsertComment finds one. It writes nothing.
+func (g *GitHub) HasComment(ctx context.Context, pullRequest int, marker string) (bool, error) {
+	id, err := g.findComment(ctx, pullRequest, marker)
+	return id != 0, err
+}
+
 // ownLogin is the account the token posts as.
 func (g *GitHub) ownLogin() string {
 	g.mu.Lock()

@@ -1,6 +1,7 @@
 package recipelint
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -99,5 +100,84 @@ func TestAgentCheckoutDropsCredentials(t *testing.T) {
 	}
 	if got := rules(LintBytes("x.yml", []byte(reportCheckout)).Findings); slices.Contains(got, RuleAgentCheckoutCredentials) {
 		t.Fatalf("a checkout in a job with no agent was refused: %v", got)
+	}
+}
+
+// The report reads the agent's answer from the rows artifact only when the
+// workflow sets post-review to true. Any other setting refuses an artifact
+// that holds it, as it refuses any third entry.
+func TestArtifactAdmitsTheReviewOnlyWhenOptedIn(t *testing.T) {
+	for setting, admitted := range map[string]bool{"true": true, "false": false, "": false, "TRUE": false, "unset": false} {
+		t.Run(setting, func(t *testing.T) {
+			r := newRelease(t)
+			dir := rowsIn(t, r.root, withAnswer)
+			outputs := filepath.Join(r.root, "github-output")
+			env := []string{"COSTROID_STAGE=report", "COSTROID_VERSION=" + testVersion, "COSTROID_SHA256=" + sumOf(releaseBinary), "GITHUB_OUTPUT=" + outputs}
+			if setting != "unset" {
+				env = append(env, "COSTROID_POST_REVIEW="+setting)
+			}
+			code, output := r.install(env...)
+			refused := strings.Contains(output, "costroid: the costroid-rows artifact holds 1 entries besides the rows and the run object")
+			if admitted {
+				if code != 0 || refused || !r.installed() || read(t, filepath.Join(dir, "costroid-review.md")) != "An answer." {
+					t.Fatalf("exit %d, refused %v: %s", code, refused, output)
+				}
+				return
+			}
+			if code != 0 || !refused || read(t, outputs) != "refused=costroid-review.md\nrefused_count=1\n" {
+				t.Fatalf("exit %d, refused %v: %s", code, refused, output)
+			}
+			if left, err := os.ReadDir(dir); err != nil || len(left) != 0 {
+				t.Fatalf("the refused artifact is still there: %v, %v", left, err)
+			}
+		})
+	}
+}
+
+// withAnswer is an artifact from an agent's step that kept its answer.
+var withAnswer = map[string]string{"costroid-rows.jsonl": "{}\n", "costroid-rows.run.json": "{}", "costroid-review.md": "An answer."}
+
+// Ingest reads the rows alone. It takes an artifact that holds the agent's
+// answer whatever post-review says, and deletes the answer before anything
+// else runs, so no later step can read it. A folder or a link by that name is
+// still refused.
+func TestIngestSkipsTheReviewFile(t *testing.T) {
+	for _, setting := range []string{"true", "false", "", "unset"} {
+		t.Run(setting, func(t *testing.T) {
+			r := newRelease(t)
+			dir := rowsIn(t, r.root, withAnswer)
+			env := []string{"COSTROID_STAGE=ingest", "COSTROID_VERSION=" + testVersion, "COSTROID_SHA256=" + sumOf(releaseBinary)}
+			if setting != "unset" {
+				env = append(env, "COSTROID_POST_REVIEW="+setting)
+			}
+			code, output := r.install(env...)
+			if code != 0 || !r.installed() || strings.Contains(output, "costroid-rows artifact holds") {
+				t.Fatalf("exit %d: %s", code, output)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, "costroid-review.md")); !os.IsNotExist(err) {
+				t.Fatalf("the answer is still in the rows directory: %v", err)
+			}
+			if read(t, filepath.Join(dir, "costroid-rows.jsonl")) != "{}\n" {
+				t.Fatal("the rows changed")
+			}
+		})
+	}
+	target := filepath.Join(t.TempDir(), "secret")
+	write(t, target, "kept")
+	for name, place := range map[string]func(dir string) error{
+		"a folder": func(dir string) error { return os.MkdirAll(filepath.Join(dir, "costroid-review.md", "x"), 0o755) },
+		"a link":   func(dir string) error { return os.Symlink(target, filepath.Join(dir, "costroid-review.md")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRelease(t)
+			dir := rowsIn(t, r.root, map[string]string{"costroid-rows.jsonl": "{}\n"})
+			if err := place(dir); err != nil {
+				t.Fatal(err)
+			}
+			code, output := r.install("COSTROID_STAGE=ingest", "COSTROID_POST_REVIEW=true", "COSTROID_VERSION="+testVersion, "COSTROID_SHA256="+sumOf(releaseBinary))
+			if code != 1 || r.installed() || !strings.Contains(output, "costroid-review.md") || read(t, target) != "kept" {
+				t.Fatalf("exit %d: %s", code, output)
+			}
+		})
 	}
 }

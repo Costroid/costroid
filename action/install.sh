@@ -44,17 +44,24 @@ STAGES
 }
 
 # check_rows refuses the costroid-rows artifact unless each entry in it is one
-# of the two files the run stage keeps, as a plain file. The agent's job chose
+# of the two files the run stage keeps, or the agent's answer it keeps beside
+# them, each as a plain file. Stage report takes the answer only when
+# post-review is true. Stage ingest reads the rows alone, so it takes the
+# answer whatever the setting and deletes it unread. The agent's job chose
 # the names, so the first ten are printed with anything outside A-Z, a-z, 0-9,
 # ., _, / and - as ?. No artifact at all leaves an empty directory, and the
 # report then says the run left no rows. In stage report a refused artifact is
 # deleted, an empty directory takes its place, and the step outputs refused and
 # refused_count tell the report what it held.
 check_rows() {
-  local LC_ALL=C dir=$RUNNER_TEMP/costroid-rows-in entry kind count=0 names=""
+  local LC_ALL=C dir=$RUNNER_TEMP/costroid-rows-in entry kind count=0 names="" answer=false
   mkdir -p "$dir"
   while IFS= read -r -d '' entry && IFS= read -r -d '' kind; do
     if [[ $kind == f && ($entry == costroid-rows.jsonl || $entry == costroid-rows.run.json) ]]; then
+      continue
+    fi
+    if [[ $kind == f && $entry == costroid-review.md && ($COSTROID_STAGE == ingest || ${COSTROID_POST_REVIEW:-false} == true) ]]; then
+      answer=true
       continue
     fi
     count=$((count + 1))
@@ -62,6 +69,9 @@ check_rows() {
       names+="${names:+, }${entry//[^A-Za-z0-9._\/-]/?}"
     fi
   done < <(find "$dir" -mindepth 1 -printf '%P\0%y\0')
+  if [[ $answer == true && $COSTROID_STAGE == ingest ]]; then
+    rm -- "$dir/costroid-review.md"
+  fi
   if ((count == 0)); then
     return
   fi
