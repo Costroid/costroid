@@ -8,14 +8,6 @@ import (
 	"io"
 )
 
-// Tag keys version 0.3 of the convention adds. A caller names each one, and
-// no writer of rows sets one on its own.
-const (
-	TagWorkItem = "costroid/work_item"
-	TagArm      = "costroid/arm"
-	TagTeam     = "costroid/team"
-)
-
 // Profile is how a row states the figure Costroid measured.
 type Profile string
 

@@ -37,9 +37,6 @@ const (
 	credentialVariable     = "COSTROID_CREDENTIAL"
 	// maxAccount is the row contract's limit on a text column.
 	maxAccount = 512
-	// secretKeyPrefix opens every provider key this product reads. A key pasted
-	// as a credential would otherwise reach every row and every ledger.
-	secretKeyPrefix = "sk-"
 )
 
 // version is set at link time.
@@ -107,16 +104,10 @@ func (a accountFlags) check() error {
 	if utf8.RuneCountInString(*a.credential) > maxAccount {
 		return fmt.Errorf("--credential must be at most %d characters", maxAccount)
 	}
-	if readsLikeKey(*a.credential) {
+	if focus.ReadsLikeKey(*a.credential) {
 		return errors.New("--credential takes the key's id, never the key: this value reads like a key")
 	}
 	return nil
-}
-
-// readsLikeKey reports whether a value opens as every provider key this
-// product reads does. A value that does never reaches a row.
-func readsLikeKey(value string) bool {
-	return strings.HasPrefix(value, secretKeyPrefix)
 }
 
 const runHelp = `Usage:

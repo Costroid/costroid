@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/config"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/recipelint"
 	"github.com/Costroid/costroid/internal/run"
 	"go.yaml.in/yaml/v3"
@@ -477,7 +478,7 @@ func keyLines(host doctorHost, agents []string) []finding {
 			lines = append(lines, ok("%s is not set in this shell, so a local run of %s uses its own sign-in, priced as docs/bases.md says", strings.Join(keyVariables[agent], " or "), agent))
 		}
 	}
-	if strings.HasPrefix(host.getenv(credentialVariable), secretKeyPrefix) {
+	if focus.ReadsLikeKey(host.getenv(credentialVariable)) {
 		lines = append(lines, fail(credentialVariable+" reads like a key, and every row would carry it", "set it to the key's id from the provider's console, never the key"))
 	}
 	return lines
