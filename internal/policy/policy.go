@@ -128,6 +128,7 @@ var reasons = []string{
 	ReasonUnattributedRows, ReasonOtherCurrency, ReasonJoinableRows,
 	ReasonOverBaseline, ReasonNoBaseline, ReasonNoLifetime, ReasonRepeatPossible,
 	ReasonNoLedger, ReasonOutsideAllowlist, ReasonUnreadableModel, ReasonOnAllowlist,
+	ReasonUnmeasuredSpend, ReasonNoRunRows,
 }
 
 // Request is everything one evaluation reads. The pack reads no clock, so At
