@@ -57,6 +57,12 @@ var codexCorpus = map[string]corpusRead{
 		source: costSourceStream, basis: focus.ListEquivalent, model: UnknownModel, requests: 1, grade: adapter.GradeNone,
 		tokens: adapter.Tokens{InputUncached: 7246, CacheRead: 44928, Output: 116, CachedInputReported: 44928},
 	},
+	// The Codex SDK's program printed the SDK's events, which are codex
+	// exec's stream, so the recording reads as a run of codex exec.
+	"0.164.0-alpha.11.1/sdk-codex": {
+		source: costSourceRollout, basis: focus.ListEquivalent, model: "gpt-6-luna", requests: 1, grade: adapter.GradeWrapperWatchdog,
+		tokens: adapter.Tokens{InputUncached: 3, CacheWrite30m: 10035, Output: 5},
+	},
 	"0.164.0-alpha.11.1/stopped": {
 		source: costSourceRollout, basis: focus.ListEquivalent, model: "gpt-5.6-sol", requests: 1, grade: adapter.GradeWrapperWatchdog,
 		tokens:   adapter.Tokens{InputUncached: 5632, CacheRead: 11264, Output: 64, CachedInputReported: 11264},
@@ -270,7 +276,7 @@ func TestCodexCorpus(t *testing.T) {
 			if err := json.Unmarshal([]byte(fixture(t, filepath.Join(path, "manifest.json"))), &manifest); err != nil {
 				t.Fatal(err)
 			}
-			if !manifest.Recorded || manifest.Agent != name || manifest.Scenario == "" || !strings.HasPrefix(dir, manifest.Version+"/") {
+			if !manifest.Recorded || !slices.Contains([]string{name, SDKName}, manifest.Agent) || manifest.Scenario == "" || !strings.HasPrefix(dir, manifest.Version+"/") {
 				t.Errorf("manifest %+v does not name the version of its directory", manifest)
 			}
 			want, ok := codexCorpus[dir]

@@ -1,0 +1,137 @@
+# Runs your Claude Agent SDK program on a pull request, then reports what it
+# cost. Copy to .github/workflows/costroid.yml. docs/sdk.md lists what it needs.
+# The program is agent/review.mjs, with its package.json and package-lock.json
+# in agent/. It holds its own budget in maxBudgetUsd; set budget-usd below to
+# the same figure, so the report states the budget the program held.
+name: costroid
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions: {}
+
+concurrency:
+  group: costroid-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    # Same-repository branches only. A first contributor needs the maintainer's label.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && (github.event.action != 'labeled' || github.event.label.name == 'costroid-agent')
+      && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)
+      || contains(github.event.pull_request.labels.*.name, 'costroid-agent'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # Block mode: the job reaches only these hosts. docs/recipes.md says why each is here.
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >-
+            api.anthropic.com:443
+            github.com:443
+            results-receiver.actions.githubusercontent.com:443
+            productionresultssa*.blob.core.windows.net:443
+            release-assets.githubusercontent.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            registry.npmjs.org:443
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The SDK package carries the Claude Code it runs. The lock file pins both,
+      # and no package's install script runs.
+      - name: Install the program's packages
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix agent
+      - name: Install costroid
+        uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
+        with:
+          stage: install
+      - name: Write the pull request's diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: git diff "$BASE...$HEAD" > pull-request.diff
+      - name: Run the program
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # A directory made for this run, so the sessions in it are the run's.
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/claude
+          COSTROID_BILLING_ACCOUNT: ${{ github.repository_owner }}
+          COSTROID_CREDENTIAL: ${{ vars.COSTROID_CREDENTIAL }}
+          COSTROID_ROWS: ${{ runner.temp }}/costroid-rows.jsonl
+          COSTROID_AGENT_OUTPUT: ${{ runner.temp }}/costroid-agent-output.jsonl
+          OTEL_LOG_USER_PROMPTS: "0"
+          OTEL_LOG_ASSISTANT_RESPONSES: "0"
+          OTEL_LOG_TOOL_DETAILS: "0"
+          OTEL_LOG_TOOL_CONTENT: "0"
+          OTEL_LOG_RAW_API_BODIES: "0"
+        # The program's output stays on the runner: a public repository's log is public.
+        run: |
+          costroid run --agent claude-code-sdk --budget-usd 5 --out "$COSTROID_ROWS" -- \
+            node agent/review.mjs </dev/null >"$COSTROID_AGENT_OUTPUT"
+      - name: Keep the rows
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: costroid-rows
+          # The run's result object rides with the rows, so the report can say
+          # why a run wrote none.
+          path: |
+            ${{ runner.temp }}/costroid-rows.jsonl
+            ${{ runner.temp }}/costroid-rows.run.json
+          if-no-files-found: warn
+          retention-days: 7
+      # The run's status file holds its spend per basis, the cap, the grade and
+      # the counts, never what the agent read or wrote.
+      - name: Print the run's status
+        if: always()
+        run: |
+          status=${COSTROID_STATUS_FILE:-$RUNNER_TEMP/costroid-status.json}
+          if [ -f "$status" ]; then cat "$status"; else echo "costroid: the run wrote no status file at $status"; fi
+
+  ingest:
+    needs: agent
+    # Sends to a ledger when COSTROID_INGEST_URL is set, and to Costroid
+    # Platform when COSTROID_PLATFORM_URL is. docs/export.md says how.
+    if: >-
+      always() && needs.agent.result != 'skipped'
+      && (vars.COSTROID_INGEST_URL != '' || vars.COSTROID_PLATFORM_URL != '')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
+        with:
+          stage: ingest
+          ingest-url: ${{ vars.COSTROID_INGEST_URL }}
+          ingest-audience: ${{ vars.COSTROID_INGEST_AUDIENCE }}
+          platform-url: ${{ vars.COSTROID_PLATFORM_URL }}
+          installation-id: github-owner:${{ github.repository_owner_id }}
+          platform-token: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
+
+  report:
+    needs: agent
+    # Always posts, even with no rows. Another label says nothing about the run.
+    if: always() && (github.event.action != 'labeled' || github.event.label.name == 'costroid-agent')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      # Reads costroid.yml at the base commit. Without it a private repository
+      # answers 403 and comment.show_cost cannot be read.
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
+        with:
+          stage: report
+          # A skipped agent job then reads as skipped, not as a run with no rows.
+          agent-result: ${{ needs.agent.result }}

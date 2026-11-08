@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -32,6 +33,9 @@ const defaultGrace = 5 * time.Second
 
 // Options describes one run.
 type Options struct {
+	// Agent names the adapter, one of Agents. Empty picks it by the command's
+	// name.
+	Agent  string
 	Argv   []string
 	Budget decimal.Decimal
 	// BillingAccount fills BillingAccountId. Empty reads unknown.
@@ -211,6 +215,37 @@ type windowedSession interface {
 	RunWindow(start, end time.Time)
 }
 
+// Agents are the names --agent takes: the two agents, and a program that
+// runs each through its SDK.
+var Agents = []string{claudecode.Name, claudecode.SDKName, codex.Agent{}.Name(), codex.SDKName}
+
+// AgentNamed picks the adapter by its name, whatever the command is.
+func AgentNamed(name string) (adapter.Agent, error) {
+	switch name {
+	case claudecode.Name:
+		return claudecode.Agent{}, nil
+	case claudecode.SDKName:
+		return claudecode.SDKAgent{}, nil
+	case codex.Agent{}.Name():
+		return codex.Agent{}, nil
+	case codex.SDKName:
+		return codex.SDKAgent{}, nil
+	}
+	return nil, fmt.Errorf("run: no agent named %q: --agent takes %s", name, strings.Join(Agents, ", "))
+}
+
+// agent is the run's adapter: the one Agent names, or the one the command's
+// name picks.
+func (o Options) agent() (adapter.Agent, error) {
+	if len(o.Argv) == 0 {
+		return nil, errors.New("run: no agent command")
+	}
+	if o.Agent != "" {
+		return AgentNamed(o.Agent)
+	}
+	return AgentFor(o.Argv)
+}
+
 // AgentFor picks the adapter by the command's name.
 func AgentFor(argv []string) (adapter.Agent, error) {
 	if len(argv) == 0 {
@@ -225,14 +260,106 @@ func AgentFor(argv []string) (adapter.Agent, error) {
 	return nil, fmt.Errorf("run: no adapter for %q: costroid runs claude and codex", filepath.Base(argv[0]))
 }
 
+// launcher is a command that starts an agent's package or script.
+type launcher struct {
+	// valued are its options that take the next argument as their value.
+	valued []string
+	// refused are its options that run code of their own in place of a
+	// package or script, which no agent's arguments can follow.
+	refused []string
+}
+
+// launchers are the commands that start Claude Code or Codex from a package
+// or a script. Each takes its own options before the package or script, and
+// the agent's after it.
+var launchers = map[string]launcher{
+	"npx": {
+		valued:  []string{"-p", "--package", "--registry", "--cache", "--userconfig", "--prefix", "-w", "--workspace"},
+		refused: []string{"-c", "--call"},
+	},
+	"bunx": {valued: []string{"-p", "--package"}},
+	"node": {
+		valued:  []string{"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions"},
+		refused: []string{"-e", "--eval", "-p", "--print"},
+	},
+}
+
+// splitLauncher splits a command that starts the agent through a launcher
+// into the launcher with its options and the package or script it starts,
+// and the agent's own arguments. A "--" that ends the launcher's options is
+// left out, so the agent's arguments hold the only "--" the run reads. It is
+// false for a command that is not a launcher's.
+func splitLauncher(argv []string) (prefix, args []string, launched bool, err error) {
+	name := filepath.Base(argv[0])
+	known, ok := launchers[name]
+	if !ok {
+		return nil, nil, false, nil
+	}
+	prefix = []string{argv[0]}
+	for i := 1; i < len(argv); i++ {
+		arg := argv[i]
+		flag, _, inline := strings.Cut(arg, "=")
+		switch {
+		case arg == "--":
+			if i+1 == len(argv) {
+				return nil, nil, true, fmt.Errorf("run: %s names no package or script after --", name)
+			}
+			return append(prefix, argv[i+1]), argv[i+2:], true, nil
+		case slices.Contains(known.refused, flag):
+			return nil, nil, true, fmt.Errorf("run: %s %s runs code of its own, so no agent's arguments follow it: name the package or the script", name, flag)
+		case slices.Contains(known.valued, flag) && !inline:
+			if i+1 == len(argv) {
+				return nil, nil, true, fmt.Errorf("run: %s %s takes a value", name, flag)
+			}
+			prefix = append(prefix, arg, argv[i+1])
+			i++
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			prefix = append(prefix, arg)
+		default:
+			return append(prefix, arg), argv[i+1:], true, nil
+		}
+	}
+	return nil, nil, true, fmt.Errorf("run: %s names no package or script", name)
+}
+
+// planCommand plans the agent's command. A command that starts Claude Code
+// or Codex through a launcher is planned as the agent's own arguments, and
+// what the plan adds goes after the package or script the launcher starts.
+// The session gets the agent's own arguments under no command name: the
+// launcher's version is not the agent's, so Codex's version is read from its
+// rollout file.
+func planCommand(agent adapter.Agent, argv []string, budget decimal.Decimal) (plan, session adapter.Plan, err error) {
+	switch agent.(type) {
+	case claudecode.Agent, codex.Agent:
+	default:
+		plan, err = agent.Plan(argv, budget)
+		return plan, plan, err
+	}
+	prefix, args, launched, err := splitLauncher(argv)
+	if err != nil || !launched {
+		if err == nil {
+			plan, err = agent.Plan(argv, budget)
+		}
+		return plan, plan, err
+	}
+	own, err := agent.Plan(append([]string{argv[0]}, args...), budget)
+	if err != nil {
+		return own, own, err
+	}
+	plan, session = own, own
+	plan.Argv = slices.Concat(prefix, own.Argv[1:])
+	session.Argv = slices.Concat([]string{""}, own.Argv[1:])
+	return plan, session, nil
+}
+
 // Run starts the agent, reads its stream, stops it at the cap when the plan
 // watches the run, and writes the rows at the grade the run earned.
 func Run(ctx context.Context, opts Options) (Result, error) {
-	agent, err := AgentFor(opts.Argv)
+	agent, err := opts.agent()
 	if err != nil {
 		return Result{}, err
 	}
-	plan, err := agent.Plan(opts.Argv, opts.Budget)
+	plan, sessionPlan, err := planCommand(agent, opts.Argv, opts.Budget)
 	if err != nil {
 		return Result{}, err
 	}
@@ -255,7 +382,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		plan.Enforcement = held.enforcement("")
 		plan.Argv = held.argv(plan.Argv)
 	}
-	session := agent.NewSession(plan)
+	sessionPlan.Enforcement = plan.Enforcement
+	session := agent.NewSession(sessionPlan)
 	if billed, ok := session.(adapter.GatewayBilled); ok && held != nil {
 		billed.BilledThroughGateway()
 	}

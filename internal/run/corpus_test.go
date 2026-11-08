@@ -50,6 +50,13 @@ var runCorpus = map[string]corpusRows{
 	"claude-code/2.1.316/action-session": {rows: 12, total: "0.0391529", grade: adapter.GradeNone},
 	"claude-code/2.1.319/current":        {rows: 5, total: "0.000877895", grade: adapter.GradeAgentFlag},
 	"codex/0.164.0-alpha.11.1/action":    {rows: 8, total: "0.029324", grade: adapter.GradeNone},
+	// The Agent SDK's programs, read as Claude Code's own stream; each total
+	// is the program's own total_cost_usd.
+	"claude-code/2.1.316/sdk-claude-ts": {rows: 5, total: "0.000468745", grade: adapter.GradeAgentFlag},
+	"claude-code/2.1.316/sdk-claude-py": {rows: 6, total: "0.000303215", grade: adapter.GradeAgentFlag},
+	// gpt-6-luna at 0.10, 0.125 and 0.50 USD per million: 3 uncached input,
+	// 10035 cache write and 5 output tokens.
+	"codex/0.164.0-alpha.11.1/sdk-codex": {rows: 3, total: "0.001257175", grade: adapter.GradeWrapperWatchdog},
 	// gpt-5.6-sol at 4.00, 0.40 and 20.00 USD per million: 5875 uncached,
 	// 28032 cached input and 111 output tokens.
 	"codex/0.164.0-alpha.11.1/exec": {rows: 8, total: "0.0369328", grade: adapter.GradeWrapperWatchdog},
