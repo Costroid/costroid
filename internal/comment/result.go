@@ -379,6 +379,9 @@ var (
 		policy.ReasonOverBaseline, policy.ReasonNoBaseline, policy.ReasonNoLifetime, policy.ReasonRepeatPossible,
 		policy.ReasonNoLedger, policy.ReasonOutsideAllowlist, policy.ReasonUnreadableModel, policy.ReasonOnAllowlist,
 	}
+	// reasonsAddedIn07 are the reasons of policy.results that result/v0.7
+	// added.
+	reasonsAddedIn07 = []string{policy.ReasonUnmeasuredSpend, policy.ReasonNoRunRows}
 	// fieldsAdded are the top-level fields a later version added. Each is
 	// present in every object of that version, null or not.
 	fieldsAdded = []addedValue{
@@ -424,6 +427,9 @@ func addedValues(object string, block Block) []addedValue {
 		}
 		if slices.Contains(reasonsAddedIn06, result.Reason) {
 			found = append(found, addedValue{"the reason " + result.Reason, schemaV06})
+		}
+		if slices.Contains(reasonsAddedIn07, result.Reason) {
+			found = append(found, addedValue{"the reason " + result.Reason, schemaV07})
 		}
 		for _, field := range []struct {
 			name string

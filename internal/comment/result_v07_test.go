@@ -416,10 +416,11 @@ func TestResultV07BlockFieldsMatchTheSchema(t *testing.T) {
 }
 
 // resultSchemaSHA256 is the SHA-256 of result/v0.7/result.schema.json in
-// Costroid/costroid-schemas at fdad0a6, the commit that added it:
+// Costroid/costroid-schemas at fc84b78, the commit that added the reasons
+// unmeasured_spend and no_run_rows:
 //
-//	git show fdad0a6:result/v0.7/result.schema.json | sha256sum
-const resultSchemaSHA256 = "1a3fb898864fcfb6b2523bbc491f1ef40a45a8d3aa25cc9db64a87374ca991a8"
+//	git show fc84b78:result/v0.7/result.schema.json | sha256sum
+const resultSchemaSHA256 = "7ece93151080a5d8dfba5902dcc11abcaa6be277305de1d099dc7e7e777e3798"
 
 // TestResultSchemaCopyMatchesItsDigest holds the copied schema to the
 // published file byte for byte, so the tests never validate against a copy
