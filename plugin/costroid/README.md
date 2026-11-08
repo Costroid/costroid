@@ -11,9 +11,10 @@ It holds:
 
 ## Install
 
-The plugin starts its server as `costroid mcp`, so the `costroid` binary must be on your `PATH`, at a release that has the `mcp` command. [Install it](https://github.com/Costroid/costroid#install) first. Then, in Claude Code:
+The plugin starts its server as `costroid mcp`, so the `costroid` binary must be on your `PATH`, at a release that has the `mcp` command. [Install it](https://github.com/Costroid/costroid#install) first. Then add this repository as a marketplace and install the plugin from it, in Claude Code:
 
-    /plugin install costroid --marketplace Costroid/costroid
+    /plugin marketplace add Costroid/costroid
+    /plugin install costroid@costroid
 
 `/costroid:result` reads GitHub with `GITHUB_TOKEN`, and the repository from `GITHUB_REPOSITORY`, in the environment Claude Code starts in.
 
