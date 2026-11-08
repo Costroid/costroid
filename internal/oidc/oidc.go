@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -273,7 +275,6 @@ func (v *Verifier) checkRegistered(claims registered) error {
 var (
 	repoPath   = regexp.MustCompile(`^[A-Za-z0-9._~%-]+(/[A-Za-z0-9._~%-]+){1,7}$`)
 	hostName   = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
-	commitSHA  = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 	runID      = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 	githubPull = regexp.MustCompile(`^refs/pull/([1-9][0-9]{0,19})/merge$`)
 )
@@ -339,7 +340,7 @@ func readIdentity(issuer Issuer, payload string) (Identity, error) {
 	if !runID.MatchString(identity.RunID) {
 		return Identity{}, fmt.Errorf("%w: run id", ErrClaims)
 	}
-	if !commitSHA.MatchString(identity.CommitSHA) {
+	if !vcs.IsCommit(identity.CommitSHA) {
 		return Identity{}, fmt.Errorf("%w: commit", ErrClaims)
 	}
 	if identity.RunAttempt != "" {

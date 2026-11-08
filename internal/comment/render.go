@@ -24,6 +24,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -137,7 +138,6 @@ var basisLabels = map[string]string{
 
 var (
 	installationPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
-	commitPattern       = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 	digestPattern       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	// runURLPattern holds no character that can end a Markdown link target.
 	runURLPattern = regexp.MustCompile(`^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+$`)
@@ -441,7 +441,7 @@ func (i Input) readerLine() string {
 
 // headSHA is the head commit when it is one, and empty otherwise.
 func (i Input) headSHA() string {
-	if !commitPattern.MatchString(i.HeadSHA) {
+	if !vcs.IsCommit(i.HeadSHA) {
 		return ""
 	}
 	return i.HeadSHA
@@ -747,7 +747,7 @@ func (i Input) runCommit() string {
 // runLine names the commit and links the run only when each is well formed.
 func runLine(head, link string) string {
 	line := "This is one run, not a total across runs."
-	if commitPattern.MatchString(head) {
+	if vcs.IsCommit(head) {
 		line = "This is one run at commit `" + head[:shortCommitLength] + "`, not a total across runs."
 	}
 	if len(link) <= maxRunURLLength && runURLPattern.MatchString(link) {

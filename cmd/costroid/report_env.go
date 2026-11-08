@@ -17,6 +17,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // pullContext is what the CI environment says about the commit.
@@ -184,7 +185,7 @@ func hostFromEnvironment(pull pullContext) (scm.Reporter, error) {
 	if token == "" {
 		return nil, errors.New("GITHUB_TOKEN is not set")
 	}
-	if !headPattern.MatchString(pull.head) {
+	if !vcs.IsCommit(pull.head) {
 		return nil, errors.New("no head commit: GITHUB_SHA and the event file name none")
 	}
 	return scm.NewGitHub(scm.GitHubOptions{

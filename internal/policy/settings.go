@@ -16,6 +16,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/scm"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // ConfigPath is where a repository keeps its settings.
@@ -36,10 +37,6 @@ type Settings struct {
 // amountPattern is a plain decimal of at most the row contract's scale, the
 // same pattern the schema states.
 var amountPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,12})?$`)
-
-// commitPattern is a full commit SHA. An empty ref would read the default
-// branch, which is neither the base nor the head.
-var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
 // modelEntryPattern is an entry of policy.models: a model id a comment may
 // print, or such an id's prefix followed by *.
@@ -307,7 +304,9 @@ func ReadConfig(ctx context.Context, files FileReader, commits Commits) ConfigFi
 	if commits.PullRequest {
 		ref = commits.Base
 	}
-	if !commitPattern.MatchString(ref) {
+	// An empty ref would read the default branch, which is neither the base
+	// nor the head.
+	if !vcs.IsCommit(ref) {
 		return ConfigFile{FromBase: commits.PullRequest, Unread: errors.New("policy: no commit to read costroid.yml at")}
 	}
 	data, found, err := readOptional(ctx, files, ref)

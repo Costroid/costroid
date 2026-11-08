@@ -3,9 +3,10 @@ package cicontext
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const fuzzHead = "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d"
@@ -15,17 +16,17 @@ const fuzzHead = "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d"
 func assertChecked(t *testing.T, c Context) {
 	t.Helper()
 	for name, field := range map[string]struct {
-		value   string
-		pattern *regexp.Regexp
+		value string
+		valid func(string) bool
 	}{
-		"pull request": {c.PullRequest, pullRequestPattern},
-		"head":         {c.Head, commitPattern},
-		"base":         {c.Base, commitPattern},
-		"run":          {c.Run, runPattern},
-		"task":         {c.Task, runPattern},
-		"repository":   {c.Repository, repositoryPattern},
+		"pull request": {c.PullRequest, pullRequestPattern.MatchString},
+		"head":         {c.Head, vcs.IsCommit},
+		"base":         {c.Base, vcs.IsCommit},
+		"run":          {c.Run, runPattern.MatchString},
+		"task":         {c.Task, runPattern.MatchString},
+		"repository":   {c.Repository, repositoryPattern.MatchString},
 	} {
-		if field.value != "" && !field.pattern.MatchString(field.value) {
+		if field.value != "" && !field.valid(field.value) {
 			t.Fatalf("the %s reads %q", name, field.value)
 		}
 	}

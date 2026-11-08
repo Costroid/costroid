@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/oidc/oidctest"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -341,7 +342,7 @@ func FuzzReadIdentity(f *testing.F) {
 			if err != nil {
 				continue
 			}
-			if !commitSHA.MatchString(identity.CommitSHA) || !runID.MatchString(identity.RunID) {
+			if !vcs.IsCommit(identity.CommitSHA) || !runID.MatchString(identity.RunID) {
 				t.Fatalf("an invalid identity passed: %+v", identity)
 			}
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -239,7 +240,7 @@ func finishedPullRun(eventName, eventPath, repository string, branches bool) (fi
 		return run, "", errors.New("the finished run names no head repository")
 	case !branches && strings.EqualFold(run.HeadRepository.FullName, repository):
 		return run, "", errors.New("the pull request is from a branch of this repository, and its own report job posts the check")
-	case !headPattern.MatchString(run.HeadSHA):
+	case !vcs.IsCommit(run.HeadSHA):
 		return run, "", errors.New("no head commit: the event file names none")
 	}
 	return run, run.HeadSHA, nil

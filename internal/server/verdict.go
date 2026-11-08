@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/store"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -26,9 +26,6 @@ const (
 	// requests. Any count from the threshold up ends the period alike.
 	maxMeasuredPullRequests = 1 << 20
 )
-
-// configRefPattern is a full commit SHA, the commit costroid.yml was read at.
-var configRefPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
 // spendAttestation is what costroid gateway close sends once the run is over:
 // the run its key was minted for and what the gateway counted on the key. The
@@ -166,7 +163,7 @@ func (s *Server) readVerdictRequest(w http.ResponseWriter, r *http.Request) (ver
 		return verdictRequest{}, policy.ConfigFile{}, policy.Start{}, malformedVerdict("The body is not a verdict request.")
 	}
 	config := policy.ConfigFile{Ref: stated.ConfigRef, FromBase: stated.ConfigRef != ""}
-	if stated.ConfigRef != "" && !configRefPattern.MatchString(stated.ConfigRef) {
+	if stated.ConfigRef != "" && !vcs.IsCommit(stated.ConfigRef) {
 		return verdictRequest{}, policy.ConfigFile{}, policy.Start{}, malformedVerdict("config_ref is not a commit.")
 	}
 	if stated.Config != nil {

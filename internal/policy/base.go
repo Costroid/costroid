@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // branchPattern is a branch name this package asks a host about. A name
@@ -31,7 +33,7 @@ func BaseHead(ctx context.Context, branches Branches, branch string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("policy: read the head of %s: %w", branch, err)
 	}
-	if !commitPattern.MatchString(head) {
+	if !vcs.IsCommit(head) {
 		return "", fmt.Errorf("policy: the head of %s is not a commit", branch)
 	}
 	return head, nil

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // The refusals an approval can answer.
@@ -130,7 +132,7 @@ func CountReview(ctx context.Context, roles Roles, rules ApprovalRules, pull Pul
 		return Approval{}, ErrBotApproval
 	case !rules.AllowAuthor && strings.EqualFold(pull.Author, review.Reviewer):
 		return Approval{}, ErrAuthorApproval
-	case !shaPattern.MatchString(pull.HeadSHA) || review.CommitID != pull.HeadSHA:
+	case !vcs.IsCommit(pull.HeadSHA) || review.CommitID != pull.HeadSHA:
 		return Approval{}, ErrOffHead
 	case review.SubmittedAt.IsZero() || now.Sub(review.SubmittedAt) >= rules.Lasts:
 		return Approval{}, ErrExpiredReview
