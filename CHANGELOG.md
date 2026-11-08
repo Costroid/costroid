@@ -2,6 +2,35 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.12 (2026-11-08)
+
+### Breaking changes
+
+- The GitHub recipes run `step-security/harden-runner` on the agent's job in block mode, with its telemetry off. The job reaches only the model provider, GitHub and the hosts the install needs. Copy the recipes again. The LiteLLM recipe needs the repository variable `COSTROID_GATEWAY_HOST`.
+- The `codex` recipe reads the secret `OPENAI_API_KEY`, which the action gives Codex as `CODEX_API_KEY`.
+- `costroid init` writes its files at the repository's root, from any directory inside it. Outside a repository it refuses with exit 2.
+- `costroid reconcile` exits 1 on a price that misses the catalog, as it does on a token miss.
+- A gateway run refuses an agent command that routes around the gateway: Codex's `--oss`, `--local-provider` and its own provider or base URL, and Claude Code's `--settings` naming a base URL, a token or a cloud provider.
+- With no account named, the comment's account link opens [docs.costroid.com/account](https://docs.costroid.com/account). On GitLab the link names `gitlab-namespace:<id>` on gitlab.com and no id on a self-managed instance.
+
+### What you can now do
+
+- Hold `claude-code-action` to a cap: pass `--max-budget-usd` in `claude_args` and the same figure to the `read` stage as `budget-usd`, with the new `claude-args` input. The grade then reads `agent-flag`, and `none` with the reason when the two differ. `costroid lint` notes an action step without the flag.
+- Run Codex through a LiteLLM gateway on a key made for the run. Codex takes the gateway's address and provider on its command line, which override its own configuration, and its rows read `measured`. Claude Code's gateway rows read `measured` too.
+- Watch a run while it works: `costroid run` writes `$COSTROID_STATUS_FILE`, by default `$RUNNER_TEMP/costroid-status.json`, after each priced request. It holds spend per basis, the cap, the grade and counts, never content. Its schema is `costroid.status/0.1`.
+- Fail a GitLab merge request's pipeline on its verdict: set `COSTROID_GATE`, and the report job exits 1 on `failure` and 3, a warning, on `neutral`. [`docs/gitlab.md`](docs/gitlab.md) has the template.
+- Send the rows to Costroid Platform from the recipes, bind the repository's owner with `costroid connect` and the new `recipes/github-connect.yml`, and read each batch's verdict from `costroid export`.
+- Post the agent's own answer as a second comment, opt-in with `post-review: "true"`. The comment shows it as plain text and says Costroid did not write or check it.
+- Prove each price from the provider's own figures: `costroid reconcile` reads Anthropic's cost report by model and token type and OpenAI's by line item, and compares each class's dollars within 1%.
+- Sign in with a Claude subscription: `costroid init github --agent claude-code-action --auth subscription`.
+- Verify a release's build provenance with `gh attestation verify`, on each release file and on the image.
+
+### Fixes
+
+- A per-run row prices Claude Code's input at the context tier of the model's whole input, carries fast mode and a region seen on any message, and composes fast mode's cache prices from the fast input price.
+- The follow-up names its own check run in its result object.
+- `costroid approve` re-concludes a check that an earlier release wrote as `costroid.result/0.5`.
+
 ## 1.0.0-alpha.11 (2026-11-07)
 
 ### Breaking changes
