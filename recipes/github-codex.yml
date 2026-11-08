@@ -52,7 +52,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: git diff "$BASE...$HEAD" > pull-request.diff
       - name: Run Codex under the budget
-        uses: Costroid/costroid/action@61dac375b64017cbc42a5878603268577a49058c # v1.0.0-alpha.13
+        uses: Costroid/costroid/action@bd747c80573f04fc03cbd37873f2678a2aad0aa2 # v1.0.0-alpha.14
         with:
           stage: run
           agent: codex
@@ -91,7 +91,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@61dac375b64017cbc42a5878603268577a49058c # v1.0.0-alpha.13
+      - uses: Costroid/costroid/action@bd747c80573f04fc03cbd37873f2678a2aad0aa2 # v1.0.0-alpha.14
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -113,7 +113,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@61dac375b64017cbc42a5878603268577a49058c # v1.0.0-alpha.13
+      - uses: Costroid/costroid/action@bd747c80573f04fc03cbd37873f2678a2aad0aa2 # v1.0.0-alpha.14
         with:
           stage: report
           # A skipped agent job then reads as skipped, not as a run with no rows.
