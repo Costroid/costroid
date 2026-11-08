@@ -2,6 +2,7 @@ package claudecode_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -154,10 +155,10 @@ func TestGatewaySettingsCarryTheCommandsLastSettings(t *testing.T) {
 		argv []string
 		want string
 	}{
-		{[]string{"claude", "-p", "work"}, `{"env":{` + gatewayEnv + `}}`},
-		{[]string{"claude", "-p", "--settings", `{"model":"first"}`, "--settings", own, "work"}, `{"env":{` + gatewayEnv + `,"DISABLE_AUTO_COMPACT":"1"},"model":"from-file"}`},
-		{[]string{"claude", "-p", "--settings", own, `--settings={"model":"last","env":null}`, "work"}, `{"env":{` + gatewayEnv + `},"model":"last"}`},
-		{[]string{"claude", "-p", "--settings", `{"model":"before"}`, "--", "--settings", own}, `{"env":{` + gatewayEnv + `},"model":"before"}`},
+		{[]string{"claude", "-p", "work"}, `{"apiKeyHelper":"","env":{` + gatewayEnv + `}}`},
+		{[]string{"claude", "-p", "--settings", `{"model":"first"}`, "--settings", own, "work"}, `{"apiKeyHelper":"","env":{` + gatewayEnv + `,"DISABLE_AUTO_COMPACT":"1"},"model":"from-file"}`},
+		{[]string{"claude", "-p", "--settings", own, `--settings={"model":"last","env":null}`, "work"}, `{"apiKeyHelper":"","env":{` + gatewayEnv + `},"model":"last"}`},
+		{[]string{"claude", "-p", "--settings", `{"model":"before"}`, "--", "--settings", own}, `{"apiKeyHelper":"","env":{` + gatewayEnv + `},"model":"before"}`},
 	} {
 		args, remove, err := claudecode.Agent{}.GatewaySettings(c.argv, "http://gateway.test", "sk-run-key")
 		if err != nil || len(args) != 2 || args[0] != "--settings" {
@@ -165,6 +166,35 @@ func TestGatewaySettingsCarryTheCommandsLastSettings(t *testing.T) {
 		}
 		if got := string(mustRead(t, args[1])); got != c.want {
 			t.Errorf("%q:\n got %s\nwant %s", c.argv, got, c.want)
+		}
+		if err := remove(); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// TestGatewaySettingsBlankTheKeyHelper sets apiKeyHelper empty in the run's
+// settings, over a helper the command's own last --settings names. Claude
+// Code runs a helper a repository's .claude/settings.json names, and sends
+// its output as x-api-key beside the run's bearer token, so a repository
+// could choose the key a gateway reads. Empty, Claude Code runs none.
+func TestGatewaySettingsBlankTheKeyHelper(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	for _, argv := range [][]string{
+		{"claude", "-p", "work"},
+		{"claude", "-p", "--settings", `{"apiKeyHelper":"echo sk-from-the-command"}`, "work"},
+		{"claude", "-p", `--settings={"apiKeyHelper":null,"model":"haiku"}`, "work"},
+	} {
+		args, remove, err := claudecode.Agent{}.GatewaySettings(argv, "http://gateway.test", "sk-run-key")
+		if err != nil || len(args) != 2 {
+			t.Fatalf("%q: args %q, err %v", argv, args, err)
+		}
+		var settings map[string]any
+		if err := json.Unmarshal(mustRead(t, args[1]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		if helper, ok := settings["apiKeyHelper"]; !ok || helper != "" {
+			t.Errorf("%q: apiKeyHelper is %#v, present %v, want an empty string", argv, helper, ok)
 		}
 		if err := remove(); err != nil {
 			t.Error(err)
