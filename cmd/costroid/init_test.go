@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"maps"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -30,6 +32,9 @@ const (
 )
 
 var releaseBuild = buildInfo{version: testRelease, commit: testCommit}
+
+// testPR holds --pr to no terminal and to runs that show at once.
+var testPR = prSettings{getenv: os.Getenv, terminal: filepath.Join(os.TempDir(), "costroid-no-terminal"), polls: 3}
 
 // existingReview is a team's own review workflow, with no Costroid in it.
 const existingReview = `# Claude reviews a pull request.
@@ -92,7 +97,7 @@ func runInit(t *testing.T, root string, build buildInfo, recipes fs.FS, args ...
 func runInitIn(t *testing.T, repo repository, build buildInfo, recipes fs.FS, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := initRepository(func() (repository, error) { return repo, nil }, build, recipes, args, &stdout, &stderr)
+	code := initRepository(func() (repository, error) { return repo, nil }, build, recipes, testPR, args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -516,12 +521,19 @@ func TestInitExistingPrintsAPatchAndWritesNothing(t *testing.T) {
 				t.Errorf("the read step's if: %v", read["if"])
 			}
 			reportJob := jobs["report"].(map[string]any)
-			if reportJob["needs"] != "review" || reportJob["steps"].([]any)[0].(map[string]any)["uses"] != pinned {
+			reportStep := reportJob["steps"].([]any)[0].(map[string]any)
+			if reportJob["needs"] != "review" || reportStep["uses"] != pinned {
 				t.Errorf("the report job: %v", reportJob)
+			}
+			claudeWith := claude["with"].(map[string]any)
+			readWith := read["with"].(map[string]any)
+			if claudeWith["claude_args"] != "--max-budget-usd 5" || readWith["budget-usd"] != "5" || readWith["claude-args"] != "--max-budget-usd 5" || reportStep["with"].(map[string]any)["budget-usd"] != "5" {
+				t.Errorf("the patch does not hold the run to a cap of USD 5:\n%s", patched)
 			}
 			if test.stepID == addedStepID {
 				delete(claude, "id")
 			}
+			delete(claudeWith, "claude_args")
 			review["steps"] = slices.Delete(steps, at+1, at+2)
 			delete(jobs, "report")
 			if !reflect.DeepEqual(document, original) {
@@ -560,7 +572,7 @@ func TestInitExistingPrintsAPatchAndWritesNothing(t *testing.T) {
 
 // TestInitExistingMatchesTheDocs takes docs/existing-workflow.md's example
 // without its two blocks and the step's id, patches it, and gets the example
-// back.
+// back with the page's cap lines added as its diff shows them.
 func TestInitExistingMatchesTheDocs(t *testing.T) {
 	page := readFile(t, "../../docs/existing-workflow.md")
 	blocks := regexp.MustCompile("(?s)```yaml\n(.*?)```").FindAllStringSubmatch(page, -1)
@@ -584,9 +596,43 @@ func TestInitExistingMatchesTheDocs(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	patched := applyPatch(t, "review.yml", before, patch)
-	if !reflect.DeepEqual(decodeYAML(t, patched), decodeYAML(t, example)) {
-		t.Errorf("the patched workflow differs from the page's example:\n%s", patched)
+	capped := addDiffLines(t, example, page, "## Hold each run to a cap")
+	if !reflect.DeepEqual(decodeYAML(t, patched), decodeYAML(t, capped)) {
+		t.Errorf("the patched workflow differs from the page's example with its cap lines:\n%s\nwant:\n%s", patched, capped)
 	}
+}
+
+// addDiffLines adds to text the + lines of the first diff block under the
+// page's heading, each after the context line before it. A context line of
+// ... skips lines.
+func addDiffLines(t *testing.T, text, page, heading string) string {
+	t.Helper()
+	_, section, found := strings.Cut(page, heading+"\n")
+	diff := regexp.MustCompile("(?s)```diff\n(.*?)```").FindStringSubmatch(section)
+	if !found || diff == nil {
+		t.Fatalf("the page has no diff under %s", heading)
+	}
+	lines := strings.Split(text, "\n")
+	at, added := 0, 0
+	for line := range strings.SplitSeq(strings.TrimSuffix(diff[1], "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "+"):
+			lines = slices.Insert(lines, at, line[1:])
+			at++
+			added++
+		case strings.TrimSpace(line) == "...":
+		default:
+			next := slices.Index(lines[at:], strings.TrimPrefix(line, " "))
+			if next < 0 {
+				t.Fatalf("the diff's context line %q is not in the example after line %d", line, at)
+			}
+			at += next + 1
+		}
+	}
+	if added == 0 {
+		t.Fatalf("the diff under %s adds no line", heading)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestInitRefusesWhatItCannotWrite(t *testing.T) {
@@ -703,7 +749,7 @@ func TestInitWritesAtTheRepositoryRoot(t *testing.T) {
 	t.Chdir(sub)
 	start := func(args ...string) (int, string, string) {
 		var stdout, stderr bytes.Buffer
-		code := initRepository(locateRepository, releaseBuild, costroid.Recipes, args, &stdout, &stderr)
+		code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, args, &stdout, &stderr)
 		return code, stdout.String(), stderr.String()
 	}
 
@@ -753,7 +799,7 @@ func TestInitRefusesOutsideARepository(t *testing.T) {
 	t.Chdir(dir)
 	for _, args := range [][]string{{"github", "--agent", "claude"}, {"--agent", "claude"}, {"gitlab", "--agent", "codex"}} {
 		var stdout, stderr bytes.Buffer
-		code := initRepository(locateRepository, releaseBuild, costroid.Recipes, args, &stdout, &stderr)
+		code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, args, &stdout, &stderr)
 		if code != exitNoRepository || stdout.Len() != 0 || stderr.String() != "costroid: init: "+errNoRepository.Error()+"\n" {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout.String(), stderr.String())
 		}
@@ -765,7 +811,7 @@ func TestInitRefusesOutsideARepository(t *testing.T) {
 		t.Errorf("init wrote %v", files)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, []string{"--help"}, &stdout, &stderr); code != 0 || stderr.String() != initHelp {
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"--help"}, &stdout, &stderr); code != 0 || stderr.String() != initHelp {
 		t.Errorf("--help outside a repository: exit %d, stderr %q", code, stderr.String())
 	}
 }
@@ -1313,4 +1359,742 @@ func TestSchemaAndDocsNameOneReadPoint(t *testing.T) {
 	if flat := strings.Join(words, " "); !strings.Contains(flat, readPoint) || strings.Contains(flat, "server") {
 		t.Errorf("the costroid.yml init writes does not state the read point:\n%s", settings)
 	}
+}
+
+// fakeGH, fakeGit and fakeStty stand in for gh, git and stty in the tests of
+// --pr. Each prints "ran:" and its arguments, a tab before each, to stderr,
+// and appends the same line without the prefix to $FAKE_LOG. They use only
+// the shell's builtins, so with PATH set to their directory alone nothing
+// else runs.
+const (
+	fakeGH = `#!/bin/sh
+printf 'ran:\tgh' >&2
+printf 'gh' >> "$FAKE_LOG"
+for arg in "$@"; do printf '\t%s' "$arg" >&2; printf '\t%s' "$arg" >> "$FAKE_LOG"; done
+printf '\n' >&2
+printf '\n' >> "$FAKE_LOG"
+[ "$FAKE_FAIL" = "gh $1 $2" ] && exit 1
+case "$1 $2" in
+"secret list") printf '%s\n' "$FAKE_SECRETS" ;;
+"secret set") while IFS= read -r line || [ -n "$line" ]; do printf '%s' "$line" >> "$FAKE_STDIN"; done ;;
+"pr create") echo "https://github.com/example/widgets/pull/7" ;;
+"run list") printf '%s\n' "$FAKE_RUNS" ;;
+"run watch") echo "the run completed" ;;
+"pr view") printf '%s\n' "$FAKE_COMMENTS" ;;
+esac
+exit 0
+`
+	fakeGit = `#!/bin/sh
+printf 'ran:\tgit' >&2
+printf 'git' >> "$FAKE_LOG"
+for arg in "$@"; do printf '\t%s' "$arg" >&2; printf '\t%s' "$arg" >> "$FAKE_LOG"; done
+printf '\n' >&2
+printf '\n' >> "$FAKE_LOG"
+[ "$1" = "-C" ] && shift 2
+[ "$FAKE_FAIL" = "git $1" ] && exit 1
+case "$1" in
+remote) echo origin ;;
+rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;;
+esac
+exit 0
+`
+	fakeStty = `#!/bin/sh
+printf 'stty\t%s\n' "$1" >> "$FAKE_LOG"
+exit 0
+`
+	fakePull    = "https://github.com/example/widgets/pull/7"
+	fakeComment = fakePull + "#issuecomment-9"
+)
+
+// fakes are the fake tools' directory and the files they write.
+type fakes struct {
+	log, stdin string
+}
+
+// installFakes puts fake gh, git and stty alone on PATH, so neither the real
+// gh nor the real git can run, and sets what they answer.
+func installFakes(t *testing.T) fakes {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	for name, script := range map[string]string{"gh": fakeGH, "git": fakeGit, "stty": fakeStty} {
+		writeFile(t, filepath.Join(bin, name), script)
+		if err := os.Chmod(filepath.Join(bin, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := fakes{log: filepath.Join(dir, "calls.log"), stdin: filepath.Join(dir, "stdin")}
+	for name, value := range map[string]string{
+		"PATH": bin, "FAKE_LOG": f.log, "FAKE_STDIN": f.stdin, "FAKE_FAIL": "", "FAKE_SECRETS": "[]",
+		"FAKE_RUNS":     `[{"databaseId":42,"url":"https://github.com/example/widgets/actions/runs/42","workflowName":"costroid"}]`,
+		"FAKE_COMMENTS": `{"comments":[{"body":"thanks","url":"` + fakePull + `#issuecomment-8"},{"body":"<!-- costroid:comment -->\n### Costroid","url":"` + fakeComment + `"}]}`,
+	} {
+		t.Setenv(name, value)
+	}
+	return f
+}
+
+// calls are the fake tools' runs in order, each as its arguments.
+func (f fakes) calls(t *testing.T) [][]string {
+	t.Helper()
+	data, err := os.ReadFile(f.log)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls [][]string
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(data), "\n"), "\n") {
+		calls = append(calls, strings.Split(line, "\t"))
+	}
+	return calls
+}
+
+// runPR runs init with --pr in a directory with no repository, where only
+// the fake tools answer, and returns its exit code and everything it printed,
+// stdout and stderr in the order they came.
+func runPR(t *testing.T, root string, settings prSettings, args ...string) (int, string) {
+	t.Helper()
+	var output bytes.Buffer
+	repo := repository{root: root, dir: root}
+	code := initRepository(func() (repository, error) { return repo, nil }, releaseBuild, costroid.Recipes, settings, args, &output, &output)
+	return code, output.String()
+}
+
+// prSteps are the commands init --pr runs on the claude recipe with
+// --platform-url, in order.
+var prSteps = []string{
+	"gh secret list --json name",
+	"gh secret set ANTHROPIC_API_KEY",
+	"gh variable set COSTROID_PLATFORM_URL --body https://app.costroid.com",
+	"git switch --create try-costroid",
+	"git add -- .github/workflows/costroid.yml costroid.yml",
+	"git commit --message 'Add the costroid check' -- .github/workflows/costroid.yml costroid.yml",
+	"git rev-parse HEAD",
+	"git push --set-upstream origin try-costroid",
+	"gh pr create --fill --head try-costroid",
+	"gh run list --commit " + testCommit + " --event pull_request --json databaseId,url,workflowName",
+	"gh run watch 42",
+	"gh pr view " + fakePull + " --json comments",
+}
+
+func TestInitPRNamesEachStepBeforeRunningIt(t *testing.T) {
+	installFakes(t)
+	t.Setenv("TEST_AGENT_KEY", "sk-ant-test-0123456789")
+	code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--pr", "--key-env", "TEST_AGENT_KEY")
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, output)
+	}
+	var named, ran []string
+	pending := ""
+	for line := range strings.SplitSeq(output, "\n") {
+		switch {
+		case strings.HasPrefix(line, "$ "):
+			if pending != "" {
+				t.Errorf("init named %q and ran nothing before it named %q", pending, line[2:])
+			}
+			pending = line[2:]
+			named = append(named, pending)
+		case strings.HasPrefix(line, "ran:\t"):
+			command := shellJoin(strings.Split(line, "\t")[1:])
+			if command != pending {
+				t.Errorf("%q ran, and the line before it named %q", command, pending)
+			}
+			ran = append(ran, command)
+			pending = ""
+		}
+	}
+	if !slices.Equal(named, prSteps) || !slices.Equal(ran, prSteps) {
+		t.Errorf("named:\n%s\nran:\n%s\nwant:\n%s", strings.Join(named, "\n"), strings.Join(ran, "\n"), strings.Join(prSteps, "\n"))
+	}
+	if at := strings.Index(output, "costroid: the run posted its comment at "+fakeComment+"\n"); at < strings.LastIndex(output, "ran:\t") {
+		t.Errorf("init does not print the comment's address after the last command:\n%s", output)
+	}
+	if strings.Contains(output, "These commands are left") {
+		t.Errorf("init lists commands as left after running them:\n%s", output)
+	}
+}
+
+func TestInitPRNeverPrintsTheKey(t *testing.T) {
+	const key = "sk-ant-test-never-printed-5550"
+	for _, test := range []struct {
+		label string
+		// terminal is what the terminal holds, and args what init is given
+		// beyond the host and the agent.
+		terminal string
+		args     []string
+	}{
+		{"from --key-env", "", []string{"--pr", "--key-env", "TEST_AGENT_KEY"}},
+		{"from the prompt", key + "\n", []string{"--pr"}},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			fake := installFakes(t)
+			t.Setenv("TEST_AGENT_KEY", key)
+			settings := testPR
+			if test.terminal != "" {
+				settings.terminal = filepath.Join(t.TempDir(), "tty")
+				writeFile(t, settings.terminal, test.terminal)
+			}
+			root := t.TempDir()
+			code, output := runPR(t, root, settings, append([]string{"github", "--agent", "claude"}, test.args...)...)
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, output)
+			}
+			if strings.Contains(output, key) {
+				t.Errorf("init printed the key:\n%s", output)
+			}
+			calls := fake.calls(t)
+			for _, call := range calls {
+				if slices.ContainsFunc(call, func(arg string) bool { return strings.Contains(arg, key) }) {
+					t.Errorf("the key is in the arguments of %v", call)
+				}
+			}
+			if sent := readFile(t, fake.stdin); sent != key {
+				t.Errorf("gh secret set read %q on its standard input, want the key", sent)
+			}
+			for name, content := range tree(t, root) {
+				if strings.Contains(content, key) {
+					t.Errorf("the key is in %s", name)
+				}
+			}
+			if test.terminal == "" {
+				return
+			}
+			order := make([]string, len(calls))
+			for i, call := range calls {
+				order[i] = strings.Join(call, " ")
+			}
+			off, on, set := slices.Index(order, "stty -echo"), slices.Index(order, "stty echo"), slices.Index(order, "gh secret set ANTHROPIC_API_KEY")
+			if off < 0 || on < off || set < on {
+				t.Errorf("the terminal's echo is not off while the key is read:\n%s", strings.Join(order, "\n"))
+			}
+			if !strings.Contains(output, "The value of ANTHROPIC_API_KEY, which init passes to gh and never prints: ") {
+				t.Errorf("init asked for no key:\n%s", output)
+			}
+		})
+	}
+}
+
+func TestInitPRSkipsAnExistingSecret(t *testing.T) {
+	fake := installFakes(t)
+	t.Setenv("FAKE_SECRETS", `[{"name":"OPENAI_API_KEY"},{"name":"ANTHROPIC_API_KEY"}]`)
+	code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--pr")
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, output)
+	}
+	if !strings.Contains(output, "costroid: the repository has the secret ANTHROPIC_API_KEY already, so init leaves it as it is\n") {
+		t.Errorf("init does not say it left the secret:\n%s", output)
+	}
+	for _, call := range fake.calls(t) {
+		if len(call) > 2 && call[0] == "gh" && call[1] == "secret" && call[2] == "set" {
+			t.Errorf("init ran %v over a secret the repository has", call)
+		}
+	}
+	if _, err := os.Stat(fake.stdin); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("gh secret set was given a value: %v", err)
+	}
+}
+
+func TestInitPRStopsAtTheFirstFailedStep(t *testing.T) {
+	failures := []struct {
+		label, fail, runs, comments, want string
+		// at is the index in prSteps of the command that fails.
+		at int
+	}{
+		{label: "secret list", fail: "gh secret list", at: 0, want: "exit status 1"},
+		{label: "secret set", fail: "gh secret set", at: 1, want: "exit status 1"},
+		{label: "variable", fail: "gh variable set", at: 2, want: "exit status 1"},
+		{label: "branch", fail: "git switch", at: 3, want: "exit status 1"},
+		{label: "push", fail: "git push", at: 7, want: "exit status 1"},
+		{label: "pull request", fail: "gh pr create", at: 8, want: "exit status 1"},
+		{label: "no run", runs: "[]", at: 9, want: "no run of the workflow costroid started on the commit"},
+		{label: "watch", fail: "gh run watch", at: 10, want: "exit status 1"},
+		{label: "no comment", comments: `{"comments":[]}`, at: 11, want: "the run ended and the pull request holds no Costroid comment, so read the run's log at https://github.com/example/widgets/actions/runs/42"},
+	}
+	for _, test := range failures {
+		t.Run(test.label, func(t *testing.T) {
+			fake := installFakes(t)
+			t.Setenv("FAKE_FAIL", test.fail)
+			t.Setenv("TEST_AGENT_KEY", "sk-ant-test-0123456789")
+			if test.runs != "" {
+				t.Setenv("FAKE_RUNS", test.runs)
+			}
+			if test.comments != "" {
+				t.Setenv("FAKE_COMMENTS", test.comments)
+			}
+			code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--pr", "--key-env", "TEST_AGENT_KEY")
+			if code != exitFailure {
+				t.Fatalf("exit %d:\n%s", code, output)
+			}
+			if failed := "costroid: init: " + prSteps[test.at] + " failed: " + test.want; !strings.Contains(output, failed) {
+				t.Errorf("init does not say %q:\n%s", failed, output)
+			}
+			last := fake.calls(t)[len(fake.calls(t))-1]
+			if shellJoin(last) != prSteps[test.at] {
+				t.Errorf("the last command that ran is %v, want %s", last, prSteps[test.at])
+			}
+			_, list, found := strings.Cut(output, "init stopped at the first command that failed. These commands are left, that one first:\n")
+			if !found {
+				t.Fatalf("init lists nothing as left:\n%s", output)
+			}
+			list, _, _ = strings.Cut(list, "costroid: init:")
+			var left []string
+			for line := range strings.SplitSeq(strings.TrimSpace(list), "\n") {
+				left = append(left, strings.TrimSpace(line))
+			}
+			want := placeholders(prSteps[test.at:], test.at)
+			if !slices.Equal(left, want) {
+				t.Errorf("left:\n%s\nwant:\n%s", strings.Join(left, "\n"), strings.Join(want, "\n"))
+			}
+		})
+	}
+}
+
+// placeholders are the steps from at on as init lists them when the step at
+// failed: a value the steps before it did not find reads as its placeholder.
+// git rev-parse, gh pr create and gh run list are steps 6, 8 and 9.
+func placeholders(steps []string, at int) []string {
+	out := slices.Clone(steps)
+	for i := range out {
+		if at <= 6 {
+			out[i] = strings.Replace(out[i], testCommit, "<commit>", 1)
+		}
+		if at <= 8 {
+			out[i] = strings.Replace(out[i], fakePull, prBranch, 1)
+		}
+		if at <= 9 {
+			out[i] = strings.Replace(out[i], "watch 42", "watch <run id>", 1)
+		}
+	}
+	return out
+}
+
+func TestInitPRRefusesWhatItCannotRun(t *testing.T) {
+	installFakes(t)
+	for _, refusal := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"gitlab", "--agent", "claude", "--pr"}, "--pr opens a pull request with gh, which works on GitHub alone"},
+		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--pr"}, "--existing writes nothing, so --pr and --skills do not apply"},
+		{[]string{"github", "--agent", "claude", "--key-env", "KEY"}, "--key-env names the key --pr sets as a secret, so it needs --pr"},
+		{[]string{"github", "--agent", "claude", "--pr", "--key-env", "NOT A NAME"}, `not "NOT A NAME"`},
+		{[]string{"github", "--agent", "claude", "--pr", "--key-env", "COSTROID_TEST_UNSET"}, "gh secret set ANTHROPIC_API_KEY failed: the environment variable COSTROID_TEST_UNSET is empty"},
+		{[]string{"github", "--agent", "claude", "--pr"}, "gh secret set ANTHROPIC_API_KEY failed: no terminal to ask for the key on, so name the environment variable that holds it with --key-env"},
+	} {
+		code, output := runPR(t, t.TempDir(), testPR, refusal.args...)
+		if code != exitFailure || !strings.Contains(output, refusal.want) {
+			t.Errorf("%v: exit %d:\n%s", refusal.args, code, output)
+		}
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, workflowDir, "review.yml"), existingReview)
+	code, output := runPR(t, root, testPR, "github", "--pr")
+	if want := ".github/workflows/review.yml already runs anthropics/claude-code-action, and init reads it as --existing does, which writes nothing: pass --agent to write a new workflow with --pr or --skills"; code != exitFailure || !strings.Contains(output, want) {
+		t.Errorf("--pr beside a claude-code-action workflow: exit %d:\n%s", code, output)
+	}
+}
+
+// writtenSteps decodes a written workflow and returns each step that uses
+// Costroid's action, by its stage.
+func writtenSteps(t *testing.T, workflow string) map[string]map[string]any {
+	t.Helper()
+	steps := map[string]map[string]any{}
+	for _, job := range decodeYAML(t, workflow)["jobs"].(map[string]any) {
+		list, _ := job.(map[string]any)["steps"].([]any)
+		for _, step := range list {
+			uses, _ := step.(map[string]any)["uses"].(string)
+			if !strings.HasPrefix(uses, costroidActionPath+"@") {
+				continue
+			}
+			with, _ := step.(map[string]any)["with"].(map[string]any)
+			stage, _ := with["stage"].(string)
+			steps[stage] = with
+		}
+	}
+	return steps
+}
+
+func TestInitPostReviewWritesTheOptIn(t *testing.T) {
+	for agent, recipe := range initRecipes[githubHost] {
+		t.Run(agent, func(t *testing.T) {
+			root := t.TempDir()
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", agent, "--post-review")
+			if code != 0 {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+			written := readFile(t, filepath.Join(root, workflowDir, "costroid.yml"))
+			if report := recipelint.LintBytes("costroid.yml", []byte(written)); len(report.Findings) > 0 {
+				t.Errorf("the written recipe breaks a rule: %v", report.Findings)
+			}
+			steps := writtenSteps(t, written)
+			agentStage := "run"
+			if strings.HasSuffix(agent, "-action") {
+				agentStage = "read"
+			}
+			for stage, want := range map[string]any{agentStage: "true", "report": "true", "ingest": nil} {
+				if steps[stage]["post-review"] != want {
+					t.Errorf("the %s step's post-review is %v, want %v", stage, steps[stage]["post-review"], want)
+				}
+			}
+			var kept []string
+			for line := range strings.SplitSeq(written, "\n") {
+				if strings.TrimSpace(line) != `post-review: "true"` {
+					kept = append(kept, line)
+				}
+			}
+			if strings.Join(kept, "\n") != string(writtenRecipe(t, recipe)) {
+				t.Errorf("--post-review changed more than the two lines:\n%s", written)
+			}
+		})
+	}
+	for _, test := range []struct{ agent, workflow, stage string }{
+		{"claude-code-action", existingReview, "read"},
+		{"codex-action", existingCodexReview, "read"},
+	} {
+		t.Run("existing "+test.agent, func(t *testing.T) {
+			patched, _ := patchWorkflow(t, test.workflow, "--agent", test.agent, "--post-review")
+			steps := writtenSteps(t, patched)
+			if steps[test.stage]["post-review"] != "true" || steps["report"]["post-review"] != "true" {
+				t.Errorf("the patch does not turn the answer on in both steps:\n%s", patched)
+			}
+			if rules := lintRules("review.yml", patched); len(rules) > 0 {
+				t.Errorf("costroid lint on the patched workflow: %v", rules)
+			}
+		})
+	}
+	code, _, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "gitlab", "--agent", "claude", "--post-review")
+	if code != exitFailure || !strings.Contains(stderr, "--post-review posts the agent's answer on GitHub alone") {
+		t.Errorf("gitlab: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// writtenRecipe is a shipped recipe as init writes it without flags.
+func writtenRecipe(t *testing.T, name string) []byte {
+	t.Helper()
+	recipe, err := buildRecipe(name, shippedRecipe(t, name), pin{commit: testCommit, version: testRelease}, initFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return recipe
+}
+
+// patchWorkflow prints the patch for workflow, applies it, and returns the
+// patched workflow and what init said on stderr.
+func patchWorkflow(t *testing.T, workflow string, args ...string) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "review.yml"), workflow)
+	code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append([]string{"github", "--existing", "review.yml"}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	return applyDiff(t, workflow, patch), stderr
+}
+
+func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
+	inputs := map[string]any{
+		"stage":           "ingest",
+		"platform-url":    "${{ vars.COSTROID_PLATFORM_URL }}",
+		"installation-id": "github-owner:${{ github.repository_owner_id }}",
+		"platform-token":  "${{ secrets.COSTROID_PLATFORM_TOKEN }}",
+	}
+	command := "gh variable set COSTROID_PLATFORM_URL --body https://app.costroid.com"
+	for agent := range initRecipes[githubHost] {
+		t.Run(agent, func(t *testing.T) {
+			root := t.TempDir()
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", agent, "--platform-url", "https://app.costroid.com/")
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			ingest := writtenSteps(t, readFile(t, filepath.Join(root, workflowDir, "costroid.yml")))["ingest"]
+			for key, want := range inputs {
+				if ingest[key] != want {
+					t.Errorf("the ingest step's %s is %v, want %v", key, ingest[key], want)
+				}
+			}
+			commands := printedCommands(t, stdout)
+			if at := slices.Index(commands, command); at < 0 || at > slices.Index(commands, "git switch -c try-costroid") {
+				t.Errorf("the commands left do not set the variable before the branch: %v", commands)
+			}
+			if !strings.Contains(strings.Join(strings.Fields(stdout), " "), platformNeeds) {
+				t.Errorf("init does not say what else the platform needs:\n%s", stdout)
+			}
+		})
+	}
+	t.Run("existing", func(t *testing.T) {
+		patched, stderr := patchWorkflow(t, existingReview, "--agent", "claude-code-action", "--platform-url", "https://app.costroid.com")
+		job := decodeYAML(t, patched)["jobs"].(map[string]any)["ingest"].(map[string]any)
+		if job["needs"] != "review" || !strings.Contains(job["if"].(string), "vars.COSTROID_PLATFORM_URL != ''") || !strings.Contains(job["if"].(string), "needs.review.result != 'skipped'") {
+			t.Errorf("the ingest job: %v", job)
+		}
+		if permissions := job["permissions"].(map[string]any); !reflect.DeepEqual(permissions, map[string]any{"id-token": "write"}) {
+			t.Errorf("the ingest job holds %v", permissions)
+		}
+		if ingest := writtenSteps(t, patched)["ingest"]; !reflect.DeepEqual(ingest, inputs) {
+			t.Errorf("the ingest step's inputs: %v", ingest)
+		}
+		if rules := lintRules("review.yml", patched); len(rules) > 0 {
+			t.Errorf("costroid lint on the patched workflow: %v", rules)
+		}
+		if !strings.Contains(stderr, "\n  "+command+"\n") {
+			t.Errorf("init does not print the variable's command:\n%s", stderr)
+		}
+	})
+	for _, refusal := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"github", "--agent", "claude", "--platform-url", "http://app.costroid.com"}, "--platform-url must be an https origin"},
+		{[]string{"github", "--agent", "claude", "--platform-url", "https://app.costroid.com/v1"}, "--platform-url must be an https origin"},
+		{[]string{"gitlab", "--agent", "claude", "--platform-url", "https://app.costroid.com"}, "on GitLab, set the CI/CD variables docs/export.md lists"},
+	} {
+		root := t.TempDir()
+		code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
+		if code != exitFailure || !strings.Contains(stderr, refusal.want) || len(tree(t, root)) != 0 {
+			t.Errorf("%v: exit %d, stderr %q", refusal.args, code, stderr)
+		}
+	}
+}
+
+func TestInitSkillsWritesBothSkillFiles(t *testing.T) {
+	skills := []string{".agents/skills/costroid/SKILL.md", ".claude/skills/costroid/SKILL.md"}
+	root := t.TempDir()
+	code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "codex", "--skills")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	for _, name := range skills {
+		if got := readFile(t, filepath.Join(root, name)); got != costroidSkill {
+			t.Errorf("%s holds:\n%s", name, got)
+		}
+		if !strings.Contains(stdout, "costroid: wrote "+name+", the skill that reads what a run cost\n") {
+			t.Errorf("init does not say it wrote %s:\n%s", name, stdout)
+		}
+	}
+	want := "git add .github/workflows/costroid.yml costroid.yml " + strings.Join(skills, " ")
+	if !slices.Contains(printedCommands(t, stdout), want) {
+		t.Errorf("the commands left do not add the skills: %v", printedCommands(t, stdout))
+	}
+
+	edited := filepath.Join(root, skills[1])
+	writeFile(t, edited, "a team's own skill\n")
+	code, stdout, stderr = runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "codex", "--skills", "--force")
+	if code != 0 {
+		t.Fatalf("again: exit %d, stderr %q", code, stderr)
+	}
+	if got := readFile(t, edited); got != "a team's own skill\n" || !strings.Contains(stdout, "costroid: "+skills[1]+" exists, and init left it as it is\n") {
+		t.Errorf("init replaced a skill file that exists: %q\n%s", got, stdout)
+	}
+
+	code, _, stderr = runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--existing", "review.yml", "--skills")
+	if code != exitFailure || !strings.Contains(stderr, "--existing writes nothing, so --pr and --skills do not apply") {
+		t.Errorf("--existing --skills: exit %d, stderr %q", code, stderr)
+	}
+}
+
+func TestSkillFrontMatterNamesAndDescribes(t *testing.T) {
+	front, body, found := strings.Cut(strings.TrimPrefix(costroidSkill, "---\n"), "\n---\n")
+	if !strings.HasPrefix(costroidSkill, "---\n") || !found {
+		t.Fatalf("the skill opens with no front matter:\n%s", costroidSkill)
+	}
+	var matter map[string]string
+	if err := yaml.Unmarshal([]byte(front), &matter); err != nil {
+		t.Fatal(err)
+	}
+	if keys := slices.Sorted(maps.Keys(matter)); !slices.Equal(keys, []string{"description", "name"}) {
+		t.Errorf("the front matter's keys are %v, want name and description", keys)
+	}
+	for _, name := range skillPaths {
+		if directory := path.Base(path.Dir(name)); matter["name"] != directory {
+			t.Errorf("the skill's name is %q, and %s is in %s", matter["name"], name, directory)
+		}
+	}
+	if !regexp.MustCompile(`^[a-z0-9-]{1,64}$`).MatchString(matter["name"]) {
+		t.Errorf("the name %q is not 1 to 64 lower-case letters, digits and hyphens", matter["name"])
+	}
+	description := matter["description"]
+	if len(description) == 0 || len(description) > 1024 {
+		t.Errorf("the description is %d bytes, want 1 to 1024", len(description))
+	}
+	for _, says := range []string{"status file", "how the costroid check concluded", "never estimates", "never reads the pull request comment"} {
+		if !strings.Contains(description, says) {
+			t.Errorf("the description does not say %q: %s", says, description)
+		}
+	}
+	for _, command := range []string{"costroid result --pr NUMBER --repo OWNER/NAME --json", `cat "${COSTROID_STATUS_FILE:-$RUNNER_TEMP/costroid-status.json}"`} {
+		if !strings.Contains(body, "    "+command+"\n") {
+			t.Errorf("the skill does not show %s", command)
+		}
+	}
+}
+
+// TestSkillsPassTheClaudeValidator runs Claude Code's own validator, with
+// warnings as errors, on the skills init writes into a directory under the
+// system's temporary directory. It needs claude on PATH.
+func TestSkillsPassTheClaudeValidator(t *testing.T) {
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude is not on PATH")
+	}
+	root := t.TempDir()
+	if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--skills"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	for _, profile := range [][]string{nil, {"--strict"}} {
+		command := exec.Command(claude, append(append([]string{"plugin", "validate"}, profile...), filepath.Join(root, ".claude", "skills"))...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Errorf("claude plugin validate %v: %v\n%s", profile, err, output)
+		}
+	}
+}
+
+// claudeStep is a claude-code-action step whose with block ends in
+// claude_args, which each case of TestExistingAddsMaxBudgetToClaudeArgs
+// fills.
+const claudeStep = `name: review
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: Review this pull request.
+`
+
+func TestExistingAddsMaxBudgetToClaudeArgs(t *testing.T) {
+	for _, test := range []struct {
+		label, workflow string
+		// args is the step's claude_args after the patch, and budget what
+		// the read step and the report job are told; "" means no cap.
+		args, budget string
+		changed      bool
+	}{
+		{"no claude_args", claudeStep, "--max-budget-usd 5", "5", true},
+		{"no with", strings.Replace(claudeStep, "        with:\n          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}\n          prompt: Review this pull request.\n", "        env:\n          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}\n", 1), "--max-budget-usd 5", "5", true},
+		{"one line", claudeStep + "          claude_args: --max-turns 10\n", "--max-turns 10 --max-budget-usd 5", "5", true},
+		{"one line with a comment", claudeStep + "          claude_args: --max-turns 10 # turns\n", "--max-turns 10 --max-budget-usd 5", "5", true},
+		{"one line, no final newline", claudeStep + "          claude_args: --max-turns 10", "--max-turns 10 --max-budget-usd 5", "5", true},
+		{"quoted", claudeStep + "          claude_args: \"--model 'claude-opus-4-1'\"\n", "--model 'claude-opus-4-1' --max-budget-usd 5", "5", true},
+		{"a literal block", claudeStep + "          claude_args: |\n            --max-turns 10\n            # a comment\n            --model claude-opus-4-1\n", "--max-turns 10\n# a comment\n--model claude-opus-4-1\n--max-budget-usd 5\n", "5", true},
+		{"a folded block", claudeStep + "          claude_args: >-\n            --max-turns 10\n            --model claude-opus-4-1\n", "--max-turns 10 --model claude-opus-4-1 --max-budget-usd 5", "5", true},
+		{"its own cap", claudeStep + "          claude_args: --max-budget-usd 2.50 --max-turns 10\n", "--max-budget-usd 2.50 --max-turns 10", "2.50", false},
+		{"two caps, the last one holds", claudeStep + "          claude_args: --max-budget-usd 9 --max-budget-usd=3\n", "--max-budget-usd 9 --max-budget-usd=3", "3", false},
+		{"its own cap as an expression", claudeStep + "          claude_args: --max-budget-usd ${{ env.CAP }}\n", "--max-budget-usd ${{ env.CAP }}", "${{ env.CAP }}", false},
+		{"one expression", claudeStep + "          claude_args: ${{ inputs.claude-args }}\n", "${{ inputs.claude-args }}", "", false},
+		{"a cap behind a comment", claudeStep + "          claude_args: |\n            # --max-budget-usd 9\n            --max-turns 10\n", "# --max-budget-usd 9\n--max-turns 10\n--max-budget-usd 5\n", "5", true},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			patched, stderr := patchWorkflow(t, test.workflow, "--agent", "claude-code-action")
+			steps := decodeYAML(t, patched)["jobs"].(map[string]any)["review"].(map[string]any)["steps"].([]any)
+			with, _ := steps[0].(map[string]any)["with"].(map[string]any)
+			if with["claude_args"] != test.args {
+				t.Errorf("claude_args %q, want %q", with["claude_args"], test.args)
+			}
+			written := writtenSteps(t, patched)
+			flat := strings.Join(strings.Fields(stderr), " ")
+			switch {
+			case test.budget == "":
+				if _, stated := written["read"]["budget-usd"]; stated || written["report"]["budget-usd"] != nil {
+					t.Errorf("a cap is stated where none can be read:\n%s", patched)
+				}
+				if !strings.Contains(flat, "so the patch states no cap") {
+					t.Errorf("init does not say the patch states no cap: %s", flat)
+				}
+			case written["read"]["budget-usd"] != test.budget || written["read"]["claude-args"] != test.args || written["report"]["budget-usd"] != test.budget:
+				t.Errorf("read %v, report %v, want budget-usd %q and claude-args %q", written["read"], written["report"], test.budget, test.args)
+			}
+			if adds := strings.Contains(flat, "The patch adds --max-budget-usd 5 to the claude_args"); adds != test.changed {
+				t.Errorf("init says it adds the cap: %v, want %v: %s", adds, test.changed, flat)
+			}
+			if rules := lintRules("review.yml", patched); test.budget != "" && len(rules) > 0 {
+				t.Errorf("costroid lint on the patched workflow: %v", rules)
+			}
+			if test.changed && strings.Contains(test.workflow, "# turns") && !strings.Contains(patched, "--max-budget-usd 5 # turns\n") {
+				t.Errorf("the patch drops the line's comment:\n%s", patched)
+			}
+		})
+	}
+}
+
+var hunkHeader = regexp.MustCompile(`^@@ -(\d+),(\d+) \+(\d+),(\d+) @@$`)
+
+// applyDiff applies a unified diff of one file to original. Every context
+// and removed line must match the original, and every hunk its counts.
+func applyDiff(t *testing.T, original, patch string) string {
+	t.Helper()
+	lines, endsWithNewline := splitLines([]byte(original))
+	diff := strings.Split(strings.TrimSuffix(patch, "\n"), "\n")
+	if len(diff) < 3 || !strings.HasPrefix(diff[0], "--- a/") || !strings.HasPrefix(diff[1], "+++ b/") {
+		t.Fatalf("not a patch of one file:\n%s", patch)
+	}
+	var out []string
+	next, noNewline := 0, false
+	for at := 2; at < len(diff); {
+		header := hunkHeader.FindStringSubmatch(diff[at])
+		if header == nil {
+			t.Fatalf("line %d is not a hunk's header: %q", at+1, diff[at])
+		}
+		counts := make([]int, 4)
+		for i := range counts {
+			counts[i], _ = strconv.Atoi(header[i+1])
+		}
+		if counts[0]-1 < next || counts[0]-1 > len(lines) {
+			t.Fatalf("hunk %q starts outside the file", diff[at])
+		}
+		out = append(out, lines[next:counts[0]-1]...)
+		next = counts[0] - 1
+		if counts[2] != len(out)+1 {
+			t.Errorf("hunk %q starts at new line %d, want %d", diff[at], counts[2], len(out)+1)
+		}
+		old, added := 0, 0
+		for at++; at < len(diff) && !strings.HasPrefix(diff[at], "@@ "); at++ {
+			line := diff[at]
+			switch {
+			case line == `\ No newline at end of file`:
+				noNewline = diff[at-1][0] != '-'
+			case line != "" && (line[0] == ' ' || line[0] == '-'):
+				if next >= len(lines) || lines[next] != line[1:] {
+					t.Fatalf("line %q does not match the original's line %d", line, next+1)
+				}
+				if marked := at+1 < len(diff) && diff[at+1] == `\ No newline at end of file`; marked != (next == len(lines)-1 && !endsWithNewline) {
+					t.Fatalf("line %q and the original's line %d disagree on whether a newline ends it", line, next+1)
+				}
+				if line[0] == ' ' {
+					out = append(out, line[1:])
+					added++
+				}
+				next++
+				old++
+			case line != "" && line[0] == '+':
+				out = append(out, line[1:])
+				added++
+			default:
+				t.Fatalf("line %q is not a diff line", line)
+			}
+		}
+		if old != counts[1] || added != counts[3] {
+			t.Errorf("hunk %q holds %d old and %d new lines", diff[2], old, added)
+		}
+	}
+	if next < len(lines) {
+		out = append(out, lines[next:]...)
+	} else {
+		endsWithNewline = !noNewline
+	}
+	text := strings.Join(out, "\n")
+	if endsWithNewline {
+		text += "\n"
+	}
+	return text
 }
