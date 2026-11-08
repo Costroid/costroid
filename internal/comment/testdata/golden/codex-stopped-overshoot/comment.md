@@ -29,7 +29,7 @@ Agents: `codex`. Models: `gpt-5.6-sol`. 4 rows, catalog `0.1.0`.
 
 </details>
 
-[Your account on costroid.com](https://docs.costroid.com/account) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Your account on costroid.com](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, the check run was not posted</summary>

@@ -1,6 +1,6 @@
 # Your account on costroid.com
 
-The comment Costroid posts on a pull request links here when the report names no account.
+The comment Costroid posts on a pull request links to [costroid.com/account](https://costroid.com/account/) when the report names no account. This page says the same.
 
 Costroid Platform is a FinOps platform that reads an organization's billing data in the FOCUS format, from its cloud bills and from Costroid's rows, into one ledger. It is not open yet.
 

@@ -730,8 +730,8 @@ func TestGitLabLinkNamesTheNamespaceKind(t *testing.T) {
 	}
 }
 
-func TestAccountLinkPointsAtTheDocsPageWithoutAnInstallation(t *testing.T) {
-	line := "[Your account on costroid.com](https://docs.costroid.com/account) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)\n"
+func TestAccountLinkPointsAtTheAccountPageWithoutAnInstallation(t *testing.T) {
+	line := "[Your account on costroid.com](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)\n"
 	unknownHost := realInput(t)
 	unknownHost.AccountHost = "bitbucket"
 	none := realInput(t)
@@ -791,7 +791,7 @@ func TestTwoLinksCarryEqualWeightAndTheAccountLinkNamesTheInstallation(t *testin
 	for _, installation := range []string{"", "12x", "1&evil=2", "<script>"} {
 		input := realInput(t)
 		input.Installation = installation
-		if body := commentOf(t, input); !strings.Contains(body, "(https://docs.costroid.com/account)") {
+		if body := commentOf(t, input); !strings.Contains(body, "(https://costroid.com/account/)") {
 			t.Errorf("installation %q:\n%s", installation, body)
 		}
 	}

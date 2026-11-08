@@ -201,7 +201,7 @@ func TestSelfManagedGitLabNamesNoNamespace(t *testing.T) {
 			t.Fatalf("host %q: %d notes", host, len(stub.Notes))
 		}
 		body := stub.Notes[0].Body
-		if !strings.Contains(body, "(https://docs.costroid.com/account)") || strings.Contains(body, "installation=") {
+		if !strings.Contains(body, "(https://costroid.com/account/)") || strings.Contains(body, "installation=") {
 			t.Errorf("host %q: the link is not the docs page:\n%s", host, body)
 		}
 	}

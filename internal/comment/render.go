@@ -41,7 +41,7 @@ const (
 	accountURL       = "https://app.costroid.com/"
 	// accountPage is where the account link goes when the report names no
 	// installation and no platform: the page that says what the account is.
-	accountPage = "https://docs.costroid.com/account"
+	accountPage = "https://costroid.com/account/"
 	exportURL   = "https://docs.costroid.com/export"
 )
 
