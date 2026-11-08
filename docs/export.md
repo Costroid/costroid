@@ -137,6 +137,53 @@ A batch the platform took can still fail as it ingests. So `costroid export` ask
 
 In the `ingest` stage, each warning becomes a warning annotation, and any failure warns and passes the job, as a ledger outage does. The artifact `costroid-rows` keeps the rows for 7 days.
 
+## Files for another tool
+
+`costroid export --format` writes the rows file as a file another cost tool imports, and sends nothing. It writes to `--out`, or to standard output when `--out` is absent:
+
+```sh
+costroid export --rows rows.jsonl --format vantage --out costs.csv
+```
+
+Every amount is written as the row states it. None is converted, rounded or added up, and each row keeps its own currency.
+
+| `--format` | The file |
+| ---------- | -------- |
+| `focus-csv` | FOCUS 1.4 CSV: the row contract's 40 columns, the same CSV Costroid Platform takes. 36 are FOCUS 1.4 columns, and 4 are Costroid's own, each named with the `x_` prefix FOCUS requires of a custom column |
+| `vantage` | A Vantage custom provider's CSV |
+| `datadog` | A Datadog Custom Costs CSV |
+
+A row's `BilledCost` is 0, because Costroid issues no invoice, and FOCUS 1.4 requires 0 there of anyone who does not invoice the charge. The row's figure is in `EffectiveCost`: the priced figure of a `measured` row, and 0 on a `list_equivalent` row, whose figure is never shown as billed. [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3#which-cost-column-holds-what) lists each cost column by basis. Vantage and Datadog read their cost from `BilledCost`, so both files carry the row's `EffectiveCost` there.
+
+Those figures are the same spend the provider bills. If the tool also imports the provider's own bill, do not add the two.
+
+### Vantage
+
+Vantage's [custom providers page](https://docs.vantage.sh/connecting_custom_providers), read 2026-11-08, states: "Vantage supports columns from FOCUS 1.1–1.3." The file holds the 15 columns of that page a row fills, in the page's order: `ChargeCategory`, `ChargePeriodStart`, `BilledCost`, `ServiceName`, `ChargePeriodEnd`, `BillingCurrency`, `ConsumedQuantity`, `ConsumedUnit`, `BillingAccountId`, `SubAccountId`, `RegionId`, `RegionName`, `ServiceCategory`, `ServiceSubcategory` and `Tags`. Each is the row's column of the same name, but `BilledCost`, which is the row's `EffectiveCost`. A row has no `ResourceId` or `ResourceType`.
+
+The file has no `EffectiveCost` column. The page states that when `EffectiveCost` is "provided and different from `BilledCost`, Vantage records the row at `EffectiveCost` and adds a separate `Discount` charge for the `BilledCost − EffectiveCost` difference". The row's two columns as they are would add a discount that no provider gave.
+
+The page states: "Note that there is a maximum of 10,000 rows and a file size of 2MB allowed." It does not say whether 2MB is 2,000,000 or 2,097,152 bytes, so a file stays within 2,000,000. Past either limit the rows go to more than one file, each with the header: `--out costs.csv` writes `costs-1.csv`, `costs-2.csv` and on. Rows that need more than one file are not written to standard output.
+
+Vantage takes a currency other than USD, and the page states: "Check that currency conversion is also enabled." The file keeps each row's currency.
+
+### Datadog
+
+Datadog's [Custom Costs page](https://docs.datadoghq.com/cloud_cost_management/setup/custom/), read 2026-11-08, names six required columns and states: "The required fields must appear as columns in your CSV in the order listed above." The file holds them in that order:
+
+| Column | From the row |
+| ------ | ------------ |
+| `ProviderName` | `ServiceProviderName`, the column that replaced `ProviderName` in FOCUS 1.3 |
+| `ChargeDescription` | `ChargeDescription` |
+| `ChargePeriodStart` | The UTC day of `ChargePeriodStart`, as `YYYY-MM-DD` |
+| `ChargePeriodEnd` | The UTC day of the charge's last instant. A row's `ChargePeriodEnd` is exclusive, and Datadog's is the "Last day of a charge (inclusive)", so a charge that ends at midnight ends the day before |
+| `BilledCost` | `EffectiveCost` |
+| `BillingCurrency` | `BillingCurrency` |
+
+The page states of `BillingCurrency`: "Must be USD." A rows file with a row in another currency is refused whole. The line names each such row by its place and its `x_CostroidRowId`, and no file is written. Write `focus-csv` or `vantage` for those rows instead.
+
+"For a CSV file, add a column per tag." Each tag key becomes a column after the six, named as the key, such as `costroid/repo`. The page also states: "NULL or blank ("") parameter values are not accepted." So a tag gets a column only when every row carries it with a value, and the command names the tags it left out. `costroid/cost_basis` is on every row Costroid writes, so each figure keeps its basis. A value past the page's 1,000 characters, or blank in a required column, refuses the file and names the row.
+
 ## What does not exist yet
 
-Costroid has no writer for an S3 or GCS bucket, no Snowflake or BigQuery share, and no connector for any FinOps platform besides Costroid Platform. To reach one today, load the rows file or the ledger's view with that tool's own import.
+Costroid has no writer for an S3 or GCS bucket, no Snowflake or BigQuery share, and sends to no FinOps platform besides Costroid Platform. For Vantage and Datadog it writes the file their import takes, as [Files for another tool](#files-for-another-tool) shows. To reach any other tool today, load the rows file or a `focus-csv` file with that tool's own import.

@@ -376,7 +376,7 @@ func TestExportHelpNamesEveryFlag(t *testing.T) {
 	if _, err := parseExport([]string{"-h"}, new(bytes.Buffer)); err != flag.ErrHelp {
 		t.Fatalf("-h: %v", err)
 	}
-	for _, name := range []string{"--rows", "--platform-url", "--installation-id", "--batch-id", platformTokenVariable} {
+	for _, name := range []string{"--rows", "--platform-url", "--installation-id", "--batch-id", "--format", "--out", "focus-csv", "vantage", "datadog", platformTokenVariable} {
 		if !strings.Contains(exportHelp, name) {
 			t.Errorf("the help does not name %s", name)
 		}
@@ -641,5 +641,195 @@ func TestExportAcceptsLoopbackHTTP(t *testing.T) {
 		if origin, err := platformOrigin(address); err == nil {
 			t.Errorf("%s was taken as %s", address, origin)
 		}
+	}
+}
+
+// runExport runs costroid export with no platform token in the environment,
+// so a test that reaches the platform fails.
+func runExport(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	t.Setenv(platformTokenVariable, "")
+	var stdout, stderr bytes.Buffer
+	code := exportCommand(context.Background(), args, stdio{stdout: &stdout, stderr: &stderr})
+	return code, stdout.String(), stderr.String()
+}
+
+// TestExportFormatWritesAFileAndSendsNothing writes each format to a file and
+// to standard output, the same bytes both ways, and sends nothing: no platform
+// flag is given and none is taken.
+func TestExportFormatWritesAFileAndSendsNothing(t *testing.T) {
+	for _, format := range []string{"focus-csv", "vantage", "datadog"} {
+		t.Run(format, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "costs.csv")
+			code, stdout, stderr := runExport(t, "--rows", exampleRows, "--format", format, "--out", path)
+			if code != 0 || stdout != "costroid: wrote 11 rows as "+format+" to "+path+"\n" {
+				t.Fatalf("exit %d: %s%s", code, stdout, stderr)
+			}
+			file, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, streamed, _ := runExport(t, "--rows", exampleRows, "--format", format)
+			if code != 0 || streamed != string(file) {
+				t.Fatalf("exit %d, standard output differs from the file", code)
+			}
+		})
+	}
+	want, err := os.ReadFile(exampleCSV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, stdout, _ := runExport(t, "--rows", exampleRows, "--format", "focus-csv"); stdout != string(want) {
+		t.Error("focus-csv is not the CSV the platform takes")
+	}
+}
+
+// Without --format, export sends to the platform as before, and --out alone
+// is refused, so no file is written by mistake.
+func TestExportWithoutFormatStillSends(t *testing.T) {
+	if code, _, stderr := runExport(t, "--rows", exampleRows, "--out", filepath.Join(t.TempDir(), "costs.csv")); code != exitFailure || !strings.Contains(stderr, "--out names the file --format writes") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if code, _, stderr := runExport(t, "--rows", exampleRows); code != exitFailure || !strings.Contains(stderr, "export needs --rows, --platform-url and --installation-id") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+}
+
+func TestExportFormatRefusesBeforeWriting(t *testing.T) {
+	for name, check := range map[string]struct {
+		args []string
+		want string
+	}{
+		"an unknown format": {[]string{"--rows", exampleRows, "--format", "parquet"}, `--format is "parquet", and export writes focus-csv, vantage, datadog`},
+		"no rows":           {[]string{"--format", "vantage"}, "export --format needs --rows"},
+		"a platform flag":   {[]string{"--rows", exampleRows, "--format", "vantage", "--platform-url", "https://app.costroid.com"}, "writes a file and sends nothing"},
+		"a batch id":        {[]string{"--rows", exampleRows, "--format", "datadog", "--batch-id", "nightly"}, "writes a file and sends nothing"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, stdout, stderr := runExport(t, check.args...)
+			if code != exitFailure || stdout != "" || !strings.Contains(stderr, check.want) {
+				t.Fatalf("exit %d: %s%s", code, stdout, stderr)
+			}
+		})
+	}
+}
+
+// A Datadog export with a row in EUR exits 1, names the row and writes no
+// file.
+func TestExportDatadogRefusalWritesNothing(t *testing.T) {
+	rows := writeRows(t, func(int, map[string]string) {})
+	data, err := os.ReadFile(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+	lines[6] = bytes.Replace(lines[6], []byte(`"BillingCurrency":"USD"`), []byte(`"BillingCurrency":"EUR"`), 1)
+	if err := os.WriteFile(rows, append(bytes.Join(lines, []byte("\n")), '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "costs.csv")
+	code, stdout, stderr := runExport(t, "--rows", rows, "--format", "datadog", "--out", path)
+	if code != exitRejected || stdout != "" || !strings.HasPrefix(stderr, "costroid: datadog refuses row 7 (x_CostroidRowId ") ||
+		!strings.Contains(stderr, ") in EUR: Datadog takes USD only, and export never converts an amount. Nothing was written\n") {
+		t.Fatalf("exit %d: %s%s", code, stdout, stderr)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a file was written: %v", err)
+	}
+}
+
+// Datadog's file has a column for a tag only when every row carries it, and
+// the command names the tags it left out.
+func TestExportDatadogNamesTheTagsLeftOut(t *testing.T) {
+	code, _, stderr := runExport(t, "--rows", exampleRows, "--format", "datadog", "--out", filepath.Join(t.TempDir(), "costs.csv"))
+	if code != 0 || stderr != "costroid: warning: some rows lack the tags costroid/assumed_ttl, so the datadog file has no column for them\n" {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+}
+
+// Rows past one Vantage file go to numbered files beside --out, and standard
+// output, which cannot keep files apart, is refused.
+func TestExportVantageNumbersItsFiles(t *testing.T) {
+	data, err := os.ReadFile(exampleRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := bytes.Cut(data, []byte("\n"))
+	rows := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(rows, bytes.Repeat(append(first, '\n'), 10001), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	code, stdout, stderr := runExport(t, "--rows", rows, "--format", "vantage", "--out", filepath.Join(dir, "costs.csv"))
+	if code != 0 || !strings.Contains(stdout, "costs-1.csv") || !strings.Contains(stdout, "costs-2.csv") {
+		t.Fatalf("exit %d: %s%s", code, stdout, stderr)
+	}
+	written, err := filepath.Glob(filepath.Join(dir, "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, path := range written {
+		records, err := csv.NewReader(bytesFile(t, path)).ReadAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		total += len(records) - 1
+	}
+	if len(written) < 2 || total != 10001 {
+		t.Fatalf("%d files hold %d rows", len(written), total)
+	}
+	code, stdout, stderr = runExport(t, "--rows", rows, "--format", "vantage")
+	if code != exitRejected || stdout != "" || !strings.Contains(stderr, "vantage files, so name them with --out. Nothing was written") {
+		t.Fatalf("exit %d: %q %s", code, stdout, stderr)
+	}
+}
+
+func bytesFile(t *testing.T, path string) *bytes.Reader {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.NewReader(data)
+}
+
+func TestExportFormatOfNoRowsWritesNothing(t *testing.T) {
+	empty := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runExport(t, "--rows", empty, "--format", "focus-csv")
+	if code != 0 || stdout != "" || stderr != "costroid: "+empty+" holds no rows, so nothing was written\n" {
+		t.Fatalf("exit %d: %q %q", code, stdout, stderr)
+	}
+}
+
+// The example of docs/export.md's Files for another tool runs, on the example
+// rows, into a file of its own.
+func TestExportDocsFormatExampleRuns(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("..", "..", "docs", "export.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, found := strings.Cut(string(page), "## Files for another tool\n")
+	_, block, _ := strings.Cut(section, "```sh\n")
+	command, _, _ := strings.Cut(block, "\n```")
+	fields := strings.Fields(command)
+	if !found || len(fields) < 2 || fields[0] != "costroid" || fields[1] != "export" || !slices.Contains(fields, "--format") {
+		t.Fatalf("the section's example is %q", command)
+	}
+	out := filepath.Join(t.TempDir(), "costs.csv")
+	args := slices.Clone(fields[2:])
+	for i, arg := range args {
+		switch arg {
+		case "rows.jsonl":
+			args[i] = exampleRows
+		case "costs.csv":
+			args[i] = out
+		}
+	}
+	if code, stdout, stderr := runExport(t, args...); code != 0 || stdout != "costroid: wrote 11 rows as vantage to "+out+"\n" {
+		t.Fatalf("%v: exit %d: %s%s", args, code, stdout, stderr)
 	}
 }
