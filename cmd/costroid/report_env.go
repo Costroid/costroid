@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/comment"
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
 )
@@ -246,4 +248,36 @@ func gitLabInstallation() string {
 		return ""
 	}
 	return os.Getenv("CI_PROJECT_NAMESPACE_ID")
+}
+
+// parseBudget reads --budget-usd as set holds it. A value that is empty or
+// blank, as "$NAME" gives it where the job does not set NAME, is no budget and
+// never a budget of 0, and empty says the flag was given so.
+func parseBudget(set *flag.FlagSet, value string) (*decimal.Decimal, bool, error) {
+	if strings.TrimSpace(value) == "" {
+		given := false
+		set.Visit(func(f *flag.Flag) { given = given || f.Name == "budget-usd" })
+		return nil, given, nil
+	}
+	amount, err := decimal.Parse(value)
+	if err != nil {
+		return nil, false, fmt.Errorf("--budget-usd: %w", err)
+	}
+	return &amount, false, nil
+}
+
+// budgetFor is the budget the report states, nil when it was given none. One
+// warning names the input when an expression likely gave it empty:
+// --budget-usd given empty, or no budget beside a run object that says the
+// run was given a cap, as when budget-usd: ${{ env.NAME }} reads a variable
+// set on the agent's job alone.
+func budgetFor(flags reportFlags, runCapped bool, stderr io.Writer) *decimal.Decimal {
+	switch {
+	case flags.budget != nil:
+	case flags.budgetEmpty:
+		fmt.Fprintln(stderr, `costroid: warning: --budget-usd is empty, so the report states no cap. A variable that gives it, such as "$COSTROID_BUDGET_USD", reads empty where the job does not set it`)
+	case runCapped:
+		fmt.Fprintln(stderr, "costroid: warning: the run was given a cap and the report's budget-usd is empty, so the report states no cap. An expression such as ${{ env.NAME }} reads empty in a job that does not set NAME: give the report's step the amount, or set NAME in the workflow's env")
+	}
+	return flags.budget
 }

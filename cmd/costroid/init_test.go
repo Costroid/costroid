@@ -1469,8 +1469,8 @@ var prSteps = []string{
 	"gh secret set ANTHROPIC_API_KEY",
 	"gh variable set COSTROID_PLATFORM_URL --body https://app.costroid.com",
 	"git switch --create try-costroid",
-	"git add -- .github/workflows/costroid.yml costroid.yml",
-	"git commit --message 'Add the costroid check' -- .github/workflows/costroid.yml costroid.yml",
+	"git add -- .github/workflows/costroid.yml .github/workflows/costroid-connect.yml costroid.yml",
+	"git commit --message 'Add the costroid check' -- .github/workflows/costroid.yml .github/workflows/costroid-connect.yml costroid.yml",
 	"git rev-parse HEAD",
 	"git push --set-upstream origin try-costroid",
 	"gh pr create --fill --head try-costroid",
@@ -1593,6 +1593,77 @@ func TestInitPRSkipsAnExistingSecret(t *testing.T) {
 	}
 	if _, err := os.Stat(fake.stdin); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("gh secret set was given a value: %v", err)
+	}
+}
+
+// repositoryWins is what init --pr says once before it sets the key.
+const repositoryWins = "costroid: a repository secret takes precedence over an organization secret of the same name, so the run reads the ANTHROPIC_API_KEY set here. Pass --keep-org-secret to keep the organization's\n"
+
+// TestInitPRSaysARepositorySecretWins holds the line init --pr prints once
+// before it sets the key, and --keep-org-secret, which lists and sets no
+// repository secret, so the run reads the organization's.
+func TestInitPRSaysARepositorySecretWins(t *testing.T) {
+	t.Run("it sets the key", func(t *testing.T) {
+		installFakes(t)
+		t.Setenv("TEST_AGENT_KEY", "sk-ant-test-0123456789")
+		code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--pr", "--key-env", "TEST_AGENT_KEY")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, output)
+		}
+		if strings.Count(output, repositoryWins) != 1 {
+			t.Fatalf("init says %d times that a repository secret wins:\n%s", strings.Count(output, repositoryWins), output)
+		}
+		said := strings.Index(output, repositoryWins)
+		if named, ran := strings.Index(output, "$ gh secret set ANTHROPIC_API_KEY\n"), strings.Index(output, "ran:\tgh\tsecret\tset"); named < 0 || said < named || ran < said {
+			t.Errorf("init does not say it between naming gh secret set and running it:\n%s", output)
+		}
+	})
+
+	t.Run("the repository has the secret", func(t *testing.T) {
+		installFakes(t)
+		t.Setenv("FAKE_SECRETS", `[{"name":"ANTHROPIC_API_KEY"}]`)
+		code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--pr")
+		if code != 0 || strings.Contains(output, "takes precedence") {
+			t.Errorf("exit %d, and init sets no key yet says a repository secret wins:\n%s", code, output)
+		}
+	})
+
+	t.Run("--keep-org-secret", func(t *testing.T) {
+		fake := installFakes(t)
+		code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--pr", "--keep-org-secret")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, output)
+		}
+		if !strings.HasPrefix(output, "costroid: wrote ") || !strings.Contains(output, "costroid: init sets no repository secret ANTHROPIC_API_KEY, so the run reads the organization's\n") || strings.Contains(output, "takes precedence") {
+			t.Errorf("init does not say it leaves the key to the organization:\n%s", output)
+		}
+		var ran []string
+		for _, call := range fake.calls(t) {
+			if (call[0] == "gh" || call[0] == "git") && (len(call) < 2 || call[1] != "-C") {
+				ran = append(ran, shellJoin(call))
+			}
+		}
+		if want := prSteps[2:]; !slices.Equal(ran, want) {
+			t.Errorf("ran:\n%s\nwant:\n%s", strings.Join(ran, "\n"), strings.Join(want, "\n"))
+		}
+		if _, err := os.Stat(fake.stdin); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("gh was given a key: %v", err)
+		}
+	})
+
+	for _, refusal := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"github", "--agent", "claude", "--keep-org-secret"}, "--keep-org-secret stops --pr from setting the key, so it needs --pr"},
+		{[]string{"github", "--agent", "claude", "--pr", "--keep-org-secret", "--key-env", "TEST_AGENT_KEY"}, "--keep-org-secret sets no key, so --key-env does not apply"},
+	} {
+		installFakes(t)
+		root := t.TempDir()
+		code, output := runPR(t, root, testPR, refusal.args...)
+		if code != exitFailure || !strings.Contains(output, refusal.want) || len(tree(t, root)) != 0 {
+			t.Errorf("%v: exit %d:\n%s", refusal.args, code, output)
+		}
 	}
 }
 
@@ -1818,7 +1889,7 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 			if at := slices.Index(commands, command); at < 0 || at > slices.Index(commands, "git switch -c try-costroid") {
 				t.Errorf("the commands left do not set the variable before the branch: %v", commands)
 			}
-			if !strings.Contains(strings.Join(strings.Fields(stdout), " "), platformNeeds) {
+			if !strings.Contains(strings.Join(strings.Fields(stdout), " "), connectNeeds) {
 				t.Errorf("init does not say what else the platform needs:\n%s", stdout)
 			}
 		})
@@ -1856,6 +1927,103 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 			t.Errorf("%v: exit %d, stderr %q", refusal.args, code, stderr)
 		}
 	}
+}
+
+// TestInitPlatformURLWritesTheConnectWorkflow holds the workflow that binds
+// the owner: --platform-url writes recipes/github-connect.yml beside the
+// agent's recipe, pinned as that recipe is, without its copy sentence, and
+// lint-clean. It replaces a file only with --force.
+func TestInitPlatformURLWritesTheConnectWorkflow(t *testing.T) {
+	connect := filepath.FromSlash(connectWorkflow)
+	for _, test := range []struct {
+		label string
+		build buildInfo
+		args  []string
+		pin   string
+	}{
+		{"a release", releaseBuild, nil, costroidActionPath + "@" + testCommit + " # v" + testRelease},
+		{"--action-ref", buildInfo{version: "dev"}, []string{"--action-ref", otherCommit}, costroidActionPath + "@" + otherCommit + " # set by costroid init --action-ref"},
+	} {
+		for agent := range initRecipes[githubHost] {
+			t.Run(test.label+"/"+agent, func(t *testing.T) {
+				root := t.TempDir()
+				args := append([]string{"github", "--agent", agent, "--platform-url", "https://app.costroid.com"}, test.args...)
+				code, stdout, stderr := runInit(t, root, test.build, costroid.Recipes, args...)
+				if code != 0 {
+					t.Fatalf("exit %d, stderr %q", code, stderr)
+				}
+				written := readFile(t, filepath.Join(root, connect))
+				recipe := readFile(t, filepath.Join(root, workflowDir, "costroid.yml"))
+				pins := actionPin.FindAllString(written, -1)
+				if len(pins) == 0 || slices.ContainsFunc(pins, func(pin string) bool { return pin != test.pin }) {
+					t.Errorf("the connect workflow pins %v, want %s", pins, test.pin)
+				}
+				if !strings.Contains(recipe, test.pin) {
+					t.Errorf("the agent's recipe does not pin %s, so the two differ", test.pin)
+				}
+				_, shippedBody := recipeHeader(shippedRecipe(t, connectRecipeName))
+				header, writtenBody := recipeHeader([]byte(written))
+				if got, want := actionPin.ReplaceAllString(string(writtenBody), "PIN"), actionPin.ReplaceAllString(string(shippedBody), "PIN"); got != want {
+					t.Errorf("the connect workflow differs from recipes/%s beyond its pin:\n%s", connectRecipeName, written)
+				}
+				if strings.Contains(header, "Copy ") || !strings.Contains(header, "docs/connect.md says what the proof is and what it binds.") {
+					t.Errorf("the connect workflow's header: %q", header)
+				}
+				if report := recipelint.LintBytes(connectWorkflow, []byte(written)); len(report.Findings) > 0 {
+					t.Errorf("lint-recipes rejects the connect workflow: %v", report.Findings)
+				}
+				if rules := lintRules(connectWorkflow, written); len(rules) > 0 {
+					t.Errorf("costroid lint on the connect workflow: %v", rules)
+				}
+				said := "costroid: wrote " + connectWorkflow + " from recipes/" + connectRecipeName + ", "
+				if !strings.Contains(stdout, said) {
+					t.Errorf("init does not say it wrote the connect workflow:\n%s", stdout)
+				}
+				if want := "git add .github/workflows/costroid.yml " + connectWorkflow + " costroid.yml"; !slices.Contains(printedCommands(t, stdout), want) {
+					t.Errorf("the commands left do not add the connect workflow: %v", printedCommands(t, stdout))
+				}
+			})
+		}
+	}
+
+	t.Run("no --platform-url", func(t *testing.T) {
+		root := t.TempDir()
+		if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude"); code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(root, connect)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("init wrote %s without --platform-url: %v", connectWorkflow, err)
+		}
+	})
+
+	t.Run("a connect workflow that exists", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, connect), "a team's own connect job\n")
+		before := tree(t, root)
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com")
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, "costroid: init: "+connectWorkflow+" exists: pass --force to replace it\n") {
+			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		if !reflect.DeepEqual(before, tree(t, root)) {
+			t.Error("init wrote a file before it refused")
+		}
+		code, _, stderr = runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--force")
+		if code != 0 || !strings.Contains(readFile(t, filepath.Join(root, connect)), "costroid connect --platform-url") {
+			t.Errorf("--force: exit %d, stderr %q", code, stderr)
+		}
+	})
+
+	t.Run("--out names its path", func(t *testing.T) {
+		root := t.TempDir()
+		code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--out", connectWorkflow)
+		if code != exitFailure || !strings.Contains(stderr, "names the workflow --platform-url writes to bind the owner") || len(tree(t, root)) != 0 {
+			t.Errorf("exit %d, stderr %q", code, stderr)
+		}
+	})
+
+	t.Run("--existing writes nothing", func(t *testing.T) {
+		existingPatch(t, existingReview, "--platform-url", "https://app.costroid.com")
+	})
 }
 
 func TestInitSkillsWritesBothSkillFiles(t *testing.T) {
@@ -2022,6 +2190,93 @@ func TestExistingAddsMaxBudgetToClaudeArgs(t *testing.T) {
 			}
 			if test.changed && strings.Contains(test.workflow, "# turns") && !strings.Contains(patched, "--max-budget-usd 5 # turns\n") {
 				t.Errorf("the patch drops the line's comment:\n%s", patched)
+			}
+		})
+	}
+}
+
+// TestExistingTakesTheBudgetFlag holds --budget-usd: the amount the patch adds
+// to claude_args that hold no cap and gives the read step and the report job,
+// USD 5 without it, and refused where it cannot apply.
+func TestExistingTakesTheBudgetFlag(t *testing.T) {
+	for _, test := range []struct {
+		label, workflow string
+		flag            []string
+		args, budget    string
+	}{
+		{"no flag", claudeStep, nil, "--max-budget-usd 5", "5"},
+		{"no claude_args", claudeStep, []string{"--budget-usd", "2.50"}, "--max-budget-usd 2.50", "2.50"},
+		{"one line", claudeStep + "          claude_args: --max-turns 10\n", []string{"--budget-usd", "12"}, "--max-turns 10 --max-budget-usd 12", "12"},
+		{"a literal block", claudeStep + "          claude_args: |\n            --max-turns 10\n", []string{"--budget-usd=0.75"}, "--max-turns 10\n--max-budget-usd 0.75\n", "0.75"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			patched, stderr := patchWorkflow(t, test.workflow, append([]string{"--agent", "claude-code-action"}, test.flag...)...)
+			steps := decodeYAML(t, patched)["jobs"].(map[string]any)["review"].(map[string]any)["steps"].([]any)
+			if with := steps[0].(map[string]any)["with"].(map[string]any); with["claude_args"] != test.args {
+				t.Errorf("claude_args %q, want %q", with["claude_args"], test.args)
+			}
+			written := writtenSteps(t, patched)
+			if written["read"]["budget-usd"] != test.budget || written["read"]["claude-args"] != test.args || written["report"]["budget-usd"] != test.budget {
+				t.Errorf("read %v, report %v, want budget-usd %q", written["read"], written["report"], test.budget)
+			}
+			said := "The patch adds --max-budget-usd " + test.budget + " to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes USD " + test.budget + ","
+			if flat := strings.Join(strings.Fields(stderr), " "); !strings.Contains(flat, said) {
+				t.Errorf("init does not say it adds USD %s: %s", test.budget, flat)
+			}
+			if rules := lintRules("review.yml", patched); len(rules) > 0 {
+				t.Errorf("costroid lint on the patched workflow: %v", rules)
+			}
+		})
+	}
+
+	t.Run("a step that holds its own cap", func(t *testing.T) {
+		patched, stderr := patchWorkflow(t, claudeStep+"          claude_args: --max-budget-usd 3\n", "--agent", "claude-code-action", "--budget-usd", "9")
+		if written := writtenSteps(t, patched); written["read"]["budget-usd"] != "3" || written["report"]["budget-usd"] != "3" {
+			t.Errorf("read %v, report %v, want the step's own cap", written["read"], written["report"])
+		}
+		if flat := strings.Join(strings.Fields(stderr), " "); !strings.Contains(flat, "--budget-usd 9 is not used, because init adds a cap only to claude_args it can read that hold none.") {
+			t.Errorf("init does not say --budget-usd is not used: %s", flat)
+		}
+	})
+
+	t.Run("switched to --existing", func(t *testing.T) {
+		root := t.TempDir()
+		name := workflowDir + "/claude.yml"
+		writeFile(t, filepath.Join(root, name), claudeStep)
+		code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--budget-usd", "4")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+		if written := writtenSteps(t, applyDiff(t, claudeStep, patch)); written["report"]["budget-usd"] != "4" {
+			t.Errorf("the report job's budget-usd is %v, want 4", written["report"]["budget-usd"])
+		}
+	})
+
+	for _, refusal := range []struct {
+		label, workflow string
+		args            []string
+		want            string
+	}{
+		{"zero", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "0.00"}, `--budget-usd is an amount in USD above 0, such as 5 or 2.50, not "0.00"`},
+		{"a negative amount", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "-1"}, `not "-1"`},
+		{"an expression", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "${{ env.CAP }}"}, `not "${{ env.CAP }}"`},
+		{"a word", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "five"}, `not "five"`},
+		{"an exponent", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "1e3"}, `not "1e3"`},
+		{"a recipe", "", []string{"--agent", "claude", "--budget-usd", "3"}, "--budget-usd sets the cap the --existing patch adds to claude_args: the recipes init writes hold their own"},
+		{"codex-action", existingCodexReview, []string{"--existing", "review.yml", "--budget-usd", "3"}, "--budget-usd sets the cap init adds to the claude_args of anthropics/claude-code-action, and the step runs openai/codex-action, which takes none"},
+	} {
+		t.Run(refusal.label, func(t *testing.T) {
+			root := t.TempDir()
+			if refusal.workflow != "" {
+				writeFile(t, filepath.Join(root, "review.yml"), refusal.workflow)
+			}
+			before := tree(t, root)
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append([]string{"github"}, refusal.args...)...)
+			if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+			if !reflect.DeepEqual(before, tree(t, root)) {
+				t.Error("init changed the repository")
 			}
 		})
 	}

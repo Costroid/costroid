@@ -87,6 +87,8 @@ type reportFlags struct {
 	preview bool
 	// exitOnVerdict ends a report on GitLab CI with the verdict's exit code.
 	exitOnVerdict bool
+	// budgetEmpty says --budget-usd was given empty, so it is no budget.
+	budgetEmpty bool
 }
 
 func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
@@ -122,12 +124,9 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 			fmt.Fprintf(stderr, "costroid: warning: --installation-id %q is not github:<id> or a GitHub App installation's bare number, so the comment links no account\n", *installation)
 		}
 	}
-	if *budget != "" {
-		amount, err := decimal.Parse(*budget)
-		if err != nil {
-			return reportFlags{}, fmt.Errorf("--budget-usd: %w", err)
-		}
-		flags.budget = &amount
+	var err error
+	if flags.budget, flags.budgetEmpty, err = parseBudget(set, *budget); err != nil {
+		return reportFlags{}, err
 	}
 	return flags, nil
 }
@@ -323,7 +322,7 @@ func verdictExit(conclusion string) int {
 // artifact that carried them, neither file is read.
 func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 	if refused := refusedArtifact(os.Getenv, stderr); refused != nil {
-		return comment.Input{State: comment.Unreadable, Reason: comment.NoRowsFile, Refused: refused, Budget: flags.budget}
+		return comment.Input{State: comment.Unreadable, Reason: comment.NoRowsFile, Refused: refused, Budget: budgetFor(flags, false, stderr)}
 	}
 	rows, err := readReportRows(flags.rows)
 	if err != nil {
@@ -339,7 +338,7 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 		ReaderLine:     stated.ReaderError,
 		AgentError:     agentErrorFor(stated.AgentError, stderr),
 		AgentStated:    agentStatedFor(stated.AgentStated, stderr),
-		Budget:         flags.budget,
+		Budget:         budgetFor(flags, stated.Cap != nil, stderr),
 		RowsSHA256:     rows.rowsSHA256,
 		RowsFileSHA256: rows.fileSHA256,
 	}
@@ -424,6 +423,9 @@ type statedReason struct {
 	ReaderError string            `json:"reader_error"`
 	AgentError  *statedAgentError `json:"agent_error"`
 	AgentStated *statedFigure     `json:"agent_stated"`
+	// Cap is non-nil when the run was given a cap. Only whether it is null
+	// is read.
+	Cap *struct{} `json:"cap"`
 }
 
 // statedFigure is the agent's own figure for the run, in its own unit, as the

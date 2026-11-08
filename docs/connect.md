@@ -31,6 +31,8 @@ costroid connect --platform-url https://app.costroid.com
 
 with `COSTROID_PLATFORM_TOKEN` set from the organization secret. When the default branch has no protection rule, the first binding waits for the first scheduled run.
 
+[`recipes/github-connect.yml`](../recipes/github-connect.yml) is that workflow. `costroid init github --platform-url https://app.costroid.com` writes it as `.github/workflows/costroid-connect.yml`, pinned to the same release as the agent's recipe, so it reaches the default branch when the pull request merges. `init --existing` writes nothing, so copy the file there yourself.
+
 ## On GitLab CI
 
 `connect` binds `gitlab-namespace:` and the number in `CI_PROJECT_NAMESPACE_ID`. GitLab fixes an ID token's audience in the pipeline file, so the job names its tenant there, and `connect` reads the token from `COSTROID_PLATFORM_PROOF`. With the [GitLab template](recipes.md) included, add this job:
@@ -86,7 +88,7 @@ Each line starts with `costroid:`. A refusal names the platform's status and cod
 | `AUTH_TOKEN_INVALID` | The integration token is unknown, expired or revoked, so create one on Costroid Platform. |
 | `AUTH_TOKEN_SCOPE` | The integration token needs identity:read and installations:write. |
 
-The platform answers `INSTALLATION_PROOF_KEYS_UNAVAILABLE` when it cannot read the CI system's keys, and the same proof can be sent again inside its window. `connect` sends it once more after the platform's `Retry-After`, which is 60 seconds today, and prints that it does. It waits at most 120 seconds. A `Retry-After` that is longer, absent or not a number of seconds ends the command with the sentence above, and so does a second refusal.
+The platform answers `INSTALLATION_PROOF_KEYS_UNAVAILABLE` when it cannot read the CI system's keys, and the same proof can be sent again inside its window. `connect` sends it once more after the platform's `Retry-After`, which is 60 seconds today, and prints that it does. It waits at most 120 seconds. When the `Retry-After` is absent or not a number of seconds, such as a date, `connect` waits 60 seconds. A `Retry-After` longer than 120 seconds ends the command with the sentence above, and so does a second refusal.
 
 A code outside this table gets a sentence that points here, and the contract's [refusals](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#refusals) say what it means. [`docs/troubleshooting.md`](troubleshooting.md#connecting-to-costroid-platform) lists every other line.
 

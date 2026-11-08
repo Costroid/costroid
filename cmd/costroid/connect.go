@@ -38,12 +38,17 @@ const (
 	// retry, so the proof is still inside its window when it is sent again.
 	// The platform asks for 60 seconds.
 	maxKeysWait = 120 * time.Second
+	// defaultKeysWait is the wait before the retry when Retry-After names no
+	// whole seconds, the platform's own figure.
+	defaultKeysWait = 60 * time.Second
 )
 
 var (
 	// proofInstallationPattern is the ids a CI job proves: a GitHub owner that
 	// runs only the action, and a GitLab.com namespace.
 	proofInstallationPattern = regexp.MustCompile(`^(github-owner|gitlab-namespace):[1-9][0-9]{0,19}$`)
+	// delaySeconds is a Retry-After in whole seconds, as RFC 9110 writes it.
+	delaySeconds = regexp.MustCompile(`^[0-9]+$`)
 	// compactJWSPattern is integration/v0.2's CompactJws.
 	compactJWSPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
 )
@@ -73,7 +78,8 @@ connect sends nothing. A binding made through the GitHub App does not stop
 it: the recipes export under github-owner:, so connect proves that binding
 beside the App's. When the platform cannot read the CI system's keys,
 connect sends the proof once more after the Retry-After the platform names,
-when that is 120 seconds or less. The token and the proof are never printed.
+when that is 120 seconds or less, or after 60 seconds when it names no whole
+seconds. The token and the proof are never printed.
 docs/connect.md gives the job.
 
 Exit codes of connect:
@@ -307,10 +313,15 @@ func retryAfterKeys(err error) (time.Duration, bool) {
 	return keysWait(refused.retryAfter)
 }
 
-// keysWait is the wait Retry-After asks for, in whole seconds. It is not ok
-// when the value is absent, unreadable or past maxKeysWait, and connect then
-// stops with the refusal instead of waiting.
+// keysWait is the wait Retry-After asks for, in whole seconds, and
+// defaultKeysWait when the value is absent or names no whole seconds, such as
+// an HTTP date. It is not ok when the seconds are 0 or past maxKeysWait, and
+// connect then stops with the refusal instead of waiting.
 func keysWait(retryAfter string) (time.Duration, bool) {
+	retryAfter = strings.TrimSpace(retryAfter)
+	if !delaySeconds.MatchString(retryAfter) {
+		return defaultKeysWait, true
+	}
 	seconds, err := strconv.Atoi(retryAfter)
 	if err != nil || seconds < 1 || seconds > int(maxKeysWait/time.Second) {
 		return 0, false
