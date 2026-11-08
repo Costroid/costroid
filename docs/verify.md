@@ -2,6 +2,8 @@
 
 Every release carries its binaries, `SHA256SUMS`, an SPDX SBOM and one Sigstore bundle per file. Costroid's release workflow signs each file with cosign, keyless, under its own GitHub Actions identity. The image is signed the same way. Releases after 1.0.0-alpha.12 also carry SLSA build provenance for each file and for the image, as GitHub artifact attestations. 1.0.0-alpha.12 and earlier releases carry none, so `gh attestation verify` fails on them.
 
+Releases after 1.0.0-alpha.12 also carry `NOTICE`, which lists the modules the binaries link and their licences, and `LICENSE`. `SHA256SUMS` names both, each is signed and attested like a binary, and the image holds the same two files in `/usr/share/doc/costroid/`.
+
 The commands below check `1.0.0-alpha.12`. Replace the version in every line for another release.
 
 ## The checksum
