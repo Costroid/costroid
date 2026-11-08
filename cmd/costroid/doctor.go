@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +34,10 @@ the agents and keys on this machine, and the repository's secrets and
 variables. It prints one line per check: ok, warn or fail, the fact and, after
 warn or fail, the fix. It reads secret names through gh secret list when gh is
 on PATH, and it never prints a secret's value, prefix or length.
+
+With COSTROID_PLATFORM_URL set in the shell, doctor asks Costroid Platform for
+the scopes of the integration token in COSTROID_PLATFORM_TOKEN and for the
+binding of the repository's owner. It names the token by that variable alone.
 
 --ci runs it as a step of a GitHub Actions job, and adds what only the job
 sees: the event, whether the head is a fork, the OIDC token and the job's
@@ -74,12 +80,16 @@ func warn(fact, fix string) finding { return finding{verdict: verdictWarn, fact:
 func fail(fact, fix string) finding { return finding{verdict: verdictFail, fact: fact, fix: fix} }
 
 // doctorHost is what doctor reads outside the repository's files: the
-// environment, the programs on PATH and their output. Tests replace each.
+// environment, the programs on PATH and their output, and Costroid Platform.
+// Tests replace each.
 type doctorHost struct {
 	getenv   func(string) string
 	lookPath func(string) (string, error)
 	// output runs a program in dir and returns its stdout.
 	output func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
+	// client asks Costroid Platform about the integration token.
+	client *http.Client
+	now    func() time.Time
 }
 
 // doctorTimeout bounds each program doctor runs.
@@ -103,8 +113,14 @@ func firstLineOf(text string) string {
 	return line
 }
 
+// doctorCommand asks the platform with a client that follows no redirect, so
+// the token reaches only the origin named, as connect's does.
 func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	host := doctorHost{getenv: os.Getenv, lookPath: exec.LookPath, output: runOutput}
+	client := &http.Client{
+		Timeout:       doctorTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	host := doctorHost{getenv: os.Getenv, lookPath: exec.LookPath, output: runOutput, client: client, now: time.Now}
 	return doctor(ctx, ".", buildInfo{version: version, commit: commit}, host, args, stdout, stderr)
 }
 
@@ -163,6 +179,7 @@ func examine(ctx context.Context, root string, build buildInfo, host doctorHost,
 	}
 	lines = append(lines, keyLines(host, agents)...)
 	lines = append(lines, repositoryLines(ctx, root, host, flows)...)
+	lines = append(lines, platformLines(ctx, root, host)...)
 	if ci {
 		lines = append(lines, jobLines(root, host)...)
 	}
@@ -179,6 +196,9 @@ type workflow struct {
 	costroid []costroidRef
 	// agent is set when the file starts a coding agent.
 	agent bool
+	// action is the agent's own action the file calls, by the name init's
+	// --agent takes, or empty.
+	action string
 }
 
 type costroidRef struct {
@@ -225,7 +245,12 @@ func readWorkflow(name string, source []byte) workflow {
 		return flow
 	}
 	flow.root = document.Content[0]
-	walkUses(flow.root, func(key, value *yaml.Node) {
+	recipelint.Uses(flow.root, func(key, value *yaml.Node) {
+		for _, action := range agentActions {
+			if flow.action == "" && strings.HasPrefix(value.Value, action.uses+"@") {
+				flow.action = action.agent
+			}
+		}
 		if match := costroidUses.FindStringSubmatch(value.Value); match != nil {
 			comment := value.LineComment
 			if comment == "" {
@@ -239,23 +264,6 @@ func readWorkflow(name string, source []byte) workflow {
 		}
 	})
 	return flow
-}
-
-// walkUses calls visit for every uses: key under node.
-func walkUses(node *yaml.Node, visit func(key, value *yaml.Node)) {
-	if node == nil {
-		return
-	}
-	if node.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			if key, value := node.Content[i], node.Content[i+1]; key.Value == "uses" && value.Kind == yaml.ScalarNode {
-				visit(key, value)
-			}
-		}
-	}
-	for _, child := range node.Content {
-		walkUses(child, visit)
-	}
 }
 
 // releaseLine states this binary's release beside the releases the
@@ -301,9 +309,14 @@ func configLines(root string) ([]finding, error) {
 
 // workflowLines judges the workflows as costroid lint does, checks each pin
 // of Costroid's action, and finds a pull request that pays for two agents.
+// A repository whose workflow already runs an agent's action is sent to
+// init --existing, which reports from that workflow instead of adding one.
 func workflowLines(root string, flows []workflow) []finding {
 	if !slices.ContainsFunc(flows, func(flow workflow) bool { return len(flow.costroid) > 0 }) {
 		fix := "run costroid init github --agent claude"
+		if index := slices.IndexFunc(flows, func(flow workflow) bool { return flow.action != "" }); index >= 0 {
+			fix = existingFix(flows[index])
+		}
 		if _, err := os.Stat(filepath.Join(root, ".gitlab-ci.yml")); err == nil {
 			fix += ", or on GitLab costroid lint-recipes .gitlab/costroid.yml"
 		}
@@ -368,31 +381,25 @@ func twoAgentLine(flows []workflow) []finding {
 	}
 	fix := "keep one of them"
 	for _, flow := range flows {
-		if flow.agent && len(flow.costroid) == 0 && bytes.Contains(flow.source, []byte(claudeCodeAction+"@")) {
-			fix = "keep one of them. To keep " + flow.path + ", delete the others and run costroid init github --agent claude-code-action --existing " + flow.path + ", which prints the patch that reports from it"
+		if flow.agent && len(flow.costroid) == 0 && flow.action != "" {
+			fix = "keep one of them. To keep " + flow.path + ", delete the others and " + existingFix(flow)
 			break
 		}
 	}
 	return []finding{warn(joinNames(paying)+" each run an agent on pull_request, so each pull request pays for "+fmt.Sprint(len(paying))+" runs", fix)}
 }
 
+// existingFix sends a workflow that runs an agent's action to init
+// --existing.
+func existingFix(flow workflow) string {
+	return "run costroid init github --agent " + flow.action + " --existing " + flow.path + ", which prints the patch that reports from it"
+}
+
+// onPullRequest reads the workflow's events as costroid lint does, so a
+// trigger written through an alias counts.
 func onPullRequest(root *yaml.Node) bool {
-	_, on := mappingPair(root, "on")
-	if on == nil {
-		return false
-	}
-	events := []*yaml.Node{on}
-	switch on.Kind {
-	case yaml.SequenceNode:
-		events = on.Content
-	case yaml.MappingNode:
-		events = nil
-		for i := 0; i < len(on.Content); i += 2 {
-			events = append(events, on.Content[i])
-		}
-	}
-	return slices.ContainsFunc(events, func(event *yaml.Node) bool {
-		return event.Value == "pull_request" || event.Value == "pull_request_target"
+	return slices.ContainsFunc(recipelint.EventNames(root), func(event string) bool {
+		return event == "pull_request" || event == "pull_request_target"
 	})
 }
 
@@ -477,19 +484,43 @@ func keyLines(host doctorHost, agents []string) []finding {
 	return lines
 }
 
+// ghNoRemote is what gh prints when the repository has no remote it can name
+// a GitHub repository from. Every gh read then fails alike.
+const ghNoRemote = "no git remotes found"
+
+// ghFix says what to do about a failed gh read, from gh's own error.
+func ghFix(err error) string {
+	if strings.Contains(err.Error(), ghNoRemote) {
+		return "add a GitHub remote, or push the repository first"
+	}
+	return "run gh auth login, then doctor again"
+}
+
 // repositoryLines read, through gh, what the repository holds: its secrets'
-// and variables' names and its visibility.
+// and variables' names and its visibility. With the platform's URL set, in
+// this shell or as a repository variable, the integration token's secret is
+// needed by name.
 func repositoryLines(ctx context.Context, root string, host doctorHost, flows []workflow) []finding {
 	needed := secretsNeeded(flows)
 	if _, err := host.lookPath("gh"); err != nil {
+		if host.getenv(platformVariable) != "" {
+			needed = append(needed, platformTokenVariable)
+		}
 		if len(needed) == 0 {
 			return nil
 		}
 		return []finding{warn("gh is not on PATH, so doctor did not list the repository's secrets",
 			"install gh, or check that the repository's settings hold "+joinNames(needed))}
 	}
+	variables, err := ghNames(ctx, root, host, "variable", "list")
+	if err != nil && strings.Contains(err.Error(), ghNoRemote) {
+		return []finding{warn("gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: "+err.Error(), ghFix(err))}
+	}
+	if host.getenv(platformVariable) != "" || slices.Contains(variables, platformVariable) {
+		needed = append(needed, platformTokenVariable)
+	}
 	lines := secretLines(ctx, root, host, needed)
-	lines = append(lines, variableLines(ctx, root, host)...)
+	lines = append(lines, variableLines(variables, err)...)
 	return append(lines, visibilityLines(ctx, root, host, flows)...)
 }
 
@@ -517,7 +548,7 @@ func secretLines(ctx context.Context, root string, host doctorHost, needed []str
 	}
 	have, err := ghNames(ctx, root, host, "secret", "list")
 	if err != nil {
-		return []finding{warn("gh secret list failed, so doctor did not check the repository's secrets: "+err.Error(), "run gh auth login, then doctor again")}
+		return []finding{warn("gh secret list failed, so doctor did not check the repository's secrets: "+err.Error(), ghFix(err))}
 	}
 	var lines []finding
 	for _, name := range needed {
@@ -530,19 +561,24 @@ func secretLines(ctx context.Context, root string, host doctorHost, needed []str
 	return lines
 }
 
-func variableLines(ctx context.Context, root string, host doctorHost) []finding {
-	have, err := ghNames(ctx, root, host, "variable", "list")
+// variableLines judge the variables gh variable list named, or the error it
+// failed with.
+func variableLines(have []string, err error) []finding {
 	if err != nil {
-		return []finding{warn("gh variable list failed, so doctor did not check the repository's variables: "+err.Error(), "run gh auth login, then doctor again")}
+		return []finding{warn("gh variable list failed, so doctor did not check the repository's variables: "+err.Error(), ghFix(err))}
 	}
+	var lines []finding
 	url, audience := slices.Contains(have, "COSTROID_INGEST_URL"), slices.Contains(have, "COSTROID_INGEST_AUDIENCE")
 	switch {
 	case url && !audience:
-		return []finding{warn("the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE", "set COSTROID_INGEST_AUDIENCE to the audience your ledger requires, as docs/recipes.md#send-rows-to-a-ledger says")}
+		lines = append(lines, warn("the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE", "set COSTROID_INGEST_AUDIENCE to the audience your ledger requires, as docs/recipes.md#send-rows-to-a-ledger says"))
 	case url:
-		return []finding{ok("the repository sets COSTROID_INGEST_URL and COSTROID_INGEST_AUDIENCE, so the ingest job sends the rows")}
+		lines = append(lines, ok("the repository sets COSTROID_INGEST_URL and COSTROID_INGEST_AUDIENCE, so the ingest job sends the rows"))
 	}
-	return nil
+	if slices.Contains(have, platformVariable) {
+		lines = append(lines, ok("the repository sets %s, so the ingest job sends the rows to Costroid Platform", platformVariable))
+	}
+	return lines
 }
 
 // ghNames runs a gh list command and keeps the first column, the names. A
@@ -564,7 +600,7 @@ func ghNames(ctx context.Context, root string, host doctorHost, args ...string) 
 func visibilityLines(ctx context.Context, root string, host doctorHost, flows []workflow) []finding {
 	out, err := host.output(ctx, root, "gh", "repo", "view", "--json", "isPrivate", "--jq", ".isPrivate")
 	if err != nil {
-		return []finding{warn("gh repo view failed, so doctor did not read whether the repository is private: "+err.Error(), "run gh auth login, then doctor again")}
+		return []finding{warn("gh repo view failed, so doctor did not read whether the repository is private: "+err.Error(), ghFix(err))}
 	}
 	if strings.TrimSpace(string(out)) != "true" {
 		return []finding{ok("the repository is public, so the comment shows amounts unless %s sets comment.show_cost: false", configFile)}
@@ -577,6 +613,185 @@ func visibilityLines(ctx context.Context, root string, host doctorHost, flows []
 		}
 	}
 	return lines
+}
+
+// tokenScopes are the scopes docs/connect.md gives the one token per owner:
+// connect uses the first two, and export the first and the third.
+var tokenScopes = []string{"identity:read", "installations:write", "rows:write"}
+
+var scopePattern = regexp.MustCompile(`^[a-z]+:[a-z]+$`)
+
+const (
+	// bindingCurrentFor is how long a binding stays current after its last
+	// proof, under integration/v0.2.
+	bindingCurrentFor = 7 * 24 * time.Hour
+	connectFix        = "run costroid connect from a scheduled job, as docs/connect.md says"
+)
+
+// platformLines ask Costroid Platform, when COSTROID_PLATFORM_URL is set in
+// this shell, for the scopes of the integration token in
+// COSTROID_PLATFORM_TOKEN and for the binding of the repository's owner. They
+// name the token by its variable alone.
+func platformLines(ctx context.Context, root string, host doctorHost) []finding {
+	address := host.getenv(platformVariable)
+	if address == "" {
+		return nil
+	}
+	base, err := integrationBase(address)
+	if err != nil {
+		return []finding{warn(platformVariable+" is not an https origin, so doctor did not ask Costroid Platform", "set it to https://app.costroid.com, or to http on a loopback address")}
+	}
+	token := host.getenv(platformTokenVariable)
+	if token == "" {
+		return []finding{ok("%s is not set in this shell, so doctor did not read its scopes or the binding; set it to the integration token to check them", platformTokenVariable)}
+	}
+	if !integrationTokenPattern.MatchString(token) {
+		return []finding{fail(platformTokenVariable+" is not an integration token, which starts costroid_it_", "create one on Costroid Platform, as docs/connect.md says")}
+	}
+	target := platform{client: host.client, base: base, token: token}
+	scopes, err := target.currentScopes(ctx)
+	if err != nil {
+		return []finding{platformFailure("the token request", err)}
+	}
+	lines := []finding{scopeLine(scopes)}
+	if !slices.Contains(scopes.Scopes, "identity:read") {
+		return lines
+	}
+	return append(lines, bindingLine(ctx, root, host, target))
+}
+
+// tokenAnswer is the part of GET /tokens/current that doctor reads. The
+// answer never holds the secret.
+type tokenAnswer struct {
+	Scopes    []string `json:"scopes"`
+	ExpiresAt string   `json:"expires_at"`
+	expires   time.Time
+}
+
+func (p platform) currentScopes(ctx context.Context) (tokenAnswer, error) {
+	request, err := p.request(ctx, http.MethodGet, "/tokens/current", nil)
+	if err != nil {
+		return tokenAnswer{}, err
+	}
+	_, data, err := p.do(request, "the token request")
+	if err != nil {
+		return tokenAnswer{}, err
+	}
+	var answer tokenAnswer
+	if err := json.Unmarshal(data, &answer); err != nil || len(answer.Scopes) == 0 ||
+		slices.ContainsFunc(answer.Scopes, func(scope string) bool { return !scopePattern.MatchString(scope) }) {
+		return tokenAnswer{}, errors.New("the token answer of Costroid Platform names no scope it can print")
+	}
+	answer.expires, err = time.Parse(time.RFC3339, answer.ExpiresAt)
+	if err != nil {
+		return tokenAnswer{}, errors.New("the token answer of Costroid Platform names no time it expires")
+	}
+	return answer, nil
+}
+
+// scopeLine states the token's scopes, and the ones docs/connect.md gives it
+// that it lacks.
+func scopeLine(token tokenAnswer) finding {
+	held := fmt.Sprintf("%s in this shell carries %s, and expires at %s", platformTokenVariable, joinNames(token.Scopes), token.expires.UTC().Format(time.RFC3339))
+	var lacks []string
+	for _, scope := range tokenScopes {
+		if !slices.Contains(token.Scopes, scope) {
+			lacks = append(lacks, scope)
+		}
+	}
+	if len(lacks) == 0 {
+		return ok("%s", held)
+	}
+	return warn(held+", and lacks "+joinNames(lacks), "create one with "+joinNames(tokenScopes)+", as docs/connect.md says")
+}
+
+// bindingLine states the binding of the installation a CI job of this
+// repository proves, as GET /identity lists it.
+func bindingLine(ctx context.Context, root string, host doctorHost, target platform) finding {
+	installation, err := ownerInstallation(ctx, root, host)
+	if err != nil {
+		fix := "run doctor where gh can read the repository, or as a step of the connect job"
+		if strings.Contains(err.Error(), ghNoRemote) {
+			fix = ghFix(err)
+		}
+		return warn("doctor did not read the binding, because it could not name the repository's owner: "+err.Error(), fix)
+	}
+	identity, err := target.identity(ctx)
+	if err != nil {
+		return platformFailure("the identity request", err)
+	}
+	tenant := identity.Tenant.ID
+	var ended *installationAnswer
+	for index, held := range identity.Installations {
+		if held.ID != installation {
+			continue
+		}
+		if held.Status != "active" {
+			ended = &identity.Installations[index]
+			continue
+		}
+		proven, err := time.Parse(time.RFC3339, held.ProvenAt)
+		if err != nil {
+			return warn(fmt.Sprintf("tenant %s lists %s as active, with no time it was proven", tenant, installation), connectFix)
+		}
+		at := proven.UTC().Format(time.RFC3339)
+		if host.now().Sub(proven) >= bindingCurrentFor {
+			return warn(fmt.Sprintf("%s is bound to tenant %s, last proven at %s, more than 7 days ago, so another tenant's proof can displace it", installation, tenant, at), connectFix)
+		}
+		return ok("%s is bound to tenant %s, proven at %s", installation, tenant, at)
+	}
+	if ended != nil && installationStatus.MatchString(ended.Status) {
+		return warn(fmt.Sprintf("%s was bound to tenant %s and is %s, so Costroid Platform refuses its rows with %s", installation, tenant, ended.Status, installationNotBound), connectFix)
+	}
+	return warn(fmt.Sprintf("tenant %s holds no binding of %s, so Costroid Platform refuses its rows with %s", tenant, installation, installationNotBound), connectFix)
+}
+
+// installationStatus is integration/v0.2's InstallationStatus for an ended
+// binding, so nothing else the platform sends is printed.
+var installationStatus = regexp.MustCompile(`^(revoked|displaced)$`)
+
+// ownerInstallation names the installation a CI job of this repository
+// proves: from the job's own variables in CI, as connect reads them, and
+// elsewhere from the owner's account id that gh reads.
+func ownerInstallation(ctx context.Context, root string, host doctorHost) (string, error) {
+	if host.getenv("GITHUB_ACTIONS") == "true" || host.getenv("GITLAB_CI") == "true" {
+		job, err := connectJob("", host.getenv)
+		return job.installation, err
+	}
+	if _, err := host.lookPath("gh"); err != nil {
+		return "", errors.New("gh is not on PATH")
+	}
+	out, err := host.output(ctx, root, "gh", "api", "repos/{owner}/{repo}", "--jq", ".owner.id")
+	if err != nil {
+		return "", err
+	}
+	owner := strings.TrimSpace(string(out))
+	if !installationNumber.MatchString(owner) {
+		return "", errors.New("gh api named no owner's number")
+	}
+	return githubOwnerKind + owner, nil
+}
+
+// platformFailure states a request doctor could not complete: a refusal by
+// its status and code, as connect prints it, or the error.
+func platformFailure(what string, err error) finding {
+	var refused *refusal
+	if !errors.As(err, &refused) {
+		return warn("doctor could not ask Costroid Platform: "+err.Error(), "check "+platformVariable+" and the network, then doctor again")
+	}
+	code := refused.code
+	if code == "" {
+		code = "with no refusal code"
+	}
+	fact := fmt.Sprintf("Costroid Platform refused %s: %d %s", what, refused.status, code)
+	switch refused.code {
+	case "AUTH_TOKEN_INVALID":
+		return warn(fact, "the token is unknown, expired or revoked, so create one on Costroid Platform")
+	case "AUTH_TOKEN_SCOPE":
+		return warn(fact, "create a token with "+joinNames(tokenScopes)+", as docs/connect.md says")
+	default:
+		return warn(fact, "the contract's refusals in docs/connect.md say what each code means")
+	}
 }
 
 // jobLines are what only a GitHub Actions job sees.
@@ -636,28 +851,38 @@ func permissionLine(root string, host doctorHost) finding {
 	if yaml.Unmarshal(source, &document) != nil || len(document.Content) == 0 {
 		return warn(name+" is not valid YAML", "costroid lint "+name+" says where")
 	}
-	_, jobs := mappingPair(document.Content[0], "jobs")
-	_, declared := mappingPair(jobs, job)
-	_, permissions := mappingPair(declared, "permissions")
+	declared := recipelint.Field(recipelint.Field(document.Content[0], "jobs"), job)
+	permissions := recipelint.Field(declared, "permissions")
 	if permissions == nil {
-		_, permissions = mappingPair(document.Content[0], "permissions")
+		permissions = recipelint.Field(document.Content[0], "permissions")
 	}
 	if permissions == nil {
 		return warn("job "+job+" of "+name+" declares no permissions, so it holds the repository's default token", "declare the permissions the job needs, as the recipes do")
 	}
-	return ok("job %s of %s declares permissions %s", job, name, flowPermissions(permissions))
+	granted, err := flowPermissions(permissions)
+	if err != nil {
+		return warn("job "+job+" of "+name+" declares permissions doctor cannot read: "+err.Error(), "costroid lint "+name+" says where")
+	}
+	return ok("job %s of %s declares permissions %s", job, name, granted)
 }
 
-func flowPermissions(node *yaml.Node) string {
+// flowPermissions writes a permissions block on one line: a scalar as it
+// is, a mapping as its pairs in name order, read through aliases and merge
+// keys.
+func flowPermissions(node *yaml.Node) (string, error) {
 	if node.Kind == yaml.ScalarNode {
-		return node.Value
+		return node.Value, nil
 	}
-	if len(node.Content) == 0 {
-		return "{}"
+	var granted map[string]string
+	if err := node.Decode(&granted); err != nil {
+		return "", err
+	}
+	if len(granted) == 0 {
+		return "{}", nil
 	}
 	var pairs []string
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		pairs = append(pairs, node.Content[i].Value+": "+node.Content[i+1].Value)
+	for _, name := range slices.Sorted(maps.Keys(granted)) {
+		pairs = append(pairs, name+": "+granted[name])
 	}
-	return strings.Join(pairs, ", ")
+	return strings.Join(pairs, ", "), nil
 }

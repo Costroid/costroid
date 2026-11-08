@@ -294,12 +294,15 @@ It reads the names of the repository's secrets and variables through `gh secret 
 
 `costroid doctor --ci`, run as a step of a GitHub Actions job, adds what only the job sees: the event, whether the pull request's head is a fork, whether the job holds `id-token: write`, and the job's declared permissions.
 
+With `COSTROID_PLATFORM_URL` set in the shell, `doctor` asks Costroid Platform for the scopes of the integration token in `COSTROID_PLATFORM_TOKEN`, through `GET /tokens/current`, and for the binding of the repository's owner, through `GET /identity`. It names the token by that variable alone. It reads the owner from `GITHUB_REPOSITORY_OWNER_ID` or `CI_PROJECT_NAMESPACE_ID` in a CI job, as `costroid connect` does, and through `gh api` elsewhere.
+
 | Check | A `warn` or `fail` line | Fix |
 | ----- | ----------------------- | --- |
 | The binary | `warn: costroid <version>, and <file>:<line> pins <release>` | Install the release the workflow pins, as the [README](../README.md#install) shows |
 | | `warn: costroid <version> is a development build, which belongs to no release` | The same |
 | `costroid.yml` | `fail: costroid.yml: <problem>` | The problem is the one `costroid validate` names. [`docs/configuration.md`](configuration.md) lists each key |
 | The workflows | `warn: no workflow in .github/workflows calls Costroid's action` | Run `costroid init github --agent claude`, or another agent, as [`docs/install.md`](install.md#write-the-workflow) shows |
+| | `warn: no workflow in .github/workflows calls Costroid's action: run costroid init github --agent claude-code-action --existing <file>` | A workflow already runs `claude-code-action`, or `codex-action` with `--agent codex-action`. Run the command the line names: it prints the patch that reports from that workflow, as [`docs/existing-workflow.md`](existing-workflow.md) shows |
 | | `fail: <file>:<line>: high: <rule>: <message>`, `warn: <file>:<line>: medium: <rule>: <message>` | The finding `costroid lint` prints for that workflow. [`docs/lint.md`](lint.md) says what each rule guards |
 | Costroid's pin | `fail: <file>:<line>: Costroid/costroid/action@<ref> is not a full commit SHA` | Pin the full commit SHA of a release tag, with its version in a comment, as `costroid init` writes it. The action installs only the release its own commit belongs to |
 | | `fail: <file>:<line>: Costroid/costroid/action@<ref> is the zero SHA, which names no release` | The same |
@@ -311,8 +314,17 @@ It reads the names of the repository's secrets and variables through `gh secret 
 | Secrets | `warn: gh secret list names no repository secret <name>; an organization or environment secret of that name is not listed here` | Run `gh secret set <name>`, unless the organization or the environment already holds it. `gh secret list` lists repository secrets only, so this is a warning, not a failure |
 | | `warn: gh is not on PATH, so doctor did not list the repository's secrets` | Install `gh`, or check the secrets the line names in the repository's settings |
 | | `warn: gh secret list failed, so doctor did not check the repository's secrets: <error>` | Run `gh auth login`, then `costroid doctor` again |
+| | `warn: gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: gh exited 1: no git remotes found` | The repository has no remote, so `gh` cannot name it. Add a GitHub remote, or push the repository first |
 | Variables | `warn: the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE` | Set `COSTROID_INGEST_AUDIENCE` to the audience your ledger requires, as [`docs/recipes.md`](recipes.md#send-rows-to-a-ledger) says |
 | Visibility | `warn: <file> runs step-security/harden-runner, which needs a paid plan on a private repository` | Read [Egress in the agent's job](recipes.md#egress-in-the-agents-job), then keep the step or delete it |
+| Costroid Platform | `ok: COSTROID_PLATFORM_TOKEN is not set in this shell, so doctor did not read its scopes or the binding; set it to the integration token to check them` | Nothing: the recipes read the token from the repository's secrets. To check its scopes and the binding, set it in the shell and run `costroid doctor` again |
+| | `fail: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_` | Create one on Costroid Platform, as [`docs/connect.md`](connect.md#one-token-per-owner) says |
+| | `warn: COSTROID_PLATFORM_TOKEN in this shell carries <scopes>, and expires at <time>, and lacks <scopes>` | Create one with `identity:read`, `installations:write` and `rows:write`. `connect` uses the first two and `export` the first and the third |
+| | `warn: Costroid Platform refused <request>: <status> <code>` | `AUTH_TOKEN_INVALID`: the token is unknown, expired or revoked, so create one. Any other code: [`docs/connect.md`](connect.md) says what it means |
+| | `warn: tenant <tenant> holds no binding of <installation>, so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND` | Run `costroid connect` from a scheduled job, as [`docs/connect.md`](connect.md) says |
+| | `warn: <installation> is bound to tenant <tenant>, last proven at <time>, more than 7 days ago, so another tenant's proof can displace it` | The same. A daily run renews the binding |
+| | `warn: <installation> was bound to tenant <tenant> and is <status>, so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND` | The same |
+| | `warn: doctor did not read the binding, because it could not name the repository's owner: <error>` | Run `doctor` where `gh` can read the repository, or as a step of the connect job |
 | The event, with `--ci` | `warn: the event is <event>, and costroid report posts only on pull_request` | Run the report job on `pull_request` |
 | The head, with `--ci` | `warn: the pull request's head is the fork <repository>, which receives no secrets and cannot post the check` | Add [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml), which posts the check from your repository |
 | The job, with `--ci` | `warn: job <job> of <file> declares no permissions, so it holds the repository's default token` | Declare the permissions the job needs, as the recipes do |
