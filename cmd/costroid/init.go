@@ -67,10 +67,11 @@ says what that comment shows.
 
 --platform-url names Costroid Platform's address. init prints the command that
 sets it as the repository variable COSTROID_PLATFORM_URL, which the recipe's
-ingest job reads, and with --existing the patch adds that ingest job. Without
---existing it also writes .github/workflows/costroid-connect.yml, pinned as
-the recipe is, which binds the owner to the platform from the default branch.
-docs/export.md says what else the platform needs.
+ingest job reads, and with --existing the patch adds that ingest job. It also
+writes .github/workflows/costroid-connect.yml, pinned as the recipe is, which
+binds the owner to the platform from the default branch. With --existing the
+patch creates that file, unless the repository holds one. docs/export.md says
+what else the platform needs.
 
 --skills writes .agents/skills/costroid/SKILL.md for Codex and
 .claude/skills/costroid/SKILL.md for Claude Code: a skill that reads a run's
@@ -301,7 +302,7 @@ func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, 
 		fmt.Fprintf(stderr, "costroid: %s already runs %s, so init prints the patch that reports from it, as --existing %s does\n", filepath.ToSlash(flags.existing), actionFor(flags.agent).uses, filepath.ToSlash(flags.existing))
 	}
 	if flags.existing != "" {
-		return printExistingPatch(repo, flags, release, stdout, stderr)
+		return printExistingPatch(repo, flags, release, recipes, stdout, stderr)
 	}
 	return writeRecipe(repo, flags, release, recipes, pr, stdout, stderr)
 }
@@ -758,6 +759,34 @@ func connectRecipe(repo repository, recipes fs.FS, release pin, out string, forc
 	if out == connectWorkflow {
 		return nil, fmt.Errorf("--out %s names the workflow --platform-url writes to bind the owner: name another file", out)
 	}
+	recipe, err := pinnedConnect(recipes, release, stderr)
+	if err != nil {
+		return nil, err
+	}
+	switch exists, err := connectExists(repo); {
+	case err != nil:
+		return nil, err
+	case exists && !force:
+		return nil, fmt.Errorf("%s exists: pass --force to replace it", connectWorkflow)
+	}
+	return recipe, nil
+}
+
+// connectExists reports whether the repository holds a connect workflow.
+func connectExists(repo repository) (bool, error) {
+	switch _, err := os.Lstat(repo.file(filepath.FromSlash(connectWorkflow))); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	default:
+		return false, fmt.Errorf("read %s: %w", connectWorkflow, err)
+	}
+}
+
+// pinnedConnect is recipes/github-connect.yml pinned to release, without its
+// copy sentence, and held to the rules of lint-recipes.
+func pinnedConnect(recipes fs.FS, release pin, stderr io.Writer) ([]byte, error) {
 	source, err := fs.ReadFile(recipes, path.Join("recipes", connectRecipeName))
 	if err != nil {
 		return nil, fmt.Errorf("read the shipped recipe: %w", err)
@@ -773,12 +802,6 @@ func connectRecipe(repo repository, recipes fs.FS, release pin, out string, forc
 		}
 		fmt.Fprintf(stderr, "costroid: init wrote nothing: recipes/%s breaks a rule of lint-recipes, which is a defect in costroid\n", connectRecipeName)
 		return nil, errRecipeRule
-	}
-	switch _, err := os.Lstat(repo.file(filepath.FromSlash(connectWorkflow))); {
-	case err == nil && !force:
-		return nil, fmt.Errorf("%s exists: pass --force to replace it", connectWorkflow)
-	case err != nil && !errors.Is(err, fs.ErrNotExist):
-		return nil, fmt.Errorf("read %s: %w", connectWorkflow, err)
 	}
 	return recipe, nil
 }
@@ -1218,7 +1241,7 @@ const (
 	connectNeeds  = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. The workflow costroid-connect.yml binds it from the default branch, on a push when that branch is protected and on its daily schedule otherwise. docs/connect.md says how."
 )
 
-func printExistingPatch(repo repository, flags initFlags, release pin, stdout, stderr io.Writer) int {
+func printExistingPatch(repo repository, flags initFlags, release pin, recipes fs.FS, stdout, stderr io.Writer) int {
 	shown := filepath.ToSlash(flags.existing)
 	source, err := os.ReadFile(repo.file(flags.existing))
 	if err != nil {
@@ -1233,8 +1256,23 @@ func printExistingPatch(repo repository, flags initFlags, release pin, stdout, s
 	if err != nil {
 		return initFailed(stderr, fmt.Errorf("%s: %w", shown, err))
 	}
+	connect, connectLeft, err := existingConnect(repo, flags, recipes, release, stderr)
+	if errors.Is(err, errRecipeRule) {
+		return exitRejected
+	}
+	if err != nil {
+		return initFailed(stderr, err)
+	}
 	fmt.Fprint(stdout, unifiedDiff(shown, lines, endsWithNewline, patch.edits))
-	fmt.Fprintf(stderr, "costroid: printed a patch for %s, and wrote nothing\n", shown)
+	if connect != nil {
+		fmt.Fprint(stdout, newFileDiff(connectWorkflow, connect))
+		fmt.Fprintf(stderr, "costroid: printed a patch for %s and %s, and wrote nothing\n", shown, connectWorkflow)
+	} else {
+		fmt.Fprintf(stderr, "costroid: printed a patch for %s, and wrote nothing\n", shown)
+	}
+	if connectLeft {
+		fmt.Fprintf(stderr, "costroid: %s exists, and init left it as it is\n", connectWorkflow)
+	}
 	text := "Apply it from the repository's root with git apply. Your job keeps the permissions it has, and the read step asks for nothing more. The report job holds checks: write and pull-requests: write, runs on pull requests alone, and runs nothing the pull request wrote. docs/existing-workflow.md says more."
 	if patch.capNote != "" {
 		text += " " + patch.capNote
@@ -1246,9 +1284,43 @@ func printExistingPatch(repo repository, flags initFlags, release pin, stdout, s
 	if flags.platformURL != "" {
 		fmt.Fprint(stderr, "\n"+wrap("The ingest job holds id-token: write and reads the platform's address from a repository variable. Set it with:", usageWidth))
 		fmt.Fprintf(stderr, "  %s\n", variableCommand(flags.platformURL))
-		fmt.Fprint(stderr, wrap(platformNeeds, usageWidth))
+		needs := platformNeeds
+		if connect != nil {
+			needs = connectNeeds
+		}
+		fmt.Fprint(stderr, wrap(needs, usageWidth))
 	}
 	return 0
+}
+
+// existingConnect is the connect workflow the --existing patch creates when
+// --platform-url is given, pinned as its other blocks are. left is true when
+// the repository holds a connect workflow already, which the patch leaves as
+// it is.
+func existingConnect(repo repository, flags initFlags, recipes fs.FS, release pin, stderr io.Writer) (recipe []byte, left bool, err error) {
+	if flags.platformURL == "" {
+		return nil, false, nil
+	}
+	exists, err := connectExists(repo)
+	if err != nil || exists {
+		return nil, exists, err
+	}
+	recipe, err = pinnedConnect(recipes, release, stderr)
+	return recipe, false, err
+}
+
+// newFileDiff prints a unified diff that creates the file name with data.
+func newFileDiff(name string, data []byte) string {
+	lines, endsWithNewline := splitLines(data)
+	var out strings.Builder
+	fmt.Fprintf(&out, "--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", name, len(lines))
+	for _, line := range lines {
+		out.WriteString("+" + line + "\n")
+	}
+	if !endsWithNewline {
+		out.WriteString("\\ No newline at end of file\n")
+	}
+	return out.String()
 }
 
 // variableCommand sets the repository variable the ingest job reads.

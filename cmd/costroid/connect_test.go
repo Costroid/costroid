@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -379,9 +383,11 @@ type keysRetry struct {
 	name, retryAfter string
 	refusals         []string
 	gitlab           bool
-	// wait is the pause before the retry, zero when there is none.
-	wait time.Duration
-	code int
+	// wait is the pause before the retry, zero when there is none. atOnce is
+	// a retry with no pause.
+	wait   time.Duration
+	atOnce bool
+	code   int
 }
 
 const keysUnavailableCode = "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
@@ -402,7 +408,10 @@ func checkKeysRetry(t *testing.T, tc keysRetry) {
 	}
 	sends, want, waits := 1, "", []time.Duration(nil)
 	if tc.wait > 0 {
-		sends, waits = 2, []time.Duration{tc.wait}
+		waits = []time.Duration{tc.wait}
+	}
+	if tc.wait > 0 || tc.atOnce {
+		sends = 2
 		want = fmt.Sprintf("costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(tc.wait.Seconds()))
 	}
 	if len(stub.proofs) != sends {
@@ -431,8 +440,8 @@ func checkKeysRetry(t *testing.T, tc keysRetry) {
 
 // TestConnectRetriesOnceWhenKeysAreUnavailable sends the same proof a second
 // time after the platform's Retry-After, when that is 120 seconds or less,
-// and never a third time. At 0 seconds or past 120 it stops with the
-// refusal's sentence.
+// and never a third time. Past 120 seconds it stops with the refusal's
+// sentence.
 func TestConnectRetriesOnceWhenKeysAreUnavailable(t *testing.T) {
 	keys := keysUnavailableCode
 	for _, tc := range []keysRetry{
@@ -442,8 +451,22 @@ func TestConnectRetriesOnceWhenKeysAreUnavailable(t *testing.T) {
 		{name: "120 seconds", retryAfter: "120", refusals: []string{keys}, wait: 120 * time.Second},
 		{name: "past 120 seconds", retryAfter: "121", refusals: []string{keys}, code: exitRejected},
 		{name: "seconds past any whole number", retryAfter: "99999999999999999999", refusals: []string{keys}, code: exitRejected},
-		{name: "0 seconds", retryAfter: "0", refusals: []string{keys}, code: exitRejected},
 		{name: "refused again", retryAfter: "2", refusals: []string{keys, keys, keys}, wait: 2 * time.Second, code: exitRejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkKeysRetry(t, tc) })
+	}
+}
+
+// TestConnectRetriesAtOnceOnZero sends the same proof a second time at once
+// when the refusal for unreadable keys names a Retry-After of 0 seconds. It
+// asks the clock for no pause, and never sends a third time.
+func TestConnectRetriesAtOnceOnZero(t *testing.T) {
+	keys := keysUnavailableCode
+	for _, tc := range []keysRetry{
+		{name: "bound on the retry", retryAfter: "0", refusals: []string{keys}, atOnce: true},
+		{name: "a GitLab job bound on the retry", retryAfter: "0", refusals: []string{keys}, gitlab: true, atOnce: true},
+		{name: "0 written twice", retryAfter: "00", refusals: []string{keys}, atOnce: true},
+		{name: "refused again", retryAfter: "0", refusals: []string{keys, keys, keys}, atOnce: true, code: exitRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) { checkKeysRetry(t, tc) })
 	}
@@ -642,4 +665,118 @@ func TestConnectDocsMatchTheCommand(t *testing.T) {
 			t.Errorf("docs/connect.md does not hold %q", want)
 		}
 	}
+}
+
+// integrationContractPath is integration/v0.2's openapi.json of
+// Costroid/costroid-schemas at 6f6ed69, copied.
+var integrationContractPath = filepath.Join("testdata", "integration-v0.2.openapi.json")
+
+// contractCode is a code integration/v0.2 writes as "CODE: what it means".
+var contractCode = regexp.MustCompile(`\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+):`)
+
+// connectContractCodes reads from integration/v0.2 every refusal code of
+// connect's two requests, GET /identity and PUT /installations/{installation_id},
+// with the status that answers it. A response names its codes in its
+// description and its examples, and a $ref response is read where it points.
+func connectContractCodes(t *testing.T) map[string]int {
+	t.Helper()
+	type response struct {
+		Ref         string `json:"$ref"`
+		Description string `json:"description"`
+		Content     map[string]struct {
+			Examples map[string]json.RawMessage `json:"examples"`
+		} `json:"content"`
+	}
+	var contract struct {
+		Paths      map[string]map[string]json.RawMessage `json:"paths"`
+		Components struct {
+			Responses map[string]response `json:"responses"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, integrationContractPath)), &contract); err != nil {
+		t.Fatal(err)
+	}
+	codes := map[string]int{}
+	for _, operation := range [][2]string{{"/identity", "get"}, {"/installations/{installation_id}", "put"}} {
+		var answers struct {
+			Responses map[string]response `json:"responses"`
+		}
+		if err := json.Unmarshal(contract.Paths[operation[0]][operation[1]], &answers); err != nil || len(answers.Responses) == 0 {
+			t.Fatalf("integration/v0.2 has no %s %s: %v", operation[1], operation[0], err)
+		}
+		for status, answer := range answers.Responses {
+			if name, ok := strings.CutPrefix(answer.Ref, "#/components/responses/"); ok {
+				answer = contract.Components.Responses[name]
+			}
+			named := []string{}
+			for _, match := range contractCode.FindAllStringSubmatch(answer.Description, -1) {
+				named = append(named, match[1])
+			}
+			for _, content := range answer.Content {
+				for example := range content.Examples {
+					if refusalCodePattern.MatchString(example) {
+						named = append(named, example)
+					}
+				}
+			}
+			number, err := strconv.Atoi(status)
+			if err != nil {
+				t.Fatalf("%s %s answers %q, not a status", operation[1], operation[0], status)
+			}
+			for _, code := range named {
+				if held, seen := codes[code]; seen && held != number {
+					t.Fatalf("integration/v0.2 answers %s with %d and %d", code, held, number)
+				}
+				codes[code] = number
+			}
+		}
+	}
+	return codes
+}
+
+// TestConnectPrintsOnlyContractCodes holds every code connect gives a
+// sentence, and the one it retries on, to the refusals integration/v0.2 lists
+// for its two requests, and gives each of those its own sentence. A refusal
+// the contract lists prints the contract's code word for word.
+func TestConnectPrintsOnlyContractCodes(t *testing.T) {
+	contract := connectContractCodes(t)
+	if len(contract) < 2 {
+		t.Fatalf("integration/v0.2 lists %d refusals of connect's requests: %v", len(contract), contract)
+	}
+	printed := slices.Sorted(maps.Keys(refusalSentences))
+	if !slices.Contains(printed, keysUnavailable) {
+		printed = append(printed, keysUnavailable)
+	}
+	for _, code := range printed {
+		if _, listed := contract[code]; !listed {
+			t.Errorf("connect names %s, which integration/v0.2 does not list for GET /identity or PUT /installations/{installation_id}", code)
+		}
+	}
+	installation := "github-owner:" + testOwner
+	named := binding{installation: installation, tenant: testTenant}
+	for _, code := range slices.Sorted(maps.Keys(contract)) {
+		t.Run(code, func(t *testing.T) {
+			says, ok := refusalSentences[code]
+			if !ok {
+				t.Fatalf("integration/v0.2 lists %s, and connect gives it no sentence", code)
+			}
+			status := contract[code]
+			stub := refuseProof(t, status, code)
+			exit, stdout, stderr := stub.connect(t, stub.githubEnv())
+			want := fmt.Sprintf("costroid: Costroid Platform refused the proof for %s: %d %s. %s\n", installation, status, code, says(named))
+			if exit != exitRejected || stdout != "" || !strings.HasSuffix(stderr, want) {
+				t.Errorf("exit %d, stdout %q, stderr %q, want it to end %q", exit, stdout, stderr, want)
+			}
+		})
+	}
+	t.Run("the identity request", func(t *testing.T) {
+		stub := newConnectStub(t)
+		env := stub.githubEnv()
+		env[platformTokenVariable] = "costroid_it_" + strings.Repeat("Z", 43)
+		exit, _, stderr := stub.connect(t, env)
+		want := "costroid: Costroid Platform refused the identity request: 401 AUTH_TOKEN_INVALID. " + refusalSentence("AUTH_TOKEN_INVALID", binding{}) + "\n"
+		if exit != exitRejected || stderr != want || contract["AUTH_TOKEN_INVALID"] != http.StatusUnauthorized {
+			t.Errorf("exit %d, stderr %q, want %q", exit, stderr, want)
+		}
+	})
 }

@@ -292,8 +292,10 @@ func bind(ctx context.Context, target platform, job ciJob, clock connectClock, s
 	sent, err := target.sendProof(ctx, job.installation, identity.Tenant.ID, proof)
 	if pause, ok := retryAfterKeys(err); ok {
 		fmt.Fprintf(stderr, "costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(pause.Seconds()))
-		if err := clock.wait(ctx, pause); err != nil {
-			return named, fmt.Errorf("wait to send the proof again: %w", err)
+		if pause > 0 {
+			if err := clock.wait(ctx, pause); err != nil {
+				return named, fmt.Errorf("wait to send the proof again: %w", err)
+			}
 		}
 		sent, err = target.sendProof(ctx, job.installation, identity.Tenant.ID, proof)
 	}
@@ -315,15 +317,16 @@ func retryAfterKeys(err error) (time.Duration, bool) {
 
 // keysWait is the wait Retry-After asks for, in whole seconds, and
 // defaultKeysWait when the value is absent or names no whole seconds, such as
-// an HTTP date. It is not ok when the seconds are 0 or past maxKeysWait, and
-// connect then stops with the refusal instead of waiting.
+// an HTTP date. 0 seconds is no wait, so the retry goes at once. It is not ok
+// past maxKeysWait, and connect then stops with the refusal instead of
+// waiting.
 func keysWait(retryAfter string) (time.Duration, bool) {
 	retryAfter = strings.TrimSpace(retryAfter)
 	if !delaySeconds.MatchString(retryAfter) {
 		return defaultKeysWait, true
 	}
 	seconds, err := strconv.Atoi(retryAfter)
-	if err != nil || seconds < 1 || seconds > int(maxKeysWait/time.Second) {
+	if err != nil || seconds > int(maxKeysWait/time.Second) {
 		return 0, false
 	}
 	return time.Duration(seconds) * time.Second, true
@@ -430,31 +433,42 @@ func (p platform) sendProof(ctx context.Context, installation, tenant, proof str
 	return binding{installation: installation, tenant: tenant, provenAt: proven, sent: true}, nil
 }
 
+// refusalSentences says what to do about each refusal integration/v0.2 lists
+// for connect's two requests, GET /identity and PUT /installations/{id}, by
+// the contract's code.
+var refusalSentences = map[string]func(named binding) string{
+	"INSTALLATION_PROOF_UNPROTECTED_RUN": sentence("Run costroid connect from a scheduled job, or protect the default branch and run it on a push there."),
+	"INSTALLATION_BOUND_ELSEWHERE":       sentence("Another tenant holds this owner, and this proof does not outrank its binding, as docs/connect.md explains."),
+	"INSTALLATION_PROOF_AUDIENCE_MISMATCH": func(named binding) string {
+		return fmt.Sprintf("The proof names another tenant than the integration token, so set the ID token's aud to %s%s.", proofAudience, named.tenant)
+	},
+	"INSTALLATION_PROOF_EXPIRED": sentence("The proof is past its window or older than the binding's last change, so run the job again for a new one."),
+	"INSTALLATION_PROOF_SUBJECT_MISMATCH": func(named binding) string {
+		return fmt.Sprintf("The proof names another owner than %s, so run costroid connect in a job of that owner.", named.installation)
+	},
+	"INSTALLATION_PROOF_CLAIMS_INVALID":    sentence(untouchedProof),
+	"INSTALLATION_PROOF_SIGNATURE_INVALID": sentence(untouchedProof),
+	"INSTALLATION_PROOF_MISSING":           sentence(untouchedProof),
+	"INSTALLATION_PROOF_ISSUER_UNTRUSTED":  sentence("The platform trusts proofs from GitHub Actions and GitLab.com only, so a self-managed GitLab or GitHub Enterprise Server cannot bind."),
+	keysUnavailable:                        sentence("The platform could not read the CI system's keys, so run the job again."),
+	"AUTH_TOKEN_INVALID":                   sentence("The integration token is unknown, expired or revoked, so create one on Costroid Platform."),
+	"AUTH_TOKEN_SCOPE":                     sentence("The integration token needs identity:read and installations:write."),
+}
+
+// untouchedProof is the sentence for a proof that is not the CI system's own
+// token as it was issued.
+const untouchedProof = "The proof is not the ID token the CI system issued, so pass the job's own token unchanged."
+
+// sentence is a refusal's sentence that names nothing of the binding.
+func sentence(text string) func(binding) string {
+	return func(binding) string { return text }
+}
+
 // refusalSentence says what to do about a refusal of connect's two requests.
 // A code the contract does not name gets the page that lists them.
 func refusalSentence(code string, named binding) string {
-	switch code {
-	case "INSTALLATION_PROOF_UNPROTECTED_RUN":
-		return "Run costroid connect from a scheduled job, or protect the default branch and run it on a push there."
-	case "INSTALLATION_BOUND_ELSEWHERE":
-		return "Another tenant holds this owner, and this proof does not outrank its binding, as docs/connect.md explains."
-	case "INSTALLATION_PROOF_AUDIENCE_MISMATCH":
-		return fmt.Sprintf("The proof names another tenant than the integration token, so set the ID token's aud to %s%s.", proofAudience, named.tenant)
-	case "INSTALLATION_PROOF_EXPIRED":
-		return "The proof is past its window or older than the binding's last change, so run the job again for a new one."
-	case "INSTALLATION_PROOF_SUBJECT_MISMATCH":
-		return fmt.Sprintf("The proof names another owner than %s, so run costroid connect in a job of that owner.", named.installation)
-	case "INSTALLATION_PROOF_CLAIMS_INVALID", "INSTALLATION_PROOF_SIGNATURE_INVALID", "INSTALLATION_PROOF_MISSING":
-		return "The proof is not the ID token the CI system issued, so pass the job's own token unchanged."
-	case "INSTALLATION_PROOF_ISSUER_UNTRUSTED":
-		return "The platform trusts proofs from GitHub Actions and GitLab.com only, so a self-managed GitLab or GitHub Enterprise Server cannot bind."
-	case "INSTALLATION_PROOF_KEYS_UNAVAILABLE":
-		return "The platform could not read the CI system's keys, so run the job again."
-	case "AUTH_TOKEN_INVALID":
-		return "The integration token is unknown, expired or revoked, so create one on Costroid Platform."
-	case "AUTH_TOKEN_SCOPE":
-		return "The integration token needs identity:read and installations:write."
-	default:
-		return "The contract's refusals in docs/connect.md say what each code means."
+	if says, ok := refusalSentences[code]; ok {
+		return says(named)
 	}
+	return "The contract's refusals in docs/connect.md say what each code means."
 }
