@@ -14,11 +14,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	exportformat "github.com/Costroid/costroid/internal/export"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
 )
@@ -69,6 +71,7 @@ var (
 
 const exportHelp = `Usage:
   costroid export --rows rows.jsonl --platform-url URL --installation-id ID [--batch-id ID]
+  costroid export --rows rows.jsonl --format focus-csv|vantage|datadog [--out PATH]
 
 export sends a rows file to Costroid Platform as one batch of CSV, under the
 integration token in COSTROID_PLATFORM_TOKEN. --platform-url is the platform's
@@ -97,16 +100,41 @@ installation, which costroid connect makes. In each case export warns, keeps
 the rows file and exits 0, so it can be sent later. docs/export.md lists every
 answer.
 
+With --format, export sends nothing and writes the rows as a file another
+tool imports, to --out or to standard output. Every amount is written as the
+row states it: none is converted, rounded or added up.
+
+  focus-csv         FOCUS 1.4 CSV: the row contract's 40 columns, the CSV
+                    the platform takes
+  vantage           a Vantage custom provider's CSV. Past 10,000 rows or
+                    2,000,000 bytes the rows go to more than one file, so
+                    costs.csv becomes costs-1.csv, costs-2.csv and on, and
+                    standard output is refused
+  datadog           Datadog's Custom Costs CSV. It takes USD only, so a row in
+                    another currency refuses the file, and the line names it.
+                    Each tag that every row carries is a column
+
+In vantage and datadog, BilledCost is the row's EffectiveCost, because a row's
+own BilledCost is 0: Costroid issues no invoice.
+
+docs/export.md says which column each format takes from the row.
+
 Exit codes of export:
   0                 the batch ingested or its verdict did not come in 60 s, or
-                    the platform answered 402, 409 INSTALLATION_NOT_BOUND or 429
+                    the platform answered 402, 409 INSTALLATION_NOT_BOUND or
+                    429, or --format wrote its files
   1                 the platform refused or the batch failed, and the line
-                    names its code
-  125               costroid could not read the rows or reach the platform
+                    names its code, or the format refused rows, and the line
+                    names them
+  125               costroid could not read the rows, reach the platform or
+                    write a file
 `
 
 type exportFlags struct {
 	rows, origin, installation, batch string
+	// format and out are the file export writes instead of sending.
+	format exportformat.Format
+	out    string
 }
 
 // refusal is an answer of the platform that took nothing.
@@ -163,6 +191,9 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
+	if flags.format != "" {
+		return writeFormat(flags, stdout, stderr)
+	}
 	target := platform{client: client, base: flags.origin + integrationPath, token: getenv(platformTokenVariable)}
 	sent, err := sendBatch(ctx, flags, target, getenv)
 	var refused *refusal
@@ -205,11 +236,19 @@ func parseExport(args []string, stderr io.Writer) (exportFlags, error) {
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation the rows came through")
 	batch := set.String("batch-id", "", "the batch id; GitHub Actions derives one from the run")
+	format := set.String("format", "", "the file format to write instead of sending")
+	out := set.String("out", "", "the file --format writes; standard output when absent")
 	if err := set.Parse(args); err != nil {
 		return exportFlags{}, err
 	}
 	if set.NArg() > 0 {
 		return exportFlags{}, errors.New("export takes no argument")
+	}
+	if *format != "" {
+		return parseFormatFlags(*rows, *format, *out, *address != "" || *installation != "" || *batch != "")
+	}
+	if *out != "" {
+		return exportFlags{}, errors.New("--out names the file --format writes, and export without --format sends to Costroid Platform")
 	}
 	if *rows == "" || *address == "" || *installation == "" {
 		return exportFlags{}, errors.New("export needs --rows, --platform-url and --installation-id")
@@ -226,6 +265,90 @@ func parseExport(args []string, stderr io.Writer) (exportFlags, error) {
 		return exportFlags{}, err
 	}
 	return exportFlags{rows: *rows, origin: origin, installation: installationID, batch: *batch}, nil
+}
+
+// parseFormatFlags reads the flags of a file export, which refuses any flag
+// that names the platform: sends reports one.
+func parseFormatFlags(rows, format, out string, sends bool) (exportFlags, error) {
+	if rows == "" {
+		return exportFlags{}, errors.New("export --format needs --rows")
+	}
+	if sends {
+		return exportFlags{}, errors.New("export --format writes a file and sends nothing, so it takes no --platform-url, --installation-id or --batch-id")
+	}
+	parsed, err := exportformat.ParseFormat(format)
+	if err != nil {
+		return exportFlags{}, err
+	}
+	return exportFlags{rows: rows, format: parsed, out: out}, nil
+}
+
+// writeFormat writes the rows file in its format. Nothing is written until
+// every row is taken, so a refused export leaves no file.
+func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
+	file, err := os.Open(flags.rows)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		return exitFailure
+	}
+	defer file.Close()
+	written, err := exportformat.Write(flags.format, file)
+	var refused *exportformat.RowsError
+	switch {
+	case errors.Is(err, exportformat.ErrNoRows):
+		fmt.Fprintf(stderr, "costroid: %s holds no rows, so nothing was written\n", flags.rows)
+		return 0
+	case errors.As(err, &refused):
+		fmt.Fprintf(stderr, "costroid: %v. Nothing was written\n", err)
+		return exitRejected
+	case err != nil:
+		fmt.Fprintf(stderr, "costroid: %s: %v\n", flags.rows, err)
+		return exitFailure
+	}
+	if len(written.OmittedTags) > 0 {
+		fmt.Fprintf(stderr, "costroid: warning: some rows lack the tags %s, so the %s file has no column for them\n", strings.Join(written.OmittedTags, ", "), flags.format)
+	}
+	if flags.out == "" {
+		return writeStdout(flags.format, written.Files, stdout, stderr)
+	}
+	paths := partPaths(flags.out, len(written.Files))
+	for i, part := range written.Files {
+		if err := os.WriteFile(paths[i], part.Body, 0o644); err != nil {
+			fmt.Fprintf(stderr, "costroid: %v\n", err)
+			return exitFailure
+		}
+		fmt.Fprintf(stdout, "costroid: wrote %d rows as %s to %s\n", part.Rows, flags.format, paths[i])
+	}
+	return 0
+}
+
+// writeStdout writes a format of one file to standard output, and refuses one
+// that needs more, which a stream cannot keep apart.
+func writeStdout(format exportformat.Format, files []exportformat.File, stdout, stderr io.Writer) int {
+	if len(files) > 1 {
+		fmt.Fprintf(stderr, "costroid: the rows need %d %s files, so name them with --out. Nothing was written\n", len(files), format)
+		return exitRejected
+	}
+	if _, err := stdout.Write(files[0].Body); err != nil {
+		fmt.Fprintf(stderr, "costroid: write the %s file: %v\n", format, err)
+		return exitFailure
+	}
+	return 0
+}
+
+// partPaths names the files of an export: the path itself for one file, and
+// for more, the path with -1, -2 and on before its extension.
+func partPaths(path string, count int) []string {
+	if count == 1 {
+		return []string{path}
+	}
+	extension := filepath.Ext(path)
+	stem := strings.TrimSuffix(path, extension)
+	paths := make([]string, count)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("%s-%d%s", stem, i+1, extension)
+	}
+	return paths
 }
 
 // githubInstallation is the prefix of a GitHub App installation id.

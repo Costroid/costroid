@@ -183,6 +183,19 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: this job has no id-token permission, so no run token can name the run: give the job id-token: write` | On GitHub Actions the batch goes with the job's OIDC token, and the job cannot ask for one | Give the `ingest` job `id-token: write` |
 | `costroid: outside GitHub Actions, export needs --batch-id` | Only a GitHub Actions run gives a batch id | Pass `--batch-id` |
 
+## Writing rows for another tool
+
+`costroid export --format`, which writes a file and sends nothing. [`docs/export.md`](export.md#files-for-another-tool) says what each format holds.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: wrote <count> rows as <format> to <path>` | The file is written. A Vantage export past one file prints one line for each file | None |
+| `costroid: <format> refuses <rows>: <reason>. Nothing was written` | The format cannot take the rows the line names, the first 10 of them and a count of the rest. Datadog takes USD only, and no blank value or one past 1,000 characters. A Vantage file holds at most 2,000,000 bytes, and one row passed that alone. The command exits 1 | For another currency, write `focus-csv` or `vantage`, which keep each row's currency. Costroid never converts an amount |
+| `costroid: warning: some rows lack the tags <keys>, so the <format> file has no column for them` | Datadog takes no blank value, so a tag gets a column only when every row carries it | None. `focus-csv` and `vantage` keep every tag in `Tags` |
+| `costroid: the rows need <count> <format> files, so name them with --out. Nothing was written` | A Vantage file holds at most 10,000 rows and 2,000,000 bytes, and standard output cannot keep files apart. The command exits 1 | Pass `--out`. The files are numbered beside it |
+| `costroid: <path> holds no rows, so nothing was written` | The rows file is empty | Read the agent job's log |
+| `costroid: write the <format> file: <error>` | Standard output closed before the file was written. The command exits 125 | Write to a file with `--out` |
+
 ## Connecting to Costroid Platform
 
 `costroid connect`, which binds the job's owner to the integration token's tenant. [`docs/connect.md`](connect.md) gives the job.
