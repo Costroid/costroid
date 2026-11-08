@@ -100,6 +100,8 @@ The `read` step cannot see your step's inputs, so it is told the cap. Give Block
 
 The comment's grade then reads `agent-flag` when the run stopped at that cap, or ended under it by Claude Code's own total. It reads `none`, with the reason, when `budget-usd` and the flag differ, when `claude-args` holds no `--max-budget-usd`, or when the run passed the cap without a stop. Without `budget-usd` it reads `none`, because Costroid did not start the run. `costroid init github --existing` writes these lines, and adds `--max-budget-usd 5` to `claude_args` that hold no cap. `--budget-usd` names another amount in USD, such as `--budget-usd 2.50`.
 
+Block 2 runs in a job of its own, so `budget-usd: ${{ env.NAME }}` reads empty there when `NAME` is set on your job or step alone. The report then states no cap, never a cap of 0, and prints one warning that names `budget-usd`. Set `NAME` in the workflow's `env`, or give Block 2 the amount.
+
 `costroid lint` prints a note for a `claude-code-action` step whose `claude_args` hold no `--max-budget-usd`.
 
 ## On `openai/codex-action`
