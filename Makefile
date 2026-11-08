@@ -2,7 +2,7 @@ VERSION ?= dev
 COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-.PHONY: check test check-short bench-view bench-ingest fuzz fixture build image e2e e2e-bite lint lint-vulnerabilities lint-shell lint-workflows
+.PHONY: check test check-short bench-view bench-ingest fuzz fixture build image notice e2e e2e-bite lint lint-vulnerabilities lint-shell lint-workflows
 
 # Runs everything, with Postgres in Docker. A missing Docker fails this target.
 check: test
@@ -55,6 +55,12 @@ fixture:
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/costroid ./cmd/costroid
+
+# Writes NOTICE from the modules a release build links and the licence and
+# notice files each holds in the module cache. check fails until it is run
+# after a dependency changes.
+notice:
+	go run ./scripts/notice -o NOTICE
 
 IMAGE ?= ghcr.io/costroid/costroid:$(VERSION)
 
