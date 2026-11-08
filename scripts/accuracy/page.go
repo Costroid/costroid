@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -117,7 +116,9 @@ Each day a scheduled job in a private repository runs one small Claude Code task
 
 Measured cost is what the day's rows on the key cost at list price, from Costroid's own rows. It reads on a day with no provider report as well, so the test's spend is always on the page.
 
-` + "`go run ./scripts/accuracy -write docs/accuracy.md`" + ` re-runs ` + "`costroid reconcile`" + ` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, every price the cost report implies equals the catalog's to the last digit the report states, and the list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines each step and each cause.
+` + "`go run ./scripts/accuracy -write docs/accuracy.md`" + ` re-runs ` + "`costroid reconcile`" + ` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, every price the cost report implies equals the catalog's to the last digit the report states, each token class's list-price dollars land within 1% of the cost report's where the report splits them by class, and the day's list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines each step and each cause.
+
+Each day names the Costroid release that kept its inputs, which the job pins to the release it runs the agent under. A day fails when it names no release, when it names a build that is no release, or when its release trails the newest release out on that day by more than one.
 
 No line is edited by hand. ` + "`go run ./scripts/accuracy -check docs/accuracy.md -days 14`" + ` recomputes every line from the inputs, refuses the page when one line differs, and passes only when the last 14 days on it are consecutive and each passed. The last column is the SHA-256 of a listing of each input file's SHA-256 and path, in the form ` + "`sha256sum`" + ` prints, so a line names the exact inputs it was computed from.
 `
@@ -133,21 +134,21 @@ func render(lines []line) []byte {
 	return page.Bytes()
 }
 
-type version struct {
+type agentVersion struct {
 	agent                   string
 	reconciled, passed      int
 	tokens, dollars, causes share
 }
 
 func renderVersions(w io.Writer, lines []line) {
-	var versions []*version
+	var versions []*agentVersion
 	for _, l := range lines {
 		if !l.reconciled() {
 			continue
 		}
-		index := slices.IndexFunc(versions, func(v *version) bool { return v.agent == l.agent })
+		index := slices.IndexFunc(versions, func(v *agentVersion) bool { return v.agent == l.agent })
 		if index < 0 {
-			versions = append(versions, &version{agent: l.agent})
+			versions = append(versions, &agentVersion{agent: l.agent})
 			index = len(versions) - 1
 		}
 		versions[index].add(l)
@@ -156,7 +157,7 @@ func renderVersions(w io.Writer, lines []line) {
 		fmt.Fprintln(w, "No day has been reconciled yet.")
 		return
 	}
-	slices.SortFunc(versions, func(a, b *version) int { return strings.Compare(a.agent, b.agent) })
+	slices.SortFunc(versions, func(a, b *agentVersion) int { return strings.Compare(a.agent, b.agent) })
 	fmt.Fprintln(w, "| Agent | Days reconciled | Days passed | Largest token error | Largest dollar error | Largest dollar error after named causes |")
 	fmt.Fprintln(w, "| --- | --- | --- | --- | --- | --- |")
 	for _, v := range versions {
@@ -166,7 +167,7 @@ func renderVersions(w io.Writer, lines []line) {
 
 // add counts one line. The figures were read when the line was judged, so
 // they parse.
-func (v *version) add(l line) {
+func (v *agentVersion) add(l line) {
 	v.reconciled++
 	if l.passed() {
 		v.passed++
@@ -275,7 +276,7 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 	if err != nil {
 		return nil, err
 	}
-	releases, err := readReleases()
+	releases, err := readReleases(opts.changelog)
 	if err != nil {
 		return nil, err
 	}
@@ -294,10 +295,7 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 		if err != nil {
 			return nil, err
 		}
-		writer, err := writerOf(day)
-		if err != nil {
-			return nil, err
-		}
+		writer := strings.TrimPrefix(day.record.Writer, "v")
 		failure := writerFailure(writer, day.record.Day, releases)
 		for i := range dayLines {
 			dayLines[i].writer = writer
@@ -313,6 +311,7 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 // The verdicts a line fails with when the release that wrote its rows is
 // not the one that ships.
 const (
+	failNoWriter         = "day names no writer"
 	failWriterUnreleased = "writer is no release"
 	failWriterLags       = "writer lags the newest release"
 )
@@ -321,30 +320,12 @@ const (
 // out on its day: one, for the day a release ships and the pin moves.
 const maxWriterLag = 1
 
-// writerOf reads the Costroid release that day.json names as the writer of
-// the day's rows, without a leading v. A day that names none reads empty.
-func writerOf(day keptDay) (string, error) {
-	path := filepath.Join(day.directory, dayFile)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	var record struct {
-		Writer string `json:"writer"`
-	}
-	if err := json.Unmarshal(data, &record); err != nil {
-		return "", fmt.Errorf("%s: %w", path, err)
-	}
-	return strings.TrimPrefix(record.Writer, "v"), nil
-}
-
 // writerFailure judges the release that wrote a day's rows against the
 // releases out on that day, counted in the changelog's order. A writer the
-// changelog does not list, or lists after the day, is no release. A day that
-// names no writer is not judged.
+// changelog does not list, or lists after the day, is no release.
 func writerFailure(writer, day string, releases []release) string {
 	if writer == "" {
-		return ""
+		return failNoWriter
 	}
 	newest := slices.IndexFunc(releases, func(r release) bool { return r.date <= day })
 	wrote := slices.IndexFunc(releases, func(r release) bool { return r.version == writer })
@@ -370,15 +351,17 @@ const (
 
 var changelogHeading = regexp.MustCompile(`^## (\S+) \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)$`)
 
-// readReleases lists the releases in this module's changelog, newest first.
-// A second-level heading of another form is refused, so no release is
-// skipped when the lag is counted.
-func readReleases() ([]release, error) {
-	root, err := moduleRoot()
-	if err != nil {
-		return nil, err
+// readReleases lists the releases in a changelog, newest first: the one at
+// path, or this module's when path is empty. A second-level heading of
+// another form is refused, so no release is skipped when the lag is counted.
+func readReleases(path string) ([]release, error) {
+	if path == "" {
+		root, err := moduleRoot()
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join(root, changelog)
 	}
-	path := filepath.Join(root, changelog)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read the releases: %w", err)

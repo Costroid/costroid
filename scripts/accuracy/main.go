@@ -19,13 +19,16 @@ import (
 
 const usage = `Usage:
   go run ./scripts/accuracy -save DIR -day YYYY-MM-DD -rows FILE [-credential ID]
-  go run ./scripts/accuracy -write FILE [-inputs DIR] [-costroid BINARY]
-  go run ./scripts/accuracy -check FILE [-days N] [-inputs DIR] [-costroid BINARY]
+  go run ./scripts/accuracy -write FILE [-inputs DIR] [-costroid BINARY] [-changelog FILE]
+  go run ./scripts/accuracy -check FILE [-days N] [-inputs DIR] [-costroid BINARY] [-changelog FILE]
 
 -save keeps one UTC day's inputs in DIR: the rows, the provider's usage and
-cost reports cut to the credentials the rows name, and when the reports were
-saved. It reads ANTHROPIC_ADMIN_KEY and OPENAI_ADMIN_KEY. When a report's key
-is not set, it records that no provider report was saved and exits 0.
+cost reports cut to the credentials the rows name, when the reports were
+saved, and the Costroid release this command was built as. It reads
+ANTHROPIC_ADMIN_KEY and OPENAI_ADMIN_KEY. When a report's key is not set, it
+records that no provider report was saved and exits 0. Build it with
+-ldflags "-X main.version=VERSION" to name the release; any other build
+records dev, which is no release.
 
 -write re-runs costroid reconcile on each day kept under -inputs, one
 directory per day, and writes the page. -check recomputes the page the same
@@ -34,6 +37,9 @@ days on it are consecutive UTC days that each passed.
 
 -costroid names the binary that reconciles. Without it, the command builds
 cmd/costroid from this module.
+
+-changelog names the changelog a day's release is judged against. Without it,
+the command reads CHANGELOG.md at the root of the module it runs in.
 
 Exit codes: 0 done or passed, 1 the page was refused, 125 the inputs could not
 be read or the reports could not be saved.
@@ -47,6 +53,10 @@ const (
 	defaultDays   = 14
 )
 
+// version is the Costroid release this command was built as, set at link
+// time.
+var version = "dev"
+
 // errRefused marks a page that was read and turned down, as against inputs
 // that could not be read.
 var errRefused = errors.New("refused")
@@ -54,7 +64,7 @@ var errRefused = errors.New("refused")
 type options struct {
 	save, day, rows, credential string
 	write, check                string
-	inputs, costroid            string
+	inputs, costroid, changelog string
 	days                        int
 }
 
@@ -113,6 +123,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	set.StringVar(&opts.check, "check", "", "the page to check")
 	set.StringVar(&opts.inputs, "inputs", defaultInputs, "the directory of kept days, one directory per day")
 	set.StringVar(&opts.costroid, "costroid", "", "the costroid binary that reconciles")
+	set.StringVar(&opts.changelog, "changelog", "", "the changelog that lists Costroid's releases")
 	set.IntVar(&opts.days, "days", defaultDays, "how many consecutive passing days -check needs")
 	if err := set.Parse(args); err != nil {
 		return options{}, err

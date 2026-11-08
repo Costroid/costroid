@@ -11,9 +11,8 @@ import (
 	"github.com/Costroid/costroid/internal/reconcile"
 )
 
-// nameWriter records in a kept day's day.json the Costroid release that wrote
-// its rows.
-func nameWriter(t *testing.T, inputs, date, writer string) {
+// editDay rewrites a kept day's day.json through edit.
+func editDay(t *testing.T, inputs, date string, edit func(record map[string]any)) {
 	t.Helper()
 	path := filepath.Join(inputs, date, dayFile)
 	data, err := os.ReadFile(path)
@@ -24,49 +23,92 @@ func nameWriter(t *testing.T, inputs, date, writer string) {
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
 	}
-	record["writer"] = writer
-	named, err := json.MarshalIndent(record, "", "  ")
+	edit(record)
+	edited, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(named, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(path, append(edited, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// newestOn reads this module's changelog and returns it with the index of
-// the newest release out on date.
-func newestOn(t *testing.T, date string) ([]release, int) {
+// nameWriter records writer in a kept day's day.json as the release that
+// kept it.
+func nameWriter(t *testing.T, inputs, date, writer string) {
 	t.Helper()
-	releases, err := readReleases()
+	editDay(t, inputs, date, func(record map[string]any) { record["writer"] = writer })
+}
+
+// recordedWriter reads the writer a kept day's day.json records.
+func recordedWriter(t *testing.T, inputs, date string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(inputs, date, dayFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	newest := slices.IndexFunc(releases, func(r release) bool { return r.date <= date })
-	if newest < 0 || newest+2 >= len(releases) {
-		t.Fatalf("the changelog lists no release on %s with two before it", date)
+	var record dayRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
 	}
-	return releases, newest
+	return record.Writer
 }
 
 func TestAccuracyPageNamesTheWriterVersion(t *testing.T) {
-	releases, newest := newestOn(t, firstDay)
-	named, unnamed := passingDay(firstDay), passingDay("2026-11-11")
-	inputs := keepAll(t, named, unnamed)
-	nameWriter(t, inputs, named.date, "v"+releases[newest].version)
+	saved, prefixed := passingDay(firstDay), passingDay("2026-11-11")
+	inputs := keepAll(t, saved, prefixed)
+	nameWriter(t, inputs, prefixed.date, "v"+shipped)
 	page, got := writeAndCheck(t, inputs, 2)
 	if got.code != 0 {
 		t.Fatalf("-check exited %d: %s", got.code, got.stderr)
 	}
-	text := dayLine(t, page, named.date)
-	if want := "| claude-code 2.1.316, Costroid " + releases[newest].version + " |"; !strings.Contains(text, want) {
-		t.Errorf("the line does not name the release that wrote its rows, %q: %s", want, text)
+	for _, date := range []string{saved.date, prefixed.date} {
+		text := dayLine(t, page, date)
+		if want := "| claude-code 2.1.316, Costroid " + shipped + " |"; !strings.Contains(text, want) {
+			t.Errorf("the line does not name the release that wrote its rows, %q: %s", want, text)
+		}
+		if verdictOf(t, text) != "pass" {
+			t.Errorf("verdict %q, want pass: %s", verdictOf(t, text), text)
+		}
 	}
-	if verdictOf(t, text) != "pass" {
-		t.Errorf("verdict %q, want pass: %s", verdictOf(t, text), text)
+}
+
+func TestSaveRecordsTheWriter(t *testing.T) {
+	inputs := keepAll(t, passingDay(firstDay))
+	if writer := recordedWriter(t, inputs, firstDay); writer != shipped {
+		t.Errorf("-save recorded the writer %q, want the release it was built as, %s", writer, shipped)
 	}
-	if text := dayLine(t, page, unnamed.date); !strings.Contains(text, "| claude-code 2.1.316, Costroid none |") {
-		t.Errorf("a day that names no writer does not say so: %s", text)
+
+	built := version
+	t.Cleanup(func() { version = built })
+	version = "dev"
+	inputs = keepAll(t, passingDay(firstDay))
+	if writer := recordedWriter(t, inputs, firstDay); writer != "dev" {
+		t.Errorf("a development build recorded the writer %q, want dev", writer)
+	}
+	page, got := writeAndCheck(t, inputs, 1)
+	if got.code != exitRefused {
+		t.Fatalf("-check exited %d on a day a development build kept, want %d", got.code, exitRefused)
+	}
+	text := dayLine(t, page, firstDay)
+	if verdictOf(t, text) != failWriterUnreleased || !strings.Contains(text, "| claude-code 2.1.316, Costroid dev |") {
+		t.Errorf("a day a development build kept does not read as no release: %s", text)
+	}
+}
+
+func TestADayWithNoWriterFails(t *testing.T) {
+	inputs := keepAll(t, passingDay(firstDay))
+	editDay(t, inputs, firstDay, func(record map[string]any) { delete(record, "writer") })
+	page, got := writeAndCheck(t, inputs, 1)
+	if got.code != exitRefused {
+		t.Fatalf("-check exited %d on a day that names no writer, want %d", got.code, exitRefused)
+	}
+	text := dayLine(t, page, firstDay)
+	if verdictOf(t, text) != failNoWriter || !strings.Contains(text, "| claude-code 2.1.316, Costroid none |") {
+		t.Errorf("a day that names no writer does not fail as one: %s", text)
+	}
+	if !strings.Contains(got.stderr, firstDay+" did not pass") {
+		t.Errorf("-check did not name the day: %s", got.stderr)
 	}
 }
 
@@ -87,7 +129,7 @@ func TestAccuracyPinLagsNoRelease(t *testing.T) {
 		{"a release out only after the day", "1.0.0-alpha.4", "2026-11-08", failWriterUnreleased},
 		{"a day before any release", "1.0.0-alpha.1", "2026-10-31", failWriterUnreleased},
 		{"a build the changelog does not list", "dev", "2026-11-08", failWriterUnreleased},
-		{"a day that names no writer", "", "2026-11-08", ""},
+		{"a day that names no writer", "", "2026-11-08", failNoWriter},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := writerFailure(test.writer, test.day, releases); got != test.want {
@@ -96,18 +138,26 @@ func TestAccuracyPinLagsNoRelease(t *testing.T) {
 		})
 	}
 
-	shipped, newest := newestOn(t, firstDay)
-	for behind, want := range map[int]string{1: "pass", 2: failWriterLags} {
+	for writer, want := range map[string]string{"1.0.0-alpha.2": "pass", "1.0.0-alpha.1": failWriterLags} {
 		inputs := keepAll(t, passingDay(firstDay))
-		writer := shipped[newest+behind].version
 		nameWriter(t, inputs, firstDay, writer)
 		page, got := writeAndCheck(t, inputs, 1)
 		if verdict := verdictOf(t, dayLine(t, page, firstDay)); verdict != want {
-			t.Errorf("%s, %d releases behind %s: verdict %q, want %q", writer, behind, shipped[newest].version, verdict, want)
+			t.Errorf("%s against %s: verdict %q, want %q", writer, shipped, verdict, want)
 		}
 		if failed := got.code != 0; failed != (want != "pass") {
-			t.Errorf("-check exited %d with the writer %d releases behind: %s", got.code, behind, got.stderr)
+			t.Errorf("-check exited %d with the writer %s: %s", got.code, writer, got.stderr)
 		}
+	}
+}
+
+func TestModuleChangelogListsItsReleases(t *testing.T) {
+	releases, err := readReleases("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) == 0 || !slices.IsSortedFunc(releases, func(a, b release) int { return strings.Compare(b.date, a.date) }) {
+		t.Errorf("CHANGELOG.md lists %d releases, newest first by date expected: %v", len(releases), releases)
 	}
 }
 
@@ -123,10 +173,14 @@ func TestAccuracyVerdictReadsTheClassLines(t *testing.T) {
 		row  reconciledRow
 		want []string
 	}{
-		"every class within 1%":           {settled(input), nil},
-		"one class outside 1%":            {settled(input, output), []string{failClassDollars}},
-		"a report not split by class":     {settled(), nil},
-		"a class outside on a missed day": {func() reconciledRow { r := settled(output); r.State = string(reconcile.TokensMiss); return r }(), []string{failTokens, failClassDollars}},
+		"every class within 1%":       {settled(input), nil},
+		"one class outside 1%":        {settled(input, output), []string{failClassDollars}},
+		"a report not split by class": {settled(), nil},
+		"a class outside on a missed day": {func() reconciledRow {
+			r := settled(output)
+			r.State = string(reconcile.TokensMiss)
+			return r
+		}(), []string{failTokens, failClassDollars}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			judged, err := judge(test.row)

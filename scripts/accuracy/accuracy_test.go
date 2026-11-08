@@ -28,8 +28,23 @@ const (
 	firstDay      = "2026-11-10"
 )
 
+// The releases every test judges a writer against. shipped is the newest out
+// on every day the tests keep, and the release -save records.
+const (
+	shipped       = "1.0.0-alpha.3"
+	testChangelog = `# Changelog
+
+## 1.0.0-alpha.3 (2026-11-09)
+
+## 1.0.0-alpha.2 (2026-11-02)
+
+## 1.0.0-alpha.1 (2026-11-01)
+`
+)
+
 // costroid is the binary every test reconciles with, built once.
-var costroid string
+// changelogFile holds testChangelog.
+var costroid, changelogFile string
 
 func TestMain(m *testing.M) {
 	scratch, err := os.MkdirTemp("", "accuracy-test-")
@@ -42,6 +57,12 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	changelogFile = filepath.Join(scratch, "CHANGELOG.md")
+	if err := os.WriteFile(changelogFile, []byte(testChangelog), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	version = shipped
 	code := m.Run()
 	os.RemoveAll(scratch)
 	os.Exit(code)
@@ -239,7 +260,8 @@ func runAccuracy(t *testing.T, outside world, args ...string) result {
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 
-// keep saves one day through -save, as the workflow does.
+// keep saves one day through -save, as the workflow does. -save records
+// shipped as the day's writer.
 func keep(t *testing.T, inputs string, d day) result {
 	t.Helper()
 	rows := filepath.Join(t.TempDir(), "rows.jsonl")
@@ -290,10 +312,10 @@ func offline(t *testing.T) world {
 func writeAndCheck(t *testing.T, inputs string, days int) (string, result) {
 	t.Helper()
 	page := filepath.Join(t.TempDir(), "accuracy.md")
-	if got := runAccuracy(t, offline(t), "-write", page, "-inputs", inputs, "-costroid", costroid); got.code != 0 {
+	if got := runAccuracy(t, offline(t), "-write", page, "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile); got.code != 0 {
 		t.Fatalf("-write exited %d: %s", got.code, got.stderr)
 	}
-	return page, runAccuracy(t, offline(t), "-check", page, "-days", fmt.Sprint(days), "-inputs", inputs, "-costroid", costroid)
+	return page, runAccuracy(t, offline(t), "-check", page, "-days", fmt.Sprint(days), "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile)
 }
 
 func dayLine(t *testing.T, page, date string) string {
@@ -438,7 +460,7 @@ func TestTamperedLineIsRefusedBecauseTheCheckRecomputes(t *testing.T) {
 			if err := os.WriteFile(tampered, []byte(strings.Replace(string(data), honest, forged, 1)), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got := runAccuracy(t, offline(t), "-check", tampered, "-days", "14", "-inputs", inputs, "-costroid", costroid)
+			got := runAccuracy(t, offline(t), "-check", tampered, "-days", "14", "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile)
 			if got.code != exitRefused {
 				t.Fatalf("-check exited %d on a tampered line, want %d", got.code, exitRefused)
 			}
@@ -463,7 +485,7 @@ func TestChangedInputsAreRefused(t *testing.T) {
 	if err := os.WriteFile(day, append(data, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got = runAccuracy(t, offline(t), "-check", page, "-days", "1", "-inputs", inputs, "-costroid", costroid)
+	got = runAccuracy(t, offline(t), "-check", page, "-days", "1", "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile)
 	if got.code != exitRefused || !strings.Contains(got.stderr, "does not match its inputs") {
 		t.Errorf("-check exited %d after an input changed by one byte: %s", got.code, got.stderr)
 	}
@@ -578,7 +600,7 @@ func TestCheckWithoutInputsCannotPass(t *testing.T) {
 	if err := os.WriteFile(page, render(nil), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := runAccuracy(t, offline(t), "-check", page, "-inputs", filepath.Join(t.TempDir(), "absent"), "-costroid", costroid)
+	got := runAccuracy(t, offline(t), "-check", page, "-inputs", filepath.Join(t.TempDir(), "absent"), "-costroid", costroid, "-changelog", changelogFile)
 	if got.code != exitFailure {
 		t.Errorf("-check exited %d with no inputs, want %d: %s", got.code, exitFailure, got.stderr)
 	}
@@ -589,7 +611,7 @@ func TestStrayEntryInTheInputsIsRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(inputs, "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := runAccuracy(t, offline(t), "-write", filepath.Join(t.TempDir(), "accuracy.md"), "-inputs", inputs, "-costroid", costroid)
+	got := runAccuracy(t, offline(t), "-write", filepath.Join(t.TempDir(), "accuracy.md"), "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile)
 	if got.code != exitFailure || !strings.Contains(got.stderr, "is not a kept day") {
 		t.Errorf("-write exited %d over a stray file: %s", got.code, got.stderr)
 	}
