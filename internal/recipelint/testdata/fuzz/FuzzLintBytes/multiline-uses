@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("on: 0000000000000\njobs:\n 0:\n  steps:\n        uses: 0000000000000000000000000\n\n         0")

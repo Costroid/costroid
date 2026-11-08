@@ -14,7 +14,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -240,7 +243,33 @@ func (l *linter) note(node *yaml.Node, rule, format string, args ...any) {
 }
 
 func (l *linter) finding(node *yaml.Node, rule, format string, args ...any) Finding {
-	return Finding{Path: l.path, Line: node.Line, Rule: rule, Message: fmt.Sprintf(format, args...)}
+	return Finding{Path: l.path, Line: node.Line, Rule: rule, Message: message(format, args...)}
+}
+
+// message formats a finding's message on one line. A value read from the file
+// can hold a line break or another control character, so each one is written
+// as its Go escape, the way %q writes it.
+func message(format string, args ...any) string {
+	text := fmt.Sprintf(format, args...)
+	if !strings.ContainsFunc(text, breaksLine) {
+		return text
+	}
+	var escaped strings.Builder
+	for rest := text; rest != ""; {
+		r, size := utf8.DecodeRuneInString(rest)
+		if breaksLine(r) {
+			quoted := strconv.QuoteRune(r)
+			escaped.WriteString(quoted[1 : len(quoted)-1])
+		} else {
+			escaped.WriteString(rest[:size])
+		}
+		rest = rest[size:]
+	}
+	return escaped.String()
+}
+
+func breaksLine(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
 }
 
 // agentRun is one agent job, read the same way on either CI system.

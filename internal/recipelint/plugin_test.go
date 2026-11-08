@@ -256,3 +256,18 @@ func TestRecipeGivesTheAgentThePluginsServer(t *testing.T) {
 		t.Errorf("agent-args end in %s, and the prompt that follows could be read as its value", last)
 	}
 }
+
+func TestAPluginValueThatSpansLinesIsEscapedInItsFinding(t *testing.T) {
+	root := pluginTree(t)
+	servers := pluginDir + "/" + pluginServers
+	replaceIn(t, root, servers, `"command": "costroid",
+      "args": ["mcp"]`, `"type": "http",
+      "url": "https://mcp.example.com/a\nb"`)
+	report := lintTree(t, root)
+	expectPluginRule(t, report, RulePluginUnpinned, servers)
+	for _, finding := range report.Findings {
+		if line := finding.String(); strings.ContainsAny(line, "\r\n") || !strings.Contains(line, `https://mcp.example.com/a\nb`) {
+			t.Errorf("the finding does not show the server's URL escaped on one line: %q", line)
+		}
+	}
+}

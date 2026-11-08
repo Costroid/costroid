@@ -121,7 +121,7 @@ func (l *pluginLinter) flag(file string, data []byte, near, rule, format string,
 	if at := bytes.Index(data, []byte(near)); near != "" && at >= 0 {
 		line += bytes.Count(data[:at], []byte("\n"))
 	}
-	l.report.Findings = append(l.report.Findings, Finding{Path: file, Line: line, Rule: rule, Message: fmt.Sprintf(format, args...)})
+	l.report.Findings = append(l.report.Findings, Finding{Path: file, Line: line, Rule: rule, Message: message(format, args...)})
 }
 
 // source returns the directory a marketplace entry names, by path from the
