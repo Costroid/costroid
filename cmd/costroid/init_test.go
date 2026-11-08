@@ -1469,8 +1469,8 @@ var prSteps = []string{
 	"gh secret set ANTHROPIC_API_KEY",
 	"gh variable set COSTROID_PLATFORM_URL --body https://app.costroid.com",
 	"git switch --create try-costroid",
-	"git add -- .github/workflows/costroid.yml costroid.yml",
-	"git commit --message 'Add the costroid check' -- .github/workflows/costroid.yml costroid.yml",
+	"git add -- .github/workflows/costroid.yml .github/workflows/costroid-connect.yml costroid.yml",
+	"git commit --message 'Add the costroid check' -- .github/workflows/costroid.yml .github/workflows/costroid-connect.yml costroid.yml",
 	"git rev-parse HEAD",
 	"git push --set-upstream origin try-costroid",
 	"gh pr create --fill --head try-costroid",
@@ -1818,7 +1818,7 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 			if at := slices.Index(commands, command); at < 0 || at > slices.Index(commands, "git switch -c try-costroid") {
 				t.Errorf("the commands left do not set the variable before the branch: %v", commands)
 			}
-			if !strings.Contains(strings.Join(strings.Fields(stdout), " "), platformNeeds) {
+			if !strings.Contains(strings.Join(strings.Fields(stdout), " "), connectNeeds) {
 				t.Errorf("init does not say what else the platform needs:\n%s", stdout)
 			}
 		})
@@ -1856,6 +1856,103 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 			t.Errorf("%v: exit %d, stderr %q", refusal.args, code, stderr)
 		}
 	}
+}
+
+// TestInitPlatformURLWritesTheConnectWorkflow holds the workflow that binds
+// the owner: --platform-url writes recipes/github-connect.yml beside the
+// agent's recipe, pinned as that recipe is, without its copy sentence, and
+// lint-clean. It replaces a file only with --force.
+func TestInitPlatformURLWritesTheConnectWorkflow(t *testing.T) {
+	connect := filepath.FromSlash(connectWorkflow)
+	for _, test := range []struct {
+		label string
+		build buildInfo
+		args  []string
+		pin   string
+	}{
+		{"a release", releaseBuild, nil, costroidActionPath + "@" + testCommit + " # v" + testRelease},
+		{"--action-ref", buildInfo{version: "dev"}, []string{"--action-ref", otherCommit}, costroidActionPath + "@" + otherCommit + " # set by costroid init --action-ref"},
+	} {
+		for agent := range initRecipes[githubHost] {
+			t.Run(test.label+"/"+agent, func(t *testing.T) {
+				root := t.TempDir()
+				args := append([]string{"github", "--agent", agent, "--platform-url", "https://app.costroid.com"}, test.args...)
+				code, stdout, stderr := runInit(t, root, test.build, costroid.Recipes, args...)
+				if code != 0 {
+					t.Fatalf("exit %d, stderr %q", code, stderr)
+				}
+				written := readFile(t, filepath.Join(root, connect))
+				recipe := readFile(t, filepath.Join(root, workflowDir, "costroid.yml"))
+				pins := actionPin.FindAllString(written, -1)
+				if len(pins) == 0 || slices.ContainsFunc(pins, func(pin string) bool { return pin != test.pin }) {
+					t.Errorf("the connect workflow pins %v, want %s", pins, test.pin)
+				}
+				if !strings.Contains(recipe, test.pin) {
+					t.Errorf("the agent's recipe does not pin %s, so the two differ", test.pin)
+				}
+				_, shippedBody := recipeHeader(shippedRecipe(t, connectRecipeName))
+				header, writtenBody := recipeHeader([]byte(written))
+				if got, want := actionPin.ReplaceAllString(string(writtenBody), "PIN"), actionPin.ReplaceAllString(string(shippedBody), "PIN"); got != want {
+					t.Errorf("the connect workflow differs from recipes/%s beyond its pin:\n%s", connectRecipeName, written)
+				}
+				if strings.Contains(header, "Copy ") || !strings.Contains(header, "docs/connect.md says what the proof is and what it binds.") {
+					t.Errorf("the connect workflow's header: %q", header)
+				}
+				if report := recipelint.LintBytes(connectWorkflow, []byte(written)); len(report.Findings) > 0 {
+					t.Errorf("lint-recipes rejects the connect workflow: %v", report.Findings)
+				}
+				if rules := lintRules(connectWorkflow, written); len(rules) > 0 {
+					t.Errorf("costroid lint on the connect workflow: %v", rules)
+				}
+				said := "costroid: wrote " + connectWorkflow + " from recipes/" + connectRecipeName + ", "
+				if !strings.Contains(stdout, said) {
+					t.Errorf("init does not say it wrote the connect workflow:\n%s", stdout)
+				}
+				if want := "git add .github/workflows/costroid.yml " + connectWorkflow + " costroid.yml"; !slices.Contains(printedCommands(t, stdout), want) {
+					t.Errorf("the commands left do not add the connect workflow: %v", printedCommands(t, stdout))
+				}
+			})
+		}
+	}
+
+	t.Run("no --platform-url", func(t *testing.T) {
+		root := t.TempDir()
+		if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude"); code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(root, connect)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("init wrote %s without --platform-url: %v", connectWorkflow, err)
+		}
+	})
+
+	t.Run("a connect workflow that exists", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, connect), "a team's own connect job\n")
+		before := tree(t, root)
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com")
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, "costroid: init: "+connectWorkflow+" exists: pass --force to replace it\n") {
+			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		if !reflect.DeepEqual(before, tree(t, root)) {
+			t.Error("init wrote a file before it refused")
+		}
+		code, _, stderr = runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--force")
+		if code != 0 || !strings.Contains(readFile(t, filepath.Join(root, connect)), "costroid connect --platform-url") {
+			t.Errorf("--force: exit %d, stderr %q", code, stderr)
+		}
+	})
+
+	t.Run("--out names its path", func(t *testing.T) {
+		root := t.TempDir()
+		code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--out", connectWorkflow)
+		if code != exitFailure || !strings.Contains(stderr, "names the workflow --platform-url writes to bind the owner") || len(tree(t, root)) != 0 {
+			t.Errorf("exit %d, stderr %q", code, stderr)
+		}
+	})
+
+	t.Run("--existing writes nothing", func(t *testing.T) {
+		existingPatch(t, existingReview, "--platform-url", "https://app.costroid.com")
+	})
 }
 
 func TestInitSkillsWritesBothSkillFiles(t *testing.T) {

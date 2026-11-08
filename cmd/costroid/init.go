@@ -67,7 +67,9 @@ says what that comment shows.
 
 --platform-url names Costroid Platform's address. init prints the command that
 sets it as the repository variable COSTROID_PLATFORM_URL, which the recipe's
-ingest job reads, and with --existing the patch adds that ingest job.
+ingest job reads, and with --existing the patch adds that ingest job. Without
+--existing it also writes .github/workflows/costroid-connect.yml, pinned as
+the recipe is, which binds the owner to the platform from the default branch.
 docs/export.md says what else the platform needs.
 
 --skills writes .agents/skills/costroid/SKILL.md for Codex and
@@ -645,8 +647,17 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 		fmt.Fprintf(stderr, "costroid: init wrote nothing: recipes/%s breaks a rule of lint-recipes, which is a defect in costroid\n", name)
 		return exitRejected
 	}
-	if flags.platformURL != "" && !bytes.Contains(recipe, []byte("platform-url: ${{ vars."+platformVariable+" }}")) {
-		return initFailed(stderr, fmt.Errorf("recipes/%s has no ingest step that reads %s, which is a defect in costroid", name, platformVariable))
+	var connect []byte
+	if flags.platformURL != "" {
+		if !bytes.Contains(recipe, []byte("platform-url: ${{ vars."+platformVariable+" }}")) {
+			return initFailed(stderr, fmt.Errorf("recipes/%s has no ingest step that reads %s, which is a defect in costroid", name, platformVariable))
+		}
+		if connect, err = connectRecipe(repo, recipes, release, shown, flags.force, stderr); err != nil {
+			if errors.Is(err, errRecipeRule) {
+				return exitRejected
+			}
+			return initFailed(stderr, err)
+		}
 	}
 	var flow *prFlow
 	if flags.pr {
@@ -669,6 +680,13 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	}
 	fmt.Fprintf(stdout, "costroid: wrote %s from recipes/%s, %s\n", shown, name, release)
 	changed := []string{shown}
+	if connect != nil {
+		if err := createFile(repo.file(filepath.FromSlash(connectWorkflow)), connect, flags.force); err != nil {
+			return initFailed(stderr, err)
+		}
+		fmt.Fprintf(stdout, "costroid: wrote %s from recipes/%s, %s\n", connectWorkflow, connectRecipeName, release)
+		changed = append(changed, connectWorkflow)
+	}
 	settings, err := commentedConfig()
 	if err != nil {
 		return initFailed(stderr, err)
@@ -712,6 +730,49 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 		fmt.Fprintf(stdout, "\nnote: %s\n", note)
 	}
 	return 0
+}
+
+// connectRecipeName is the shipped workflow that binds the owner to Costroid
+// Platform, which --platform-url writes to connectWorkflow.
+const (
+	connectRecipeName = "github-connect.yml"
+	connectWorkflow   = ".github/workflows/costroid-connect.yml"
+)
+
+// errRecipeRule is a shipped recipe that breaks a rule of lint-recipes, whose
+// findings are printed already.
+var errRecipeRule = errors.New("a shipped recipe breaks a rule of lint-recipes")
+
+// connectRecipe is the connect workflow as init writes it, pinned as the
+// agent's recipe is. It refuses, before anything is written, a connect
+// workflow that exists unless force is set, and an --out that names its path.
+func connectRecipe(repo repository, recipes fs.FS, release pin, out string, force bool, stderr io.Writer) ([]byte, error) {
+	if out == connectWorkflow {
+		return nil, fmt.Errorf("--out %s names the workflow --platform-url writes to bind the owner: name another file", out)
+	}
+	source, err := fs.ReadFile(recipes, path.Join("recipes", connectRecipeName))
+	if err != nil {
+		return nil, fmt.Errorf("read the shipped recipe: %w", err)
+	}
+	recipe, err := pinRecipe(connectRecipeName, source, release, "")
+	if err != nil {
+		return nil, err
+	}
+	recipe = dropCopyInstruction(recipe)
+	if report := recipelint.LintBytes(connectWorkflow, recipe); len(report.Findings) > 0 {
+		for _, finding := range report.Findings {
+			fmt.Fprintln(stderr, finding)
+		}
+		fmt.Fprintf(stderr, "costroid: init wrote nothing: recipes/%s breaks a rule of lint-recipes, which is a defect in costroid\n", connectRecipeName)
+		return nil, errRecipeRule
+	}
+	switch _, err := os.Lstat(repo.file(filepath.FromSlash(connectWorkflow))); {
+	case err == nil && !force:
+		return nil, fmt.Errorf("%s exists: pass --force to replace it", connectWorkflow)
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("read %s: %w", connectWorkflow, err)
+	}
+	return recipe, nil
 }
 
 // buildRecipe is a shipped recipe as init writes it: pinned to release,
@@ -993,7 +1054,7 @@ func printSpend(stdout io.Writer, flags initFlags, recipe []byte) {
 // the agent's label is needed.
 func printAfterSteps(stdout io.Writer, flags initFlags, recipe []byte) {
 	if flags.platformURL != "" {
-		fmt.Fprint(stdout, "\n"+wrap(platformNeeds, usageWidth))
+		fmt.Fprint(stdout, "\n"+wrap(connectNeeds, usageWidth))
 	}
 	if flags.host == githubHost && bytes.Contains(recipe, []byte(agentLabel)) {
 		fmt.Fprintf(stdout, "\nBefore a first contributor's pull request:\n  gh label create %s\n", agentLabel)
@@ -1142,8 +1203,12 @@ func addInputs(block []string, postReview bool, capAfter string, cap []string) [
 	return out
 }
 
-// platformNeeds is what the ingest job needs besides the variable.
-const platformNeeds = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. docs/connect.md says how."
+// platformNeeds is what the ingest job needs besides the variable, and
+// connectNeeds the same once init wrote the connect workflow.
+const (
+	platformNeeds = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. docs/connect.md says how."
+	connectNeeds  = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. The workflow costroid-connect.yml binds it from the default branch, on a push when that branch is protected and on its daily schedule otherwise. docs/connect.md says how."
+)
 
 func printExistingPatch(repo repository, flags initFlags, release pin, stdout, stderr io.Writer) int {
 	shown := filepath.ToSlash(flags.existing)

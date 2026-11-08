@@ -31,6 +31,8 @@ costroid connect --platform-url https://app.costroid.com
 
 with `COSTROID_PLATFORM_TOKEN` set from the organization secret. When the default branch has no protection rule, the first binding waits for the first scheduled run.
 
+[`recipes/github-connect.yml`](../recipes/github-connect.yml) is that workflow. `costroid init github --platform-url https://app.costroid.com` writes it as `.github/workflows/costroid-connect.yml`, pinned to the same release as the agent's recipe, so it reaches the default branch when the pull request merges. `init --existing` writes nothing, so copy the file there yourself.
+
 ## On GitLab CI
 
 `connect` binds `gitlab-namespace:` and the number in `CI_PROJECT_NAMESPACE_ID`. GitLab fixes an ID token's audience in the pipeline file, so the job names its tenant there, and `connect` reads the token from `COSTROID_PLATFORM_PROOF`. With the [GitLab template](recipes.md) included, add this job:
