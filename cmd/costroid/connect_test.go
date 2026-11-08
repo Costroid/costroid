@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -661,4 +665,118 @@ func TestConnectDocsMatchTheCommand(t *testing.T) {
 			t.Errorf("docs/connect.md does not hold %q", want)
 		}
 	}
+}
+
+// integrationContractPath is integration/v0.2's openapi.json of
+// Costroid/costroid-schemas at 6f6ed69, copied.
+var integrationContractPath = filepath.Join("testdata", "integration-v0.2.openapi.json")
+
+// contractCode is a code integration/v0.2 writes as "CODE: what it means".
+var contractCode = regexp.MustCompile(`\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+):`)
+
+// connectContractCodes reads from integration/v0.2 every refusal code of
+// connect's two requests, GET /identity and PUT /installations/{installation_id},
+// with the status that answers it. A response names its codes in its
+// description and its examples, and a $ref response is read where it points.
+func connectContractCodes(t *testing.T) map[string]int {
+	t.Helper()
+	type response struct {
+		Ref         string `json:"$ref"`
+		Description string `json:"description"`
+		Content     map[string]struct {
+			Examples map[string]json.RawMessage `json:"examples"`
+		} `json:"content"`
+	}
+	var contract struct {
+		Paths      map[string]map[string]json.RawMessage `json:"paths"`
+		Components struct {
+			Responses map[string]response `json:"responses"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, integrationContractPath)), &contract); err != nil {
+		t.Fatal(err)
+	}
+	codes := map[string]int{}
+	for _, operation := range [][2]string{{"/identity", "get"}, {"/installations/{installation_id}", "put"}} {
+		var answers struct {
+			Responses map[string]response `json:"responses"`
+		}
+		if err := json.Unmarshal(contract.Paths[operation[0]][operation[1]], &answers); err != nil || len(answers.Responses) == 0 {
+			t.Fatalf("integration/v0.2 has no %s %s: %v", operation[1], operation[0], err)
+		}
+		for status, answer := range answers.Responses {
+			if name, ok := strings.CutPrefix(answer.Ref, "#/components/responses/"); ok {
+				answer = contract.Components.Responses[name]
+			}
+			named := []string{}
+			for _, match := range contractCode.FindAllStringSubmatch(answer.Description, -1) {
+				named = append(named, match[1])
+			}
+			for _, content := range answer.Content {
+				for example := range content.Examples {
+					if refusalCodePattern.MatchString(example) {
+						named = append(named, example)
+					}
+				}
+			}
+			number, err := strconv.Atoi(status)
+			if err != nil {
+				t.Fatalf("%s %s answers %q, not a status", operation[1], operation[0], status)
+			}
+			for _, code := range named {
+				if held, seen := codes[code]; seen && held != number {
+					t.Fatalf("integration/v0.2 answers %s with %d and %d", code, held, number)
+				}
+				codes[code] = number
+			}
+		}
+	}
+	return codes
+}
+
+// TestConnectPrintsOnlyContractCodes holds every code connect gives a
+// sentence, and the one it retries on, to the refusals integration/v0.2 lists
+// for its two requests, and gives each of those its own sentence. A refusal
+// the contract lists prints the contract's code word for word.
+func TestConnectPrintsOnlyContractCodes(t *testing.T) {
+	contract := connectContractCodes(t)
+	if len(contract) < 2 {
+		t.Fatalf("integration/v0.2 lists %d refusals of connect's requests: %v", len(contract), contract)
+	}
+	printed := slices.Sorted(maps.Keys(refusalSentences))
+	if !slices.Contains(printed, keysUnavailable) {
+		printed = append(printed, keysUnavailable)
+	}
+	for _, code := range printed {
+		if _, listed := contract[code]; !listed {
+			t.Errorf("connect names %s, which integration/v0.2 does not list for GET /identity or PUT /installations/{installation_id}", code)
+		}
+	}
+	installation := "github-owner:" + testOwner
+	named := binding{installation: installation, tenant: testTenant}
+	for _, code := range slices.Sorted(maps.Keys(contract)) {
+		t.Run(code, func(t *testing.T) {
+			says, ok := refusalSentences[code]
+			if !ok {
+				t.Fatalf("integration/v0.2 lists %s, and connect gives it no sentence", code)
+			}
+			status := contract[code]
+			stub := refuseProof(t, status, code)
+			exit, stdout, stderr := stub.connect(t, stub.githubEnv())
+			want := fmt.Sprintf("costroid: Costroid Platform refused the proof for %s: %d %s. %s\n", installation, status, code, says(named))
+			if exit != exitRejected || stdout != "" || !strings.HasSuffix(stderr, want) {
+				t.Errorf("exit %d, stdout %q, stderr %q, want it to end %q", exit, stdout, stderr, want)
+			}
+		})
+	}
+	t.Run("the identity request", func(t *testing.T) {
+		stub := newConnectStub(t)
+		env := stub.githubEnv()
+		env[platformTokenVariable] = "costroid_it_" + strings.Repeat("Z", 43)
+		exit, _, stderr := stub.connect(t, env)
+		want := "costroid: Costroid Platform refused the identity request: 401 AUTH_TOKEN_INVALID. " + refusalSentence("AUTH_TOKEN_INVALID", binding{}) + "\n"
+		if exit != exitRejected || stderr != want || contract["AUTH_TOKEN_INVALID"] != http.StatusUnauthorized {
+			t.Errorf("exit %d, stderr %q, want %q", exit, stderr, want)
+		}
+	})
 }
