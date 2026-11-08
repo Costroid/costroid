@@ -41,7 +41,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, c
 
 ```json
 {
-  "schema": "costroid.result/0.6",
+  "schema": "costroid.result/0.7",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",
@@ -92,6 +92,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, c
     "fallback_price_ids_omitted": 0
   },
   "lifetime": null,
+  "agent_stated": null,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",

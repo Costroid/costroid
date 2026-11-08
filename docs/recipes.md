@@ -131,6 +131,10 @@ The agent's recipes run no agent on a fork's pull request, and the fork's token 
 
 A failing `costroid` check can be approved by a pull-request review. [`recipes/github-approval.yml`](../recipes/github-approval.yml) re-posts the check when a writer who is not the author approves the current head; [`docs/approval.md`](approval.md) says which reviews count and for how long.
 
+## GitHub Agentic Workflows
+
+gh-aw compiles its own workflow, so Costroid runs after it. [`recipes/github-gh-aw-follow-up.yml`](../recipes/github-gh-aw-follow-up.yml) reads the finished run's `usage` artifact with `costroid ingest-run --from gh-aw`, posts the `costroid` check on its pull request with `costroid follow-up --ingested`, and sends the rows on as the agent recipes do. No gh-aw file is edited. Copy it to `.github/workflows/costroid-gh-aw.yml` on the default branch, and name your gh-aw workflow in its `workflows:` line. It needs no secret. [`docs/gh-aw.md`](gh-aw.md) says what it reads.
+
 [`docs/required-check.md`](required-check.md#a-forks-pull-request) says what a fork's pull request gets, and [`docs/security.md`](security.md#a-forks-pull-request) why the follow-up never meets its code.
 
 ## What the job log shows
@@ -207,7 +211,7 @@ Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ing
 | GitLab's note token in `costroid:report` alone                              | The job that reads the pull request's content can never write to it                 |
 | `costroid:report` holds no code, no provider key and no id token            | The job with write access runs nothing the pull request wrote                       |
 | The follow-up checks out nothing and names no head commit in a step         | The job with your repository's token never holds a fork's code                      |
-| The follow-up reads the fork's artifact only through `costroid follow-up --rows` | A fork's workflow wrote it, so nothing in it runs                              |
+| A follow-up reads the finished run's artifact only through `costroid follow-up --rows` and `costroid ingest-run --from gh-aw` | Another workflow wrote it, so nothing in it runs |
 
 `costroid lint-recipes <paths>` rejects a file that breaks one of these, and exits 1. `make check` lints every file in `recipes/` and `action/action.yml`.
 

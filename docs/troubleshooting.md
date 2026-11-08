@@ -118,6 +118,31 @@ The `read` stage. A line here ends the step with exit code 125.
 | `costroid: ingest-run needs --from KIND=PATH and --out, with KIND one of <kinds>` | `costroid ingest-run` was called without a source or without `--out` | Pass both. `--execution-file F` and `--codex-home D` still name a source |
 | `costroid: reason reader_refused: <error>` | The execution file is not the array of messages Costroid reads, so no rows were written. The rows file is empty, and the object beside it carries the reason and the error's first line, which the report shows | Report it with the error line and the claude-code-action version |
 
+## Reading a gh-aw run
+
+`costroid ingest-run --from gh-aw=DIR`, as [`docs/gh-aw.md`](gh-aw.md) shows. A line that ends the command does so with exit code 125.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: gh-aw <path> does not exist: the run uploaded no usage artifact, or its download failed` | The directory is not there, so nothing was read and no rows file was written. gh-aw's conclusion job uploads `usage`, so a run cancelled before that job left none | Read the run's artifacts list. Download `usage`, not `agent`, into a directory of its own |
+| `costroid: gh-aw <path> is not a directory: download the run's usage artifact into a directory of its own` | The path names a file | Pass the directory `gh run download` wrote to |
+| `costroid: reason reader_refused: <error>` | The artifact could not be read as gh-aw writes it, so no rows were written. The rows file is empty, and the object beside it carries the reason and the error, which the report shows. The errors are listed below | The fix beside the error |
+| `costroid: gh-aw stated <count> AI credits for this run. Costroid does not convert credits.` | gh-aw's own figure for the run, in its own unit, apart from the USD figure | None |
+| `costroid: warning: <count> requests in <file> are left out: the catalog holds no price for provider <provider>` | Records from a provider the catalog does not price, such as `gemini`, wrote no row | None. The rows hold every other request |
+| `costroid: warning: <requests> Copilot served bill by subscription and the rest bill a key, so every row reads list_equivalent, the weaker claim` | The run mixed Copilot with a provider's key | None |
+| `costroid: warning: <file> states no AI credits, so the run's credits are not stated` | The threat detection job made requests and stated no credits, so gh-aw's total for the run is unknown | None |
+
+The errors after `reason reader_refused:` for a gh-aw run:
+
+| Error | Meaning | Fix |
+| ----- | ------- | --- |
+| `gh-aw: the usage artifact holds no agent/token_usage.jsonl: download the usage artifact of a gh-aw run whose firewall was on` | The artifact holds no agent records. The firewall's proxy writes them, so a workflow with the firewall off writes none | Turn the firewall on in the workflow, or read a run that had it on |
+| `gh-aw: the usage artifact holds <entry>, which gh-aw <version> does not write there` | The directory holds a file the named gh-aw release does not put in the usage artifact, so none of it was read. A newer gh-aw that adds a file gets this error too | Download into an empty directory. If the file is gh-aw's own, report it with the gh-aw version |
+| `gh-aw: the usage artifact holds the directory <entry>, which gh-aw <version> does not write there` | The same, for a directory | The same |
+| `gh-aw: the usage artifact's <entry> is not a plain file` | A link or another special file stands where gh-aw writes a file | Download into an empty directory |
+| `gh-aw: request_id <id> appears in <file> and <file>` | Two records name one request, and a row's id is built from its request's | Report it with the gh-aw version |
+| `gh-aw: <file> line <number>: <problem>` | A record breaks the token-usage schema in a field Costroid reads, so none of the run was read | Report it with the line's `_schema` |
+
 ## Sending rows to a ledger
 
 The `ingest` stage. Each line here is a warning annotation, and the job still passes: a ledger or platform outage never blocks a merge.
@@ -208,6 +233,7 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: warning: the run's reason <reason> is not one this release knows, so it is ignored` | A newer `costroid run` wrote a reason this report does not know | Report with the release that ran the agent |
 | `costroid: warning: the run's reason <reason> is ignored, because only an empty rows file carries one` | The rows file holds rows, or could not be read, so it says more than the run's reason | None |
 | `costroid: warning: the agent's error class <class> is not one this release knows, so it is ignored` | The run's object names an error class this report does not list | Report with the release that ran the agent |
+| `costroid: warning: the run's object states a figure of the agent's own in a unit or from a source this release does not know, so it is ignored` | The run's object states `agent_stated` in a unit or from an agent `result/v0.7` does not list, or with a quantity that is not a decimal string. The comment states no such figure | Report with the release that ran the agent |
 | `costroid: warning: COSTROID_ARTIFACT_REFUSED_COUNT is <count>, which is fewer than the entries the artifact was refused for, so the report counts <count>` | The action refused the rows artifact, and the count it passed is not a whole number at or above the entries it named. The check still fails with the run reason `artifact_refused` | Report it as [`SECURITY.md`](../SECURITY.md) says: the action's install sets this count |
 | `costroid: warning: the agent's result <result> is not success, failure, cancelled or skipped, so it is ignored` | The action's `agent-result` input, or `--agent-result`, holds a value GitHub Actions does not give a job's result | Pass `${{ needs.<job>.result }}` of the agent's job |
 | `costroid: warning: the agent's job reads skipped, and the rows file is not empty, so the result is ignored` | The report was told the agent's job was skipped, and the rows file holds rows or a line that is not one. The report shows what the file holds | Pass the result of the job that wrote the rows |

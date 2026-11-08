@@ -30,10 +30,10 @@ const (
 
 // schemas are the result objects this release adds up: those that carry
 // every figure with its amount in the check run.
-var schemas = []string{"costroid.result/0.3", "costroid.result/0.4", "costroid.result/0.5", digestSchema}
+var schemas = append([]string{"costroid.result/0.3", "costroid.result/0.4", "costroid.result/0.5"}, digestSchemas...)
 
-// digestSchema is the first result object that states the digest of its rows.
-const digestSchema = "costroid.result/0.6"
+// digestSchemas are the result objects that state the digest of their rows.
+var digestSchemas = []string{"costroid.result/0.6", "costroid.result/0.7"}
 
 // usd is the one currency the policy's pull request budget is held in.
 const usd = "USD"
@@ -47,7 +47,7 @@ type Report struct {
 	CheckRun int64
 	Block    comment.Block
 	// RowsSHA256 is the digest of the rows the object reports, empty when it
-	// states none. Only a result/v0.6 object states one.
+	// states none. Only a result/v0.6 or later object states one.
 	RowsSHA256 string
 }
 
@@ -65,8 +65,9 @@ type Totals struct {
 // comment.FigureCost refuses, is refused whole: a total without it would read
 // as a smaller cost.
 //
-// The digest of the rows is read from a result/v0.6 object only. An older
-// object states none, so it counts once per check run.
+// The digest of the rows is read from a result/v0.6 or later object only. An
+// older object states none, so it counts once per check run. The agent's own
+// figure in a result/v0.7 object is never added: it is in the agent's unit.
 func Parse(object []byte) (Report, error) {
 	var block comment.Block
 	if err := json.Unmarshal(object, &block); err != nil {
@@ -88,7 +89,7 @@ func Parse(object []byte) (Report, error) {
 		}
 	}
 	report := Report{Block: block}
-	if block.Schema == digestSchema && block.RowsSHA256 != nil {
+	if slices.Contains(digestSchemas, block.Schema) && block.RowsSHA256 != nil {
 		report.RowsSHA256 = *block.RowsSHA256
 	}
 	return report, nil

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.6/result.schema.json",
-  "title": "Costroid result object, version 0.6",
-  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.7/result.schema.json",
+  "title": "Costroid result object, version 0.7",
+  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, the agent's own figure in its own unit, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.6"
+      "const": "costroid.result/0.7"
     },
     "check_run_id": {
       "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
@@ -141,6 +141,17 @@
           "$ref": "#/$defs/lifetime"
         }
       ]
+    },
+    "agent_stated": {
+      "description": "The agent's own figure for the run, in the agent's own unit, as the agent stated it. Costroid never converts it and never adds it to an amount. Null when the agent stated none, and in a copy that withholds amounts.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/agentStated"
+        }
+      ]
     }
   },
   "required": [
@@ -160,7 +171,8 @@
     "ci_run",
     "rows_sha256",
     "rows_file_sha256",
-    "lifetime"
+    "lifetime",
+    "agent_stated"
   ],
   "additionalProperties": false,
   "allOf": [
@@ -409,6 +421,9 @@
             }
           },
           "lifetime": {
+            "type": "null"
+          },
+          "agent_stated": {
             "type": "null"
           }
         }
@@ -1023,6 +1038,38 @@
           }
         }
       }
+    },
+    "agentStated": {
+      "description": "A figure the agent stated about its own run. gh-aw states its AI credits: the last ai_credits_total of the agent job's records and of the threat detection job's, added up in gh-aw's own unit.",
+      "type": "object",
+      "properties": {
+        "unit": {
+          "description": "The agent's own unit. AIC is gh-aw's AI credits.",
+          "enum": [
+            "AIC"
+          ]
+        },
+        "quantity": {
+          "$ref": "#/$defs/statedQuantity"
+        },
+        "source": {
+          "description": "The agent that stated the figure.",
+          "enum": [
+            "gh-aw"
+          ]
+        }
+      },
+      "required": [
+        "unit",
+        "quantity",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "statedQuantity": {
+      "description": "A non-negative decimal string, every digit the agent wrote kept. Never a JSON number and never scientific notation.",
+      "type": "string",
+      "pattern": "^[0-9]{1,26}(\\.[0-9]{1,32})?$"
     }
   }
 }

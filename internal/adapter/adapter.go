@@ -178,6 +178,23 @@ type Report struct {
 	// Unrecorded counts the model requests the run sent whose usage no source
 	// reported, so no row holds them. A warning says which.
 	Unrecorded int
+	// AgentStated is the agent's own figure for the run, in the agent's own
+	// unit, nil when it states none. No row holds it, and it is never
+	// converted or added to an amount.
+	AgentStated *Stated
+}
+
+// UnitAICredits is the unit of gh-aw's AI credits.
+const UnitAICredits = "AIC"
+
+// Stated is a figure an agent states about its own run, as it states it.
+type Stated struct {
+	// Unit is the agent's own unit, such as UnitAICredits.
+	Unit string
+	// Quantity is a non-negative decimal string, never a JSON number.
+	Quantity string
+	// Source names the agent that stated it.
+	Source string
 }
 
 // Plan is how one agent command runs under a budget.

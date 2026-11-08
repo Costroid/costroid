@@ -14,7 +14,7 @@ No rows file reached this report, so it shows no figures. The agent's job log sa
 
 ```json
 {
-  "schema": "costroid.result/0.6",
+  "schema": "costroid.result/0.7",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "rows_unreadable",
@@ -41,7 +41,8 @@ No rows file reached this report, so it shows no figures. The agent's job log sa
     "fallback_price_ids": [],
     "fallback_price_ids_omitted": 0
   },
-  "lifetime": null
+  "lifetime": null,
+  "agent_stated": null
 }
 ```
 

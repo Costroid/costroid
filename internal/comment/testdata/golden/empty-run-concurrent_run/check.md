@@ -14,7 +14,7 @@ This report shows no figures. Reason `concurrent_run`: another costroid run hold
 
 ```json
 {
-  "schema": "costroid.result/0.6",
+  "schema": "costroid.result/0.7",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "empty_rows_file",
@@ -41,6 +41,7 @@ This report shows no figures. Reason `concurrent_run`: another costroid run hold
     "fallback_price_ids": [],
     "fallback_price_ids_omitted": 0
   },
-  "lifetime": null
+  "lifetime": null,
+  "agent_stated": null
 }
 ```

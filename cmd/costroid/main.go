@@ -321,7 +321,10 @@ type runRecord struct {
 	agentError adapter.AgentError
 	// ciRun is the CI run the environment names, nil when it names none.
 	ciRun *comment.BlockCIRun
-	json  bool
+	// agentStated is the agent's own figure for the run, nil when it states
+	// none.
+	agentStated *adapter.Stated
+	json        bool
 }
 
 // failed adds what err says about a run that ended before its rows were
@@ -391,6 +394,7 @@ func runResult(stderr io.Writer, record runRecord) (string, error) {
 		BeforeCheck:    true,
 		RowsSHA256:     rows.rowsSHA256,
 		RowsFileSHA256: rows.fileSHA256,
+		AgentStated:    record.agentStated,
 	}
 	return comment.Result(input)
 }

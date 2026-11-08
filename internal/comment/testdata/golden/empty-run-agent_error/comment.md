@@ -14,7 +14,7 @@ This report shows no figures. Reason `agent_error`: the agent ended in an error 
 
 ```json
 {
-  "schema": "costroid.result/0.6",
+  "schema": "costroid.result/0.7",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "no_rows",
@@ -44,7 +44,8 @@ This report shows no figures. Reason `agent_error`: the agent ended in an error 
     "fallback_price_ids": [],
     "fallback_price_ids_omitted": 0
   },
-  "lifetime": null
+  "lifetime": null,
+  "agent_stated": null
 }
 ```
 

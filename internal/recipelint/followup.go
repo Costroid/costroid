@@ -18,7 +18,10 @@ const (
 
 	followUpEvent    = "workflow_run"
 	downloadArtifact = "actions/download-artifact"
-	checkoutAction   = "actions/checkout"
+	uploadArtifact   = "actions/upload-artifact"
+	// keptRowsName is the artifact the action's ingest stage fetches.
+	keptRowsName   = "costroid-rows"
+	checkoutAction = "actions/checkout"
 )
 
 var (
@@ -35,10 +38,22 @@ var (
 	// followUpCommand is the step that posts the check.
 	followUpCommand = regexp.MustCompile(`\bcostroid\s+follow-up\b`)
 
-	// rowsLine is the one line that may name the artifact: costroid reads the
-	// rows file in it as data.
-	rowsLine = regexp.MustCompile(`^\s*costroid\s+follow-up\s+--rows\s+"?(\$\{?RUNNER_TEMP\}?/)?[A-Za-z0-9._/-]+"?\s*$`)
+	// readLines are the lines that may name the artifact: costroid follow-up
+	// reads the rows file in it as data, and costroid ingest-run reads a gh-aw
+	// usage artifact as data and writes rows outside it.
+	readLines = []*regexp.Regexp{
+		regexp.MustCompile(`^\s*costroid\s+follow-up\s+(--ingested\s+)?--rows\s+` + runnerPath + `\s*$`),
+		regexp.MustCompile(`^\s*costroid\s+ingest-run\s+--from\s+gh-aw=` + runnerPath + `\s+--out\s+` + runnerPath + `\s*$`),
+	}
+
+	// keptRows is the one upload a follow-up may make from the runner's
+	// directory: the rows and the run's object ingest-run wrote, under the name
+	// the action's ingest stage fetches.
+	keptRows = regexp.MustCompile(`^\$\{\{\s*runner\.temp\s*\}\}/costroid-rows\.(jsonl|run\.json)$`)
 )
+
+// runnerPath is a path under the runner's directory, quoted or not.
+const runnerPath = `"?(\$\{?RUNNER_TEMP\}?/)?[A-Za-z0-9._/-]+"?`
 
 // isFollowUp reports a workflow that a workflow_run event starts.
 func isFollowUp(on *yaml.Node) bool {
@@ -65,9 +80,11 @@ func (l *linter) followUp(root *yaml.Node) {
 }
 
 // followUpPermissions holds a follow-up job to one write, checks, because it
-// runs with the base repository's token after a workflow a fork can edit. The
-// job that posts reads the head commit's pull requests, so it needs
-// pull-requests: read, without which costroid follow-up posts nothing.
+// runs with the base repository's token after a workflow a fork can edit. A
+// job whose one step is the action's ingest stage may also write id-token,
+// which proves the run to the ledger. The job that posts reads the head
+// commit's pull requests, so it needs pull-requests: read, without which
+// costroid follow-up posts nothing.
 func (l *linter) followUpPermissions(root *yaml.Node, job entry, steps []*yaml.Node) {
 	permissions := field(job.value, "permissions")
 	if permissions == nil {
@@ -75,7 +92,7 @@ func (l *linter) followUpPermissions(root *yaml.Node, job entry, steps []*yaml.N
 	}
 	granted := grants(permissions)
 	for _, scope := range slices.Sorted(maps.Keys(granted)) {
-		if granted[scope] != "write" || scope == "checks" {
+		if granted[scope] != "write" || scope == "checks" || scope == "id-token" && sendsRowsAlone(steps) {
 			continue
 		}
 		held := scope + ": write"
@@ -109,12 +126,12 @@ func (l *linter) followUpStep(step *yaml.Node, artifacts []string) {
 	if match := followUpHead.FindString(text(step)); match != "" {
 		l.add(step, RuleFollowUpCode, "%s names the pull request's head: a follow-up never fetches it", match)
 	}
-	if ref == downloadArtifact {
+	if ref == downloadArtifact || ref == uploadArtifact && uploadsKeptRows(step) {
 		return
 	}
 	for _, name := range []string{"with", "env"} {
 		if value := field(step, name); value != nil && namesArtifact(text(value), artifacts) {
-			l.add(value, RuleFollowUpArtifact, "a step's %s names the finished run's files: only costroid follow-up --rows reads them", name)
+			l.add(value, RuleFollowUpArtifact, "a step's %s names the finished run's files: only costroid follow-up --rows and costroid ingest-run --from gh-aw read them", name)
 		}
 	}
 	run := field(step, "run")
@@ -125,8 +142,8 @@ func (l *linter) followUpStep(step *yaml.Node, artifacts []string) {
 		l.add(run, RuleFollowUpCode, "a follow-up fetches no code")
 	}
 	for _, line := range strings.Split(run.Value, "\n") {
-		if namesArtifact(line, artifacts) && !rowsLine.MatchString(line) {
-			l.add(run, RuleFollowUpArtifact, "a script names the finished run's files: only costroid follow-up --rows reads them")
+		if namesArtifact(line, artifacts) && !slices.ContainsFunc(readLines, func(read *regexp.Regexp) bool { return read.MatchString(line) }) {
+			l.add(run, RuleFollowUpArtifact, "a script names the finished run's files: only costroid follow-up --rows and costroid ingest-run --from gh-aw read them")
 			return
 		}
 	}
@@ -164,4 +181,24 @@ func namesArtifact(text string, artifacts []string) bool {
 		}
 	}
 	return false
+}
+
+// uploadsKeptRows reports an upload of the rows and the run's object alone,
+// under the name the action's ingest stage fetches.
+func uploadsKeptRows(step *yaml.Node) bool {
+	with := field(step, "with")
+	if scalarField(with, "name") != keptRowsName {
+		return false
+	}
+	paths := strings.Split(strings.TrimSpace(scalarField(with, "path")), "\n")
+	return !slices.ContainsFunc(paths, func(path string) bool { return !keptRows.MatchString(strings.TrimSpace(path)) })
+}
+
+// sendsRowsAlone reports a job whose one step is the action's ingest stage.
+func sendsRowsAlone(steps []*yaml.Node) bool {
+	if len(steps) != 1 {
+		return false
+	}
+	ref, _, _ := strings.Cut(scalarField(steps[0], "uses"), "@")
+	return strings.EqualFold(ref, costroidAction) && scalarField(field(steps[0], "with"), "stage") == "ingest"
 }

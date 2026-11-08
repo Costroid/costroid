@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/adapter/ghaw"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
@@ -67,6 +68,9 @@ type Figure struct {
 	Tokens map[focus.TokenClass]decimal.Decimal
 	// Catalogs are the catalog versions of the figure's rows.
 	Catalogs []Data
+	// ProxyCap is the AI-credit cap gh-aw's proxy held the run to, as every
+	// row of the figure states it, empty when one states none or another.
+	ProxyCap string
 }
 
 // Trace is the rows of one Figure that share a catalog, a token class and a
@@ -144,6 +148,17 @@ func (r row) tag(key string) (string, error) {
 	return value, nil
 }
 
+// proxyCap is the cap a gh-aw row's description states its proxy held the run
+// to, empty for any other row. The note is matched, and only its digits are
+// kept.
+func (r row) proxyCap() string {
+	if agent, err := r.tag(focus.TagAgent); err != nil || agent != ghaw.Name {
+		return ""
+	}
+	limit, _ := ghaw.ProxyCap(r.ChargeDescription)
+	return limit
+}
+
 // fallback reports whether the writer noted the fallback tier. The note is
 // matched, never shown.
 func (r row) fallback() bool {
@@ -171,6 +186,9 @@ type figureTally struct {
 	figure   Figure
 	traces   map[traceKey]*Trace
 	catalogs map[Data]struct{}
+	// proxyCaps are the gh-aw caps the rows state, an empty one for a row
+	// that states none.
+	proxyCaps map[string]struct{}
 }
 
 // spendKey is what a budget is compared within: one currency, one basis.
@@ -272,14 +290,16 @@ func (t *tally) add(line []byte) error {
 				Currency: key.currency, Basis: key.basis, Attribution: key.attribution, Enforcement: key.enforcement,
 				Tokens: map[focus.TokenClass]decimal.Decimal{},
 			},
-			traces:   map[traceKey]*Trace{},
-			catalogs: map[Data]struct{}{},
+			traces:    map[traceKey]*Trace{},
+			catalogs:  map[Data]struct{}{},
+			proxyCaps: map[string]struct{}{},
 		}
 		t.figures[key] = entry
 	}
 	entry.figure.Cost = entry.figure.Cost.Add(priced.Cost)
 	entry.figure.Rows++
 	entry.add(priced)
+	entry.proxyCaps[parsed.proxyCap()] = struct{}{}
 	t.logRequest(spendKey{key.currency, key.basis}, parsed, priced)
 	if parsed.fallback() {
 		entry.figure.FallbackRows++
@@ -527,6 +547,11 @@ func (t *tally) ledger() Ledger {
 func (f *figureTally) withTrace() Figure {
 	figure := f.figure
 	figure.Catalogs, _ = capped(f.catalogs)
+	if len(f.proxyCaps) == 1 {
+		for limit := range f.proxyCaps {
+			figure.ProxyCap = limit
+		}
+	}
 	figure.Trace = make([]Trace, 0, len(f.traces))
 	for _, line := range f.traces {
 		figure.Trace = append(figure.Trace, *line)

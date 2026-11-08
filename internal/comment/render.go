@@ -30,9 +30,9 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.6 in
+	// schema names the result object's contract, result/v0.7 in
 	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.6"
+	schema = "costroid.result/0.7"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -221,6 +221,11 @@ type Input struct {
 	// Lifetime is the pull request's total, nil off a pull request. It is
 	// withheld with the amounts.
 	Lifetime *Lifetime
+	// AgentStated is the agent's own figure for the run, in its own unit, nil
+	// when it states none. It is shown on a line of its own, never added to
+	// an amount, and withheld with the amounts. A unit or a source outside the
+	// closed lists is dropped.
+	AgentStated *adapter.Stated
 	// RunURL is the CI run's page as the environment names it, empty when it
 	// names none. A value outside runURLPattern is dropped.
 	RunURL string
@@ -467,6 +472,9 @@ type view struct {
 	// AgentError is the sentence for an agent error beside figures, empty
 	// otherwise.
 	AgentError string
+	// AgentStated is the agent's own figure for the run, empty when it states
+	// none or amounts are withheld.
+	AgentStated string
 	// CheckRuns is false on GitLab, which has no check run to name.
 	CheckRuns   bool
 	ShowAmounts bool
@@ -505,6 +513,7 @@ func (i Input) view() view {
 		RunLine:        runLine(i.HeadSHA, i.RunURL),
 		Why:            i.why(),
 		AgentError:     i.agentErrorBesideFigures(),
+		AgentStated:    i.agentStatedLine(shown),
 		ShowAmounts:    shown,
 		AmountsOff:     i.Amounts == AmountsOff,
 		FiguresOmitted: i.Ledger.FiguresOmitted,
@@ -530,7 +539,7 @@ func (i Input) view() view {
 			Basis:       basisLabels[figure.Basis],
 			Attribution: figure.Attribution,
 			Enforcement: figure.Enforcement,
-			Note:        enforcementNotes[figure.Enforcement],
+			Note:        figureNote(figure, shown),
 		}
 		if figure.FallbackRows > 0 {
 			line.Mark = fallbackMark
@@ -649,6 +658,16 @@ func (i Input) firstLine(shown bool) string {
 		line = "This run was priced " + listed(clauses, 0) + "."
 	}
 	return line + " " + heldSentence(weakestGrade(i.Ledger.Figures))
+}
+
+// figureNote says how far a figure's grade held. A gh-aw figure at grade none
+// names the cap gh-aw's proxy held the run to, which Costroid did not set and
+// does not price; a withheld copy leaves the cap out with the amounts.
+func figureNote(figure Figure, shown bool) string {
+	if figure.Enforcement == "none" && figure.ProxyCap != "" && shown {
+		return fmt.Sprintf("gh-aw's proxy held this run to %s AI credits, priced by gh-aw, not by Costroid", figure.ProxyCap)
+	}
+	return enforcementNotes[figure.Enforcement]
 }
 
 // heldSentence says what held the run to its cap, by the weakest grade.
