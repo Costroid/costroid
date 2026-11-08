@@ -287,6 +287,7 @@ Exit codes of follow-up:
 
 const reconcileHelp = `Usage:
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID]
+                     [--upstream-credential SOURCE=ID]
                      [--out FILE] [--reports DIR --as-of T]
 
 reconcile compares rows with the provider's usage and cost reports, per
@@ -299,8 +300,11 @@ ANTHROPIC_ADMIN_KEY or OPENAI_ADMIN_KEY. The key never leaves the process.
 --as-of states when they were saved. docs/reconcile.md names the files.
 
 A row's credential is its SubAccountId. --credential names one for rows where
-that is null. --out keeps one row per source, credential and day, and a rerun
-replaces it. Rerun through the eighth day after month end, when restating stops.
+that is null. A gateway's rows name its run keys, which the provider never
+sees: --upstream-credential names the key the gateway sends with, once per
+source, such as anthropic=apikey_01Example. --out keeps one row per source,
+credential and day, and a rerun replaces it. Rerun through the eighth day after
+month end, when restating stops.
 
 Exit codes of reconcile:
   0                 no token miss and no price miss

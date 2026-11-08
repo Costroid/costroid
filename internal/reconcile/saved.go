@@ -29,6 +29,10 @@ var SavedReportFiles = map[string]string{
 // Anthropic's group, and each result of an OpenAI bucket.
 var credentialFields = []string{"api_key_id", "workspace_id", "project_id"}
 
+// actorFields are the fields an Anthropic group's actor names its identity in:
+// a service account, or the key itself when no identity stands behind it.
+var actorFields = []string{"service_account_id", "api_key_id"}
+
 // Recorder sends each request through Client and keeps the response in
 // Directory, so the report can be reconciled again with no key. A saved report
 // is one response, so a second request for one file is refused: that report
@@ -144,10 +148,18 @@ func keepResults(bucket map[string]json.RawMessage, credentials []string) error 
 	return nil
 }
 
-// names reports whether a record's credential fields name one of the
-// credentials. A null or absent field names none.
+// names reports whether a record's credential fields, or its actor's, name one
+// of the credentials. A null or absent field names none.
 func names(fields map[string]json.RawMessage, credentials []string) bool {
-	for _, field := range credentialFields {
+	var actor map[string]json.RawMessage
+	if json.Unmarshal(fields["actor"], &actor) != nil {
+		actor = nil
+	}
+	return namesIn(fields, credentialFields, credentials) || namesIn(actor, actorFields, credentials)
+}
+
+func namesIn(fields map[string]json.RawMessage, named, credentials []string) bool {
+	for _, field := range named {
 		var value *string
 		if json.Unmarshal(fields[field], &value) == nil && value != nil && slices.Contains(credentials, *value) {
 			return true

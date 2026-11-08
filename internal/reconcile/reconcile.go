@@ -77,6 +77,10 @@ const (
 	CauseTier         CauseName = "tier"
 	CauseResidency    CauseName = "residency"
 	CauseContractRate CauseName = "contract_rate"
+	// CauseRunSpansDays is a run that crossed midnight UTC. The ledger dates a
+	// run's tokens by the run's start, and the provider dates each request by
+	// when it was served, so the days differ and together they match.
+	CauseRunSpansDays CauseName = "run_spans_days"
 )
 
 // Key is what makes a Row idempotent.
@@ -97,7 +101,18 @@ type Row struct {
 	Tokens          []TokenCheck `json:"tokens"`
 	Prices          []PriceCheck `json:"prices"`
 	Dollars         *DollarCheck `json:"dollars"`
+	Span            *Span        `json:"span"`
 	Notes           []string     `json:"notes"`
+}
+
+// Span names the days a run crossed midnight UTC over, compared as one
+// because a day of them missed on its own and together they matched. The row
+// of From holds the joined token comparison, and the rows of later days hold
+// none. It is null on a row compared on its own day.
+type Span struct {
+	Cause CauseName `json:"cause"`
+	From  string    `json:"from"`
+	To    string    `json:"to"`
 }
 
 // TokenCheck compares one token class. Delta is Provider minus Ledger.
@@ -255,13 +270,20 @@ func (c comparison) row(key Key) (Row, error) {
 	group := c.ledger.group(key)
 	usage := c.report.usageOf(key)
 	row.Tokens = compareTokens(key.Source, group, usage)
+	joined, err := c.joinSpan(key, &row)
+	if err != nil || row.State == Pending {
+		return row, err
+	}
 	row.State = Matched
-	if slices.ContainsFunc(row.Tokens, func(check TokenCheck) bool { return !check.Within }) {
+	if missed(row.Tokens) {
 		row.State = TokensMiss
 		row.Notes = append(row.Notes, "tokens missed the 1% tolerance: this is a defect")
 	}
-	if slices.ContainsFunc(row.Tokens, func(check TokenCheck) bool { return check.Class == cacheWrite }) {
+	if slices.ContainsFunc(joined, func(check TokenCheck) bool { return check.Class == cacheWrite }) {
 		row.Notes = append(row.Notes, "cache writes compared as one figure, because the ledger cannot see their lifetime")
+	}
+	if group.upstream {
+		row.Notes = append(row.Notes, "rows drawn on a gateway's run keys are compared under the provider key the gateway holds, so the provider's figure counts every request the gateway sent with it")
 	}
 	prices, notes, err := c.prices(key, group, usage)
 	if err != nil {
@@ -275,13 +297,107 @@ func (c comparison) row(key Key) (Row, error) {
 		}
 		row.Notes = append(row.Notes, "a price the report implies missed the catalog past the report's last stated digit: this is a defect")
 	}
-	dollars, notes, err := c.dollars(key, group, usage, row.Tokens)
+	dollars, notes, err := c.dollars(key, group, usage, joined)
 	if err != nil {
 		return Row{}, err
+	}
+	if row.Span != nil {
+		if dollars, err = c.spanCause(key, group, usage, dollars); err != nil {
+			return Row{}, err
+		}
 	}
 	row.Dollars = &dollars
 	row.Notes = append(row.Notes, notes...)
 	return row, nil
+}
+
+func missed(checks []TokenCheck) bool {
+	return slices.ContainsFunc(checks, func(check TokenCheck) bool { return !check.Within })
+}
+
+// joinSpan compares the days a run crossed midnight UTC over as one, when a
+// day of them misses on its own. It returns the checks that judge the row's
+// tokens: the joined ones when the days together match, the day's own
+// otherwise. A day it cannot join, because another day of the run is outside
+// the range or not yet reported, reads pending, because half a run is not a
+// miss.
+func (c comparison) joinSpan(key Key, row *Row) ([]TokenCheck, error) {
+	from, to := c.ledger.span(key)
+	days := daysFrom(from, to)
+	if len(days) == 1 || !slices.ContainsFunc(days, c.missesAlone(key)) {
+		return row.Tokens, nil
+	}
+	if !c.options.Range.holds(from) || !c.options.Range.holds(to) {
+		row.State, row.Tokens = Pending, nil
+		row.Notes = append(row.Notes, fmt.Sprintf("a run on this credential crossed midnight UTC: reconcile from %s to %s to compare those days as one", from, to))
+		return nil, nil
+	}
+	if waiting := slices.IndexFunc(days, func(day string) bool { return !c.settled(day) }); waiting >= 0 {
+		row.State, row.Tokens = Pending, nil
+		row.Notes = append(row.Notes, fmt.Sprintf("a run on this credential crossed midnight UTC into %s, which the provider has not finished reporting", days[waiting]))
+		return nil, nil
+	}
+	var usage []Usage
+	for _, day := range days {
+		usage = append(usage, c.report.usageOf(Key{key.Source, key.Credential, day})...)
+	}
+	joined := compareTokens(key.Source, c.ledger.joined(key.Source, key.Credential, days), usage)
+	if missed(joined) {
+		row.Notes = append(row.Notes, fmt.Sprintf("a run on this credential crossed midnight UTC, and the tokens of %s to %s miss together too", from, to))
+		return row.Tokens, nil
+	}
+	row.Span = &Span{Cause: CauseRunSpansDays, From: from, To: to}
+	row.Tokens = nil
+	if key.Day == from {
+		row.Tokens = joined
+		row.Notes = append(row.Notes, fmt.Sprintf("a run crossed midnight UTC: the ledger dates its tokens by its start, and the provider by when each request was served, so %s to %s are compared as one, and every class matched within 1%%", from, to))
+	} else {
+		row.Notes = append(row.Notes, fmt.Sprintf("a run crossed midnight UTC: this day's tokens are compared with %s's as one, on that day's row", from))
+	}
+	return joined, nil
+}
+
+// missesAlone reports whether a settled day in the range misses on its own.
+func (c comparison) missesAlone(key Key) func(string) bool {
+	return func(day string) bool {
+		at := Key{key.Source, key.Credential, day}
+		if !c.options.Range.holds(day) || !c.settled(day) {
+			return false
+		}
+		return missed(compareTokens(key.Source, c.ledger.group(at), c.report.usageOf(at)))
+	}
+}
+
+// spanCause names what the day's tokens moved to or from another day of the
+// run, priced at the standard tier through the pinned catalog, as the cause
+// run_spans_days. A day with no bill has no residual to name.
+func (c comparison) spanCause(key Key, group *ledgerGroup, usage []Usage, check DollarCheck) (DollarCheck, error) {
+	if check.Verdict == NoBill {
+		return check, nil
+	}
+	walk := walker{catalog: c.options.Catalog, source: key.Source, at: parseDay(key.Day)}
+	mine, err := walk.price(group.records())
+	if err != nil {
+		return DollarCheck{}, err
+	}
+	theirs, err := walk.price(usage)
+	if err != nil {
+		return DollarCheck{}, err
+	}
+	amount := theirs.standard.Sub(mine.standard)
+	if amount.Sign() != 0 {
+		check.Causes = append(check.Causes, Cause{CauseRunSpansDays, amount})
+		check.Unattributed = check.Unattributed.Sub(amount)
+	}
+	return check, nil
+}
+
+func daysFrom(from, to string) []string {
+	var days []string
+	for at := parseDay(from); at.Format(dayLayout) <= to; at = at.AddDate(0, 0, 1) {
+		days = append(days, at.Format(dayLayout))
+	}
+	return days
 }
 
 // settled reports whether the day has ended, the report's lag has passed and

@@ -160,6 +160,10 @@ When the prices cannot match, lower the key's budget by the ratio. If the gatewa
 
 The journey once showed USD 0.013951, and that figure was not a price. The mock model is priced in [`e2e/testdata/litellm.yaml`](../e2e/testdata/litellm.yaml) at the catalog's prices, and LiteLLM charged each request USD 0.006, USD 0.001 input and USD 0.005 output by its `x-litellm-response-cost-input` and `-output` headers. USD 0.013951 was the key's counter read while the third request's cost was still being settled. LiteLLM reserves an estimate of a request's cost before it runs and settles it to the real cost after (`reserve_budget_for_request` and `reconcile_budget_reservation` in [`budget_reservation.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/proxy/spend_tracking/budget_reservation.py)). How the counter came to that exact figure was not traced.
 
+## Reconcile the gateway's rows
+
+A provider's report never names a run's key. It names the key the gateway sends with, the one in LiteLLM's model list. `costroid reconcile --upstream-credential anthropic=<that key's id>` compares every run key's rows under it. [Compare a ledger with a provider's report](reconcile.md#a-gateways-rows) says more.
+
 ## When the gateway's store fails
 
 LiteLLM keeps spend in a database. With `allow_requests_on_db_unavailable: true` it keeps serving while the database is down: in the e2e journey, with its database stopped, LiteLLM v1.108.1 answered the next request with HTTP 200. `costroid run` asks the gateway's public `/health/readiness` before the agent starts, every two seconds while it runs, and after it ends. If any answer names a database that is not `connected`, or the gateway does not answer, the run's rows read `none`. An outage that starts and ends between two probes is not seen.

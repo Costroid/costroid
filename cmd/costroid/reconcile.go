@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,10 +32,32 @@ type clock func() time.Time
 type reconcileFlags struct {
 	rows       string
 	credential string
+	upstream   map[string]string
 	out        string
 	days       reconcile.Range
 	reports    string
 	asOf       time.Time
+}
+
+// upstreamSources are the sources an upstream credential can be named for.
+var upstreamSources = []string{reconcile.SourceAnthropic, reconcile.SourceOpenAI}
+
+// upstreamFlag reads --upstream-credential SOURCE=ID, once per source.
+func upstreamFlag(into map[string]string) func(string) error {
+	return func(value string) error {
+		source, id, found := strings.Cut(value, "=")
+		if !found || id == "" {
+			return fmt.Errorf("%q must read SOURCE=ID, such as anthropic=apikey_01Example", value)
+		}
+		if !slices.Contains(upstreamSources, source) {
+			return fmt.Errorf("source %q must be one of %s", source, strings.Join(upstreamSources, ", "))
+		}
+		if _, named := into[source]; named {
+			return fmt.Errorf("%s is named twice: a gateway holds one key per provider", source)
+		}
+		into[source] = id
+		return nil
+	}
 }
 
 func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
@@ -45,6 +68,8 @@ func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
 	from := set.String("from", "", "the first UTC day, YYYY-MM-DD")
 	to := set.String("to", "", "the last UTC day, YYYY-MM-DD")
 	credential := set.String("credential", "", "the credential of rows whose SubAccountId is null")
+	upstream := map[string]string{}
+	set.Func("upstream-credential", "SOURCE=ID: the provider key a gateway holds, which rows drawn on its run keys are compared under", upstreamFlag(upstream))
 	out := set.String("out", "", "the file reconciliation rows are kept in, one per source, credential and day")
 	reports := set.String("reports", "", "a directory of saved provider reports, read in place of the provider")
 	asOf := set.String("as-of", "", "when the saved reports were saved, as a UTC instant")
@@ -58,7 +83,7 @@ func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
 	if err != nil {
 		return reconcileFlags{}, err
 	}
-	flags := reconcileFlags{rows: *rows, credential: *credential, out: *out, days: days, reports: *reports}
+	flags := reconcileFlags{rows: *rows, credential: *credential, upstream: upstream, out: *out, days: days, reports: *reports}
 	if (*reports == "") != (*asOf == "") {
 		return reconcileFlags{}, errors.New("--reports and --as-of go together")
 	}
@@ -114,6 +139,11 @@ func reconcileRows(ctx context.Context, flags reconcileFlags, getenv func(string
 	if ledger.Uncredentialed > 0 {
 		return reconcile.Result{}, fmt.Errorf("%d rows have a null SubAccountId: pass --credential to name their credential", ledger.Uncredentialed)
 	}
+	for _, source := range upstreamSources {
+		if count := ledger.Gatewayed[source]; count > 0 {
+			return reconcile.Result{}, fmt.Errorf("%d %s rows were drawn on a gateway's run keys, which the provider's report never names: pass --upstream-credential %s=ID with the id of the key the gateway sends with", count, source, source)
+		}
+	}
 	if ledger.Repeats > 0 {
 		fmt.Fprintf(stderr, "costroid: warning: %d repeated rows in %s were counted once\n", ledger.Repeats, flags.rows)
 	}
@@ -147,7 +177,7 @@ func readLedger(flags reconcileFlags) (*reconcile.Ledger, error) {
 	if err != nil {
 		return nil, err
 	}
-	ledger, err := reconcile.ReadLedger(rows, flags.days, flags.credential)
+	ledger, err := reconcile.ReadLedgerWith(rows, flags.days, reconcile.LedgerOptions{Credential: flags.credential, Upstream: flags.upstream})
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.rows, closeErr)
 	}
