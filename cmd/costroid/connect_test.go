@@ -439,6 +439,88 @@ func TestConnectRetriesOnceWhenKeysAreUnavailable(t *testing.T) {
 	}
 }
 
+// appEntry is an identity entry for a binding made through the GitHub App,
+// as integration/v0.2's Installation.app-attestation.json states one.
+func appEntry(owner, status string, provenAt time.Time) string {
+	return `{"id":"github:58120394","tenant_id":"` + testTenant + `","owner_id":"` + owner + `","status":"` + status +
+		`","proof_kind":"app_attestation","bound_at":"2026-08-01T08:02:11Z","proven_at":"` + provenAt.Format(time.RFC3339) + `","ended_at":null}`
+}
+
+// TestConnectProvesTheOwnerBesideAnAppBinding sends the job's proof for
+// github-owner:, which the recipes export under, whatever App binding the
+// tenant holds of the same owner. Only that exact binding, active and proven
+// in the last 20 hours, saves the proof. doctor states the github-owner:
+// binding as it stands, and the App binding on a line of its own.
+func TestConnectProvesTheOwnerBesideAnAppBinding(t *testing.T) {
+	appProven := connectNow.Add(-90 * 24 * time.Hour)
+	app := appEntry(testOwner, "active", appProven)
+	owner := "github-owner:" + testOwner
+	fresh := connectNow.Add(-time.Hour)
+	entries := func(list ...string) string { return "[" + strings.Join(list, ",") + "]" }
+	inner := func(list string) string { return strings.TrimSuffix(strings.TrimPrefix(list, "["), "]") }
+	for _, tc := range []struct {
+		name, installations string
+		proofs              int
+	}{
+		{name: "the App alone", installations: entries(app), proofs: 1},
+		{name: "the App beside a stale proof", installations: entries(inner(activeInstallation(owner, connectNow.Add(-8*24*time.Hour))), app), proofs: 1},
+		{name: "the App beside a proof older than 20 hours", installations: entries(inner(activeInstallation(owner, connectNow.Add(-21*time.Hour))), app), proofs: 1},
+		{name: "the App beside a fresh proof", installations: entries(inner(activeInstallation(owner, fresh)), app), proofs: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newConnectStub(t)
+			stub.installations = tc.installations
+			code, stdout, stderr := stub.connect(t, stub.githubEnv())
+			if code != 0 || stderr != "" {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if len(stub.proofs) != tc.proofs {
+				t.Fatalf("%d proofs, want %d", len(stub.proofs), tc.proofs)
+			}
+			want := "costroid: " + owner + " is bound to tenant " + testTenant + ", proven at 2026-11-08T08:59:30Z\n"
+			if tc.proofs == 0 {
+				want = "costroid: " + owner + " is bound to tenant " + testTenant + ", proven at " + fresh.Format(time.RFC3339) + ", so no proof was sent\n"
+			} else if stub.proofs[0].path != owner {
+				t.Errorf("the proof went to /installations/%s, want %s", stub.proofs[0].path, owner)
+			}
+			if stdout != want {
+				t.Errorf("stdout %q, want %q", stdout, want)
+			}
+		})
+	}
+
+	stub := newConnectStub(t)
+	stub.installations = entries(app)
+	env := map[string]string{platformTokenVariable: testIntegrationToken}
+	if code, _, stderr := stub.connect(t, env, "--installation-id", owner); code != exitFailure || !strings.HasPrefix(stderr, "costroid: "+owner+" has no binding to tenant ") {
+		t.Errorf("outside CI beside an App binding: exit %d, stderr %q", code, stderr)
+	}
+
+	appLine := "ok: tenant " + testTenant + " also holds owner " + testOwner + " through the GitHub App installation github:58120394, proven at " + appProven.Format(time.RFC3339)
+	for _, tc := range []struct {
+		name, installations, owned string
+		app                        bool
+	}{
+		{"the App alone", entries(app), "warn: tenant " + testTenant + " holds no binding of " + owner + ", so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND", true},
+		{"the App beside a stale proof", entries(inner(activeInstallation(owner, connectNow.Add(-8*24*time.Hour))), app), "warn: " + owner + " is bound to tenant " + testTenant + ", last proven at 2026-10-31T09:00:00Z, more than 7 days ago", true},
+		{"a revoked App", entries(appEntry(testOwner, "revoked", appProven)), "warn: tenant " + testTenant + " holds no binding of " + owner, false},
+		{"the App of another owner", entries(appEntry("1", "active", appProven)), "warn: tenant " + testTenant + " holds no binding of " + owner, false},
+	} {
+		t.Run("doctor reads "+tc.name, func(t *testing.T) {
+			stub := newDoctorPlatform(t)
+			stub.installations = tc.installations
+			root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+			_, stdout, stderr := runDoctor(t, root, stub.platformHost("ANTHROPIC_API_KEY\nCOSTROID_PLATFORM_TOKEN\n"))
+			if lineWith(stdout, tc.owned) == "" {
+				t.Errorf("no line starts %q:\n%s%s", tc.owned, stdout, stderr)
+			}
+			if got := lineWith(stdout, appLine) == appLine; got != tc.app {
+				t.Errorf("the App line is there: %v, want %v:\n%s", got, tc.app, stdout)
+			}
+		})
+	}
+}
+
 // secretsIn are the values no line of connect may hold: the integration
 // token, GitHub's request token, and both proofs.
 var secretsIn = []string{testIntegrationToken, testRequestToken, testRunToken, testGitLabProof, "the platform's own words"}

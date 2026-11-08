@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/gateway"
@@ -68,7 +69,9 @@ both, --installation-id is needed, and connect only reads whether it is bound.
 The platform takes a proof from a scheduled run or a push to a protected
 branch. A binding stays current for 7 days after its last proof, so a daily
 schedule keeps it. When the installation was proven in the last 20 hours,
-connect sends nothing. When the platform cannot read the CI system's keys,
+connect sends nothing. A binding made through the GitHub App does not stop
+it: the recipes export under github-owner:, so connect proves that binding
+beside the App's. When the platform cannot read the CI system's keys,
 connect sends the proof once more after the Retry-After the platform names,
 when that is 120 seconds or less. The token and the proof are never printed.
 docs/connect.md gives the job.
@@ -325,6 +328,7 @@ type identityAnswer struct {
 
 type installationAnswer struct {
 	ID       string `json:"id"`
+	OwnerID  string `json:"owner_id"`
 	Status   string `json:"status"`
 	ProvenAt string `json:"proven_at"`
 }
@@ -357,6 +361,33 @@ func (a identityAnswer) current(installation string, now time.Time) (binding, bo
 		}
 	}
 	return binding{}, false
+}
+
+// appBinding is a binding of a GitHub owner made through the GitHub App. It
+// never goes stale. Rows the recipes send name github-owner:, which only a
+// job's proof binds, so it stands beside that binding and never for it.
+type appBinding struct {
+	id, owner string
+	provenAt  time.Time
+}
+
+// app finds the tenant's active App binding of the GitHub owner that
+// installation names, which GET /identity names by owner_id.
+func (a identityAnswer) app(installation string) (appBinding, bool) {
+	owner, ok := strings.CutPrefix(installation, githubOwnerKind)
+	if !ok {
+		return appBinding{}, false
+	}
+	for _, held := range a.Installations {
+		if !strings.HasPrefix(held.ID, githubInstallation) || held.OwnerID != owner || held.Status != "active" || !installationIDPattern.MatchString(held.ID) {
+			continue
+		}
+		proven, err := time.Parse(time.RFC3339, held.ProvenAt)
+		if err == nil {
+			return appBinding{id: held.ID, owner: owner, provenAt: proven}, true
+		}
+	}
+	return appBinding{}, false
 }
 
 // sendProof puts the proof in the body, never in the path or a header the

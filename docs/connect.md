@@ -57,6 +57,8 @@ When `COSTROID_PLATFORM_PROOF` is empty, `connect` stops and prints the audience
 
 A binding by a job's proof is current for 7 days after its last proof. When `GET /identity` lists the installation active and proven less than 20 hours ago, `connect` prints that it is bound and sends no proof. The daily run renews the binding, and a push on the same day costs one request.
 
+A binding made through the GitHub App does not save the proof. The contract names it `github:` and the App installation's id, and `GET /identity` gives the owner's account id in its `owner_id`. The platform takes a batch only under the exact installation it names, and the recipes send their rows under `github-owner:`. So `connect` proves `github-owner:` whatever App binding the tenant holds of the same owner. The contract binds both kinds of id to one tenant side by side. `costroid doctor` states the `github-owner:` binding, and an App binding of the same owner on a line of its own.
+
 Outside GitHub Actions and GitLab CI no proof exists. There `connect` needs `--installation-id`, and only reads whether the installation is bound:
 
 ```sh

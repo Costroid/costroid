@@ -331,6 +331,7 @@ With `COSTROID_PLATFORM_URL` set in the shell, `doctor` asks Costroid Platform f
 | | `warn: tenant <tenant> holds no binding of <installation>, so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND` | Run `costroid connect` from a scheduled job, as [`docs/connect.md`](connect.md) says |
 | | `warn: <installation> is bound to tenant <tenant>, last proven at <time>, more than 7 days ago, so another tenant's proof can displace it` | The same. A daily run renews the binding |
 | | `warn: <installation> was bound to tenant <tenant> and is <status>, so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND` | The same |
+| | `ok: tenant <tenant> also holds owner <owner> through the GitHub App installation <id>, proven at <time>` | Nothing for the App. Rows the recipes send name `github-owner:`, which only a job's proof binds, so the line above it is the one that decides whether they are taken |
 | | `warn: doctor did not read the binding, because it could not name the repository's owner: <error>` | Run `doctor` where `gh` can read the repository, or as a step of the connect job |
 | The event, with `--ci` | `warn: the event is <event>, and costroid report posts only on pull_request` | Run the report job on `pull_request` |
 | The head, with `--ci` | `warn: the pull request's head is the fork <repository>, which receives no secrets and cannot post the check` | Add [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml), which posts the check from your repository |
