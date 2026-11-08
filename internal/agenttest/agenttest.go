@@ -13,8 +13,13 @@ import (
 // that is one.
 var Names = []string{"bunx", "claude", "codex", "node", "npx"}
 
-// ExitCode is the status every stub exits with.
-const ExitCode = 97
+const (
+	// ExitCode is the status every stub exits with.
+	ExitCode = 97
+	// PathBeforeStubs names the variable that holds PATH as it stood before
+	// Main put the stubs first.
+	PathBeforeStubs = "COSTROID_PATH_BEFORE_STUBS"
+)
 
 // Main puts a directory that holds one stub for each of Names first on PATH,
 // runs the tests through run and removes the directory. A test that means to
@@ -32,6 +37,10 @@ func Main(run func() int) int {
 	}
 	defer os.RemoveAll(dir)
 	if err := writeStubs(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "agenttest:", err)
+		return 1
+	}
+	if err := os.Setenv(PathBeforeStubs, os.Getenv("PATH")); err != nil {
 		fmt.Fprintln(os.Stderr, "agenttest:", err)
 		return 1
 	}

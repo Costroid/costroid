@@ -20,6 +20,7 @@ import (
 	"testing/fstest"
 
 	costroid "github.com/Costroid/costroid"
+	"github.com/Costroid/costroid/internal/agenttest"
 	"github.com/Costroid/costroid/internal/config"
 	"github.com/Costroid/costroid/internal/recipelint"
 	"go.yaml.in/yaml/v3"
@@ -2202,17 +2203,13 @@ func TestSkillFrontMatterNamesAndDescribes(t *testing.T) {
 // warnings as errors, on the skills init writes into a directory under the
 // system's temporary directory. It needs claude on PATH.
 func TestSkillsPassTheClaudeValidator(t *testing.T) {
-	claude, err := exec.LookPath("claude")
-	if err != nil {
-		t.Skip("claude is not on PATH")
-	}
+	claude := agenttest.ClaudeForPluginValidate(t)
 	root := t.TempDir()
 	if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--skills"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	for _, profile := range [][]string{nil, {"--strict"}} {
-		command := exec.Command(claude, append(append([]string{"plugin", "validate"}, profile...), filepath.Join(root, ".claude", "skills"))...)
-		if output, err := command.CombinedOutput(); err != nil {
+		if output, err := claude(append(append([]string{"plugin", "validate"}, profile...), filepath.Join(root, ".claude", "skills"))...); err != nil {
 			t.Errorf("claude plugin validate %v: %v\n%s", profile, err, output)
 		}
 	}

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Costroid/costroid/internal/agenttest"
 	"github.com/Costroid/costroid/internal/recipelint"
 )
 
@@ -88,14 +88,9 @@ func TestPluginToolsReadOnly(t *testing.T) {
 // warnings as errors, on the plugin and on the marketplace. Its settings
 // directory is one of its own. It needs claude on PATH.
 func TestPluginPassesTheClaudeValidator(t *testing.T) {
-	claude, err := exec.LookPath("claude")
-	if err != nil {
-		t.Skip("claude is not on PATH")
-	}
+	claude := agenttest.ClaudeForPluginValidate(t)
 	for _, target := range []string{pluginRoot, repositoryRoot} {
-		command := exec.Command(claude, "plugin", "validate", "--strict", target)
-		command.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+t.TempDir(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
-		if output, err := command.CombinedOutput(); err != nil {
+		if output, err := claude("plugin", "validate", "--strict", target); err != nil {
 			t.Errorf("claude plugin validate --strict %s: %v\n%s", target, err, output)
 		}
 	}
