@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +13,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/recipelint"
@@ -52,6 +56,8 @@ func (f *fakeHost) host() doctorHost {
 			}
 			return []byte(out), nil
 		},
+		client: &http.Client{Timeout: 10 * time.Second},
+		now:    func() time.Time { return connectNow },
 	}
 }
 
@@ -118,7 +124,9 @@ func printsAnyOf(text, secret string) string {
 }
 
 func TestDoctorNeverPrintsSecret(t *testing.T) {
-	host := ghHost("ANTHROPIC_API_KEY\t2026-11-01T09:00:00Z\n",
+	stub := newDoctorPlatform(t)
+	stub.installations = activeInstallation("github-owner:"+testOwner, connectNow.Add(-time.Hour))
+	host := ghHost("ANTHROPIC_API_KEY\t2026-11-01T09:00:00Z\nCOSTROID_PLATFORM_TOKEN\t2026-11-01T09:00:00Z\n",
 		"COSTROID_INGEST_URL\t"+fakeKey+"\t2026-11-01T09:00:00Z\nCOSTROID_INGEST_AUDIENCE\t"+fakeKey+"\t2026-11-01T09:00:00Z\n")
 	host.programs = append(host.programs, "codex")
 	host.outputs["codex --version"] = "codex-cli 0.164.0-alpha.11.1\n"
@@ -131,6 +139,7 @@ func TestDoctorNeverPrintsSecret(t *testing.T) {
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event,
 		"GITHUB_REPOSITORY": "acme/widgets", "GITHUB_WORKFLOW_REF": "acme/widgets/.github/workflows/costroid.yml@refs/pull/7/merge",
 		"GITHUB_JOB": "report", "ACTIONS_ID_TOKEN_REQUEST_URL": "https://token.example/",
+		"GITHUB_REPOSITORY_OWNER_ID": testOwner, platformVariable: stub.server.URL, platformTokenVariable: doctorToken,
 	} {
 		host.env[name] = value
 	}
@@ -144,6 +153,9 @@ func TestDoctorNeverPrintsSecret(t *testing.T) {
 	if leaked := printsAnyOf(output, fakeKey); leaked != "" {
 		t.Fatalf("doctor printed %q of the key:\n%s", leaked, output)
 	}
+	if leaked := printsAnyOf(output, strings.TrimPrefix(doctorToken, "costroid_it_")); leaked != "" {
+		t.Fatalf("doctor printed %q of the integration token:\n%s", leaked, output)
+	}
 	if code != exitRejected {
 		t.Errorf("exit %d, want %d for the credential that reads like a key", code, exitRejected)
 	}
@@ -153,6 +165,9 @@ func TestDoctorNeverPrintsSecret(t *testing.T) {
 		"fail: " + credentialVariable + " reads like a key",
 		"ok: the repository sets COSTROID_INGEST_URL and COSTROID_INGEST_AUDIENCE",
 		"ok: job report of .github/workflows/costroid.yml declares permissions",
+		"ok: the repository has the secret COSTROID_PLATFORM_TOKEN",
+		"ok: COSTROID_PLATFORM_TOKEN in this shell carries identity:read, installations:write and rows:write",
+		"ok: github-owner:" + testOwner + " is bound to tenant " + testTenant,
 	} {
 		if lineWith(stdout, want) == "" {
 			t.Errorf("doctor read no key here, so it proved nothing: no line starts %q:\n%s", want, stdout)
@@ -555,5 +570,291 @@ func TestReadmeTryItBlockIsWhatInitPrints(t *testing.T) {
 	}
 	if !slices.Equal(lines[1:], want) {
 		t.Errorf("the README's block runs %q after init, and init prints %q", lines[1:], want)
+	}
+}
+
+func TestDoctorSendsAnActionRepositoryToExisting(t *testing.T) {
+	for _, check := range []struct{ name, file, source, agent string }{
+		{"claude-code-action", "claude.yml", existingReview, "claude-code-action"},
+		{"codex-action", "codex.yaml", existingCodexReview, "codex-action"},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			path := ".github/workflows/" + check.file
+			root := doctorRepository(t, map[string]string{path: check.source})
+			code, stdout, stderr := runDoctor(t, root, ghHost("ANTHROPIC_API_KEY\nOPENAI_API_KEY\n", ""))
+			command := "costroid init github --agent " + check.agent + " --existing " + path
+			want := "warn: no workflow in .github/workflows calls Costroid's action: run " + command + ", which prints the patch that reports from it"
+			if code != 0 || lineWith(stdout, "warn: no workflow in") != want {
+				t.Fatalf("exit %d, want 0 and %q:\n%s%s", code, want, stdout, stderr)
+			}
+			args := strings.Fields(command)[2:]
+			code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, args...)
+			if code != 0 || !strings.Contains(patch, "+++ b/"+path) {
+				t.Errorf("the command doctor names, %s, exited %d and printed no patch of %s:\n%s%s", command, code, path, patch, stderr)
+			}
+		})
+	}
+}
+
+func TestDoctorStillSendsARepositoryWithNoAgentActionToInit(t *testing.T) {
+	root := doctorRepository(t, map[string]string{".github/workflows/ci.yml": "on: push\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"})
+	_, stdout, _ := runDoctor(t, root, ghHost("", ""))
+	if want := "warn: no workflow in .github/workflows calls Costroid's action: run costroid init github --agent claude"; lineWith(stdout, "warn: no workflow in") != want {
+		t.Errorf("no line %q:\n%s", want, stdout)
+	}
+}
+
+// fakeGh puts on PATH a gh that fails every command with message on its
+// stderr, as gh does, and returns the host that runs it.
+func fakeGh(t *testing.T, message string) doctorHost {
+	t.Helper()
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "gh"), "#!/bin/sh\necho '"+message+"' >&2\nexit 1\n")
+	if err := os.Chmod(filepath.Join(bin, "gh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	return doctorHost{getenv: func(string) string { return "" }, lookPath: exec.LookPath, output: runOutput}
+}
+
+func TestDoctorNamesAMissingRemote(t *testing.T) {
+	root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+	var stdout, stderr bytes.Buffer
+	code := doctor(context.Background(), root, releaseBuild, fakeGh(t, "no git remotes found"), nil, &stdout, &stderr)
+	want := "warn: gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: gh exited 1: no git remotes found: add a GitHub remote, or push the repository first"
+	if code != 0 || lineWith(stdout.String(), "warn: gh ") != want {
+		t.Fatalf("exit %d, want 0 and %q:\n%s%s", code, want, stdout.String(), stderr.String())
+	}
+	if lines := strings.Count(stdout.String(), "warn: gh "); lines != 1 {
+		t.Errorf("%d lines say gh failed, want 1 for the one missing remote:\n%s", lines, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "gh auth login") {
+		t.Errorf("doctor sent a signed-in user to gh auth login for a missing remote:\n%s", stdout.String())
+	}
+}
+
+func TestDoctorSendsAnUnreadableGhToSignIn(t *testing.T) {
+	root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+	var stdout, stderr bytes.Buffer
+	doctor(context.Background(), root, releaseBuild, fakeGh(t, "To get started with GitHub CLI, please run:  gh auth login"), nil, &stdout, &stderr)
+	for _, want := range []string{
+		"warn: gh variable list failed, so doctor did not check the repository's variables: gh exited 1: To get started with GitHub CLI, please run:  gh auth login: run gh auth login, then doctor again",
+		"warn: gh secret list failed, so doctor did not check the repository's secrets: ",
+		"warn: gh repo view failed, so doctor did not read whether the repository is private: ",
+	} {
+		if lineWith(stdout.String(), want) == "" {
+			t.Errorf("no line starts %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+// aliasedTrigger moves a workflow's pull_request trigger under an anchor and
+// reads it back through on: *events.
+func aliasedTrigger(t *testing.T, source, trigger string) string {
+	t.Helper()
+	moved := strings.Replace(source, "on:\n"+trigger, "x-events: &events\n"+trigger+"on: *events\n", 1)
+	if moved == source {
+		t.Fatalf("the workflow has no trigger %q", trigger)
+	}
+	return moved
+}
+
+func TestDoctorWarnsOnTwoAgentsBehindAnAliasedTrigger(t *testing.T) {
+	recipe := pinnedRecipe(t, "github-claude-code.yml", "claude")
+	_, trigger, _ := strings.Cut(recipe, "\non:\n")
+	trigger, _, _ = strings.Cut(trigger, "\n\n")
+	files := map[string]string{
+		".github/workflows/costroid.yml": aliasedTrigger(t, recipe, trigger+"\n"),
+		".github/workflows/claude.yml":   aliasedTrigger(t, existingReview, "  pull_request:\n    types: [opened, synchronize]\n"),
+	}
+	_, stdout, stderr := runDoctor(t, doctorRepository(t, files), ghHost("ANTHROPIC_API_KEY\n", ""))
+	want := "warn: .github/workflows/claude.yml and .github/workflows/costroid.yml each run an agent on pull_request, so each pull request pays for 2 runs: " +
+		"keep one of them. To keep .github/workflows/claude.yml, delete the others and run costroid init github --agent claude-code-action --existing .github/workflows/claude.yml, which prints the patch that reports from it"
+	if got := lineWith(stdout, "warn: .github/workflows/claude.yml and"); got != want {
+		t.Errorf("got %q, want %q:\n%s%s", got, want, stdout, stderr)
+	}
+}
+
+func TestDoctorReadsPermissionsBehindAMergeKey(t *testing.T) {
+	workflow := "x-read: &read\n  contents: read\non: pull_request\njobs:\n  report:\n    runs-on: ubuntu-24.04\n    permissions:\n      <<: *read\n      checks: write\n    steps:\n      - run: echo\n"
+	root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": workflow})
+	host := ghHost("", "")
+	event := filepath.Join(t.TempDir(), "event.json")
+	writeFile(t, event, `{"pull_request":{"head":{"repo":{"full_name":"acme/widgets"}}}}`)
+	host.env = map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": event, "GITHUB_REPOSITORY": "acme/widgets",
+		"GITHUB_WORKFLOW_REF": "acme/widgets/.github/workflows/costroid.yml@refs/pull/7/merge", "GITHUB_JOB": "report",
+	}
+	_, stdout, _ := runDoctor(t, root, host, "--ci")
+	if want := "ok: job report of .github/workflows/costroid.yml declares permissions checks: write, contents: read"; lineWith(stdout, want) != want {
+		t.Errorf("no line %q:\n%s", want, stdout)
+	}
+}
+
+// doctorToken is an integration token. No four characters of what follows
+// its prefix appear in anything doctor prints of its own.
+const doctorToken = "costroid_it_" + "Qw7Ze2Rx9Tb4Yn6Um1Kp3Hs5Jd8Lf0Gc-Va_Xo2Ni4M"
+
+// doctorPlatform answers as Costroid Platform's GET /tokens/current and GET
+// /identity, to doctorToken alone, and keeps the paths it answered.
+type doctorPlatform struct {
+	server *httptest.Server
+	// scopes and installations are JSON arrays for the answers.
+	scopes, installations string
+	// refuse is a code every request is refused with.
+	refuse string
+
+	mu    sync.Mutex
+	asked []string
+}
+
+func newDoctorPlatform(t *testing.T) *doctorPlatform {
+	t.Helper()
+	stub := &doctorPlatform{scopes: `["identity:read","installations:write","rows:write"]`, installations: "[]"}
+	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
+	t.Cleanup(stub.server.Close)
+	return stub
+}
+
+func (s *doctorPlatform) serve(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if code := s.refuse; code != "" || r.Header.Get("Authorization") != "Bearer "+doctorToken {
+		if code == "" {
+			code = "AUTH_TOKEN_INVALID"
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		// The message holds the token, so a test sees it if doctor prints
+		// more of a refusal than its code.
+		w.Write([]byte(`{"error":{"code":"` + code + `","message":"` + doctorToken + `"}}`))
+		return
+	}
+	s.asked = append(s.asked, r.URL.Path)
+	token := `{"id":"tok_01JEXAMPLE0001","scopes":` + s.scopes + `,"created_at":"2026-10-01T08:00:00Z","expires_at":"2027-01-01T08:00:00Z","last_used_at":null}`
+	switch r.URL.Path {
+	case integrationPath + "/tokens/current":
+		w.Write([]byte(token))
+	case integrationPath + "/identity":
+		w.Write([]byte(`{"contract":{"version":"0.2","tag_set":"tags/v0.2","focus_row":"focus-row/v0.3"},` +
+			`"tenant":{"id":"` + testTenant + `","name":"Example Inc","region":"eu"},` +
+			`"account":{"id":"acct_01JEXAMPLE0001","role":"admin"},"token":` + token + `,"installations":` + s.installations + `}`))
+	default:
+		http.Error(w, "", http.StatusNotFound)
+	}
+}
+
+func (s *doctorPlatform) paths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.asked)
+}
+
+// platformHost is ghHost with the platform's URL and the token set in the
+// shell, outside CI, where gh names the owner 7204411.
+func (s *doctorPlatform) platformHost(secrets string) *fakeHost {
+	host := ghHost(secrets, "")
+	host.env[platformVariable] = s.server.URL
+	host.env[platformTokenVariable] = doctorToken
+	host.outputs["gh api repos/{owner}/{repo} --jq .owner.id"] = testOwner + "\n"
+	return host
+}
+
+func TestDoctorReadsPlatformScopes(t *testing.T) {
+	const (
+		every    = "COSTROID_PLATFORM_TOKEN in this shell carries identity:read, installations:write and rows:write, and expires at 2027-01-01T08:00:00Z"
+		owner    = "github-owner:" + testOwner
+		connects = ": run costroid connect from a scheduled job, as docs/connect.md says"
+	)
+	revoked := `[{"id":"` + owner + `","tenant_id":"` + testTenant + `","owner_id":"` + testOwner + `","status":"revoked","proof_kind":"ci_oidc","bound_at":"2026-10-01T08:02:11Z","proven_at":"2026-10-02T08:00:00Z","ended_at":"2026-10-03T08:00:00Z"}]`
+	for _, check := range []struct {
+		name, scopes, installations, refuse string
+		want                                []string
+		paths                               int
+	}{
+		{name: "bound", installations: activeInstallation(owner, connectNow.Add(-3*time.Hour)), paths: 2, want: []string{
+			"ok: " + every,
+			"ok: " + owner + " is bound to tenant " + testTenant + ", proven at 2026-11-08T06:00:00Z",
+		}},
+		{name: "a scope lacking", scopes: `["identity:read","rows:write"]`, paths: 2, want: []string{
+			"warn: COSTROID_PLATFORM_TOKEN in this shell carries identity:read and rows:write, and expires at 2027-01-01T08:00:00Z, and lacks installations:write: create one with identity:read, installations:write and rows:write, as docs/connect.md says",
+		}},
+		{name: "no identity:read", scopes: `["rows:write","quotas:read"]`, paths: 1, want: []string{
+			"warn: COSTROID_PLATFORM_TOKEN in this shell carries rows:write and quotas:read, and expires at 2027-01-01T08:00:00Z, and lacks identity:read and installations:write: ",
+		}},
+		{name: "unbound", paths: 2, want: []string{
+			"ok: " + every,
+			"warn: tenant " + testTenant + " holds no binding of " + owner + ", so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND" + connects,
+		}},
+		{name: "stale", installations: activeInstallation(owner, connectNow.Add(-8*24*time.Hour)), paths: 2, want: []string{
+			"warn: " + owner + " is bound to tenant " + testTenant + ", last proven at 2026-10-31T09:00:00Z, more than 7 days ago, so another tenant's proof can displace it" + connects,
+		}},
+		{name: "revoked", installations: revoked, paths: 2, want: []string{
+			"warn: " + owner + " was bound to tenant " + testTenant + " and is revoked, so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND" + connects,
+		}},
+		{name: "refused", refuse: "AUTH_TOKEN_INVALID", paths: 0, want: []string{
+			"warn: Costroid Platform refused the token request: 401 AUTH_TOKEN_INVALID: the token is unknown, expired or revoked, so create one on Costroid Platform",
+		}},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			stub := newDoctorPlatform(t)
+			if check.scopes != "" {
+				stub.scopes = check.scopes
+			}
+			if check.installations != "" {
+				stub.installations = check.installations
+			}
+			stub.refuse = check.refuse
+			root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+			_, stdout, stderr := runDoctor(t, root, stub.platformHost("ANTHROPIC_API_KEY\nCOSTROID_PLATFORM_TOKEN\n"))
+			for _, want := range append(check.want, "ok: the repository has the secret COSTROID_PLATFORM_TOKEN") {
+				if lineWith(stdout, want) == "" {
+					t.Errorf("no line starts %q:\n%s%s", want, stdout, stderr)
+				}
+			}
+			if asked := stub.paths(); len(asked) != check.paths {
+				t.Errorf("doctor asked %q, want %d requests", asked, check.paths)
+			}
+			if leaked := printsAnyOf(stdout+stderr, strings.TrimPrefix(doctorToken, "costroid_it_")); leaked != "" {
+				t.Errorf("doctor printed %q of the token:\n%s", leaked, stdout)
+			}
+		})
+	}
+}
+
+func TestDoctorNamesThePlatformTokenByItsSecret(t *testing.T) {
+	stub := newDoctorPlatform(t)
+	root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+
+	host := stub.platformHost("ANTHROPIC_API_KEY\n")
+	delete(host.env, platformTokenVariable)
+	_, stdout, _ := runDoctor(t, root, host)
+	for _, want := range []string{
+		"warn: gh secret list names no repository secret COSTROID_PLATFORM_TOKEN; an organization or environment secret of that name is not listed here: gh secret set COSTROID_PLATFORM_TOKEN, unless the organization or the environment already holds it",
+		"warn: COSTROID_PLATFORM_TOKEN is not set in this shell, so doctor did not read its scopes or the binding: set it to the integration token, then doctor again",
+	} {
+		if lineWith(stdout, want) != want {
+			t.Errorf("no line %q:\n%s", want, stdout)
+		}
+	}
+
+	host = stub.platformHost("ANTHROPIC_API_KEY\n")
+	host.env[platformTokenVariable] = fakeKey
+	code, stdout, _ := runDoctor(t, root, host)
+	if want := "fail: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform, as docs/connect.md says"; code != exitRejected || lineWith(stdout, want) != want {
+		t.Errorf("exit %d, want %d and %q:\n%s", code, exitRejected, want, stdout)
+	}
+
+	host = ghHost("ANTHROPIC_API_KEY\n", "COSTROID_PLATFORM_URL\thttps://app.costroid.com\t2026-11-01T09:00:00Z\n")
+	_, stdout, _ = runDoctor(t, root, host)
+	for _, want := range []string{
+		"ok: the repository sets COSTROID_PLATFORM_URL, so the ingest job sends the rows to Costroid Platform",
+		"warn: gh secret list names no repository secret COSTROID_PLATFORM_TOKEN; ",
+	} {
+		if lineWith(stdout, want) == "" {
+			t.Errorf("no line starts %q:\n%s", want, stdout)
+		}
+	}
+	if len(stub.paths()) != 0 || strings.Contains(stdout, "in this shell carries") {
+		t.Errorf("doctor asked the platform without COSTROID_PLATFORM_URL in this shell:\n%s", stdout)
 	}
 }
