@@ -80,7 +80,14 @@ A program that sets its own base URL or key in the SDK's `env` option sends its 
 
 ## The recipes
 
-[`recipes/github-claude-agent-sdk.yml`](../recipes/github-claude-agent-sdk.yml) and [`recipes/github-codex-sdk.yml`](../recipes/github-codex-sdk.yml) run a program on a pull request and report what it cost, as the [agent recipes](recipes.md) do. Copy one to `.github/workflows/costroid.yml`. Each expects the program at `agent/review.mjs`, with its `package.json` and `package-lock.json` in `agent/`. Change the path in the recipe to yours.
+[`recipes/github-claude-agent-sdk.yml`](../recipes/github-claude-agent-sdk.yml) and [`recipes/github-codex-sdk.yml`](../recipes/github-codex-sdk.yml) run a program on a pull request and report what it cost, as the [agent recipes](recipes.md) do. `costroid init` writes one to `.github/workflows/costroid.yml`, with Costroid pinned to the release the binary belongs to:
+
+```sh
+costroid init github --agent claude-agent-sdk
+costroid init github --agent codex-sdk
+```
+
+Each expects the program at `agent/review.mjs`, with its `package.json` and `package-lock.json` in `agent/`. Change the path in the recipe to yours. `init` prints what the program must do, and that it prints its output on standard output: the recipe keeps that in a file on the runner, and standard error reaches the job's log. `--post-review` does not apply, because Costroid does not read the program's output. `--pr` needs `agent/package-lock.json` in the repository, because the run it opens installs from it.
 
 | Recipe                     | Secret              | The agent's environment                                                         |
 | -------------------------- | ------------------- | ------------------------------------------------------------------------------- |
@@ -88,5 +95,7 @@ A program that sets its own base URL or key in the SDK's `env` option sends its 
 | `github-codex-sdk`         | `OPENAI_API_KEY`    | The key as `CODEX_API_KEY`, and a `CODEX_HOME` made for the run with `log_user_prompt = false` |
 
 `npm ci --ignore-scripts` installs the program's packages from its lock file, and no package's install script runs. The Agent SDK's package carries the Claude Code it runs, and the Codex SDK's depends on the Codex it runs, so the lock file pins the agent too. The job reaches the provider, GitHub and the npm registry and nothing else; [Egress in the agent's job](recipes.md#egress-in-the-agents-job) lists each host and why. A Python program installs from a package index instead: add the hosts its install reaches to `allowed-endpoints`, and `costroid lint-recipes` notes each one it does not know.
+
+`costroid lint-recipes` holds a job that runs `costroid run --agent` to every rule of an agent's job, as it holds one that runs `claude -p`: the guard on who starts it, `contents: read` and nothing else, the content flags, the install from the lock file, and egress. `costroid lint` judges a workflow with such a job as an agent workflow, as [Check your own agent workflows](lint.md) says.
 
 The program's prompt is the program's own. Never build it from the pull request's title, description or comments. The program runs from the pull request's branch, so someone who can push a branch can change it, as they can change the workflow file; [Residual risk](recipes.md#residual-risk) says what limits that.

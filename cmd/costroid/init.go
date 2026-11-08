@@ -134,12 +134,36 @@ var initRecipes = map[string]map[string]string{
 		"codex":              "github-codex.yml",
 		"claude-code-action": "github-claude-code-action.yml",
 		"codex-action":       "github-codex-action.yml",
+		"claude-agent-sdk":   "github-claude-agent-sdk.yml",
+		"codex-sdk":          "github-codex-sdk.yml",
 	},
 	gitlabHost: {
 		"claude": "gitlab-ci.yml",
 		"codex":  "gitlab-ci.yml",
 	},
 }
+
+// sdkProgram is the program an SDK recipe runs, and sdkLockFile the lock file
+// npm ci installs its packages from, each from the repository's root.
+const (
+	sdkProgram  = "agent/review.mjs"
+	sdkLockFile = "agent/package-lock.json"
+)
+
+// sdkPrograms says, for each recipe that runs a program on an agent's SDK,
+// what the program must do for the run to be read. %s is the budget the
+// recipe passes to --budget-usd.
+var sdkPrograms = map[string]string{
+	"claude-agent-sdk": "The program holds its own budget in maxBudgetUsd: set it to USD %s, the figure the recipe passes to --budget-usd, so the report states the budget the program held. It must leave persistSession on, because the rows come from the sessions Claude Code writes in CLAUDE_CONFIG_DIR.",
+	"codex-sdk":        "The run stops the program at USD %s, the figure the recipe passes to --budget-usd. The program must leave CODEX_HOME as the recipe sets it, because the rows come from the threads Codex writes there.",
+}
+
+// sdkOutput says where an SDK program's output goes, and what it must keep
+// out of the job's log.
+const sdkOutput = "Print the program's output on standard output: the recipe keeps it in a file on the runner, and Costroid does not read it. Standard error reaches the job's log, which a public repository shows to anyone, so print nothing there that the agent read or wrote. docs/sdk.md says more."
+
+// recipeBudget finds the budget a recipe passes to costroid run.
+var recipeBudget = regexp.MustCompile(`--budget-usd ([0-9]+(?:\.[0-9]+)?)\b`)
 
 // initOut is where each host reads the file init writes, from the root.
 var initOut = map[string]string{
@@ -468,7 +492,29 @@ func resolveTarget(repo repository, flags initFlags) (initFlags, bool, error) {
 	case agents[flags.agent] == "":
 		return flags, false, fmt.Errorf("--agent on %s is one of %s, not %q", flags.host, agentNames(agents), flags.agent)
 	}
-	return flags, false, errors.Join(flags.checkAuth(), flags.checkHost())
+	return flags, false, errors.Join(flags.checkAuth(), flags.checkHost(), flags.checkProgram(repo))
+}
+
+// checkProgram refuses what an SDK recipe cannot do. Costroid does not read
+// the program's output, so it has no answer to post. --pr pushes a run that
+// starts the program, so the program's lock file must be in the repository.
+func (f initFlags) checkProgram(repo repository) error {
+	if sdkPrograms[f.agent] == "" {
+		return nil
+	}
+	if f.postReview {
+		return fmt.Errorf("--post-review posts the agent's answer, and Costroid does not read what a program on --agent %s prints", f.agent)
+	}
+	if !f.pr {
+		return nil
+	}
+	switch _, err := os.Stat(repo.file(filepath.FromSlash(sdkLockFile))); {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("--pr opens a pull request whose run installs the program's packages from %s, and the repository has none: add the program at %s, or run init without --pr and change the path in the recipe", sdkLockFile, sdkProgram)
+	case err != nil:
+		return fmt.Errorf("read %s: %w", sdkLockFile, err)
+	}
+	return nil
 }
 
 func (f initFlags) checkAuth() error {
@@ -729,6 +775,7 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 		printNextSteps(stdout, repo, flags, changed, recipe)
 	} else {
 		printSpend(stdout, flags, recipe)
+		printProgram(stdout, flags, recipe)
 		flow.files = changed
 		if err := flow.run(); err != nil {
 			return initFailed(stderr, err)
@@ -1041,6 +1088,7 @@ func perPushSentence(recipe []byte) string {
 
 func printNextSteps(stdout io.Writer, repo repository, flags initFlags, changed []string, recipe []byte) {
 	printSpend(stdout, flags, recipe)
+	printProgram(stdout, flags, recipe)
 	var commands []string
 	if repo.dir != repo.root {
 		if up, err := filepath.Rel(repo.dir, repo.root); err == nil {
@@ -1078,6 +1126,23 @@ func printSpend(stdout io.Writer, flags initFlags, recipe []byte) {
 	}
 	if flags.auth == subscriptionAuth {
 		fmt.Fprint(stdout, "\n"+wrap(subscriptionBasis, usageWidth))
+	}
+}
+
+// printProgram says, for a recipe that runs a program on an agent's SDK,
+// where the program sits, what it must do and what it must print.
+func printProgram(stdout io.Writer, flags initFlags, recipe []byte) {
+	needs := sdkPrograms[flags.agent]
+	if needs == "" {
+		return
+	}
+	budget := recipeBudget.FindSubmatch(recipe)
+	if budget == nil {
+		return
+	}
+	where := fmt.Sprintf("The recipe runs %s, with its package.json and package-lock.json in %s/. Change the path in the recipe to yours.", sdkProgram, path.Dir(sdkProgram))
+	for _, paragraph := range []string{where, fmt.Sprintf(needs, budget[1]), sdkOutput} {
+		fmt.Fprint(stdout, "\n"+wrap(paragraph, usageWidth))
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -199,6 +200,9 @@ func TestInitWritesLintCleanRecipe(t *testing.T) {
 
 		flat := strings.Join(strings.Fields(stdout), " ")
 		sentence := perPushSentence(shippedRecipe(t, recipe))
+		if needs := sdkPrograms[agent]; sentence == "" && needs != "" {
+			sentence = fmt.Sprintf(needs, recipeBudget.FindSubmatch(shippedRecipe(t, recipe))[1])
+		}
 		if sentence == "" || !strings.Contains(flat, sentence) {
 			t.Errorf("stdout lacks the per-push sentence %q:\n%s", sentence, stdout)
 		}
@@ -642,7 +646,7 @@ func TestInitRefusesWhatItCannotWrite(t *testing.T) {
 	}{
 		{nil, "name the host"},
 		{[]string{"bitbucket", "--agent", "claude"}, `not "bitbucket"`},
-		{[]string{"github"}, "--agent is one of claude, claude-code-action, codex, codex-action"},
+		{[]string{"github"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
 		{[]string{"gitlab", "--agent", "claude-code-action"}, "--agent on gitlab is one of claude, codex"},
 		{[]string{"github", "--agent", "claude", "--existing", "x.yml"}, "--existing reads a GitHub workflow that runs claude-code-action"},
 		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--force"}, "--existing writes nothing"},
@@ -973,8 +977,8 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 		files map[string]string
 		want  string
 	}{
-		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "--agent is one of claude, claude-code-action, codex, codex-action"},
-		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "--agent is one of claude, claude-code-action, codex, codex-action"},
+		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
+		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
 		{"two", map[string]string{"claude.yml": existingReview, "codex.yml": existingCodexReview}, ".github/workflows/claude.yml and .github/workflows/codex.yml each run an agent's action: name the one to report from with --existing"},
 		{"no codex-home", map[string]string{"codex.yml": strings.Replace(existingCodexReview, "          codex-home: ${{ runner.temp }}/codex-home\n", "", 1)}, "sets no codex-home"},
 	} {
@@ -1789,6 +1793,9 @@ func writtenSteps(t *testing.T, workflow string) map[string]map[string]any {
 
 func TestInitPostReviewWritesTheOptIn(t *testing.T) {
 	for agent, recipe := range initRecipes[githubHost] {
+		if sdkPrograms[agent] != "" {
+			continue
+		}
 		t.Run(agent, func(t *testing.T) {
 			root := t.TempDir()
 			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", agent, "--post-review")
@@ -2445,4 +2452,100 @@ func applyDiff(t *testing.T, original, patch string) string {
 		text += "\n"
 	}
 	return text
+}
+
+// TestInitWritesTheSDKRecipes writes each recipe that runs a program on an
+// agent's SDK, pinned as init pins the others and clean under both lints, and
+// holds init to saying where the program sits, what it must do and what it
+// must print. Each costroid init line of docs/sdk.md runs.
+func TestInitWritesTheSDKRecipes(t *testing.T) {
+	keys := map[string]string{"claude-agent-sdk": "ANTHROPIC_API_KEY", "codex-sdk": "OPENAI_API_KEY"}
+	if !slices.Equal(slices.Sorted(maps.Keys(sdkPrograms)), slices.Sorted(maps.Keys(keys))) {
+		t.Fatalf("init writes SDK recipes for %v", slices.Sorted(maps.Keys(sdkPrograms)))
+	}
+	for agent, key := range keys {
+		t.Run(agent, func(t *testing.T) {
+			name := initRecipes[githubHost][agent]
+			shipped := string(shippedRecipe(t, name))
+			for _, want := range []string{"node " + sdkProgram, "--prefix " + path.Dir(sdkLockFile)} {
+				if !strings.Contains(shipped, want) {
+					t.Fatalf("recipes/%s does not run %q", name, want)
+				}
+			}
+			root := t.TempDir()
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", agent)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			written := readFile(t, filepath.Join(root, initOut[githubHost]))
+			if written != string(writtenRecipe(t, name)) {
+				t.Errorf("init wrote another file than recipes/%s pinned:\n%s", name, written)
+			}
+			pinned := costroidActionPath + "@" + testCommit + " # v" + testRelease
+			if got, want := strings.Count(written, pinned), strings.Count(shipped, costroidActionPath+"@"); got != want || want == 0 {
+				t.Errorf("%d of the %d pins of Costroid name the release: %s", got, want, pinned)
+			}
+			if report := recipelint.LintBytes(initOut[githubHost], []byte(written)); len(report.Findings) != 0 || len(report.Notes) != 0 {
+				t.Errorf("lint-recipes: findings %v, notes %v", report.Findings, report.Notes)
+			}
+			if report := recipelint.LintCustomer(initOut[githubHost], []byte(written)); report.Agents != 1 || len(report.Findings) != 0 || len(report.Notes) != 0 {
+				t.Errorf("lint: %d agents, findings %v, notes %v", report.Agents, report.Findings, report.Notes)
+			}
+			flat := strings.Join(strings.Fields(stdout), " ")
+			for _, want := range []string{
+				"The recipe runs agent/review.mjs, with its package.json and package-lock.json in agent/. Change the path in the recipe to yours.",
+				fmt.Sprintf(sdkPrograms[agent], "5"),
+				"Print the program's output on standard output: the recipe keeps it in a file on the runner, and Costroid does not read it.",
+				"Standard error reaches the job's log, which a public repository shows to anyone, so print nothing there that the agent read or wrote.",
+				"\n  gh secret set " + key + "\n",
+			} {
+				if !strings.Contains(flat, want) && !strings.Contains(stdout, want) {
+					t.Errorf("stdout does not say %q:\n%s", want, stdout)
+				}
+			}
+			if at := strings.Index(stdout, "These commands are left"); at < strings.Index(stdout, "Change the path in the recipe to yours") {
+				t.Errorf("init lists the commands before it says where the program sits:\n%s", stdout)
+			}
+		})
+	}
+	for _, refusal := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"github", "--agent", "codex-sdk", "--post-review"}, "--post-review posts the agent's answer, and Costroid does not read what a program on --agent codex-sdk prints"},
+		{[]string{"github", "--agent", "claude-agent-sdk", "--pr"}, "--pr opens a pull request whose run installs the program's packages from agent/package-lock.json, and the repository has none"},
+		{[]string{"gitlab", "--agent", "codex-sdk"}, `--agent on gitlab is one of claude, codex, not "codex-sdk"`},
+	} {
+		root := t.TempDir()
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) || len(tree(t, root)) != 0 {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", refusal.args, code, stdout, stderr)
+		}
+	}
+	t.Run("--pr with the program", func(t *testing.T) {
+		installFakes(t)
+		t.Setenv("TEST_AGENT_KEY", "sk-test-0123456789")
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, filepath.FromSlash(sdkLockFile)), "{}\n")
+		code, output := runPR(t, root, testPR, "github", "--agent", "codex-sdk", "--pr", "--key-env", "TEST_AGENT_KEY")
+		if code != 0 || !strings.Contains(output, "$ gh secret set OPENAI_API_KEY\n") || !strings.Contains(strings.Join(strings.Fields(output), " "), "Change the path in the recipe to yours") {
+			t.Errorf("exit %d:\n%s", code, output)
+		}
+	})
+
+	page := readFile(t, "../../docs/sdk.md")
+	ran := 0
+	for _, block := range regexp.MustCompile("(?s)```sh\n(.*?)```").FindAllStringSubmatch(page, -1) {
+		for line := range strings.SplitSeq(block[1], "\n") {
+			if words := strings.Fields(line); len(words) > 2 && words[0] == "costroid" && words[1] == "init" {
+				if code, _, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, words[2:]...); code != 0 {
+					t.Errorf("%s: exit %d, stderr %q", line, code, stderr)
+				}
+				ran++
+			}
+		}
+	}
+	if ran != len(keys) {
+		t.Errorf("docs/sdk.md has %d costroid init examples, want %d", ran, len(keys))
+	}
 }

@@ -92,8 +92,8 @@ func agentJobs(t *testing.T) map[string]entry {
 // read, and the shipped files draw no egress note.
 func TestShippedRecipesBlockEgress(t *testing.T) {
 	jobs := agentJobs(t)
-	if len(jobs) != 5 {
-		t.Fatalf("%d agent jobs in the shipped recipes, want 5: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
+	if len(jobs) != 7 {
+		t.Fatalf("%d agent jobs in the shipped recipes, want 7: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
 	}
 	for name, job := range jobs {
 		steps := sequence(field(job.value, "steps"))
@@ -133,13 +133,13 @@ func TestShippedRecipesBlockEgress(t *testing.T) {
 
 // reaches derives, from a job's own steps, the hosts it calls: the agent's
 // provider or the gateway, GitHub, the artifact service, and the hosts that
-// installing Costroid, cosign, Bun and the agent need.
+// installing Costroid, cosign, Bun, the agent and a program's packages need.
 func reaches(job *yaml.Node) []string {
 	hosts := map[string]bool{"github.com:443": true}
 	for _, step := range sequence(field(job, "steps")) {
 		uses, _, _ := strings.Cut(strings.ToLower(scalarField(step, "uses")), "@")
 		run := scalarField(step, "run")
-		switch stepAgent(step) {
+		switch agentKinds[stepAgent(step)].provider {
 		case claudeAgent:
 			hosts["api.anthropic.com:443"] = true
 		case codexAgent:
@@ -155,7 +155,7 @@ func reaches(job *yaml.Node) []string {
 		if agentAction(step) == claudeCodeAction {
 			hosts["release-assets.githubusercontent.com:443"] = true
 		}
-		if strings.Contains(run, "npm install") {
+		if strings.Contains(run, "npm install") || lockInstall.MatchString(run) {
 			hosts["registry.npmjs.org:443"] = true
 		}
 		if stage := costroidStage(step); stage != "" {

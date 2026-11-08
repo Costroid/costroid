@@ -484,7 +484,7 @@ func TestRunAgentRefusesAnInstallThatFails(t *testing.T) {
 // The release run-agent.sh installs by default is the one each recipe installs.
 func TestRunAgentInstallsTheReleaseTheRecipesInstall(t *testing.T) {
 	script := read(t, filepath.Join(actionDir, "run-agent.sh"))
-	for agent, install := range agentInstall {
+	for agent, install := range map[string]*regexp.Regexp{claudeAgent: claudeRelease, codexAgent: codexRelease} {
 		want := install.FindAllString(script, -1)
 		if len(want) != 1 {
 			t.Fatalf("run-agent.sh records %v for %s", want, agent)
