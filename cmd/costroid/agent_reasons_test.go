@@ -195,11 +195,10 @@ func TestAnAgentErrorBesideFiguresIsNamed(t *testing.T) {
 // arguments in turn, and all of them together.
 func TestRunNamesTheArgumentsItLacks(t *testing.T) {
 	for args, want := range map[string]string{
-		"--out r.jsonl -- claude -p work":  "costroid: run needs --budget-usd\n",
-		"--budget-usd 5 -- claude -p work": "costroid: run needs --out\n",
-		"--budget-usd 5 --out r.jsonl":     "costroid: run needs an agent command after --\n",
-		"--budget-usd 5":                   "costroid: run needs --out and an agent command after --\n",
-		"--json":                           "costroid: run needs --budget-usd, --out and an agent command after --\n",
+		"--out r.jsonl -- claude -p work": "costroid: run needs --budget-usd\n",
+		"--budget-usd 5 --out r.jsonl":    "costroid: run needs an agent command after --\n",
+		"--budget-usd 5":                  "costroid: run needs an agent command after --\n",
+		"--json":                          "costroid: run needs --budget-usd and an agent command after --\n",
 	} {
 		code, _, stderr := execute(t, append([]string{"run"}, strings.Fields(args)...)...)
 		if code != exitFailure || stderr != want {

@@ -1,7 +1,7 @@
 costroid runs a coding agent under a budget and records what it cost.
 
 Usage:
-  costroid run --budget-usd N --out rows.jsonl -- <agent command>
+  costroid run --budget-usd N -- <agent command>
   costroid report --rows rows.jsonl
   costroid demo
   costroid validate [costroid.yml]

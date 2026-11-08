@@ -525,7 +525,7 @@ func TestListingNamesEveryOutputOfTheAction(t *testing.T) {
 }
 
 func TestReadmeAndListingQuoteTheDemoCommentsFirstLine(t *testing.T) {
-	body, err := demoComment(context.Background())
+	body, err := demoStateComment(context.Background(), demoNeutral)
 	if err != nil {
 		t.Fatal(err)
 	}

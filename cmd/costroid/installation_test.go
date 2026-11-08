@@ -48,10 +48,12 @@ func TestInstallationIDOtherForms(t *testing.T) {
 		}
 	}
 	for _, given := range []string{"github-owner:7204411", "gitlab-namespace:4410287", "github:0", "github:12x", "gitlab:4242", "-1"} {
-		code, body, stderr := previewWithInstallation(t, given)
-		if code != 0 || strings.Contains(body, "installation=") || !strings.Contains(stderr, "so the comment links no account") {
-			t.Errorf("report of %q exited %d: %s%s", given, code, stderr, body)
-		}
+		t.Run(given, func(t *testing.T) {
+			code, body, stderr := previewWithInstallation(t, given)
+			if code != 0 || strings.Contains(body, "installation=") || !strings.Contains(stderr, "so the comment links no account") {
+				t.Errorf("report of %q exited %d: %s%s", given, code, stderr, body)
+			}
+		})
 	}
 }
 
