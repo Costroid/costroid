@@ -15,7 +15,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 
 - Show a recorded run on a pull request that spends nothing: `costroid report --recorded RUN_ID,DATE` opens the check, the comment and the job summary with one line that says the figures are that run's, with its date, not the pull request's. A recorded report is left out of the pull request's total.
 - Send a rows file to an OpenTelemetry Collector or a tracing backend: `costroid emit-otlp --rows FILE` sends one span per model request over OTLP/HTTP, with the GenAI attributes and the request's exact cost. [`docs/otlp.md`](docs/otlp.md) lists every attribute.
-- Read a gh-aw run's cap: `ingest-run --from gh-aw=DIR` also reads `info/aw_info.json` beside `DIR`, so the comment's Enforcement cell names the run's AI credit cap. `recipes/github-gh-aw-follow-up.yml` downloads both artifacts. The reader admits every file gh-aw v1.0.1 to v1.2.1 writes to its `usage` artifact.
+- Read a gh-aw run's cap: `ingest-run --from gh-aw=DIR` also reads `info/aw_info.json` beside `DIR`, so the comment's Enforcement cell names the AI credit cap gh-aw checks. gh-aw's firewall checks it before each request, so a run can end past it; when gh-aw's stated credits pass the cap, the cell states by how much, in AI credits. `recipes/github-gh-aw-follow-up.yml` downloads both artifacts. The reader admits every file gh-aw v1.0.1 to v1.2.1 writes to its `usage` artifact.
 - `costroid demo --state neutral|capped|failure|skipped` shows each kind of comment.
 - `costroid run` without `--out` writes `costroid-rows.jsonl` in the working directory, the name the action uses, and says so before the agent starts.
 

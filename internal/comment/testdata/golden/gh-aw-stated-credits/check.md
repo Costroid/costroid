@@ -12,7 +12,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Cost | Basis | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| USD 0.04974 | Measured | unattributed | none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw, not by Costroid |
+| USD 0.04974 | Measured | unattributed | none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |
 
 gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits.
 
