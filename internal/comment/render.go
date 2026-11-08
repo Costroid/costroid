@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/adapter/ghaw"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
@@ -583,7 +584,7 @@ func (i Input) view() view {
 			Basis:       basisLabels[figure.Basis],
 			Attribution: figure.Attribution,
 			Enforcement: figure.Enforcement,
-			Note:        figureNote(figure, shown),
+			Note:        figureNote(figure, i.agentStated(), shown),
 		}
 		if figure.FallbackRows > 0 {
 			line.Mark = fallbackMark
@@ -705,11 +706,12 @@ func (i Input) firstLine(shown bool) string {
 }
 
 // figureNote says how far a figure's grade held. A gh-aw figure at grade none
-// names the cap gh-aw's proxy held the run to, which Costroid did not set and
-// does not price; a withheld copy leaves the cap out with the amounts.
-func figureNote(figure Figure, shown bool) string {
+// names the cap gh-aw checks, which Costroid did not set and does not price,
+// and how far gh-aw's stated credits passed it; a withheld copy leaves both
+// out with the amounts.
+func figureNote(figure Figure, stated *adapter.Stated, shown bool) string {
 	if figure.Enforcement == "none" && figure.ProxyCap != "" && shown {
-		return fmt.Sprintf("gh-aw's proxy held this run to %s AI credits, priced by gh-aw, not by Costroid", figure.ProxyCap)
+		return ghaw.CapSentence(figure.ProxyCap, stated)
 	}
 	return enforcementNotes[figure.Enforcement]
 }

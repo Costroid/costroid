@@ -151,8 +151,8 @@ type usageFile struct {
 // usage, and the run's info artifact, downloaded to info, nil when there is
 // none. Each record of the agent job and of the threat detection job is one
 // request. The run's AI credits, gh-aw's own figure, go to AgentStated and
-// never into a request. The cap gh-aw's proxy held the run to is read from
-// aw_info.json in either artifact.
+// never into a request. The cap gh-aw checks is read from aw_info.json in
+// either artifact; gh-aw's firewall can let a run pass it.
 //
 // Costroid did not start the run, so the grade is none. gh-aw runs Claude and
 // Codex on an API key alone, so their rows read measured. Copilot bills by
@@ -186,10 +186,12 @@ func ReadUsage(usage, info fs.FS) (adapter.Report, error) {
 	if err != nil {
 		return adapter.Report{}, err
 	}
+	stated, creditsWarning := statedCredits(files)
 	report := adapter.Report{
 		CostBasis:   focus.Measured,
 		CostSource:  costSource,
-		Enforcement: enforcement(limit),
+		Enforcement: enforcement(limit, stated),
+		AgentStated: stated,
 	}
 	if warning != "" {
 		report.Warnings = append(report.Warnings, warning)
@@ -206,10 +208,8 @@ func ReadUsage(usage, info fs.FS) (adapter.Report, error) {
 	if copilot > 0 && copilot < len(report.Requests) {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("%s Copilot served bill by subscription and the rest bill a key, so every row reads list_equivalent, the weaker claim", counted(copilot, "request")))
 	}
-	stated, warning := statedCredits(files)
-	report.AgentStated = stated
-	if warning != "" {
-		report.Warnings = append(report.Warnings, warning)
+	if creditsWarning != "" {
+		report.Warnings = append(report.Warnings, creditsWarning)
 	}
 	return report, nil
 }

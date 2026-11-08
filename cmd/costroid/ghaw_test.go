@@ -18,15 +18,20 @@ import (
 // internal/adapter/ghaw/testdata/not-recorded/README.md says.
 const ghawArtifact = "../../internal/adapter/ghaw/testdata/not-recorded/claude"
 
-// recordedGhAw is dogfood run 42469416753, gh-aw v1.0.1 running Codex with
-// max-ai-credits: 10, recorded with its usage and info artifacts side by side
-// as gh run download writes them.
-const recordedGhAw = "../../internal/adapter/ghaw/testdata/0.29.0/codex"
+// The recorded gh-aw runs, each with its usage and info artifacts side by
+// side as gh run download writes them, and each with max-ai-credits: 10.
+// recordedGhAw is dogfood run 42469416753, gh-aw v1.0.1 running Codex, and
+// recordedGhAwClaude is dogfood run 42486902241, gh-aw v1.0.1 running Claude
+// Code, which gh-aw stated ended at 11.80342 AI credits.
+const (
+	recordedGhAw       = "../../internal/adapter/ghaw/testdata/0.29.0/codex"
+	recordedGhAwClaude = "../../internal/adapter/ghaw/testdata/0.29.0/claude"
+)
 
-// downloadRecordedGhAw lays the recorded run's usage artifact out under a new
+// downloadRecordedGhAw lays a recorded run's usage artifact out under a new
 // directory as gh run download RUN -n usage -n info does, with its info
 // artifact beside it when info is true, and returns the directory.
-func downloadRecordedGhAw(t *testing.T, info bool) string {
+func downloadRecordedGhAw(t *testing.T, recording string, info bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	names := []string{"usage/agent/token_usage.jsonl", "usage/detection/token_usage.jsonl"}
@@ -34,7 +39,7 @@ func downloadRecordedGhAw(t *testing.T, info bool) string {
 		names = append(names, "info/aw_info.json")
 	}
 	for _, name := range names {
-		copyInto(t, filepath.Join(recordedGhAw, filepath.FromSlash(name)), filepath.Join(dir, filepath.FromSlash(name)))
+		copyInto(t, filepath.Join(recording, filepath.FromSlash(name)), filepath.Join(dir, filepath.FromSlash(name)))
 	}
 	return dir
 }
@@ -97,11 +102,20 @@ func ingestGhAw(t *testing.T, artifact string) (rows, object []byte, stderr stri
 // TestGhAwStatedCreditsNeverAddToUSD prices a gh-aw run from its tokens alone.
 // The same records with AI-credit figures a million times larger write the
 // same rows, the same USD line, and the same object and comment but for
-// gh-aw's own figure, which names its unit.
+// gh-aw's own figure, which names its unit. The artifacts state no cap, so no
+// note states credits past one; TestGhAwCommentStatesTheCreditsPastTheCap
+// reads a run that passed its cap.
 func TestGhAwStatedCreditsNeverAddToUSD(t *testing.T) {
 	clearCI(t)
-	rows, object, stderr := ingestGhAw(t, copyArtifact(t, "1.5"))
-	larger, largerObject, largerStderr := ingestGhAw(t, copyArtifact(t, "1500000.5"))
+	uncapped := func(credits string) string {
+		artifact := copyArtifact(t, credits)
+		if err := os.Remove(filepath.Join(artifact, "aw_info.json")); err != nil {
+			t.Fatal(err)
+		}
+		return artifact
+	}
+	rows, object, stderr := ingestGhAw(t, uncapped("1.5"))
+	larger, largerObject, largerStderr := ingestGhAw(t, uncapped("1500000.5"))
 	if !bytes.Equal(rows, larger) {
 		t.Error("the AI credits changed the rows")
 	}
@@ -191,7 +205,7 @@ func TestGhAwDocShowsWhatIngestRunPrints(t *testing.T) {
 		t.Fatalf("the page downloads with %q, and the test lays the artifacts out as gh-aw/usage and gh-aw/info", download)
 	}
 	dir := t.TempDir()
-	if err := os.Rename(downloadRecordedGhAw(t, true), filepath.Join(dir, "gh-aw")); err != nil {
+	if err := os.Rename(downloadRecordedGhAw(t, recordedGhAw, true), filepath.Join(dir, "gh-aw")); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
@@ -301,12 +315,12 @@ func TestGhAwFollowUpNamesTheRefusedArtifact(t *testing.T) {
 }
 
 // TestGhAwCommentNamesTheProxyCap shows, in the comment's Enforcement cell of
-// a gh-aw run, the AI-credit cap gh-aw's proxy held the run to, in place of
-// the note that nothing held it. Without aw_info.json the artifact states no
-// cap, and the cell reads as any run at grade none.
+// a gh-aw run, the AI-credit cap gh-aw checks, in place of the note that
+// nothing held the run. Without aw_info.json the artifact states no cap, and
+// the cell reads as any run at grade none.
 func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 	clearCI(t)
-	const capped = "| none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw, not by Costroid |"
+	const capped = "| none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
 	const plain = "| none: nothing held the run to a budget |"
 	artifact := copyArtifact(t, "")
 	for _, stated := range []bool{true, false} {
@@ -335,20 +349,20 @@ func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 
 // TestGhAwReadsTheInfoArtifactsCap reads the recorded run's cap from its info
 // artifact, downloaded beside its usage artifact, and the comment's
-// Enforcement cell names the 10 AI credits gh-aw's proxy held it to. Without
-// the info artifact the cell reads as any run at grade none. An info artifact
+// Enforcement cell names the cap of 10 AI credits gh-aw checks. Without the
+// info artifact the cell reads as any run at grade none. An info artifact
 // that holds another file, or a file in its place, is refused.
 func TestGhAwReadsTheInfoArtifactsCap(t *testing.T) {
 	clearCI(t)
-	const capped = "| none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw, not by Costroid |"
+	const capped = "| none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
 	const plain = "| none: nothing held the run to a budget |"
 	for _, info := range []bool{true, false} {
 		out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
-		code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(downloadRecordedGhAw(t, info), "usage"), "--out", out)
+		code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(downloadRecordedGhAw(t, recordedGhAw, info), "usage"), "--out", out)
 		if code != 0 {
 			t.Fatalf("exit %d: %s", code, stderr)
 		}
-		const note = "costroid: none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw\n"
+		const note = "costroid: none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid\n"
 		if strings.Contains(stderr, note) != info {
 			t.Errorf("with the info artifact %t, ingest-run printed:\n%s", info, stderr)
 		}
@@ -382,7 +396,7 @@ func TestGhAwReadsTheInfoArtifactsCap(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := downloadRecordedGhAw(t, name != "a file in the info artifact's place")
+			dir := downloadRecordedGhAw(t, recordedGhAw, name != "a file in the info artifact's place")
 			if err := tc.plant(dir); err != nil {
 				t.Fatal(err)
 			}
@@ -395,6 +409,38 @@ func TestGhAwReadsTheInfoArtifactsCap(t *testing.T) {
 				t.Errorf("rows %q, %v", rows, err)
 			}
 		})
+	}
+}
+
+// TestGhAwCommentStatesTheCreditsPastTheCap reads the recorded Claude run,
+// which gh-aw stated ended at 11.80342 AI credits against its cap of 10. The
+// note ingest-run prints and the comment's Enforcement cell name the cap gh-aw
+// checks and the 1.80342 AI credits past it, and neither says the cap held
+// the run. The comment states the run's USD figure apart, never in credits.
+func TestGhAwCommentStatesTheCreditsPastTheCap(t *testing.T) {
+	clearCI(t)
+	const passed = "none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid; gh-aw stated 11.80342 AI credits, over the cap by 1.80342 AI credits"
+	out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
+	code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(downloadRecordedGhAw(t, recordedGhAwClaude, true), "usage"), "--out", out)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for _, line := range []string{"costroid: gh-aw, 2 requests\n", "costroid: USD 0.1180342 at list, Measured\n", "costroid: " + passed + "\n"} {
+		if !strings.Contains(stderr, line) {
+			t.Errorf("ingest-run printed no %q:\n%s", line, stderr)
+		}
+	}
+	code, stdout, stderr := execute(t, "report", "--preview", "--rows", out)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for _, want := range []string{"| USD 0.1180342 | Measured | unattributed | " + passed + " |", "gh-aw stated 11.80342 AI credits for this run. Costroid does not convert credits."} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the comment holds no %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "gh-aw checks, priced by gh-aw, not by Costroid |") || strings.Contains(stdout, "proxy held") {
+		t.Errorf("the comment names the cap without the credits past it, or says it held the run:\n%s", stdout)
 	}
 }
 

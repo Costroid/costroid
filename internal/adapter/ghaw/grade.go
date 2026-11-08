@@ -68,30 +68,54 @@ func readLimit(dir fs.FS, name string) (*decimal.Decimal, error) {
 	return &limit, nil
 }
 
-// proxyNoteFormat is the grade's note when the artifact states the cap, and
-// proxyNotePattern reads the cap back from the description of a row that
-// carries it.
-const proxyNoteFormat = "none: gh-aw's proxy held this run to %s AI credits, priced by gh-aw"
+// capFormat names the cap aw_info.json states, and capPattern reads it back
+// from the description of a row whose note carries it. gh-aw's firewall
+// checks the cap before it forwards each request, against the credits of the
+// responses that came back, so the request that crosses it completes and a
+// run can end past it (getAiCreditsBlockState and enforceGuards in
+// containers/api-proxy of github/gh-aw-firewall v0.29.0, the firewall gh-aw
+// v1.0.1 runs). The note names the cap and never says it held the run.
+const capFormat = "a cap of %s AI credits that gh-aw checks, priced by gh-aw, not by Costroid"
 
-var proxyNotePattern = regexp.MustCompile(`(?:^|; )none: gh-aw's proxy held this run to ([0-9]{1,26}(?:\.[0-9]{1,32})?) AI credits, priced by gh-aw(?:;|$)`)
+var capPattern = regexp.MustCompile(`(?:^|; )none: a cap of ([0-9]{1,26}(?:\.[0-9]{1,32})?) AI credits that gh-aw checks, priced by gh-aw, not by Costroid(?:;|$)`)
 
 // ProxyCap is the AI-credit cap a gh-aw row's description states, as the
 // grade's note wrote it, and false when it states none.
 func ProxyCap(description string) (string, bool) {
-	match := proxyNotePattern.FindStringSubmatch(description)
+	match := capPattern.FindStringSubmatch(description)
 	if match == nil {
 		return "", false
 	}
 	return match[1], true
 }
 
+// CapSentence names the cap gh-aw checks. When gh-aw's own credits for the
+// run, stated, pass it, the sentence also states them and by how much, in
+// credits, with every digit. stated is nil when gh-aw states no credits, and a
+// limit or a figure that is not a decimal states nothing past the cap.
+func CapSentence(limit string, stated *adapter.Stated) string {
+	sentence := fmt.Sprintf(capFormat, limit)
+	if stated == nil || stated.Unit != adapter.UnitAICredits || stated.Source != Name {
+		return sentence
+	}
+	capped, err := decimal.Parse(limit)
+	if err != nil {
+		return sentence
+	}
+	credits, err := decimal.Parse(stated.Quantity)
+	if err != nil || credits.Cmp(capped) <= 0 {
+		return sentence
+	}
+	return sentence + fmt.Sprintf("; gh-aw stated %s AI credits, over the cap by %s AI credits", credits, credits.Sub(capped))
+}
+
 // enforcement is the run's grade. Costroid did not start the run and minted no
-// cap, so the grade is none whatever cap gh-aw's proxy held. Its note names
-// that cap when the artifact states it.
-func enforcement(limit *decimal.Decimal) adapter.Enforcement {
+// cap, so the grade is none whatever cap gh-aw checks. Its note names that cap
+// when the artifact states it, and how far gh-aw's own credits passed it.
+func enforcement(limit *decimal.Decimal, stated *adapter.Stated) adapter.Enforcement {
 	note := noneNote
 	if limit != nil {
-		note = fmt.Sprintf(proxyNoteFormat, limit)
+		note = "none: " + CapSentence(limit.String(), stated)
 	}
 	return adapter.Enforcement{Grade: adapter.GradeNone, Note: note}
 }

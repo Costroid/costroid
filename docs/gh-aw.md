@@ -17,7 +17,7 @@ The first lines it prints, for the run recorded in [`internal/adapter/ghaw/testd
 costroid: gh-aw, 5 requests
 costroid: 18 rows in costroid-rows.jsonl, catalog 0.3.0
 costroid: USD 0.0370553 at list, Measured
-costroid: none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw
+costroid: none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid
 costroid: gh-aw stated 3.70553 AI credits for this run. Costroid does not convert credits.
 ```
 
@@ -78,16 +78,25 @@ gh-aw runs Claude on `ANTHROPIC_API_KEY` and Codex on `OPENAI_API_KEY` or `CODEX
 
 ## Grade
 
-The grade is `none`. Costroid did not start the run and minted no cap. gh-aw's proxy holds a run to its own cap of AI credits, priced by gh-aw, and the note names the cap `aw_info.json` states. The comment's Enforcement cell then reads `none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw, not by Costroid`. A cap that gh-aw's admission lowers while the run starts is not in `aw_info.json`. Without `aw_info.json` the note reads `none: Costroid did not start this run, so no budget held it`.
+The grade is `none`. Costroid did not start the run and minted no cap. gh-aw checks a cap of its own, `max-ai-credits`, in AI credits it prices itself. The note names the cap `aw_info.json` states, and the comment's Enforcement cell reads the same: `none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid`.
+
+The cap does not hold a run to its figure. gh-aw hands it to its firewall's API proxy. The proxy adds a response's credits to the run's total when the response comes back, and checks the total before it forwards each request. Once the total is at or past the cap, it refuses the request with HTTP 403 and `ai_credits_limit_exceeded` (`getAiCreditsBlockState` in `containers/api-proxy/guards/ai-credits-guard.js` and `enforceGuards` in `containers/api-proxy/proxy-guards.js` of `github/gh-aw-firewall` v0.29.0, the firewall gh-aw v1.0.1 runs, read 2026-11-08). A request forwarded under the cap completes, so a run can end past it. The recorded Claude run below did: its first request came to 8.87465 AI credits, and its second took the run to 11.80342 against a cap of 10.
+
+When gh-aw's stated credits pass the cap, the note and the cell also state them and by how much, in AI credits, with every digit: `none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid; gh-aw stated 11.80342 AI credits, over the cap by 1.80342 AI credits`. Credits at or under the cap add nothing. Credits are never converted to dollars.
+
+A cap that gh-aw's admission lowers while the run starts is not in `aw_info.json`. Without `aw_info.json` the note reads `none: Costroid did not start this run, so no budget held it`.
 
 ## gh-aw's AI credits
 
 gh-aw prices each request in its own unit, AI credits, and each record states the run's total so far as `ai_credits_total`. The run's figure is the last total of the agent job's records added to the last of the threat detection job's, with every digit gh-aw wrote. Costroid states it on its own line and never converts it or adds it to a USD figure. When the threat detection job made requests and states no credits, the run's total is unknown, and no figure is printed.
 
-gh-aw states "One AIC equals $0.01 USD" (https://github.com/github/gh-aw/blob/v1.0.1/docs/src/content/docs/reference/cost-management.md, read 2026-11-08). gh-aw prices from its own table, and Costroid from its catalog. On the recorded run the two agree to every digit: 3.70553 AI credits and USD 0.0370553. That is one run of one model, so it is a match observed, not a rule.
+gh-aw states "One AIC equals $0.01 USD" (https://github.com/github/gh-aw/blob/v1.0.1/docs/src/content/docs/reference/cost-management.md, read 2026-11-08). gh-aw prices from its own table, and Costroid from its catalog. On the two recorded runs the two agree to every digit: 3.70553 AI credits and USD 0.0370553 on the Codex run, 11.80342 AI credits and USD 0.1180342 on the Claude run. That is two runs of two models, so it is a match observed, not a rule.
 
 ## What is verified
 
-[`internal/adapter/ghaw/testdata/0.29.0/codex`](../internal/adapter/ghaw/testdata/0.29.0/codex) is a recorded run: gh-aw v1.0.1 running Codex 0.164.0 behind firewall v0.29.0, with `max-ai-credits: 10`, on 2026-11-08. It holds the run's two record files and its `aw_info.json`, cut to the keys Costroid keeps by `scripts/record`. Its records state `_schema` `token-usage/v0.29.0`, and its `aw_info.json` states firewall `v0.29.0`. A test holds its 18 rows to USD 0.0370553 and gh-aw's figure to 3.70553 AI credits.
+Two runs are recorded, each with its two record files and its `aw_info.json`, cut to the keys Costroid keeps by `scripts/record`. Each ran gh-aw v1.0.1 behind firewall v0.29.0, with `max-ai-credits: 10`, on 2026-11-08. Their records state `_schema` `token-usage/v0.29.0`, and their `aw_info.json` states firewall `v0.29.0`.
 
-No Claude or Copilot run has been recorded. The Claude and Copilot readings follow gh-aw's published schema and its source at the releases named above, and their tests run on artifacts written by hand. The two Codex requests in [`internal/adapter/ghaw/testdata/not-recorded/codex`](../internal/adapter/ghaw/testdata/not-recorded/codex) are those of the recorded Codex 0.167.0 run, written as the proxy states OpenAI's usage, and they price to the USD 0.0350276 that recording states.
+- [`internal/adapter/ghaw/testdata/0.29.0/codex`](../internal/adapter/ghaw/testdata/0.29.0/codex) ran Codex 0.164.0. A test holds its 18 rows to USD 0.0370553, gh-aw's figure to 3.70553 AI credits, and its note to the cap alone.
+- [`internal/adapter/ghaw/testdata/0.29.0/claude`](../internal/adapter/ghaw/testdata/0.29.0/claude) ran Claude Code 2.1.310 on `claude-sonnet-5` and ended past its cap. A test holds its 2 requests and 7 rows to USD 0.1180342, gh-aw's figure to 11.80342 AI credits, and its note and Enforcement cell to the 1.80342 AI credits past the cap.
+
+No Copilot run has been recorded. The Copilot reading, and the router, error and threat detection records, follow gh-aw's published schema and its source at the releases named above, and their tests run on artifacts written by hand. The two Codex requests in [`internal/adapter/ghaw/testdata/not-recorded/codex`](../internal/adapter/ghaw/testdata/not-recorded/codex) are those of the recorded Codex 0.167.0 run, written as the proxy states OpenAI's usage, and they price to the USD 0.0350276 that recording states.

@@ -46,16 +46,8 @@ type row struct {
 // rowsOf prices the report as ingest-run does and returns its rows.
 func rowsOf(t *testing.T, report adapter.Report) []row {
 	t.Helper()
-	pinned, err := catalog.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var written bytes.Buffer
-	if _, err := run.Record(run.Options{Rows: &written, Catalog: pinned}, ghaw.Name, report); err != nil {
-		t.Fatal(err)
-	}
 	var rows []row
-	lines := bufio.NewScanner(&written)
+	lines := bufio.NewScanner(bytes.NewReader(writtenRows(t, report)))
 	for lines.Scan() {
 		var r row
 		if err := json.Unmarshal(lines.Bytes(), &r); err != nil {
@@ -64,6 +56,20 @@ func rowsOf(t *testing.T, report adapter.Report) []row {
 		rows = append(rows, r)
 	}
 	return rows
+}
+
+// writtenRows is the rows file ingest-run writes for the report.
+func writtenRows(t *testing.T, report adapter.Report) []byte {
+	t.Helper()
+	pinned, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written bytes.Buffer
+	if _, err := run.Record(run.Options{Rows: &written, Catalog: pinned}, ghaw.Name, report); err != nil {
+		t.Fatal(err)
+	}
+	return written.Bytes()
 }
 
 // fileSums adds up each token field of every record in the artifact's
@@ -253,10 +259,11 @@ func TestGhAwStatedCreditsStayApart(t *testing.T) {
 }
 
 // TestGhAwGradeIsNoneWithTheProxyNote grades a gh-aw run none, because
-// Costroid minted no cap, and names the cap gh-aw's proxy held in the note.
+// Costroid minted no cap, and names the cap gh-aw checks in the note. The
+// run's 7.47 AI credits are under it, so the note states nothing past it.
 func TestGhAwGradeIsNoneWithTheProxyNote(t *testing.T) {
 	report := readArtifact(t, claudeArtifact)
-	want := adapter.Enforcement{Grade: adapter.GradeNone, Note: "none: gh-aw's proxy held this run to 10 AI credits, priced by gh-aw"}
+	want := adapter.Enforcement{Grade: adapter.GradeNone, Note: "none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid"}
 	if report.Enforcement != want {
 		t.Errorf("enforcement %+v, want %+v", report.Enforcement, want)
 	}
