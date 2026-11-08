@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -23,10 +25,12 @@ const (
 
 // line is one reconciliation of one credential on one day, as the page shows
 // it. A line with no failures passed. explained says it passed only once the
-// residual's named causes were taken out.
+// residual's named causes were taken out. writer is the Costroid release that
+// wrote the day's rows, empty when the day does not name it.
 type line struct {
 	day string
 	named
+	writer    string
 	tokens    []tokenFigure
 	dollars   *dollarFigure
 	failures  []string
@@ -112,7 +116,9 @@ Each day a scheduled job in a private repository runs one small Claude Code task
 
 Measured cost is what the day's rows on the key cost at list price, from Costroid's own rows. It reads on a day with no provider report as well, so the test's spend is always on the page.
 
-` + "`go run ./scripts/accuracy -write docs/accuracy.md`" + ` re-runs ` + "`costroid reconcile`" + ` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, every price the cost report implies equals the catalog's to the last digit the report states, and the list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines each step and each cause.
+` + "`go run ./scripts/accuracy -write docs/accuracy.md`" + ` re-runs ` + "`costroid reconcile`" + ` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, every price the cost report implies equals the catalog's to the last digit the report states, each token class's list-price dollars land within 1% of the cost report's where the report splits them by class, and the day's list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines each step and each cause.
+
+Each day names the Costroid release that kept its inputs, which the job pins to the release it runs the agent under. A day fails when it names no release, when it names a build that is no release, or when its release trails the newest release out on that day by more than one.
 
 No line is edited by hand. ` + "`go run ./scripts/accuracy -check docs/accuracy.md -days 14`" + ` recomputes every line from the inputs, refuses the page when one line differs, and passes only when the last 14 days on it are consecutive and each passed. The last column is the SHA-256 of a listing of each input file's SHA-256 and path, in the form ` + "`sha256sum`" + ` prints, so a line names the exact inputs it was computed from.
 `
@@ -128,21 +134,21 @@ func render(lines []line) []byte {
 	return page.Bytes()
 }
 
-type version struct {
+type agentVersion struct {
 	agent                   string
 	reconciled, passed      int
 	tokens, dollars, causes share
 }
 
 func renderVersions(w io.Writer, lines []line) {
-	var versions []*version
+	var versions []*agentVersion
 	for _, l := range lines {
 		if !l.reconciled() {
 			continue
 		}
-		index := slices.IndexFunc(versions, func(v *version) bool { return v.agent == l.agent })
+		index := slices.IndexFunc(versions, func(v *agentVersion) bool { return v.agent == l.agent })
 		if index < 0 {
-			versions = append(versions, &version{agent: l.agent})
+			versions = append(versions, &agentVersion{agent: l.agent})
 			index = len(versions) - 1
 		}
 		versions[index].add(l)
@@ -151,7 +157,7 @@ func renderVersions(w io.Writer, lines []line) {
 		fmt.Fprintln(w, "No day has been reconciled yet.")
 		return
 	}
-	slices.SortFunc(versions, func(a, b *version) int { return strings.Compare(a.agent, b.agent) })
+	slices.SortFunc(versions, func(a, b *agentVersion) int { return strings.Compare(a.agent, b.agent) })
 	fmt.Fprintln(w, "| Agent | Days reconciled | Days passed | Largest token error | Largest dollar error | Largest dollar error after named causes |")
 	fmt.Fprintln(w, "| --- | --- | --- | --- | --- | --- |")
 	for _, v := range versions {
@@ -161,7 +167,7 @@ func renderVersions(w io.Writer, lines []line) {
 
 // add counts one line. The figures were read when the line was judged, so
 // they parse.
-func (v *version) add(l line) {
+func (v *agentVersion) add(l line) {
 	v.reconciled++
 	if l.passed() {
 		v.passed++
@@ -183,12 +189,22 @@ func renderDays(w io.Writer, lines []line) {
 		fmt.Fprintln(w, "No day has been reconciled yet.")
 		return
 	}
-	fmt.Fprintln(w, "| Day (UTC) | Source | Agent | Catalog | Measured cost | Tokens, ledger / provider | List USD, ledger / provider | Residual USD | Causes | Verdict | Inputs SHA-256 |")
+	fmt.Fprintln(w, "| Day (UTC) | Source | Agent, Costroid release | Catalog | Measured cost | Tokens, ledger / provider | List USD, ledger / provider: day; each class | Residual USD | Causes | Verdict | Inputs SHA-256 |")
 	fmt.Fprintln(w, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, l := range lines {
-		fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n", l.day, cell(l.source), cell(l.agent), cell(l.catalog), cell(l.measured),
+		fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n", l.day, cell(l.source), writerCell(l), cell(l.catalog), cell(l.measured),
 			tokensCell(l.tokens), dollarsCell(l.dollars), residualCell(l.dollars), causesCell(l.dollars), l.verdict(), l.digest)
 	}
+}
+
+// writerCell names the agent that ran and the Costroid release that wrote
+// its rows.
+func writerCell(l line) string {
+	writer := l.writer
+	if writer == "" {
+		writer = noFigure
+	}
+	return cell(l.agent) + ", Costroid " + cell(writer)
 }
 
 func tokensCell(checks []tokenFigure) string {
@@ -211,7 +227,12 @@ func dollarsCell(dollars *dollarFigure) string {
 		return fmt.Sprintf("%s / %s", cell(dollars.Ledger), cell(dollars.Provider))
 	}
 	gap, _ := percentOf(dollars.Residual, dollars.Provider)
-	return fmt.Sprintf("%s / %s (%s)", cell(dollars.Ledger), cell(dollars.Provider), gap)
+	parts := []string{fmt.Sprintf("%s / %s (%s)", cell(dollars.Ledger), cell(dollars.Provider), gap)}
+	for _, class := range dollars.Classes {
+		gap, _ := percentOf(class.Delta, class.Provider)
+		parts = append(parts, fmt.Sprintf("%s %s / %s (%s)", cell(class.Class), cell(class.Ledger), cell(class.Provider), gap))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // compared reports whether the ledger's dollars stood against an API bill.
@@ -255,6 +276,10 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 	if err != nil {
 		return nil, err
 	}
+	releases, err := readReleases(opts.changelog)
+	if err != nil {
+		return nil, err
+	}
 	scratch, err := os.MkdirTemp("", "accuracy-")
 	if err != nil {
 		return nil, err
@@ -270,9 +295,121 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 		if err != nil {
 			return nil, err
 		}
+		writer := strings.TrimPrefix(day.record.Writer, "v")
+		failure := writerFailure(writer, day.record.Day, releases)
+		for i := range dayLines {
+			dayLines[i].writer = writer
+			if failure != "" {
+				dayLines[i].failures = append(dayLines[i].failures, failure)
+			}
+		}
 		lines = append(lines, dayLines...)
 	}
 	return lines, nil
+}
+
+// The verdicts a line fails with when the release that wrote its rows is
+// not the one that ships.
+const (
+	failNoWriter         = "day names no writer"
+	failWriterUnreleased = "writer is no release"
+	failWriterLags       = "writer lags the newest release"
+)
+
+// maxWriterLag is how many releases the writer may trail the newest release
+// out on its day: one, for the day a release ships and the pin moves.
+const maxWriterLag = 1
+
+// writerFailure judges the release that wrote a day's rows against the
+// releases out on that day, counted in the changelog's order. A writer the
+// changelog does not list, or lists after the day, is no release.
+func writerFailure(writer, day string, releases []release) string {
+	if writer == "" {
+		return failNoWriter
+	}
+	newest := slices.IndexFunc(releases, func(r release) bool { return r.date <= day })
+	wrote := slices.IndexFunc(releases, func(r release) bool { return r.version == writer })
+	switch {
+	case newest < 0 || wrote < newest:
+		return failWriterUnreleased
+	case wrote-newest > maxWriterLag:
+		return failWriterLags
+	default:
+		return ""
+	}
+}
+
+// release is one entry of the changelog: a version and its UTC date.
+type release struct {
+	version, date string
+}
+
+const (
+	modulePath = "github.com/Costroid/costroid"
+	changelog  = "CHANGELOG.md"
+)
+
+var changelogHeading = regexp.MustCompile(`^## (\S+) \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)$`)
+
+// readReleases lists the releases in a changelog, newest first: the one at
+// path, or this module's when path is empty. A second-level heading of
+// another form is refused, so no release is skipped when the lag is counted.
+func readReleases(path string) ([]release, error) {
+	if path == "" {
+		root, err := moduleRoot()
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join(root, changelog)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read the releases: %w", err)
+	}
+	var releases []release
+	for _, text := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(text, "## ") {
+			continue
+		}
+		match := changelogHeading.FindStringSubmatch(text)
+		if match == nil {
+			return nil, fmt.Errorf("%s: the heading %q is not ## <release> (<date>)", path, text)
+		}
+		releases = append(releases, release{version: match[1], date: match[2]})
+	}
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("%s lists no release", path)
+	}
+	return releases, nil
+}
+
+// moduleRoot is the nearest directory at or above the working directory
+// whose go.mod declares this module.
+func moduleRoot() (string, error) {
+	directory, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		data, err := os.ReadFile(filepath.Join(directory, "go.mod"))
+		if err == nil && declares(data, modulePath) {
+			return directory, nil
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return "", errors.New("run this inside a checkout of " + modulePath + ": no go.mod above the working directory declares it")
+		}
+		directory = parent
+	}
+}
+
+func declares(goMod []byte, module string) bool {
+	for _, text := range strings.Split(string(goMod), "\n") {
+		if fields := strings.Fields(text); len(fields) == 2 && fields[0] == "module" {
+			return fields[1] == module
+		}
+	}
+	return false
 }
 
 // costroidBinary builds cmd/costroid from this module unless a binary is named.

@@ -43,13 +43,15 @@ type doer = reconcile.Doer
 func liveClient() doer { return reconcile.NewClient() }
 
 // dayRecord is day.json: which day the directory keeps, when its reports were
-// saved and whether they were. Reason says why a report is missing.
+// saved and whether they were, and the Costroid release that kept them.
+// Reason says why a report is missing.
 type dayRecord struct {
 	Day        string `json:"day"`
 	SavedAt    string `json:"saved_at"`
 	Credential string `json:"credential"`
 	Report     string `json:"report"`
 	Reason     string `json:"reason"`
+	Writer     string `json:"writer"`
 }
 
 // save keeps the rows, the reports and day.json. day.json is written whatever
@@ -80,6 +82,7 @@ func save(ctx context.Context, opts options, outside world, stdout io.Writer) er
 		SavedAt:    outside.now().UTC().Format(focus.InstantLayout),
 		Credential: opts.credential,
 		Report:     reportNone,
+		Writer:     version,
 	}
 	saveErr := saveReports(ctx, opts, days, rows, outside, &record)
 	if err := keepRecord(opts.save, record); err != nil {
