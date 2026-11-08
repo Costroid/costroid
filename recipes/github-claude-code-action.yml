@@ -14,7 +14,8 @@ permissions: {}
 
 env:
   # The cap on each run in USD. The review step passes it to Claude Code as
-  # --max-budget-usd, and the read and report steps check the run against it.
+  # --max-budget-usd, and the read step checks the run against it and records
+  # it for the report.
   COSTROID_BUDGET_USD: "5"
 
 concurrency:
@@ -126,5 +127,4 @@ jobs:
       - uses: Costroid/costroid/action@8defbe00a23afb0f3a07130e24087cb8b9b68ed0 # v1.0.0-alpha.12
         with:
           stage: report
-          budget-usd: ${{ env.COSTROID_BUDGET_USD }}
           agent-result: ${{ needs.agent.result }}

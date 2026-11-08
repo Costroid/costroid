@@ -266,18 +266,41 @@ func parseBudget(set *flag.FlagSet, value string) (*decimal.Decimal, bool, error
 	return &amount, false, nil
 }
 
-// budgetFor is the budget the report states, nil when it was given none. One
-// warning names the input when an expression likely gave it empty:
-// --budget-usd given empty, or no budget beside a run object that says the
-// run was given a cap, as when budget-usd: ${{ env.NAME }} reads a variable
-// set on the agent's job alone.
-func budgetFor(flags reportFlags, runCapped bool, stderr io.Writer) *decimal.Decimal {
-	switch {
-	case flags.budget != nil:
-	case flags.budgetEmpty:
-		fmt.Fprintln(stderr, `costroid: warning: --budget-usd is empty, so the report states no cap. A variable that gives it, such as "$COSTROID_BUDGET_USD", reads empty where the job does not set it`)
-	case runCapped:
-		fmt.Fprintln(stderr, "costroid: warning: the run was given a cap and the report's budget-usd is empty, so the report states no cap. An expression such as ${{ env.NAME }} reads empty in a job that does not set NAME: give the report's step the amount, or set NAME in the workflow's env")
+// runCap is the cap the report states: the one the run's result object
+// records, as costroid run and ingest-run --cap-usd write it, so the report's
+// step needs no budget. --budget-usd is read only when no object was read, as
+// for a run of an older release or an artifact the install refused. A
+// --budget-usd beside an object that states another cap, or none, is ignored
+// with one warning.
+func runCap(flags reportFlags, stated statedReason, stderr io.Writer) *decimal.Decimal {
+	if !stated.read {
+		if flags.budgetEmpty {
+			fmt.Fprintln(stderr, `costroid: warning: --budget-usd is empty, so the report states no cap. A variable that gives it, such as "$COSTROID_BUDGET_USD", reads empty where the job does not set it`)
+		}
+		return flags.budget
 	}
-	return flags.budget
+	recorded := recordedCap(stated.Cap, stderr)
+	switch {
+	case flags.budget == nil:
+	case recorded == nil:
+		fmt.Fprintf(stderr, "costroid: warning: --budget-usd %s is ignored, because the run's result object states no cap, so the report states none: it states the cap the run or the read step was given\n", flags.budget)
+	case recorded.Cmp(*flags.budget) != 0:
+		fmt.Fprintf(stderr, "costroid: warning: --budget-usd %s is ignored, because the run's result object states a cap of USD %s, and the report states that one. The report reads the cap from that object, so its step needs no budget-usd\n", flags.budget, recorded)
+	}
+	return recorded
+}
+
+// recordedCap reads the cap a run's object states, nil when it states none or
+// one that is not an amount in USD above 0. The agent's job wrote the object,
+// so a cap in any other form is ignored with a warning.
+func recordedCap(stated *recordCap, stderr io.Writer) *decimal.Decimal {
+	if stated == nil {
+		return nil
+	}
+	amount, err := decimal.Parse(stated.Amount)
+	if stated.Currency != "USD" || err != nil || amount.Sign() <= 0 {
+		fmt.Fprintln(stderr, "costroid: warning: the run's result object states a cap that is not an amount in USD above 0, so the report states no cap")
+		return nil
+	}
+	return &amount
 }

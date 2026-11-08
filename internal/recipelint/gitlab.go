@@ -85,6 +85,7 @@ func (l *linter) gitlab(root *yaml.Node) {
 			l.gitlabJob(root, item)
 		}
 	}
+	l.gitlabCaps(root)
 }
 
 func (l *linter) images(holder *yaml.Node) {
