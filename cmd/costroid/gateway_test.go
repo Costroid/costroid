@@ -331,8 +331,8 @@ func TestGatewayMintRefusesFlagsItCannotHoldTheKeyTo(t *testing.T) {
 	if _, ok := stub.Key(gatewayAlias); ok {
 		t.Error("a refused mint registered a key")
 	}
-	if code, stdout, _ := execute(t, "gateway", "mint", "-h"); code != 0 || stdout != "" {
-		t.Errorf("mint -h: exit %d, %q", code, stdout)
+	if code, stdout, stderr := execute(t, "gateway", "mint", "-h"); code != 0 || stdout != gatewayUsage || stderr != "" {
+		t.Errorf("mint -h: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
 

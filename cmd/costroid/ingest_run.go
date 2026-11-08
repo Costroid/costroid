@@ -94,10 +94,9 @@ func kindNames(kinds []sourceKind, word string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " " + word + " " + names[len(names)-1]
 }
 
-func parseIngestRun(args []string, stderr io.Writer) (ingestRunFlags, error) {
+func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, error) {
 	set := flag.NewFlagSet("ingest-run", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	var sources sourcesFlag
 	set.Func("from", "KIND=PATH, the source to read", sources.from)
 	var sinceKinds, cappedKinds []sourceKind
@@ -118,7 +117,7 @@ func parseIngestRun(args []string, stderr io.Writer) (ingestRunFlags, error) {
 	claudeArgs := set.String("claude-args", "", "the claude_args the claude-code-action step was given")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
 	account := addAccountFlags(set)
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, ingestRunHelp, stdout, stderr); err != nil {
 		return ingestRunFlags{}, err
 	}
 	given := sources.given
@@ -277,8 +276,8 @@ func (e openedExecution) read() (adapter.Report, error) {
 	return report, nil
 }
 
-func ingestRunCommand(args []string, stderr io.Writer) int {
-	flags, err := parseIngestRun(args, stderr)
+func ingestRunCommand(args []string, stdout, stderr io.Writer) int {
+	flags, err := parseIngestRun(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

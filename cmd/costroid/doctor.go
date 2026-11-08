@@ -128,9 +128,8 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
-	set.Usage = func() { fmt.Fprint(stderr, doctorHelp) }
 	ci := set.Bool("ci", false, "add the checks only a GitHub Actions job can make")
-	err := set.Parse(args)
+	err := parseFlags(set, args, doctorHelp, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

@@ -70,10 +70,9 @@ var demoStates = []string{demoNeutral, demoCapped, demoFailure, demoSkipped}
 func demoCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("demo", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, demoHelp) }
 	markdown := set.Bool("markdown", false, "print the comment as the Markdown report posts")
 	state := set.String("state", demoNeutral, "the comment to show: "+strings.Join(demoStates, ", "))
-	err := set.Parse(args)
+	err := parseFlags(set, args, demoHelp, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

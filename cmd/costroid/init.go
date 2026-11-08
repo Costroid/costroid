@@ -310,7 +310,7 @@ func locateRepository() (repository, error) {
 // recipes holds under recipes/, and with pr for what --pr reads beyond the
 // arguments.
 func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, args []string, stdout, stderr io.Writer) int {
-	flags, err := parseInit(args, stderr)
+	flags, err := parseInit(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -353,10 +353,9 @@ type initFlags struct {
 	force, postReview, skills, pr, keepOrg      bool
 }
 
-func parseInit(args []string, stderr io.Writer) (initFlags, error) {
+func parseInit(args []string, stdout, stderr io.Writer) (initFlags, error) {
 	set := flag.NewFlagSet("init", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
-	set.Usage = func() { fmt.Fprint(stderr, initHelp) }
 	var flags initFlags
 	var host string
 	set.StringVar(&host, "host", "", "the host the recipe runs on")
@@ -376,7 +375,7 @@ func parseInit(args []string, stderr io.Writer) (initFlags, error) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		flags.host, args = args[0], args[1:]
 	}
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, initHelp, stdout, stderr); err != nil {
 		return flags, err
 	}
 	rest := set.Args()

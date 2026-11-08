@@ -664,9 +664,9 @@ func TestInitRefusesWhatItCannotWrite(t *testing.T) {
 	if code != 0 {
 		t.Errorf("flags before the host: exit %d, stderr %q", code, stderr)
 	}
-	code, _, stderr = runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "github", "--help")
-	if code != 0 || stderr != initHelp {
-		t.Errorf("--help after the host: exit %d, stderr %q", code, stderr)
+	code, stdout, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "github", "--help")
+	if code != 0 || stdout != initHelp || stderr != "" {
+		t.Errorf("--help after the host: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
 
@@ -816,8 +816,8 @@ func TestInitRefusesOutsideARepository(t *testing.T) {
 		t.Errorf("init wrote %v", files)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"--help"}, &stdout, &stderr); code != 0 || stderr.String() != initHelp {
-		t.Errorf("--help outside a repository: exit %d, stderr %q", code, stderr.String())
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"--help"}, &stdout, &stderr); code != 0 || stdout.String() != initHelp || stderr.Len() != 0 {
+		t.Errorf("--help outside a repository: exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}
 }
 

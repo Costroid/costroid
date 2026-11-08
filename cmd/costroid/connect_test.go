@@ -653,7 +653,7 @@ func TestConnectDocsMatchTheCommand(t *testing.T) {
 		t.Fatal("docs/connect.md runs no costroid connect")
 	}
 	for _, command := range commands {
-		if _, err := parseConnect(strings.Fields(command[1]), io.Discard); err != nil {
+		if _, err := parseConnect(strings.Fields(command[1]), io.Discard, io.Discard); err != nil {
 			t.Errorf("docs/connect.md runs %q, which connect refuses: %v", strings.TrimSpace(command[0]), err)
 		}
 	}

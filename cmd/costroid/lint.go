@@ -29,9 +29,8 @@ Exit codes of lint:
 func lintCommand(args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("lint", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, lintHelp) }
 	strict := set.Bool("strict", false, "fail on a medium finding too")
-	err := set.Parse(args)
+	err := parseFlags(set, args, lintHelp, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

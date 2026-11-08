@@ -398,7 +398,7 @@ func TestDoctorInCIRefusesOutsideAJob(t *testing.T) {
 
 func TestDoctorHelpRunsNoCheck(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := doctorCommand(context.Background(), []string{"--help"}, &stdout, &stderr); code != 0 || stderr.String() != doctorHelp || stdout.Len() != 0 {
+	if code := doctorCommand(context.Background(), []string{"--help"}, &stdout, &stderr); code != 0 || stdout.String() != doctorHelp || stderr.Len() != 0 {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}
 }

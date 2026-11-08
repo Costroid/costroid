@@ -83,11 +83,10 @@ func (r resultTarget) host() (pullHost, error) {
 func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("result", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, resultHelp) }
 	number := set.Int("pr", 0, "the pull request's number")
 	repository := set.String("repo", os.Getenv("GITHUB_REPOSITORY"), "the repository as owner/name")
 	asJSON := set.Bool("json", false, "print the result object whole")
-	if err := set.Parse(args); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, resultHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return exitFailure

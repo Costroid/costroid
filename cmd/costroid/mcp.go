@@ -53,10 +53,9 @@ Exit codes of mcp:
 func mcpCommand(ctx context.Context, args []string, std stdio) int {
 	set := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	set.SetOutput(std.stderr)
-	set.Usage = func() { fmt.Fprint(std.stderr, mcpHelp) }
 	repository := set.String("repo", os.Getenv("GITHUB_REPOSITORY"), "the repository as owner/name")
 	ledgerURL := set.String("ledger", "", "the URL of a costroid serve")
-	if err := set.Parse(args); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, mcpHelp, std.stdout, std.stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return exitFailure
@@ -108,7 +107,7 @@ func policyAnswer(ctx context.Context, request mcpserver.PolicyRequest) (policy.
 			args = append(args, option.name, option.value)
 		}
 	}
-	flags, err := parsePolicy(args, io.Discard)
+	flags, err := parsePolicy(args, io.Discard, io.Discard)
 	if err != nil {
 		return policy.Verdict{}, err
 	}

@@ -91,10 +91,9 @@ type reportFlags struct {
 	budgetEmpty bool
 }
 
-func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
+func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	set := flag.NewFlagSet("report", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	budget := set.String("budget-usd", "", "the run's cap in USD, read only when the run left no result object")
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation, github:<id> or the bare number; GitLab uses the project id")
@@ -102,7 +101,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	asJSON := set.Bool("json", false, "print the result object on stdout")
 	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
 	exitOnVerdict := set.Bool("exit-on-verdict", false, "on GitLab CI, exit 1 on a failure verdict and 3 on a neutral one")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, reportHelp, stdout, stderr); err != nil {
 		return reportFlags{}, err
 	}
 	if *rows == "" {
@@ -250,7 +249,7 @@ func readReportRows(path string) (rowsReading, error) {
 // --preview needs no CI system. On GitLab CI, where no check can fail,
 // --exit-on-verdict makes the job's exit code the gate: verdictExit gives it.
 func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	flags, err := parseReport(args, stderr)
+	flags, err := parseReport(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

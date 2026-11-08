@@ -92,17 +92,16 @@ type reviewFlags struct {
 	out, file  string
 }
 
-func parseReview(args []string, stderr io.Writer) (reviewFlags, error) {
+func parseReview(args []string, stdout, stderr io.Writer) (reviewFlags, error) {
 	set := flag.NewFlagSet("review", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	keep := set.Bool("keep", false, "read the run's answer and write it to --out")
 	post := set.Bool("post", false, "post the answer in --file as the review comment")
 	from := set.String("from", "", "KIND=PATH, where the run left its answer")
 	since := set.String("since", "", "when the job started, in RFC 3339")
 	out := set.String("out", "", "the file the answer goes to")
 	file := set.String("file", "", "the file the agent's job kept the answer in")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, reviewHelp, stdout, stderr); err != nil {
 		return reviewFlags{}, err
 	}
 	flags := reviewFlags{keep: *keep, post: *post, out: *out, file: *file}
@@ -149,8 +148,8 @@ func answerKinds() string {
 
 // reviewCommand keeps the agent's answer in the agent's job, or posts it in
 // the report's job.
-func reviewCommand(ctx context.Context, args []string, _, stderr io.Writer) int {
-	flags, err := parseReview(args, stderr)
+func reviewCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags, err := parseReview(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

@@ -373,7 +373,7 @@ func TestExportRefusesBeforeSending(t *testing.T) {
 
 // The help names every flag and variable the command reads.
 func TestExportHelpNamesEveryFlag(t *testing.T) {
-	if _, err := parseExport([]string{"-h"}, new(bytes.Buffer)); err != flag.ErrHelp {
+	if _, err := parseExport([]string{"-h"}, new(bytes.Buffer), new(bytes.Buffer)); err != flag.ErrHelp {
 		t.Fatalf("-h: %v", err)
 	}
 	for _, name := range []string{"--rows", "--platform-url", "--installation-id", "--batch-id", "--format", "--out", "focus-csv", "vantage", "datadog", platformTokenVariable} {

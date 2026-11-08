@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -36,7 +38,7 @@ type stdio struct {
 
 var commands = []command{
 	{name: "run", short: "costroid run --budget-usd N -- <agent command>", help: runHelp, run: runCommand},
-	{name: "ingest-run", help: ingestRunHelp, run: func(_ context.Context, args []string, std stdio) int { return ingestRunCommand(args, std.stderr) }},
+	{name: "ingest-run", help: ingestRunHelp, run: withoutContext(ingestRunCommand)},
 	{name: "report", short: "costroid report --rows rows.jsonl", help: reportHelp, run: withOutputs(reportCommand)},
 	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
 	{name: "init", help: initHelp, run: withoutContext(initCommand)},
@@ -84,9 +86,8 @@ func lookup(name string) (command, bool) {
 	return command{}, false
 }
 
-// usage prints as the short usage. The flag sets of report, policy and
-// follow-up print it. It is a type and not a string because the text lists the
-// table, and the table's functions read usage.
+// usage prints as the short usage, which its String method builds from the
+// table.
 var usage shortUsage
 
 type shortUsage struct{}
@@ -134,6 +135,21 @@ func wrap(text string, width int) string {
 
 func isHelpFlag(arg string) bool {
 	return arg == "-h" || arg == "-help" || arg == "--help"
+}
+
+// parseFlags parses args with set. Help asked for after other flags prints on
+// stdout, as costroid <name> -h does. After a mistake it prints on stderr,
+// below the flag set's own line.
+func parseFlags(set *flag.FlagSet, args []string, help string, stdout, stderr io.Writer) error {
+	set.Usage = func() {}
+	err := set.Parse(args)
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		fmt.Fprint(stdout, help)
+	case err != nil:
+		fmt.Fprint(stderr, help)
+	}
+	return err
 }
 
 // helpCommand answers costroid help, with or without a command's name.
