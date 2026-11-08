@@ -130,6 +130,21 @@ type Request struct {
 	// Note says in words how this entry was read, when the report's own
 	// source does not.
 	Note string
+	// TierEvidence is what an entry coarser than a request offers about its
+	// context tier beyond its summed input. Nil when it offers nothing.
+	TierEvidence *TierEvidence
+}
+
+// TierEvidence is an agent's own figure for one entry's billed tokens. The
+// entry's input is a sum over its requests, and past the lowest context tier
+// a sum says nothing about any one request. The agent's figure says which
+// tier the requests were billed in: the rows take the tier whose prices give
+// it.
+type TierEvidence struct {
+	// Agent names the agent in words, as a row's note names it.
+	Agent string
+	// USD is the agent's figure at list price, nil when it states none.
+	USD *decimal.Decimal
 }
 
 // AgentError is the class of error a run's agent ended in. The class is read

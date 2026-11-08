@@ -124,22 +124,23 @@ func TestPerModelGrainNeverTakesTheLongTierFromASum(t *testing.T) {
 	}
 	const sum = "this model's input of 143642 tokens is a sum over its requests, which selects no context tier"
 	cases := []struct {
-		name, cost string
-		notes      []string
+		name, cost, figure string
+		notes              []string
 	}{
-		{"its own figure", `,"costUSD":0.008837335`, []string{sum,
+		{"its own figure", `,"costUSD":0.008837335`, "0.008837335", []string{sum,
 			"Claude Code's own figure for it, USD 0.008837335, is its tokens at the prices up to 100000 input tokens, so that tier prices them"}},
-		{"no figure", ``, []string{sum,
+		{"no figure", ``, "", []string{sum,
 			"Claude Code states no figure for it, so its context tier is unknown, and the prices up to 100000 input tokens apply, which may read low"}},
-		{"a figure of neither tier", `,"costUSD":0.0089`, []string{sum,
+		{"a figure of neither tier", `,"costUSD":0.0089`, "0.0089", []string{sum,
 			"Claude Code's own figure for it, USD 0.0089, is its tokens at neither tier's prices, so its context tier is unknown, and the prices up to 100000 input tokens apply, which may read low"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			report, rows := perRunRows(t, append(turns, resultLine(`"claude-haiku-5-5":{`+totals+tc.cost+`}`))...)
-			if len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRun || report.Requests[0].ContextInputTokens != 0 {
+			if len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRun || report.Requests[0].ContextInputTokens != 143642 {
 				t.Fatalf("requests %+v", report.Requests)
 			}
+			wantTierEvidence(t, report.Requests[0], tc.figure)
 			if len(rows) != 5 {
 				t.Fatalf("%d rows", len(rows))
 			}
@@ -161,6 +162,26 @@ func TestPerModelGrainNeverTakesTheLongTierFromASum(t *testing.T) {
 	}
 }
 
+// wantTierEvidence holds that the adapter states the sum and hands the rows
+// Claude Code's own figure, empty for none, and leaves the tier to them.
+func wantTierEvidence(t *testing.T, request adapter.Request, figure string) {
+	t.Helper()
+	evidence := request.TierEvidence
+	if evidence == nil || evidence.Agent != "Claude Code" {
+		t.Fatalf("tier evidence %+v", evidence)
+	}
+	got := ""
+	if evidence.USD != nil {
+		got = evidence.USD.String()
+	}
+	if got != figure {
+		t.Errorf("Claude Code's figure reads %q, want %q", got, figure)
+	}
+	if request.Note != "" {
+		t.Errorf("the adapter wrote a note on the tier: %q", request.Note)
+	}
+}
+
 // TestPerModelGrainTakesTheLongTierWhenTheAgentsCostSaysSo keeps the case of
 // one request past 100000 input tokens, read from the result's per-model
 // totals: 150000 input and 1002 output tokens. Claude Code's own figure is
@@ -173,6 +194,7 @@ func TestPerModelGrainTakesTheLongTierWhenTheAgentsCostSaysSo(t *testing.T) {
 	if len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRun || report.Requests[0].ContextInputTokens != 150000 {
 		t.Fatalf("requests %+v", report.Requests)
 	}
+	wantTierEvidence(t, report.Requests[0], "0.07750499999999999")
 	wantEveryRowAt(t, rows, "over-100000",
 		"this model's input of 150000 tokens is a sum over its requests, which selects no context tier",
 		"Claude Code's own figure for it, USD 0.07750499999999999, is its tokens at the prices above 100000 input tokens, so that tier prices them")
