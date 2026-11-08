@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/scm"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // workflowPattern is a workflow file of the repository the job runs in.
@@ -33,7 +34,7 @@ type History interface {
 // reached is NotOnBase. A start it cannot read comes back zero, with the
 // reason as the error, and the period keeps running.
 func ReadStart(ctx context.Context, history History, path, base string) (Start, error) {
-	if !commitPattern.MatchString(base) {
+	if !vcs.IsCommit(base) {
 		return Start{}, errors.New("policy: no base commit to read the workflow's history at")
 	}
 	added, err := history.FirstCommit(ctx, path, base)

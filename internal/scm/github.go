@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -403,7 +405,7 @@ func (g *GitHub) BranchHead(ctx context.Context, branch string) (string, error) 
 	if err := g.do(ctx, http.MethodGet, g.repo("/git/ref/heads/"+strings.Join(segments, "/")), nil, &ref); err != nil {
 		return "", err
 	}
-	if ref.Ref != "refs/heads/"+branch || ref.Object.Type != "commit" || !shaPattern.MatchString(ref.Object.SHA) {
+	if ref.Ref != "refs/heads/"+branch || ref.Object.Type != "commit" || !vcs.IsCommit(ref.Object.SHA) {
 		return "", fmt.Errorf("scm: the answer for branch %s names no commit at its head", branch)
 	}
 	return ref.Object.SHA, nil
@@ -450,7 +452,7 @@ func (g *GitHub) OpenPullsFrom(ctx context.Context, owner, branch string) ([]Ope
 
 // BranchesAt lists this repository's branches whose head is the commit.
 func (g *GitHub) BranchesAt(ctx context.Context, sha string) ([]string, error) {
-	if !shaPattern.MatchString(sha) {
+	if !vcs.IsCommit(sha) {
 		return nil, errors.New("scm: the commit is not a full SHA")
 	}
 	var answer []struct {
@@ -549,7 +551,7 @@ func (g *GitHub) PullCommits(ctx context.Context, number int) ([]string, bool, e
 			return nil, false, err
 		}
 		for _, commit := range answer {
-			if !shaPattern.MatchString(commit.SHA) {
+			if !vcs.IsCommit(commit.SHA) {
 				return nil, false, fmt.Errorf("scm: pull request %d lists a commit that is not a full SHA", number)
 			}
 			commits = append(commits, commit.SHA)
@@ -564,7 +566,7 @@ func (g *GitHub) PullCommits(ctx context.Context, number int) ([]string, bool, e
 // CheckRuns lists the commit's completed check runs named name, every
 // attempt included, that GitHub Actions or this token's own App posted.
 func (g *GitHub) CheckRuns(ctx context.Context, sha, name string) ([]ListedCheck, error) {
-	if !shaPattern.MatchString(sha) {
+	if !vcs.IsCommit(sha) {
 		return nil, errors.New("scm: the commit is not a full SHA")
 	}
 	apps := []string{actionsApp, strings.TrimSuffix(g.ownLogin(), botSuffix)}

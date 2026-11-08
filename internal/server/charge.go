@@ -14,6 +14,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/store"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -38,7 +39,6 @@ const (
 var (
 	repoTag    = regexp.MustCompile(`^[a-z0-9.-]+(/[a-z0-9._~%-]+){1,8}$`)
 	prTag      = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
-	shaTag     = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 	runTag     = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 	sessionTag = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
 	agentTag   = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -191,7 +191,7 @@ func statedHead(sha string) (string, string, error) {
 	if sha == "" {
 		return "", "", nil
 	}
-	if !shaTag.MatchString(sha) {
+	if !vcs.IsCommit(sha) {
 		return "", "", joinKeyRefusal("commit")
 	}
 	return sha, store.HeadStated, nil
@@ -207,7 +207,7 @@ func (s *Server) joinUnverified(c *charge, who caller) (joinResult, error) {
 	if prTag.MatchString(c.pr) {
 		result.pr = c.pr
 	}
-	if shaTag.MatchString(c.sha) {
+	if vcs.IsCommit(c.sha) {
 		result.sha, result.headBasis = c.sha, store.HeadStated
 	}
 	if runTag.MatchString(c.run) {

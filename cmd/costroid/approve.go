@@ -16,6 +16,7 @@ import (
 	"github.com/Costroid/costroid/internal/history"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -152,7 +153,7 @@ func readReviewEvent(eventName, path, repository string) (int, error) {
 	switch {
 	case event.Review == nil || event.Review.User == nil || event.Review.User.Login == "":
 		return 0, errors.New("the event names no review by a signed-in account")
-	case event.PullRequest == nil || event.PullRequest.Number <= 0 || !headPattern.MatchString(event.PullRequest.Head.SHA):
+	case event.PullRequest == nil || event.PullRequest.Number <= 0 || !vcs.IsCommit(event.PullRequest.Head.SHA):
 		return 0, errors.New("the event names no pull request and head commit")
 	case event.PullRequest.Head.Repo == nil || !strings.EqualFold(event.PullRequest.Head.Repo.FullName, repository):
 		return 0, errors.New("a review on a fork's pull request runs with a read-only token, so it cannot post the check. docs/approval.md says what a fork's pull request gets")

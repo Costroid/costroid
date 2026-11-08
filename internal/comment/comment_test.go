@@ -312,7 +312,7 @@ func TestABadRowRefusesTheWholeFile(t *testing.T) {
 		"unknown enforcement":                   strings.Replace(sampleFields().line(), `"wrapper-watchdog"`, `"gateway-precheck-plus"`, 1),
 		"no grade":                              strings.Replace(sampleFields().line(), `"costroid/attribution_grade"`, `"other"`, 1),
 		"not JSON":                              "{",
-		"a row past the cap":                    `{"x":"` + strings.Repeat("a", maxRowBytes) + `"}`,
+		"a row past the cap":                    `{"x":"` + strings.Repeat("a", focus.MaxLineBytes) + `"}`,
 		"cost is not price times quantity":      strings.Replace(sampleFields().line(), `"ListUnitPrice":"0.1"`, `"ListUnitPrice":"0.2"`, 1),
 		"tokens are not quantity times unit":    strings.Replace(sampleFields().line(), `"ConsumedQuantity":"1000000"`, `"ConsumedQuantity":"999999"`, 1),
 		"no price":                              strings.Replace(sampleFields().line(), `"ListUnitPrice":"0.1",`, ``, 1),
@@ -386,7 +386,7 @@ func TestReadRowsNamesTheLineAtFault(t *testing.T) {
 	if !errors.As(err, &invalid) || invalid.Line != 4 {
 		t.Fatalf("error %v", err)
 	}
-	_, err = ReadRows(strings.NewReader(sampleFields().line() + "\n" + strings.Repeat("a", maxRowBytes+1)))
+	_, err = ReadRows(strings.NewReader(sampleFields().line() + "\n" + strings.Repeat("a", focus.MaxLineBytes+1)))
 	if !errors.As(err, &invalid) || invalid.Line != 2 {
 		t.Fatalf("a line past the cap: error %v", err)
 	}

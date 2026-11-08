@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // Approval is a review that approved one commit, as the host stated it.
@@ -43,7 +44,7 @@ func (i Input) approved() bool {
 
 // binds reports an approval of the commit head by a person.
 func (a *Approval) binds(head string) bool {
-	return a != nil && commitPattern.MatchString(head) && a.HeadSHA == head && loginPattern.MatchString(a.Approver) && !a.At.IsZero()
+	return a != nil && vcs.IsCommit(head) && a.HeadSHA == head && loginPattern.MatchString(a.Approver) && !a.At.IsZero()
 }
 
 // ApprovedConclusion is the conclusion a check gets from the policy's

@@ -59,7 +59,7 @@ func renderTokens(w io.Writer, row Row) {
 			verdict = "MISS"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Class,
-			check.Ledger, check.Provider, check.Delta, percentOf(check.Delta, check.Provider), verdict)
+			check.Ledger, check.Provider, check.Delta, PercentOf(check.Delta, check.Provider), verdict)
 	}
 }
 
@@ -88,7 +88,7 @@ func renderClassDollars(w io.Writer, row Row) {
 			verdict = "outside 1%"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Class,
-			check.Ledger, check.Provider, check.Delta, percentOf(check.Delta, check.Provider), verdict)
+			check.Ledger, check.Provider, check.Delta, PercentOf(check.Delta, check.Provider), verdict)
 	}
 }
 
@@ -106,7 +106,7 @@ func renderDollars(w io.Writer, row Row) {
 		verdict = "outside 10%"
 	}
 	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Source, row.Credential, row.Day, check.Ledger, check.Provider,
-		check.Residual, percentOf(check.Residual, check.Provider), verdict, check.Rounding.verdict(), check.attribution())
+		check.Residual, PercentOf(check.Residual, check.Provider), verdict, check.Rounding.verdict(), check.attribution())
 }
 
 // verdict reads the list figures' comparison in words with its row count, and
@@ -138,19 +138,41 @@ func (c DollarCheck) attribution() string {
 	return strings.Join(parts, ", ")
 }
 
-// percentOf prints the size of a delta against the provider's figure. It is
-// rendered from exact rationals, and no verdict reads it.
-func percentOf(delta, provider decimal.Decimal) string {
+// Percent is the size of a delta against the provider's figure, in percent,
+// as an exact rational. The zero Percent is the one of a zero provider figure.
+type Percent struct {
+	ratio *big.Rat
+}
+
+// PercentOf is the size of delta over the provider's figure. A zero provider
+// figure has no percentage and reads n/a. A negative one keeps its sign.
+func PercentOf(delta, provider decimal.Decimal) Percent {
 	whole, ok := new(big.Rat).SetString(provider.String())
 	if !ok || whole.Sign() == 0 {
-		return notApplicable
+		return Percent{}
 	}
 	part, ok := new(big.Rat).SetString(absolute(delta).String())
 	if !ok {
-		return notApplicable
+		return Percent{}
 	}
 	ratio := new(big.Rat).Quo(part, whole)
-	return ratio.Mul(ratio, big.NewRat(100, 1)).FloatString(percentDigits) + "%"
+	return Percent{ratio: ratio.Mul(ratio, big.NewRat(100, 1))}
+}
+
+// String prints the percentage to two places, or n/a.
+func (p Percent) String() string {
+	if p.ratio == nil {
+		return notApplicable
+	}
+	return p.ratio.FloatString(percentDigits) + "%"
+}
+
+// Size is the percentage without its sign. It is false for n/a.
+func (p Percent) Size() (*big.Rat, bool) {
+	if p.ratio == nil {
+		return nil, false
+	}
+	return new(big.Rat).Abs(p.ratio), true
 }
 
 func renderFooter(w io.Writer, result Result) {

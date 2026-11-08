@@ -9,11 +9,12 @@ package review
 
 import (
 	"bytes"
-	"regexp"
 	"strings"
 	"text/template"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -28,9 +29,6 @@ const (
 	// report's job reads.
 	MaxFileBytes = 1 << 20
 )
-
-// head is the form of a commit the comment names.
-var head = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
 // Answer is what one run left for the comment.
 type Answer struct {
@@ -69,7 +67,7 @@ type view struct {
 func Render(answer Answer) string {
 	text, cut := Clean(answer.Text)
 	data := view{Marker: Marker, Text: text, Cut: cut, Cap: MaxAnswerBytes}
-	if head.MatchString(answer.Head) {
+	if vcs.IsCommit(answer.Head) {
 		data.On = " on `" + answer.Head[:7] + "`"
 	}
 	if text != "" {

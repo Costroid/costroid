@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // The events the App queues. Every other event is acknowledged and dropped.
@@ -26,7 +28,6 @@ const (
 var ErrIgnoredEvent = errors.New("scm: event not processed")
 
 var (
-	shaPattern    = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 	loginPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$`)
 	actionPattern = regexp.MustCompile(`^[a-z_]{1,64}$`)
 	buttonPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,20}$`)
@@ -119,7 +120,7 @@ func (p eventPayload) common(name string) (Event, error) {
 
 func (p eventPayload) pullRequest(event Event) (Event, error) {
 	pr := p.PullRequest
-	if pr == nil || pr.Number <= 0 || !shaPattern.MatchString(pr.Head.SHA) || pr.UpdatedAt.IsZero() {
+	if pr == nil || pr.Number <= 0 || !vcs.IsCommit(pr.Head.SHA) || pr.UpdatedAt.IsZero() {
 		return Event{}, errors.New("scm: pull_request has no valid pull request")
 	}
 	event.PullRequest = pr.Number
@@ -130,7 +131,7 @@ func (p eventPayload) pullRequest(event Event) (Event, error) {
 
 func (p eventPayload) checkRun(event Event) (Event, error) {
 	run := p.CheckRun
-	if run == nil || !shaPattern.MatchString(run.HeadSHA) {
+	if run == nil || !vcs.IsCommit(run.HeadSHA) {
 		return Event{}, errors.New("scm: check_run has no valid check run")
 	}
 	if p.Action != requestedAction {

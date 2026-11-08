@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 var gitLabProjectPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
@@ -156,7 +158,7 @@ func (g *GitLab) BranchHead(ctx context.Context, branch string) (string, error) 
 	if err := g.do(ctx, http.MethodGet, g.projectPath("/repository/branches/"+url.PathEscape(branch)), nil, &answer); err != nil {
 		return "", err
 	}
-	if answer.Name != branch || !shaPattern.MatchString(answer.Commit.ID) {
+	if answer.Name != branch || !vcs.IsCommit(answer.Commit.ID) {
 		return "", fmt.Errorf("scm: the answer for branch %s names no commit at its head", branch)
 	}
 	return answer.Commit.ID, nil

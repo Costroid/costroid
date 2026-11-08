@@ -27,6 +27,7 @@ import (
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/run"
 	"github.com/Costroid/costroid/internal/scm"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -47,10 +48,7 @@ const (
 	baseHeadTimeout = 4 * time.Second
 )
 
-var (
-	headPattern  = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
-	rowIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-)
+var rowIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // errNoCISystem is why a report outside a supported CI system refuses to run.
 var errNoCISystem = errors.New("report refused: neither GitHub Actions nor GitLab CI was detected")
@@ -776,7 +774,7 @@ func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr i
 }
 
 func readConfig(ctx context.Context, host scm.Reporter, ref string) (comment.Config, error) {
-	if !headPattern.MatchString(ref) {
+	if !vcs.IsCommit(ref) {
 		return comment.Config{}, errors.New("no commit to read it from")
 	}
 	data, err := host.ReadFile(ctx, configFile, ref)

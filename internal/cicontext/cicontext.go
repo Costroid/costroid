@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // ResourceAttributesVariable is the variable OpenTelemetry SDKs read.
@@ -36,7 +37,6 @@ const (
 var (
 	repositoryPattern  = regexp.MustCompile(`^[a-z0-9.-]+(/[a-z0-9._~%-]+){1,8}$`)
 	pullRequestPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
-	commitPattern      = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 	runPattern         = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 )
 
@@ -158,16 +158,16 @@ func (c Context) checked() Context {
 	if len(c.Repository) > maxRepositoryLength || !repositoryPattern.MatchString(c.Repository) {
 		c.Repository, c.RepositoryURL = "", ""
 	}
-	c.PullRequest = keep(pullRequestPattern, c.PullRequest)
-	c.Head = keep(commitPattern, c.Head)
-	c.Base = keep(commitPattern, c.Base)
-	c.Run = keep(runPattern, c.Run)
-	c.Task = keep(runPattern, c.Task)
+	c.PullRequest = keep(pullRequestPattern.MatchString, c.PullRequest)
+	c.Head = keep(vcs.IsCommit, c.Head)
+	c.Base = keep(vcs.IsCommit, c.Base)
+	c.Run = keep(runPattern.MatchString, c.Run)
+	c.Task = keep(runPattern.MatchString, c.Task)
 	return c
 }
 
-func keep(pattern *regexp.Regexp, value string) string {
-	if pattern.MatchString(value) {
+func keep(valid func(string) bool, value string) string {
+	if valid(value) {
 		return value
 	}
 	return ""

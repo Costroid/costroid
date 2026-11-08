@@ -10,6 +10,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/vcs"
 )
 
 // commentLimit is the most characters GitHub stores in a comment or a check
@@ -135,7 +136,7 @@ func FuzzForkRun(f *testing.F) {
 		if finished.Event != "pull_request" || finished.HeadRepository == nil || strings.EqualFold(finished.HeadRepository.FullName, repository) {
 			t.Fatalf("accepted %+v", finished)
 		}
-		if sha != finished.HeadSHA || !headPattern.MatchString(sha) {
+		if sha != finished.HeadSHA || !vcs.IsCommit(sha) {
 			t.Fatalf("the head reads %q", sha)
 		}
 	})
