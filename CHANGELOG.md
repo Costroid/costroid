@@ -2,6 +2,24 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.14 (2026-11-08)
+
+### Breaking changes
+
+- `costroid reconcile` stops before any request when the rows name a gateway run key and no `--upstream-credential SOURCE=ID` says which provider key the gateway sends with. Give the flag once per source.
+
+### What you can now do
+
+- Install in one step: the release carries `costroid-install.sh`, which checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs.
+- `go install github.com/Costroid/costroid/cmd/costroid@<release>` prints its release, and `init` pins the commit that release's tag names.
+- Reconcile a service account under Workload Identity Federation by its actor, and a gateway's rows under the provider key the gateway sends with. A run that crosses 00:00 UTC is compared across its days and named as the cause, never as a miss.
+
+### Fixes
+
+- A run whose rows fell to per-model grain could read up to five times its bill. A per-model sum of input tokens took the long-context tier: one `claude-code-action` run on `claude-haiku-5-5` read USD 0.044186675 against Claude Code's own USD 0.008837335. A sum of several requests now never selects a long-context tier; Claude Code's own per-model cost decides it, and where nothing decides, the rows take the standard tier and say the figure may read low.
+- Session files that hold every conversation request now stand when the result also counts Claude Code's one request outside the conversation; that request becomes an entry of its own, and each request keeps its own tier.
+- A Codex turn whose summed input passes a context boundary takes the standard tier with that note, instead of the tier above.
+
 ## 1.0.0-alpha.13 (2026-11-08)
 
 ### Breaking changes

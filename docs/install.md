@@ -2,6 +2,16 @@
 
 `costroid` is one static binary for Linux and macOS. Install it from the release, check it, then let `costroid init` write the workflow for your repository. Hosting the ledger is optional.
 
+## In one step
+
+The release carries `costroid-install.sh`. It checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs anything, to `$HOME/.local/bin`. Read it first:
+
+```sh
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.13/costroid-install.sh
+less costroid-install.sh
+sh costroid-install.sh
+```
+
 ## The binary
 
 The commands below install `1.0.0-alpha.13`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.13), check it against `SHA256SUMS`, and put it on your `PATH`:
@@ -38,7 +48,7 @@ With Go 1.27 or later:
 go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.13
 ```
 
-`go install` builds from the module's source, so the build carries no release number: `costroid version` prints `costroid dev, catalog 0.1.0`. `init` refuses such a build, because it cannot tell which release to pin. Pass it the commit of `v1.0.0-alpha.13` with `--action-ref 61dac375b64017cbc42a5878603268577a49058c`, or install the binary above.
+`go install` records the release's version, so `costroid version` prints it. The build records no commit, so `init` reads the commit the release's tag names from github.com with `git ls-remote`, pins it and says so. Where github.com is unreachable, pass the commit of `v1.0.0-alpha.13` with `--action-ref 61dac375b64017cbc42a5878603268577a49058c`.
 
 To build from a checkout instead, run `make build`. That build belongs to no release either.
 
