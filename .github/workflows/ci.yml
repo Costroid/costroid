@@ -40,7 +40,7 @@ jobs:
 
   race:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
@@ -51,7 +51,9 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Run the tests under the race detector
-        run: go test -short -race -count=1 ./...
+        # The race detector slows internal/run's property test past Go's
+        # 10-minute default; it reads every recording line by line.
+        run: go test -short -race -count=1 -timeout 25m ./...
 
   # The per-PR view's timing gate has a job of its own, so a slow runner reads
   # as a bench failure and never as a failed check.
