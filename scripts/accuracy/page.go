@@ -6,21 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/reconcile"
 )
 
 const (
-	pageMode      = 0o644
-	percentDigits = 2
-	noFigure      = "none"
-	noProvider    = "no provider figure"
+	pageMode = 0o644
+	noFigure = "none"
 )
 
 // line is one reconciliation of one credential on one day, as the page shows
@@ -53,57 +51,54 @@ func (l line) verdict() string {
 	}
 }
 
-// share is a part of a whole in percent. A part of a zero whole has no
-// finite share unless the part is zero too.
-type share struct {
-	value  *big.Rat
-	finite bool
+// amountOf reads an amount `costroid reconcile` wrote.
+func amountOf(text string) (decimal.Decimal, error) {
+	amount, err := decimal.ParseNumber(text)
+	if err != nil {
+		return decimal.Decimal{}, fmt.Errorf("%q is not a decimal", text)
+	}
+	return amount, nil
 }
 
-func ratOf(n int64) *big.Rat { return big.NewRat(n, 1) }
-
-func percentOf(part, whole string) (share, error) {
-	numerator, ok := new(big.Rat).SetString(part)
-	if !ok {
-		return share{}, fmt.Errorf("%q is not a decimal", part)
+// gapOf is a delta against the provider's figure, as the reconciliation table
+// prints it.
+func gapOf(delta, provider string) (reconcile.Percent, error) {
+	part, err := amountOf(delta)
+	if err != nil {
+		return reconcile.Percent{}, err
 	}
-	denominator, ok := new(big.Rat).SetString(whole)
-	if !ok {
-		return share{}, fmt.Errorf("%q is not a decimal", whole)
+	whole, err := amountOf(provider)
+	if err != nil {
+		return reconcile.Percent{}, err
 	}
-	numerator.Abs(numerator)
-	if denominator.Sign() == 0 {
-		return share{value: new(big.Rat), finite: numerator.Sign() == 0}, nil
-	}
-	ratio := numerator.Quo(numerator, denominator.Abs(denominator))
-	return share{value: ratio.Mul(ratio, ratOf(100)), finite: true}, nil
+	return reconcile.PercentOf(part, whole), nil
 }
 
-func (s share) String() string {
-	if !s.finite {
-		return noProvider
-	}
-	return s.value.FloatString(percentDigits) + "%"
+// largest is the largest gap of the lines seen, by its size. A gap against a
+// zero provider figure is larger than any other. seen is false until a line
+// is.
+type largest struct {
+	gap  reconcile.Percent
+	seen bool
 }
 
-// larger keeps the larger of two shares. A share with no finite value is
-// larger than any other.
-func larger(a, b share) share {
-	switch {
-	case a.value == nil:
-		return b
-	case !a.finite || (b.finite && a.value.Cmp(b.value) >= 0):
-		return a
-	default:
-		return b
+func (l largest) with(gap reconcile.Percent) largest {
+	if !l.seen {
+		return largest{gap: gap, seen: true}
 	}
+	held, known := l.gap.Size()
+	next, nextKnown := gap.Size()
+	if !known || (nextKnown && held.Cmp(next) >= 0) {
+		return l
+	}
+	return largest{gap: gap, seen: true}
 }
 
-func (s share) cell() string {
-	if s.value == nil {
+func (l largest) cell() string {
+	if !l.seen {
 		return noFigure
 	}
-	return s.String()
+	return l.gap.String()
 }
 
 const header = `# Accuracy
@@ -137,7 +132,7 @@ func render(lines []line) []byte {
 type agentVersion struct {
 	agent                   string
 	reconciled, passed      int
-	tokens, dollars, causes share
+	tokens, dollars, causes largest
 }
 
 func renderVersions(w io.Writer, lines []line) {
@@ -173,14 +168,14 @@ func (v *agentVersion) add(l line) {
 		v.passed++
 	}
 	for _, check := range l.tokens {
-		gap, _ := percentOf(check.Delta, check.Provider)
-		v.tokens = larger(v.tokens, gap)
+		gap, _ := gapOf(check.Delta, check.Provider)
+		v.tokens = v.tokens.with(gap)
 	}
 	if l.dollars.compared() {
-		residual, _ := percentOf(l.dollars.Residual, l.dollars.Provider)
-		unattributed, _ := percentOf(l.dollars.Unattributed, l.dollars.Provider)
-		v.dollars = larger(v.dollars, residual)
-		v.causes = larger(v.causes, unattributed)
+		residual, _ := gapOf(l.dollars.Residual, l.dollars.Provider)
+		unattributed, _ := gapOf(l.dollars.Unattributed, l.dollars.Provider)
+		v.dollars = v.dollars.with(residual)
+		v.causes = v.causes.with(unattributed)
 	}
 }
 
@@ -213,7 +208,7 @@ func tokensCell(checks []tokenFigure) string {
 	}
 	parts := make([]string, 0, len(checks))
 	for _, check := range checks {
-		gap, _ := percentOf(check.Delta, check.Provider)
+		gap, _ := gapOf(check.Delta, check.Provider)
 		parts = append(parts, fmt.Sprintf("%s %s / %s (%s)", cell(check.Class), cell(check.Ledger), cell(check.Provider), gap))
 	}
 	return strings.Join(parts, "; ")
@@ -226,10 +221,10 @@ func dollarsCell(dollars *dollarFigure) string {
 	if !dollars.compared() {
 		return fmt.Sprintf("%s / %s", cell(dollars.Ledger), cell(dollars.Provider))
 	}
-	gap, _ := percentOf(dollars.Residual, dollars.Provider)
+	gap, _ := gapOf(dollars.Residual, dollars.Provider)
 	parts := []string{fmt.Sprintf("%s / %s (%s)", cell(dollars.Ledger), cell(dollars.Provider), gap)}
 	for _, class := range dollars.Classes {
-		gap, _ := percentOf(class.Delta, class.Provider)
+		gap, _ := gapOf(class.Delta, class.Provider)
 		parts = append(parts, fmt.Sprintf("%s %s / %s (%s)", cell(class.Class), cell(class.Ledger), cell(class.Provider), gap))
 	}
 	return strings.Join(parts, "; ")

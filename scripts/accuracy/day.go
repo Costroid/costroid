@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -236,13 +237,20 @@ func readReconciled(path string) ([]reconciledRow, error) {
 // labelRow is the part of a ledger row that names who ran, what priced it
 // and what it cost.
 type labelRow struct {
-	BillingCurrency     string            `json:"BillingCurrency"`
-	ChargePeriodStart   time.Time         `json:"ChargePeriodStart"`
-	ListCost            string            `json:"ListCost"`
-	ServiceProviderName string            `json:"ServiceProviderName"`
-	SubAccountID        *string           `json:"SubAccountId"`
-	Tags                map[string]string `json:"Tags"`
-	CatalogVersion      *string           `json:"x_CostroidCatalogVersion"`
+	BillingCurrency     string     `json:"BillingCurrency"`
+	ChargePeriodStart   time.Time  `json:"ChargePeriodStart"`
+	ListCost            string     `json:"ListCost"`
+	ServiceProviderName string     `json:"ServiceProviderName"`
+	SubAccountID        *string    `json:"SubAccountId"`
+	Tags                focus.Tags `json:"Tags"`
+	CatalogVersion      *string    `json:"x_CostroidCatalogVersion"`
+}
+
+// tag reads one tag. A value that is not a string reads as absent, as
+// reconciliation reads it: the convention's tags are strings.
+func (r labelRow) tag(key string) string {
+	value, _ := r.Tags.Text(key)
+	return value
 }
 
 // labels holds the day's rows, read for what the page names beside a figure.
@@ -294,12 +302,12 @@ func (l labels) of(source, credential, fallback string) (named, error) {
 		if (source != "" && rowSource != source) || (credential != "" && rowCredential != credential) {
 			continue
 		}
-		agents = appendNew(agents, strings.TrimSpace(row.Tags[focus.TagAgent]+" "+row.Tags[focus.TagAgentVersion]))
+		agents = appendNew(agents, strings.TrimSpace(row.tag(focus.TagAgent)+" "+row.tag(focus.TagAgentVersion)))
 		if row.CatalogVersion != nil {
 			catalogs = appendNew(catalogs, *row.CatalogVersion)
 		}
 		sources = appendNew(sources, rowSource)
-		if focus.CostBasis(row.Tags[focus.TagCostBasis]) != focus.Measured {
+		if focus.CostBasis(row.tag(focus.TagCostBasis)) != focus.Measured {
 			continue
 		}
 		cost, err := decimal.Parse(row.ListCost)
@@ -456,9 +464,17 @@ func explained(dollars dollarFigure) (bool, error) {
 	if len(dollars.Causes) == 0 {
 		return false, nil
 	}
-	share, err := percentOf(dollars.Unattributed, dollars.Provider)
+	unattributed, err := amountOf(dollars.Unattributed)
 	if err != nil {
 		return false, err
 	}
-	return share.finite && share.value.Cmp(ratOf(reconcile.DollarTolerancePercent)) <= 0, nil
+	provider, err := amountOf(dollars.Provider)
+	if err != nil {
+		return false, err
+	}
+	size, known := reconcile.PercentOf(unattributed, provider).Size()
+	if !known {
+		return unattributed.Sign() == 0, nil
+	}
+	return size.Cmp(big.NewRat(reconcile.DollarTolerancePercent, 1)) <= 0, nil
 }
