@@ -2,6 +2,8 @@
 
 Costroid is the cost check for pull requests. It runs a coding agent under a budget, or reads what a `claude-code-action` run cost, records the cost per token class as FOCUS rows, and posts the figure on the pull request. This action is `Costroid/costroid/action` at the commit of `__RELEASE_TAG__`, with the same inputs and outputs.
 
+Newest release: [`__RELEASE_TAG__`](https://github.com/Costroid/costroid/releases/tag/__RELEASE_TAG__), at Costroid commit `__RELEASE_COMMIT__`. The Marketplace's version menu can name an older release until this one is published there. [The commit to pin](#the-commit-to-pin) says which commit runs this one.
+
 ## What a pull request gets
 
 Each pull request gets one check, `costroid`, and one comment. The comment's first line states what the run cost and on what basis. For a recorded run of Claude Code 2.1.316 under `claude-code-action` on 2026-11-07, it reads:

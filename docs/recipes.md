@@ -2,9 +2,7 @@
 
 These recipes run a coding agent on a pull request under a budget and record what it cost. They use the repository's own token. They need no App, no server and no account.
 
-The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret and names no version and no checksum. [`docs/verify.md`](verify.md) says what it checks.
-
-Each GitHub recipe pins the action to the commit of `v1.0.0-alpha.12`, and the GitLab template installs the same release. The action installs the release at its own commit and checks it by its signature, so a repository sets one secret, the provider key. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release.
+Each GitHub recipe pins Costroid's action to the commit of `v1.0.0-alpha.12`, and the GitLab template installs the same release. The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret, the provider key, and names no version and no checksum. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release. [`docs/verify.md`](verify.md) says what the action checks.
 
 ## Claude Code
 
@@ -23,7 +21,7 @@ The recipe installs Claude Code 2.1.316, the version Costroid's fixtures record.
 
 Each push to the pull request runs the agent again, and each run has a budget of its own. At `budget-usd: "5"`, a pull request with ten pushes can spend USD 50 at list, and more, because the request that crosses a cap still runs.
 
-The agent runs with `--bare`, `--restricted` and `--strict-mcp-config`. These skip hooks and `CLAUDE.md`, ignore the repository's settings files and remove the tools that run commands. A recording with these three flags does not exist yet.
+The agent runs with `--bare`, `--restricted` and `--strict-mcp-config`. These skip hooks and `CLAUDE.md`, ignore the repository's settings files and remove the tools that run commands. Costroid's recorded fixtures ran without these flags. The daily run behind [`docs/accuracy.md`](accuracy.md) uses all three.
 
 Then open a test pull request. The `report` job posts the `costroid` check and the comment. It passes the agent job's result as `agent-result`, so when the workflow skipped the agent, for a first contributor without the label, the comment says the agent did not run. [`docs/troubleshooting.md`](troubleshooting.md) explains each line of the job log, and [`docs/required-check.md`](required-check.md) makes the check required.
 
@@ -123,7 +121,19 @@ A real run of `codex-action` at `v1.13` with Codex 0.164.0-alpha.11.1, read on 2
 | --------------------- | ----- | ------------------------------------------ |
 | `openai/codex-action` | v1.13 | `bdf19a4a223ec2549a3e2274a0cf61556bc07675` |
 
-It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. Until a release of Costroid holds the `codex-home` input, the recipe pins Costroid's action to the zero SHA and fails at start. Then open a test pull request.
+It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. Then open a test pull request.
+
+## A program on an agent's SDK
+
+[`recipes/github-claude-agent-sdk.yml`](../recipes/github-claude-agent-sdk.yml) and [`recipes/github-codex-sdk.yml`](../recipes/github-codex-sdk.yml) run a program you wrote on the Claude Agent SDK or the Codex SDK, and report what the agent it started cost. Both need a Costroid release after `1.0.0-alpha.12`, which has no `costroid run --agent`. [`docs/sdk.md`](sdk.md) says what each needs.
+
+## A LiteLLM gateway
+
+[`recipes/github-claude-code-litellm.yml`](../recipes/github-claude-code-litellm.yml) runs Claude Code through a LiteLLM proxy you run, on a key made for the run alone, with the run's budget as the key's budget. [`docs/gateway.md`](gateway.md) has the setup.
+
+## Costroid Platform
+
+[`recipes/github-connect.yml`](../recipes/github-connect.yml) binds the repository's owner to its Costroid Platform tenant from the default branch, so the agent recipes' `ingest` job can send rows there. [`docs/connect.md`](connect.md) says what it proves and what it binds.
 
 ## A fork's pull request
 
@@ -194,7 +204,7 @@ These are claims. Rows read `unverified` and `unattributed` until a ledger check
 
 ## Send rows to a ledger
 
-Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ingest` job then sends the rows under its CI OIDC token. The ledger takes the run's identity from that token and prices the rows itself. A failed send warns and never fails the job. A self-hosted ledger must list the issuer's host on its egress allowlist, or the send answers `EGRESS_REFUSED`: see [`docs/install.md`](install.md).
+Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ingest` job then sends the rows under its CI OIDC token. The ledger takes the run's identity from that token and prices the rows itself. A failed send warns and never fails the job. A self-hosted ledger must list the issuer's host on its egress allowlist, or the send answers `EGRESS_REFUSED`: see [`docs/install.md`](install.md#egress).
 
 ## What the recipes hold to
 

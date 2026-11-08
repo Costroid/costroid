@@ -1,18 +1,27 @@
 # Costroid
 
-Costroid is the cost check for pull requests. It runs a coding agent under a budget, records what the run cost per token class as FOCUS rows, and posts the figure on the pull request.
-
-## What a pull request gets
-
-Each pull request gets one check, `costroid`, and one comment. The comment's first line states what the run cost and on what basis. For a recorded run of Claude Code 2.1.316 under `claude-code-action` on 2026-11-07, it reads:
+Costroid is the cost check for pull requests. An agent's own cost figure is an estimate, so Costroid prices the run's tokens from a pinned, dated catalog and posts the figure, with its basis, on the pull request. A recorded run on 2026-11-07:
 
 > This run cost USD 0.0391529 at list (Measured). Nothing held it to a budget.
 
-The figure equals the `total_cost_usd` the run itself reported, as [the recording's notes](cmd/costroid/demo/README.md) say. [`docs/comment-example.md`](docs/comment-example.md) is the whole comment, and `costroid demo` prints it.
+## Install
+
+The recipes pin `1.0.0-alpha.12`: [install it](docs/install.md). `--pr`, the plugin, `export --format` and the SDK recipes are in no release yet.
+
+## Add it to the workflow you have
+
+Already on `claude-code-action`, with an API key or a Claude subscription, or on `openai/codex-action`:
+
+```sh
+costroid init github --existing .github/workflows/claude.yml > costroid.patch
+git apply costroid.patch
+```
+
+The patch adds a `read` step and a `report` job, [shown here](docs/existing-workflow.md).
 
 ## Try it on a pull request
 
-With `costroid` [installed](#install), from the root of your repository:
+`--pr` also sets the key and opens the pull request. Without it, `init` prints the rest:
 
 ```sh
 costroid init github --agent claude
@@ -23,60 +32,18 @@ git commit -m "Add the costroid check"
 gh pr create --fill
 ```
 
-`init` writes the workflow, pinned to the release the binary belongs to, and a `costroid.yml` that sets nothing yet. It prints the commands after it and runs none of them. The secret is an Anthropic API key: the workflow runs Claude Code with `--bare`, so a Claude subscription's token does not work. The label lets a maintainer start the agent on a first contributor's pull request. Each push to the pull request runs the agent again, with a budget of USD 5 for each run.
-
-`costroid doctor` checks the repository before the pull request, and [`docs/troubleshooting.md`](docs/troubleshooting.md#checking-a-repository) lists what it prints. Already on `claude-code-action`? `costroid init github --agent claude-code-action --existing .github/workflows/claude.yml` prints the two blocks to add to the workflow you have, as [`docs/existing-workflow.md`](docs/existing-workflow.md) shows.
-
-Bring your own key and your own agent. There is no account, and Costroid runs no service that your data goes to: the key stays in your repository's secrets, the rows stay in the job, and the ledger, if you run one, is yours.
-
-Besides the agent's provider, the GitHub recipes that run an agent call one third-party service. They run [`step-security/harden-runner`](https://github.com/step-security/harden-runner) on the agent's job in block mode, with its telemetry turned off, so the job reaches only the model provider, GitHub and the hosts the install needs. [`docs/recipes.md`](docs/recipes.md#egress-in-the-agents-job) lists each host and why it is there.
-
-## Why it exists
-
-An agent's own cost field is an estimate, and a budget flag can be weaker than it sounds. Costroid prices the agent's token counts against a pinned, dated catalog, and it writes down how the budget was enforced. A grade is never shown as stronger than it is.
-
-## Install
-
-The commands below install `1.0.0-alpha.12`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.12), check it, and put it on your `PATH`:
-
-```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.12/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.12/SHA256SUMS
-grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
-chmod +x costroid-linux-amd64
-sudo mv costroid-linux-amd64 /usr/local/bin/costroid
-costroid version
-```
-
-The last line prints `costroid 1.0.0-alpha.12, catalog 0.1.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
-
-Each file is signed with cosign, keyless, by this repository's release workflow. To check a signature, with cosign 3 or later:
-
-```sh
-cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.12 \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com costroid-linux-amd64
-```
-
-[`docs/verify.md`](docs/verify.md) checks the image as well.
-
-In GitHub Actions, the action installs the release its own commit belongs to and checks it by its signature. The Claude Code and Codex recipes then need one secret, the provider's API key. [`docs/bases.md`](docs/bases.md#which-key-each-recipe-takes) lists what each recipe takes, and what its figures read as a result. The same action is listed on the [GitHub Marketplace](https://github.com/marketplace/actions/costroid-cost-check) as `Costroid/costroid-action`. To build from a checkout instead, with Go 1.27 or later:
-
-```sh
-make build
-```
-
-To keep rows in your own ledger, [`docs/install.md`](docs/install.md) has the container, Compose and Helm shapes.
+The agent's job runs the third-party [`harden-runner`](docs/recipes.md#egress-in-the-agents-job) to limit its egress.
 
 ## First command
 
-The first command runs Claude Code, so it needs Claude Code installed and signed in, with a Claude subscription or an `ANTHROPIC_API_KEY`.
+With Claude Code installed and signed in:
 
 ```sh
 costroid run --budget-usd 5 --out rows.jsonl -- claude -p "Fix the failing test."
+costroid report --preview --rows rows.jsonl
 ```
 
-The agent's stream passes through to stdout. Costroid prints this to stderr, here for a recorded run with one subagent on a Claude subscription:
+`run` prints, for a recorded subscription run:
 
 ```text
 costroid: claude-code, 4 requests
@@ -86,32 +53,18 @@ costroid: budget USD 5, agent-flag: client-side estimate, can pass the cap
 costroid: warning: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT
 ```
 
-`rows.jsonl` holds one FOCUS row per request per token class:
+Each row is one request's token class, such as `"SkuMeter":"input_uncached"`. `report --preview` prints the comment the rows would post.
 
-```json
-{"ChargeDescription":"claude-haiku-5-5 input_uncached tokens; agent-flag: client-side estimate, can pass the cap","ConsumedQuantity":"2","ListCost":"0.0000002","ListUnitPrice":"0.1","SkuMeter":"input_uncached","SkuPriceId":"anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached"}
+## More
+
+In Claude Code, install the plugin:
+
+```text
+/plugin marketplace add Costroid/costroid
+/plugin install costroid@costroid
 ```
 
-That row is shortened. A full row has every column of the [row contract](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3), and every amount is a decimal string.
-
-## Next
-
-| Task                                      | Page                                             |
-| ----------------------------------------- | ------------------------------------------------ |
-| Run an agent on a pull request            | [`docs/recipes.md`](docs/recipes.md)             |
-| Make the check required                   | [`docs/required-check.md`](docs/required-check.md) |
-| Read a line of the job log                | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
-| Read the comment                          | [`docs/comment-example.md`](docs/comment-example.md) |
-| Read a result from an agent               | [`docs/agents.md`](docs/agents.md)               |
-| Configure a repository                    | [`docs/configuration.md`](docs/configuration.md) |
-| Host the ledger                           | [`docs/install.md`](docs/install.md), [`docs/serve.md`](docs/serve.md) |
-| Compare a ledger with a provider's report | [`docs/reconcile.md`](docs/reconcile.md)         |
-| See how Costroid's own figures match the provider's | [`docs/accuracy.md`](docs/accuracy.md) |
-| Take the rows to a warehouse              | [`docs/export.md`](docs/export.md)               |
-| Verify a release                          | [`docs/verify.md`](docs/verify.md)               |
-| See what a budget grade means             | [`docs/adapters.md`](docs/adapters.md)           |
-| See what a cost basis promises            | [`docs/bases.md`](docs/bases.md)                 |
-| See what changed in each release          | [`CHANGELOG.md`](CHANGELOG.md)                   |
+[`costroid connect`](docs/connect.md) binds an owner to Costroid Platform. [`export --format`](docs/export.md#files-for-another-tool) writes rows for another cost tool. [The SDK recipes](docs/sdk.md) record Claude Agent SDK and Codex SDK programs. [`docs/`](docs) has the rest.
 
 ## Licence
 
