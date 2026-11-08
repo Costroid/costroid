@@ -3,6 +3,7 @@ package claudecode
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -144,6 +145,49 @@ func TestSDKSessionsInTheRunWindowAreTheRuns(t *testing.T) {
 			t.Fatalf("%+v", report)
 		}
 	})
+}
+
+// Claude Code dates each session line in whole milliseconds, cut down. A
+// session written in the run's first millisecond, on a second boundary, reads
+// up to 1 ms before the run's start and is still the run's, and so is one
+// whose last line reads the instant the run ended. One dated a millisecond
+// before the start's is not, on the second boundary or inside the second:
+// the window's slack is under 1 ms.
+func TestASessionOnTheWindowEdgeIsRead(t *testing.T) {
+	outsideCI(t)
+	second := time.Date(2026, 11, 8, 4, 15, 0, 0, time.UTC)
+	stamps := regexp.MustCompile(`"timestamp":"[^"]*"`)
+	for _, c := range []struct {
+		name, stamp string
+		from, to    time.Time
+		read        bool
+	}{
+		{"in the start's millisecond", "2026-11-08T04:15:00.000Z", second.Add(400 * time.Microsecond), second.Add(time.Second), true},
+		{"at the end", "2026-11-08T04:15:00.000Z", second.Add(-time.Second), second, true},
+		{"a millisecond before the start's", "2026-11-08T04:14:59.999Z", second.Add(400 * time.Microsecond), second.Add(time.Second), false},
+		{"a millisecond before the start's, inside its second", "2026-11-08T04:15:00.499Z", second.Add(500*time.Millisecond + 400*time.Microsecond), second.Add(time.Second), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			config := installFrom(t, sdkTS, sdkSession)
+			path := filepath.Join(config, "projects", "-work", sdkSession+".jsonl")
+			text := stamps.ReplaceAllString(string(mustReadFile(t, path)), `"timestamp":"`+c.stamp+`"`)
+			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(oneHourCacheVariable, "")
+			t.Setenv(apiKeyVariable, "a-key")
+			session := SDKAgent{ConfigDir: config, Dir: "/work"}.NewSession(adapter.Plan{})
+			session.(*SDKSession).RunWindow(c.from, c.to)
+			report, err := session.Finish()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if read := report.SessionID == sdkSession && len(report.Requests) > 0; read != c.read {
+				t.Errorf("a session dated %s in the window %s to %s: read %v, want %v; warnings %q",
+					c.stamp, c.from.Format(time.RFC3339Nano), c.to.Format(time.RFC3339Nano), read, c.read, report.Warnings)
+			}
+		})
+	}
 }
 
 // The recorded session's file holds two requests, and the totals Claude Code

@@ -134,10 +134,22 @@ func TestRunAgentFlagPlansNpx(t *testing.T) {
 // sdkProgramScript stands in for a program that runs Claude Code through the
 // Agent SDK: Claude Code writes the recorded session in its config directory,
 // timed now, and the program prints the recorded stream as its own output.
+//
+// The time is written as Claude Code writes it, in whole milliseconds, cut
+// down. It is cut from date's nine digits of nanoseconds, never taken from
+// %3N: uutils coreutils 0.10.0's date drops the leading zeros of %3N, so in
+// the first 100 ms of every second it printed a time up to 0.9 s ahead, often
+// after the program had ended, and the session then read as outside the run.
+// A date that prints no nine digits stops the program with a message.
 const sdkProgramScript = `#!/bin/sh
 printf '%%s\n' "$@" > %[1]q.argv
 env > %[1]q.env
-now=$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S.%%3NZ)
+stamp=$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S.%%N)
+case $stamp in
+*.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+*) echo "date printed $stamp, not nine digits of nanoseconds" >&2; exit 3 ;;
+esac
+now=${stamp%%??????}Z
 mkdir -p "$CLAUDE_CONFIG_DIR/projects/-work"
 sed "s/\"timestamp\":\"[^\"]*\"/\"timestamp\":\"$now\"/g" %[2]q > "$CLAUDE_CONFIG_DIR/projects/-work/00000000-0000-4000-8000-000000000001.jsonl"
 cat %[3]q
@@ -172,7 +184,7 @@ func sdkTotal(t *testing.T, got outcome, want string) map[string]int64 {
 		t.Fatalf("run %s: %v, %s", got.result.Agent, got.err, got.stderr)
 	}
 	if total := got.result.ListTotal.String(); total != want {
-		t.Errorf("the rows come to USD %s at list; the program's own total_cost_usd is %s", total, want)
+		t.Errorf("the rows come to USD %s at list; the program's own total_cost_usd is %s; warnings %q; %s", total, want, got.result.Report.Warnings, got.stderr)
 	}
 	for _, row := range got.rows {
 		if tagOf(row, focus.TagSessionID) != oneRequestID || tagOf(row, focus.TagCostSource) != claudecode.SourceSessionFile ||
@@ -226,7 +238,7 @@ func TestSDKGradeIsNoneWithoutAGatewayKey(t *testing.T) {
 	const note = "none: the budget sits in the program's maxBudgetUsd, which Costroid cannot see"
 	got, _ := sdkRun(t, filepath.Join(claudeData, "sdk-claude-ts"), nil)
 	if got.err != nil || len(got.rows) == 0 || got.result.Enforcement.Grade != adapter.GradeNone || got.result.Enforcement.Note != note {
-		t.Fatalf("%v, %d rows, %+v", got.err, len(got.rows), got.result.Enforcement)
+		t.Fatalf("%v, %d rows, %+v, warnings %q, %s", got.err, len(got.rows), got.result.Enforcement, got.result.Report.Warnings, got.stderr)
 	}
 	for _, row := range got.rows {
 		if tagOf(row, focus.TagEnforcementGrade) != adapter.GradeNone || !strings.Contains(row["ChargeDescription"].(string), note) {
@@ -236,7 +248,7 @@ func TestSDKGradeIsNoneWithoutAGatewayKey(t *testing.T) {
 
 	held, log := sdkRun(t, filepath.Join(claudeData, "sdk-claude-ts"), fakeGateway(t, keyInfoHolding, `{"status":"healthy","db":"connected"}`))
 	if held.err != nil || len(held.rows) == 0 || held.result.Enforcement.Grade != adapter.GradeGatewayPrecheck {
-		t.Fatalf("%v, %d rows, %+v, %s", held.err, len(held.rows), held.result.Enforcement, held.stderr)
+		t.Fatalf("%v, %d rows, %+v, warnings %q, %s", held.err, len(held.rows), held.result.Enforcement, held.result.Report.Warnings, held.stderr)
 	}
 	for _, row := range held.rows {
 		if tagOf(row, focus.TagEnforcementGrade) != adapter.GradeGatewayPrecheck || row["SubAccountId"] != gateway.KeyID(gatewayKey) {
