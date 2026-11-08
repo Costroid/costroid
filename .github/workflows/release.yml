@@ -70,6 +70,8 @@ jobs:
           output-file: dist/costroid.spdx.json
           upload-artifact: false
           upload-release-assets: false
+      - name: Add the notice and the licence
+        run: cp NOTICE LICENSE dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binaries
@@ -143,7 +145,7 @@ jobs:
           path: sbom
       - name: Sum the files
         working-directory: dist
-        run: sha256sum costroid-* costroid.spdx.json >SHA256SUMS
+        run: sha256sum costroid-* costroid.spdx.json NOTICE LICENSE >SHA256SUMS
       # These steps run before cosign writes its bundles, so dist/costroid-*
       # matches the binaries and no bundle.
       - name: Attest the files' provenance
@@ -152,6 +154,8 @@ jobs:
           subject-path: |
             dist/costroid-*
             dist/costroid.spdx.json
+            dist/NOTICE
+            dist/LICENSE
             dist/SHA256SUMS
       - name: Attest the image's provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -184,7 +188,7 @@ jobs:
             "$@"
           }
           cd dist
-          for file in costroid-* costroid.spdx.json SHA256SUMS; do
+          for file in costroid-* costroid.spdx.json NOTICE LICENSE SHA256SUMS; do
             retry cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
           done
           retry cosign sign --yes "$IMAGE@$DIGEST"
