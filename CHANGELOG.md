@@ -2,6 +2,35 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.13 (2026-11-08)
+
+### Breaking changes
+
+- The result object is `costroid.result/0.7`. It adds `agent_stated`, an agent's own figure in its own unit, and the run reasons `unmeasured_spend` and `no_run_rows`. `costroid approve` and the readers still take 0.5 and 0.6, and refuse an older object that carries a value only a newer version defines.
+- The report states the cap the run recorded, from the run's result object. The report step needs no budget input; `--budget-usd` is read only when no result object exists, and a figure that disagrees with the object is ignored with a warning. Copy the recipes again.
+- Runs price with catalog 0.3.0. Its fallback for a model the sheet does not name is the highest price of each token class across every row, so an unknown OpenAI model's output is priced at USD 600 per million tokens, labelled as the fallback. Gemini 2.5 Pro and 2.5 Flash bill at their successors' rates from 2026-12-01, as Google states.
+- A gateway run gives Claude Code a settings file of its own, so a repository's `.claude/settings.json` cannot send requests around the gateway or choose the key through `apiKeyHelper`.
+- `costroid connect` binds a GitLab namespace only on gitlab.com.
+- `costroid lint-recipes` flags a workflow that states two different caps, and checks the plugin marketplace.
+
+### What you can now do
+
+- Read a GitHub Agentic Workflows run: `ingest-run --from gh-aw` reads its `usage` artifact, `follow-up --ingested` posts the check, and `recipes/github-gh-aw-follow-up.yml` wires both. gh-aw's AI credits appear on a line of their own, never added to a dollar figure.
+- Ask Costroid from an agent: `costroid mcp` serves four read-only tools over stdio, and `costroid result --pr N` prints the newest check's result object.
+- Install the Claude Code plugin from this repository: `/plugin marketplace add Costroid/costroid`, then `/plugin install costroid@costroid`.
+- Run the Claude Agent SDK or the Codex SDK under a budget: `costroid run --agent claude-code-sdk|codex-sdk -- <program>`, with `recipes/github-claude-agent-sdk.yml` and `recipes/github-codex-sdk.yml`. `--agent` also places Costroid's flags after an `npx`, `bunx` or `node` package.
+- Go from nothing to an open pull request: `costroid init github --pr` sets the key secret, commits, pushes, opens the pull request and prints the comment's URL, naming each command before it runs. `--skills` writes an agent skill; `--platform-url` also writes the connect workflow; `--existing` takes `--budget-usd`.
+- Write the rows for another tool: `costroid export --format focus-csv`, `vantage` or `datadog`. No amount is converted or summed across currencies.
+- `costroid doctor` sends a `claude-code-action` repository to `init --existing`, names a missing remote, reads aliased triggers, and checks the platform token's scopes and the owner's binding.
+- The image and the release carry `NOTICE` and `LICENSE`, and `NOTICE` names every module the binary includes.
+
+### Fixes
+
+- A request reported in two OTLP batches is stored as one write row.
+- Every lint finding stays on one line, whatever the value it quotes.
+- `costroid connect` retries once when the platform's key set is unavailable, after its `Retry-After`.
+- An empty budget from an environment expression reads as no budget, never as zero.
+
 ## 1.0.0-alpha.12 (2026-11-08)
 
 ### Breaking changes
