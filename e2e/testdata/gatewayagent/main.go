@@ -1,8 +1,10 @@
 // Command gatewayagent stands in for claude -p in the gateway journey. It sends
 // Messages API requests to ANTHROPIC_BASE_URL on ANTHROPIC_AUTH_TOKEN until the
 // gateway refuses one, then prints a result line in Claude Code's stream shape
-// with the usage the accepted requests reported. It exits 3 when a provider key
-// reached it.
+// with the usage the accepted requests reported. It reads both variables as
+// Claude Code does: from its environment, with the env of the working
+// directory's .claude/settings.json, then .claude/settings.local.json, then
+// the last --settings set over it. It exits 3 when a provider key reached it.
 package main
 
 import (
@@ -10,8 +12,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -26,15 +30,18 @@ type outcome struct {
 	RefusedStatus int    `json:"refused_status"`
 	Refusal       string `json:"refusal"`
 	AfterPause    int    `json:"after_pause_status"`
+	Settings      string `json:"settings"`
+	SettingsMode  string `json:"settings_mode"`
 }
 
 func main() {
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+	var result outcome
+	env := readEnv(&result)
+	if env["ANTHROPIC_API_KEY"] != "" {
 		fmt.Fprintln(os.Stderr, "gatewayagent: a provider key reached the agent")
 		os.Exit(3)
 	}
-	base, token := os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_AUTH_TOKEN")
-	var result outcome
+	base, token := env["ANTHROPIC_BASE_URL"], env["ANTHROPIC_AUTH_TOKEN"]
 	var input, output int64
 	for range maxRequests {
 		status, body, usage := send(base, token)
@@ -61,6 +68,64 @@ func main() {
 	fmt.Printf(`{"type":"system","subtype":"init","session_id":%q,"model":%q,"apiKeySource":"none","claude_code_version":"2.1.316"}`+"\n", session, model)
 	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"session_id":%q,"total_cost_usd":0,"usage":{"input_tokens":%d,"output_tokens":%d},"modelUsage":{%q:{"inputTokens":%d,"outputTokens":%d,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"cacheCreationEphemeral5mInputTokens":0,"cacheCreationEphemeral1hInputTokens":0,"thinkingTokens":0}}}`+"\n",
 		session, input, output, model, input, output)
+}
+
+// readEnv is the environment the agent runs on, with each settings file's env
+// set over it in Claude Code's order, the last --settings on top. It notes the
+// path and the mode of that --settings file.
+func readEnv(result *outcome) map[string]string {
+	env := map[string]string{}
+	for _, entry := range os.Environ() {
+		name, value, _ := strings.Cut(entry, "=")
+		env[name] = value
+	}
+	maps.Copy(env, settingsEnv(".claude/settings.json", true))
+	maps.Copy(env, settingsEnv(".claude/settings.local.json", true))
+	var flag string
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "--" {
+			break
+		}
+		if os.Args[i] == "--settings" && i+1 < len(os.Args) {
+			i++
+			flag = os.Args[i]
+		}
+	}
+	if flag == "" {
+		return env
+	}
+	if !strings.HasPrefix(flag, "{") {
+		info, err := os.Stat(flag)
+		if err != nil {
+			fail(err)
+		}
+		result.Settings, result.SettingsMode = flag, fmt.Sprintf("%o", info.Mode().Perm())
+	}
+	maps.Copy(env, settingsEnv(flag, false))
+	return env
+}
+
+// settingsEnv is the env of a settings file, or of inline JSON. A project file
+// may be missing.
+func settingsEnv(value string, optional bool) map[string]string {
+	data := []byte(value)
+	if !strings.HasPrefix(value, "{") {
+		read, err := os.ReadFile(value)
+		if optional && os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			fail(err)
+		}
+		data = read
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		fail(fmt.Errorf("%s: %w", value, err))
+	}
+	return settings.Env
 }
 
 type usage struct {
