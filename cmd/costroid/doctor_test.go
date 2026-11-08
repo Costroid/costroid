@@ -830,7 +830,7 @@ func TestDoctorNamesThePlatformTokenByItsSecret(t *testing.T) {
 	_, stdout, _ := runDoctor(t, root, host)
 	for _, want := range []string{
 		"warn: gh secret list names no repository secret COSTROID_PLATFORM_TOKEN; an organization or environment secret of that name is not listed here: gh secret set COSTROID_PLATFORM_TOKEN, unless the organization or the environment already holds it",
-		"warn: COSTROID_PLATFORM_TOKEN is not set in this shell, so doctor did not read its scopes or the binding: set it to the integration token, then doctor again",
+		"ok: COSTROID_PLATFORM_TOKEN is not set in this shell, so doctor did not read its scopes or the binding; set it to the integration token to check them",
 	} {
 		if lineWith(stdout, want) != want {
 			t.Errorf("no line %q:\n%s", want, stdout)

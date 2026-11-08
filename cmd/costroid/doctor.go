@@ -643,7 +643,7 @@ func platformLines(ctx context.Context, root string, host doctorHost) []finding 
 	}
 	token := host.getenv(platformTokenVariable)
 	if token == "" {
-		return []finding{warn(platformTokenVariable+" is not set in this shell, so doctor did not read its scopes or the binding", "set it to the integration token, then doctor again")}
+		return []finding{ok("%s is not set in this shell, so doctor did not read its scopes or the binding; set it to the integration token to check them", platformTokenVariable)}
 	}
 	if !integrationTokenPattern.MatchString(token) {
 		return []finding{fail(platformTokenVariable+" is not an integration token, which starts costroid_it_", "create one on Costroid Platform, as docs/connect.md says")}
