@@ -379,9 +379,11 @@ type keysRetry struct {
 	name, retryAfter string
 	refusals         []string
 	gitlab           bool
-	// wait is the pause before the retry, zero when there is none.
-	wait time.Duration
-	code int
+	// wait is the pause before the retry, zero when there is none. atOnce is
+	// a retry with no pause.
+	wait   time.Duration
+	atOnce bool
+	code   int
 }
 
 const keysUnavailableCode = "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
@@ -402,7 +404,10 @@ func checkKeysRetry(t *testing.T, tc keysRetry) {
 	}
 	sends, want, waits := 1, "", []time.Duration(nil)
 	if tc.wait > 0 {
-		sends, waits = 2, []time.Duration{tc.wait}
+		waits = []time.Duration{tc.wait}
+	}
+	if tc.wait > 0 || tc.atOnce {
+		sends = 2
 		want = fmt.Sprintf("costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(tc.wait.Seconds()))
 	}
 	if len(stub.proofs) != sends {
@@ -431,8 +436,8 @@ func checkKeysRetry(t *testing.T, tc keysRetry) {
 
 // TestConnectRetriesOnceWhenKeysAreUnavailable sends the same proof a second
 // time after the platform's Retry-After, when that is 120 seconds or less,
-// and never a third time. At 0 seconds or past 120 it stops with the
-// refusal's sentence.
+// and never a third time. Past 120 seconds it stops with the refusal's
+// sentence.
 func TestConnectRetriesOnceWhenKeysAreUnavailable(t *testing.T) {
 	keys := keysUnavailableCode
 	for _, tc := range []keysRetry{
@@ -442,8 +447,22 @@ func TestConnectRetriesOnceWhenKeysAreUnavailable(t *testing.T) {
 		{name: "120 seconds", retryAfter: "120", refusals: []string{keys}, wait: 120 * time.Second},
 		{name: "past 120 seconds", retryAfter: "121", refusals: []string{keys}, code: exitRejected},
 		{name: "seconds past any whole number", retryAfter: "99999999999999999999", refusals: []string{keys}, code: exitRejected},
-		{name: "0 seconds", retryAfter: "0", refusals: []string{keys}, code: exitRejected},
 		{name: "refused again", retryAfter: "2", refusals: []string{keys, keys, keys}, wait: 2 * time.Second, code: exitRejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkKeysRetry(t, tc) })
+	}
+}
+
+// TestConnectRetriesAtOnceOnZero sends the same proof a second time at once
+// when the refusal for unreadable keys names a Retry-After of 0 seconds. It
+// asks the clock for no pause, and never sends a third time.
+func TestConnectRetriesAtOnceOnZero(t *testing.T) {
+	keys := keysUnavailableCode
+	for _, tc := range []keysRetry{
+		{name: "bound on the retry", retryAfter: "0", refusals: []string{keys}, atOnce: true},
+		{name: "a GitLab job bound on the retry", retryAfter: "0", refusals: []string{keys}, gitlab: true, atOnce: true},
+		{name: "0 written twice", retryAfter: "00", refusals: []string{keys}, atOnce: true},
+		{name: "refused again", retryAfter: "0", refusals: []string{keys, keys, keys}, atOnce: true, code: exitRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) { checkKeysRetry(t, tc) })
 	}

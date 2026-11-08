@@ -292,8 +292,10 @@ func bind(ctx context.Context, target platform, job ciJob, clock connectClock, s
 	sent, err := target.sendProof(ctx, job.installation, identity.Tenant.ID, proof)
 	if pause, ok := retryAfterKeys(err); ok {
 		fmt.Fprintf(stderr, "costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(pause.Seconds()))
-		if err := clock.wait(ctx, pause); err != nil {
-			return named, fmt.Errorf("wait to send the proof again: %w", err)
+		if pause > 0 {
+			if err := clock.wait(ctx, pause); err != nil {
+				return named, fmt.Errorf("wait to send the proof again: %w", err)
+			}
 		}
 		sent, err = target.sendProof(ctx, job.installation, identity.Tenant.ID, proof)
 	}
@@ -315,15 +317,16 @@ func retryAfterKeys(err error) (time.Duration, bool) {
 
 // keysWait is the wait Retry-After asks for, in whole seconds, and
 // defaultKeysWait when the value is absent or names no whole seconds, such as
-// an HTTP date. It is not ok when the seconds are 0 or past maxKeysWait, and
-// connect then stops with the refusal instead of waiting.
+// an HTTP date. 0 seconds is no wait, so the retry goes at once. It is not ok
+// past maxKeysWait, and connect then stops with the refusal instead of
+// waiting.
 func keysWait(retryAfter string) (time.Duration, bool) {
 	retryAfter = strings.TrimSpace(retryAfter)
 	if !delaySeconds.MatchString(retryAfter) {
 		return defaultKeysWait, true
 	}
 	seconds, err := strconv.Atoi(retryAfter)
-	if err != nil || seconds < 1 || seconds > int(maxKeysWait/time.Second) {
+	if err != nil || seconds > int(maxKeysWait/time.Second) {
 		return 0, false
 	}
 	return time.Duration(seconds) * time.Second, true
