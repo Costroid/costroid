@@ -1077,7 +1077,7 @@ func TestRowsCarryTheRequestAndTheRunKeys(t *testing.T) {
 			t.Errorf("%s = %v, want %s", column, row[column], want)
 		}
 	}
-	if row["x_CostroidCatalogVersion"] != "0.1.0" {
+	if row["x_CostroidCatalogVersion"] != "0.2.0" {
 		t.Errorf("catalog version %v", row["x_CostroidCatalogVersion"])
 	}
 	if tagOf(row, focus.TagSessionID) != "00000000-0000-4000-8000-000000000001" || tagOf(row, focus.TagAgentVersion) != "2.1.316" {
@@ -1101,7 +1101,7 @@ func TestUnknownModelRowSaysItWasPricedAtTheFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := rows[0]
-	if row.SkuPriceID != "openai:fallback:output" || row.ListCost.String() != "180" {
+	if row.SkuPriceID != "openai:fallback:output" || row.ListCost.String() != "600" {
 		t.Errorf("%s %s", row.SkuPriceID, row.ListCost)
 	}
 	if !strings.Contains(row.ChargeDescription, "fallback tier") {
