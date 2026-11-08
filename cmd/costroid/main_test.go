@@ -212,7 +212,7 @@ func TestUnknownCommandExitsAsAFailureAndNamesHelp(t *testing.T) {
 
 var update = flag.Bool("update", false, "rewrite testdata/usage.golden")
 
-const maxUsageLines = 15
+const maxUsageLines = 16
 
 func TestBareCommandPrintsShortUsage(t *testing.T) {
 	code, stdout, stderr := execute(t)

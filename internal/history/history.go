@@ -128,6 +128,42 @@ func CheckRunBlocks(ctx context.Context, host scm.History, sha string) (reports 
 	return reports, unread, nil
 }
 
+// Posted is the result object of one check run as the check run carries it.
+type Posted struct {
+	CheckRun int64
+	Block    comment.Block
+	// Object is the object's text, byte for byte.
+	Object string
+}
+
+// ErrNoCheck reports a commit that no costroid check run reports on yet.
+var ErrNoCheck = errors.New("history: no costroid check run is on the commit yet")
+
+// Newest reads the result object of the newest costroid check run on the
+// commit, every attempt included. GitHub numbers check runs in the order it
+// creates them. An object comment.ParseResult refuses is an error, and an
+// older check run is never read in its place: it would report a run the
+// newest check has replaced.
+func Newest(ctx context.Context, host scm.History, sha string) (Posted, error) {
+	checks, err := host.CheckRuns(ctx, sha, comment.CheckName)
+	if err != nil {
+		return Posted{}, fmt.Errorf("history: read the check runs on %s: %w", sha, err)
+	}
+	if len(checks) == 0 {
+		return Posted{}, ErrNoCheck
+	}
+	newest := slices.MaxFunc(checks, func(a, b scm.ListedCheck) int { return cmp.Compare(a.ID, b.ID) })
+	block, err := comment.ParseResult(newest.Text)
+	if err != nil {
+		return Posted{}, fmt.Errorf("history: check run %d: %w", newest.ID, err)
+	}
+	if block.HeadSHA != sha {
+		return Posted{}, fmt.Errorf("history: check run %d reports commit %s, not %s", newest.ID, string(comment.Clean(block.HeadSHA)), sha)
+	}
+	object := strings.TrimSuffix(strings.TrimPrefix(newest.Text, fence), fenceEnd)
+	return Posted{CheckRun: newest.ID, Block: block, Object: object}, nil
+}
+
 // Read adds up the reports on every commit of the pull request and own, this
 // run's report, whose check run is not posted yet. The head is read even when
 // the host's list of commits leaves it out.
