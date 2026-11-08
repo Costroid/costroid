@@ -289,19 +289,46 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 	if err != nil {
 		return nil, err
 	}
-	var lines []line
+	groups, err := spans(days)
+	if err != nil {
+		return nil, err
+	}
+	writers := map[string]string{}
 	for _, day := range days {
-		dayLines, err := linesOf(ctx, binary, day, scratch, stderr)
+		writers[day.record.Day] = strings.TrimPrefix(day.record.Writer, "v")
+	}
+	var lines []line
+	for _, group := range groups {
+		groupLines, err := groupLinesOf(ctx, binary, group, scratch, stderr)
 		if err != nil {
 			return nil, err
 		}
-		writer := strings.TrimPrefix(day.record.Writer, "v")
-		failure := writerFailure(writer, day.record.Day, releases)
-		for i := range dayLines {
-			dayLines[i].writer = writer
-			if failure != "" {
-				dayLines[i].failures = append(dayLines[i].failures, failure)
+		for i := range groupLines {
+			writer := writers[groupLines[i].day]
+			groupLines[i].writer = writer
+			if failure := writerFailure(writer, groupLines[i].day, releases); failure != "" {
+				groupLines[i].failures = append(groupLines[i].failures, failure)
 			}
+		}
+		lines = append(lines, groupLines...)
+	}
+	return lines, nil
+}
+
+// groupLinesOf recomputes the lines of a group of days: as one range when
+// they can be joined, and each day alone otherwise.
+func groupLinesOf(ctx context.Context, binary string, group []keptDay, scratch string, stderr io.Writer) ([]line, error) {
+	if joinable(group) {
+		lines, err := spanLines(ctx, binary, group, scratch, stderr)
+		if !errors.Is(err, errUnsettledDay) {
+			return lines, err
+		}
+	}
+	var lines []line
+	for _, day := range group {
+		dayLines, err := linesOf(ctx, binary, day, scratch, stderr)
+		if err != nil {
+			return nil, err
 		}
 		lines = append(lines, dayLines...)
 	}
