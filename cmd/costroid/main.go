@@ -170,10 +170,9 @@ type runFlags struct {
 	gateway, gatewayKeyFile string
 }
 
-func parseRun(args []string, stderr io.Writer) (runFlags, error) {
+func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	set := flag.NewFlagSet("run", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, runHelp) }
 	budget := set.String("budget-usd", "", "the run's budget in USD")
 	agent := set.String("agent", "", "the agent, when the command's name does not say: "+strings.Join(run.Agents, ", "))
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines: "+defaultRowsFile+" when not given")
@@ -181,7 +180,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	gatewayURL := set.String("gateway", os.Getenv(gatewayURLVar), "the LiteLLM gateway the agent runs through")
 	keyFile := set.String("gateway-key-file", os.Getenv(gatewayKeyFileVar), "the file costroid gateway request wrote the run's key to")
 	account := addAccountFlags(set)
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, runHelp, stdout, stderr); err != nil {
 		return runFlags{}, err
 	}
 	if (*gatewayURL == "") != (*keyFile == "") {
@@ -248,7 +247,7 @@ func readCI(stderr io.Writer) cicontext.Context {
 
 func runCommand(ctx context.Context, args []string, std stdio) int {
 	stdin, stdout, stderr := std.stdin, std.stdout, std.stderr
-	flags, err := parseRun(args, stderr)
+	flags, err := parseRun(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

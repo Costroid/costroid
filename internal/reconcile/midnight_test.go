@@ -32,8 +32,23 @@ var split = []reportedDay{
 	{nextDay, 40000, 8000, 120000, 20000, "32.400000"},
 }
 
-// anthropicDays answers the usage and cost endpoints with the days given.
+// splitByClass is split's cost by token type, in cents at list: input at
+// USD 2, 5-minute writes at 2.5, reads at 0.2 and output at 10 per million.
+var splitByClass = map[string]map[string]string{
+	day:     {"uncached_input_tokens": "12.000000", "cache_creation.ephemeral_5m_input_tokens": "3.000000", "cache_read_input_tokens": "3.600000", "output_tokens": "30.000000"},
+	nextDay: {"uncached_input_tokens": "8.000000", "cache_creation.ephemeral_5m_input_tokens": "2.000000", "cache_read_input_tokens": "2.400000", "output_tokens": "20.000000"},
+}
+
+// anthropicDays answers the usage and cost endpoints with the days given,
+// each day's cost on one line.
 func anthropicDays(t *testing.T, days []reportedDay) Provider {
+	t.Helper()
+	return anthropicReport(t, days, nil)
+}
+
+// anthropicReport answers as anthropicDays does. With byClass, a day's cost
+// is one line per token type, at the cents byClass gives that day.
+func anthropicReport(t *testing.T, days []reportedDay, byClass map[string]map[string]string) Provider {
 	t.Helper()
 	var usage, cost []map[string]any
 	for _, each := range days {
@@ -45,8 +60,15 @@ func anthropicDays(t *testing.T, days []reportedDay) Provider {
 			"cache_read_input_tokens": each.read,
 			"output_tokens":           each.output,
 		}})
-		cost = append(cost, map[string]any{"starting_at": start, "group": map[string]any{"api_key_id": anthropicID, "cost_type": "tokens"},
-			"cost": map[string]any{"currency": "USD", "amount": each.cents, "list_amount": each.cents}})
+		if byClass == nil {
+			cost = append(cost, map[string]any{"starting_at": start, "group": map[string]any{"api_key_id": anthropicID, "cost_type": "tokens"},
+				"cost": map[string]any{"currency": "USD", "amount": each.cents, "list_amount": each.cents}})
+			continue
+		}
+		for tokenType, cents := range byClass[each.day] {
+			cost = append(cost, map[string]any{"starting_at": start, "group": map[string]any{"api_key_id": anthropicID, "cost_type": "tokens", "token_type": tokenType},
+				"cost": map[string]any{"currency": "USD", "amount": cents, "list_amount": cents}})
+		}
 	}
 	body := func(data []map[string]any) string {
 		page, err := json.Marshal(map[string]any{"data": data, "has_more": false, "next_page": nil, "data_refreshed_at": "2026-10-16T08:00:00Z"})
@@ -188,5 +210,31 @@ func TestHalfARunAcrossMidnightIsPending(t *testing.T) {
 				t.Errorf("the table does not say %q:\n%s", tc.want, text)
 			}
 		})
+	}
+}
+
+// The ledger holds the whole run on its first day, and the provider serves
+// three fifths of each class that day. Each class's dollars are judged over
+// both days, on the first day's row, as its tokens are, so no class misses.
+func TestClassDollarsJudgeAMidnightRunAcrossItsDays(t *testing.T) {
+	result := passOver(t, runRows(t, day+"T23:50:00Z", nextDay+"T00:20:00Z"), day, nextDay, anthropicReport(t, split, splitByClass), settledNow)
+	if len(result.Rows) != 2 {
+		t.Fatalf("got %d rows, want one per day: %+v", len(result.Rows), result.Rows)
+	}
+	first, second := result.Rows[0], result.Rows[1]
+	if first.Span == nil || first.State != Matched {
+		t.Fatalf("the first day reads %s with span %+v", first.State, first.Span)
+	}
+	want := map[focus.TokenClass]string{focus.InputUncached: "0.2", focus.CacheWrite5m: "0.05", focus.CacheRead: "0.06", focus.Output: "0.5"}
+	if len(first.Dollars.Classes) != len(want) {
+		t.Fatalf("the first day compares %d classes, want %d: %+v", len(first.Dollars.Classes), len(want), first.Dollars.Classes)
+	}
+	for _, check := range first.Dollars.Classes {
+		if check.Ledger.String() != want[check.Class] || check.Provider.String() != want[check.Class] || !check.Within {
+			t.Errorf("%s: ledger USD %s, provider USD %s, within %t; want USD %s on both sides of both days", check.Class, check.Ledger, check.Provider, check.Within, want[check.Class])
+		}
+	}
+	if second.Dollars == nil || second.Dollars.Classes != nil {
+		t.Errorf("the next day repeats the classes: %+v", second.Dollars)
 	}
 }

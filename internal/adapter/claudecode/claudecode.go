@@ -829,8 +829,9 @@ func (s *Session) perModel() ([]adapter.Request, error) {
 	return requests, nil
 }
 
-// modelEntry is one entry for one model's tokens over the run. Its context
-// tier is read as contextTier says, and that note follows the given one.
+// modelEntry is one entry for one model's tokens over the run. It states the
+// whole input of its requests and Claude Code's own figure for them, from
+// which the rows read its context tier.
 func (s *Session) modelEntry(model string, usage modelUsage, tier, where, note string) (adapter.Request, error) {
 	tokens, assumed, err := usage.tokens(s.unsplitWrite())
 	if err != nil {
@@ -848,12 +849,9 @@ func (s *Session) modelEntry(model string, usage modelUsage, tier, where, note s
 		Grain:              adapter.PerRun,
 		Tokens:             tokens,
 		AssumedWrite:       assumed,
+		Note:               note,
+		TierEvidence:       &adapter.TierEvidence{Agent: "Claude Code", USD: usage.stated},
 	}
-	bound, tierNote, err := contextTier(request, usage.stated)
-	if err != nil {
-		return adapter.Request{}, err
-	}
-	request.ContextInputTokens, request.Note = bound, joinNotes(note, tierNote)
 	return request, nil
 }
 

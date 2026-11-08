@@ -58,7 +58,7 @@ func TestReportReadsTheCapFromTheRunObject(t *testing.T) {
 			}
 			args := append([]string{"--rows", rows}, test.args...)
 			var stderr bytes.Buffer
-			flags, err := parseReport(args, &stderr)
+			flags, err := parseReport(args, &stderr, &stderr)
 			if err != nil {
 				t.Fatalf("report %q: %v", args, err)
 			}
@@ -118,7 +118,7 @@ func TestReportReadsTheCapFromTheRunObject(t *testing.T) {
 		}
 		for _, rows := range []string{ran, read} {
 			var stderr bytes.Buffer
-			flags, err := parseReport([]string{"--rows", rows, "--budget-usd", "5"}, &stderr)
+			flags, err := parseReport([]string{"--rows", rows, "--budget-usd", "5"}, &stderr, &stderr)
 			if err != nil {
 				t.Fatal(err)
 			}

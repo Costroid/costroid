@@ -58,13 +58,12 @@ type followUpFlags struct {
 	ingested bool
 }
 
-func parseFollowUp(args []string, stderr io.Writer) (followUpFlags, error) {
+func parseFollowUp(args []string, stdout, stderr io.Writer) (followUpFlags, error) {
 	set := flag.NewFlagSet("follow-up", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file the finished run kept, read as data")
 	ingested := set.Bool("ingested", false, "the rows are ones costroid ingest-run wrote in this job, for a workflow with no report job")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, followUpHelp, stdout, stderr); err != nil {
 		return followUpFlags{}, err
 	}
 	if *rows == "" {
@@ -82,7 +81,7 @@ func parseFollowUp(args []string, stderr io.Writer) (followUpFlags, error) {
 // job's ingest-run wrote. Like report, it exits 0 once it finds GitHub Actions,
 // so a failed post never fails the job.
 func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	flags, err := parseFollowUp(args, stderr)
+	flags, err := parseFollowUp(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

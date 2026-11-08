@@ -53,9 +53,8 @@ func emitOTLPCommand(ctx context.Context, args []string, std stdio) int {
 func emitOTLP(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("emit-otlp", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
-	if err := set.Parse(args); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, emitOTLPHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return exitFailure

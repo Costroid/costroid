@@ -425,7 +425,8 @@ func (l *Ledger) span(key Key) (from, to string) {
 	return from, to
 }
 
-// joined totals the tokens of a credential's days as one group.
+// joined totals the tokens of a credential's days, and their list cost by
+// class, as one group.
 func (l *Ledger) joined(source, credential string, days []string) *ledgerGroup {
 	total := newLedgerGroup()
 	for _, day := range days {
@@ -435,6 +436,9 @@ func (l *Ledger) joined(source, credential string, days []string) *ledgerGroup {
 		}
 		for class, tokens := range group.tokens {
 			total.tokens[class] = total.tokens[class].Add(tokens)
+		}
+		for class, list := range group.classList {
+			total.classList[class] = total.classList[class].Add(list)
 		}
 		total.assumedLifetime = total.assumedLifetime || group.assumedLifetime
 	}

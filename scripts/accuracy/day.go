@@ -165,18 +165,34 @@ var errReconcileRefused = errors.New("costroid reconcile refused the inputs")
 
 // reconcileDay re-runs `costroid reconcile` on one kept day.
 func reconcileDay(ctx context.Context, binary string, day keptDay, scratch string, stderr io.Writer) ([]reconciledRow, error) {
-	out := filepath.Join(scratch, day.record.Day+".jsonl")
+	return reconcileInputs(ctx, binary, reconcileInput{
+		from:       day.record.Day,
+		to:         day.record.Day,
+		directory:  day.directory,
+		savedAt:    day.record.SavedAt,
+		credential: day.record.Credential,
+	}, filepath.Join(scratch, day.record.Day+".jsonl"), stderr)
+}
+
+// reconcileInput is what one pass of `costroid reconcile` reads: the days
+// from and to, and a directory that holds rows.jsonl and the saved reports.
+type reconcileInput struct {
+	from, to, directory, savedAt, credential string
+}
+
+// reconcileInputs runs `costroid reconcile` and reads the rows it wrote to out.
+func reconcileInputs(ctx context.Context, binary string, input reconcileInput, out string, stderr io.Writer) ([]reconciledRow, error) {
 	args := []string{
 		"reconcile",
-		"--rows", filepath.Join(day.directory, rowsFile),
-		"--from", day.record.Day,
-		"--to", day.record.Day,
-		"--reports", filepath.Join(day.directory, reportsDirectory),
-		"--as-of", day.record.SavedAt,
+		"--rows", filepath.Join(input.directory, rowsFile),
+		"--from", input.from,
+		"--to", input.to,
+		"--reports", filepath.Join(input.directory, reportsDirectory),
+		"--as-of", input.savedAt,
 		"--out", out,
 	}
-	if day.record.Credential != "" {
-		args = append(args, "--credential", day.record.Credential)
+	if input.credential != "" {
+		args = append(args, "--credential", input.credential)
 	}
 	command := exec.CommandContext(ctx, binary, args...)
 	var said bytes.Buffer
@@ -187,10 +203,10 @@ func reconcileDay(ctx context.Context, binary string, day keptDay, scratch strin
 	switch {
 	case err == nil, errors.As(err, &exit) && exit.ExitCode() == reconcileMissed:
 	case errors.As(err, &exit):
-		fmt.Fprintf(stderr, "accuracy: %s: costroid reconcile exited %d: %s", day.record.Day, exit.ExitCode(), said.String())
+		fmt.Fprintf(stderr, "accuracy: %s: costroid reconcile exited %d: %s", input.from, exit.ExitCode(), said.String())
 		return nil, errReconcileRefused
 	default:
-		return nil, fmt.Errorf("%s: run %s: %w", day.record.Day, binary, err)
+		return nil, fmt.Errorf("%s: run %s: %w", input.from, binary, err)
 	}
 	return readReconciled(out)
 }
@@ -321,32 +337,43 @@ func joined(names []string) string {
 
 // linesOf recomputes one kept day's lines.
 func linesOf(ctx context.Context, binary string, day keptDay, scratch string, stderr io.Writer) ([]line, error) {
+	if day.record.Report == reportNone {
+		return wholeDay(day, failNoReport)
+	}
+	reconciled, err := reconcileDay(ctx, binary, day, scratch, stderr)
+	if errors.Is(err, errReconcileRefused) {
+		return wholeDay(day, failRefused)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return reconciledLines(day, reconciled)
+}
+
+// wholeDay is the one line of a day no reconciliation row stands for.
+func wholeDay(day keptDay, failure string) ([]line, error) {
 	rows, err := readLabels(day)
 	if err != nil {
 		return nil, err
 	}
-	whole := func(failure string) ([]line, error) {
-		about, err := rows.of("", "", day.record.Credential)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", day.record.Day, err)
-		}
-		if about.source == noFigure {
-			failure = failNoRows
-		}
-		return []line{{day: day.record.Day, named: about, digest: day.digest, failures: []string{failure}}}, nil
+	about, err := rows.of("", "", day.record.Credential)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", day.record.Day, err)
 	}
-	if day.record.Report == reportNone {
-		return whole(failNoReport)
+	if about.source == noFigure {
+		failure = failNoRows
 	}
-	reconciled, err := reconcileDay(ctx, binary, day, scratch, stderr)
-	if errors.Is(err, errReconcileRefused) {
-		return whole(failRefused)
+	return []line{{day: day.record.Day, named: about, digest: day.digest, failures: []string{failure}}}, nil
+}
+
+// reconciledLines judges the reconciliation rows of one kept day.
+func reconciledLines(day keptDay, reconciled []reconciledRow) ([]line, error) {
+	if len(reconciled) == 0 {
+		return wholeDay(day, failNoReconciliation)
 	}
+	rows, err := readLabels(day)
 	if err != nil {
 		return nil, err
-	}
-	if len(reconciled) == 0 {
-		return whole(failNoReconciliation)
 	}
 	lines := make([]line, 0, len(reconciled))
 	for _, row := range reconciled {

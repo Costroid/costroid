@@ -185,7 +185,7 @@ func exportCommand(ctx context.Context, args []string, std stdio) int {
 }
 
 func export(ctx context.Context, args []string, client *http.Client, getenv func(string) string, pace verdictPace, stdout, stderr io.Writer) int {
-	flags, err := parseExport(args, stderr)
+	flags, err := parseExport(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -230,17 +230,16 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	return verdict.print(sent, flags.origin, stdout, stderr)
 }
 
-func parseExport(args []string, stderr io.Writer) (exportFlags, error) {
+func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 	set := flag.NewFlagSet("export", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation the rows came through")
 	batch := set.String("batch-id", "", "the batch id; GitHub Actions derives one from the run")
 	format := set.String("format", "", "the file format to write instead of sending")
 	out := set.String("out", "", "the file --format writes; standard output when absent")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, exportHelp, stdout, stderr); err != nil {
 		return exportFlags{}, err
 	}
 	if set.NArg() > 0 {

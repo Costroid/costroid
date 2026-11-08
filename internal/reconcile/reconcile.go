@@ -107,8 +107,9 @@ type Row struct {
 
 // Span names the days a run crossed midnight UTC over, compared as one
 // because a day of them missed on its own and together they matched. The row
-// of From holds the joined token comparison, and the rows of later days hold
-// none. It is null on a row compared on its own day.
+// of From holds the joined token comparison and the joined dollars by class,
+// and the rows of later days hold neither. It is null on a row compared on
+// its own day.
 type Span struct {
 	Cause CauseName `json:"cause"`
 	From  string    `json:"from"`
@@ -136,8 +137,9 @@ type TokenCheck struct {
 // is null when ProviderList is.
 //
 // Classes is the first line: each class at list price on both sides, null
-// when the report does not split token cost by class. Verdict is the second
-// line, the day within 10%.
+// when the report does not split token cost by class, and on a later day of a
+// Span, whose first day holds the classes of every day in it. Verdict is the
+// second line, the day within 10%.
 type DollarCheck struct {
 	Classes           []ClassDollars   `json:"classes"`
 	Verdict           DollarVerdict    `json:"verdict"`
@@ -305,6 +307,7 @@ func (c comparison) row(key Key) (Row, error) {
 		if dollars, err = c.spanCause(key, group, usage, dollars); err != nil {
 			return Row{}, err
 		}
+		dollars.Classes = c.spanClasses(key, *row.Span, dollars)
 	}
 	row.Dollars = &dollars
 	row.Notes = append(row.Notes, notes...)
@@ -390,6 +393,22 @@ func (c comparison) spanCause(key Key, group *ledgerGroup, usage []Usage, check 
 		check.Unattributed = check.Unattributed.Sub(amount)
 	}
 	return check, nil
+}
+
+// spanClasses compares each class's dollars over the days a run crossed, as
+// its tokens are: the span's first day holds the joined classes, and later
+// days hold none. A day alone would set the whole run's cost against the
+// share the provider served that day.
+func (c comparison) spanClasses(key Key, span Span, check DollarCheck) []ClassDollars {
+	if check.Verdict == NoBill || key.Day != span.From {
+		return nil
+	}
+	days := daysFrom(span.From, span.To)
+	var lines []Cost
+	for _, day := range days {
+		lines = append(lines, c.report.costLines(Key{key.Source, key.Credential, day})...)
+	}
+	return c.compareClasses(c.ledger.joined(key.Source, key.Credential, days), lines)
 }
 
 func daysFrom(from, to string) []string {

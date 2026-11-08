@@ -44,8 +44,13 @@ func (f *fileFacts) observe(line sessionLine) {
 
 // RunWindow records when the agent's process ran. Without it, the window is
 // the span of the stream lines the session was fed.
+//
+// Claude Code states a line's time in whole milliseconds, cut down, so a line
+// written in the run's first millisecond reads up to 1 ms before the run's
+// start. The start is therefore taken down to its whole millisecond, as the
+// SDK session's is.
 func (s *Session) RunWindow(start, end time.Time) {
-	s.ranFrom, s.ranTo = start, end
+	s.ranFrom, s.ranTo = start.Truncate(time.Millisecond), end
 }
 
 func (s *Session) window() (time.Time, time.Time) {

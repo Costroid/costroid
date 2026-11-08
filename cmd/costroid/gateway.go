@@ -156,7 +156,7 @@ func sealingKey() (string, error) {
 func gatewayKeygen(args []string, stdout, stderr io.Writer) error {
 	set := gatewayFlags("keygen", stderr)
 	out := set.String("out", "", "the file the private half goes to; it must not exist")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
 		return err
 	}
 	if *out == "" {
@@ -197,14 +197,13 @@ func gatewayPublicKey(stdout io.Writer) error {
 func gatewayFlags(name string, stderr io.Writer) *flag.FlagSet {
 	set := flag.NewFlagSet("gateway "+name, flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, gatewayUsage) }
 	return set
 }
 
 func gatewayRequest(args []string, stdout, stderr io.Writer) error {
 	set := gatewayFlags("request", stderr)
 	out := set.String("out", "", "the directory the key and the sealed request go to")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
 		return err
 	}
 	public := os.Getenv(publicKeyVariable)
@@ -245,7 +244,7 @@ type mintFlags struct {
 	caps          gateway.DailyCaps
 }
 
-func parseMint(args []string, stderr io.Writer) (mintFlags, error) {
+func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
 	set := gatewayFlags("mint", stderr)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	budget := set.String("budget-usd", "", "the run's budget in USD, the key's max_budget")
@@ -255,7 +254,7 @@ func parseMint(args []string, stderr io.Writer) (mintFlags, error) {
 	repository := set.String("repository-daily-cap-usd", "", "the repository's budget per day, as a team's")
 	author := set.String("author-daily-cap-usd", "", "the author's budget per day, as a user's")
 	request := set.String("request", "", "a sealed request file, in place of this run's artifact")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
 		return mintFlags{}, err
 	}
 	if *address == "" || *budget == "" || *minutes <= 0 || *tokens <= 0 {
@@ -294,7 +293,7 @@ func dailyCap(name, text string) (*decimal.Decimal, error) {
 }
 
 func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	flags, err := parseMint(args, stderr)
+	flags, err := parseMint(args, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -414,7 +413,7 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	set := gatewayFlags("close", stderr)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	retry := set.Duration("retry-after", 0, "when no key is found, how long to wait for a mint that may still be running before deleting once more; the recipe runs close after mint, so it needs none")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
 		return err
 	}
 	if *address == "" {

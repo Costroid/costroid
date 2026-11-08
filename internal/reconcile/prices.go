@@ -378,8 +378,13 @@ func priceMissed(checks []PriceCheck) bool {
 // price, the ledger's against the cost report's. It is null when the report
 // does not split token cost by class, or a split line states no list figure.
 func (c comparison) classDollars(key Key, group *ledgerGroup) []ClassDollars {
+	return c.compareClasses(group, c.report.costLines(key))
+}
+
+// compareClasses sets a group's list cost by class beside the cost lines'.
+func (c comparison) compareClasses(group *ledgerGroup, lines []Cost) []ClassDollars {
 	var provider map[focus.TokenClass]decimal.Decimal
-	for _, line := range c.report.costLines(key) {
+	for _, line := range lines {
 		if !line.Tokens || line.Class == "" {
 			continue
 		}

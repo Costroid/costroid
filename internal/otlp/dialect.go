@@ -279,10 +279,18 @@ func instant(nanos uint64) time.Time {
 	return time.Unix(0, int64(nanos)).UTC()
 }
 
+// The cost basis Costroid states on telemetry. costroid emit-otlp writes
+// keyCostBasis on each span; keyCostBasisOld is the resource attribute a
+// wrapper sets through OTEL_RESOURCE_ATTRIBUTES.
+const (
+	keyCostBasis    = "costroid.cost.basis"
+	keyCostBasisOld = "costroid.cost_basis"
+)
+
 // costBasis defaults to the weaker claim. Telemetry does not say how a run is
-// billed, so only the wrapper's own resource attribute can say measured.
+// billed, so only Costroid's own attribute can say measured.
 func costBasis(r *record) focus.CostBasis {
-	if r.attrs.text("costroid.cost_basis") == string(focus.Measured) {
+	if r.attrs.text(keyCostBasis, keyCostBasisOld) == string(focus.Measured) {
 		return focus.Measured
 	}
 	return focus.ListEquivalent

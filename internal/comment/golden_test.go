@@ -145,6 +145,24 @@ func ghAwInput(t *testing.T) Input {
 	return input
 }
 
+// unheldInput is one row nothing held, given a cap of USD 0.05 it went over,
+// under a verdict that read config offline, as report --preview reads
+// costroid.yml in the working directory.
+func unheldInput(t *testing.T, config policy.ConfigFile) Input {
+	t.Helper()
+	unheld := sampleFields()
+	unheld.enforcement = "none"
+	input := capInput(ledgerOf(t, unheld), "0.05")
+	input.HeadSHA, input.RunURL = sampleHead, exampleRun
+	usage := policy.Usage{Rows: 1, Currencies: []policy.CurrencyUsage{{Currency: "USD", ListCost: decimal.MustParse("0.1"), Rows: 1, Models: map[string]int{"gpt-5.5": 1}}}}
+	verdict, err := policy.Evaluate(context.Background(), policy.Request{Usage: usage, Trust: policy.Unverified, Config: config, At: insidePeriod})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Verdict = &verdict
+	return input
+}
+
 // goldenStates names every state the goldens hold. A state's name is its
 // directory under testdata/golden.
 func goldenStates(t *testing.T) map[string]Input {
@@ -254,6 +272,18 @@ func goldenStates(t *testing.T) map[string]Input {
 	states["gh-aw-stated-credits-withheld"] = withheld(credits)
 
 	states[policyBudgetNoCap] = policyBudgetWithoutCap(t)
+
+	// A report states no cap for a run nothing held. A preview compares the
+	// cost with the cap it was given, and names the costroid.yml it read.
+	states["no-cap-held"] = unheldInput(t, policy.ConfigFile{})
+	for name, config := range map[string]policy.ConfigFile{
+		"preview-no-cap-held":    {},
+		"preview-config-invalid": {Data: []byte("policy: [\n"), Found: true},
+	} {
+		preview := unheldInput(t, config)
+		preview.Preview = true
+		states[name] = preview
+	}
 	return states
 }
 

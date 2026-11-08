@@ -37,7 +37,7 @@ const maxValueBytes = 1024
 var allowed = set(
 	"service.name", "service.version", "app.version",
 	"vcs.repository.url.full", "vcs.change.id", "vcs.ref.head.revision", "cicd.pipeline.run.id",
-	"costroid.cost_basis", "costroid.enforcement_grade",
+	keyCostBasis, keyCostBasisOld, "costroid.enforcement_grade",
 	"gen_ai.provider.name", "gen_ai.system", "gen_ai.operation.name",
 	"gen_ai.request.model", "gen_ai.response.model", "gen_ai.response.id",
 	"gen_ai.conversation.id", "session.id", "gen_ai.agent.name", "gen_ai.agent.version",

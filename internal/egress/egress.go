@@ -6,7 +6,7 @@
 // The Gate checks twice: once per request, which a redirect passes through
 // again, and once per dial. It holds against a mistake in this program, not
 // against code running inside it. A firewall or a network policy holds against
-// both, which docs/install.md says.
+// both, which docs/ledger.md says.
 package egress
 
 import (

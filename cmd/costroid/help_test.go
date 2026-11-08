@@ -41,6 +41,65 @@ var computedFlags = map[string]func() []string{
 // subcommandHelp are the commands that also answer help as a subcommand.
 var subcommandHelp = []string{"gateway", "keys", "egress"}
 
+// helpAfterFlags gives each command whose flag set lives in this package a
+// command line that sets one flag before help is asked for.
+var helpAfterFlags = map[string][][]string{
+	"run":        {{"run", "--out", "rows.jsonl"}},
+	"ingest-run": {{"ingest-run", "--out", "rows.jsonl"}},
+	"report":     {{"report", "--rows", "rows.jsonl"}},
+	"demo":       {{"demo", "--markdown"}},
+	"init":       {{"init", "--force"}},
+	"doctor":     {{"doctor", "--ci"}},
+	"follow-up":  {{"follow-up", "--rows", "rows.jsonl"}},
+	"approve":    {{"approve"}},
+	"reconcile":  {{"reconcile", "--rows", "rows.jsonl"}},
+	"export":     {{"export", "--rows", "rows.jsonl"}},
+	"connect":    {{"connect", "--platform-url", "https://platform.example"}},
+	"review":     {{"review", "--keep"}},
+	"policy":     {{"policy", "--rows", "rows.jsonl"}},
+	"lint":       {{"lint", "--strict"}},
+	"gateway": {
+		{"gateway", "keygen", "--out", "sealing.key"},
+		{"gateway", "request", "--out", "request"},
+		{"gateway", "mint", "--url", "https://gateway.example"},
+		{"gateway", "close", "--url", "https://gateway.example"},
+	},
+	"result":    {{"result", "--pr", "1"}},
+	"mcp":       {{"mcp", "--repo", "owner/name"}},
+	"emit-otlp": {{"emit-otlp", "--rows", "rows.jsonl"}},
+}
+
+// serverFlagSets are the commands whose flag sets live in internal/server.
+var serverFlagSets = []string{"serve", "keys", "egress"}
+
+func TestHelpAfterFlagsPrintsOnStdout(t *testing.T) {
+	for _, entry := range commands {
+		lines, ok := helpAfterFlags[entry.name]
+		if !ok {
+			if !slices.Contains(flagless, entry.name) && !slices.Contains(serverFlagSets, entry.name) {
+				t.Errorf("%s defines flags, and helpAfterFlags gives it no command line", entry.name)
+			}
+			continue
+		}
+		for _, line := range lines {
+			for _, ask := range []string{"-h", "-help", "--help"} {
+				args := append(slices.Clone(line), ask)
+				code, stdout, stderr := execute(t, args...)
+				if code != 0 || stdout != entry.help || stderr != "" {
+					t.Errorf("%v: exit %d, stderr %q, stdout:\n%s", args, code, stderr, stdout)
+				}
+			}
+		}
+	}
+}
+
+func TestHelpAfterAMistakePrintsOnStderr(t *testing.T) {
+	code, stdout, stderr := execute(t, "report", "--rows", "rows.jsonl", "--no-such-flag")
+	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "flag provided but not defined: -no-such-flag\n"+reportHelp) {
+		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+	}
+}
+
 func TestEveryHelpOpensWithUsageOnStdout(t *testing.T) {
 	for _, entry := range commands {
 		t.Run(entry.name, func(t *testing.T) {

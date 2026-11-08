@@ -193,6 +193,10 @@ type Input struct {
 	// request, and the result object names it once that request succeeds.
 	IDInCheck bool
 	Amounts   Amounts
+	// Preview marks the comment costroid report --preview prints. Its verdict
+	// read costroid.yml in the working directory, and a run nothing held
+	// says how its cost compares with the cap it was given.
+	Preview bool
 	// Reason says why there are no figures, and ReasonLine names the line of
 	// an InvalidRow.
 	Reason     Reason

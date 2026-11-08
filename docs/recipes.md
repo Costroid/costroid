@@ -204,7 +204,7 @@ These are claims. Rows read `unverified` and `unattributed` until a ledger check
 
 ## Send rows to a ledger
 
-Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ingest` job then sends the rows under its CI OIDC token. The ledger takes the run's identity from that token and prices the rows itself. A failed send warns and never fails the job. A self-hosted ledger must list the issuer's host on its egress allowlist, or the send answers `EGRESS_REFUSED`: see [`docs/install.md`](install.md#egress).
+Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ingest` job then sends the rows under its CI OIDC token. The ledger takes the run's identity from that token and prices the rows itself. A failed send warns and never fails the job. A self-hosted ledger must list the issuer's host on its egress allowlist, or the send answers `EGRESS_REFUSED`: see [`docs/ledger.md`](ledger.md#egress).
 
 ## What the recipes hold to
 

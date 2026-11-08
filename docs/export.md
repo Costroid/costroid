@@ -1,6 +1,6 @@
 # Export the rows
 
-Costroid records what a run cost as FOCUS rows. This page lists every way those rows leave Costroid today, and names what does not exist yet.
+Costroid records what a run cost as FOCUS rows. This page lists every way those rows leave Costroid today, and names what does not exist yet. [`docs/otlp.md`](otlp.md) sends them as OpenTelemetry traces.
 
 ## The rows file
 
@@ -24,7 +24,7 @@ The agent's job wrote this file, so every row in it is a claim. Its rows read `u
 
 ## A ledger you host
 
-`costroid serve` keeps every run's rows in your own Postgres. The recipes' `ingest` job sends the rows under the job's OIDC token, and the service reprices them from their token counts and takes the run's identity from the token. [`docs/install.md`](install.md) sets it up, and [`docs/serve.md`](serve.md) says what it checks.
+`costroid serve` keeps every run's rows in your own Postgres. The recipes' `ingest` job sends the rows under the job's OIDC token, and the service reprices them from their token counts and takes the run's identity from the token. [`docs/ledger.md`](ledger.md) sets it up, and [`docs/serve.md`](serve.md) says what it checks.
 
 The per-pull-request view reads them back:
 

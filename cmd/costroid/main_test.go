@@ -267,7 +267,7 @@ func TestHelpPerCommand(t *testing.T) {
 
 func TestRunHelpAfterAFlagPrintsRunsHelp(t *testing.T) {
 	code, stdout, stderr := execute(t, "run", "--out", "rows.jsonl", "--help")
-	if code != 0 || stdout != "" || stderr != runHelp {
+	if code != 0 || stdout != runHelp || stderr != "" {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

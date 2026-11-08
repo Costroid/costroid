@@ -60,10 +60,9 @@ func upstreamFlag(into map[string]string) func(string) error {
 	}
 }
 
-func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
+func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, error) {
 	set := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the FOCUS rows, as JSON lines")
 	from := set.String("from", "", "the first UTC day, YYYY-MM-DD")
 	to := set.String("to", "", "the last UTC day, YYYY-MM-DD")
@@ -73,7 +72,7 @@ func parseReconcile(args []string, stderr io.Writer) (reconcileFlags, error) {
 	out := set.String("out", "", "the file reconciliation rows are kept in, one per source, credential and day")
 	reports := set.String("reports", "", "a directory of saved provider reports, read in place of the provider")
 	asOf := set.String("as-of", "", "when the saved reports were saved, as a UTC instant")
-	if err := set.Parse(args); err != nil {
+	if err := parseFlags(set, args, reconcileHelp, stdout, stderr); err != nil {
 		return reconcileFlags{}, err
 	}
 	if *rows == "" || *from == "" || *to == "" || set.NArg() != 0 {
@@ -107,7 +106,7 @@ func fromSavedReports(flags reconcileFlags, getenv func(string) string, client r
 }
 
 func reconcileCommand(ctx context.Context, args []string, getenv func(string) string, client reconcile.Doer, now clock, stdout, stderr io.Writer) int {
-	flags, err := parseReconcile(args, stderr)
+	flags, err := parseReconcile(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

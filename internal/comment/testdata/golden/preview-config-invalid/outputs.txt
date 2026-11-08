@@ -1,0 +1,12 @@
+cost=0.1
+currency=USD
+cost_basis=measured
+tokens_input_uncached=0
+tokens_cache_read=0
+tokens_cache_write=0
+tokens_output=1000000
+enforcement_grade=none
+catalog_version=0.1.0
+check_run_id=
+conclusion=neutral
+result={"schema":"costroid.result/0.7","conclusion":"neutral","state":"reported","agent_error":null,"agent_skipped":null,"head_sha":"9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d","ci_run":null,"rows_sha256":null,"rows_file_sha256":null,"amounts":"shown","rows":1,"run_identity":"unverified","figures":[{"currency":"USD","list_cost":"0.1","cost_basis":"measured","attribution_grade":"unattributed","enforcement_grade":"none","rows":1,"fallback_rows":0,"tokens":{"output":"1000000"}}],"figures_omitted":0,"cap":{"currency":"USD","amount":"0.05","enforcement_grade":"none","cost":"0.1","cost_basis":"measured","remainder":"0","overshoot":"0.05","overshoot_tokens":"1000000"},"data":{"agents":["codex"],"models":["gpt-5.5"],"models_omitted":0,"catalog_versions":["0.1.0"],"fallback_models":[],"fallback_models_omitted":0,"fallback_price_ids":[],"fallback_price_ids_omitted":0},"lifetime":null,"agent_stated":null,"policy":{"conclusion":"neutral","trust":"unverified","pack_sha256":"0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30","config_sha256":"0145a96a9c91ef16d48835586314389c456ac1ea4218c42475da8abf0e7f8c9c","config":"invalid","config_from_base":false,"evaluated_at":"2026-11-06T09:00:00Z","warn_only":{"active":true,"reason":"start_unknown"},"results":[],"joinable_rows":0}}

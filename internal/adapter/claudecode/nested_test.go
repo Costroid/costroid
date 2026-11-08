@@ -103,6 +103,12 @@ func finishTree(t *testing.T, config string) adapter.Report {
 // finishTreeBilledBy replays the stream with its apiKeySource replaced.
 func finishTreeBilledBy(t *testing.T, config, apiKeySource string) adapter.Report {
 	t.Helper()
+	return finishTreeIn(t, config, apiKeySource, runStart, runEnd)
+}
+
+// finishTreeIn replays the stream inside the window from start to end.
+func finishTreeIn(t *testing.T, config, apiKeySource string, start, end time.Time) adapter.Report {
+	t.Helper()
 	session := Agent{ConfigDir: config}.NewSession(adapter.Plan{}).(*Session)
 	data, err := os.ReadFile(fixture("subagent", "stream.jsonl"))
 	if err != nil {
@@ -114,7 +120,7 @@ func finishTreeBilledBy(t *testing.T, config, apiKeySource string) adapter.Repor
 			t.Fatal(err)
 		}
 	}
-	session.RunWindow(runStart, runEnd)
+	session.RunWindow(start, end)
 	report, err := session.Finish()
 	if err != nil {
 		t.Fatal(err)
@@ -185,6 +191,33 @@ func TestSessionsThatStartOutsideTheRunAreNotCounted(t *testing.T) {
 			assertRunAlone(t, report)
 			if len(report.Warnings) != 0 {
 				t.Errorf("warnings %q", report.Warnings)
+			}
+		})
+	}
+}
+
+// Claude Code dates a line in whole milliseconds, cut down, so a nested
+// session that began in the run's first millisecond reads before the run's
+// start, and is still counted. One a millisecond earlier is not.
+func TestNestedSessionOnTheWindowEdgeIsRead(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		stamp   time.Time
+		from    time.Time
+		counted bool
+	}{
+		{"in the start's millisecond", runStart, runStart.Add(400 * time.Microsecond), true},
+		{"a millisecond before the start's", runStart.Add(-time.Millisecond), runStart.Add(400 * time.Microsecond), false},
+		{"a millisecond before the start's, inside its second", runStart.Add(499 * time.Millisecond), runStart.Add(500*time.Millisecond + 400*time.Microsecond), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			config, project := agentTree(t)
+			nestedAt(c.stamp, inside).writeIn(t, project)
+			report := finishTreeIn(t, config, "none", c.from, runEnd)
+			assertRunRows(t, report)
+			if counted := len(report.Nested) == 1; counted != c.counted {
+				t.Errorf("a nested session dated %s in the window from %s: counted %v, want %v; warnings %q",
+					c.stamp.Format(time.RFC3339Nano), c.from.Format(time.RFC3339Nano), counted, c.counted, report.Warnings)
 			}
 		})
 	}
