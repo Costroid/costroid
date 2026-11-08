@@ -23,6 +23,9 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - Write the rows for another tool: `costroid export --format focus-csv`, `vantage` or `datadog`. No amount is converted or summed across currencies.
 - `costroid doctor` sends a `claude-code-action` repository to `init --existing`, names a missing remote, reads aliased triggers, and checks the platform token's scopes and the owner's binding.
 - The image and the release carry `NOTICE` and `LICENSE`, and `NOTICE` names every module the binary includes.
+- `costroid init github --agent claude-agent-sdk` and `--agent codex-sdk` write the SDK recipes, and `costroid lint` checks an SDK job as an agent job, egress included.
+- Every help page opens with `Usage:`, names every flag and ends with its exit codes. `costroid` with no command prints usage and exits 2.
+- CI verifies the embedded catalog's signature with cosign against the catalog's release workflow, and checks every sheet against the signed sums.
 
 ### Fixes
 
@@ -30,6 +33,8 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - Every lint finding stays on one line, whatever the value it quotes.
 - `costroid connect` retries once when the platform's key set is unavailable, after its `Retry-After`.
 - An empty budget from an environment expression reads as no budget, never as zero.
+- The SDK agent reads a session line written in the run's first millisecond.
+- `gateway close`'s help gave the wrong default for `--retry-after`; it is 0.
 
 ## 1.0.0-alpha.12 (2026-11-08)
 
