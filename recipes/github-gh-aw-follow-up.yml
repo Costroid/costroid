@@ -1,0 +1,84 @@
+# Reads what a GitHub Agentic Workflows (gh-aw) run cost once it finishes, and
+# posts the costroid check on its pull request. gh-aw compiles its own workflow,
+# so this one runs after it and no gh-aw file is edited. Copy to
+# .github/workflows/costroid-gh-aw.yml on the default branch, and name your
+# gh-aw workflow below. docs/gh-aw.md says what it reads.
+name: costroid-gh-aw
+
+on:
+  workflow_run:
+    # The name: line of your gh-aw workflow's lock file.
+    workflows: [Agentic Pull Request Review]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  read:
+    if: github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      # Downloads the usage artifact the finished run kept.
+      actions: read
+      checks: write
+      # Reads costroid.yml at the default branch's commit.
+      contents: read
+      # Finds the pull request by its branch. The check is posted only when
+      # exactly one has the finished run's head commit as its head.
+      pull-requests: read
+    steps:
+      # gh-aw's run wrote these files. costroid reads three of them as data,
+      # refuses the artifact if it holds anything gh-aw does not put there, and
+      # no step runs anything from them.
+      - name: Fetch the finished run's usage
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: usage
+          path: ${{ runner.temp }}/gh-aw-usage
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+        with:
+          stage: install
+      # A refused or missing artifact writes empty rows and the reason, which
+      # the check states.
+      - name: Read what the run cost
+        continue-on-error: true
+        run: costroid ingest-run --from gh-aw="$RUNNER_TEMP/gh-aw-usage" --out "$RUNNER_TEMP/costroid-rows.jsonl"
+      - name: Post the check
+        if: github.event.workflow_run.event == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: costroid follow-up --ingested --rows "$RUNNER_TEMP/costroid-rows.jsonl"
+      - name: Keep the rows
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: costroid-rows
+          path: |
+            ${{ runner.temp }}/costroid-rows.jsonl
+            ${{ runner.temp }}/costroid-rows.run.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  ingest:
+    needs: read
+    # Sends to a ledger when COSTROID_INGEST_URL is set, and to Costroid
+    # Platform when COSTROID_PLATFORM_URL is. docs/export.md says how.
+    if: >-
+      always() && needs.read.result != 'skipped'
+      && (vars.COSTROID_INGEST_URL != '' || vars.COSTROID_PLATFORM_URL != '')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - uses: Costroid/costroid/action@5f8c390b2bfe502c16cd7c3feb3ad362f14668e5 # v1.0.0-alpha.11
+        with:
+          stage: ingest
+          ingest-url: ${{ vars.COSTROID_INGEST_URL }}
+          ingest-audience: ${{ vars.COSTROID_INGEST_AUDIENCE }}
+          platform-url: ${{ vars.COSTROID_PLATFORM_URL }}
+          installation-id: github-owner:${{ github.repository_owner_id }}
+          platform-token: ${{ secrets.COSTROID_PLATFORM_TOKEN }}

@@ -131,3 +131,46 @@ func TestForkFollowUpPermissionsLeaveOtherWorkflowsAlone(t *testing.T) {
 		}
 	}
 }
+
+const (
+	ghAwFollowUpRecipe = "github-gh-aw-follow-up.yml"
+	ghAwIngestRun      = `costroid ingest-run --from gh-aw="$RUNNER_TEMP/gh-aw-usage" --out "$RUNNER_TEMP/costroid-rows.jsonl"`
+	ghAwKeepStep       = "      - name: Keep the rows\n"
+	ghAwSendStep       = "          platform-token: ${{ secrets.COSTROID_PLATFORM_TOKEN }}\n"
+)
+
+// TestGhAwFollowUpRunsNothingFromTheDownload holds the gh-aw follow-up to the
+// rules every follow-up keeps. Its download is read by ingest-run --from gh-aw
+// and by nothing else, it uploads only the rows ingest-run wrote, and only a
+// job that sends them alone may hold id-token: write.
+func TestGhAwFollowUpRunsNothingFromTheDownload(t *testing.T) {
+	source := read(t, filepath.Join(recipesDir, ghAwFollowUpRecipe))
+	if report := LintBytes(ghAwFollowUpRecipe, []byte(source)); len(report.Findings) != 0 {
+		t.Fatalf("findings: %v", report.Findings)
+	}
+	before := func(body string) edit { return edit{from: ghAwKeepStep, to: body + ghAwKeepStep} }
+	for name, change := range map[string]edit{
+		"a script from the download":    before("      - run: bash \"$RUNNER_TEMP/gh-aw-usage/agent/run.sh\"\n"),
+		"a second command":              {from: ghAwIngestRun, to: ghAwIngestRun + "; sh x"},
+		"another reader on the usage":   {from: ghAwIngestRun, to: `costroid ingest-run --from codex-home="$RUNNER_TEMP/gh-aw-usage" --out "$RUNNER_TEMP/costroid-rows.jsonl"`},
+		"an upload of the download":     {from: "            ${{ runner.temp }}/costroid-rows.run.json\n", to: "            ${{ runner.temp }}/gh-aw-usage\n"},
+		"an upload under another name":  {from: "          name: costroid-rows\n", to: "          name: rows\n"},
+		"the download in an env":        before("      - env:\n          USAGE: ${{ runner.temp }}/gh-aw-usage\n        run: ls \"$USAGE\"\n"),
+		"the download in the workspace": {from: "          path: ${{ runner.temp }}/gh-aw-usage\n", to: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			change.rule = RuleFollowUpArtifact
+			expectRule(t, source, change)
+		})
+	}
+	for name, change := range map[string]edit{
+		"id-token beside another step":   {from: ghAwSendStep, to: ghAwSendStep + "      - run: echo sent\n"},
+		"a write on the reading job":     {from: "      checks: write\n", to: "      checks: write\n      id-token: write\n"},
+		"contents written by the sender": {from: "      id-token: write\n", to: "      id-token: write\n      contents: write\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			change.rule = RuleFollowUpPermissions
+			expectRule(t, source, change)
+		})
+	}
+}

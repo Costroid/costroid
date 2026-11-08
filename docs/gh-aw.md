@@ -23,6 +23,16 @@ costroid: gh-aw stated 7.47 AI credits for this run. Costroid does not convert c
 
 `costroid report --preview --rows costroid-rows.jsonl` then prints the comment those rows would get. [`docs/troubleshooting.md`](troubleshooting.md#reading-a-gh-aw-run) lists every line this source prints.
 
+## Post the check on the pull request
+
+[`recipes/github-gh-aw-follow-up.yml`](../recipes/github-gh-aw-follow-up.yml) runs on `workflow_run` after your gh-aw workflow, so no gh-aw file is edited. It downloads the run's `usage` artifact into an empty directory under `runner.temp`, reads it with `costroid ingest-run --from gh-aw`, and posts the `costroid` check with `costroid follow-up --ingested`. Copy it to `.github/workflows/costroid-gh-aw.yml` on the default branch, and put your gh-aw workflow's name, the `name:` line of its lock file, in `workflows:`.
+
+`costroid report` posts on the `pull_request` event alone, so the follow-up posts the check. `--ingested` says the rows were written in the follow-up's own job: it then posts for a pull request from a branch of your repository, which has no report job of its own, and reads the run's object beside the rows for the reason and gh-aw's credits. A fork's pull request gets a check that concludes `neutral` at most, as every fork's does. gh-aw runs no workflow on a fork's pull request unless its `forks:` field names the fork (https://github.github.com/gh-aw/reference/fork-support/, read 2026-11-08).
+
+A gh-aw run that a pull request did not start, such as one on an issue or a schedule, gets no check. Its rows still go to a ledger or to Costroid Platform when `COSTROID_INGEST_URL` or `COSTROID_PLATFORM_URL` is set, as [`docs/export.md`](export.md) says.
+
+The check and the comment state gh-aw's credits on a line of their own, under the figures: `gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits.` The result object carries them as `agent_stated`, in [`result/v0.7`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.7). Neither is shown where the comment withholds amounts.
+
 ## What is read
 
 The `usage` artifact as gh-aw v1.2.1's conclusion job uploads it (`actions/setup/sh/collect_usage_artifact_files.sh` in `github/gh-aw`, read 2026-11-08). Three of its files are read, and nothing else:
@@ -33,7 +43,7 @@ The `usage` artifact as gh-aw v1.2.1's conclusion job uploads it (`actions/setup
 | `detection/token_usage.jsonl` | The threat detection job's records. It is empty when that job made no request |
 | `aw_info.json` | The AI-credit cap the workflow was compiled with, as `model_config.max_ai_credits` |
 
-The run wrote the artifact, so it is read as data and nothing in it is run. An artifact that holds a file or a directory gh-aw does not put there, or a link in place of a file, is refused, and no row is written. A gh-aw release that adds a file to the artifact is refused the same way until Costroid's list names the file.
+The run wrote the artifact, so it is read as data and nothing in it is run. An artifact that holds a file or a directory gh-aw does not put there, or a link in place of a file, is refused, and no row is written. A gh-aw release that adds a file to the artifact is refused the same way until Costroid's list names the file. The refusal names the entry and the gh-aw release the list was read from, v1.2.1, and the check states it as the reason `reader_refused`.
 
 ## How a record becomes rows
 
@@ -58,7 +68,7 @@ Some records are not the agent's own requests:
 - A record with a 4xx or 5xx status and no tokens writes no row. One that carried tokens is kept, because the provider counted them.
 - A record from `gemini`, `opencode` or `unknown` writes no row, because the catalog holds no price for those providers. A warning counts them.
 
-A request Copilot served (`provider: copilot`) is priced at the list rate of the model's own provider, read from the model's name: `claude-` is Anthropic, and `gpt-`, `o1`, `o3` and `o4` are OpenAI. Any other model writes no row, with a warning. The proxy states Copilot's input with the cached tokens when Copilot's response lumps them in, and without them when it splits them out, and the record does not say which. Input large enough to hold the cached tokens and writes is read as holding them. No Copilot run has been recorded, so this reading is unverified.
+A request Copilot served (`provider: copilot`) is priced at the list rate of the model's own provider, read from the model's name: `claude-` is Anthropic, and `gpt-`, `o1`, `o3` and `o4` are OpenAI. Any other model writes no row, with a warning. The proxy states Copilot's input with the cached tokens when Copilot's response lumps them in, and without them when it splits them out, and the record does not say which. Input large enough to hold the cached tokens and writes is read as holding them. No Copilot run has been recorded, so this reading is unverified, and each Copilot row's description says so.
 
 ## Basis
 
@@ -70,7 +80,7 @@ The grade is `none`. Costroid did not start the run and minted no cap. gh-aw's p
 
 ## gh-aw's AI credits
 
-gh-aw prices each request in its own unit, AI credits, and each record states the run's total so far as `ai_credits_total`. The run's figure is the last total of the agent job's records added to the last of the threat detection job's, with every digit gh-aw wrote. Costroid prints it on its own line and never converts it or adds it to a USD figure. When the threat detection job made requests and states no credits, the run's total is unknown, and no figure is printed.
+gh-aw prices each request in its own unit, AI credits, and each record states the run's total so far as `ai_credits_total`. The run's figure is the last total of the agent job's records added to the last of the threat detection job's, with every digit gh-aw wrote. Costroid states it on its own line and never converts it or adds it to a USD figure. When the threat detection job made requests and states no credits, the run's total is unknown, and no figure is printed.
 
 ## What is verified
 
