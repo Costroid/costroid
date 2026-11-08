@@ -286,6 +286,10 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: wrote .gitlab-ci.yml, which includes <file>` | The repository had no `.gitlab-ci.yml`, so `init` wrote one that includes the template | Commit it with the template |
 | `costroid: added <file> to the include of .gitlab-ci.yml` | `init` added the template to the pipeline's `include:` | Commit `.gitlab-ci.yml` with the template |
 | `costroid: .gitlab-ci.yml already includes <file>` | The pipeline already reads the template, so `init` left `.gitlab-ci.yml` as it is | None |
+| `costroid: wrote <file>, the skill that reads what a run cost` | `init --skills` wrote the skill where Codex or Claude Code reads it | Commit it with the workflow |
+| `costroid: the repository has the secret <name> already, so init leaves it as it is` | `init --pr` found the agent's key among the repository's secrets, so it asked for no key and set none | None. To replace the key, run `gh secret set <name>` |
+| `costroid: the run posted its comment at <url>` | `init --pr` opened the pull request, watched its run to the end and found Costroid's comment | Open the address |
+| `costroid: init: <command> failed: <error>` | A command `init --pr` ran failed, and `init` exits 125. The lines above it list the commands left, the failed one first | Fix what the command's own error names, then run the commands left by hand |
 
 ## Checking a repository
 
