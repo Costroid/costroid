@@ -237,6 +237,7 @@ the check is the gate, and the flag is ignored with a warning.
 
 const followUpHelp = `Usage:
   costroid follow-up --rows rows.jsonl
+  costroid follow-up --ingested --rows rows.jsonl
 
 follow-up posts the check for a fork's pull request from a workflow_run job,
 which holds the base repository's token. It reads the finished run's rows as
@@ -244,6 +245,12 @@ data, up to 8 MiB, and costroid.yml at the default branch's commit. It posts no
 comment, and nothing for a branch of the repository itself, whose report job
 posts the check. Like report, it exits 0 whatever the host answers, and outside
 GitHub Actions it refuses and exits 125.
+
+--ingested says this job wrote the rows with costroid ingest-run from the
+finished run's artifact, for a workflow with no report job of its own, such as
+gh-aw's. follow-up then posts for a branch of the repository as well, and reads
+the run's object beside the rows. A fork's check still concludes neutral at
+most.
 `
 
 const reconcileHelp = `Usage:

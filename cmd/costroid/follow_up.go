@@ -50,27 +50,39 @@ type finishedRun struct {
 	} `json:"head_repository"`
 }
 
-func parseFollowUp(args []string, stderr io.Writer) (string, error) {
+// followUpFlags are what follow-up is given.
+type followUpFlags struct {
+	rows string
+	// ingested says this job wrote the rows with costroid ingest-run from the
+	// finished run's artifact, for a workflow with no report job of its own.
+	ingested bool
+}
+
+func parseFollowUp(args []string, stderr io.Writer) (followUpFlags, error) {
 	set := flag.NewFlagSet("follow-up", flag.ContinueOnError)
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file the finished run kept, read as data")
+	ingested := set.Bool("ingested", false, "the rows are ones costroid ingest-run wrote in this job, for a workflow with no report job")
 	if err := set.Parse(args); err != nil {
-		return "", err
+		return followUpFlags{}, err
 	}
 	if *rows == "" {
-		return "", errors.New("follow-up needs --rows")
+		return followUpFlags{}, errors.New("follow-up needs --rows")
 	}
-	return *rows, nil
+	return followUpFlags{rows: *rows, ingested: *ingested}, nil
 }
 
 // followUpCommand posts the costroid check for a fork's pull request from a
 // workflow_run job, which runs in the base repository with its token. It reads
 // no code and runs nothing from the finished run: the rows are data, and the
-// settings come from the default branch. Like report, it exits 0 once it finds
-// GitHub Actions, so a failed post never fails the job.
+// settings come from the default branch. With --ingested it also posts for a
+// branch of this repository, because a workflow such as gh-aw's has no report
+// job of its own, and it reads the run's object beside the rows, which this
+// job's ingest-run wrote. Like report, it exits 0 once it finds GitHub Actions,
+// so a failed post never fails the job.
 func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	rowsPath, err := parseFollowUp(args, stderr)
+	flags, err := parseFollowUp(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -82,27 +94,15 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "costroid: %v\n", errNotGitHubActions)
 		return exitFailure
 	}
-	run, head, err := forkRun(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_EVENT_PATH"), os.Getenv("GITHUB_REPOSITORY"))
+	repository := os.Getenv("GITHUB_REPOSITORY")
+	run, head, err := finishedPullRun(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_EVENT_PATH"), repository, flags.ingested)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
 		return 0
 	}
-	rows, err := readFollowUpRows(rowsPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-	}
-	// Only a fork's run reaches here, so a missing rows file is a fork's.
-	if rows.reason == comment.NoRowsFile {
-		rows.reason = comment.ForkNoRows
-	}
-	input := comment.Input{
-		Ledger:     rows.ledger,
-		State:      rows.state,
-		Reason:     rows.reason,
-		ReasonLine: rows.line,
-		HeadSHA:    head,
-		RunURL:     finishedRunURL(run.ID),
-	}
+	fork := !strings.EqualFold(run.HeadRepository.FullName, repository)
+	input := followUpInput(flags, fork, stderr)
+	input.HeadSHA, input.RunURL = head, finishedRunURL(run.ID)
 	pull := pullContext{head: head, base: os.Getenv("GITHUB_SHA")}
 	host, err := hostFromEnvironment(pull)
 	if err != nil {
@@ -110,13 +110,74 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 		publish(input, false, stdout, stderr)
 		return 0
 	}
-	if err := confirmForkPull(ctx, host, run, os.Getenv("GITHUB_REPOSITORY")); err != nil {
+	confirm := confirmForkPull
+	if !fork {
+		confirm = confirmBranchPull
+	}
+	if err := confirm(ctx, host, run, repository); err != nil {
 		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
 		return 0
 	}
-	input = postFollowUp(ctx, host, pull, run.Path, input, rowsPath, stderr)
+	input = postFollowUp(ctx, host, pull, run.Path, input, flags.rows, fork, stderr)
 	publish(input, false, stdout, stderr)
 	return 0
+}
+
+// followUpInput is what the rows say. A fork's missing rows file is a fork's
+// run that left none. Rows ingest-run wrote in this job come with the run's
+// object, as report reads it: the reason, the agent's error and the agent's
+// own figure.
+func followUpInput(flags followUpFlags, fork bool, stderr io.Writer) comment.Input {
+	rows, err := readFollowUpRows(flags.rows)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
+	}
+	if fork && rows.reason == comment.NoRowsFile {
+		rows.reason = comment.ForkNoRows
+	}
+	input := comment.Input{
+		Ledger:     rows.ledger,
+		State:      rows.state,
+		Reason:     rows.reason,
+		ReasonLine: rows.line,
+	}
+	if flags.ingested {
+		stated := readRunReason(flags.rows, stderr)
+		input.RunReason = runReasonFor(rows.state, stated.RunReason, stderr)
+		input.ReaderLine = stated.ReaderError
+		input.AgentError = agentErrorFor(stated.AgentError, stderr)
+		input.AgentStated = agentStatedFor(stated.AgentStated, stderr)
+	}
+	return input
+}
+
+// confirmBranchPull binds the head commit to the one open pull request from
+// the branch of this repository the finished run names, whose head is that
+// commit.
+func confirmBranchPull(ctx context.Context, host scm.Reporter, run finishedRun, repository string) error {
+	heads, ok := host.(scm.ForkHeads)
+	if !ok {
+		return errors.New("this host cannot find a branch's pull request")
+	}
+	if run.HeadBranch == "" || run.HeadRepository.Owner.Login == "" {
+		return errors.New("the finished run names no head branch and owner to find its pull request by")
+	}
+	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
+	defer cancel()
+	pulls, err := heads.OpenPullsFrom(ctx, run.HeadRepository.Owner.Login, run.HeadBranch)
+	if err != nil {
+		return fmt.Errorf("the branch's open pull requests could not be read: %w", err)
+	}
+	matched := 0
+	for _, pull := range pulls {
+		if pull.HeadSHA == run.HeadSHA && strings.EqualFold(pull.HeadRepository, repository) {
+			matched++
+		}
+	}
+	if matched != 1 {
+		return fmt.Errorf("%d open pull requests from %s have the head commit as their head, and the check needs exactly 1", matched, run.HeadBranch)
+	}
+	return nil
 }
 
 // confirmForkPull binds the head commit to the one open pull request from the
@@ -160,10 +221,11 @@ func confirmForkPull(ctx context.Context, host scm.Reporter, run finishedRun, re
 	return nil
 }
 
-// forkRun reads the finished run and returns the head commit of its fork's
+// finishedPullRun reads the finished run and returns the head commit of its
 // pull request. A branch of this repository gets its check from the report
-// job of its own workflow, so the follow-up posts nothing for it.
-func forkRun(eventName, eventPath, repository string) (finishedRun, string, error) {
+// job of its own workflow, so the follow-up posts nothing for it, unless the
+// rows were ingested here for a workflow that has no report job.
+func finishedPullRun(eventName, eventPath, repository string, branches bool) (finishedRun, string, error) {
 	if eventName != followUpTrigger {
 		return finishedRun{}, "", errors.New("follow-up runs on the workflow_run event alone")
 	}
@@ -176,7 +238,7 @@ func forkRun(eventName, eventPath, repository string) (finishedRun, string, erro
 		return run, "", errors.New("the finished run was not started by a pull request")
 	case run.HeadRepository == nil || run.HeadRepository.FullName == "":
 		return run, "", errors.New("the finished run names no head repository")
-	case strings.EqualFold(run.HeadRepository.FullName, repository):
+	case !branches && strings.EqualFold(run.HeadRepository.FullName, repository):
 		return run, "", errors.New("the pull request is from a branch of this repository, and its own report job posts the check")
 	case !headPattern.MatchString(run.HeadSHA):
 		return run, "", errors.New("no head commit: the event file names none")
@@ -227,8 +289,9 @@ func finishedRunURL(id int64) string {
 
 // postFollowUp posts the check alone, and names the check run in its own
 // result object as report does. The pull request's number is not in a fork's
-// workflow_run event, and the check is what a required check reads.
-func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, workflow string, input comment.Input, rowsPath string, stderr io.Writer) comment.Input {
+// workflow_run event, and the check is what a required check reads. A fork's
+// verdict is held at neutral; a branch's stands as report's does.
+func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, workflow string, input comment.Input, rowsPath string, fork bool, stderr io.Writer) comment.Input {
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input.Amounts = resolveAmounts(ctx, host, pull.base, stderr)
@@ -243,7 +306,7 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 		rowsPath: rowsPath,
 		state:    input.State,
 	}, stderr)
-	capped := capAtNeutral(verdict)
+	capped := fork && capAtNeutral(verdict)
 	input.Verdict = verdict
 	return postInputCheck(ctx, host, input, stderr, forkSentences(input, capped)...)
 }

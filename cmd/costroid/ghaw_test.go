@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
 )
@@ -194,4 +195,79 @@ func docBlock(t *testing.T, page, language, prefix string) string {
 	}
 	t.Fatalf("docs/gh-aw.md has no %s block with %q", language, prefix)
 	return ""
+}
+
+// ingestedRows runs ingest-run on the gh-aw artifact, as the gh-aw follow-up
+// recipe does, and returns the rows file beside its run object.
+func ingestedRows(t *testing.T) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
+	if code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+copyArtifact(t, ""), "--out", out); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	return out
+}
+
+// TestGhAwFollowUpPostsOnABranchWithTheCredits posts the check of a gh-aw run
+// on a pull request from a branch of this repository, which has no report job
+// of its own. The check states gh-aw's credits on their own line and in the
+// object, and its verdict stands as report's would.
+func TestGhAwFollowUpPostsOnABranchWithTheCredits(t *testing.T) {
+	stub := followUpEnvironment(t, "example/widgets")
+	stub.Files[configFile] = overBudget + "  enforce: true\n"
+	stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+	rows := ingestedRows(t)
+	code, _, stderr := execute(t, "follow-up", "--ingested", "--rows", rows)
+	if code != 0 || len(stub.Checks) != 1 {
+		t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+	}
+	check := stub.Checks[0]
+	line := "gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits."
+	if check.HeadSHA != headCommit || !strings.Contains(check.Summary, line) || strings.Contains(check.Summary, forkCapSentence) {
+		t.Errorf("check on %s:\n%s", check.HeadSHA, check.Summary)
+	}
+	block := checkBlock(t, check.Text)
+	validateResult(t, block)
+	if !strings.Contains(block, `"quantity": "7.47"`) || !strings.Contains(block, `"list_cost": "0.04974"`) {
+		t.Errorf("the object does not state the figure and the credits apart:\n%s", block)
+	}
+	if verdict := checkVerdict(t, check.Text); verdict.Conclusion != "failure" {
+		t.Errorf("a branch's verdict was held at %s", verdict.Conclusion)
+	}
+	if code, _, stderr := execute(t, "follow-up", "--rows", rows); code != 0 || len(stub.Checks) != 1 || !strings.Contains(stderr, "its own report job posts the check") {
+		t.Errorf("without --ingested a branch got a check: exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+	}
+}
+
+// TestGhAwFollowUpStillCapsAFork holds a fork's gh-aw run at neutral, as every
+// fork's check is.
+func TestGhAwFollowUpStillCapsAFork(t *testing.T) {
+	stub := followUpEnvironment(t, "stranger/widgets")
+	stub.Files[configFile] = overBudget + "  enforce: true\n"
+	stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+	code, _, stderr := execute(t, "follow-up", "--ingested", "--rows", ingestedRows(t))
+	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].Conclusion != "neutral" || !strings.Contains(stub.Checks[0].Summary, forkCapSentence) {
+		t.Fatalf("exit %d, %+v: %s", code, stub.Checks, stderr)
+	}
+}
+
+// TestGhAwFollowUpNamesTheRefusedArtifact posts the reason a refused usage
+// artifact gave, on a branch's pull request.
+func TestGhAwFollowUpNamesTheRefusedArtifact(t *testing.T) {
+	stub := followUpEnvironment(t, "example/widgets")
+	artifact := copyArtifact(t, "")
+	if err := os.WriteFile(filepath.Join(artifact, "costroid"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rows := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
+	if code, _, _ := execute(t, "ingest-run", "--from", "gh-aw="+artifact, "--out", rows); code != exitFailure {
+		t.Fatalf("ingest-run read the artifact: exit %d", code)
+	}
+	code, _, stderr := execute(t, "follow-up", "--ingested", "--rows", rows)
+	if code != 0 || len(stub.Checks) != 1 {
+		t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+	}
+	if text := stub.Checks[0].Text; !strings.Contains(text, `"run_reason": "reader_refused"`) || !strings.Contains(text, "which gh-aw v1.2.1 does not write there") {
+		t.Errorf("the check does not name the refusal:\n%s", text)
+	}
 }

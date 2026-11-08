@@ -125,7 +125,7 @@ func FuzzForkRun(f *testing.F) {
 		if err := os.WriteFile(path, event, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		finished, sha, err := forkRun(followUpTrigger, path, repository)
+		finished, sha, err := finishedPullRun(followUpTrigger, path, repository, false)
 		if err != nil {
 			if sha != "" {
 				t.Fatalf("a refused run named head %q", sha)
