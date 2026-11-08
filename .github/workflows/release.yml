@@ -55,6 +55,20 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+      # costroid-install.sh is the install script with this release's version
+      # and commit written in, so it checks the signature at this tag and
+      # commit. Its name falls under costroid-*, so it is summed, signed and
+      # attested with the binaries.
+      - name: Write the install script
+        run: |
+          if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::$VERSION is not a version the install script can name"
+            exit 1
+          fi
+          mkdir -p dist
+          sed -e "s/^version=\$/version=$VERSION/" -e "s/^commit=\$/commit=$GITHUB_SHA/" scripts/install.sh >dist/costroid-install.sh
+          grep -qx "version=$VERSION" dist/costroid-install.sh
+          grep -qx "commit=$GITHUB_SHA" dist/costroid-install.sh
       - name: Build
         run: |
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
@@ -147,7 +161,7 @@ jobs:
         working-directory: dist
         run: sha256sum costroid-* costroid.spdx.json NOTICE LICENSE >SHA256SUMS
       # These steps run before cosign writes its bundles, so dist/costroid-*
-      # matches the binaries and no bundle.
+      # matches the binaries and the install script, and no bundle.
       - name: Attest the files' provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -226,5 +240,15 @@ jobs:
           if [[ $TAG == *-* ]]; then
             flags+=(--prerelease)
           fi
-          gh release create "$TAG" dist/* --verify-tag --title "$TAG" "${flags[@]}" \
-            --notes "Image: \`ghcr.io/costroid/costroid@$DIGEST\`"
+          cat >notes.md <<NOTES
+          Install: download \`costroid-install.sh\`, read it, then run it. It checks this release's signature and checksum before it installs anything, and needs cosign 3 or later.
+
+          \`\`\`sh
+          curl -fsSLO https://github.com/$GH_REPO/releases/download/$TAG/costroid-install.sh
+          less costroid-install.sh
+          sh costroid-install.sh
+          \`\`\`
+
+          Image: \`ghcr.io/costroid/costroid@$DIGEST\`
+          NOTES
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" "${flags[@]}" --notes-file notes.md

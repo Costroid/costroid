@@ -95,6 +95,8 @@ organization's. It stops at the first command that fails and lists the ones
 left.
 
 A development build belongs to no release, so it pins nothing and refuses.
+go install at a release's tag records the release's version and no commit,
+so init reads the commit that tag names on github.com with git ls-remote.
 --action-ref names the commit of Costroid's action to pin on GitHub instead.
 
 Exit codes of init:
@@ -212,15 +214,21 @@ var (
 
 var errNoRepository = errors.New("this directory is in no git repository, and init writes at a repository's root: run it inside your repository")
 
-// buildInfo is what the linker stamped on this binary.
+// buildInfo is the release this binary belongs to: what the linker stamped,
+// or what the go command recorded. tagCommit reads the commit a release's tag
+// names, for a build that records its version and no commit, as go install's
+// does.
 type buildInfo struct {
 	version, commit string
+	tagCommit       func(tag string) (string, error)
 }
 
 // pin is the commit init pins Costroid to, and the release it belongs to.
-// version is empty when --action-ref named the commit.
+// version is empty when --action-ref named the commit. fromTag is set when
+// init read the commit from the release's tag.
 type pin struct {
 	commit, version string
+	fromTag         bool
 }
 
 func (p pin) uses() string {
@@ -233,6 +241,9 @@ func (p pin) uses() string {
 func (p pin) String() string {
 	if p.version == "" {
 		return "pinned to " + p.commit + ", which --action-ref named"
+	}
+	if p.fromTag {
+		return "pinned to v" + p.version + " at " + p.commit + ", the commit its tag names on " + repositoryURL
 	}
 	return "pinned to v" + p.version + " at " + p.commit
 }
@@ -265,7 +276,7 @@ func (r repository) file(relative string) string {
 type locate func() (repository, error)
 
 func initCommand(args []string, stdout, stderr io.Writer) int {
-	return initRepository(locateRepository, buildInfo{version: version, commit: commit}, costroid.Recipes, prDefaults, args, stdout, stderr)
+	return initRepository(locateRepository, buildInfo{version: version, commit: commit, tagCommit: remoteTagCommit}, costroid.Recipes, prDefaults, args, stdout, stderr)
 }
 
 // locateRepository asks git for the root of the working tree the current
@@ -645,7 +656,9 @@ func existingWorkflows(root string) ([]existingWorkflow, error) {
 }
 
 // resolvePin finds the commit to pin: --action-ref's, or the release's this
-// binary was built from. A binary that names no release pins nothing.
+// binary was built from. A binary that names no release pins nothing. A
+// release build that records no commit, as go install's, takes the commit its
+// tag names.
 func resolvePin(build buildInfo, actionRef, host string) (pin, error) {
 	if actionRef != "" {
 		if host != githubHost {
@@ -663,10 +676,21 @@ func resolvePin(build buildInfo, actionRef, host string) (pin, error) {
 	if !releaseVersion.MatchString(build.version) {
 		return pin{}, fmt.Errorf("this is a development build, version %s, which belongs to no release, so init pins nothing: %s", build.version, fix)
 	}
+	release := strings.TrimPrefix(build.version, "v")
+	if build.commit == "" && build.tagCommit != nil {
+		tagged, err := build.tagCommit("v" + release)
+		if err != nil {
+			return pin{}, fmt.Errorf("this build of %s records no commit, and %w, so init pins nothing: %s", build.version, err, fix)
+		}
+		if !fullSHA.MatchString(tagged) {
+			return pin{}, fmt.Errorf("this build of %s records no commit, and its tag names %q, which is not a commit SHA, so init pins nothing: %s", build.version, tagged, fix)
+		}
+		return pin{commit: tagged, version: release, fromTag: true}, nil
+	}
 	if !fullSHA.MatchString(build.commit) {
 		return pin{}, fmt.Errorf("this build of %s records no commit, so init pins nothing: %s", build.version, fix)
 	}
-	return pin{commit: build.commit, version: strings.TrimPrefix(build.version, "v")}, nil
+	return pin{commit: build.commit, version: release}, nil
 }
 
 // written is a file init wrote or changed, by path from the root.
