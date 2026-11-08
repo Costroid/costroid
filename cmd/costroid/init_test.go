@@ -2027,6 +2027,93 @@ func TestExistingAddsMaxBudgetToClaudeArgs(t *testing.T) {
 	}
 }
 
+// TestExistingTakesTheBudgetFlag holds --budget-usd: the amount the patch adds
+// to claude_args that hold no cap and gives the read step and the report job,
+// USD 5 without it, and refused where it cannot apply.
+func TestExistingTakesTheBudgetFlag(t *testing.T) {
+	for _, test := range []struct {
+		label, workflow string
+		flag            []string
+		args, budget    string
+	}{
+		{"no flag", claudeStep, nil, "--max-budget-usd 5", "5"},
+		{"no claude_args", claudeStep, []string{"--budget-usd", "2.50"}, "--max-budget-usd 2.50", "2.50"},
+		{"one line", claudeStep + "          claude_args: --max-turns 10\n", []string{"--budget-usd", "12"}, "--max-turns 10 --max-budget-usd 12", "12"},
+		{"a literal block", claudeStep + "          claude_args: |\n            --max-turns 10\n", []string{"--budget-usd=0.75"}, "--max-turns 10\n--max-budget-usd 0.75\n", "0.75"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			patched, stderr := patchWorkflow(t, test.workflow, append([]string{"--agent", "claude-code-action"}, test.flag...)...)
+			steps := decodeYAML(t, patched)["jobs"].(map[string]any)["review"].(map[string]any)["steps"].([]any)
+			if with := steps[0].(map[string]any)["with"].(map[string]any); with["claude_args"] != test.args {
+				t.Errorf("claude_args %q, want %q", with["claude_args"], test.args)
+			}
+			written := writtenSteps(t, patched)
+			if written["read"]["budget-usd"] != test.budget || written["read"]["claude-args"] != test.args || written["report"]["budget-usd"] != test.budget {
+				t.Errorf("read %v, report %v, want budget-usd %q", written["read"], written["report"], test.budget)
+			}
+			said := "The patch adds --max-budget-usd " + test.budget + " to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes USD " + test.budget + ","
+			if flat := strings.Join(strings.Fields(stderr), " "); !strings.Contains(flat, said) {
+				t.Errorf("init does not say it adds USD %s: %s", test.budget, flat)
+			}
+			if rules := lintRules("review.yml", patched); len(rules) > 0 {
+				t.Errorf("costroid lint on the patched workflow: %v", rules)
+			}
+		})
+	}
+
+	t.Run("a step that holds its own cap", func(t *testing.T) {
+		patched, stderr := patchWorkflow(t, claudeStep+"          claude_args: --max-budget-usd 3\n", "--agent", "claude-code-action", "--budget-usd", "9")
+		if written := writtenSteps(t, patched); written["read"]["budget-usd"] != "3" || written["report"]["budget-usd"] != "3" {
+			t.Errorf("read %v, report %v, want the step's own cap", written["read"], written["report"])
+		}
+		if flat := strings.Join(strings.Fields(stderr), " "); !strings.Contains(flat, "--budget-usd 9 is not used, because init adds a cap only to claude_args it can read that hold none.") {
+			t.Errorf("init does not say --budget-usd is not used: %s", flat)
+		}
+	})
+
+	t.Run("switched to --existing", func(t *testing.T) {
+		root := t.TempDir()
+		name := workflowDir + "/claude.yml"
+		writeFile(t, filepath.Join(root, name), claudeStep)
+		code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--budget-usd", "4")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+		if written := writtenSteps(t, applyDiff(t, claudeStep, patch)); written["report"]["budget-usd"] != "4" {
+			t.Errorf("the report job's budget-usd is %v, want 4", written["report"]["budget-usd"])
+		}
+	})
+
+	for _, refusal := range []struct {
+		label, workflow string
+		args            []string
+		want            string
+	}{
+		{"zero", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "0.00"}, `--budget-usd is an amount in USD above 0, such as 5 or 2.50, not "0.00"`},
+		{"a negative amount", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "-1"}, `not "-1"`},
+		{"an expression", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "${{ env.CAP }}"}, `not "${{ env.CAP }}"`},
+		{"a word", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "five"}, `not "five"`},
+		{"an exponent", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "1e3"}, `not "1e3"`},
+		{"a recipe", "", []string{"--agent", "claude", "--budget-usd", "3"}, "--budget-usd sets the cap the --existing patch adds to claude_args: the recipes init writes hold their own"},
+		{"codex-action", existingCodexReview, []string{"--existing", "review.yml", "--budget-usd", "3"}, "--budget-usd sets the cap init adds to the claude_args of anthropics/claude-code-action, and the step runs openai/codex-action, which takes none"},
+	} {
+		t.Run(refusal.label, func(t *testing.T) {
+			root := t.TempDir()
+			if refusal.workflow != "" {
+				writeFile(t, filepath.Join(root, "review.yml"), refusal.workflow)
+			}
+			before := tree(t, root)
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append([]string{"github"}, refusal.args...)...)
+			if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+			if !reflect.DeepEqual(before, tree(t, root)) {
+				t.Error("init changed the repository")
+			}
+		})
+	}
+}
+
 var hunkHeader = regexp.MustCompile(`^@@ -(\d+),(\d+) \+(\d+),(\d+) @@$`)
 
 // applyDiff applies a unified diff of one file to original. Every context

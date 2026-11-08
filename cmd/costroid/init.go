@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -33,7 +34,7 @@ const initHelp = `Usage:
                 [--pr [--key-env NAME]]
   costroid init github --agent claude-code-action --auth subscription
   costroid init github --existing PATH [--action-ref SHA] [--post-review]
-                [--platform-url URL]
+                [--platform-url URL] [--budget-usd AMOUNT]
 
 init writes the recipe for a host and an agent as this release ships it, with
 Costroid pinned to the commit and version of the release this binary belongs
@@ -53,8 +54,9 @@ openai/codex-action switches init to --existing, and init says so. --existing
 reads such a workflow and prints a patch that adds a read step after the
 agent's step and a report job that runs on pull requests. It writes nothing.
 On a claude-code-action step, the patch adds --max-budget-usd 5 to claude_args
-when they hold no cap, and gives the read step and the report job the cap they
-hold. docs/existing-workflow.md shows the result.
+when they hold no cap, or the amount in USD --budget-usd names, and gives the
+read step and the report job the cap they hold. docs/existing-workflow.md
+shows the result.
 
 --auth subscription writes the claude-code-action recipe with a Claude
 subscription's token, CLAUDE_CODE_OAUTH_TOKEN, in place of an API key.
@@ -170,6 +172,7 @@ var (
 	agentStage     = regexp.MustCompile(`(?m)^( +)stage: (?:run|read)\n`)
 	reportStage    = regexp.MustCompile(`(?m)^( +)stage: report\n`)
 	variableName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	plainAmount    = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?$`)
 	secretName     = regexp.MustCompile(`\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 	apiKeyInput    = regexp.MustCompile(`(?m)^( +)anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}$`)
 	// copyInstruction is a recipe header's sentence that tells a reader where
@@ -305,7 +308,7 @@ func initFailed(stderr io.Writer, err error) int {
 
 type initFlags struct {
 	host, agent, auth, out, existing, actionRef string
-	keyEnv, platformURL                         string
+	keyEnv, platformURL, budgetUSD              string
 	force, postReview, skills, pr               bool
 }
 
@@ -327,6 +330,7 @@ func parseInit(args []string, stderr io.Writer) (initFlags, error) {
 	set.BoolVar(&flags.skills, "skills", false, "write the skill for Codex and Claude Code")
 	set.BoolVar(&flags.pr, "pr", false, "run the commands that are left and open the pull request")
 	set.StringVar(&flags.keyEnv, "key-env", "", "the environment variable that holds the agent's key, for --pr")
+	set.StringVar(&flags.budgetUSD, "budget-usd", "", "the cap in USD --existing adds to claude_args that hold none")
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		flags.host, args = args[0], args[1:]
 	}
@@ -376,6 +380,8 @@ func (f initFlags) check() error {
 		return errors.New("--key-env names the key --pr sets as a secret, so it needs --pr")
 	case f.keyEnv != "" && !variableName.MatchString(f.keyEnv):
 		return fmt.Errorf("--key-env names an environment variable, such as ANTHROPIC_API_KEY, not %q", f.keyEnv)
+	case f.budgetUSD != "" && (!plainAmount.MatchString(f.budgetUSD) || strings.Trim(f.budgetUSD, "0.") == ""):
+		return fmt.Errorf("--budget-usd is an amount in USD above 0, such as 5 or 2.50, not %q", f.budgetUSD)
 	}
 	return nil
 }
@@ -440,6 +446,8 @@ func resolveTarget(repo repository, flags initFlags) (initFlags, bool, error) {
 		return flags, false, errors.New("--existing reads a GitHub workflow that runs claude-code-action or codex-action, and the host is gitlab")
 	case flags.existing != "" && flags.agent != "" && actionFor(flags.agent).uses == "":
 		return flags, false, errors.New("--existing reads a GitHub workflow that runs claude-code-action or codex-action: pass one of those to --agent, or no --agent")
+	case flags.existing == "" && flags.budgetUSD != "":
+		return flags, false, errors.New("--budget-usd sets the cap the --existing patch adds to claude_args: the recipes init writes hold their own")
 	case switched && (flags.pr || flags.skills):
 		return flags, false, fmt.Errorf("%s already runs %s, and init reads it as --existing does, which writes nothing: pass --agent to write a new workflow with --pr or --skills", filepath.ToSlash(flags.existing), actionFor(flags.agent).uses)
 	case flags.existing != "":
@@ -1209,12 +1217,18 @@ func existingEdits(source []byte, lines []string, release pin, flags initFlags) 
 	}
 	var patch workflowPatch
 	var readCap, reportCap []string
+	if flags.budgetUSD != "" && step.action.uses != claudeCodeAction {
+		return workflowPatch{}, fmt.Errorf("--budget-usd sets the cap init adds to the claude_args of %s, and the step runs %s, which takes none", claudeCodeAction, step.action.uses)
+	}
 	if step.action.uses == claudeCodeAction {
-		held, err := claudeCap(lines, step, dash, unit)
+		held, err := claudeCap(lines, step, dash, unit, cmp.Or(flags.budgetUSD, defaultBudgetUSD))
 		if err != nil {
 			return workflowPatch{}, err
 		}
 		patch.edits, patch.capNote = held.edits, held.note
+		if flags.budgetUSD != "" && len(held.edits) == 0 {
+			patch.capNote += fmt.Sprintf(" --budget-usd %s is not used, because init adds a cap only to claude_args it can read that hold none.", flags.budgetUSD)
+		}
 		if readCap, reportCap, err = held.inputs(); err != nil {
 			return workflowPatch{}, err
 		}
@@ -1265,9 +1279,9 @@ func workflowJobs(source []byte) (*yaml.Node, *yaml.Node, error) {
 	return jobsKey, jobs, nil
 }
 
-// addedBudgetUSD is the cap --existing adds to claude_args that hold none, the
-// recipes' own.
-const addedBudgetUSD = "5"
+// defaultBudgetUSD is the cap --existing adds to claude_args that hold none
+// when --budget-usd names no other, the recipes' own.
+const defaultBudgetUSD = "5"
 
 var (
 	// capFlag finds --max-budget-usd in claude_args, and capValue reads its
@@ -1333,19 +1347,19 @@ func indented(indent string, lines []string) []string {
 }
 
 // claudeCap reads the cap a claude-code-action step's claude_args hold, and
-// adds --max-budget-usd addedBudgetUSD when they hold none. A layout init does
-// not write into leaves the step as it is, with a note that says why.
-func claudeCap(lines []string, step agentStep, dash, unit int) (heldCap, error) {
+// adds --max-budget-usd budget when they hold none. A layout init does not
+// write into leaves the step as it is, with a note that says why.
+func claudeCap(lines []string, step agentStep, dash, unit int, budget string) (heldCap, error) {
 	withKey, with := mappingPair(step.step, "with")
 	keys := strings.Repeat(" ", step.step.Column-1)
-	added := "claude_args: --max-budget-usd " + addedBudgetUSD
+	added := "claude_args: --max-budget-usd " + budget
 	switch {
 	case withKey == nil:
 		at := blockEnd(lines, step.step.Line-1, dash) + 1
-		return addedCap(lines, step, edit{at: at, lines: []string{keys + "with:", keys + strings.Repeat(" ", unit) + added}})
+		return addedCap(lines, step, budget, edit{at: at, lines: []string{keys + "with:", keys + strings.Repeat(" ", unit) + added}})
 	case with.Kind == yaml.ScalarNode && with.Tag == "!!null" && with.Value == "":
 		child := strings.Repeat(" ", withKey.Column-1+unit)
-		return addedCap(lines, step, edit{at: blockEnd(lines, withKey.Line-1, withKey.Column-1) + 1, lines: []string{child + added}})
+		return addedCap(lines, step, budget, edit{at: blockEnd(lines, withKey.Line-1, withKey.Column-1) + 1, lines: []string{child + added}})
 	case with.Kind != yaml.MappingNode || with.Style&yaml.FlowStyle != 0:
 		return unheldCap("its with is written in a layout init does not write into"), nil
 	}
@@ -1353,7 +1367,7 @@ func claudeCap(lines []string, step agentStep, dash, unit int) (heldCap, error) 
 	switch {
 	case args == nil:
 		at := blockEnd(lines, withKey.Line-1, withKey.Column-1) + 1
-		return addedCap(lines, step, edit{at: at, lines: []string{strings.Repeat(" ", with.Column-1) + added}})
+		return addedCap(lines, step, budget, edit{at: at, lines: []string{strings.Repeat(" ", with.Column-1) + added}})
 	case args.Kind != yaml.ScalarNode:
 		return unheldCap("its claude_args are not text"), nil
 	case wholeExpression.MatchString(strings.TrimSpace(args.Value)):
@@ -1367,12 +1381,12 @@ func claudeCap(lines []string, step agentStep, dash, unit int) (heldCap, error) 
 		if indent == "" {
 			return unheldCap("its claude_args are an empty block"), nil
 		}
-		return addedCap(lines, step, edit{at: end + 1, lines: []string{indent + "--max-budget-usd " + addedBudgetUSD}})
+		return addedCap(lines, step, budget, edit{at: end + 1, lines: []string{indent + "--max-budget-usd " + budget}})
 	}
 	if end != argsKey.Line-1 || args.Line != argsKey.Line {
 		return unheldCap("its claude_args run over more than one line"), nil
 	}
-	value, err := yamlScalar(strings.TrimSpace(args.Value + " --max-budget-usd " + addedBudgetUSD))
+	value, err := yamlScalar(strings.TrimSpace(args.Value + " --max-budget-usd " + budget))
 	if err != nil {
 		return heldCap{}, err
 	}
@@ -1380,12 +1394,12 @@ func claudeCap(lines []string, step agentStep, dash, unit int) (heldCap, error) 
 	if args.LineComment != "" {
 		line += " " + args.LineComment
 	}
-	return addedCap(lines, step, edit{at: args.Line - 1, remove: 1, lines: []string{line}})
+	return addedCap(lines, step, budget, edit{at: args.Line - 1, remove: 1, lines: []string{line}})
 }
 
-// addedCap is the cap once change adds --max-budget-usd to the step: it reads
-// the patched workflow back and takes the claude_args it holds.
-func addedCap(lines []string, step agentStep, change edit) (heldCap, error) {
+// addedCap is the cap once change adds --max-budget-usd budget to the step: it
+// reads the patched workflow back and takes the claude_args it holds.
+func addedCap(lines []string, step agentStep, budget string, change edit) (heldCap, error) {
 	patched := []byte(strings.Join(applyEdits(lines, []edit{change}), "\n") + "\n")
 	_, jobs, err := workflowJobs(patched)
 	if err != nil {
@@ -1401,9 +1415,9 @@ func addedCap(lines []string, step agentStep, change edit) (heldCap, error) {
 	}
 	return heldCap{
 		edits:  []edit{change},
-		budget: addedBudgetUSD,
+		budget: budget,
 		args:   args.Value,
-		note:   fmt.Sprintf("The patch adds --max-budget-usd %s to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes USD %s, and gives the read step and the report job that cap. To change the cap, change it in claude_args, in claude-args and in both budget-usd inputs.", addedBudgetUSD, addedBudgetUSD),
+		note:   fmt.Sprintf("The patch adds --max-budget-usd %s to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes USD %s, and gives the read step and the report job that cap. To change the cap, change it in claude_args, in claude-args and in both budget-usd inputs.", budget, budget),
 	}, nil
 }
 
