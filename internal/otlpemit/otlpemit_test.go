@@ -146,6 +146,46 @@ func TestEmitRoundTripsThroughDecoder(t *testing.T) {
 	}
 }
 
+// TestServeReadsEmittedCostAttributes feeds the spans to the decoder serve
+// reads OTLP with, and holds each request's cost basis and enforcement grade
+// to its rows'. The Codex request's rows are measured, which a decoder that
+// missed costroid.cost.basis would read as list_equivalent.
+func TestServeReadsEmittedCostAttributes(t *testing.T) {
+	requests, _, err := readRequests(readFile(t, runRows))
+	if err != nil {
+		t.Fatal(err)
+	}
+	measured := 0
+	for _, want := range runRequests {
+		if want.basis == string(focus.Measured) {
+			measured++
+		}
+	}
+	if measured == 0 {
+		t.Fatal("the fixture no longer holds a measured request")
+	}
+	for encoding, body := range bodies(t, spansOf(t, readFile(t, runRows))) {
+		t.Run(encodingName(encoding), func(t *testing.T) {
+			batch, err := otlp.Parse(body, encoding, otlp.Traces)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(batch.Usage) != len(runRequests) {
+				t.Fatalf("decoded %d usages, want %d", len(batch.Usage), len(runRequests))
+			}
+			for i, want := range runRequests {
+				usage := batch.Usage[i]
+				if string(usage.CostBasis) != want.basis {
+					t.Errorf("request %d decodes as %s, want %s", i+1, usage.CostBasis, want.basis)
+				}
+				if grade := requests[i].tags[focus.TagEnforcementGrade]; grade == "" || usage.EnforcementGrade != grade {
+					t.Errorf("request %d decodes the grade %q, want %q", i+1, usage.EnforcementGrade, grade)
+				}
+			}
+		})
+	}
+}
+
 func TestEmitSplitsTwoRequestsOfTheSameSeconds(t *testing.T) {
 	requests, rows, err := readRequests(readFile(t, runRows))
 	if err != nil {
