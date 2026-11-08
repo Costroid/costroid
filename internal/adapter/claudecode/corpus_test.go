@@ -66,11 +66,28 @@ var claudeCorpus = map[string]corpusRead{
 		tokens:   adapter.Tokens{InputUncached: 1200, Output: 17},
 		warnings: []string{"no session file: one set of rows per model, for the whole run"},
 	},
+	// The Agent SDK's TypeScript and Python programs, read as Claude Code's
+	// own stream. Each session counts a request outside the conversation on
+	// the conversation's own model, so the result's totals stand.
+	"2.1.316/sdk-claude-ts": {
+		source: SourceStream, basis: focus.Measured, requests: 1, grade: adapter.GradeAgentFlag,
+		tokens:   adapter.Tokens{InputUncached: 1204, CacheRead: 1522, CacheWrite5m: 2205, Output: 115, CachedInputReported: 1522},
+		warnings: []string{"the session files disagree with the result object"},
+	},
+	"2.1.316/sdk-claude-py": {
+		source: SourceStream, basis: focus.Measured, requests: 1, grade: adapter.GradeAgentFlag,
+		tokens:   adapter.Tokens{InputUncached: 1204, CacheRead: 3044, CacheWrite5m: 683, Output: 134, ReasoningOutput: 22, CachedInputReported: 3044},
+		warnings: []string{"the session files disagree with the result object"},
+	},
 	"2.1.319/current": {
 		source: SourceSessionFile, basis: focus.Measured, requests: 1, grade: adapter.GradeAgentFlag,
 		tokens: adapter.Tokens{InputUncached: 2, CacheRead: 11507, CacheWrite5m: 6085, Output: 4, CachedInputReported: 11507},
 	},
 }
+
+// recordedAgents are the agents the recording harness names whose recordings
+// this adapter reads: Claude Code, and the Agent SDK that runs it.
+var recordedAgents = []string{Name, "claude-agent-sdk"}
 
 // corpusSaved is when the corpus reads an execution file as saved.
 var corpusSaved = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
@@ -276,7 +293,7 @@ func TestClaudeCodeCorpus(t *testing.T) {
 		t.Run(dir, func(t *testing.T) {
 			path := filepath.Join("testdata", filepath.FromSlash(dir))
 			manifest := readCorpusManifest(t, path)
-			if !manifest.Recorded || manifest.Agent != Name || manifest.Scenario == "" || !strings.HasPrefix(dir, manifest.Version+"/") {
+			if !manifest.Recorded || !slices.Contains(recordedAgents, manifest.Agent) || manifest.Scenario == "" || !strings.HasPrefix(dir, manifest.Version+"/") {
 				t.Errorf("manifest %+v does not name the version of its directory", manifest)
 			}
 			want, ok := claudeCorpus[dir]

@@ -164,8 +164,8 @@ func TestReportStepNeedsNoBudget(t *testing.T) {
 			t.Errorf("%s states a cap that no run or read step records", name)
 		}
 	}
-	if capped != 5 {
-		t.Errorf("%d recipes record a cap, want 5: Claude Code, its action, its gateway, Codex and GitLab", capped)
+	if capped != 7 {
+		t.Errorf("%d recipes record a cap, want 7: Claude Code, its action, its gateway, Codex, GitLab and the two SDK programs", capped)
 	}
 }
 

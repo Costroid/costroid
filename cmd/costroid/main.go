@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -110,9 +111,18 @@ func (a accountFlags) check() error {
 }
 
 const runHelp = `Usage:
-  costroid run --budget-usd N --out rows.jsonl [--billing-account ID] [--credential ID] [--gateway URL --gateway-key-file F] [--json] -- <agent command>
+  costroid run --budget-usd N --out rows.jsonl [--agent NAME] [--billing-account ID] [--credential ID] [--gateway URL --gateway-key-file F] [--json] -- <agent command>
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
+
+--agent names the agent when the command's name does not: claude-code or codex
+for a command that starts the agent through npx, bunx or node, with the flags
+placed after the package or script; claude-code-sdk or codex-sdk for a program
+that runs the agent through its SDK. An SDK program runs as it is, and its
+output is not read. The rows come from every Claude Code session or Codex
+thread the program started while it ran. A claude-code-sdk run grades none
+unless a gateway holds it, because the budget sits in the program's own
+maxBudgetUsd. A codex-sdk run stops the program at the cap, as codex exec does.
 
 ` + accountHelp + `
 --gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
@@ -136,6 +146,7 @@ Exit codes of run:
 `
 
 type runFlags struct {
+	agent   string
 	budget  decimal.Decimal
 	out     string
 	account accountFlags
@@ -150,6 +161,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, runHelp) }
 	budget := set.String("budget-usd", "", "the run's budget in USD")
+	agent := set.String("agent", "", "the agent, when the command's name does not say: "+strings.Join(run.Agents, ", "))
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
 	asJSON := set.Bool("json", false, "print the result object on stdout, and the agent's stream on stderr")
 	gatewayURL := set.String("gateway", os.Getenv(gatewayURLVar), "the LiteLLM gateway the agent runs through")
@@ -160,6 +172,9 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 	}
 	if (*gatewayURL == "") != (*keyFile == "") {
 		return runFlags{}, errors.New("--gateway and --gateway-key-file go together")
+	}
+	if *agent != "" && !slices.Contains(run.Agents, *agent) {
+		return runFlags{}, fmt.Errorf("--agent takes %s, not %q", strings.Join(run.Agents, ", "), *agent)
 	}
 	if missing := missingRunArguments(*budget, *out, set.NArg()); missing != "" {
 		return runFlags{}, errors.New("run needs " + missing)
@@ -175,7 +190,7 @@ func parseRun(args []string, stderr io.Writer) (runFlags, error) {
 		return runFlags{}, err
 	}
 	return runFlags{
-		budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON,
+		agent: *agent, budget: amount, out: *out, account: account, argv: set.Args(), json: *asJSON,
 		gateway: *gatewayURL, gatewayKeyFile: *keyFile,
 	}, nil
 }
@@ -251,6 +266,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		return exitFailure
 	}
 	result, err := run.Run(ctx, run.Options{
+		Agent:          flags.agent,
 		Argv:           flags.argv,
 		Budget:         flags.budget,
 		BillingAccount: *flags.account.billing,

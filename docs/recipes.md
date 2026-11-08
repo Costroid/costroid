@@ -149,15 +149,15 @@ Each list names what its own job's steps call. They were read on 2026-11-08 from
 
 | Host | Why the job reaches it | Recipes |
 | ---- | ---------------------- | ------- |
-| `api.anthropic.com` | Claude Code's provider | `github-claude-code`, `github-claude-code-action` |
-| `api.openai.com` | Codex's provider. `codex-action` starts a proxy that calls it | `github-codex`, `github-codex-action` |
+| `api.anthropic.com` | Claude Code's provider | `github-claude-code`, `github-claude-code-action`, `github-claude-agent-sdk` |
+| `api.openai.com` | Codex's provider. `codex-action` starts a proxy that calls it | `github-codex`, `github-codex-action`, `github-codex-sdk` |
 | The variable `COSTROID_GATEWAY_HOST` | The LiteLLM gateway, in place of the provider | `github-claude-code-litellm` |
-| `github.com` | `actions/checkout`. The install step lists Costroid's tags and downloads its release, and `sigstore/cosign-installer` and `oven-sh/setup-bun` download theirs | All five |
+| `github.com` | `actions/checkout`. The install step lists Costroid's tags and downloads its release, and `sigstore/cosign-installer` and `oven-sh/setup-bun` download theirs | All seven |
 | `api.github.com` | `claude-code-action` reads the pull request, and `codex-action` checks the actor's access | `github-claude-code-action`, `github-codex-action` |
-| `results-receiver.actions.githubusercontent.com`, `productionresultssa*.blob.core.windows.net` | `actions/upload-artifact`, which keeps the rows | All five |
-| `release-assets.githubusercontent.com` | github.com answers a release download with a redirect to this host. `curl -I` on a release's `SHA256SUMS` showed it on 2026-11-08 | All five |
-| `tuf-repo-cdn.sigstore.dev` | cosign reads Sigstore's trusted root here before it checks the release's signature (`tuf.DefaultMirror` in [`sigstore-go`](https://github.com/sigstore/sigstore-go/blob/main/pkg/tuf/options.go)) | All five |
-| `registry.npmjs.org` | npm installs the agent at its pinned version, and Bun installs `claude-code-action`'s packages | All five |
+| `results-receiver.actions.githubusercontent.com`, `productionresultssa*.blob.core.windows.net` | `actions/upload-artifact`, which keeps the rows | All seven |
+| `release-assets.githubusercontent.com` | github.com answers a release download with a redirect to this host. `curl -I` on a release's `SHA256SUMS` showed it on 2026-11-08 | All seven |
+| `tuf-repo-cdn.sigstore.dev` | cosign reads Sigstore's trusted root here before it checks the release's signature (`tuf.DefaultMirror` in [`sigstore-go`](https://github.com/sigstore/sigstore-go/blob/main/pkg/tuf/options.go)) | All seven |
+| `registry.npmjs.org` | npm installs the agent at its pinned version, or an SDK program's packages from its lock file, and Bun installs `claude-code-action`'s packages | All seven |
 
 Each host is listed on port 443. The LiteLLM recipe lists the gateway and not `api.anthropic.com`, so the run's own key is the only provider credential the job can use. Claude Code's [network requirements](https://code.claude.com/docs/en/network-config#network-access-requirements) (read 2026-11-08) list other hosts for sign-in, plugins, updates and error reports. A run on an API key or a gateway needs none of them, so they stay blocked.
 
