@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Costroid/costroid/internal/agenttest"
 )
 
 const (
@@ -20,7 +22,8 @@ const (
 )
 
 // TestMain replays a recorded stream when the harness runs the test binary
-// under the name claude.
+// under the name claude. Otherwise it runs the tests with a stub first on PATH
+// for every agent, so no test can start the machine's own.
 func TestMain(m *testing.M) {
 	if stream := os.Getenv(replayStream); stream != "" {
 		data, err := os.ReadFile(stream)
@@ -30,7 +33,7 @@ func TestMain(m *testing.M) {
 		os.Stdout.Write(data)
 		return
 	}
-	os.Exit(m.Run())
+	os.Exit(agenttest.Main(m.Run))
 }
 
 func execute(t *testing.T, args ...string) (int, string, string) {

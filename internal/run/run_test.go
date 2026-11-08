@@ -25,6 +25,7 @@ import (
 
 	catalogdata "github.com/Costroid/costroid/catalog"
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/agenttest"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -60,13 +61,14 @@ const (
 )
 
 // TestMain turns the test binary into the fake agent when the harness runs it
-// under the name of a real one.
+// under the name of a real one. Otherwise it runs the tests with a stub first
+// on PATH for every agent, so no test can start the machine's own.
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeMode); mode != "" {
 		fakeAgent(mode)
 		return
 	}
-	os.Exit(m.Run())
+	os.Exit(agenttest.Main(m.Run))
 }
 
 func fakeAgent(mode string) {

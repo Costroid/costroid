@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/agenttest"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/gateway"
@@ -35,9 +36,10 @@ import (
 	"github.com/Costroid/costroid/internal/store/storetest"
 )
 
-// TestMain runs Postgres for the ledger the gateway journey attests to.
+// TestMain runs Postgres for the ledger the gateway journey attests to, with a
+// stub first on PATH for every agent, so no test can start the machine's own.
 func TestMain(m *testing.M) {
-	os.Exit(storetest.Main(m))
+	os.Exit(agenttest.Main(func() int { return storetest.Main(m) }))
 }
 
 const (

@@ -20,6 +20,8 @@ CI rejects a pull request with an unsigned commit. Contributions are licensed un
 4. Read [STYLE.md](STYLE.md). It is the bar for every public line.
 5. Open a pull request with three sections: changed, deliberately unchanged, verified.
 
+A package whose tests run an agent by name calls `agenttest.Main` from its `TestMain`, so a stub that refuses to run stands first on `PATH` for `claude`, `codex`, `node`, `npx` and `bunx`.
+
 When a change adds, removes or updates a Go module, run `make notice` and commit the new `NOTICE` with it; `make check` fails until `NOTICE` names every module the binary links.
 
 Commit messages use the imperative mood and say what changed and why.
