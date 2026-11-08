@@ -149,7 +149,6 @@ jobs:
       - uses: Costroid/costroid/action@__RELEASE_COMMIT__ # __RELEASE_TAG__
         with:
           stage: report
-          budget-usd: "5"
           # A skipped agent job then reads as skipped, not as a run with no rows.
           agent-result: ${{ needs.agent.result }}
 ```

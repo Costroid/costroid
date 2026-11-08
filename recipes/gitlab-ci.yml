@@ -171,9 +171,7 @@ costroid:report:
       allow_failure: true
   script:
     - touch costroid-rows.jsonl
-    - >-
-      costroid report --rows costroid-rows.jsonl --budget-usd "$COSTROID_BUDGET_USD"
-      ${COSTROID_GATE:+--exit-on-verdict}
+    - costroid report --rows costroid-rows.jsonl ${COSTROID_GATE:+--exit-on-verdict}
 
 # Binds the project's namespace to its Costroid Platform tenant, so its rows
 # can be sent there. It runs in a scheduled pipeline, or on a push to the

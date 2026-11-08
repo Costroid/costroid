@@ -20,7 +20,8 @@ const (
 
 // The rules only the customer profile names. It also names
 // RulePullRequestTarget, RuleAgentIDToken, RuleExpressionInScript,
-// RuleUnpinned, RuleAgentPromptInput, RuleEgressAudit and RuleUnreadable.
+// RuleUnpinned, RuleAgentPromptInput, RuleEgressAudit, RuleTwoCaps and
+// RuleUnreadable.
 const (
 	RuleCommentTrigger    = "comment-trigger"
 	RuleAgentOpen         = "agent-open"
@@ -129,6 +130,7 @@ func (l *linter) customerWorkflow(root *yaml.Node) bool {
 	for _, agent := range agents {
 		l.customerAgentJob(root, agent, texts)
 	}
+	l.twoCaps(root, Medium)
 	return true
 }
 

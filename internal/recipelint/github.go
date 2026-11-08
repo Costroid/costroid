@@ -97,6 +97,7 @@ func (l *linter) workflow(root *yaml.Node) {
 	for _, item := range entries(field(root, "jobs")) {
 		l.job(root, item, workflowPermissions, guarded)
 	}
+	l.twoCaps(root, "")
 }
 
 // needsGuard reports whether a pull request could start the workflow. A

@@ -96,7 +96,7 @@ func parseReport(args []string, stderr io.Writer) (reportFlags, error) {
 	set.SetOutput(stderr)
 	set.Usage = func() { fmt.Fprint(stderr, usage) }
 	rows := set.String("rows", "", "the rows file costroid run wrote")
-	budget := set.String("budget-usd", "", "the cap the run was given, in USD")
+	budget := set.String("budget-usd", "", "the run's cap in USD, read only when the run left no result object")
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation, github:<id> or the bare number; GitLab uses the project id")
 	agentResult := set.String("agent-result", os.Getenv(agentResultVariable), "the agent job's result: success, failure, cancelled or skipped")
 	asJSON := set.Bool("json", false, "print the result object on stdout")
@@ -322,7 +322,7 @@ func verdictExit(conclusion string) int {
 // artifact that carried them, neither file is read.
 func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 	if refused := refusedArtifact(os.Getenv, stderr); refused != nil {
-		return comment.Input{State: comment.Unreadable, Reason: comment.NoRowsFile, Refused: refused, Budget: budgetFor(flags, false, stderr)}
+		return comment.Input{State: comment.Unreadable, Reason: comment.NoRowsFile, Refused: refused, Budget: runCap(flags, statedReason{}, stderr)}
 	}
 	rows, err := readReportRows(flags.rows)
 	if err != nil {
@@ -338,7 +338,7 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 		ReaderLine:     stated.ReaderError,
 		AgentError:     agentErrorFor(stated.AgentError, stderr),
 		AgentStated:    agentStatedFor(stated.AgentStated, stderr),
-		Budget:         budgetFor(flags, stated.Cap != nil, stderr),
+		Budget:         runCap(flags, stated, stderr),
 		RowsSHA256:     rows.rowsSHA256,
 		RowsFileSHA256: rows.fileSHA256,
 	}
@@ -416,16 +416,25 @@ func previewVerdict(ctx context.Context, rowsPath string, state comment.State, a
 const maxRunResult = 1 << 20
 
 // statedReason is what the run's result object says about why the run wrote
-// no rows, and about the error its agent ended in. The comment cleans
-// ReaderError again before it shows it.
+// no rows, about the error its agent ended in, and about the cap it was given.
+// The comment cleans ReaderError again before it shows it.
 type statedReason struct {
 	RunReason   run.Reason        `json:"run_reason"`
 	ReaderError string            `json:"reader_error"`
 	AgentError  *statedAgentError `json:"agent_error"`
 	AgentStated *statedFigure     `json:"agent_stated"`
-	// Cap is non-nil when the run was given a cap. Only whether it is null
-	// is read.
-	Cap *struct{} `json:"cap"`
+	// Cap is the run's cap, nil when the run was given none.
+	Cap *recordCap `json:"cap"`
+	// read says an object was read, so its cap, or its lack of one, is the
+	// run's own.
+	read bool
+}
+
+// recordCap is the cap the run's object states, as costroid run and
+// ingest-run --cap-usd recorded it.
+type recordCap struct {
+	Currency string `json:"currency"`
+	Amount   string `json:"amount"`
 }
 
 // statedFigure is the agent's own figure for the run, in its own unit, as the
@@ -444,9 +453,9 @@ type statedAgentError struct {
 // readRunReason reads the reason from the result object costroid run or
 // ingest-run wrote beside the rows. The agent's job wrote that file, as it
 // wrote the rows, so only the reason, the reader's error line, the agent's
-// error class and the agent's own figure are read, and only a reason, a class
-// or a figure from its closed list is used. A run that wrote no object, as an older release does, gives no
-// reason.
+// error class, the agent's own figure and the cap are read, and only a reason,
+// a class or a figure from its closed list, and a cap in USD above 0, is used.
+// A run that wrote no object, as an older release does, gives no reason.
 func readRunReason(rows string, stderr io.Writer) statedReason {
 	path := runResultPath(rows)
 	info, err := os.Lstat(path)
@@ -467,6 +476,7 @@ func readRunReason(rows string, stderr io.Writer) statedReason {
 		fmt.Fprintf(stderr, "costroid: warning: the run's result object %s is ignored: %v\n", path, err)
 		return statedReason{}
 	}
+	object.read = true
 	return object
 }
 

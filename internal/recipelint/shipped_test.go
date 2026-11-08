@@ -450,7 +450,7 @@ func TestGitLabReportJobPostsTheRowsItWasHanded(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, output)
 	}
-	want := "report\n--rows\ncostroid-rows.jsonl\n--budget-usd\n5\n"
+	want := "report\n--rows\ncostroid-rows.jsonl\n"
 	if got := read(t, filepath.Join(s.root, "argv")); got != want {
 		t.Fatalf("argv:\n%s\nwant:\n%s", got, want)
 	}

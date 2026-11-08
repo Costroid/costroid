@@ -225,8 +225,8 @@ GITHUB_* variables, then writes the step's outputs and a job summary. The
 summary withholds amounts and token counts where the comment does. On GitLab CI
 it posts one sticky merge request note, with COSTROID_GITLAB_TOKEN and the CI_*
 variables, and no check. It exits 0 whatever the host answers, so a failed post
-never fails the job. Outside both it refuses and exits 125. --budget-usd
-restates the run's cap, which rows do not record.
+never fails the job. Outside both it refuses and exits 125. The run's cap
+comes from its result object; --budget-usd is read only when there is none.
 --installation-id puts the GitHub App installation, github:<id> or the bare
 number, on the account link; COSTROID_INSTALLATION_ID does the same. A value
 in neither form is skipped with a warning. GitLab's link names the project id.
