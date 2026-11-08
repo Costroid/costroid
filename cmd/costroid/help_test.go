@@ -362,3 +362,21 @@ func TestGatewayMintWarnsWhenTheEventFileCannotBeRead(t *testing.T) {
 		t.Errorf("registered %+v", got)
 	}
 }
+
+// TestInitHelpNamesEveryAgentItAccepts holds init's --agent sentence to the
+// agents each host's recipes take, so an agent added to init is named there.
+func TestInitHelpNamesEveryAgentItAccepts(t *testing.T) {
+	text := strings.Join(strings.Fields(initHelp), " ")
+	sentence := regexp.MustCompile(`--agent is (.+?) on GitHub, and (.+?) on GitLab\.`).FindStringSubmatch(text)
+	if sentence == nil {
+		t.Fatalf("init's help has no --agent sentence:\n%s", initHelp)
+	}
+	for host, named := range map[string]string{githubHost: sentence[1], gitlabHost: sentence[2]} {
+		listed := strings.FieldsFunc(strings.ReplaceAll(named, " or ", ", "), func(r rune) bool { return r == ',' || r == ' ' })
+		for agent := range initRecipes[host] {
+			if !slices.Contains(listed, agent) {
+				t.Errorf("init's help does not name the %s agent %s: %q", host, agent, named)
+			}
+		}
+	}
+}

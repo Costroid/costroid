@@ -46,8 +46,8 @@ when there is none. On GitLab it adds the template to the include of
 .gitlab-ci.yml, and writes that file when there is none.
 
 The host is the one the repository's remote names. github, gitlab or --host
-names it instead. --agent is claude, codex, claude-code-action or codex-action
-on GitHub, and claude or codex on GitLab.
+names it instead. --agent is claude, codex, claude-code-action, codex-action,
+claude-agent-sdk or codex-sdk on GitHub, and claude or codex on GitLab.
 
 With no --agent, a workflow that already runs anthropics/claude-code-action or
 openai/codex-action switches init to --existing, and init says so. --existing
