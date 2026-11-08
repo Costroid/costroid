@@ -1,0 +1,70 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "gemini-cli"}},
+          {"key": "service.version", "value": {"stringValue": "v22.20.0"}},
+          {"key": "session.id", "value": {"stringValue": "5f0c3d0e-8f4e-4c55-9a51-3b0f6a2b7c41"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {"name": "gemini-cli"},
+          "logRecords": [
+            {
+              "timeUnixNano": "1794132000000000000",
+              "observedTimeUnixNano": "1794132000000000000",
+              "body": {"stringValue": "API response from gemini-2.5-pro. Status: 200. Duration: 5321ms."},
+              "attributes": [
+                {"key": "session.id", "value": {"stringValue": "5f0c3d0e-8f4e-4c55-9a51-3b0f6a2b7c41"}},
+                {"key": "installation.id", "value": {"stringValue": "0b6c1f4e-2d7a-4e58-8c3b-9a1e5d2f7c60"}},
+                {"key": "interactive", "value": {"boolValue": false}},
+                {"key": "auth_type", "value": {"stringValue": "gemini-api-key"}},
+                {"key": "event.name", "value": {"stringValue": "gemini_cli.api_response"}},
+                {"key": "event.timestamp", "value": {"stringValue": "2026-11-08T10:00:00.000Z"}},
+                {"key": "model", "value": {"stringValue": "gemini-2.5-pro"}},
+                {"key": "duration_ms", "value": {"intValue": "5321"}},
+                {"key": "input_token_count", "value": {"intValue": "12000"}},
+                {"key": "output_token_count", "value": {"intValue": "300"}},
+                {"key": "cached_content_token_count", "value": {"intValue": "8000"}},
+                {"key": "thoughts_token_count", "value": {"intValue": "450"}},
+                {"key": "tool_token_count", "value": {"intValue": "0"}},
+                {"key": "total_token_count", "value": {"intValue": "12750"}},
+                {"key": "prompt_id", "value": {"stringValue": "prompt-id-1"}},
+                {"key": "status_code", "value": {"intValue": "200"}},
+                {"key": "finish_reasons", "value": {"arrayValue": {"values": [{"stringValue": "stop"}]}}},
+                {"key": "role", "value": {"stringValue": "main"}},
+                {"key": "http.status_code", "value": {"intValue": "200"}}
+              ]
+            },
+            {
+              "timeUnixNano": "1794132000000000000",
+              "observedTimeUnixNano": "1794132000000000000",
+              "body": {"stringValue": "GenAI operation details from gemini-2.5-pro. Status: 200. Duration: 5321ms."},
+              "attributes": [
+                {"key": "session.id", "value": {"stringValue": "5f0c3d0e-8f4e-4c55-9a51-3b0f6a2b7c41"}},
+                {"key": "installation.id", "value": {"stringValue": "0b6c1f4e-2d7a-4e58-8c3b-9a1e5d2f7c60"}},
+                {"key": "interactive", "value": {"boolValue": false}},
+                {"key": "auth_type", "value": {"stringValue": "gemini-api-key"}},
+                {"key": "event.name", "value": {"stringValue": "gen_ai.client.inference.operation.details"}},
+                {"key": "event.timestamp", "value": {"stringValue": "2026-11-08T10:00:00.000Z"}},
+                {"key": "gen_ai.response.id", "value": {"stringValue": "resp-1"}},
+                {"key": "gen_ai.response.finish_reasons", "value": {"arrayValue": {"values": [{"stringValue": "stop"}]}}},
+                {"key": "gen_ai.system_instructions", "value": {"stringValue": "[{\"type\":\"text\",\"content\":\"SENTINEL-CONTENT-7f3a\"}]"}},
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "generate_content"}},
+                {"key": "gen_ai.provider.name", "value": {"stringValue": "gcp.gen_ai"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gemini-2.5-pro"}},
+                {"key": "gen_ai.response.model", "value": {"stringValue": "gemini-2.5-pro"}},
+                {"key": "server.address", "value": {"stringValue": "generativelanguage.googleapis.com"}},
+                {"key": "server.port", "value": {"intValue": "443"}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "12000"}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": "300"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

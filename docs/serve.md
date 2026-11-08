@@ -224,14 +224,31 @@ The edge keeps an allowlist of attributes. Everything else is dropped before any
 
 ## OTLP dialects
 
-| Agent          | Reads                                                                       | Input includes cache | Cache writes              |
-| -------------- | --------------------------------------------------------------------------- | -------------------- | ------------------------- |
-| GenAI standard | `gen_ai.usage.*`, with `gen_ai.system`, `prompt_tokens` and `completion_tokens` as older names | Yes | `cache_write`, formerly `cache_creation`; lifetime assumed |
-| Claude Code    | `claude_code.api_request`                                                   | No                   | Two lifetime counts       |
-| Codex          | `gen_ai.usage.*` on spans, with `codex.usage.reasoning_output_tokens`. The `codex.sse_event` log repeats the span, so it is left out | Yes | `cache_write`; lifetime assumed |
-| Copilot CLI    | `gen_ai.usage.*` on `chat` spans                                            | Yes                  | `cache_creation`; lifetime assumed |
-| Cursor         | `cursor.api.request.*_tokens` on logs                                       | No                   | `cache_creation_tokens`; lifetime assumed |
-| OpenCode V2    | `gen_ai.usage.*` on spans                                                   | Yes                  | None reported             |
+| Agent          | Reads                                                                       | Input includes cache | Cache writes              | Recorded |
+| -------------- | --------------------------------------------------------------------------- | -------------------- | ------------------------- | -------- |
+| GenAI standard | `gen_ai.usage.*`, with `gen_ai.system`, `prompt_tokens` and `completion_tokens` as older names | Yes | `cache_write`, formerly `cache_creation`; lifetime assumed | No |
+| Claude Code    | `claude_code.api_request`                                                   | No                   | Two lifetime counts       | Claude Code 2.1.316 |
+| Codex          | `gen_ai.usage.*` on spans, with `codex.usage.reasoning_output_tokens`. The `codex.sse_event` log repeats the span, so it is left out | Yes | `cache_write`; lifetime assumed | Codex 0.164.0-alpha.11.1 |
+| Copilot CLI    | `gen_ai.usage.*` on `chat` spans                                            | Yes                  | `cache_creation`; lifetime assumed | No |
+| Cursor         | `cursor.api.request.*_tokens` on logs                                       | No                   | `cache_creation_tokens`; lifetime assumed | No |
+| OpenCode V2    | `gen_ai.usage.*` on spans                                                   | Yes                  | None reported             | No |
+| Gemini CLI     | `*_token_count` on `gemini_cli.api_response` logs. The `llm_call` span and the `gen_ai.client.inference.operation.details` log repeat it without cache reads or thoughts, so they are left out | Yes | None reported | No. Built from the source at v0.67.0 |
+
+A version in the last column is a run in [`docs/adapters.md`](adapters.md#recorded-runs) that sent its telemetry to a local sink. The bodies it sent are not kept as test data. `No` means the dialect rests on no run at all.
+
+The Gemini CLI dialect is built from Gemini CLI's telemetry source at tag `v0.67.0`, read on 2026-11-08, and so is its test data. Each file under `internal/otlp/testdata/gemini/` says `from-source` in its name. Every attribute is a whole number of tokens:
+
+| Attribute                    | Set from                                           | Priced as                                                     |
+| ---------------------------- | -------------------------------------------------- | ------------------------------------------------------------- |
+| `model`                      | The response's `modelVersion`, else the request's model | The model. One the Google sheet does not name takes its fallback tier |
+| `input_token_count`          | `promptTokenCount`                                 | `input_uncached`, less the cached tokens                      |
+| `cached_content_token_count` | `cachedContentTokenCount`                          | `cache_read`                                                  |
+| `output_token_count`         | `candidatesTokenCount`                             | `output`                                                      |
+| `thoughts_token_count`       | `thoughtsTokenCount`                               | `output`, and repeated in `reasoning_output`                  |
+
+[`types.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/telemetry/types.ts) sets each count, and [`loggingContentGenerator.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/core/loggingContentGenerator.ts) names the model. The prompt count holds the cached tokens: Gemini CLI's own statistics take uncached input as the prompt count less the cached count ([`uiTelemetry.ts`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/telemetry/uiTelemetry.ts)). They list thoughts apart from output ([`ModelStatsDisplay.tsx`](https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/cli/src/ui/components/ModelStatsDisplay.tsx)), and the catalog's Google sheet bills thinking tokens as output, so thoughts are added to `output`. That `candidatesTokenCount` leaves thoughts out is unverified: no run was recorded.
+
+`tool_token_count` is not read, so a tool-use prompt's tokens reach no row. Gemini CLI writes the version of Node.js that runs it as `service.version`, so its rows name no agent version. Every Gemini CLI request is priced on the Google sheet, whose source is the Gemini API's price page, including a request made through Vertex AI.
 
 Where the table says the lifetime is assumed, a row that took those tokens carries `costroid/assumed_ttl`.
 

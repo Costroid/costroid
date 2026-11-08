@@ -1,0 +1,40 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "gemini-cli"}},
+          {"key": "service.version", "value": {"stringValue": "v22.20.0"}},
+          {"key": "session.id", "value": {"stringValue": "5f0c3d0e-8f4e-4c55-9a51-3b0f6a2b7c41"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "gemini-cli"},
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba902b7",
+              "name": "llm_call",
+              "startTimeUnixNano": "1794131994679000000",
+              "endTimeUnixNano": "1794132000000000000",
+              "attributes": [
+                {"key": "gen_ai.request.model", "value": {"stringValue": "gemini-2.5-pro"}},
+                {"key": "gen_ai.prompt.name", "value": {"stringValue": "prompt-id-1"}},
+                {"key": "gen_ai.system_instructions", "value": {"stringValue": "[{\"text\":\"SENTINEL-CONTENT-7f3a\"}]"}},
+                {"key": "gen_ai.tool.definitions", "value": {"stringValue": "[]"}},
+                {"key": "gen_ai.input.messages", "value": {"stringValue": "[{\"role\":\"user\",\"parts\":[{\"text\":\"SENTINEL-CONTENT-7f3a\"}]}]"}},
+                {"key": "gen_ai.output.messages", "value": {"stringValue": "{\"role\":\"model\",\"parts\":[{\"text\":\"SENTINEL-CONTENT-7f3a\"}]}"}},
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "llm_call"}},
+                {"key": "gen_ai.agent.name", "value": {"stringValue": "gemini-cli"}},
+                {"key": "gen_ai.conversation.id", "value": {"stringValue": "5f0c3d0e-8f4e-4c55-9a51-3b0f6a2b7c41"}},
+                {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "12000"}},
+                {"key": "gen_ai.usage.output_tokens", "value": {"intValue": "300"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
