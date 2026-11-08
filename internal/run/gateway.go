@@ -32,9 +32,17 @@ type heldKey struct {
 	agent   adapter.Gatewayed
 }
 
+// bypassed is an agent that can name a flag of its command that sends its
+// requests somewhere other than the gateway, or empty when none does.
+type bypassed interface {
+	GatewayBypass(argv []string) (string, error)
+}
+
 // openGateway waits for the run's key and holds it to what the run needs. A
 // key that never authenticates stops the run before the agent starts, because
-// the agent would have no credential.
+// the agent would have no credential. A command that routes requests around
+// the gateway is refused before the gateway is asked anything, because the
+// gateway's grade holds only for the requests that pass through it.
 func (o Options) openGateway(ctx context.Context, agent adapter.Agent) (*heldKey, error) {
 	if o.Gateway == nil {
 		return nil, nil
@@ -42,6 +50,15 @@ func (o Options) openGateway(ctx context.Context, agent adapter.Agent) (*heldKey
 	gatewayed, ok := agent.(adapter.Gatewayed)
 	if !ok {
 		return nil, fmt.Errorf("run: %s cannot be pointed at a gateway, so a gateway key cannot run it", agent.Name())
+	}
+	if routed, ok := agent.(bypassed); ok {
+		flag, err := routed.GatewayBypass(o.Argv)
+		if err != nil {
+			return nil, fmt.Errorf("run: %w", err)
+		}
+		if flag != "" {
+			return nil, fmt.Errorf("run: %s sends %s's requests around the gateway, and a gateway cannot hold a run that routes around it; remove it", flag, agent.Name())
+		}
 	}
 	info, err := o.Gateway.Await(ctx)
 	if err != nil {

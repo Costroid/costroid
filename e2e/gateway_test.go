@@ -320,8 +320,9 @@ var (
 	claudeCode = fakeAgent{name: "claude", source: "./testdata/gatewayagent", command: []string{"-p", "Fix the failing test."},
 		provider: []string{"ANTHROPIC_API_KEY=sk-ant-must-not-reach-the-agent"}}
 	// The Codex job holds an OpenAI key and no CODEX_API_KEY, as the recipe's
-	// does, and its command names a provider the gateway's must override.
-	codexExec = fakeAgent{name: "codex", source: "./testdata/gatewaycodex", command: []string{"exec", "-c", `model_provider="elsewhere"`, "-m", "gpt-5-nano", "Fix the failing test."},
+	// does. A command that names its own provider is refused before the
+	// gateway is asked, so this one names none.
+	codexExec = fakeAgent{name: "codex", source: "./testdata/gatewaycodex", command: []string{"exec", "-m", "gpt-5-nano", "Fix the failing test."},
 		provider: []string{"OPENAI_API_KEY=sk-must-not-reach-the-agent"}}
 )
 

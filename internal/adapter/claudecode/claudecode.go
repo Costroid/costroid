@@ -189,6 +189,9 @@ type Session struct {
 	oneJob bool
 	// oneHourCache is true when ENABLE_PROMPT_CACHING_1H is set.
 	oneHourCache bool
+	// billedThroughGateway is true when the run starts the agent on a
+	// gateway's key, which the gateway bills per token upstream.
+	billedThroughGateway bool
 }
 
 // limitSubtypes are the result subtypes of a run that stopped at a limit its
@@ -658,7 +661,7 @@ func (s *Session) unsplitWrite() focus.TokenClass {
 }
 
 func (s *Session) costBasis() focus.CostBasis {
-	if s.keyBilled() {
+	if s.keyBilled() || s.billedThroughGateway {
 		return focus.Measured
 	}
 	return focus.ListEquivalent
