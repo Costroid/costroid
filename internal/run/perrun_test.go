@@ -225,7 +225,7 @@ func TestPerRunGrainKeepsFastModeSeenOnTheStream(t *testing.T) {
 // entry coarser than a request, with input tokens and no whole input stated,
 // says its context tier is unknown, and that one with no input does not.
 func TestCoarseRowWithNoStatedInputSaysItsContextTierIsUnknown(t *testing.T) {
-	const unknown = "one turn's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read under"
+	const unknown = "one turn's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read low"
 	cases := map[string]struct {
 		tokens adapter.Tokens
 		says   bool

@@ -250,7 +250,7 @@ func tierNote(price catalog.Price, request adapter.Request) string {
 	case request.Grain == adapter.PerRun && (request.ContextInputTokens == 0 || price.ContextTierMin != nil):
 		return ""
 	case request.ContextInputTokens == 0 && tokens.InputUncached+tokens.CacheRead+tokens.CacheWrite5m+tokens.CacheWrite1h+tokens.CacheWrite30m > 0:
-		return fmt.Sprintf("one %s's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read under", request.Grain)
+		return fmt.Sprintf("one %s's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read low", request.Grain)
 	case price.ContextTierMax != nil && request.ContextInputTokens > *price.ContextTierMax:
 		return fmt.Sprintf("one %s's input of %d tokens is a sum over its requests and passes the %d-token context tier boundary, and its requests' own inputs are unknown, so its context tier is unknown, and the prices up to %d input tokens apply, which may read low", request.Grain, request.ContextInputTokens, *price.ContextTierMax, *price.ContextTierMax)
 	case price.ContextTierMax != nil:
