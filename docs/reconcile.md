@@ -14,6 +14,18 @@ costroid run --credential apikey_01Example --budget-usd 5 --out rows.jsonl -- cl
 
 `COSTROID_CREDENTIAL` does the same. A value that reads like a key is refused, because it would land on every row. For rows with a null `SubAccountId`, `reconcile --credential` names one for the whole file.
 
+A run on a Workload Identity Federation token, such as `claude-code-action` with `anthropic_federation_rule_id`, spends on no API key. Anthropic's report gives it a null `api_key_id` and attributes it to the service account the token acts as ([Usage and Cost Analytics API](https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api), retrieved 2026-11-08). Name that service account as the credential, such as `svac_01Example`, and `reconcile` reads Anthropic's report by actor for it. Requests on the service account's own API keys are attributed to it too, so its figure counts them.
+
+## A gateway's rows
+
+A run behind a [LiteLLM gateway](gateway.md) names its own key in `SubAccountId`: the key's id, the SHA-256 of the key in hex. The provider never sees that key. It reports the gateway's traffic under the key the gateway sends with. Name that key once per provider:
+
+```sh
+ANTHROPIC_ADMIN_KEY=... costroid reconcile --rows rows.jsonl --from 2026-10-01 --to 2026-10-31 --upstream-credential anthropic=apikey_01Example
+```
+
+Each row whose `SubAccountId` has the shape of a gateway key's id is then compared under `apikey_01Example`, and the row's notes say so. The provider's figure counts every request the gateway sent with that key, so the traffic of runs missing from the rows file reads as a token miss, as on any shared key. Without the flag, `reconcile` stops and names it, because no provider's report names a run's key.
+
 ## Run it where the key lives
 
 ```sh
@@ -53,6 +65,14 @@ costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-01 --reports
 | `openai-costs.json`    | `GET /v1/organization/costs`              |
 
 Keep each response's body as the provider sent it, or cut to the records of the credentials you reconcile, as `scripts/accuracy -save` keeps them. A range that needs a second page, or a second provider window, cannot be saved as one file.
+
+## A run across midnight
+
+A row is dated by the start of its charge period. A row that covers a whole run or turn and crosses 00:00 UTC puts all its tokens on its first day, while the provider dates each request by when it was served. Each day then misses on its own.
+
+When a day misses and a row in the file ran past midnight on the same credential, `reconcile` compares the days that row spans as one. If every class matches within 1% over those days together, each day reads `matched` and its `span` names the cause `run_spans_days` with the first and last day. The first day's row holds the joined token comparison, and a later day's row holds none. Each day's dollar residual names `run_spans_days` for the tokens that moved, priced at the standard tier through the pinned catalog. If the days miss together too, each day keeps its own verdict.
+
+The days are joined only when every one of them is in the range and reported. Otherwise the day reads `pending`, and its note names the range to reconcile or the day the provider has not finished. Half a run is not a miss.
 
 ## Prices
 

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
@@ -32,6 +33,12 @@ const (
 	anthropicKeyGrain = "api_key_id"
 	anthropicScope    = "workspace_id"
 	anthropicScopeID  = "wrkspc_"
+
+	// A request on a Workload Identity Federation token has a null api_key_id,
+	// and the actor it is attributed to is the service account the token acts
+	// as. The report then names it by actor.
+	anthropicActorGrain     = "actor"
+	anthropicServiceAccount = "svac_"
 
 	centsPerDollar = 2
 	costTypeTokens = "tokens"
@@ -58,7 +65,7 @@ func (a anthropic) authorize(header http.Header) {
 
 func (a anthropic) Fetch(ctx context.Context, days Range, credentials []string) (Report, error) {
 	report := Report{Source: SourceAnthropic, Unsettled: map[string]bool{}, Refreshed: map[string]time.Time{}}
-	for _, grain := range grains(credentials, anthropicScopeID, anthropicKeyGrain, anthropicScope) {
+	for _, grain := range anthropicGrains(credentials) {
 		for _, span := range days.windows(anthropicMaxSpan) {
 			if err := a.usage(ctx, grain, span, &report); err != nil {
 				return Report{}, err
@@ -69,6 +76,26 @@ func (a anthropic) Fetch(ctx context.Context, days Range, credentials []string) 
 		}
 	}
 	return report, nil
+}
+
+// anthropicGrains says which dimension each credential needs. A service
+// account is read by actor, a workspace by workspace and anything else as an
+// API key.
+func anthropicGrains(credentials []string) []string {
+	var keyed []string
+	actors := false
+	for _, credential := range credentials {
+		if strings.HasPrefix(credential, anthropicServiceAccount) {
+			actors = true
+			continue
+		}
+		keyed = append(keyed, credential)
+	}
+	needed := grains(keyed, anthropicScopeID, anthropicKeyGrain, anthropicScope)
+	if actors {
+		needed = append(needed, anthropicActorGrain)
+	}
+	return needed
 }
 
 func anthropicQuery(span window, groupBy ...string) url.Values {
@@ -83,15 +110,23 @@ func anthropicQuery(span window, groupBy ...string) url.Values {
 	}
 }
 
+// anthropicActor is who the report attributes a row to. Only a service
+// account states a service_account_id: a user or a federated identity is no
+// credential.
+type anthropicActor struct {
+	ServiceAccountID *string `json:"service_account_id"`
+}
+
 type anthropicGroup struct {
-	APIKeyID     *string `json:"api_key_id"`
-	WorkspaceID  *string `json:"workspace_id"`
-	Model        *string `json:"model"`
-	ServiceTier  *string `json:"service_tier"`
-	InferenceGeo *string `json:"inference_geo"`
-	Speed        *string `json:"speed"`
-	CostType     *string `json:"cost_type"`
-	TokenType    *string `json:"token_type"`
+	Actor        *anthropicActor `json:"actor"`
+	APIKeyID     *string         `json:"api_key_id"`
+	WorkspaceID  *string         `json:"workspace_id"`
+	Model        *string         `json:"model"`
+	ServiceTier  *string         `json:"service_tier"`
+	InferenceGeo *string         `json:"inference_geo"`
+	Speed        *string         `json:"speed"`
+	CostType     *string         `json:"cost_type"`
+	TokenType    *string         `json:"token_type"`
 }
 
 // anthropicTokenTypes maps the cost report's token types to classes.
@@ -104,8 +139,14 @@ var anthropicTokenTypes = map[string]focus.TokenClass{
 }
 
 func (g anthropicGroup) credential(grain string) string {
-	if grain == anthropicScope {
+	switch grain {
+	case anthropicScope:
 		return text(g.WorkspaceID)
+	case anthropicActorGrain:
+		if g.Actor == nil {
+			return ""
+		}
+		return text(g.Actor.ServiceAccountID)
 	}
 	return text(g.APIKeyID)
 }
