@@ -14,6 +14,8 @@ costroid run --credential apikey_01Example --budget-usd 5 --out rows.jsonl -- cl
 
 `COSTROID_CREDENTIAL` does the same. A value that reads like a key is refused, because it would land on every row. For rows with a null `SubAccountId`, `reconcile --credential` names one for the whole file.
 
+A run on a Workload Identity Federation token, such as `claude-code-action` with `anthropic_federation_rule_id`, spends on no API key. Anthropic's report gives it a null `api_key_id` and attributes it to the service account the token acts as ([Usage and Cost Analytics API](https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api), retrieved 2026-11-08). Name that service account as the credential, such as `svac_01Example`, and `reconcile` reads Anthropic's report by actor for it. Requests on the service account's own API keys are attributed to it too, so its figure counts them.
+
 ## A gateway's rows
 
 A run behind a [LiteLLM gateway](gateway.md) names its own key in `SubAccountId`: the key's id, the SHA-256 of the key in hex. The provider never sees that key. It reports the gateway's traffic under the key the gateway sends with. Name that key once per provider:
