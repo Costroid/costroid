@@ -31,7 +31,7 @@ costroid connect --platform-url https://app.costroid.com
 
 with `COSTROID_PLATFORM_TOKEN` set from the organization secret. When the default branch has no protection rule, the first binding waits for the first scheduled run.
 
-[`recipes/github-connect.yml`](../recipes/github-connect.yml) is that workflow. `costroid init github --platform-url https://app.costroid.com` writes it as `.github/workflows/costroid-connect.yml`, pinned to the same release as the agent's recipe, so it reaches the default branch when the pull request merges. `init --existing` writes nothing, so copy the file there yourself.
+[`recipes/github-connect.yml`](../recipes/github-connect.yml) is that workflow. `costroid init github --platform-url https://app.costroid.com` writes it as `.github/workflows/costroid-connect.yml`, pinned to the same release as the agent's recipe, so it reaches the default branch when the pull request merges. `init --existing --platform-url` prints it as a third block of its patch, which creates the file when you apply it.
 
 ## On GitLab CI
 
