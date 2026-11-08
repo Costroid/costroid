@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"slices"
 	"strings"
 
@@ -25,11 +27,15 @@ var billedClasses = []focus.TokenClass{
 }
 
 // heldKey is the run's key once the gateway has returned it, and the agent
-// that runs on it.
+// that runs on it. settings names a file the run wrote for the agent, which
+// holds the key, and removeSettings deletes it.
 type heldKey struct {
-	session gateway.Session
-	grant   gateway.Grant
-	agent   adapter.Gatewayed
+	session        gateway.Session
+	grant          gateway.Grant
+	agent          adapter.Gatewayed
+	settings       []string
+	removeSettings func() error
+	stderr         io.Writer
 }
 
 // bypassed is an agent that can name a flag of its command that sends its
@@ -38,11 +44,18 @@ type bypassed interface {
 	GatewayBypass(argv []string) (string, error)
 }
 
+// settled is an agent that reaches the gateway through a settings file the run
+// writes for it. Its arguments name the file, and remove deletes it.
+type settled interface {
+	GatewaySettings(argv []string, base, key string) (args []string, remove func() error, err error)
+}
+
 // openGateway waits for the run's key and holds it to what the run needs. A
 // key that never authenticates stops the run before the agent starts, because
 // the agent would have no credential. A command that routes requests around
 // the gateway is refused before the gateway is asked anything, because the
-// gateway's grade holds only for the requests that pass through it.
+// gateway's grade holds only for the requests that pass through it. An agent
+// that takes the gateway from a settings file gets one once the key is held.
 func (o Options) openGateway(ctx context.Context, agent adapter.Agent) (*heldKey, error) {
 	if o.Gateway == nil {
 		return nil, nil
@@ -65,13 +78,20 @@ func (o Options) openGateway(ctx context.Context, agent adapter.Agent) (*heldKey
 		return nil, fmt.Errorf("run: %w", err)
 	}
 	grant := gateway.Inspect(o.Gateway.Key, info, gateway.Expect{Budget: o.Budget, Run: o.CI.Run, Now: o.Now()})
-	return &heldKey{session: *o.Gateway, grant: grant, agent: gatewayed}, nil
+	held := &heldKey{session: *o.Gateway, grant: grant, agent: gatewayed, stderr: o.Stderr}
+	if configured, ok := agent.(settled); ok {
+		held.settings, held.removeSettings, err = configured.GatewaySettings(o.Argv, o.Gateway.Client.URL, o.Gateway.Key)
+		if err != nil {
+			return nil, fmt.Errorf("run: %w", err)
+		}
+	}
+	return held, nil
 }
 
 // argv is the agent's command with what it needs to reach the gateway after
 // every option it holds: before a "--" that ends them, or at the end.
 func (h *heldKey) argv(argv []string) []string {
-	args := h.agent.GatewayArgs(h.session.Client.URL)
+	args := slices.Concat(h.agent.GatewayArgs(h.session.Client.URL), h.settings)
 	at := len(argv)
 	if end := slices.Index(argv, "--"); end > 0 {
 		at = end
@@ -98,12 +118,32 @@ func (h *heldKey) enforcement(storeFailure string) adapter.Enforcement {
 }
 
 // watch probes the gateway's store while the agent runs. Without a gateway it
-// watches nothing.
+// watches nothing. The run stops it once the agent has ended, and stopping it
+// also removes the settings file the run wrote for the agent, because the
+// file holds the key.
 func (h *heldKey) watch(ctx context.Context) func() string {
 	if h == nil {
 		return func() string { return "" }
 	}
-	return h.session.Watch(ctx)
+	stop := h.session.Watch(ctx)
+	return func() string {
+		failure := stop()
+		h.dropSettings()
+		return failure
+	}
+}
+
+// dropSettings removes the settings file the run wrote for the agent. A file
+// that cannot be removed still holds the key, so the run says so.
+func (h *heldKey) dropSettings() {
+	if h.removeSettings == nil {
+		return
+	}
+	err := h.removeSettings()
+	if err == nil || errors.Is(err, fs.ErrNotExist) || h.stderr == nil {
+		return
+	}
+	fmt.Fprintf(h.stderr, "costroid: warning: the settings file the run wrote for the agent holds the run's key and could not be removed: %v\n", err)
 }
 
 // overshootBound is the most a run can pass its budget by: the requests the

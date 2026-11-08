@@ -3,7 +3,10 @@ package run
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -56,13 +60,22 @@ func fakeGateway(t *testing.T, keyInfo, readiness string) *gateway.Session {
 	}
 }
 
-func gatewayRunWith(t *testing.T, session *gateway.Session) (outcome, string) {
+// gatewayRunWith runs the recorded Claude Code run through the gateway, with
+// args between -p and the prompt.
+func gatewayRunWith(t *testing.T, session *gateway.Session, args ...string) (outcome, string) {
 	t.Helper()
 	log := installClaudeRun(t, oneRequest, oneRequestID)
+	return runOnGateway(t, session, args...), log
+}
+
+// runOnGateway runs the Claude Code run already installed through the
+// gateway, with args between -p and the prompt. The job holds a provider key.
+func runOnGateway(t *testing.T, session *gateway.Session, args ...string) outcome {
+	t.Helper()
 	t.Setenv("ANTHROPIC_API_KEY", providerKey)
 	var rows, stdout, stderr bytes.Buffer
 	result, err := Run(context.Background(), Options{
-		Argv:       []string{agentNamed(t, "claude"), "-p", "work"},
+		Argv:       slices.Concat([]string{agentNamed(t, "claude"), "-p"}, args, []string{"work"}),
 		Budget:     decimal.MustParse("0.01"),
 		Credential: claimedKey,
 		CI:         cicontext.Context{Run: gatewayRun},
@@ -73,7 +86,7 @@ func gatewayRunWith(t *testing.T, session *gateway.Session) (outcome, string) {
 		Catalog:    pinned(t),
 		Gateway:    session,
 	})
-	return outcome{result: result, stdout: stdout.String(), stderr: stderr.String(), err: err, rows: parseRows(t, rows.Bytes())}, log
+	return outcome{result: result, stdout: stdout.String(), stderr: stderr.String(), err: err, rows: parseRows(t, rows.Bytes())}
 }
 
 func TestAGatewayKeyGradesGatewayPrecheckWithTheKeyIDAndTheBound(t *testing.T) {
@@ -256,6 +269,7 @@ func TestOpenGatewayRefusesAnAgentWithoutGatewayEnv(t *testing.T) {
 	t.Cleanup(server.Close)
 	session := &gateway.Session{Client: gateway.NewClient(server.URL), Key: gatewayKey, Wait: time.Second, Poll: 10 * time.Millisecond}
 	options := Options{Gateway: session, Budget: decimal.MustParse("0.01"), CI: cicontext.Context{Run: gatewayRun}}.withDefaults()
+	t.Setenv("TMPDIR", t.TempDir())
 
 	held, err := options.openGateway(context.Background(), plainAgent{})
 	if err == nil || held != nil || !strings.Contains(err.Error(), "plain cannot be pointed at a gateway") {
@@ -365,5 +379,165 @@ func TestGatewayArgumentsComeBeforeTheEndOfOptions(t *testing.T) {
 	end := slices.Index(argv, "--")
 	if end < 0 || argv[len(argv)-1] != "work" || lastConfig(argv[:end], "model_provider") != `"openai"` {
 		t.Errorf("the gateway's arguments after the end of options would read as the prompt: %q", argv)
+	}
+}
+
+// settingsFiles are the settings files the run has written for Claude Code
+// and not yet removed, in TMPDIR.
+func settingsFiles(t *testing.T) []string {
+	found, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), "costroid-claude-settings-*.json"))
+	if err != nil {
+		t.Error(err)
+	}
+	return found
+}
+
+// whileTheAgentRuns holds the fake agent at its start, until it has read
+// the settings files the run left in TMPDIR, and returns what each held.
+func whileTheAgentRuns(t *testing.T, log string) <-chan map[string][]byte {
+	t.Helper()
+	if err := os.WriteFile(log+".hold", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(chan map[string][]byte, 1)
+	go func() {
+		defer os.Remove(log + ".hold")
+		for wait := 0; wait < 200; wait++ {
+			if _, err := os.Stat(log + ".starts"); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		files := map[string][]byte{}
+		for _, file := range settingsFiles(t) {
+			files[file], _ = os.ReadFile(file)
+		}
+		seen <- files
+	}()
+	return seen
+}
+
+// A repository's .claude/settings.json can name another base URL in its env,
+// and Claude Code applies it over the environment the run gives it. A
+// --settings file outranks it, and Claude Code reads only the last
+// --settings, so the run's comes last and carries the command's own.
+func TestGatewayRunSuppliesItsOwnSettings(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	session := fakeGateway(t, keyInfoHolding, `{"status":"healthy","db":"connected"}`)
+	log := installClaudeRun(t, oneRequest, oneRequestID)
+	seen := whileTheAgentRuns(t, log)
+	own := `{"permissions":{"deny":["Read(./.env)"]},"env":{"DISABLE_AUTO_COMPACT":"1"}}`
+	got := runOnGateway(t, session, "--settings", `{"model":"claude-opus-5-5"}`, "--settings", own)
+	if got.err != nil || len(got.rows) == 0 {
+		t.Fatalf("run: %v, %d rows, %s", got.err, len(got.rows), got.stderr)
+	}
+	files := <-seen
+	if len(files) != 1 {
+		t.Fatalf("while the agent ran, TMPDIR held %d settings files, want 1", len(files))
+	}
+	var path string
+	var data []byte
+	for file, content := range files {
+		path, data = file, content
+	}
+
+	var settings struct {
+		Model       *string           `json:"model"`
+		Permissions json.RawMessage   `json:"permissions"`
+		Env         map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("the run's settings are not JSON: %v", err)
+	}
+	want := map[string]string{
+		"ANTHROPIC_BASE_URL": session.Client.URL, "ANTHROPIC_AUTH_TOKEN": gatewayKey, "ANTHROPIC_API_KEY": "",
+		"CLAUDE_CODE_USE_BEDROCK": "", "CLAUDE_CODE_USE_MANTLE": "", "CLAUDE_CODE_USE_VERTEX": "",
+		"CLAUDE_CODE_USE_FOUNDRY": "", "CLAUDE_CODE_USE_ANTHROPIC_AWS": "", "ANTHROPIC_BEDROCK_BASE_URL": "",
+		"ANTHROPIC_VERTEX_BASE_URL": "", "ANTHROPIC_FOUNDRY_BASE_URL": "", "ANTHROPIC_AWS_BASE_URL": "",
+		"DISABLE_AUTO_COMPACT": "1",
+	}
+	for variable, value := range want {
+		if got, ok := settings.Env[variable]; !ok || got != value {
+			t.Errorf("the run's settings set %s to %q (set %v), want %q", variable, got, ok, value)
+		}
+	}
+	if string(settings.Permissions) != `{"deny":["Read(./.env)"]}` || settings.Model != nil {
+		t.Errorf("the run's settings do not carry the command's last --settings as written: %s", data)
+	}
+
+	argv := strings.Split(strings.TrimSpace(string(mustRead(t, log))), "\n")
+	last := -1
+	for i, arg := range argv {
+		if arg == "--settings" {
+			last = i
+		}
+	}
+	if last < 0 || last+1 >= len(argv) || argv[last+1] != path {
+		t.Errorf("the last --settings the agent reads is not the run's %s: %q", path, argv)
+	}
+	if strings.Contains(got.stdout+got.stderr, gatewayKey) {
+		t.Error("the run printed the key")
+	}
+}
+
+func TestGatewaySettingsFileIsPrivateAndRemoved(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	var stderr bytes.Buffer
+	options := Options{
+		Argv: []string{"claude", "-p", "work"}, Gateway: fakeGateway(t, keyInfoHolding, `{"status":"healthy","db":"connected"}`),
+		Budget: decimal.MustParse("0.01"), CI: cicontext.Context{Run: gatewayRun}, Stderr: &stderr,
+	}.withDefaults()
+	held, err := options.openGateway(context.Background(), claudecode.Agent{})
+	if err != nil || len(held.settings) != 2 || held.settings[0] != "--settings" {
+		t.Fatalf("held %+v, err %v", held, err)
+	}
+	path := held.settings[1]
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := info.Sys().(*syscall.Stat_t).Uid
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || owner != uint32(os.Getuid()) || filepath.Dir(path) != os.Getenv("TMPDIR") {
+		t.Errorf("the settings file %s reads %v, owner %d, want a regular file of the run's user that only it can read", path, info.Mode(), owner)
+	}
+	if !strings.Contains(string(mustRead(t, path)), gatewayKey) {
+		t.Error("the settings file does not hold the run's key")
+	}
+	another, err := options.openGateway(context.Background(), claudecode.Agent{})
+	if err != nil || another.settings[1] == path {
+		t.Errorf("a second run reuses the settings file %s: %v", path, err)
+	}
+	another.dropSettings()
+	held.watch(context.Background())()
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the settings file outlives the run: %v", err)
+	}
+
+	installClaudeRun(t, oneRequest, oneRequestID)
+	if got := runOnGateway(t, options.Gateway); got.err != nil || len(settingsFiles(t)) != 0 {
+		t.Errorf("after a run that ended: err %v, files %q", got.err, settingsFiles(t))
+	}
+	missing := options
+	missing.Argv = []string{filepath.Join(t.TempDir(), "claude"), "-p", "work"}
+	missing.Rows, missing.Stdout, missing.Catalog = &bytes.Buffer{}, &bytes.Buffer{}, pinned(t)
+	if _, err := Run(context.Background(), missing); err == nil || !strings.Contains(err.Error(), "run: start") || len(settingsFiles(t)) != 0 {
+		t.Errorf("after a run whose agent never started: err %v, files %q", err, settingsFiles(t))
+	}
+
+	stuck, err := options.openGateway(context.Background(), claudecode.Agent{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := os.Getenv("TMPDIR")
+	if err := os.Chmod(directory, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	stuck.dropSettings()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if line := stderr.String(); !strings.Contains(line, "costroid: warning: the settings file the run wrote for the agent holds the run's key and could not be removed") ||
+		!strings.Contains(line, stuck.settings[1]) || strings.Contains(line, gatewayKey) {
+		t.Errorf("a settings file the run could not remove reads: %q", line)
 	}
 }

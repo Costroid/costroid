@@ -141,3 +141,49 @@ func TestClaudeCodeGatewayRowsReadMeasured(t *testing.T) {
 		t.Errorf("on the gateway's key, the rows read %q over %d requests", report.CostBasis, len(report.Requests))
 	}
 }
+
+// Claude Code reads only the last --settings before the end of options, so the
+// run's file carries that one with the gateway's env set over its own.
+func TestGatewaySettingsCarryTheCommandsLastSettings(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	own := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(own, []byte(`{"model":"from-file","env":{"DISABLE_AUTO_COMPACT":"1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"claude", "-p", "work"}, `{"env":{` + gatewayEnv + `}}`},
+		{[]string{"claude", "-p", "--settings", `{"model":"first"}`, "--settings", own, "work"}, `{"env":{` + gatewayEnv + `,"DISABLE_AUTO_COMPACT":"1"},"model":"from-file"}`},
+		{[]string{"claude", "-p", "--settings", own, `--settings={"model":"last","env":null}`, "work"}, `{"env":{` + gatewayEnv + `},"model":"last"}`},
+		{[]string{"claude", "-p", "--settings", `{"model":"before"}`, "--", "--settings", own}, `{"env":{` + gatewayEnv + `},"model":"before"}`},
+	} {
+		args, remove, err := claudecode.Agent{}.GatewaySettings(c.argv, "http://gateway.test", "sk-run-key")
+		if err != nil || len(args) != 2 || args[0] != "--settings" {
+			t.Fatalf("%q: args %q, err %v", c.argv, args, err)
+		}
+		if got := string(mustRead(t, args[1])); got != c.want {
+			t.Errorf("%q:\n got %s\nwant %s", c.argv, got, c.want)
+		}
+		if err := remove(); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// gatewayEnv is the env the run's settings set, keys in JSON's order.
+const gatewayEnv = `"ANTHROPIC_API_KEY":"","ANTHROPIC_AUTH_TOKEN":"sk-run-key","ANTHROPIC_AWS_BASE_URL":"",` +
+	`"ANTHROPIC_BASE_URL":"http://gateway.test","ANTHROPIC_BEDROCK_BASE_URL":"","ANTHROPIC_BEDROCK_MANTLE_BASE_URL":"",` +
+	`"ANTHROPIC_FOUNDRY_BASE_URL":"","ANTHROPIC_FOUNDRY_RESOURCE":"","ANTHROPIC_VERTEX_BASE_URL":"",` +
+	`"CLAUDE_CODE_USE_ANTHROPIC_AWS":"","CLAUDE_CODE_USE_BEDROCK":"","CLAUDE_CODE_USE_FOUNDRY":"",` +
+	`"CLAUDE_CODE_USE_MANTLE":"","CLAUDE_CODE_USE_VERTEX":""`
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
