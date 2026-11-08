@@ -379,7 +379,8 @@ func previewReport(ctx context.Context, flags reportFlags, at time.Time, stdout,
 		input.Installation = flags.installation
 		input.Amounts = comment.AmountsShown
 		input.Verdict = previewVerdict(ctx, flags.rows, input.State, at, stderr)
-		body, err = previewComment(input)
+		input.Preview = true
+		body, err = comment.Comment(input)
 	}
 	if err == nil {
 		_, err = io.WriteString(stdout, body)
@@ -401,68 +402,6 @@ func previewRowsExist(flags reportFlags) error {
 		return nil
 	}
 	return fmt.Errorf("no rows file at %s. costroid run writes one at --out, and costroid demo shows a comment without one", flags.rows)
-}
-
-// The comment's sentences a preview states otherwise. A report reads
-// costroid.yml on the pull request's base branch, and a preview in the
-// working directory. A run nothing held states no cap, and a preview given
-// one says how the rows compare with it.
-const (
-	baseBranchConfig = "`costroid.yml` on the base branch"
-	directoryConfig  = "`costroid.yml` in this directory"
-	noCapHeld        = "No cap held this run: its enforcement grade is none."
-)
-
-// previewComment is the comment for the input, with what the preview read in
-// place of what a report reads.
-func previewComment(input comment.Input) (string, error) {
-	body, err := comment.Comment(input)
-	if err != nil {
-		return "", err
-	}
-	body = strings.ReplaceAll(body, baseBranchConfig, directoryConfig)
-	unheld, err := capNothingHeld(input)
-	if err != nil || unheld == "" {
-		return body, err
-	}
-	return strings.Replace(body, noCapHeld, noCapHeld+" "+unheld, 1), nil
-}
-
-// capNothingHeld compares a run nothing held with the cap it was given, as the
-// result object does. It is empty when the run had no cap, when a grade held
-// it, or when the figures are not one USD figure of one basis.
-func capNothingHeld(input comment.Input) (string, error) {
-	if input.Budget == nil {
-		return "", nil
-	}
-	object, err := comment.Result(input)
-	if err != nil {
-		return "", err
-	}
-	var result struct {
-		Cap *comment.BlockCap `json:"cap"`
-	}
-	if err := json.Unmarshal([]byte(object), &result); err != nil {
-		return "", fmt.Errorf("read the result object: %w", err)
-	}
-	held := result.Cap
-	if held == nil || held.EnforcementGrade == nil || *held.EnforcementGrade != "none" || held.Cost == nil || held.CostBasis == nil ||
-		held.Overshoot == nil || held.Remainder == nil {
-		return "", nil
-	}
-	basis := labels[focus.CostBasis(*held.CostBasis)]
-	if basis == "" {
-		basis = *held.CostBasis
-	}
-	line := fmt.Sprintf("Cap: %s %s, which nothing enforced. Cost: %s %s, %s.", held.Currency, held.Amount, held.Currency, *held.Cost, basis)
-	if over, err := decimal.Parse(*held.Overshoot); err != nil || over.Sign() <= 0 {
-		return line + fmt.Sprintf(" Under the cap by %s %s.", held.Currency, *held.Remainder), nil
-	}
-	line += fmt.Sprintf(" Over the cap by %s %s", held.Currency, *held.Overshoot)
-	if held.OvershootTokens != nil {
-		line += fmt.Sprintf(" and %s tokens", *held.OvershootTokens)
-	}
-	return line + ".", nil
 }
 
 // previewVerdict evaluates the policy offline at the given time. It reads no

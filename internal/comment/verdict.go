@@ -36,9 +36,24 @@ var limitNouns = map[string]string{
 	policy.RuleMonthlyBudget:      "budget",
 }
 
+// The costroid.yml a verdict reads: a report reads the pull request's base
+// branch's, and a preview the working directory's.
+const (
+	baseBranchConfig = "`costroid.yml` on the base branch"
+	directoryConfig  = "`costroid.yml` in this directory"
+)
+
+// configRead names the costroid.yml the verdict read.
+func (i Input) configRead() string {
+	if i.Preview {
+		return directoryConfig
+	}
+	return baseBranchConfig
+}
+
 // verdictLine opens with the approval when one turns the check neutral.
 func (i Input) verdictLine(shown bool) string {
-	line := verdictLine(i.Verdict, shown, i.lifetimeBases())
+	line := verdictLine(i.Verdict, shown, i.lifetimeBases(), i.configRead())
 	if i.approved() {
 		return approvalLine(*i.Approval) + " " + line
 	}
@@ -46,30 +61,32 @@ func (i Input) verdictLine(shown bool) string {
 }
 
 // verdictLine is built from the verdict's closed fields and its amounts, so
-// no text from the pull request reaches it.
-func verdictLine(verdict *policy.Verdict, shown bool, bases []string) string {
+// no text from the pull request reaches it. config names the costroid.yml
+// the verdict read.
+func verdictLine(verdict *policy.Verdict, shown bool, bases []string, config string) string {
 	if verdict == nil {
 		return "No policy ran on this change."
 	}
-	return strings.Join(verdictSentences(*verdict, shown, bases), " ")
+	return strings.Join(verdictSentences(*verdict, shown, bases, config), " ")
 }
 
 // VerdictSentences says what the policy found, one sentence per fact, in the
 // words the comment uses. shown says whether amounts may be printed. It reads
 // no lifetime, so a pull request's total is said to add every basis.
 func VerdictSentences(verdict policy.Verdict, shown bool) []string {
-	return verdictSentences(verdict, shown, nil)
+	return verdictSentences(verdict, shown, nil, baseBranchConfig)
 }
 
 // verdictSentences names the bases the pull request's total adds, in
-// basisOrder, or every basis when bases is empty.
-func verdictSentences(verdict policy.Verdict, shown bool, bases []string) []string {
+// basisOrder, or every basis when bases is empty, and config as the
+// costroid.yml the verdict read.
+func verdictSentences(verdict policy.Verdict, shown bool, bases []string, config string) []string {
 	var sentences []string
 	switch verdict.Config {
 	case policy.ConfigInvalid:
-		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` on the base branch is not valid, and `costroid validate` names the problem.")
+		sentences = append(sentences, "No rule ran, so the check concludes neutral: "+config+" is not valid, and `costroid validate` names the problem.")
 	case policy.ConfigUnread:
-		sentences = append(sentences, "No rule ran, so the check concludes neutral: `costroid.yml` on the base branch could not be read, and a missing input never blocks a merge.")
+		sentences = append(sentences, "No rule ran, so the check concludes neutral: "+config+" could not be read, and a missing input never blocks a merge.")
 	}
 	held := false
 	for _, result := range verdict.Results {
@@ -77,7 +94,7 @@ func verdictSentences(verdict policy.Verdict, shown bool, bases []string) []stri
 		held = held || result.HeldByWarnOnly
 	}
 	if len(sentences) == 0 {
-		sentences = append(sentences, "No rule applied: `costroid.yml` on the base branch sets no budget and no threshold.")
+		sentences = append(sentences, "No rule applied: "+config+" sets no budget and no threshold.")
 	}
 	if held {
 		sentences = append(sentences, warnOnlySentence(verdict.WarnOnly))

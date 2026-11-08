@@ -100,7 +100,7 @@ func text(value string) *string {
 // alone, so it never reads as a missing budget.
 func (i Input) capLine() string {
 	if i.Budget != nil {
-		return i.capCheck().line()
+		return i.capCheck().line(i.Preview)
 	}
 	switch grade := weakestGrade(i.Ledger.Figures); grade {
 	case "":
@@ -114,23 +114,34 @@ func (i Input) capLine() string {
 
 const noCap = "No cap held this run: its enforcement grade is none."
 
-func (c *capCheck) line() string {
+// line states the cap beside the cost. A run nothing held states no cap,
+// unless a preview gave it one: then the line compares the cost with it, as
+// the result object does.
+func (c *capCheck) line(preview bool) string {
 	if c.grade == "none" {
-		return noCap
+		if !preview || !c.compared {
+			return noCap
+		}
+		return noCap + fmt.Sprintf(" Cap: %s %s, which nothing enforced.", budgetCurrency, c.amount) + c.spent()
 	}
 	held := fmt.Sprintf("Cap: %s %s (%s: %s).", budgetCurrency, c.amount, c.grade, enforcementNotes[c.grade])
 	if !c.compared {
 		return held + " The figures above are not one " + budgetCurrency + " figure of one basis, so none is compared with the cap."
 	}
+	return held + c.spent()
+}
+
+// spent states the cost and how far under or over the cap it is.
+func (c *capCheck) spent() string {
 	spent := fmt.Sprintf(" Cost: %s %s, %s.", budgetCurrency, c.cost, basisLabels[c.basis])
 	if c.overshoot.Sign() == 0 {
-		return held + spent + fmt.Sprintf(" Under the cap by %s %s.", budgetCurrency, c.remainder)
+		return spent + fmt.Sprintf(" Under the cap by %s %s.", budgetCurrency, c.remainder)
 	}
 	over := fmt.Sprintf(" Over the cap by %s %s", budgetCurrency, c.overshoot)
 	if c.overshootTokens != nil {
 		over += fmt.Sprintf(" and %s tokens", c.overshootTokens)
 	}
-	return held + spent + over + "."
+	return spent + over + "."
 }
 
 // Reconciliation is the last reconciliation of one credential's day.
