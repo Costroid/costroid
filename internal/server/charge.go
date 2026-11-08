@@ -88,6 +88,8 @@ type charge struct {
 	// weakJoin is a sender's statement that its join is only windowed.
 	weakJoin bool
 	email    string
+	// requestID is the provider's request id, empty when the sender gave none.
+	requestID string
 }
 
 // joinResult is what the join decided for one row.
@@ -259,6 +261,7 @@ func (s *Server) price(c *charge, joined joinResult) (store.Record, error) {
 	return store.Record{
 		Row: row, RunAttempt: joined.attempt, Actor: joined.actor, Event: joined.event,
 		TokenCommitSHA: joined.tokenSHA, HeadBasis: joined.headBasis, CredentialBasis: joined.credentialBasis,
+		RequestID: c.requestID,
 	}, nil
 }
 

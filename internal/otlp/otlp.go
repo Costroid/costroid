@@ -75,6 +75,8 @@ type Usage struct {
 	RunID       string
 	// Email is held in memory only, to be replaced before anything is stored.
 	Email string
+	// RequestID is the provider's id alone, empty when ID is a stand-in.
+	RequestID string
 }
 
 // Batch is one decoded request.

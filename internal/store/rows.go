@@ -31,6 +31,10 @@ type Record struct {
 	// CredentialBasis says whether SubAccountId is a key attested as minted
 	// for the row's run or only stated, empty when the row names no credential.
 	CredentialBasis string
+	// RequestID is the provider's id for the request the row counts, empty
+	// when the sender stated none. It is not stored: it lets a cache write
+	// row be matched with the request's write rows of other lifetimes.
+	RequestID string
 }
 
 // Values of HeadBasis.
@@ -139,7 +143,11 @@ func (s *Store) writeBatch(ctx context.Context, tenant TenantID, batch Batch, co
 		if _, err := tx.Exec(ctx, batchWorkMem); err != nil {
 			return fmt.Errorf("store: set work_mem: %w", err)
 		}
-		tag, err := tx.Exec(ctx, statement, cols.args()...)
+		skip, err := storedWrites(ctx, tx, tenant, batch.Records)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, statement, cols.without(skip).args()...)
 		if err != nil {
 			return fmt.Errorf("store: insert rows: %w", err)
 		}
@@ -226,13 +234,41 @@ func (c *columns) add(record *Record) {
 	c.credentialBases = append(c.credentialBases, record.CredentialBasis)
 }
 
-func (c *columns) args() []any {
-	return []any{
-		c.ids, c.currencies, c.categories, c.meters, c.units, c.quantities, c.listCosts, c.effectiveCosts,
-		c.starts, c.ends, c.bases, c.sources, c.grades, c.enforcement, c.identities,
-		c.agents, c.models, c.repos, c.prs, c.shas, c.runs, c.attempts, c.actors, c.events, c.catalogs, c.docs,
-		c.tokenCommits, c.headBases, c.accounts, c.credentialBases,
+// arrays lists the columns in insertRows' order.
+func (c *columns) arrays() []*[]string {
+	return []*[]string{
+		&c.ids, &c.currencies, &c.categories, &c.meters, &c.units, &c.quantities, &c.listCosts, &c.effectiveCosts,
+		&c.starts, &c.ends, &c.bases, &c.sources, &c.grades, &c.enforcement, &c.identities,
+		&c.agents, &c.models, &c.repos, &c.prs, &c.shas, &c.runs, &c.attempts, &c.actors, &c.events, &c.catalogs, &c.docs,
+		&c.tokenCommits, &c.headBases, &c.accounts, &c.credentialBases,
 	}
+}
+
+func (c *columns) args() []any {
+	arrays := c.arrays()
+	args := make([]any, len(arrays))
+	for i, array := range arrays {
+		args[i] = *array
+	}
+	return args
+}
+
+// without copies the columns less the records at the skipped indexes.
+func (c *columns) without(skip map[int]bool) *columns {
+	if len(skip) == 0 {
+		return c
+	}
+	kept := &columns{}
+	targets := kept.arrays()
+	for i, array := range c.arrays() {
+		target := targets[i]
+		for row, value := range *array {
+			if !skip[row] {
+				*target = append(*target, value)
+			}
+		}
+	}
+	return kept
 }
 
 // Tag keys of the convention that the focus package leaves to the join.
