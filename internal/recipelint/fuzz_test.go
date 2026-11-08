@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // seedWorkflows adds every shipped recipe, the action and the customer
@@ -41,7 +42,8 @@ func seedWorkflows(f *testing.F) {
 var yamlBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n")
 
 // assertFindings holds a report to what a reader of the lint's output needs:
-// every finding names the file, a line in it and a rule, on one line.
+// every finding names the file, a line in it and a rule, on one line that
+// holds no control character.
 func assertFindings(t *testing.T, path string, data []byte, report Report) {
 	t.Helper()
 	lines := strings.Count(yamlBreaks.Replace(string(data)), "\n") + 1
@@ -49,8 +51,8 @@ func assertFindings(t *testing.T, path string, data []byte, report Report) {
 		if finding.Path != path || finding.Rule == "" || finding.Line < 1 || finding.Line > lines {
 			t.Fatalf("a finding at %s:%d of a file of %d lines, rule %q", finding.Path, finding.Line, lines, finding.Rule)
 		}
-		if strings.ContainsAny(finding.String(), "\r\n") {
-			t.Fatalf("a finding spans lines: %q", finding.String())
+		if line := finding.String(); strings.ContainsFunc(line, unicode.IsControl) || strings.ContainsAny(line, "\u2028\u2029") {
+			t.Fatalf("a finding spans lines or holds a control character: %q", line)
 		}
 	}
 }

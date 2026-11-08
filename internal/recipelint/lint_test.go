@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 const goodWorkflow = `on:
@@ -344,5 +345,39 @@ func TestAgentStartedByAnyOtherEventKeepsTheGuard(t *testing.T) {
 				t.Fatalf("want %s, got %v", RuleAgentGuard, report.Findings)
 			}
 		})
+	}
+}
+
+func TestAValueThatSpansLinesIsEscapedInItsFinding(t *testing.T) {
+	for name, uses := range map[string]string{
+		"plain over a blank line": "actions/checkout@v7\n\n          v8",
+		"quoted line feed":        `"actions/checkout@v7\nv8"`,
+		"quoted carriage return":  `"actions/checkout@v7\rv8"`,
+		"quoted next line":        `"actions/checkout@v7\Nv8"`,
+		"quoted line separator":   `"actions/checkout@v7\Lv8"`,
+		"quoted escape":           `"actions/checkout@v7\ev8"`,
+	} {
+		source := strings.Replace(goodWorkflow, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1", uses, 1)
+		for profile, report := range map[string]Report{
+			"recipe":   LintBytes("x.yml", []byte(source)),
+			"customer": LintCustomer("x.yml", []byte(source)),
+		} {
+			var unpinned []Finding
+			for _, finding := range report.Findings {
+				if finding.Rule == RuleUnpinned {
+					unpinned = append(unpinned, finding)
+				}
+			}
+			if len(unpinned) != 1 {
+				t.Fatalf("%s, %s profile: want one %s, got %v", name, profile, RuleUnpinned, report.Findings)
+			}
+			message := unpinned[0].String()
+			if strings.ContainsFunc(message, unicode.IsControl) || strings.ContainsAny(message, "  ") {
+				t.Errorf("%s, %s profile: the finding spans lines or holds a control character: %q", name, profile, message)
+			}
+			if !strings.Contains(message, `actions/checkout@v7\`) {
+				t.Errorf("%s, %s profile: the finding does not show the break escaped: %q", name, profile, message)
+			}
+		}
 	}
 }
