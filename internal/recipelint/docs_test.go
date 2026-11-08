@@ -10,10 +10,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 const (
 	readmePath          = "../../README.md"
+	installPage         = "../../docs/install.md"
+	listingTemplate     = "../../marketplace/README.md"
 	changelogPath       = "../../CHANGELOG.md"
 	docsDir             = "../../docs"
 	releaseWorkflowFile = "../../.github/workflows/release.yml"
@@ -21,10 +24,15 @@ const (
 	// It prints installedMark.
 	installedMark = "the installed costroid ran"
 	fakeBinary    = "#!/bin/sh\necho '" + installedMark + "'\n"
+	// minuteOfReading is STYLE.md's bar for a README, under a minute of
+	// reading, at 220 words a minute.
+	minuteOfReading = 220
 )
 
 var (
 	actionPin     = regexp.MustCompile(regexp.QuoteMeta(costroidAction) + `@[0-9a-f]{40} # v(\S+)`)
+	actionCommit  = regexp.MustCompile(regexp.QuoteMeta(costroidAction) + `@([0-9a-f]{40}) # v`)
+	actionRef     = regexp.MustCompile("`--action-ref ([0-9a-f]{40})`")
 	gitlabVersion = regexp.MustCompile(`(?m)^\s+COSTROID_VERSION: (\S+)$`)
 	// releaseNumber is the form every release of Costroid has taken so far.
 	// The pin is held to it, so a release of another form fails here first.
@@ -34,6 +42,9 @@ var (
 	pastOrExample    = regexp.MustCompile("(up to|such as) `?v?$")
 	changelogHeading = regexp.MustCompile(`^## (\S+) \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)$`)
 	shellBlock       = regexp.MustCompile("(?s)```sh\n(.*?)```")
+	fencedBlock      = regexp.MustCompile("(?s)```.*?```")
+	linkTarget       = regexp.MustCompile(`\]\([^)]*\)`)
+	recipeLink       = regexp.MustCompile(`\]\(\.\./recipes/([^)]+)\)`)
 	releaseTargets   = regexp.MustCompile(`for target in ([a-z0-9/ ]+); do`)
 )
 
@@ -190,16 +201,35 @@ cp "`+served+`/${url##*/}" . || exit 22`)
 	return command.ProcessState.ExitCode(), string(output), strings.Fields(string(urls))
 }
 
-// TestReadmeInstallBlockIsComplete runs the README's install block, so a
+// pinnedCommit is the one commit of Costroid's action every GitHub recipe pins.
+func pinnedCommit(t *testing.T) string {
+	t.Helper()
+	commits := map[string]bool{}
+	for _, file := range recipeFiles(t) {
+		for _, match := range actionCommit.FindAllStringSubmatch(read(t, file), -1) {
+			commits[match[1]] = true
+		}
+	}
+	if len(commits) != 1 {
+		t.Fatalf("the recipes pin %d commits of %s, want 1: %v", len(commits), costroidAction, commits)
+	}
+	var commit string
+	for value := range commits {
+		commit = value
+	}
+	return commit
+}
+
+// TestInstallPageBlockIsComplete runs the install page's first block, so a
 // stranger who pastes it ends with costroid on PATH, from the release the
 // recipes pin, checked against SHA256SUMS.
-func TestReadmeInstallBlockIsComplete(t *testing.T) {
+func TestInstallPageBlockIsComplete(t *testing.T) {
 	pin := pinnedRelease(t)
-	readme := read(t, readmePath)
-	install := section(t, readme, "Install")
-	blocks := shellBlock.FindAllStringSubmatch(install, -1)
-	if len(blocks) < 2 {
-		t.Fatalf("the install section has %d shell blocks, want the install and the signature check", len(blocks))
+	page := read(t, installPage)
+	binary := section(t, page, "The binary")
+	blocks := shellBlock.FindAllStringSubmatch(binary, -1)
+	if len(blocks) != 1 {
+		t.Fatalf("the binary section has %d shell blocks, want the install", len(blocks))
 	}
 	block := blocks[0][1]
 	sums := sumOf(fakeBinary) + "  " + releaseAsset + "\n" + sumOf("arm") + "  costroid-linux-arm64\n"
@@ -222,26 +252,116 @@ func TestReadmeInstallBlockIsComplete(t *testing.T) {
 		t.Errorf("the block installed a binary that does not match SHA256SUMS, exit %d:\n%s", code, output)
 	}
 
-	if !strings.Contains(blocks[1][1], "release.yml@refs/tags/v"+pin+" ") {
+	if !strings.Contains(section(t, page, "The signature"), "release.yml@refs/tags/v"+pin+" ") {
 		t.Errorf("the signature check does not name the tag v%s", pin)
 	}
-	if !strings.Contains(install, "prints `costroid "+pin+", catalog ") {
-		t.Errorf("the install section does not say what costroid version prints for %s", pin)
+	if !strings.Contains(binary, "prints `costroid "+pin+", catalog ") {
+		t.Errorf("the binary section does not say what costroid version prints for %s", pin)
 	}
-	if !strings.Contains(install, "`shasum -a 256 --check`") {
-		t.Error("the install section does not give macOS's checksum command")
+	if !strings.Contains(binary, "`shasum -a 256 --check`") {
+		t.Error("the binary section does not give macOS's checksum command")
 	}
 	match := releaseTargets.FindStringSubmatch(read(t, releaseWorkflowFile))
 	if match == nil {
 		t.Fatal("release.yml lists no targets")
 	}
 	for _, target := range strings.Fields(match[1]) {
-		if asset := "costroid-" + strings.ReplaceAll(target, "/", "-"); !strings.Contains(install, "`"+asset+"`") {
-			t.Errorf("the install section does not name %s, which the release builds", asset)
+		if asset := "costroid-" + strings.ReplaceAll(target, "/", "-"); !strings.Contains(binary, "`"+asset+"`") {
+			t.Errorf("the binary section does not name %s, which the release builds", asset)
 		}
+	}
+
+	goInstall := section(t, page, "With Go")
+	if want := "go install github.com/Costroid/costroid/cmd/costroid@v" + pin + "\n"; !strings.Contains(goInstall, want) {
+		t.Errorf("the Go section does not install v%s with %q", pin, want)
+	}
+	refs := actionRef.FindAllStringSubmatch(goInstall, -1)
+	if len(refs) != 1 || refs[0][1] != pinnedCommit(t) {
+		t.Errorf("the Go section names --action-ref %v, want the commit the recipes pin, %s", refs, pinnedCommit(t))
+	}
+}
+
+// readingWords counts the words a reader reads: those outside fenced blocks,
+// which are copied rather than read, with link targets left out.
+func readingWords(text string) int {
+	text = linkTarget.ReplaceAllString(fencedBlock.ReplaceAllString(text, " "), "]")
+	words := 0
+	for _, field := range strings.Fields(text) {
+		if strings.ContainsFunc(field, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+			words++
+		}
+	}
+	return words
+}
+
+// TestReadmeReadsInAMinute holds the README to STYLE.md's minute. The licence
+// is a legal statement, not reading toward the first command, so it is not
+// counted. The README leads with the path for a workflow a team already runs,
+// then init --pr, then the comment previewed on the reader's own machine.
+func TestReadmeReadsInAMinute(t *testing.T) {
+	readme := read(t, readmePath)
+	body, _, found := strings.Cut(readme, "\n## Licence\n")
+	if !found {
+		t.Fatal("README.md has no Licence section")
+	}
+	if words := readingWords(body); words > minuteOfReading {
+		t.Errorf("README.md reads %d words outside its code and its licence, past a minute at %d", words, minuteOfReading)
+	}
+	at := 0
+	for _, step := range []string{"costroid init github --existing ", "`--pr`", "costroid report --preview --rows rows.jsonl\n"} {
+		next := strings.Index(readme[at:], step)
+		if next < 0 {
+			t.Fatalf("README.md does not name %q after byte %d: it leads with --existing, then --pr, then report --preview", step, at)
+		}
+		at += next + len(step)
 	}
 	if !strings.Contains(section(t, readme, "First command"), "Claude Code installed and signed in") {
 		t.Error("the first command does not say it needs Claude Code installed and signed in")
+	}
+}
+
+func TestReadingWordsSkipsCodeAndLinkTargets(t *testing.T) {
+	text := "One [two](https://example.com/three four) `five`.\n\n```sh\nsix seven\n```\n\n- eight, 9 -- ...\n"
+	if got := readingWords(text); got != 5 {
+		t.Errorf("got %d words, want 5: One, two, five, eight, 9", got)
+	}
+}
+
+// TestDocsNameEveryShippedRecipe holds docs/recipes.md to recipes/: each file
+// a release ships, and init can write, is linked from the page that lists them.
+func TestDocsNameEveryShippedRecipe(t *testing.T) {
+	linked := map[string]bool{}
+	for _, match := range recipeLink.FindAllStringSubmatch(read(t, recipesDoc), -1) {
+		linked[match[1]] = true
+	}
+	files := recipeFiles(t)
+	if len(files) == 0 {
+		t.Fatal("recipes/ holds no recipe")
+	}
+	for _, file := range files {
+		if name := filepath.Base(file); !linked[name] {
+			t.Errorf("docs/recipes.md does not link recipes/%s", name)
+		}
+	}
+	for name := range linked {
+		if _, err := os.Stat(filepath.Join(recipesDir, name)); err != nil {
+			t.Errorf("docs/recipes.md links recipes/%s, which does not exist", name)
+		}
+	}
+}
+
+// TestListingNamesItsReleaseFirst holds the wrapper's README to name the
+// release and its commit before its first section, where a reader of the
+// Marketplace page sees them. scripts/marketplace.sh fills both in.
+func TestListingNamesItsReleaseFirst(t *testing.T) {
+	top, _, found := strings.Cut(read(t, listingTemplate), "\n## ")
+	if !found {
+		t.Fatal("marketplace/README.md has no section")
+	}
+	for _, placeholder := range []string{"__RELEASE_TAG__", "__RELEASE_COMMIT__"} {
+		if !strings.Contains(top, placeholder) {
+			t.Errorf("marketplace/README.md does not name %s before its first section", placeholder)
+		}
 	}
 }
 
