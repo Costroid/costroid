@@ -209,11 +209,22 @@ func runFiles(t *testing.T, recording propertyRecording, files map[string][]byte
 			t.Fatal(err)
 		}
 	}
-	t.Setenv(fakeMode, "replay")
-	t.Setenv(fakeLog, filepath.Join(config, "argv"))
 	t.Setenv("COSTROID_FAKE_STREAM", filepath.Join(config, streamFile))
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
-	return runArgv(t, agentNamed(t, "claude"), "-p", "work")
+	return runArgv(t, streamingClaude(t), "-p", "work")
+}
+
+// streamingClaude is a fake claude that prints the stream file
+// COSTROID_FAKE_STREAM names and does nothing else, which is all a replay
+// needs. A shell script starts in a few milliseconds, where the test binary
+// as the fake takes about thirty.
+func streamingClaude(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexec cat \"$COSTROID_FAKE_STREAM\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func runCodexFiles(t *testing.T, files map[string][]byte) (Result, []map[string]any, error) {
@@ -472,9 +483,19 @@ func runOneBadLineShares(t *testing.T, count int) []map[string]int {
 	return tallies
 }
 
-// runOneBadLineShare runs the share of the changes named index/count, a run
-// of consecutive changes so that few recordings need their own run, and
-// writes its outcomes where oneBadLineTally names.
+// oneBadLineCost is how long a change takes to run, in Claude Code runs. A
+// Codex run waits on the rollout file's tail, read every 50 ms, and takes
+// about five.
+func oneBadLineCost(change oneBadLineChange) int {
+	if propertyRecordings[change.recording].agent == "codex" {
+		return 5
+	}
+	return 1
+}
+
+// runOneBadLineShare runs the share of the changes named index/count, by
+// their cost, and writes its outcomes where oneBadLineTally names. A share
+// is a run of consecutive changes, so few recordings need their own run.
 func runOneBadLineShare(t *testing.T, share string) {
 	t.Helper()
 	var index, count int
@@ -482,14 +503,15 @@ func runOneBadLineShare(t *testing.T, share string) {
 		t.Fatalf("share %q is not index/count", share)
 	}
 	total := 0
-	eachOneBadLineChange(t, func(oneBadLineChange) { total++ })
+	eachOneBadLineChange(t, func(change oneBadLineChange) { total += oneBadLineCost(change) })
 	from, to := total*index/count, total*(index+1)/count
 	tally := map[string]int{}
 	bases := map[int]baselineRun{}
-	number := 0
+	spent := 0
 	eachOneBadLineChange(t, func(change oneBadLineChange) {
-		defer func() { number++ }()
-		if number < from || number >= to {
+		start := spent
+		spent += oneBadLineCost(change)
+		if start < from || start >= to {
 			return
 		}
 		recording := propertyRecordings[change.recording]
