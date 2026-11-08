@@ -1861,8 +1861,12 @@ func patchWorkflow(t *testing.T, workflow string, args ...string) (string, strin
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	return applyDiff(t, workflow, patch), stderr
+	workflowPatch, _, _ := strings.Cut(patch, newFileHeader)
+	return applyDiff(t, workflow, workflowPatch), stderr
 }
+
+// newFileHeader opens the block of a patch that creates a file.
+const newFileHeader = "--- /dev/null\n"
 
 func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 	inputs := map[string]any{
@@ -2023,6 +2027,95 @@ func TestInitPlatformURLWritesTheConnectWorkflow(t *testing.T) {
 
 	t.Run("--existing writes nothing", func(t *testing.T) {
 		existingPatch(t, existingReview, "--platform-url", "https://app.costroid.com")
+	})
+}
+
+// TestExistingPlatformURLPrintsTheConnectWorkflow holds the third block of
+// the --existing patch: with --platform-url it creates the connect workflow,
+// byte for byte the file init writes without --existing, pinned to the same
+// commit as the read step and the report job. git apply makes both files.
+// A connect workflow the repository holds is left out of the patch.
+func TestExistingPlatformURLPrintsTheConnectWorkflow(t *testing.T) {
+	name := workflowDir + "/review.yml"
+	for _, test := range []struct {
+		label string
+		build buildInfo
+		args  []string
+		pin   string
+	}{
+		{"a release", releaseBuild, nil, costroidActionPath + "@" + testCommit + " # v" + testRelease},
+		{"--action-ref", buildInfo{version: "dev"}, []string{"--action-ref", otherCommit}, costroidActionPath + "@" + otherCommit + " # set by costroid init --action-ref"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, name), existingReview)
+			before := tree(t, root)
+			args := append([]string{"github", "--agent", "claude-code-action", "--existing", name, "--platform-url", "https://app.costroid.com"}, test.args...)
+			code, patch, stderr := runInit(t, root, test.build, costroid.Recipes, args...)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			if !reflect.DeepEqual(before, tree(t, root)) {
+				t.Fatal("--existing changed the repository")
+			}
+			if strings.Count(patch, newFileHeader) != 1 || !strings.Contains(patch, newFileHeader+"+++ b/"+connectWorkflow+"\n@@ -0,0 +1,") {
+				t.Fatalf("the patch creates no %s:\n%s", connectWorkflow, patch)
+			}
+			applied := t.TempDir()
+			writeFile(t, filepath.Join(applied, name), existingReview)
+			command := exec.Command("git", "apply", "--verbose", "-")
+			command.Dir = applied
+			command.Stdin = strings.NewReader(patch)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("git apply: %v\n%s", err, output)
+			}
+			connect := readFile(t, filepath.Join(applied, filepath.FromSlash(connectWorkflow)))
+			patched := readFile(t, filepath.Join(applied, name))
+
+			written := t.TempDir()
+			plain := append([]string{"github", "--agent", "claude", "--platform-url", "https://app.costroid.com"}, test.args...)
+			if code, _, stderr := runInit(t, written, test.build, costroid.Recipes, plain...); code != 0 {
+				t.Fatalf("init without --existing: exit %d, stderr %q", code, stderr)
+			}
+			if want := readFile(t, filepath.Join(written, filepath.FromSlash(connectWorkflow))); connect != want {
+				t.Errorf("the patch's connect workflow differs from the one init writes:\n%s\nwant:\n%s", connect, want)
+			}
+			for file, text := range map[string]string{connectWorkflow: connect, name: patched} {
+				pins := actionPin.FindAllString(text, -1)
+				if len(pins) == 0 || slices.ContainsFunc(pins, func(pin string) bool { return pin != test.pin }) {
+					t.Errorf("%s pins %v, want %s", file, pins, test.pin)
+				}
+			}
+			if report := recipelint.LintBytes(connectWorkflow, []byte(connect)); len(report.Findings) > 0 {
+				t.Errorf("lint-recipes rejects the connect workflow: %v", report.Findings)
+			}
+			flat := strings.Join(strings.Fields(stderr), " ")
+			if !strings.Contains(flat, "costroid: printed a patch for "+name+" and "+connectWorkflow+", and wrote nothing") || !strings.Contains(flat, connectNeeds) {
+				t.Errorf("init does not say the patch creates the connect workflow:\n%s", stderr)
+			}
+		})
+	}
+
+	t.Run("a connect workflow that exists", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, name), existingReview)
+		writeFile(t, filepath.Join(root, filepath.FromSlash(connectWorkflow)), "a team's own connect job\n")
+		before := tree(t, root)
+		code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--existing", name, "--platform-url", "https://app.costroid.com")
+		if code != 0 || strings.Contains(patch, newFileHeader) || !reflect.DeepEqual(before, tree(t, root)) {
+			t.Fatalf("exit %d, stderr %q, patch:\n%s", code, stderr, patch)
+		}
+		flat := strings.Join(strings.Fields(stderr), " ")
+		if !strings.Contains(stderr, "costroid: "+connectWorkflow+" exists, and init left it as it is\n") || !strings.Contains(flat, platformNeeds) {
+			t.Errorf("stderr %q", stderr)
+		}
+	})
+
+	t.Run("no --platform-url", func(t *testing.T) {
+		patch, stderr, _ := existingPatch(t, existingReview)
+		if strings.Contains(patch, newFileHeader) || strings.Contains(stderr, connectWorkflow) {
+			t.Errorf("the patch names the connect workflow without --platform-url:\n%s\n%s", patch, stderr)
+		}
 	})
 }
 
