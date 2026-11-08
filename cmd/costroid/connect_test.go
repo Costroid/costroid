@@ -374,68 +374,97 @@ func TestConnectRefusesSelfManagedGitLab(t *testing.T) {
 	}
 }
 
+// keysRetry is a refusal for unreadable keys and what connect does with it.
+type keysRetry struct {
+	name, retryAfter string
+	refusals         []string
+	gitlab           bool
+	// wait is the pause before the retry, zero when there is none.
+	wait time.Duration
+	code int
+}
+
+const keysUnavailableCode = "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
+
+// checkKeysRetry runs connect against refusals for unreadable keys and holds
+// the proofs it sends, the pause it asks the clock for and what it prints.
+func checkKeysRetry(t *testing.T, tc keysRetry) {
+	t.Helper()
+	stub := newConnectStub(t)
+	stub.retryAfter, stub.refusals = tc.retryAfter, tc.refusals
+	env, installation, proof := stub.githubEnv(), "github-owner:"+testOwner, testRunToken
+	if tc.gitlab {
+		env, installation, proof = gitlabEnv(), "gitlab-namespace:"+testNamespace, testGitLabProof
+	}
+	code, stdout, stderr := stub.connect(t, env)
+	if code != tc.code {
+		t.Fatalf("exit %d, want %d: %s", code, tc.code, stderr)
+	}
+	sends, want, waits := 1, "", []time.Duration(nil)
+	if tc.wait > 0 {
+		sends, waits = 2, []time.Duration{tc.wait}
+		want = fmt.Sprintf("costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(tc.wait.Seconds()))
+	}
+	if len(stub.proofs) != sends {
+		t.Fatalf("%d proofs, want %d", len(stub.proofs), sends)
+	}
+	for _, sent := range stub.proofs {
+		if string(sent.body) != `{"proof":"`+proof+`"}` {
+			t.Errorf("a proof's body is %s, want the same proof each time", sent.body)
+		}
+	}
+	if len(stub.audiences) > 1 {
+		t.Errorf("the OIDC token was asked %d times, want once", len(stub.audiences))
+	}
+	if !slices.Equal(stub.waits, waits) {
+		t.Errorf("waits %v, want %v", stub.waits, waits)
+	}
+	if tc.code == exitRejected {
+		want += "costroid: Costroid Platform refused the proof for " + installation + ": 503 " + keysUnavailableCode + ". The platform could not read the CI system's keys, so run the job again.\n"
+	} else if stdout != "costroid: "+installation+" is bound to tenant "+testTenant+", proven at 2026-11-08T08:59:30Z\n" {
+		t.Errorf("stdout %q", stdout)
+	}
+	if stderr != want {
+		t.Errorf("stderr %q, want %q", stderr, want)
+	}
+}
+
 // TestConnectRetriesOnceWhenKeysAreUnavailable sends the same proof a second
 // time after the platform's Retry-After, when that is 120 seconds or less,
-// and never a third time. Past 120 seconds, absent or unreadable, it stops
-// with the refusal's sentence.
+// and never a third time. At 0 seconds or past 120 it stops with the
+// refusal's sentence.
 func TestConnectRetriesOnceWhenKeysAreUnavailable(t *testing.T) {
-	const keys = "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
-	for _, tc := range []struct {
-		name, retryAfter string
-		refusals         []string
-		gitlab           bool
-		// wait is the pause before the retry, zero when there is none.
-		wait time.Duration
-		code int
-	}{
+	keys := keysUnavailableCode
+	for _, tc := range []keysRetry{
 		{name: "bound on the retry", retryAfter: "5", refusals: []string{keys}, wait: 5 * time.Second},
 		{name: "a GitLab job bound on the retry", retryAfter: "1", refusals: []string{keys}, gitlab: true, wait: time.Second},
 		{name: "the platform's 60 seconds", retryAfter: "60", refusals: []string{keys}, wait: 60 * time.Second},
 		{name: "120 seconds", retryAfter: "120", refusals: []string{keys}, wait: 120 * time.Second},
 		{name: "past 120 seconds", retryAfter: "121", refusals: []string{keys}, code: exitRejected},
-		{name: "no Retry-After", refusals: []string{keys}, code: exitRejected},
-		{name: "a Retry-After that is not seconds", retryAfter: "Sun, 08 Nov 2026 09:01:00 GMT", refusals: []string{keys}, code: exitRejected},
+		{name: "seconds past any whole number", retryAfter: "99999999999999999999", refusals: []string{keys}, code: exitRejected},
+		{name: "0 seconds", retryAfter: "0", refusals: []string{keys}, code: exitRejected},
 		{name: "refused again", retryAfter: "2", refusals: []string{keys, keys, keys}, wait: 2 * time.Second, code: exitRejected},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stub := newConnectStub(t)
-			stub.retryAfter, stub.refusals = tc.retryAfter, tc.refusals
-			env, installation, proof := stub.githubEnv(), "github-owner:"+testOwner, testRunToken
-			if tc.gitlab {
-				env, installation, proof = gitlabEnv(), "gitlab-namespace:"+testNamespace, testGitLabProof
-			}
-			code, stdout, stderr := stub.connect(t, env)
-			if code != tc.code {
-				t.Fatalf("exit %d, want %d: %s", code, tc.code, stderr)
-			}
-			sends, want, waits := 1, "", []time.Duration(nil)
-			if tc.wait > 0 {
-				sends, waits = 2, []time.Duration{tc.wait}
-				want = fmt.Sprintf("costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(tc.wait.Seconds()))
-			}
-			if len(stub.proofs) != sends {
-				t.Fatalf("%d proofs, want %d", len(stub.proofs), sends)
-			}
-			for _, sent := range stub.proofs {
-				if string(sent.body) != `{"proof":"`+proof+`"}` {
-					t.Errorf("a proof's body is %s, want the same proof each time", sent.body)
-				}
-			}
-			if len(stub.audiences) > 1 {
-				t.Errorf("the OIDC token was asked %d times, want once", len(stub.audiences))
-			}
-			if !slices.Equal(stub.waits, waits) {
-				t.Errorf("waits %v, want %v", stub.waits, waits)
-			}
-			if tc.code == exitRejected {
-				want += "costroid: Costroid Platform refused the proof for " + installation + ": 503 " + keys + ". The platform could not read the CI system's keys, so run the job again.\n"
-			} else if stdout != "costroid: "+installation+" is bound to tenant "+testTenant+", proven at 2026-11-08T08:59:30Z\n" {
-				t.Errorf("stdout %q", stdout)
-			}
-			if stderr != want {
-				t.Errorf("stderr %q, want %q", stderr, want)
-			}
-		})
+		t.Run(tc.name, func(t *testing.T) { checkKeysRetry(t, tc) })
+	}
+}
+
+// TestConnectWaitsSixtySecondsWithoutRetryAfter sends the proof once more
+// after 60 seconds, the platform's own figure, when the refusal for
+// unreadable keys names no Retry-After in whole seconds. The clock is the
+// stub's, so the test never sleeps.
+func TestConnectWaitsSixtySecondsWithoutRetryAfter(t *testing.T) {
+	keys := keysUnavailableCode
+	for _, tc := range []keysRetry{
+		{name: "no Retry-After", refusals: []string{keys}, wait: 60 * time.Second},
+		{name: "a GitLab job with no Retry-After", refusals: []string{keys}, gitlab: true, wait: 60 * time.Second},
+		{name: "an HTTP date", retryAfter: "Sun, 08 Nov 2026 09:01:00 GMT", refusals: []string{keys}, wait: 60 * time.Second},
+		{name: "a word", retryAfter: "soon", refusals: []string{keys}, wait: 60 * time.Second},
+		{name: "a fraction", retryAfter: "1.5", refusals: []string{keys}, wait: 60 * time.Second},
+		{name: "a negative number", retryAfter: "-5", refusals: []string{keys}, wait: 60 * time.Second},
+		{name: "refused again", refusals: []string{keys, keys, keys}, wait: 60 * time.Second, code: exitRejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkKeysRetry(t, tc) })
 	}
 }
 
