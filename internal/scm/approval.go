@@ -78,8 +78,8 @@ func RequestFrom(event Event) (ApprovalRequest, error) {
 	return ApprovalRequest{PullRequest: event.PullRequest, Approver: event.Sender, HeadSHA: event.HeadSHA}, nil
 }
 
-// Approval records who approved which commit. It flips nothing yet: the check
-// stays neutral until a policy gives it a conclusion to flip.
+// Approval records who approved which commit, and when. A failed check that
+// an approval binds concludes neutral and names the approver.
 type Approval struct {
 	PullRequest int
 	Approver    string

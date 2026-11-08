@@ -43,6 +43,11 @@ token goes anywhere the command line did not name.
 
 To add it to Claude Code:
   claude mcp add costroid -- costroid mcp
+
+Exit codes of mcp:
+  0                 the client closed the session
+  125               costroid could not read the flags or --ledger, or the
+                    session failed
 `
 
 func mcpCommand(ctx context.Context, args []string, std stdio) int {

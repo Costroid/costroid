@@ -70,8 +70,10 @@ var (
 )
 
 const exportHelp = `Usage:
-  costroid export --rows rows.jsonl --platform-url URL --installation-id ID [--batch-id ID]
-  costroid export --rows rows.jsonl --format focus-csv|vantage|datadog [--out PATH]
+  costroid export --rows rows.jsonl --platform-url URL --installation-id ID
+                  [--batch-id ID]
+  costroid export --rows rows.jsonl --format focus-csv|vantage|datadog
+                  [--out PATH]
 
 export sends a rows file to Costroid Platform as one batch of CSV, under the
 integration token in COSTROID_PLATFORM_TOKEN. --platform-url is the platform's

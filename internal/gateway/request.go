@@ -29,6 +29,9 @@ func ReadBinding(getenv func(string) string) (Binding, error) {
 	if cicontext.Detect(getenv) != cicontext.GitHubActions {
 		return Binding{}, errors.New("gateway: a run key is bound to a GitHub Actions run, and this is not one")
 	}
+	// The binding takes the repository and the run, which Read takes from the
+	// variables alone. Its error is about the event file, which the binding
+	// does not read, and mint warns about it where it reads the file.
 	ci, _ := cicontext.Read(getenv)
 	binding := Binding{Repository: ci.Repository, Run: ci.Run, Attempt: getenv("GITHUB_RUN_ATTEMPT")}
 	if binding.Repository == "" || binding.Run == "" || binding.Attempt == "" {

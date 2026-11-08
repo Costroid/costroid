@@ -40,11 +40,14 @@ const (
 	exitFailure          = 125
 )
 
-const serveUsage = `costroid serve runs the ingest service.
+// ServeUsage is serve's help page. costroid help serve prints it on stdout,
+// and a flag serve cannot parse prints it on stderr.
+const ServeUsage = `Usage:
+  costroid serve [--addr :8080] [--gitlab-host HOST]... [--bind HOST:OWNER]...
+                 [--egress-allow HOST]...
 
-Usage:
-  costroid serve [--addr :8080] [--gitlab-host host]... [--bind host:owner]...
-                 [--egress-allow host]...
+serve runs the ingest service. --addr is the address it listens on, :8080 by
+default.
 
 Environment:
   COSTROID_DATABASE_URL            the application role's connection
@@ -54,10 +57,14 @@ Environment:
                                    GitHub's default, https://github.com/<owner>
   COSTROID_PSEUDONYM_KEY           at least 32 bytes in base64, the master key
                                    for per-tenant address pseudonyms
-  COSTROID_EGRESS_ALLOW            hosts for the egress allowlist, comma-separated
+  COSTROID_EGRESS_ALLOW            hosts for the egress allowlist,
+                                   comma-separated
   COSTROID_GATEWAY_ENVIRONMENT     the GitHub environment whose jobs may attest
                                    a minted gateway key, costroid-gateway by
                                    default
+
+--gitlab-host trusts the CI tokens of one more GitLab instance. GitHub Actions
+and gitlab.com are trusted by default.
 
 --bind gives an SCM owner to this instance's tenant, and needs the owner role.
 
@@ -70,6 +77,10 @@ egress report prints what was attempted.
 A row reads exact only when its SubAccountId is a gateway key that a job in
 that environment attested as minted for the run the row's CI token names.
 docs/serve.md says why.
+
+Exit codes of serve:
+  0                 the service stopped on a signal
+  125               the service could not start, or stopped on an error
 `
 
 type serveOptions struct {
@@ -92,7 +103,7 @@ func (r *repeated) Set(value string) error {
 func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 	set := flag.NewFlagSet("serve", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, serveUsage) }
+	set.Usage = func() { fmt.Fprint(stderr, ServeUsage) }
 	options := serveOptions{}
 	var gitlab, binds, allow repeated
 	set.StringVar(&options.addr, "addr", ":8080", "the address to listen on")

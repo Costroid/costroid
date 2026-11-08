@@ -85,7 +85,8 @@ docs/connect.md gives the job.
 Exit codes of connect:
   0                 the installation is bound to the token's tenant
   1                 the platform refused, and the line names its code
-  125               costroid could not read its input, get a proof or reach the platform
+  125               costroid could not read its input, get a proof or reach the
+                    platform
 `
 
 type connectFlags struct {

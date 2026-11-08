@@ -318,6 +318,7 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: init: <command> failed: <error>` | A command `init --pr` ran failed, and `init` exits 125. The lines above it list the commands left, the failed one first | Fix what the command's own error names, then run the commands left by hand |
 | `costroid: a repository secret takes precedence over an organization secret of the same name, so the run reads the <name> set here. Pass --keep-org-secret to keep the organization's` | `init --pr` is about to set the agent's key as a repository secret, which the run reads in place of an organization secret of that name | None. To keep the organization's secret, stop `init` and run it again with `--keep-org-secret` |
 | `costroid: init sets no repository secret <name>, so the run reads the organization's` | `init --pr` ran with `--keep-org-secret`, so it listed and set no repository secret | Check that the organization's secret `<name>` is available to this repository |
+| `costroid: warning: the event file "<file>" could not be read, so the key names no pull request, head commit or author, and no author's budget applies: <error>` | `gateway mint` registered the run's key without the pull request, its head commit and its author, because the event file `GITHUB_EVENT_PATH` names is missing or is not JSON. `--author-daily-cap-usd` then puts the key under no author's budget | Run the mint job on `pull_request`, as the LiteLLM recipe does, and let no step before it move or rewrite the event file |
 
 ## Checking a repository
 

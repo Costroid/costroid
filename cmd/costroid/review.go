@@ -50,6 +50,12 @@ renders, cuts it to 30000 bytes and says the words are the agent's. With no
 answer in FILE, it creates no comment, and edits an earlier run's to say this
 run kept none. Like report, it exits 0 whatever the host answers, and outside
 GitHub Actions and GitLab CI it refuses and exits 125.
+
+Exit codes of review:
+  0                 the answer was kept or posted, or there was none to keep,
+                    or the host refused it
+  125               costroid could not read the flags or write --out, or
+                    --post found neither GitHub Actions nor GitLab CI
 `
 
 // answerSource is one kind of file an answer is read from.

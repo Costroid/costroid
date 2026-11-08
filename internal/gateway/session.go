@@ -48,11 +48,6 @@ type Grant struct {
 	Problems []string
 }
 
-// Holds reports whether the key's own facts let the run read gateway-precheck.
-func (g Grant) Holds() bool {
-	return len(g.Problems) == 0
-}
-
 // Await waits until the key authenticates, then reads it back. A URL the key
 // would cross the network in the clear to is refused before any wait.
 func (s Session) Await(ctx context.Context) (KeyInfo, error) {
