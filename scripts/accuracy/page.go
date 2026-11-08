@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -23,10 +26,12 @@ const (
 
 // line is one reconciliation of one credential on one day, as the page shows
 // it. A line with no failures passed. explained says it passed only once the
-// residual's named causes were taken out.
+// residual's named causes were taken out. writer is the Costroid release that
+// wrote the day's rows, empty when the day does not name it.
 type line struct {
 	day string
 	named
+	writer    string
 	tokens    []tokenFigure
 	dollars   *dollarFigure
 	failures  []string
@@ -183,12 +188,22 @@ func renderDays(w io.Writer, lines []line) {
 		fmt.Fprintln(w, "No day has been reconciled yet.")
 		return
 	}
-	fmt.Fprintln(w, "| Day (UTC) | Source | Agent | Catalog | Measured cost | Tokens, ledger / provider | List USD, ledger / provider | Residual USD | Causes | Verdict | Inputs SHA-256 |")
+	fmt.Fprintln(w, "| Day (UTC) | Source | Agent, Costroid release | Catalog | Measured cost | Tokens, ledger / provider | List USD, ledger / provider: day; each class | Residual USD | Causes | Verdict | Inputs SHA-256 |")
 	fmt.Fprintln(w, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, l := range lines {
-		fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n", l.day, cell(l.source), cell(l.agent), cell(l.catalog), cell(l.measured),
+		fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n", l.day, cell(l.source), writerCell(l), cell(l.catalog), cell(l.measured),
 			tokensCell(l.tokens), dollarsCell(l.dollars), residualCell(l.dollars), causesCell(l.dollars), l.verdict(), l.digest)
 	}
+}
+
+// writerCell names the agent that ran and the Costroid release that wrote
+// its rows.
+func writerCell(l line) string {
+	writer := l.writer
+	if writer == "" {
+		writer = noFigure
+	}
+	return cell(l.agent) + ", Costroid " + cell(writer)
 }
 
 func tokensCell(checks []tokenFigure) string {
@@ -211,7 +226,12 @@ func dollarsCell(dollars *dollarFigure) string {
 		return fmt.Sprintf("%s / %s", cell(dollars.Ledger), cell(dollars.Provider))
 	}
 	gap, _ := percentOf(dollars.Residual, dollars.Provider)
-	return fmt.Sprintf("%s / %s (%s)", cell(dollars.Ledger), cell(dollars.Provider), gap)
+	parts := []string{fmt.Sprintf("%s / %s (%s)", cell(dollars.Ledger), cell(dollars.Provider), gap)}
+	for _, class := range dollars.Classes {
+		gap, _ := percentOf(class.Delta, class.Provider)
+		parts = append(parts, fmt.Sprintf("%s %s / %s (%s)", cell(class.Class), cell(class.Ledger), cell(class.Provider), gap))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // compared reports whether the ledger's dollars stood against an API bill.
@@ -255,6 +275,10 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 	if err != nil {
 		return nil, err
 	}
+	releases, err := readReleases()
+	if err != nil {
+		return nil, err
+	}
 	scratch, err := os.MkdirTemp("", "accuracy-")
 	if err != nil {
 		return nil, err
@@ -270,9 +294,139 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 		if err != nil {
 			return nil, err
 		}
+		writer, err := writerOf(day)
+		if err != nil {
+			return nil, err
+		}
+		failure := writerFailure(writer, day.record.Day, releases)
+		for i := range dayLines {
+			dayLines[i].writer = writer
+			if failure != "" {
+				dayLines[i].failures = append(dayLines[i].failures, failure)
+			}
+		}
 		lines = append(lines, dayLines...)
 	}
 	return lines, nil
+}
+
+// The verdicts a line fails with when the release that wrote its rows is
+// not the one that ships.
+const (
+	failWriterUnreleased = "writer is no release"
+	failWriterLags       = "writer lags the newest release"
+)
+
+// maxWriterLag is how many releases the writer may trail the newest release
+// out on its day: one, for the day a release ships and the pin moves.
+const maxWriterLag = 1
+
+// writerOf reads the Costroid release that day.json names as the writer of
+// the day's rows, without a leading v. A day that names none reads empty.
+func writerOf(day keptDay) (string, error) {
+	path := filepath.Join(day.directory, dayFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var record struct {
+		Writer string `json:"writer"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	return strings.TrimPrefix(record.Writer, "v"), nil
+}
+
+// writerFailure judges the release that wrote a day's rows against the
+// releases out on that day, counted in the changelog's order. A writer the
+// changelog does not list, or lists after the day, is no release. A day that
+// names no writer is not judged.
+func writerFailure(writer, day string, releases []release) string {
+	if writer == "" {
+		return ""
+	}
+	newest := slices.IndexFunc(releases, func(r release) bool { return r.date <= day })
+	wrote := slices.IndexFunc(releases, func(r release) bool { return r.version == writer })
+	switch {
+	case newest < 0 || wrote < newest:
+		return failWriterUnreleased
+	case wrote-newest > maxWriterLag:
+		return failWriterLags
+	default:
+		return ""
+	}
+}
+
+// release is one entry of the changelog: a version and its UTC date.
+type release struct {
+	version, date string
+}
+
+const (
+	modulePath = "github.com/Costroid/costroid"
+	changelog  = "CHANGELOG.md"
+)
+
+var changelogHeading = regexp.MustCompile(`^## (\S+) \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)$`)
+
+// readReleases lists the releases in this module's changelog, newest first.
+// A second-level heading of another form is refused, so no release is
+// skipped when the lag is counted.
+func readReleases() ([]release, error) {
+	root, err := moduleRoot()
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(root, changelog)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read the releases: %w", err)
+	}
+	var releases []release
+	for _, text := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(text, "## ") {
+			continue
+		}
+		match := changelogHeading.FindStringSubmatch(text)
+		if match == nil {
+			return nil, fmt.Errorf("%s: the heading %q is not ## <release> (<date>)", path, text)
+		}
+		releases = append(releases, release{version: match[1], date: match[2]})
+	}
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("%s lists no release", path)
+	}
+	return releases, nil
+}
+
+// moduleRoot is the nearest directory at or above the working directory
+// whose go.mod declares this module.
+func moduleRoot() (string, error) {
+	directory, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		data, err := os.ReadFile(filepath.Join(directory, "go.mod"))
+		if err == nil && declares(data, modulePath) {
+			return directory, nil
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return "", errors.New("run this inside a checkout of " + modulePath + ": no go.mod above the working directory declares it")
+		}
+		directory = parent
+	}
+}
+
+func declares(goMod []byte, module string) bool {
+	for _, text := range strings.Split(string(goMod), "\n") {
+		if fields := strings.Fields(text); len(fields) == 2 && fields[0] == "module" {
+			return fields[1] == module
+		}
+	}
+	return false
 }
 
 // costroidBinary builds cmd/costroid from this module unless a binary is named.

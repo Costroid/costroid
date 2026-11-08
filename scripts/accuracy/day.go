@@ -134,12 +134,24 @@ type tokenFigure struct {
 }
 
 type dollarFigure struct {
-	Verdict      string  `json:"verdict"`
-	Ledger       string  `json:"ledger"`
-	Provider     string  `json:"provider"`
-	Residual     string  `json:"residual"`
-	Causes       []cause `json:"causes"`
-	Unattributed string  `json:"unattributed"`
+	Classes      []classFigure `json:"classes"`
+	Verdict      string        `json:"verdict"`
+	Ledger       string        `json:"ledger"`
+	Provider     string        `json:"provider"`
+	Residual     string        `json:"residual"`
+	Causes       []cause       `json:"causes"`
+	Unattributed string        `json:"unattributed"`
+}
+
+// classFigure is one token class's dollars at list price on both sides. It
+// is the first line of the dollar comparison, read only where the cost report
+// splits token cost by class.
+type classFigure struct {
+	Class    string `json:"class"`
+	Ledger   string `json:"ledger"`
+	Provider string `json:"provider"`
+	Delta    string `json:"delta"`
+	Within   bool   `json:"within"`
 }
 
 type cause struct {
@@ -363,12 +375,15 @@ const (
 	failTokens           = "token miss"
 	failPrices           = "price miss"
 	failNoBill           = "no API bill"
+	failClassDollars     = "class dollar miss"
 	failDollars          = "dollar miss"
 )
 
 // judge reads one reconciliation row. Tokens and prices pass only as
-// `reconcile` judged them. Dollars pass within 10%, or within 10% once the
-// named causes are taken out of the residual.
+// `reconcile` judged them. Each class's dollars pass within 1%, as
+// `reconcile` judged them, where the cost report splits them. The day's
+// dollars pass within 10%, or within 10% once the named causes are taken out
+// of the residual.
 func judge(row reconciledRow) (line, error) {
 	judged := line{day: row.Day, tokens: row.Tokens, dollars: row.Dollars}
 	switch reconcile.State(row.State) {
@@ -385,6 +400,9 @@ func judge(row reconciledRow) (line, error) {
 	}
 	if row.Dollars == nil {
 		return line{}, errors.New("a settled row has no dollar figures")
+	}
+	if slices.ContainsFunc(row.Dollars.Classes, func(class classFigure) bool { return !class.Within }) {
+		judged.failures = append(judged.failures, failClassDollars)
 	}
 	switch reconcile.DollarVerdict(row.Dollars.Verdict) {
 	case reconcile.Within:

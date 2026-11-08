@@ -72,6 +72,24 @@ jobs:
       - name: Time the per-PR view on one million rows
         run: make bench-view
 
+  # The accuracy page's checks have a job of their own, so a page that would
+  # pass a stale writer or a class outside 1% reads as an accuracy failure.
+  # They run on synthetic days; the kept days are checked where they are kept.
+  accuracy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Recompute and judge the accuracy page over synthetic days
+        run: go test -count=1 ./scripts/accuracy/...
+
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
