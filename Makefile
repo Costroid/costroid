@@ -119,7 +119,7 @@ lint-deadcode: $(DEADCODE)
 		FILENAME == ARGV[1] { \
 			if (/^(#.*)?$$/) next; \
 			if ($$1 !~ /^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$$/ || NF < 3) { \
-				printf ".deadcode-allow:%d: want a date, a function and the change that calls it\n", FNR; bad = 1 \
+				printf ".deadcode-allow:%d: want a date, a function and the change that calls it\n", FNR; bad = 1; next \
 			} \
 			allowed[$$2] = FNR; next \
 		} \
