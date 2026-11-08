@@ -19,7 +19,7 @@ const (
 	composed   = "compose.yaml"
 	chart      = "helm/costroid"
 	workflows  = "../.github/workflows"
-	install    = "../docs/install.md"
+	ledger     = "../docs/ledger.md"
 
 	egressVariable = "COSTROID_EGRESS_ALLOW"
 )
@@ -107,7 +107,7 @@ func TestTheEgressListIsPresentAndEmptyInComposeAndTheChart(t *testing.T) {
 }
 
 func TestEachFileSaysWhatOIDCIngestNeedsOnTheList(t *testing.T) {
-	for _, path := range []string{composed, filepath.Join(chart, "values.yaml"), install} {
+	for _, path := range []string{composed, filepath.Join(chart, "values.yaml"), ledger} {
 		text := read(t, path)
 		for _, want := range []string{"token.actions.githubusercontent.com", "gitlab.com"} {
 			if !bytes.Contains(text, []byte(want)) {
@@ -118,7 +118,7 @@ func TestEachFileSaysWhatOIDCIngestNeedsOnTheList(t *testing.T) {
 }
 
 func TestTheDocsCallTheFirewallTheStrongerControl(t *testing.T) {
-	for _, path := range []string{composed, install} {
+	for _, path := range []string{composed, ledger} {
 		text := strings.Join(strings.Fields(strings.ReplaceAll(string(read(t, path)), "#", "")), " ")
 		if !strings.Contains(text, "does not hold against code running in the process") || !strings.Contains(text, "the stronger control") {
 			t.Errorf("%s dropped the sentence on the stronger control", path)

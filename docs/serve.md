@@ -22,7 +22,7 @@ costroid serve --addr :8080 --bind github.com:example
 
 `COSTROID_OIDC_AUDIENCE` names this service. The service refuses to start on GitHub's default audience, any URL on `github.com` such as `https://github.com/example`. A workflow that requests a token without naming an audience gets that one, so a token meant for any other service would pass here too. GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc) gives the repository owner's URL as the default. That page was not re-read on 2026-11-07, so the statement is unverified here.
 
-`--bind` gives an SCM owner to this instance's tenant. `--gitlab-host` trusts one more GitLab instance. GitHub Actions and gitlab.com are trusted by default, and their keys still need their hosts on the egress allowlist. [`docs/install.md`](install.md) has the list and its report.
+`--bind` gives an SCM owner to this instance's tenant. `--gitlab-host` trusts one more GitLab instance. GitHub Actions and gitlab.com are trusted by default, and their keys still need their hosts on the egress allowlist. [`docs/ledger.md`](ledger.md#egress) has the list and its report.
 
 Migrations run forward only. The service refuses a migration edited after it was applied, and a database ahead of the binary.
 

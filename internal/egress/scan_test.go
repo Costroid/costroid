@@ -159,7 +159,7 @@ func TestServesCodePathBuildsNoOutboundClientOutsideThisPackage(t *testing.T) {
 }
 
 // TestTheWalkReachesEveryPackageServeUses keeps the scan from passing because it
-// read nothing, and holds the line docs/install.md states: reconcile runs in CI.
+// read nothing, and holds the line docs/ledger.md states: reconcile runs in CI.
 func TestTheWalkReachesEveryPackageServeUses(t *testing.T) {
 	_, packages := servePackages(t)
 	for _, want := range []string{"internal/server", "internal/oidc", "internal/store", "internal/catalog", "internal/egress", "internal/scm", "migrations"} {
