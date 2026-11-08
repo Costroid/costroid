@@ -559,10 +559,11 @@ func (s *Session) readTurn(line []byte, at time.Time) {
 	}
 }
 
-// completeTurn takes one turn's usage. The turn's whole input bounds each of
-// its requests' from above, so it selects the context tier: within the lowest
-// tier, every request is in it. The usage is a running total, so a count
-// that fell is refused.
+// completeTurn takes one turn's usage. The turn's whole input is a sum over
+// its requests and bounds each of theirs: within the lowest context tier,
+// every request is in it, and past that tier it shows no one request past the
+// boundary, so the rows price it at the lowest tier and say so. The usage is
+// a running total, so a count that fell is refused.
 func (s *Session) completeTurn(total usage, at time.Time) error {
 	if err := total.negative(); err != nil {
 		return err

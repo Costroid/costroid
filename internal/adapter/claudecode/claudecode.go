@@ -153,6 +153,9 @@ type modelUsage struct {
 	Thinking     int64 `json:"thinkingTokens"`
 	// context is the model's whole input: uncached, read and written.
 	context int64
+	// stated is Claude Code's own figure for these tokens at list price, its
+	// costUSD, nil when it states none.
+	stated *decimal.Decimal
 }
 
 // Session reads one Claude Code run.
@@ -340,7 +343,9 @@ var modelUsageFields = []struct {
 
 // readModelUsage reads the result's per-model totals. Absent or null is no
 // models. Every count is read whole; a field the reader does not price is
-// left unread, whatever its type.
+// left unread, whatever its type. costUSD is read exactly when it is a
+// non-negative JSON number, and otherwise states nothing: it only says which
+// context tier priced the tokens.
 func readModelUsage(raw json.RawMessage) (map[string]modelUsage, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -364,6 +369,7 @@ func readModelUsage(raw json.RawMessage) (map[string]modelUsage, error) {
 			return nil, fmt.Errorf("modelUsage %s: %w", model, err)
 		}
 		totalsOfModel.context = context
+		totalsOfModel.stated = statedUSD(fields["costUSD"])
 		totals[model] = totalsOfModel
 	}
 	return totals, nil
@@ -589,14 +595,15 @@ func (s *Session) finishRun() (adapter.Report, transcript, error) {
 	}
 	requests := run.requests
 	side := s.sideModels(requests)
+	outside, agree := outsideConversation(requests, s.totals, side)
 	switch {
 	case len(requests) > 0 && !s.sawResult:
 		report.Warnings = append(report.Warnings, "no result object: the session files are the only record of this run")
-	case len(requests) > 0 && !agrees(requests, s.totals, side):
+	case len(requests) > 0 && (!agree || (len(outside) > 0 && !run.complete())):
 		report.Warnings = append(report.Warnings, "the session files disagree with the result object; the result's per-model totals were used")
 		requests = nil
 	case len(requests) > 0:
-		more, err := s.sideRequests(side)
+		more, err := s.sideRequests(side, outside, SourceStream)
 		if err != nil {
 			return report, run, err
 		}
@@ -623,7 +630,7 @@ func (s *Session) finishRun() (adapter.Report, transcript, error) {
 	if err == nil && len(report.Warnings) == 0 {
 		report.Warnings = append(report.Warnings, "no session file: one set of rows per model, for the whole run")
 	}
-	perModel, err := s.perModel(nil)
+	perModel, err := s.perModel()
 	if err != nil {
 		return report, run, err
 	}
@@ -684,17 +691,36 @@ func (s *Session) sideModels(requests []adapter.Request) map[string]bool {
 	return side
 }
 
-// sideRequests are one entry per side model, from the result's totals. No
-// stream message names a side model, and the note says so in place of the
-// note on a tier no message stated.
-func (s *Session) sideRequests(side map[string]bool) ([]adapter.Request, error) {
-	requests, err := s.perModel(side)
-	if err != nil {
-		return nil, err
+// The notes on entries the result counts beside the session files.
+const (
+	sideNote    = "a request outside the conversation: the result counts it, and no session file or stream message holds it"
+	outsideNote = "requests outside the conversation: Claude Code's totals for this model count them, and no session file line holds them"
+)
+
+// sideRequests are the entries the totals count beside the session files'
+// requests: one per side model, and one per conversation model for what its
+// totals count beyond the files. No stream message or session file line
+// holds them, so the standard tier and global price them, and their note
+// says so in place of the note on a tier no message stated. source names
+// where the totals were read.
+func (s *Session) sideRequests(side map[string]bool, outside map[string]modelUsage, source string) ([]adapter.Request, error) {
+	var requests []adapter.Request
+	for _, model := range slices.Sorted(maps.Keys(side)) {
+		request, err := s.modelEntry(model, s.totals[model], catalog.TierStandard, catalog.RegionGlobal, sideNote)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
+	}
+	for _, model := range slices.Sorted(maps.Keys(outside)) {
+		request, err := s.modelEntry(model, outside[model], catalog.TierStandard, catalog.RegionGlobal, outsideNote)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
 	}
 	for i := range requests {
-		requests[i].CostSource = SourceStream
-		requests[i].Note = "a request outside the conversation: the result counts it, and no session file or stream message holds it"
+		requests[i].CostSource = source
 	}
 	return requests, nil
 }
@@ -788,41 +814,47 @@ func joinNotes(notes ...string) string {
 	return strings.Join(slices.DeleteFunc(notes, func(note string) bool { return note == "" }), "; ")
 }
 
-// perModel is one entry per model in the result's totals. A non-nil only
-// keeps the models it names. The model's whole input bounds each of its
-// requests', so it selects the context tier as an upper bound. The tier and
-// region are what the model's stream messages stated.
-func (s *Session) perModel(only map[string]bool) ([]adapter.Request, error) {
-	models := make([]string, 0, len(s.totals))
-	for model := range s.totals {
-		if only == nil || only[model] {
-			models = append(models, model)
-		}
-	}
-	slices.Sort(models)
-	requests := make([]adapter.Request, 0, len(models))
-	for _, model := range models {
-		tokens, assumed, err := s.totals[model].tokens(s.unsplitWrite())
-		if err != nil {
-			return nil, fmt.Errorf("claude-code: the result's totals for %s do not add up: %w", model, err)
-		}
+// perModel is one entry per model in the result's totals, at the tier and
+// region the model's stream messages stated.
+func (s *Session) perModel() ([]adapter.Request, error) {
+	requests := make([]adapter.Request, 0, len(s.totals))
+	for _, model := range slices.Sorted(maps.Keys(s.totals)) {
 		tier, where, note := s.routes[model].settle()
-		requests = append(requests, adapter.Request{
-			ID:                 s.sessionID + ":" + model,
-			Provider:           provider,
-			Model:              model,
-			Start:              s.first,
-			End:                s.last,
-			ServiceTier:        tier,
-			Region:             where,
-			ContextInputTokens: s.totals[model].context,
-			Grain:              adapter.PerRun,
-			Tokens:             tokens,
-			AssumedWrite:       assumed,
-			Note:               note,
-		})
+		request, err := s.modelEntry(model, s.totals[model], tier, where, note)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
 	}
 	return requests, nil
+}
+
+// modelEntry is one entry for one model's tokens over the run. Its context
+// tier is read as contextTier says, and that note follows the given one.
+func (s *Session) modelEntry(model string, usage modelUsage, tier, where, note string) (adapter.Request, error) {
+	tokens, assumed, err := usage.tokens(s.unsplitWrite())
+	if err != nil {
+		return adapter.Request{}, fmt.Errorf("claude-code: the result's totals for %s do not add up: %w", model, err)
+	}
+	request := adapter.Request{
+		ID:                 s.sessionID + ":" + model,
+		Provider:           provider,
+		Model:              model,
+		Start:              s.first,
+		End:                s.last,
+		ServiceTier:        tier,
+		Region:             where,
+		ContextInputTokens: usage.context,
+		Grain:              adapter.PerRun,
+		Tokens:             tokens,
+		AssumedWrite:       assumed,
+	}
+	bound, tierNote, err := contextTier(request, usage.stated)
+	if err != nil {
+		return adapter.Request{}, err
+	}
+	request.ContextInputTokens, request.Note = bound, joinNotes(note, tierNote)
+	return request, nil
 }
 
 func (m modelUsage) tokens(unsplit focus.TokenClass) (adapter.Tokens, focus.TokenClass, error) {
@@ -858,32 +890,49 @@ func splitWrites(created, fiveMinute, oneHour int64, unsplit focus.TokenClass) (
 	}
 }
 
-// agrees compares every billed class per model, except the side models, which
-// no file holds. The informational classes do not decide it: thinking counts
-// are re-tokenized and may differ by a few.
-func agrees(requests []adapter.Request, totals map[string]modelUsage, side map[string]bool) bool {
+// outsideConversation compares every billed class per model, except the side
+// models, which no file holds. The files agree with the totals when every
+// class is equal. They also agree when the totals count the same cache reads
+// and writes and more uncached input: Claude Code sends requests outside the
+// conversation on the conversation's own model, which read and write no
+// cache, and no session file line holds them. The recorded Agent SDK runs
+// show one, 1200 input tokens beside the files' 4. What the totals count
+// beyond the files is returned per model. Every request sends input, so more
+// output alone is a disagreement, as is a model the totals do not name. The
+// informational classes do not decide it: thinking counts are re-tokenized
+// and may differ by a few.
+func outsideConversation(requests []adapter.Request, totals map[string]modelUsage, side map[string]bool) (map[string]modelUsage, bool) {
 	summed := map[string]adapter.Tokens{}
 	for _, request := range requests {
 		summed[request.Model] = summed[request.Model].Add(request.Tokens)
 	}
 	if len(summed) != len(totals)-len(side) {
-		return false
+		return nil, false
 	}
+	outside := map[string]modelUsage{}
 	for model, want := range totals {
 		if side[model] {
 			continue
 		}
 		got, ok := summed[model]
-		if !ok {
-			return false
+		if !ok || got.CacheRead != want.CacheRead || got.CacheWrite5m+got.CacheWrite1h != want.CacheCreated ||
+			got.InputUncached > want.InputTokens || got.Output > want.OutputTokens {
+			return nil, false
 		}
-		if got.InputUncached != want.InputTokens || got.CacheRead != want.CacheRead ||
-			got.CacheWrite5m+got.CacheWrite1h != want.CacheCreated ||
-			got.Output != want.OutputTokens {
-			return false
+		input, output := want.InputTokens-got.InputUncached, want.OutputTokens-got.Output
+		if input == 0 && output > 0 {
+			return nil, false
+		}
+		if input > 0 {
+			outside[model] = modelUsage{
+				InputTokens:  input,
+				OutputTokens: output,
+				Thinking:     max(want.Thinking-got.ReasoningOutput, 0),
+				context:      input,
+			}
 		}
 	}
-	return true
+	return outside, true
 }
 
 // sessionEnvelope is a session file line's own fields, each kept raw so that
@@ -957,7 +1006,16 @@ type transcript struct {
 	// cwd is the working directory the main session file states first.
 	cwd      string
 	requests []adapter.Request
+	// unanswered counts the requests the files announce and hold no response
+	// to.
+	unanswered int
 	fileCounts
+}
+
+// complete says whether the files hold every request they announce: each
+// api-request line has its response, and no file ends inside a line.
+func (t transcript) complete() bool {
+	return t.unanswered == 0 && t.inFlight == 0
 }
 
 // fileCounts are the lines the reader passed over in a run's files.
@@ -1014,6 +1072,7 @@ func (s *Session) readSessionFiles() (transcript, error) {
 		run.add(facts.fileCounts)
 	}
 	run.requests = builder.requests(s.window())
+	run.unanswered = builder.unanswered()
 	return run, nil
 }
 
@@ -1333,6 +1392,22 @@ func (b *requestBuilder) tokens(u usage) (adapter.Tokens, focus.TokenClass, erro
 	var err error
 	tokens.CacheWrite5m, tokens.CacheWrite1h, assumed, err = splitWrites(u.CacheCreated, reported.FiveMinute, reported.OneHour, b.unsplit)
 	return tokens, assumed, err
+}
+
+// unanswered counts the api-request lines whose id no response names as its
+// requestRef.
+func (b *requestBuilder) unanswered() int {
+	answered := map[string]bool{}
+	for _, ref := range b.refs {
+		answered[ref] = true
+	}
+	count := 0
+	for id := range b.startedAt {
+		if !answered[id] {
+			count++
+		}
+	}
+	return count
 }
 
 // requests lists the requests in the order they started. A request no line

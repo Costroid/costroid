@@ -290,7 +290,8 @@ func (s *SDKSession) readSession(file, id string, counted map[string]bool) (*sdk
 		return nil, fmt.Sprintf("session %s started while the program ran in another working directory, so it was not counted", id), nil
 	}
 	inner.version, inner.first, inner.last = facts.version, facts.first, last
-	report, err := inner.sdkReport(file, builder.requests(facts.first, last), facts)
+	complete := builder.unanswered() == 0 && facts.inFlight == 0
+	report, err := inner.sdkReport(file, builder.requests(facts.first, last), facts, complete)
 	if err != nil {
 		return nil, "", err
 	}
@@ -327,9 +328,12 @@ func (s *SDKSession) session(id string) *Session {
 
 // sdkReport takes the session's requests when they agree with the totals its
 // cost-state line states, and one set of rows per model from those totals
-// when they do not. A session with no cost-state line ended before Claude
-// Code wrote one, and its requests are the only record of it.
-func (s *Session) sdkReport(file string, requests []adapter.Request, facts fileFacts) (adapter.Report, error) {
+// when they do not. Totals that count requests outside the conversation
+// agree only when the files are complete: they hold a response to every
+// request they announce, and no file ends inside a line. A session with no
+// cost-state line ended before Claude Code wrote one, and its requests are
+// the only record of it.
+func (s *Session) sdkReport(file string, requests []adapter.Request, facts fileFacts, complete bool) (adapter.Report, error) {
 	report := adapter.Report{SessionID: s.sessionID, AgentVersion: s.version, CostBasis: s.costBasis(), CostSource: SourceSessionFile}
 	totals, err := readCostState(file, s.sessionID)
 	if err != nil {
@@ -341,18 +345,19 @@ func (s *Session) sdkReport(file string, requests []adapter.Request, facts fileF
 	}
 	s.routes = routesOf(requests)
 	side := s.sideModels(requests)
+	outside, agree := outsideConversation(requests, totals, side)
 	switch {
 	case totals == nil:
 		reportInFlight(&report, facts.inFlight)
 		report.Warnings = append(report.Warnings, fmt.Sprintf("session %s states no cost-state totals, so its file's requests are the only record of it", s.sessionID))
-	case agrees(requests, totals, side):
-		more, err := s.sideRequests(side)
+	case agree && (len(outside) == 0 || complete):
+		more, err := s.sideRequests(side, outside, SourceSessionFile)
 		if err != nil {
 			return report, err
 		}
 		requests = append(requests, more...)
 	default:
-		perModel, err := s.perModel(nil)
+		perModel, err := s.perModel()
 		if err != nil {
 			return report, err
 		}

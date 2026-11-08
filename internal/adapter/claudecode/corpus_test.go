@@ -68,16 +68,16 @@ var claudeCorpus = map[string]corpusRead{
 	},
 	// The Agent SDK's TypeScript and Python programs, read as Claude Code's
 	// own stream. Each session counts a request outside the conversation on
-	// the conversation's own model, so the result's totals stand.
+	// the conversation's own model, 1200 input tokens with no cache read or
+	// write. The files answer every request they announce, so their two
+	// requests stand, and the third is one entry of its own.
 	"2.1.316/sdk-claude-ts": {
-		source: SourceStream, basis: focus.Measured, requests: 1, grade: adapter.GradeAgentFlag,
-		tokens:   adapter.Tokens{InputUncached: 1204, CacheRead: 1522, CacheWrite5m: 2205, Output: 115, CachedInputReported: 1522},
-		warnings: []string{"the session files disagree with the result object"},
+		source: SourceSessionFile, basis: focus.Measured, requests: 3, grade: adapter.GradeAgentFlag,
+		tokens: adapter.Tokens{InputUncached: 1204, CacheRead: 1522, CacheWrite5m: 2205, Output: 115, CachedInputReported: 1522},
 	},
 	"2.1.316/sdk-claude-py": {
-		source: SourceStream, basis: focus.Measured, requests: 1, grade: adapter.GradeAgentFlag,
-		tokens:   adapter.Tokens{InputUncached: 1204, CacheRead: 3044, CacheWrite5m: 683, Output: 134, ReasoningOutput: 22, CachedInputReported: 3044},
-		warnings: []string{"the session files disagree with the result object"},
+		source: SourceSessionFile, basis: focus.Measured, requests: 3, grade: adapter.GradeAgentFlag,
+		tokens: adapter.Tokens{InputUncached: 1204, CacheRead: 3044, CacheWrite5m: 683, Output: 134, ReasoningOutput: 22, CachedInputReported: 3044},
 	},
 	"2.1.319/current": {
 		source: SourceSessionFile, basis: focus.Measured, requests: 1, grade: adapter.GradeAgentFlag,

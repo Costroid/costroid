@@ -191,22 +191,51 @@ func TestASessionOnTheWindowEdgeIsRead(t *testing.T) {
 }
 
 // The recorded session's file holds two requests, and the totals Claude Code
-// states for it count a third, made outside the conversation. The totals
-// stand, one set of rows per model, read from the session file, on the key.
-func TestSDKSessionReadsTheTotalsItsFileStates(t *testing.T) {
+// states for it count a third, made outside the conversation: 1200 input and
+// 23 output tokens, with no cache read or write. The file answers both
+// requests it announces, so they stand, and the third is one entry read from
+// the totals in the session file, on the key.
+func TestSDKSessionKeepsItsRequestsBesideOneOutsideTheConversation(t *testing.T) {
 	outsideCI(t)
 	report := readSDK(t, SDKAgent{ConfigDir: installFrom(t, sdkTS, sdkSession), Dir: "/work"})
 	want := adapter.Tokens{InputUncached: 1204, CacheRead: 1522, CacheWrite5m: 2205, Output: 115, CachedInputReported: 1522}
 	if got := sum(report.Requests); got != want {
 		t.Errorf("tokens %+v, want %+v", got, want)
 	}
-	if report.CostSource != SourceSessionFile || report.CostBasis != focus.Measured || report.AgentVersion != "2.1.316" || len(report.Requests) != 1 {
-		t.Errorf("%s, %s, version %s, %d requests", report.CostSource, report.CostBasis, report.AgentVersion, len(report.Requests))
+	if report.CostSource != SourceSessionFile || report.CostBasis != focus.Measured || report.AgentVersion != "2.1.316" || len(report.Requests) != 3 {
+		t.Fatalf("%s, %s, version %s, %d requests", report.CostSource, report.CostBasis, report.AgentVersion, len(report.Requests))
 	}
-	if request := report.Requests[0]; request.ServiceTier != "standard" || request.Region != "global" || request.Note != "" {
-		t.Errorf("%+v", request)
+	outside := report.Requests[2]
+	if outside.Grain != adapter.PerRun || outside.Tokens != (adapter.Tokens{InputUncached: 1200, Output: 23}) || outside.CostSource != SourceSessionFile ||
+		outside.ServiceTier != "standard" || outside.Region != "global" || !strings.Contains(outside.Note, "requests outside the conversation") {
+		t.Errorf("%+v", outside)
 	}
-	if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "differ from the per-model totals Claude Code states") {
+	for _, request := range report.Requests[:2] {
+		if request.Grain != adapter.PerRequest {
+			t.Errorf("%s read at %s grain", request.ID, request.Grain)
+		}
+	}
+	if len(report.Warnings) != 0 {
+		t.Errorf("warnings %q", report.Warnings)
+	}
+}
+
+// A session whose file announces a request it holds no response to cannot
+// show that the excess in its totals is outside the conversation, so the
+// totals stand, one set of rows per model, with the warning.
+func TestSDKSessionThatIsNotCompleteFallsToItsTotals(t *testing.T) {
+	outsideCI(t)
+	config := installFrom(t, sdkTS, sdkSession)
+	path := filepath.Join(config, "projects", "-work", sdkSession+".jsonl")
+	unanswered := `{"type":"api-request","sessionId":"` + sdkSession + `","id":"00000000-0000-4000-9000-0000000000f1","timestamp":"2026-11-08T04:14:53.900Z","version":"2.1.316","querySource":"sdk"}`
+	if err := os.WriteFile(path, append(mustReadFile(t, path), []byte(unanswered+"\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := readSDK(t, SDKAgent{ConfigDir: config, Dir: "/work"})
+	if len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRun {
+		t.Fatalf("%+v", report.Requests)
+	}
+	if !holdsWarning(report.Warnings, "differ from the per-model totals Claude Code states") {
 		t.Errorf("warnings %q", report.Warnings)
 	}
 }

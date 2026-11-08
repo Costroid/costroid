@@ -16,6 +16,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
+	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
@@ -35,30 +36,40 @@ func sheetPrice(t *testing.T, c *catalog.Catalog, class focus.TokenClass, input 
 	return price
 }
 
-// TestCodexLongContextTier runs an unwatched Codex turn of one request on each
-// side of the sheet's context tier boundary. The boundary comes from the sheet.
-// A turn's input bounds each request's, so a turn at the boundary is priced in
-// the lowest tier, and one past it in the tier above, never below its own.
-func TestCodexLongContextTier(t *testing.T) {
+// TestCodexTurnSumNeverTakesTheLongTier runs an unwatched Codex turn on each
+// side of the sheet's context tier boundary, 272000 input tokens on the pinned
+// gpt-5.6-sol sheet, with 1000 output tokens. The boundary comes from the
+// sheet. A turn's input is a sum over its requests, and the stream states no
+// request's own. At the boundary every request is in the lowest tier, and the
+// row says so. Past it no single request is shown past the boundary, so the
+// lowest tier still prices the turn, and the row says the tier is unknown and
+// the figure may read low, never an upper bound.
+func TestCodexTurnSumNeverTakesTheLongTier(t *testing.T) {
 	c := pinned(t)
-	lowest := sheetPrice(t, c, focus.InputUncached, 1)
-	if lowest.ContextTierMax == nil {
+	inputPrice, outputPrice := sheetPrice(t, c, focus.InputUncached, 1), sheetPrice(t, c, focus.Output, 1)
+	if inputPrice.ContextTierMax == nil {
 		t.Fatal("the sheet states no context tier for gpt-5.6-sol")
 	}
-	boundary := *lowest.ContextTierMax
-	for name, input := range map[string]int64{"at the boundary": boundary, "past the boundary": boundary + 1} {
+	boundary := *inputPrice.ContextTierMax
+	if above := sheetPrice(t, c, focus.InputUncached, boundary+1); above.SkuPriceID == inputPrice.SkuPriceID {
+		t.Fatalf("the sheet prices %d input tokens in the lowest tier", boundary+1)
+	}
+	for name, tc := range map[string]struct {
+		input int64
+		says  string
+	}{
+		"at the boundary": {boundary, fmt.Sprintf("one turn's input of %d tokens is within the %d-token context tier, so each of its requests is too", boundary, boundary)},
+		"past the boundary": {boundary + 1, fmt.Sprintf("one turn's input of %d tokens is a sum over its requests and passes the %d-token context tier boundary, "+
+			"and its requests' own inputs are unknown, so its context tier is unknown, and the prices up to %d input tokens apply, which may read low", boundary+1, boundary, boundary)},
+	} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(fakeStreamInput, strconv.FormatInt(input, 10))
+			t.Setenv(fakeStreamInput, strconv.FormatInt(tc.input, 10))
 			got, _ := codexRun(t, "one-turn", "1", "--ephemeral")
 			if got.err != nil {
 				t.Fatal(got.err)
 			}
 			if got.result.Enforcement.Grade != adapter.GradeNone || len(got.rows) != 2 {
 				t.Fatalf("%+v, %d rows", got.result.Enforcement, len(got.rows))
-			}
-			inputPrice, outputPrice := sheetPrice(t, c, focus.InputUncached, input), sheetPrice(t, c, focus.Output, input)
-			if input > boundary && inputPrice.SkuPriceID == lowest.SkuPriceID {
-				t.Fatalf("the sheet prices %d input tokens in the lowest tier", input)
 			}
 			for _, row := range got.rows {
 				want := inputPrice.SkuPriceID
@@ -69,19 +80,95 @@ func TestCodexLongContextTier(t *testing.T) {
 					t.Errorf("%v priced at %v, want %s", row["SkuMeter"], row["SkuPriceId"], want)
 				}
 				text, _ := row["ChargeDescription"].(string)
-				if !strings.Contains(text, "one turn's input of "+strconv.FormatInt(input, 10)+" tokens") {
-					t.Errorf("the row does not state the turn's input: %q", text)
-				}
-				if input > boundary && !strings.Contains(text, "upper bound") {
-					t.Errorf("a turn past the boundary does not say its price is an upper bound: %q", text)
+				if !strings.Contains(text, tc.says) || strings.Contains(text, "upper bound") {
+					t.Errorf("the row does not say %q: %q", tc.says, text)
 				}
 			}
-			want := inputPrice.ListUnitPrice.Mul(decimal.FromInt(input).DivPow10(6)).
+			want := inputPrice.ListUnitPrice.Mul(decimal.FromInt(tc.input).DivPow10(6)).
 				Add(outputPrice.ListUnitPrice.Mul(decimal.FromInt(1000).DivPow10(6)))
 			if err := checkListTotal(got.result.ListTotal, want.String()); err != nil {
 				t.Error(err)
 			}
 		})
+	}
+}
+
+// codexHomeRollout is a Codex home whose one rollout file settles two
+// requests by their token_count events: 300000 input and 100 output tokens,
+// then 20000 input and 50 output, on gpt-5.6-sol.
+func codexHomeRollout(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	directory := filepath.Join(home, "sessions", "2026", "11", "08")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	count := func(at string, total, last [2]int64) string {
+		usage := func(counts [2]int64) string {
+			return fmt.Sprintf(`{"input_tokens":%d,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":%d,"reasoning_output_tokens":0,"total_tokens":%d}`,
+				counts[0], counts[1], counts[0]+counts[1])
+		}
+		return `{"timestamp":"` + at + `","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":` + usage(total) + `,"last_token_usage":` + usage(last) + `}}}`
+	}
+	lines := []string{
+		`{"timestamp":"2026-11-08T10:00:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-4000-8000-0000000000c1","cli_version":"0.164.0-alpha.11.1"}}`,
+		`{"timestamp":"2026-11-08T10:00:00.100Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}`,
+		count("2026-11-08T10:00:05.000Z", [2]int64{300000, 100}, [2]int64{300000, 100}),
+		count("2026-11-08T10:00:09.000Z", [2]int64{320000, 150}, [2]int64{20000, 50}),
+	}
+	path := filepath.Join(directory, "rollout-2026-11-08T10-00-00-00000000-0000-4000-8000-0000000000c1.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// TestCodexRequestOverTheBoundaryTakesTheLongTier reads a Codex home whose
+// rollout file states each request's own usage. A request of 300000 input
+// tokens is past the sheet's 272000-token boundary, so the tier above prices
+// its rows; a request of 20000 in the same turn is priced in the lowest tier.
+// Each row is one request's, so neither says anything about a context tier.
+func TestCodexRequestOverTheBoundaryTakesTheLongTier(t *testing.T) {
+	report, err := codex.Agent{}.ReadHome(codexHomeRollout(t), time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Requests) != 2 || report.Requests[0].Grain != adapter.PerRequest ||
+		report.Requests[0].ContextInputTokens != 300000 || report.Requests[1].ContextInputTokens != 20000 {
+		t.Fatalf("requests %+v", report.Requests)
+	}
+	var written bytes.Buffer
+	result, err := Record(Options{Rows: &written, Catalog: pinned(t)}, codex.Agent{}.Name(), report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := pinned(t)
+	want := decimal.Decimal{}
+	priceOf := map[string]string{}
+	for i, request := range report.Requests {
+		for _, count := range request.Tokens.Counts() {
+			price := sheetPrice(t, c, count.Class, request.ContextInputTokens)
+			want = want.Add(price.ListUnitPrice.Mul(decimal.FromInt(count.Tokens).DivPow10(6)))
+			priceOf[focus.RowIdentity(request.ID, count.Class)] = price.SkuPriceID
+			if long := strings.Contains(price.SkuPriceID, ":over-272000:"); long != (i == 0) {
+				t.Errorf("the sheet prices request %d's %s at %s", i+1, count.Class, price.SkuPriceID)
+			}
+		}
+	}
+	rows := parseRows(t, written.Bytes())
+	if len(rows) != len(priceOf) {
+		t.Fatalf("%d rows, want %d", len(rows), len(priceOf))
+	}
+	for _, row := range rows {
+		if sku, want := row["SkuPriceId"], priceOf[row["x_CostroidRowId"].(string)]; sku != want {
+			t.Errorf("%v %v tokens priced at %v, want %s", row["ConsumedQuantity"], row["SkuMeter"], sku, want)
+		}
+		if text := row["ChargeDescription"].(string); strings.Contains(text, "context tier") || strings.Contains(text, "upper bound") {
+			t.Errorf("a request's own row speaks of a context tier: %q", text)
+		}
+	}
+	if err := checkListTotal(result.ListTotal, want.String()); err != nil {
+		t.Error(err)
 	}
 }
 

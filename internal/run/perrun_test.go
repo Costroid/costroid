@@ -8,6 +8,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
+	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 )
 
@@ -66,30 +67,119 @@ func wantRow(t *testing.T, rows map[string]map[string]any, key, sku, price strin
 	}
 }
 
-// TestPerRunGrainPricesTheUpperContextTier holds that a run read from the
-// result's per-model totals takes the model's whole input as the bound of
-// every request's in it. Claude Haiku 5.5 bills input above 100,000 tokens at
-// USD 0.50 per million against 0.10 below, so a run whose input passes that
-// line is priced at the upper tier and says the price is an upper bound; a
-// run whose whole input is below it is priced at the lower tier, exactly.
-func TestPerRunGrainPricesTheUpperContextTier(t *testing.T) {
-	report, rows := perRunRows(t,
-		resultLine(`"claude-haiku-5-5":{"inputTokens":150000,"outputTokens":1000}`))
+// rowsTotal adds the list cost of the rows.
+func rowsTotal(t *testing.T, rows map[string]map[string]any) decimal.Decimal {
+	t.Helper()
+	var total decimal.Decimal
+	for key, row := range rows {
+		cost, ok := row["ListCost"].(string)
+		if !ok {
+			continue
+		}
+		figure, err := decimal.Parse(cost)
+		if err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		total = total.Add(figure)
+	}
+	return total
+}
+
+// wantEveryRowAt holds every billed row to one context tier's price id and
+// to the note it must carry, and no row to an upper bound.
+func wantEveryRowAt(t *testing.T, rows map[string]map[string]any, context string, notes ...string) {
+	t.Helper()
+	for key, row := range rows {
+		sku := row["SkuPriceId"].(string)
+		if strings.Contains(sku, ":informational:") {
+			continue
+		}
+		model, class, _ := strings.Cut(key, " ")
+		wantRow(t, rows, key, "anthropic:"+model+":global:standard:"+context+":"+class, row["ListUnitPrice"].(string), notes...)
+		if description := row["ChargeDescription"].(string); strings.Contains(description, "upper bound") {
+			t.Errorf("%s calls a sum's price an upper bound: %q", key, description)
+		}
+	}
+}
+
+// standardGlobal is a stream message's routing as Claude Code states it.
+const standardGlobal = `{"service_tier":"standard","speed":"standard","inference_geo":"global"}`
+
+// TestPerModelGrainNeverTakesTheLongTierFromASum holds a claude-code-action
+// run's shape, read from the result's per-model totals: Claude Haiku 5.5
+// over 8 requests, 143642 input tokens in all, no request past 100000. Its
+// sum passes the 100000-token boundary, and says nothing about any one
+// request. Claude Code's own figure, USD 0.008837335, is these tokens at the
+// prices up to 100000 input tokens, so that tier prices every row, and the
+// rows come to that figure; the tier above would read USD 0.044186675. With
+// no figure, or one that matches neither tier, the lowest tier prices the
+// rows, which say the tier is unknown and may read low. A sum within the
+// lowest tier needs no figure.
+func TestPerModelGrainNeverTakesTheLongTierFromASum(t *testing.T) {
+	const totals = `"inputTokens":1231,"cacheReadInputTokens":122736,"cacheCreationInputTokens":19675,` +
+		`"cacheCreationEphemeral5mInputTokens":19675,"outputTokens":10055`
+	turns := make([]string, 8)
+	for i := range turns {
+		turns[i] = assistantLine("claude-haiku-5-5", standardGlobal)
+	}
+	const sum = "this model's input of 143642 tokens is a sum over its requests, which selects no context tier"
+	cases := []struct {
+		name, cost string
+		notes      []string
+	}{
+		{"its own figure", `,"costUSD":0.008837335`, []string{sum,
+			"Claude Code's own figure for it, USD 0.008837335, is its tokens at the prices up to 100000 input tokens, so that tier prices them"}},
+		{"no figure", ``, []string{sum,
+			"Claude Code states no figure for it, so its context tier is unknown, and the prices up to 100000 input tokens apply, which may read low"}},
+		{"a figure of neither tier", `,"costUSD":0.0089`, []string{sum,
+			"Claude Code's own figure for it, USD 0.0089, is its tokens at neither tier's prices, so its context tier is unknown, and the prices up to 100000 input tokens apply, which may read low"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report, rows := perRunRows(t, append(turns, resultLine(`"claude-haiku-5-5":{`+totals+tc.cost+`}`))...)
+			if len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRun || report.Requests[0].ContextInputTokens != 0 {
+				t.Fatalf("requests %+v", report.Requests)
+			}
+			if len(rows) != 5 {
+				t.Fatalf("%d rows", len(rows))
+			}
+			wantEveryRowAt(t, rows, "to-100000", tc.notes...)
+			if total := rowsTotal(t, rows); total.String() != "0.008837335" {
+				t.Errorf("the rows come to USD %s, not Claude Code's own 0.008837335", total)
+			}
+		})
+	}
+
+	_, rows := perRunRows(t,
+		resultLine(`"claude-haiku-5-5":{"inputTokens":40000,"cacheReadInputTokens":50000,"outputTokens":1000}`))
+	wantEveryRowAt(t, rows, "to-100000",
+		"one run's input of 90000 tokens is within the 100000-token context tier, so each of its requests is too")
+	for key, row := range rows {
+		if strings.Contains(row["ChargeDescription"].(string), "Claude Code") {
+			t.Errorf("%s reads Claude Code's figure for a sum within the lowest tier: %v", key, row["ChargeDescription"])
+		}
+	}
+}
+
+// TestPerModelGrainTakesTheLongTierWhenTheAgentsCostSaysSo keeps the case of
+// one request past 100000 input tokens, read from the result's per-model
+// totals: 150000 input and 1002 output tokens. Claude Code's own figure is
+// USD 0.07750499999999999, the long-context prices' 0.077505 as binary64
+// arithmetic leaves it, so the long-context tier prices the rows. The lowest
+// tier would read USD 0.015501, five times under.
+func TestPerModelGrainTakesTheLongTierWhenTheAgentsCostSaysSo(t *testing.T) {
+	report, rows := perRunRows(t, assistantLine("claude-haiku-5-5", standardGlobal),
+		resultLine(`"claude-haiku-5-5":{"inputTokens":150000,"outputTokens":1002,"costUSD":0.07750499999999999}`))
 	if len(report.Requests) != 1 || report.Requests[0].Grain != adapter.PerRun || report.Requests[0].ContextInputTokens != 150000 {
 		t.Fatalf("requests %+v", report.Requests)
 	}
-	wantRow(t, rows, "claude-haiku-5-5 input_uncached", "anthropic:claude-haiku-5-5:global:standard:over-100000:input_uncached", "0.5",
-		"one run's input of 150000 tokens passes the 100000-token context tier boundary", "upper bound")
-	wantRow(t, rows, "claude-haiku-5-5 output", "anthropic:claude-haiku-5-5:global:standard:over-100000:output", "2.5", "upper bound")
-
-	_, rows = perRunRows(t,
-		resultLine(`"claude-haiku-5-5":{"inputTokens":40000,"cacheReadInputTokens":50000,"outputTokens":1000}`))
-	wantRow(t, rows, "claude-haiku-5-5 input_uncached", "anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached", "0.1",
-		"one run's input of 90000 tokens is within the 100000-token context tier, so each of its requests is too")
-	for key, row := range rows {
-		if strings.Contains(row["ChargeDescription"].(string), "lowest context tier") {
-			t.Errorf("%s still reads the lowest tier by default: %v", key, row["ChargeDescription"])
-		}
+	wantEveryRowAt(t, rows, "over-100000",
+		"this model's input of 150000 tokens is a sum over its requests, which selects no context tier",
+		"Claude Code's own figure for it, USD 0.07750499999999999, is its tokens at the prices above 100000 input tokens, so that tier prices them")
+	wantRow(t, rows, "claude-haiku-5-5 input_uncached", "anthropic:claude-haiku-5-5:global:standard:over-100000:input_uncached", "0.5")
+	wantRow(t, rows, "claude-haiku-5-5 output", "anthropic:claude-haiku-5-5:global:standard:over-100000:output", "2.5")
+	if total := rowsTotal(t, rows); total.String() != "0.077505" {
+		t.Errorf("the rows come to USD %s, want 0.077505", total)
 	}
 }
 
@@ -102,7 +192,6 @@ func TestPerRunGrainPricesTheUpperContextTier(t *testing.T) {
 // is unknown.
 func TestPerRunGrainKeepsFastModeSeenOnTheStream(t *testing.T) {
 	const fastUS = `{"service_tier":"standard","speed":"fast","inference_geo":"us"}`
-	const standardGlobal = `{"service_tier":"standard","speed":"standard","inference_geo":"global"}`
 	totals := `"claude-opus-5-5":{"inputTokens":1000,"cacheReadInputTokens":10000,"outputTokens":100},` +
 		`"claude-haiku-5-5":{"inputTokens":500,"outputTokens":50}`
 

@@ -24,6 +24,8 @@ The token counts come from the agent's own stream or files, read as [`docs/adapt
 
 The amount is the tokens times the catalog's list price. A contract discount, a commitment or a credit makes your bill differ. `costroid reconcile` compares the list amount with the provider's cost report within 10% and splits the difference into named causes.
 
+A run read as one set of rows per model sums each model's requests, so the sum never selects a long-context tier. Claude Code's own figure for the model chooses the tier. When nothing shows the tier, the rows say so, and the amount may read low. [`docs/adapters.md`](adapters.md#claude-code) has the rule.
+
 ## List-equivalent
 
 A run on a subscription is not billed per token, so no invoice holds these tokens. Costroid prices them at the provider's published API rate, which says what the run would cost on an API key. The comment and the CLI always say "not billed" beside the amount. `costroid reconcile` compares the tokens and states that no API bill exists to compare the amount with.
