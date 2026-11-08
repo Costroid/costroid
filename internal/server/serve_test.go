@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -62,24 +63,43 @@ func freeAddress(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-func serveOnce(t *testing.T, addr string) {
+// serveOnce starts serve on addr, waits until it is healthy, and stops it. It
+// returns false, having started nothing, when another process on the machine
+// took addr after freeAddress let it go: serve then exits on the bind, and
+// anything that answered on addr was not serve. Every other failure is fatal.
+func serveOnce(t *testing.T, addr string) bool {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	exit := make(chan int, 1)
 	var stderr bytes.Buffer
 	go func() { exit <- Main(ctx, []string{"--addr", addr, "--bind", "github.com:acme"}, &stderr) }()
+	taken := func(code int) bool {
+		return code != 0 && strings.Contains(stderr.String(), "address already in use")
+	}
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		response, err := http.Get("http://" + addr + "/healthz")
 		if err == nil {
 			_ = response.Body.Close()
-			if response.StatusCode != http.StatusNoContent {
+			if response.StatusCode == http.StatusNoContent {
+				break
+			}
+			select {
+			case code := <-exit:
+				if taken(code) {
+					return false
+				}
+				t.Fatalf("health status %d, and serve exited %d: %s", response.StatusCode, code, stderr.String())
+			case <-time.After(5 * time.Second):
 				t.Fatalf("health status %d", response.StatusCode)
 			}
-			break
 		}
 		select {
 		case code := <-exit:
+			if taken(code) {
+				return false
+			}
 			t.Fatalf("exited %d: %s", code, stderr.String())
 		default:
 		}
@@ -92,6 +112,7 @@ func serveOnce(t *testing.T, addr string) {
 	if code := <-exit; code != 0 {
 		t.Fatalf("exit %d", code)
 	}
+	return true
 }
 
 func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
@@ -100,9 +121,20 @@ func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
 	t.Setenv(envMigration, db.OwnerURL)
 	t.Setenv(envAudience, audience)
 	t.Setenv(envPseudonym, base64.StdEncoding.EncodeToString(make([]byte, minPseudonymKeyBytes)))
-	addr := freeAddress(t)
-	serveOnce(t, addr)
-	serveOnce(t, addr)
+	// Serve twice on one address: the second start finds the schema migrated
+	// and the bind in place. Another process can take the address between
+	// freeAddress and either start, so a taken address is tried again anew.
+	served := false
+	for attempt := 0; attempt < 3 && !served; attempt++ {
+		addr := freeAddress(t)
+		if !serveOnce(t, addr) {
+			continue
+		}
+		served = serveOnce(t, addr)
+	}
+	if !served {
+		t.Fatal("another process took the address three times")
+	}
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, db.SuperURL)
 	if err != nil {
@@ -116,5 +148,21 @@ func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
 	}
 	if tenants != 1 || bindings != 1 {
 		t.Fatalf("%d tenants, %d bindings after two starts", tenants, bindings)
+	}
+}
+
+// TestServeOnceGivesUpATakenAddress holds an address with a server that is not
+// serve and answers 200, as another process on the machine can: serveOnce
+// reports the address taken instead of failing on the foreign answer.
+func TestServeOnceGivesUpATakenAddress(t *testing.T) {
+	db := storetest.Empty(t)
+	t.Setenv(envDatabase, db.AppURL)
+	t.Setenv(envMigration, db.OwnerURL)
+	t.Setenv(envAudience, audience)
+	t.Setenv(envPseudonym, base64.StdEncoding.EncodeToString(make([]byte, minPseudonymKeyBytes)))
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer foreign.Close()
+	if serveOnce(t, foreign.Listener.Addr().String()) {
+		t.Fatal("serveOnce took an address another server holds")
 	}
 }
