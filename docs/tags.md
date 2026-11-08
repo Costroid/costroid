@@ -35,6 +35,6 @@ The command exits 125 before it writes a row, and prints why, for:
 
 ## Where the tags go
 
-The tags travel with the rows. Costroid Platform keeps every tag under `costroid/`. The ledger that `costroid serve` hosts reads tag set version 0.2 in this release, and refuses a row that carries one of these three tags.
+The tags travel with the rows. Costroid Platform keeps every tag under `costroid/`. The ledger that `costroid serve` hosts stores the three tags with the row, and holds each value to the rule above: a row whose value misses it is refused with 422 `ROW_INVALID`, and the refusal never repeats the value. It refuses any other key under `costroid/` the same way.
 
 The comment and `costroid report` do not show the tags.
