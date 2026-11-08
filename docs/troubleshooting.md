@@ -292,6 +292,8 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: the repository has the secret <name> already, so init leaves it as it is` | `init --pr` found the agent's key among the repository's secrets, so it asked for no key and set none | None. To replace the key, run `gh secret set <name>` |
 | `costroid: the run posted its comment at <url>` | `init --pr` opened the pull request, watched its run to the end and found Costroid's comment | Open the address |
 | `costroid: init: <command> failed: <error>` | A command `init --pr` ran failed, and `init` exits 125. The lines above it list the commands left, the failed one first | Fix what the command's own error names, then run the commands left by hand |
+| `costroid: a repository secret takes precedence over an organization secret of the same name, so the run reads the <name> set here. Pass --keep-org-secret to keep the organization's` | `init --pr` is about to set the agent's key as a repository secret, which the run reads in place of an organization secret of that name | None. To keep the organization's secret, stop `init` and run it again with `--keep-org-secret` |
+| `costroid: init sets no repository secret <name>, so the run reads the organization's` | `init --pr` ran with `--keep-org-secret`, so it listed and set no repository secret | Check that the organization's secret `<name>` is available to this repository |
 
 ## Checking a repository
 

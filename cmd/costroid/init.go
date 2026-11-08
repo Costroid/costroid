@@ -31,7 +31,7 @@ const initHelp = `Usage:
   costroid init [github|gitlab] --agent AGENT [--out PATH] [--force]
                 [--action-ref SHA] [--skills]
   costroid init github --agent AGENT [--post-review] [--platform-url URL]
-                [--pr [--key-env NAME]]
+                [--pr [--key-env NAME | --keep-org-secret]]
   costroid init github --agent claude-code-action --auth subscription
   costroid init github --existing PATH [--action-ref SHA] [--post-review]
                 [--platform-url URL] [--budget-usd AMOUNT]
@@ -88,7 +88,10 @@ pushes, opens the pull request, watches its run and prints the URL of
 Costroid's comment. The key goes to gh secret set on standard input, read
 from the environment variable --key-env names, or else from a prompt on the
 terminal that does not echo it. init never prints it, logs it or writes it to
-a file. It stops at the first command that fails and lists the ones left.
+a file. A repository secret takes precedence over an organization secret of
+the same name, so --keep-org-secret sets none and the run reads the
+organization's. It stops at the first command that fails and lists the ones
+left.
 
 A development build belongs to no release, so it pins nothing and refuses.
 --action-ref names the commit of Costroid's action to pin on GitHub instead.
@@ -311,7 +314,7 @@ func initFailed(stderr io.Writer, err error) int {
 type initFlags struct {
 	host, agent, auth, out, existing, actionRef string
 	keyEnv, platformURL, budgetUSD              string
-	force, postReview, skills, pr               bool
+	force, postReview, skills, pr, keepOrg      bool
 }
 
 func parseInit(args []string, stderr io.Writer) (initFlags, error) {
@@ -332,6 +335,7 @@ func parseInit(args []string, stderr io.Writer) (initFlags, error) {
 	set.BoolVar(&flags.skills, "skills", false, "write the skill for Codex and Claude Code")
 	set.BoolVar(&flags.pr, "pr", false, "run the commands that are left and open the pull request")
 	set.StringVar(&flags.keyEnv, "key-env", "", "the environment variable that holds the agent's key, for --pr")
+	set.BoolVar(&flags.keepOrg, "keep-org-secret", false, "set no repository secret, so the run reads the organization's, for --pr")
 	set.StringVar(&flags.budgetUSD, "budget-usd", "", "the cap in USD --existing adds to claude_args that hold none")
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		flags.host, args = args[0], args[1:]
@@ -380,6 +384,10 @@ func (f initFlags) check() error {
 		return errors.New("--existing writes nothing, so --pr and --skills do not apply")
 	case f.keyEnv != "" && !f.pr:
 		return errors.New("--key-env names the key --pr sets as a secret, so it needs --pr")
+	case f.keepOrg && !f.pr:
+		return errors.New("--keep-org-secret stops --pr from setting the key, so it needs --pr")
+	case f.keepOrg && f.keyEnv != "":
+		return errors.New("--keep-org-secret sets no key, so --key-env does not apply")
 	case f.keyEnv != "" && !variableName.MatchString(f.keyEnv):
 		return fmt.Errorf("--key-env names an environment variable, such as ANTHROPIC_API_KEY, not %q", f.keyEnv)
 	case f.budgetUSD != "" && (!plainAmount.MatchString(f.budgetUSD) || strings.Trim(f.budgetUSD, "0.") == ""):

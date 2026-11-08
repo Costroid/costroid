@@ -1596,6 +1596,77 @@ func TestInitPRSkipsAnExistingSecret(t *testing.T) {
 	}
 }
 
+// repositoryWins is what init --pr says once before it sets the key.
+const repositoryWins = "costroid: a repository secret takes precedence over an organization secret of the same name, so the run reads the ANTHROPIC_API_KEY set here. Pass --keep-org-secret to keep the organization's\n"
+
+// TestInitPRSaysARepositorySecretWins holds the line init --pr prints once
+// before it sets the key, and --keep-org-secret, which lists and sets no
+// repository secret, so the run reads the organization's.
+func TestInitPRSaysARepositorySecretWins(t *testing.T) {
+	t.Run("it sets the key", func(t *testing.T) {
+		installFakes(t)
+		t.Setenv("TEST_AGENT_KEY", "sk-ant-test-0123456789")
+		code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--pr", "--key-env", "TEST_AGENT_KEY")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, output)
+		}
+		if strings.Count(output, repositoryWins) != 1 {
+			t.Fatalf("init says %d times that a repository secret wins:\n%s", strings.Count(output, repositoryWins), output)
+		}
+		said := strings.Index(output, repositoryWins)
+		if named, ran := strings.Index(output, "$ gh secret set ANTHROPIC_API_KEY\n"), strings.Index(output, "ran:\tgh\tsecret\tset"); named < 0 || said < named || ran < said {
+			t.Errorf("init does not say it between naming gh secret set and running it:\n%s", output)
+		}
+	})
+
+	t.Run("the repository has the secret", func(t *testing.T) {
+		installFakes(t)
+		t.Setenv("FAKE_SECRETS", `[{"name":"ANTHROPIC_API_KEY"}]`)
+		code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--pr")
+		if code != 0 || strings.Contains(output, "takes precedence") {
+			t.Errorf("exit %d, and init sets no key yet says a repository secret wins:\n%s", code, output)
+		}
+	})
+
+	t.Run("--keep-org-secret", func(t *testing.T) {
+		fake := installFakes(t)
+		code, output := runPR(t, t.TempDir(), testPR, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com", "--pr", "--keep-org-secret")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, output)
+		}
+		if !strings.HasPrefix(output, "costroid: wrote ") || !strings.Contains(output, "costroid: init sets no repository secret ANTHROPIC_API_KEY, so the run reads the organization's\n") || strings.Contains(output, "takes precedence") {
+			t.Errorf("init does not say it leaves the key to the organization:\n%s", output)
+		}
+		var ran []string
+		for _, call := range fake.calls(t) {
+			if (call[0] == "gh" || call[0] == "git") && (len(call) < 2 || call[1] != "-C") {
+				ran = append(ran, shellJoin(call))
+			}
+		}
+		if want := prSteps[2:]; !slices.Equal(ran, want) {
+			t.Errorf("ran:\n%s\nwant:\n%s", strings.Join(ran, "\n"), strings.Join(want, "\n"))
+		}
+		if _, err := os.Stat(fake.stdin); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("gh was given a key: %v", err)
+		}
+	})
+
+	for _, refusal := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"github", "--agent", "claude", "--keep-org-secret"}, "--keep-org-secret stops --pr from setting the key, so it needs --pr"},
+		{[]string{"github", "--agent", "claude", "--pr", "--keep-org-secret", "--key-env", "TEST_AGENT_KEY"}, "--keep-org-secret sets no key, so --key-env does not apply"},
+	} {
+		installFakes(t)
+		root := t.TempDir()
+		code, output := runPR(t, root, testPR, refusal.args...)
+		if code != exitFailure || !strings.Contains(output, refusal.want) || len(tree(t, root)) != 0 {
+			t.Errorf("%v: exit %d:\n%s", refusal.args, code, output)
+		}
+	}
+}
+
 func TestInitPRStopsAtTheFirstFailedStep(t *testing.T) {
 	failures := []struct {
 		label, fail, runs, comments, want string

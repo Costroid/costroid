@@ -60,6 +60,7 @@ func newPRFlow(repo repository, flags initFlags, settings prSettings, workflow s
 		remote:      remote,
 		secret:      secrets[0],
 		keyEnv:      flags.keyEnv,
+		keepOrg:     flags.keepOrg,
 		platformURL: flags.platformURL,
 		workflow:    workflowName(recipe, workflow),
 		stdout:      stdout,
@@ -87,6 +88,9 @@ func workflowName(recipe []byte, path string) string {
 // The key it sets as a secret reaches gh on standard input alone.
 type prFlow struct {
 	root, remote, secret, keyEnv, platformURL string
+	// keepOrg leaves the key to an organization secret, so no repository
+	// secret is listed or set.
+	keepOrg bool
 	// workflow is the name the written workflow's runs carry.
 	workflow string
 	files    []string
@@ -118,9 +122,12 @@ func (f *prFlow) steps() []prStep {
 		}
 		return value
 	}
-	steps := []prStep{
-		{args: fixed("gh", "secret", "list", "--json", "name"), run: f.listSecrets},
-		{args: fixed("gh", "secret", "set", f.secret), skip: func() bool { return f.secretExists }, run: f.setSecret},
+	var steps []prStep
+	if !f.keepOrg {
+		steps = append(steps,
+			prStep{args: fixed("gh", "secret", "list", "--json", "name"), run: f.listSecrets},
+			prStep{args: fixed("gh", "secret", "set", f.secret), skip: func() bool { return f.secretExists }, run: f.setSecret},
+		)
 	}
 	if f.platformURL != "" {
 		steps = append(steps, prStep{args: fixed("gh", "variable", "set", platformVariable, "--body", f.platformURL), run: f.passThrough})
@@ -143,6 +150,9 @@ func (f *prFlow) steps() []prStep {
 // run runs each step in order, printing it before it runs, and stops at the
 // first that fails. It then lists the steps left, the failed one first.
 func (f *prFlow) run() error {
+	if f.keepOrg {
+		fmt.Fprintf(f.stdout, "costroid: init sets no repository secret %s, so the run reads the organization's\n", f.secret)
+	}
 	steps := f.steps()
 	for at, step := range steps {
 		if step.skip != nil && step.skip() {
@@ -214,7 +224,9 @@ func (f *prFlow) listSecrets(args []string) error {
 }
 
 // setSecret sends the key to gh on standard input, so it is in no argument.
+// It says first that the secret it sets outranks an organization's.
 func (f *prFlow) setSecret(args []string) error {
+	fmt.Fprintf(f.stdout, "costroid: a repository secret takes precedence over an organization secret of the same name, so the run reads the %s set here. Pass --keep-org-secret to keep the organization's\n", f.secret)
 	key, err := f.key()
 	if err != nil {
 		return err
