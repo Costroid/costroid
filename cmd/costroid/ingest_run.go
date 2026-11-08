@@ -18,6 +18,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/run"
 )
 
@@ -27,6 +28,8 @@ type ingestRunFlags struct {
 	since   time.Time
 	out     string
 	account accountFlags
+	// shape is what --tag and --focus-profile add to every row.
+	shape focus.Shape
 	// cap is what the workflow states about the cap the run was held to.
 	cap claudecode.Cap
 }
@@ -118,6 +121,7 @@ func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, er
 	claudeArgs := set.String("claude-args", "", "the claude_args the claude-code-action step was given")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
 	account := addAccountFlags(set)
+	shaping := addRowFlags(set)
 	if err := parseFlags(set, args, ingestRunHelp, stdout, stderr); err != nil {
 		return ingestRunFlags{}, err
 	}
@@ -156,6 +160,11 @@ func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, er
 	if err := account.check(); err != nil {
 		return ingestRunFlags{}, err
 	}
+	shape, err := shaping.shape()
+	if err != nil {
+		return ingestRunFlags{}, err
+	}
+	flags.shape = shape
 	return flags, nil
 }
 
@@ -375,7 +384,7 @@ func recordEndedRun(flags ingestRunFlags, pinned *catalog.Catalog, ci cicontext.
 		BillingAccount: *flags.account.billing,
 		Credential:     *flags.account.credential,
 		CI:             ci,
-		Rows:           rows,
+		Rows:           focus.Shaped(rows, flags.shape),
 		Catalog:        pinned,
 	}, ended.agent(), report)
 }
