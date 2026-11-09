@@ -170,30 +170,19 @@ func reconclude(ctx context.Context, host approvalHost, pull pullContext, number
 		return fmt.Errorf("read the pull request: %w", err)
 	}
 	approval := findApproval(ctx, host, pull.settingsRef(), current, now, stderr)
-	newest, err := history.Newest(ctx, host, current.HeadSHA)
-	if errors.Is(err, history.ErrNoCheck) {
+	done, err := history.Reconclude(ctx, host, current.HeadSHA, approval, time.Now)
+	switch {
+	case errors.Is(err, history.ErrNoCheck):
 		return fmt.Errorf("no costroid check is on commit %s yet, and the report applies an approval when it posts", current.HeadSHA)
-	}
-	if err != nil {
+	case errors.Is(err, history.ErrConcluded):
+		return fmt.Errorf("check run %d already concludes %s", done.Previous, done.Conclusion)
+	case err != nil:
 		return err
 	}
-	previous, block := newest.CheckRun, newest.Block
-	conclusion := block.ApprovedConclusion(approval)
-	if block.Conclusion != nil && *block.Conclusion == conclusion {
-		return fmt.Errorf("check run %d already concludes %s", previous, conclusion)
+	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", done.CheckRun, done.Conclusion)
+	if done.Unnamed != nil {
+		fmt.Fprintf(stderr, "costroid: warning: check run %d does not name itself: %v\n", done.CheckRun, done.Unnamed)
 	}
-	render := func(id *int64) (comment.CheckOutput, error) {
-		named := block
-		if id != nil {
-			named.CheckRunID = id
-		}
-		return comment.Reconclude(named, approval, previous)
-	}
-	id, err := postCheck(ctx, host, current.HeadSHA, conclusion, render, stderr)
-	if err != nil {
-		return err
-	}
-	nameCheck(ctx, host, *id, render, stderr)
 	return nil
 }
 
