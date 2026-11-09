@@ -50,7 +50,7 @@ func TestRunAgentStepIsAnAgentJob(t *testing.T) {
 	}
 
 	unknown := withRule(LintBytes("x.yml", []byte(idTokenJob("costroid run --agent aider --budget-usd 5 --out r -- aider"))).Findings, RuleUnknownAgent)
-	if len(unknown) != 1 || !strings.Contains(unknown[0].Message, `"aider" is not one Costroid runs: it runs claude-code, claude-code-sdk, codex or codex-sdk`) {
+	if len(unknown) != 1 || !strings.Contains(unknown[0].Message, `"aider" is not one Costroid runs: it runs claude-code, claude-code-sdk, codex, codex-sdk or opencode`) {
 		t.Errorf("costroid run --agent aider: %v", unknown)
 	}
 	action := LintBytes("x.yml", []byte(strings.Replace(goodWorkflow, "agent: claude", "agent: "+claudeSDKAgent, 1))).Findings

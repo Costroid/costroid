@@ -127,6 +127,10 @@ It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. The
 
 [`recipes/github-claude-agent-sdk.yml`](../recipes/github-claude-agent-sdk.yml) and [`recipes/github-codex-sdk.yml`](../recipes/github-codex-sdk.yml) run a program you wrote on the Claude Agent SDK or the Codex SDK, and report what the agent it started cost. Both need a Costroid release after `1.0.0-alpha.17`, which has no `costroid run --agent`. [`docs/sdk.md`](sdk.md) says what each needs.
 
+## OpenCode
+
+[`recipes/github-opencode.yml`](../recipes/github-opencode.yml) runs OpenCode 1.19.4 on `anthropic/claude-haiku-5-5` with the secret `ANTHROPIC_API_KEY`, and stops it at the cap between its steps. It reads no `opencode.json` from the repository, which the pull request can change, and it denies OpenCode's edits, commands, web fetches and subagents. It needs a Costroid release after `1.0.0-alpha.17`, which has no `costroid run --agent opencode`. [`docs/adapters.md`](adapters.md#opencode) says how Costroid reads OpenCode.
+
 ## A LiteLLM gateway
 
 [`recipes/github-claude-code-litellm.yml`](../recipes/github-claude-code-litellm.yml) runs Claude Code through a LiteLLM proxy you run, on a key made for the run alone, with the run's budget as the key's budget. [`docs/gateway.md`](gateway.md) has the setup.
@@ -159,15 +163,15 @@ Each list names what its own job's steps call. They were read on 2026-11-08 from
 
 | Host | Why the job reaches it | Recipes |
 | ---- | ---------------------- | ------- |
-| `api.anthropic.com` | Claude Code's provider | `github-claude-code`, `github-claude-code-action`, `github-claude-agent-sdk` |
+| `api.anthropic.com` | Claude Code's provider, and OpenCode's in its recipe | `github-claude-code`, `github-claude-code-action`, `github-claude-agent-sdk`, `github-opencode` |
 | `api.openai.com` | Codex's provider. `codex-action` starts a proxy that calls it | `github-codex`, `github-codex-action`, `github-codex-sdk` |
 | The variable `COSTROID_GATEWAY_HOST` | The LiteLLM gateway, in place of the provider | `github-claude-code-litellm` |
-| `github.com` | `actions/checkout`. The install step lists Costroid's tags and downloads its release, and `sigstore/cosign-installer` and `oven-sh/setup-bun` download theirs | All seven |
+| `github.com` | `actions/checkout`. The install step lists Costroid's tags and downloads its release, and `sigstore/cosign-installer` and `oven-sh/setup-bun` download theirs | All eight |
 | `api.github.com` | `claude-code-action` reads the pull request, and `codex-action` checks the actor's access | `github-claude-code-action`, `github-codex-action` |
-| `results-receiver.actions.githubusercontent.com`, `productionresultssa*.blob.core.windows.net` | `actions/upload-artifact`, which keeps the rows | All seven |
-| `release-assets.githubusercontent.com` | github.com answers a release download with a redirect to this host. `curl -I` on a release's `SHA256SUMS` showed it on 2026-11-08 | All seven |
-| `tuf-repo-cdn.sigstore.dev` | cosign reads Sigstore's trusted root here before it checks the release's signature (`tuf.DefaultMirror` in [`sigstore-go`](https://github.com/sigstore/sigstore-go/blob/main/pkg/tuf/options.go)) | All seven |
-| `registry.npmjs.org` | npm installs the agent at its pinned version, or an SDK program's packages from its lock file, and Bun installs `claude-code-action`'s packages | All seven |
+| `results-receiver.actions.githubusercontent.com`, `productionresultssa*.blob.core.windows.net` | `actions/upload-artifact`, which keeps the rows | All eight |
+| `release-assets.githubusercontent.com` | github.com answers a release download with a redirect to this host. `curl -I` on a release's `SHA256SUMS` showed it on 2026-11-08 | All eight |
+| `tuf-repo-cdn.sigstore.dev` | cosign reads Sigstore's trusted root here before it checks the release's signature (`tuf.DefaultMirror` in [`sigstore-go`](https://github.com/sigstore/sigstore-go/blob/main/pkg/tuf/options.go)) | All eight |
+| `registry.npmjs.org` | npm installs the agent at its pinned version, or an SDK program's packages from its lock file, and Bun installs `claude-code-action`'s packages | All eight |
 
 Each host is listed on port 443. The LiteLLM recipe lists the gateway and not `api.anthropic.com`, so the run's own key is the only provider credential the job can use. Claude Code's [network requirements](https://code.claude.com/docs/en/network-config#network-access-requirements) (read 2026-11-08) list other hosts for sign-in, plugins, updates and error reports. A run on an API key or a gateway needs none of them, so they stay blocked.
 

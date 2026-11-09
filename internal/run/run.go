@@ -23,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/adapter/copilot"
+	"github.com/Costroid/costroid/internal/adapter/opencode"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -140,9 +141,9 @@ type windowedSession interface {
 	RunWindow(start, end time.Time)
 }
 
-// Agents are the names --agent takes: the two agents, and a program that
-// runs each through its SDK.
-var Agents = []string{claudecode.Name, claudecode.SDKName, codex.Agent{}.Name(), codex.SDKName}
+// Agents are the names --agent takes: each agent, and a program that runs
+// Claude Code or Codex through its SDK.
+var Agents = []string{claudecode.Name, claudecode.SDKName, codex.Agent{}.Name(), codex.SDKName, opencode.Name}
 
 // AgentNamed picks the adapter by its name, whatever the command is.
 func AgentNamed(name string) (adapter.Agent, error) {
@@ -155,6 +156,8 @@ func AgentNamed(name string) (adapter.Agent, error) {
 		return codex.Agent{}, nil
 	case codex.SDKName:
 		return codex.SDKAgent{}, nil
+	case opencode.Name:
+		return opencode.Agent{}, nil
 	}
 	return nil, fmt.Errorf("run: no agent named %q: --agent takes %s", name, strings.Join(Agents, ", "))
 }
@@ -183,6 +186,8 @@ func AgentFor(argv []string) (adapter.Agent, error) {
 		return codex.Agent{}, nil
 	case "copilot":
 		return copilot.Agent{}, nil
+	case "opencode":
+		return opencode.Agent{}, nil
 	}
 	return nil, fmt.Errorf("run: no adapter for %q: costroid runs claude and codex", filepath.Base(argv[0]))
 }

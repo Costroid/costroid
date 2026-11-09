@@ -92,8 +92,8 @@ func agentJobs(t *testing.T) map[string]entry {
 // read, and the shipped files draw no egress note.
 func TestShippedRecipesBlockEgress(t *testing.T) {
 	jobs := agentJobs(t)
-	if len(jobs) != 7 {
-		t.Fatalf("%d agent jobs in the shipped recipes, want 7: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
+	if len(jobs) != 8 {
+		t.Fatalf("%d agent jobs in the shipped recipes, want 8: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
 	}
 	for name, job := range jobs {
 		steps := sequence(field(job.value, "steps"))
@@ -144,6 +144,9 @@ func reaches(job *yaml.Node) []string {
 			hosts["api.anthropic.com:443"] = true
 		case codexAgent:
 			hosts["api.openai.com:443"] = true
+		case openCodeAgent:
+			// The OpenCode recipe runs it on Anthropic.
+			hosts["api.anthropic.com:443"] = true
 		}
 		if strings.Contains(text(field(step, "env")), "vars.COSTROID_GATEWAY_URL") {
 			hosts[gatewayHost] = true
