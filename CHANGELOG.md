@@ -2,6 +2,22 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.19 (2026-11-09)
+
+### Breaking changes
+
+- The result object is `costroid.result/0.9`. `agent_stated` also takes OpenCode's own cost in USD and Copilot CLI's credits in nano-AIU, each from its own source. `costroid approve` and the readers still take 0.5 to 0.8.
+
+### What you can now do
+
+- See an agent's own figure beside Costroid's: the comment states OpenCode's cost for the run "by its own prices, which Costroid never adds to its own figures", and Copilot CLI's credits, "which Costroid never converts to dollars".
+- `costroid run --agent copilot` names Copilot CLI, as `--agent opencode` names OpenCode. `costroid lint` checks a workflow that runs `costroid run --agent copilot` for Copilot CLI's provider variables and its tool rules.
+- Register a GitHub App whose private key never touches a disk: `costroid app manifest` prints the App's minimum permissions, and `costroid app create` runs GitHub's manifest flow and imports the key GitHub returns straight into an AWS KMS key, writing no copy. With `COSTROID_GITHUB_APP_ID` and `COSTROID_GITHUB_APP_KMS_KEY` set, `costroid serve` signs the App's tokens through that key, and the approve button on a check posts. [`docs/github-app.md`](docs/github-app.md) has the steps.
+
+### Fixes
+
+- An unknown agent's error names every agent `costroid run` takes.
+
 ## 1.0.0-alpha.18 (2026-11-09)
 
 ### What you can now do
