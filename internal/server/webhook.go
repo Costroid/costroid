@@ -28,6 +28,9 @@ type GitHubApp struct {
 	// Secret is the webhook secret GitHub signs each delivery with.
 	Secret        []byte
 	Installations Installations
+	// Deliveries keeps the delivery ids taken. Nil keeps them in this
+	// process's memory, which a restart forgets.
+	Deliveries scm.DeliveryStore
 	// Hosts reaches a repository as one of the App's installations. Without
 	// it, an approve press is refused and logged: the service holds no App
 	// key to post a check with.
@@ -89,7 +92,11 @@ func final(err error) bool {
 // newWebhook returns the route's handler and the queue its worker drains.
 func newWebhook(config Config) (*scm.Webhook, *scm.Queue) {
 	queue := scm.NewQueue(webhookQueueSize)
-	return &scm.Webhook{Secret: config.App.Secret, Deliveries: scm.NewMemoryDeliveries(), Queue: queue, Now: config.Now}, queue
+	deliveries := config.App.Deliveries
+	if deliveries == nil {
+		deliveries = scm.NewMemoryDeliveries()
+	}
+	return &scm.Webhook{Secret: config.App.Secret, Deliveries: deliveries, Queue: queue, Now: config.Now}, queue
 }
 
 // ProcessWebhooks applies the verified deliveries until ctx ends. It returns

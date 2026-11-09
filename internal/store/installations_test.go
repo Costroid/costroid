@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -70,6 +71,7 @@ func TestTheInstallationTablesHoldIdsAndNamesOnly(t *testing.T) {
 	for table, want := range map[string][]string{
 		"app_installations":             {"installation_id", "account", "suspended"},
 		"app_installation_repositories": {"installation_id", "repository_id", "full_name"},
+		"app_deliveries":                {"delivery", "claimed_at"},
 	} {
 		rows, err := conn.Query(ctx, `
 			SELECT column_name FROM information_schema.columns
@@ -107,4 +109,42 @@ func TestTheAppRoleCannotRenumberAnInstallation(t *testing.T) {
 	requireSQLState(t, err, insufficientPrivilege)
 	_, err = conn.Exec(ctx, `UPDATE app_installation_repositories SET repository_id = 7`)
 	requireSQLState(t, err, insufficientPrivilege)
+}
+
+func TestADeliveryIsTakenOnceUntilItsRetentionPasses(t *testing.T) {
+	db := storetest.New(t)
+	ctx := context.Background()
+	retention := 72 * time.Hour
+	first, second := open(t, db).Deliveries(retention), open(t, db).Deliveries(retention)
+	at := time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC)
+	claim := func(deliveries store.Deliveries, delivery string, now time.Time) bool {
+		t.Helper()
+		taken, err := deliveries.Claim(ctx, delivery, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return taken
+	}
+	if !claim(first, "d-1", at) || claim(second, "d-1", at) {
+		t.Fatal("one id was taken twice, or not at all")
+	}
+	if err := second.Release(ctx, "d-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !claim(first, "d-1", at) {
+		t.Fatal("a released id stayed taken")
+	}
+	if claim(second, "d-1", at.Add(retention)) {
+		t.Error("an id was taken again at its retention")
+	}
+	if !claim(second, "d-1", at.Add(retention+time.Second)) {
+		t.Error("an id stayed taken past its retention")
+	}
+	if !claim(first, "d-2", at.Add(3*retention)) {
+		t.Fatal("a new id was refused")
+	}
+	var held int
+	if err := connect(t, db.SuperURL).QueryRow(ctx, `SELECT count(*) FROM app_deliveries`).Scan(&held); err != nil || held != 1 {
+		t.Errorf("%d ids held after pruning: %v", held, err)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -327,14 +328,14 @@ func TestWebhookRouteRefusesGet(t *testing.T) {
 func TestServeSaysOnceWhetherTheWebhookRouteIsServed(t *testing.T) {
 	var logged bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logged, nil))
-	if app := githubApp(nil, newMemoryInstallations(), logger); app != nil {
+	if app := githubApp(nil, nil, logger); app != nil {
 		t.Fatalf("no secret configured %+v", app)
 	}
 	if lines := strings.Count(logged.String(), "\n"); lines != 1 || !strings.Contains(logged.String(), `"msg":"webhook route not served","path":"/webhooks/github","reason":"COSTROID_GITHUB_WEBHOOK_SECRET is not set"`) {
 		t.Fatalf("%d lines: %s", lines, logged.String())
 	}
 	logged.Reset()
-	if app := githubApp([]byte(webhookSecretText), newMemoryInstallations(), logger); app == nil || string(app.Secret) != webhookSecretText {
+	if app := githubApp([]byte(webhookSecretText), nil, logger); app == nil || string(app.Secret) != webhookSecretText {
 		t.Fatal("a secret served no route")
 	}
 	if strings.Contains(logged.String(), webhookSecretText) || !strings.Contains(logged.String(), `"msg":"webhook route served"`) {
@@ -676,5 +677,102 @@ func TestTheAccountsInTheContractAreTheOnesTheButtonSees(t *testing.T) {
 		if _, err := scm.ParseEvent(scm.EventCheckRun, []byte(pressBody(sender, acmeSHA, scm.ApproveAction))); err != nil {
 			t.Errorf("%s: %v", sender, err)
 		}
+	}
+}
+
+// startServe runs serve on a free address until the test ends, and returns
+// the address and its log. Another process can take the address before serve
+// binds it, so a taken address is tried again anew.
+func startServe(t *testing.T) (string, *lockedBuffer) {
+	t.Helper()
+	for range 3 {
+		addr := freeAddress(t)
+		if log, started := serveUntilCleanup(t, addr); started {
+			return addr, log
+		}
+	}
+	t.Fatal("another process took the address three times")
+	return "", nil
+}
+
+// serveUntilCleanup starts serve on addr and waits until it is healthy. It
+// reports false when serve exits on a taken address.
+func serveUntilCleanup(t *testing.T, addr string) (*lockedBuffer, bool) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	log := &lockedBuffer{}
+	exit := make(chan int, 1)
+	go func() { exit <- Main(ctx, []string{"--addr", addr}, log) }()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		response, err := http.Get("http://" + addr + "/healthz")
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusNoContent {
+				t.Cleanup(func() {
+					cancel()
+					if code := <-exit; code != 0 {
+						t.Errorf("serve exited %d: %s", code, log.String())
+					}
+				})
+				return log, true
+			}
+		}
+		select {
+		case code := <-exit:
+			cancel()
+			if strings.Contains(log.String(), "address already in use") {
+				return nil, false
+			}
+			t.Fatalf("serve exited %d: %s", code, log.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("serve is not healthy: %v\n%s", err, log.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestWebhookRefusesReplayAfterRestart runs two instances of serve on one
+// database: the second refuses a delivery the first took, as a restarted
+// instance would.
+func TestWebhookRefusesReplayAfterRestart(t *testing.T) {
+	db := storetest.New(t)
+	t.Setenv(envDatabase, db.AppURL)
+	t.Setenv(envMigration, db.OwnerURL)
+	t.Setenv(envAudience, audience)
+	t.Setenv(envPseudonym, base64.StdEncoding.EncodeToString(make([]byte, minPseudonymKeyBytes)))
+	t.Setenv(envWebhook, webhookSecretText)
+	body := installationBody(scm.InstallationCreated, widgets)
+	deliver := func(addr, delivery string) int {
+		request, err := http.NewRequest(http.MethodPost, "http://"+addr+webhookPath, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("X-GitHub-Event", scm.EventInstallation)
+		request.Header.Set("X-GitHub-Delivery", delivery)
+		request.Header.Set("X-Hub-Signature-256", signed(webhookSecretText, body))
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		return response.StatusCode
+	}
+	first, _ := startServe(t)
+	second, log := startServe(t)
+	if status := deliver(first, "taken-by-the-first"); status != http.StatusAccepted {
+		t.Fatalf("the first instance answered %d", status)
+	}
+	if status := deliver(second, "taken-by-the-first"); status != http.StatusOK {
+		t.Errorf("the second instance answered %d to the first's delivery", status)
+	}
+	if status := deliver(second, "new-to-both"); status != http.StatusAccepted {
+		t.Errorf("the second instance answered %d to a new delivery", status)
+	}
+	if strings.Contains(log.String(), webhookSecretText) {
+		t.Error("serve logged the webhook secret")
 	}
 }

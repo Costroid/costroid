@@ -20,6 +20,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/egress"
 	"github.com/Costroid/costroid/internal/oidc"
+	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/store"
 )
 
@@ -197,13 +198,13 @@ func webhookSecret() ([]byte, error) {
 
 // githubApp configures the webhook route, or answers nil when no secret is
 // set. The service holds no App key, so an approve press posts nothing.
-func githubApp(secret []byte, installations Installations, logger *slog.Logger) *GitHubApp {
+func githubApp(secret []byte, ledger *store.Store, logger *slog.Logger) *GitHubApp {
 	if secret == nil {
 		logger.Info("webhook route not served", "path", webhookPath, "reason", envWebhook+" is not set")
 		return nil
 	}
 	logger.Info("webhook route served", "path", webhookPath)
-	return &GitHubApp{Secret: secret, Installations: installations}
+	return &GitHubApp{Secret: secret, Installations: ledger, Deliveries: ledger.Deliveries(scm.DeliveryRetention)}
 }
 
 func run(ctx context.Context, options serveOptions, stderr io.Writer) error {

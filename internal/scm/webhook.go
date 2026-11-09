@@ -21,9 +21,10 @@ const (
 	maxWebhookBody = 25 << 20
 	// ReplayWindow is how far an event's signed instant may sit from now.
 	ReplayWindow = 10 * time.Minute
-	// DeliveryRetention is how long a delivery id stays claimed. It outlasts
-	// the replay window because a check_run states no instant, so the claim
-	// is what refuses its replay.
+	// DeliveryRetention is how long a delivery id stays claimed: GitHub's
+	// redelivery window, "the past 3 days" on its redelivering-webhooks page
+	// as read on 2026-11-09. It outlasts the replay window because a
+	// check_run states no instant, so the claim is what refuses its replay.
 	DeliveryRetention = 72 * time.Hour
 
 	signaturePrefix = "sha256="

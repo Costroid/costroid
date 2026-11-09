@@ -273,7 +273,7 @@ Every table carries row level security with `FORCE`. The service names a tenant 
 
 `egress_counters` is the deployment's own table and has no tenant column. Its policy admits every role, and the application role reads, inserts and updates it. It cannot delete from it.
 
-`app_installations` and `app_installation_repositories` are the deployment's own tables too, because the GitHub App is the deployment's. Their policy admits every role. The application role reads, inserts and deletes their rows, and updates a name or the suspension, never an id.
+`app_installations`, `app_installation_repositories` and `app_deliveries` are the deployment's own tables too, because the GitHub App is the deployment's. Their policy admits every role. The application role reads, inserts and deletes their rows, and updates a name or the suspension, never an id.
 
 ## The GitHub App's webhook
 
@@ -299,12 +299,15 @@ The service answers each delivery within two seconds and applies it afterwards. 
 
 A verified delivery takes its id before it waits. A delivery that fails for a reason a redelivery can change, such as GitHub or Postgres not answering, gives its id back, so a redelivery from the App's settings is processed. A delivery refused by a rule keeps its id.
 
-The ids are held in the service's memory. A restart forgets them, and two instances do not share them. A press of the approve button replayed after a restart is held to the same rules again, against the pull request as it is then.
+The ids are kept in `app_deliveries` in Postgres, so every instance refuses a delivery another took, and a restart forgets none. An id is kept for 72 hours, GitHub's redelivery window, and pruned after it.
+
+GitHub's delivery headers state no time. A `pull_request` delivery is refused past 10 minutes by its own `updated_at`. A `check_run` or installation delivery states no instant of the delivery, so the id alone refuses its replay. Past 72 hours its id is pruned, and a replayed press is held to the same rules again, against the pull request as it is then.
 
 What GitHub documents, read on 2026-11-09:
 
 - [Webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads): `X-GitHub-Delivery` is "A globally unique identifier (GUID) to identify the event." `X-GitHub-Event` is "The name of the event that triggered the delivery." `X-Hub-Signature-256` "is the HMAC hex digest of the request body, and is generated using the SHA-256 hash function". "Payloads are capped at 25 MB."
 - [Validating webhook deliveries](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries): "The hash signature always starts with `sha256=`." "The hash signature is generated using your webhook's secret token and the payload contents." "Never use a plain `==` operator."
+- [Redelivering webhooks](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks): "You can redeliver webhook deliveries that occurred in the past 3 days." "GitHub does not automatically redeliver failed deliveries."
 - [Best practices for using webhooks](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks): "To protect against replay attacks, you can use the `X-GitHub-Delivery` header". "If you request a redelivery, the `X-GitHub-Delivery` header will be the same as in the original delivery." "Your server should respond with a 2XX response within 10 seconds of receiving a webhook delivery."
 
 ### Installations

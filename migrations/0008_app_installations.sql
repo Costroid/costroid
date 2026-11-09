@@ -3,6 +3,10 @@
 -- They have no column for a token, a key or a secret: an installation token is
 -- minted when it is needed and is never stored.
 --
+-- app_deliveries holds the webhook delivery ids the service has taken, and
+-- when, so a replayed delivery is refused by every instance and after a
+-- restart. An id is pruned once it is older than GitHub's redelivery window.
+--
 -- The deployment owns these tables, as it owns the App, so they have no tenant
 -- column. Row security is on and forced like everywhere else, with a policy
 -- that says so.
@@ -20,6 +24,11 @@ CREATE TABLE app_installation_repositories (
     PRIMARY KEY (installation_id, repository_id)
 );
 
+CREATE TABLE app_deliveries (
+    delivery   text PRIMARY KEY CHECK (delivery ~ '^[A-Za-z0-9-]{1,64}$'),
+    claimed_at timestamptz NOT NULL
+);
+
 ALTER TABLE app_installations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_installations FORCE ROW LEVEL SECURITY;
 CREATE POLICY deployment_wide ON app_installations
@@ -32,7 +41,14 @@ CREATE POLICY deployment_wide ON app_installation_repositories
     USING (true)
     WITH CHECK (true);
 
+ALTER TABLE app_deliveries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_deliveries FORCE ROW LEVEL SECURITY;
+CREATE POLICY deployment_wide ON app_deliveries
+    USING (true)
+    WITH CHECK (true);
+
 GRANT SELECT, INSERT, DELETE ON app_installations TO costroid_app;
 GRANT UPDATE (account, suspended) ON app_installations TO costroid_app;
 GRANT SELECT, INSERT, DELETE ON app_installation_repositories TO costroid_app;
 GRANT UPDATE (full_name) ON app_installation_repositories TO costroid_app;
+GRANT SELECT, INSERT, DELETE ON app_deliveries TO costroid_app;
