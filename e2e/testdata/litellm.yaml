@@ -21,3 +21,13 @@ model_list:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   allow_requests_on_db_unavailable: true
+  # With its store down, LiteLLM serves a key only from its cache. By default
+  # it caches a key for 60 seconds from the store read that loaded it, and a
+  # cache hit does not extend that (in_memory_cache_ttl and
+  # user_api_key_cache_ttl in litellm/proxy/proxy_server.py, get_key_object in
+  # litellm/proxy/auth/auth_checks.py, set_cache and get_cache in
+  # litellm/caching/in_memory_cache.py, at v1.108.1). The store-down step runs
+  # from mint to the request after the store stops, through two waits of up to
+  # 4 minutes each. 600 seconds covers the step, so it tests a gateway that
+  # fails open on any runner.
+  user_api_key_cache_ttl: 600

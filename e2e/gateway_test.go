@@ -233,12 +233,6 @@ func (s *gatewayStack) awaitStore(want string) {
 
 // keyStatus asks the gateway, as its admin, what became of a key.
 func (s *gatewayStack) keyStatus(id string) string {
-	status, _ := s.keyInfo(id)
-	return status
-}
-
-// keyInfo reads a key's status and its spend as the gateway answered it.
-func (s *gatewayStack) keyInfo(id string) (string, string) {
 	s.t.Helper()
 	request, _ := http.NewRequest(http.MethodGet, s.url+"/key/info?key="+id, nil)
 	request.Header.Set("Authorization", "Bearer "+s.admin)
@@ -249,14 +243,11 @@ func (s *gatewayStack) keyInfo(id string) (string, string) {
 	defer response.Body.Close()
 	var answer struct {
 		Info struct {
-			Status string      `json:"status"`
-			Spend  json.Number `json:"spend"`
+			Status string `json:"status"`
 		} `json:"info"`
 	}
-	decoder := json.NewDecoder(response.Body)
-	decoder.UseNumber()
-	_ = decoder.Decode(&answer)
-	return answer.Info.Status, answer.Info.Spend.String()
+	_ = json.NewDecoder(response.Body).Decode(&answer)
+	return answer.Info.Status
 }
 
 // teamBudget reads the repository's team as the gateway holds it.
@@ -619,8 +610,8 @@ func holdCodex(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
 
 // runToTheRefusal runs the agent on the key until the gateway refuses it, and
 // holds the rows to the key: its id, gateway-precheck, the bound given, an
-// overshoot within it, and the gateway's count set beside them only when it
-// differs. It returns the rows' total.
+// overshoot within it, and no count of the gateway's set beside them. It
+// returns the rows' total.
 func runToTheRefusal(t *testing.T, job *gatewayJob, mock *mockUpstream, attempt int, id, bound string) decimal.Decimal {
 	t.Helper()
 	before := mock.requests.Load()
@@ -654,18 +645,14 @@ func runToTheRefusal(t *testing.T, job *gatewayJob, mock *mockUpstream, attempt 
 	if over.Cmp(decimal.MustParse(bound)) > 0 {
 		t.Errorf("the run cost USD %s, past the budget by more than the bound", total)
 	}
-	// The gateway's figure is set beside the rows' whenever the two differ by
-	// more than float rounding, and never replaces them.
-	_, counted := job.stack.keyInfo(id)
-	spend, err := decimal.ParseNumber(counted)
-	if err != nil {
-		t.Fatalf("the gateway's spend %q: %v", counted, err)
+	// The journey's gateway prices each model at the catalog's prices, so the
+	// figure costroid run read once the gateway's store settled is the rows'
+	// total, and the run sets no figure of the gateway's beside them.
+	for line := range strings.Lines(string(out)) {
+		if strings.Contains(line, "the gateway counted USD") || strings.Contains(line, "the gateway's count of the key's spend") {
+			t.Errorf("the rows come to USD %s, and costroid run printed: %s", total, line)
+		}
 	}
-	warning := "the gateway counted USD " + spend.String() + " on the run's key, and the rows, priced at the catalog, come to USD " + total.String()
-	if gateway.SameSpend(spend, total) == strings.Contains(string(out), warning) {
-		t.Errorf("the gateway counted USD %s and the rows USD %s, and the run's warnings read:\n%s", spend, total, out)
-	}
-	t.Logf("the gateway counted USD %s, the rows USD %s", spend, total)
 	if strings.Contains(string(out), job.key()) {
 		t.Error("costroid run printed the key")
 	}
@@ -698,6 +685,7 @@ func holdTheMintersKeyToItsRoutes(t *testing.T, stack *gatewayStack) {
 // must say none.
 func recordAStoreFailureAsNone(t *testing.T, stack *gatewayStack, job *gatewayJob, mock *mockUpstream) {
 	t.Helper()
+	opened := time.Now()
 	id := job.open(2)
 	before := mock.requests.Load()
 	resume := filepath.Join(job.directory, "resume")
@@ -715,6 +703,7 @@ func recordAStoreFailureAsNone(t *testing.T, stack *gatewayStack, job *gatewayJo
 		t.Fatalf("stop the store: %v\n%s", err, out)
 	}
 	stack.awaitStoreDown()
+	resumed := time.Since(opened).Round(time.Second)
 	if err := os.WriteFile(resume, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -722,8 +711,9 @@ func recordAStoreFailureAsNone(t *testing.T, stack *gatewayStack, job *gatewayJo
 		t.Fatalf("costroid run: %v\n%s", err, output.String())
 	}
 	if status := job.outcome().AfterPause; status != http.StatusOK {
-		t.Errorf("with its store down the gateway answered %d, and the journey needs a gateway that fails open", status)
+		t.Errorf("with its store down the gateway answered %d, %s after mint, and the journey needs a gateway that fails open; LiteLLM serves a key without its store only while the key is in its cache, for user_api_key_cache_ttl in testdata/litellm.yaml", status, resumed)
 	}
+	t.Logf("the agent resumed with the store down %s after mint", resumed)
 	for _, row := range job.readRows() {
 		if row.SubAccountID != id {
 			t.Errorf("SubAccountId reads %q, want %s", row.SubAccountID, id)
