@@ -2,6 +2,13 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.18 (2026-11-09)
+
+### What you can now do
+
+- Run OpenCode under a budget: `costroid run --agent opencode -- opencode run ...` reads each step OpenCode prints, prices it and stops the run at the cap. Costroid adds `--title` when the command has none, so OpenCode sends no title request of its own that no row would count, and reads the agent's version. Rows read `measured` on a provider key with no OpenCode sign-in for that provider. OpenCode's own cost for the run is stated beside Costroid's figure and never replaces it. A `task` subagent spends in a session of its own, which the stream does not show, so a run that calls it is graded `none` and says so. `recipes/github-opencode.yml` runs it in a pull request.
+- Run Copilot CLI with your own model provider under a budget: `costroid run -- copilot -p ...` names a new session, reads its session file as each request lands and stops the run at the cap. Each model's rows must add up to Copilot CLI's own totals for the session, or the run is refused with the model and the field. Copilot's own credits are stated as it writes them, never converted to dollars. Rows read `measured` on your own provider key; a request Copilot served on its own model routing is priced at the provider's list rate and reads `list_equivalent`. Only a run on your own key has been recorded.
+
 ## 1.0.0-alpha.17 (2026-11-09)
 
 ### What you can now do
