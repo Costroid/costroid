@@ -96,8 +96,11 @@ const (
 	gatewayKeyWait         = 10 * time.Minute
 	gatewayProbeEvery      = 2 * time.Second
 	gatewayPoll            = 2 * time.Second
-	// LiteLLM writes spend to its store every 10 seconds by default
-	// (PROXY_BATCH_WRITE_AT in litellm/constants.py at v1.108.1).
+	// LiteLLM writes spend to its store every 10 to 15 seconds by default:
+	// PROXY_BATCH_WRITE_AT, 10, in litellm/constants.py, plus a random 0 to 5
+	// drawn at startup in initialize_scheduled_background_jobs in
+	// litellm/proxy/proxy_server.py, at v1.108.1. The settle bound covers two
+	// writes.
 	gatewaySpendSettle = 30 * time.Second
 	gatewaySpendStable = 12 * time.Second
 )
@@ -441,7 +444,7 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 // spend before the delete and attests it after, through ledger.
 func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration, ledger *http.Client, stdout, stderr io.Writer) error {
 	counted := os.Getenv(ingestURLVariable) != ""
-	count, unread := readCount(ctx, counter, counted)
+	count, unread := readCount(ctx, counter, counted, stderr)
 	deleted, err := gateway.Close(ctx, counter.Client, counter.AdminKey, counter.Run)
 	if err == nil && !deleted {
 		fmt.Fprintf(stderr, "no key yet: waiting %s for a late mint, then deleting once more\n", retry)
@@ -450,7 +453,7 @@ func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration,
 			return ctx.Err()
 		case <-time.After(retry):
 		}
-		count, unread = readCount(ctx, counter, counted)
+		count, unread = readCount(ctx, counter, counted, stderr)
 		deleted, err = gateway.Close(ctx, counter.Client, counter.AdminKey, counter.Run)
 	}
 	if err != nil {
@@ -472,12 +475,18 @@ func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration,
 
 // readCount reads what the gateway counted on the run's key, when a ledger is
 // named to attest it to. It answers nil when no ledger is named or no key is
-// there.
-func readCount(ctx context.Context, counter gateway.Counter, counted bool) (*gateway.Count, error) {
+// there. A figure that may not have settled is still the gateway's last count,
+// and the ledger's attestation has no field to say so, so it is attested with
+// a warning.
+func readCount(ctx context.Context, counter gateway.Counter, counted bool, stderr io.Writer) (*gateway.Count, error) {
 	if !counted {
 		return nil, nil
 	}
 	count, found, err := counter.Settled(ctx)
+	if errors.Is(err, gateway.ErrUnsettled) {
+		fmt.Fprintf(stderr, "costroid: warning: %v. The ledger's spend attestation has no field to say so, and the ledger takes this figure as the gateway's count\n", err)
+		err = nil
+	}
 	if err != nil || !found {
 		return nil, err
 	}

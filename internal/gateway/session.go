@@ -27,7 +27,8 @@ type Session struct {
 	Poll time.Duration
 	// Settle bounds the wait for the key's spend to reach the gateway's store,
 	// and must outlast one of LiteLLM's batch writes. Stable is how long a
-	// figure that has moved must then hold to count as settled.
+	// figure that has moved must then hold to count as settled. settle says
+	// why.
 	Settle, Stable time.Duration
 }
 
@@ -90,56 +91,29 @@ func SameSpend(counted, total decimal.Decimal) bool {
 }
 
 // Spend reads what the gateway counted on the key, in its own prices, once the
-// agent has ended and the figure has settled. LiteLLM queues a request's spend
-// and by default writes the queue to its store every 10 to 15 seconds, and
-// /key/info reads the store, so a figure read before the next write lacks the
-// run's last requests. Spend answers as soon as the figure is the same as want.
-// A figure apart from want counts as settled once it has moved during the wait
-// and then held for Stable, because the move was a write made after the agent
-// ended. A figure that never moves is read until Settle has passed. A figure
-// still moving when Settle passes may not have settled, and Spend answers it
-// with an error that says so.
+// agent has ended and the figure has settled. It answers as soon as the figure
+// is the same as want, and otherwise waits as settle does. A figure still
+// moving when Settle passes is answered with an error wrapping ErrUnsettled.
 func (s Session) Spend(ctx context.Context, want decimal.Decimal) (decimal.Decimal, error) {
-	deadline := time.Now().Add(s.Settle)
-	last, err := s.spend(ctx)
+	wait := settling{poll: s.Poll, stable: s.Stable, bound: s.Settle}
+	count, err := wait.settle(ctx, s.spend, func(count Count) bool { return SameSpend(count.Spend, want) })
 	if err != nil {
 		return decimal.Decimal{}, err
 	}
-	since, moved := time.Now(), false
-	for {
-		held, late := time.Since(since) >= s.Stable, time.Now().After(deadline)
-		switch {
-		case SameSpend(last, want), held && (moved || late):
-			return last, nil
-		case late:
-			return last, fmt.Errorf("gateway: the key's spend still moved in the last %s of a %s wait, so its last figure, USD %s, may not have settled", s.Stable, s.Settle, last)
-		}
-		select {
-		case <-ctx.Done():
-			return last, ctx.Err()
-		case <-time.After(s.Poll):
-		}
-		spend, err := s.spend(ctx)
-		if err != nil {
-			return decimal.Decimal{}, err
-		}
-		if spend.Cmp(last) != 0 {
-			last, since, moved = spend, time.Now(), true
-		}
-	}
+	return count.Spend, nil
 }
 
 // spend reads the key's spend as the gateway's store holds it.
-func (s Session) spend(ctx context.Context) (decimal.Decimal, error) {
+func (s Session) spend(ctx context.Context) (Count, error) {
 	info, err := s.Client.Info(ctx, s.Key, "")
 	if err != nil {
-		return decimal.Decimal{}, err
+		return Count{}, err
 	}
 	spend, err := decimal.ParseNumber(info.Spend.String())
 	if err != nil {
-		return decimal.Decimal{}, fmt.Errorf("gateway: the key's spend field reads %.40q, which is not a number", info.Spend.String())
+		return Count{}, fmt.Errorf("gateway: the key's spend field reads %.40q, which is not a number", info.Spend.String())
 	}
-	return spend, nil
+	return Count{Spend: spend}, nil
 }
 
 // Inspect holds the key the gateway returned to what the run needs.

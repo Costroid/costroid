@@ -82,36 +82,33 @@ type Counter struct {
 	Client   *Client
 	AdminKey string
 	Run      Binding
-	// Poll is how often the key is read. Stable is how long an unchanged
-	// figure counts as settled, and Settle bounds the whole wait.
+	// Poll is how often the key is read. Stable is how long a figure that has
+	// moved must then hold to count as settled, and Settle bounds the whole
+	// wait. settle says why.
 	Poll, Stable, Settle time.Duration
 }
 
-// Settled reads the run's key until its spend has not moved for Stable, or
-// until Settle has passed, and answers the last figure read. It answers false
-// when no key has the run's alias.
+// errNoKey is a key that is not there while its count is read.
+var errNoKey = errors.New("gateway: no key has the run's alias")
+
+// Settled reads the run's key until its spend has settled as settle reads it,
+// with no figure accepted early, since close has no rows to compare with. It
+// answers false when no key has the run's alias. A figure still moving when
+// Settle passes is answered with an error wrapping ErrUnsettled.
 func (c Counter) Settled(ctx context.Context) (Count, bool, error) {
-	deadline := time.Now().Add(c.Settle)
-	count, found, err := c.Client.Count(ctx, c.AdminKey, c.Run.Alias())
-	if err != nil || !found {
-		return Count{}, found, err
+	read := func(ctx context.Context) (Count, error) {
+		count, found, err := c.Client.Count(ctx, c.AdminKey, c.Run.Alias())
+		if err == nil && !found {
+			return Count{}, errNoKey
+		}
+		return count, err
 	}
-	since := time.Now()
-	for time.Since(since) < c.Stable && time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return Count{}, false, ctx.Err()
-		case <-time.After(c.Poll):
-		}
-		next, found, err := c.Client.Count(ctx, c.AdminKey, c.Run.Alias())
-		if err != nil || !found {
-			return Count{}, found, err
-		}
-		if next.KeyID != count.KeyID || next.Spend.Cmp(count.Spend) != 0 {
-			count, since = next, time.Now()
-		}
+	wait := settling{poll: c.Poll, stable: c.Stable, bound: c.Settle}
+	count, err := wait.settle(ctx, read, func(Count) bool { return false })
+	if errors.Is(err, errNoKey) {
+		return Count{}, false, nil
 	}
-	return count, true, nil
+	return count, true, err
 }
 
 // SpendAttestation tells the ledger what the gateway counted on a key minted
