@@ -1,6 +1,6 @@
 # Runs OpenCode on a pull request under a budget, then reports what it cost.
 # Copy to .github/workflows/costroid.yml. docs/recipes.md lists what it needs.
-# It needs a Costroid release after 1.0.0-alpha.18, which has no
+# It needs a Costroid release after 1.0.0-alpha.19, which has no
 # costroid run --agent opencode. Each push to the pull request runs the agent
 # again, with a budget of USD 5 for each run.
 name: costroid
@@ -48,7 +48,7 @@ jobs:
       - name: Install OpenCode
         run: npm install --global opencode-ai@1.19.4
       - name: Install costroid
-        uses: Costroid/costroid/action@7b091a81c4f73c150aa36977909ec21a456a7e40 # v1.0.0-alpha.18
+        uses: Costroid/costroid/action@c14ca2dd10b7ca5373af4453a7d4bdde3a4dafc7 # v1.0.0-alpha.19
         with:
           stage: install
       - name: Check the agent's version
@@ -118,7 +118,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@7b091a81c4f73c150aa36977909ec21a456a7e40 # v1.0.0-alpha.18
+      - uses: Costroid/costroid/action@c14ca2dd10b7ca5373af4453a7d4bdde3a4dafc7 # v1.0.0-alpha.19
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -140,7 +140,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@7b091a81c4f73c150aa36977909ec21a456a7e40 # v1.0.0-alpha.18
+      - uses: Costroid/costroid/action@c14ca2dd10b7ca5373af4453a7d4bdde3a4dafc7 # v1.0.0-alpha.19
         with:
           stage: report
           # A skipped agent job then reads as skipped, not as a run with no rows.

@@ -2,7 +2,7 @@
 
 These recipes run a coding agent on a pull request under a budget and record what it cost. They use the repository's own token. They need no App, no server and no account.
 
-Each GitHub recipe pins Costroid's action to the commit of `v1.0.0-alpha.18`, and the GitLab template installs the same release. The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret, the provider key, and names no version and no checksum. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release. [`docs/verify.md`](verify.md) says what the action checks.
+Each GitHub recipe pins Costroid's action to the commit of `v1.0.0-alpha.19`, and the GitLab template installs the same release. The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret, the provider key, and names no version and no checksum. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release. [`docs/verify.md`](verify.md) says what the action checks.
 
 ## Claude Code
 
@@ -125,11 +125,11 @@ It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. The
 
 ## A program on an agent's SDK
 
-[`recipes/github-claude-agent-sdk.yml`](../recipes/github-claude-agent-sdk.yml) and [`recipes/github-codex-sdk.yml`](../recipes/github-codex-sdk.yml) run a program you wrote on the Claude Agent SDK or the Codex SDK, and report what the agent it started cost. Both need a Costroid release after `1.0.0-alpha.18`, which has no `costroid run --agent`. [`docs/sdk.md`](sdk.md) says what each needs.
+[`recipes/github-claude-agent-sdk.yml`](../recipes/github-claude-agent-sdk.yml) and [`recipes/github-codex-sdk.yml`](../recipes/github-codex-sdk.yml) run a program you wrote on the Claude Agent SDK or the Codex SDK, and report what the agent it started cost. Both need a Costroid release after `1.0.0-alpha.19`, which has no `costroid run --agent`. [`docs/sdk.md`](sdk.md) says what each needs.
 
 ## OpenCode
 
-[`recipes/github-opencode.yml`](../recipes/github-opencode.yml) runs OpenCode 1.19.4 on `anthropic/claude-haiku-5-5` with the secret `ANTHROPIC_API_KEY`, and stops it at the cap between its steps. It reads no `opencode.json` from the repository, which the pull request can change, and it denies OpenCode's edits, commands, web fetches and subagents. It needs a Costroid release after `1.0.0-alpha.18`, which has no `costroid run --agent opencode`. [`docs/adapters.md`](adapters.md#opencode) says how Costroid reads OpenCode.
+[`recipes/github-opencode.yml`](../recipes/github-opencode.yml) runs OpenCode 1.19.4 on `anthropic/claude-haiku-5-5` with the secret `ANTHROPIC_API_KEY`, and stops it at the cap between its steps. It reads no `opencode.json` from the repository, which the pull request can change, and it denies OpenCode's edits, commands, web fetches and subagents. It needs a Costroid release after `1.0.0-alpha.19`, which has no `costroid run --agent opencode`. [`docs/adapters.md`](adapters.md#opencode) says how Costroid reads OpenCode.
 
 ## A LiteLLM gateway
 
@@ -257,7 +257,7 @@ Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on Novembe
 | --------------------------- | ------- | ------------------------------------------ |
 | `actions/checkout`          | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `step-security/harden-runner` | v2.22.3 | `46b06cea07f9e64621fdf066ba77ac6915163d43` |
-| `Costroid/costroid/action` | v1.0.0-alpha.18 | `7b091a81c4f73c150aa36977909ec21a456a7e40` |
+| `Costroid/costroid/action` | v1.0.0-alpha.19 | `c14ca2dd10b7ca5373af4453a7d4bdde3a4dafc7` |
 | `anthropics/claude-code-action` | v1.0.248 | `1d6de8cb0c237e7c15e9e1bdf973826ebae490cc` |
 | `actions/upload-artifact`   | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | `actions/download-artifact` | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
