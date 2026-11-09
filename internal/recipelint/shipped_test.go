@@ -497,11 +497,12 @@ func TestGitLabReportRunsWhenIngestRuns(t *testing.T) {
 	}
 }
 
-func TestGitLabDocsStateTheAdapterIsUntestedAndCiteTheToken(t *testing.T) {
+func TestGitLabDocsStateWhatRanAndCiteTheToken(t *testing.T) {
 	doc := read(t, recipesDoc)
 	for _, want := range []string{
 		"has run against a stub",
-		"never a real GitLab",
+		"self-managed GitLab CE 19.5.1",
+		"It has not run on gitlab.com",
 		"https://docs.gitlab.com/ci/jobs/ci_job_token/",
 		"https://docs.gitlab.com/user/permissions/",
 		gitLabNoteToken,

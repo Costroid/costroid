@@ -58,7 +58,7 @@ Each push to a labelled merge request runs the agent again, and each run has a b
 
 The template records the run and keeps `costroid-rows.jsonl` and the run's result object, `costroid-rows.run.json`, as artifacts. The `costroid:report` job then posts one sticky note on the merge request, the same comment a GitHub pull request gets.
 
-This adapter has run against a stub built from GitLab's documentation, never a real GitLab instance. Treat it as untested until a run on your instance posts its note. Open a test merge request with the label to see it.
+This adapter has run against a stub built from GitLab's documentation, and end to end on a self-managed GitLab CE 19.5.1 in Docker: [`docs/gitlab.md`](gitlab.md) says what that run proved. It has not run on gitlab.com. Open a test merge request with the label to see its note on your instance.
 
 ### Give the report a token
 

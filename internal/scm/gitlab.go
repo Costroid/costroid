@@ -27,8 +27,8 @@ type GitLabOptions struct {
 }
 
 // GitLab is the Reporter for one project. It reaches GitLab's REST API v4, and
-// it has run against a stub built from GitLab's documentation, never a real
-// instance.
+// it has run against a stub built from GitLab's documentation and on a
+// self-managed GitLab CE 19.5.1 (e2e/gitlab), not on gitlab.com.
 type GitLab struct {
 	api     string
 	project string
