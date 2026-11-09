@@ -260,10 +260,11 @@ func TestOpenCodePlanTitlesTheSession(t *testing.T) {
 	}
 }
 
-// fakeOpenCode writes an opencode that prints a version, and returns it.
-func fakeOpenCode(t *testing.T, output string) string {
+// fakeCommand writes a command called name that prints output, and returns
+// it.
+func fakeCommand(t *testing.T, name, output string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "opencode")
+	path := filepath.Join(t.TempDir(), name)
 	write(t, path, "#!/bin/sh\necho '"+output+"'\n")
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
@@ -283,16 +284,16 @@ func TestOpenCodeReadsItsVersion(t *testing.T) {
 		}
 		return report.AgentVersion
 	}
-	if got := version(fakeOpenCode(t, recordedVersion)); got != recordedVersion {
+	if got := version(fakeCommand(t, Name, recordedVersion)); got != recordedVersion {
 		t.Errorf("version %q, want %s", got, recordedVersion)
 	}
 	if got := version("opencode"); got != "" {
 		t.Errorf("the stub on PATH answered version %q", got)
 	}
-	if got := version(fakeOpenCode(t, "not a version")); got != "" {
+	if got := version(fakeCommand(t, Name, "not a version")); got != "" {
 		t.Errorf("version %q from output that holds none", got)
 	}
-	if got := version("npx"); got != "" {
+	if got := version(fakeCommand(t, "npx", "10.9.2")); got != "" {
 		t.Errorf("a launcher's version %q was read as OpenCode's", got)
 	}
 }
