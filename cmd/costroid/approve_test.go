@@ -520,8 +520,8 @@ func TestApproveRepostsOnlyAnObjectItWrites(t *testing.T) {
 	}
 	for name, changed := range map[string]string{
 		"a field this release does not write": strings.Replace(text, "{\n", "{\n  \"approved_by\": \"someone\",\n", 1),
-		"an older schema":                     strings.Replace(text, `"costroid.result/0.8"`, `"costroid.result/0.5"`, 1),
-		"the schema before":                   strings.Replace(text, `"costroid.result/0.8"`, `"costroid.result/0.7"`, 1),
+		"an older schema":                     strings.Replace(text, `"costroid.result/0.9"`, `"costroid.result/0.5"`, 1),
+		"a schema before recorded":            strings.Replace(text, `"costroid.result/0.9"`, `"costroid.result/0.7"`, 1),
 		"another layout":                      "```json\n" + compact.String() + "\n```",
 		"a backtick":                          strings.Replace(text, `"amounts": "shown"`, "\"amounts\": \"shown`\"", 1),
 		"no fence":                            object,
@@ -539,9 +539,9 @@ func TestApproveRepostsOnlyAnObjectItWrites(t *testing.T) {
 			}
 		})
 	}
-	repository.Checks[0].Text = strings.Replace(text, `"costroid.result/0.8"`, `"costroid.result/0.5"`, 1)
+	repository.Checks[0].Text = strings.Replace(text, `"costroid.result/0.9"`, `"costroid.result/0.5"`, 1)
 	repository.Reviews = []map[string]any{review(31, approver, "APPROVED", headCommit, time.Now().Add(-time.Hour))}
-	if code, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit)); code != 0 || len(repository.Checks) != 1 || !strings.Contains(stderr, "and this release writes costroid.result/0.8") {
+	if code, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit)); code != 0 || len(repository.Checks) != 1 || !strings.Contains(stderr, "and this release writes costroid.result/0.9") {
 		t.Errorf("exit %d, %d checks: %s", code, len(repository.Checks), stderr)
 	}
 }

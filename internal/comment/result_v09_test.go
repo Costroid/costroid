@@ -1,6 +1,7 @@
 package comment
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -21,7 +22,7 @@ import (
 	"github.com/Costroid/costroid/internal/reason"
 )
 
-// resultSchemaPath is result/v0.8 of Costroid/costroid-schemas, copied.
+// resultSchemaPath is result/v0.9 of Costroid/costroid-schemas, copied.
 var resultSchemaPath = filepath.Join("testdata", "result.schema.json")
 
 // The digests of testdata/rows.jsonl, computed outside Costroid:
@@ -119,7 +120,7 @@ func statedInput(t *testing.T) Input {
 	return input
 }
 
-func TestResultV08MatchesSchema(t *testing.T) {
+func TestResultV09MatchesSchema(t *testing.T) {
 	schema := compileResultSchema(t)
 	blocks := emittedBlocks(t)
 	stated := statedInput(t)
@@ -139,6 +140,13 @@ func TestResultV08MatchesSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	blocks["stated withheld comment copy"] = withheld
+	for name, input := range map[string]Input{"OpenCode's USD": openCodeInput(t), "Copilot CLI's nano-AI units": copilotInput(t)} {
+		block, err := Result(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blocks[name] = block
+	}
 	empty, err := Result(Input{State: NoRows, Reason: EmptyRowsFile, RowsSHA256: realRowsSHA256, RowsFileSHA256: realRowsFileSHA256})
 	if err != nil {
 		t.Fatal(err)
@@ -151,16 +159,16 @@ func TestResultV08MatchesSchema(t *testing.T) {
 		if err := json.Unmarshal([]byte(block), &head); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if head.Schema != "costroid.result/0.8" {
-			t.Errorf("%s: schema = %q, want costroid.result/0.8", name, head.Schema)
+		if head.Schema != "costroid.result/0.9" {
+			t.Errorf("%s: schema = %q, want costroid.result/0.9", name, head.Schema)
 		}
 		if err := resultSchemaErrors(schema, block); err != nil {
-			t.Errorf("%s breaks result/v0.8: %v\n%s", name, err, block)
+			t.Errorf("%s breaks result/v0.9: %v\n%s", name, err, block)
 		}
 	}
 }
 
-func TestResultV08NewFieldsAreNullUntilStated(t *testing.T) {
+func TestResultV09NewFieldsAreNullUntilStated(t *testing.T) {
 	for name, block := range emittedBlocks(t) {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(block), &fields); err != nil {
@@ -220,7 +228,7 @@ func TestResultV07StatesTheLifetimeAsTheCommentDoes(t *testing.T) {
 	}
 }
 
-func TestResultV08FilledFieldsMatchTheSchema(t *testing.T) {
+func TestResultV09FilledFieldsMatchTheSchema(t *testing.T) {
 	schema := compileResultSchema(t)
 	encoded, err := Result(statedInput(t))
 	if err != nil {
@@ -243,7 +251,7 @@ func TestResultV08FilledFieldsMatchTheSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := resultSchemaErrors(schema, string(filled)); err != nil {
-		t.Errorf("a filled object breaks result/v0.8: %v\n%s", err, filled)
+		t.Errorf("a filled object breaks result/v0.9: %v\n%s", err, filled)
 	}
 	upper := strings.ToUpper(realRowsSHA256)
 	for name, change := range map[string]func(Block) Block{
@@ -291,16 +299,16 @@ func TestResultV08FilledFieldsMatchTheSchema(t *testing.T) {
 			t.Fatal(err)
 		}
 		if resultSchemaErrors(schema, string(refused)) == nil {
-			t.Errorf("%s passed result/v0.8:\n%s", name, refused)
+			t.Errorf("%s passed result/v0.9:\n%s", name, refused)
 		}
 	}
 }
 
-// TestNewPolicyRulesValidateAgainstV08 runs every rule of the default pack,
+// TestNewPolicyRulesValidateAgainstV09 runs every rule of the default pack,
 // with a baseline and a pull request's total, and holds the check run's
-// object and both comment copies to result/v0.8. It then holds the schema's
+// object and both comment copies to result/v0.9. It then holds the schema's
 // closed lists to every rule and reason the policy names.
-func TestNewPolicyRulesValidateAgainstV08(t *testing.T) {
+func TestNewPolicyRulesValidateAgainstV09(t *testing.T) {
 	schema := compileResultSchema(t)
 	file, err := os.Open(filepath.Join("testdata", "rows.jsonl"))
 	if err != nil {
@@ -356,7 +364,7 @@ func TestNewPolicyRulesValidateAgainstV08(t *testing.T) {
 	}
 	for name, block := range map[string]string{"check run": check, "comment copy": shown, "withheld comment copy": withheld} {
 		if err := resultSchemaErrors(schema, block); err != nil {
-			t.Errorf("%s breaks result/v0.8: %v\n%s", name, err, block)
+			t.Errorf("%s breaks result/v0.9: %v\n%s", name, err, block)
 		}
 	}
 	reasons := []string{
@@ -375,15 +383,15 @@ func TestNewPolicyRulesValidateAgainstV08(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := resultSchemaErrors(schema, block); err != nil {
-				t.Errorf("rule %s with reason %s breaks result/v0.8: %v", rule, reason, err)
+				t.Errorf("rule %s with reason %s breaks result/v0.9: %v", rule, reason, err)
 			}
 		}
 	}
 }
 
-// TestResultV08BlockFieldsMatchTheSchema holds Block to the copied schema in
+// TestResultV09BlockFieldsMatchTheSchema holds Block to the copied schema in
 // both directions, so neither gains a field the other lacks.
-func TestResultV08BlockFieldsMatchTheSchema(t *testing.T) {
+func TestResultV09BlockFieldsMatchTheSchema(t *testing.T) {
 	data, err := os.ReadFile(resultSchemaPath)
 	if err != nil {
 		t.Fatal(err)
@@ -395,8 +403,8 @@ func TestResultV08BlockFieldsMatchTheSchema(t *testing.T) {
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(document.ID, "/result/v0.8/result.schema.json") {
-		t.Errorf("the copied schema is %s, want result/v0.8", document.ID)
+	if !strings.HasSuffix(document.ID, "/result/v0.9/result.schema.json") {
+		t.Errorf("the copied schema is %s, want result/v0.9", document.ID)
 	}
 	var fromSchema []string
 	for name := range document.Properties {
@@ -424,11 +432,11 @@ func TestResultV08BlockFieldsMatchTheSchema(t *testing.T) {
 	}
 }
 
-// resultSchemaSHA256 is the SHA-256 of result/v0.8/result.schema.json in
-// Costroid/costroid-schemas at 2a9ced6, the commit that added result/v0.8:
+// resultSchemaSHA256 is the SHA-256 of result/v0.9/result.schema.json in
+// Costroid/costroid-schemas at b42529b, the commit that added result/v0.9:
 //
-//	git show 2a9ced6:result/v0.8/result.schema.json | sha256sum
-const resultSchemaSHA256 = "bf02ad38ac823007cf7984b89ad936e0c9c39b64360812c504eae27fdac0d49a"
+//	git show b42529b:result/v0.9/result.schema.json | sha256sum
+const resultSchemaSHA256 = "a41214c4fcaa6a33c242e0848b7678fa70ec182d4779d8ff8d8befe1f9711dfa"
 
 // TestResultSchemaCopyMatchesItsDigest holds the copied schema to the
 // published file byte for byte, so the tests never validate against a copy
@@ -439,7 +447,7 @@ func TestResultSchemaCopyMatchesItsDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != resultSchemaSHA256 {
-		t.Errorf("the copy's SHA-256 is %s, and result/v0.8 as published is %s", got, resultSchemaSHA256)
+		t.Errorf("the copy's SHA-256 is %s, and result/v0.9 as published is %s", got, resultSchemaSHA256)
 	}
 }
 
@@ -490,6 +498,10 @@ func TestResultV07StatesTheAgentsFigureApart(t *testing.T) {
 		{Unit: "USD", Quantity: "1", Source: "gh-aw"},
 		{Unit: "AIC", Quantity: "1", Source: "another-agent"},
 		{Unit: "AIC", Quantity: "1e3", Source: "gh-aw"},
+		{Unit: "AIC", Quantity: "1", Source: "opencode"},
+		{Unit: "USD", Quantity: "1", Source: "copilot"},
+		{Unit: "nano-AIU", Quantity: "1", Source: "gh-aw"},
+		{Unit: "USD", Quantity: "-1", Source: "opencode"},
 	} {
 		plain.AgentStated = &unknown
 		if dropped, err := Result(plain); err != nil || dropped != without {
@@ -506,7 +518,7 @@ func TestParseResultReadsAV06ObjectAsItWasWritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	older := strings.Replace(strings.Replace(current, ",\n  \"agent_stated\": null,\n  \"recorded\": null", "", 1), `"costroid.result/0.8"`, `"costroid.result/0.6"`, 1)
+	older := strings.Replace(strings.Replace(current, ",\n  \"agent_stated\": null,\n  \"recorded\": null", "", 1), `"costroid.result/0.9"`, `"costroid.result/0.6"`, 1)
 	if older == current || strings.Contains(older, "agent_stated") {
 		t.Fatalf("no 0.6 object was made:\n%s", older)
 	}
@@ -518,7 +530,7 @@ func TestParseResultReadsAV06ObjectAsItWasWritten(t *testing.T) {
 	if err != nil || again != older {
 		t.Errorf("written again as\n%s\nwant\n%s (%v)", again, older, err)
 	}
-	if _, err := ParseResult(fenced(strings.Replace(strings.Replace(current, ",\n  \"recorded\": null", "", 1), `"costroid.result/0.8"`, `"costroid.result/0.6"`, 1))); err == nil {
+	if _, err := ParseResult(fenced(strings.Replace(strings.Replace(current, ",\n  \"recorded\": null", "", 1), `"costroid.result/0.9"`, `"costroid.result/0.6"`, 1))); err == nil {
 		t.Error("a 0.6 object holding agent_stated was read")
 	}
 }
@@ -532,7 +544,7 @@ func TestParseResultReadsAV07ObjectAsItWasWritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	older := strings.Replace(strings.Replace(current, ",\n  \"recorded\": null", "", 1), `"costroid.result/0.8"`, `"costroid.result/0.7"`, 1)
+	older := strings.Replace(strings.Replace(current, ",\n  \"recorded\": null", "", 1), `"costroid.result/0.9"`, `"costroid.result/0.7"`, 1)
 	if older == current || strings.Contains(older, "recorded") {
 		t.Fatalf("no 0.7 object was made:\n%s", older)
 	}
@@ -544,8 +556,145 @@ func TestParseResultReadsAV07ObjectAsItWasWritten(t *testing.T) {
 	if err != nil || again != older {
 		t.Errorf("written again as\n%s\nwant\n%s (%v)", again, older, err)
 	}
-	_, err = ParseResult(fenced(strings.Replace(current, `"costroid.result/0.8"`, `"costroid.result/0.7"`, 1)))
+	_, err = ParseResult(fenced(strings.Replace(current, `"costroid.result/0.9"`, `"costroid.result/0.7"`, 1)))
 	if err == nil || !strings.Contains(err.Error(), "the field recorded, which only costroid.result/0.8 defines") {
 		t.Errorf("a 0.7 object holding recorded was read: %v", err)
+	}
+}
+
+// TestStatedFiguresNeverJoinTheCost states each agent's own figure beside
+// the same report: gh-aw's AI credits, OpenCode's own price in USD and
+// Copilot CLI's nano-AI units. Each changes the result object's agent_stated
+// and adds one line to the check and the comment, and nothing else: the
+// figures, the cap, the pull request's total and the verdict read the same
+// with it and without it, OpenCode's USD included.
+func TestStatedFiguresNeverJoinTheCost(t *testing.T) {
+	plain := statedInput(t)
+	plain.AgentStated = nil
+	plain.Verdict = goldenVerdict(t, underBudget, policy.Unverified, insidePeriod)
+	without := renderAll(t, plain)
+	for _, stated := range []struct {
+		figure adapter.Stated
+		object string
+		line   string
+	}{
+		{
+			adapter.Stated{Unit: "AIC", Quantity: "7.47", Source: "gh-aw"},
+			`{"unit":"AIC","quantity":"7.47","source":"gh-aw"}`,
+			"gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits.",
+		},
+		{
+			adapter.Stated{Unit: "USD", Quantity: "0.00153317", Source: "opencode"},
+			`{"unit":"USD","quantity":"0.00153317","source":"opencode"}`,
+			"OpenCode stated USD 0.00153317 for this run by its own prices, which Costroid never adds to its own figures.",
+		},
+		{
+			adapter.Stated{Unit: "nano-AIU", Quantity: "0", Source: "copilot"},
+			`{"unit":"nano-AIU","quantity":"0","source":"copilot"}`,
+			"Copilot CLI stated 0 nano-AI units for this run, which Costroid never converts to dollars.",
+		},
+	} {
+		t.Run(stated.figure.Source, func(t *testing.T) {
+			input := plain
+			input.AgentStated = &stated.figure
+			with := renderAll(t, input)
+			if !strings.Contains(with.object, `"agent_stated":`+stated.object) {
+				t.Fatalf("the object does not state %s:\n%s", stated.object, with.object)
+			}
+			if got := strings.Replace(with.object, `"agent_stated":`+stated.object, `"agent_stated":null`, 1); got != without.object {
+				t.Errorf("the figure changed the object beyond agent_stated:\n%s\n%s", got, without.object)
+			}
+			for name, pair := range map[string][2]string{"comment": {with.comment, without.comment}, "check": {with.check, without.check}} {
+				compact := strings.Replace(pair[0], indented(t, stated.object), "null", 1)
+				if strings.Count(compact, stated.line) != 1 || strings.Replace(compact, stated.line+"\n\n", "", 1) != pair[1] {
+					t.Errorf("the %s changed beyond its line and the object:\n%s", name, pair[0])
+				}
+			}
+			if with.summary != without.summary {
+				t.Errorf("the job summary changed:\n%s", with.summary)
+			}
+			var block Block
+			if err := json.Unmarshal([]byte(with.object), &block); err != nil {
+				t.Fatal(err)
+			}
+			if block.Cap == nil || block.Cap.Cost == nil || *block.Cap.Cost != "0.001619725" || block.Lifetime.Figures[1].ListCost != "0.003619725" || block.Policy.Results[0].CostUSD != "0.001619725" {
+				t.Errorf("cap %+v, lifetime %+v, verdict %+v", block.Cap, block.Lifetime, block.Policy.Results)
+			}
+		})
+	}
+}
+
+// rendering is what a report writes for one input, its object compacted.
+type rendering struct {
+	object, comment, check, summary string
+}
+
+func renderAll(t *testing.T, input Input) rendering {
+	t.Helper()
+	object, err := Result(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(object)); err != nil {
+		t.Fatal(err)
+	}
+	body, err := Comment(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check, err := Check(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := Summary(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rendering{object: compact.String(), comment: body, check: check.Summary + check.Text, summary: summary}
+}
+
+// indented is a compact object as the result object lays it out under
+// agent_stated.
+func indented(t *testing.T, compact string) string {
+	t.Helper()
+	var out bytes.Buffer
+	if err := json.Indent(&out, []byte(compact), "  ", "  "); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+// TestParseResultReadsAV08ObjectAsItWasWritten reads an object a release that
+// wrote result/0.8 posted, gh-aw's credits in it, and writes it again byte
+// for byte. A 0.8 object that states OpenCode's or Copilot CLI's figure was
+// not written by such a release, so it is refused.
+func TestParseResultReadsAV08ObjectAsItWasWritten(t *testing.T) {
+	current, err := Result(statedInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := strings.Replace(current, `"costroid.result/0.9"`, `"costroid.result/0.8"`, 1)
+	if older == current {
+		t.Fatalf("no 0.8 object was made:\n%s", older)
+	}
+	block, err := ParseResult(fenced(older))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := block.encode()
+	if err != nil || again != older {
+		t.Errorf("written again as\n%s\nwant\n%s (%v)", again, older, err)
+	}
+	for _, source := range []string{"opencode", "copilot"} {
+		unit := map[string]string{"opencode": "USD", "copilot": "nano-AIU"}[source]
+		stated := strings.Replace(strings.Replace(older, `"unit": "AIC"`, `"unit": "`+unit+`"`, 1), `"source": "gh-aw"`, `"source": "`+source+`"`, 1)
+		_, err := ParseResult(fenced(stated))
+		if err == nil || !strings.Contains(err.Error(), "the agent_stated source "+source+", which only costroid.result/0.9 defines") {
+			t.Errorf("a 0.8 object stating %s's figure was read: %v", source, err)
+		}
+		if _, err := ParseResult(fenced(strings.Replace(stated, `"costroid.result/0.8"`, `"costroid.result/0.9"`, 1))); err != nil {
+			t.Errorf("a 0.9 object stating %s's figure was refused: %v", source, err)
+		}
 	}
 }

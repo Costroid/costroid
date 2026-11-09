@@ -41,7 +41,7 @@ Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",

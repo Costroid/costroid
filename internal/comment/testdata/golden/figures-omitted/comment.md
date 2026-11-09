@@ -225,7 +225,7 @@ Agents: `codex`. Models: `gpt-5.5`. 23 rows, catalog `0.1.0`.
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",

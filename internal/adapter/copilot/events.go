@@ -499,17 +499,18 @@ func basis(records []usageRecord, keyed bool) (focus.CostBasis, []string) {
 }
 
 // stated is Copilot's own figure for the run and the sentence that states
-// it. totalNanoAiu is AgentStated as Copilot wrote it; each model's
-// requests.cost is named beside it. A figure Copilot wrote as 0 is stated
-// as 0, and one it left out is said to be absent.
+// it. totalNanoAiu is AgentStated as Copilot wrote it, every digit kept; each
+// model's requests.cost is named beside it. A figure Copilot wrote as 0 is
+// stated as 0, and one it left out is said to be absent.
 func stated(totals shutdown, records []usageRecord) (*adapter.Stated, []string) {
 	var figure *adapter.Stated
 	nano := "no totalNanoAiu"
 	if totals.TotalNanoAiu != nil {
-		if quantity, err := decimal.ParseNumber(totals.TotalNanoAiu.String()); err == nil && quantity.Sign() >= 0 {
-			figure = &adapter.Stated{Unit: UnitNanoAIU, Quantity: quantity.String(), Source: Name}
+		written := totals.TotalNanoAiu.String()
+		if quantity, err := decimal.ParseNumber(written); err == nil && quantity.Sign() >= 0 {
+			figure = &adapter.Stated{Unit: UnitNanoAIU, Quantity: asWritten(written, quantity), Source: Name}
 		}
-		nano = "a totalNanoAiu of " + totals.TotalNanoAiu.String() + " nano-AI units"
+		nano = "a totalNanoAiu of " + written + " nano-AI units"
 	}
 	var costs []string
 	for _, model := range slices.Sorted(maps.Keys(totals.ModelMetrics)) {
@@ -529,6 +530,16 @@ func stated(totals shutdown, records []usageRecord) (*adapter.Stated, []string) 
 		sentence += ". Every request's aiCreditsStatus reads unavailable, which Copilot documents as no amount reported, not a zero cost"
 	}
 	return figure, []string{sentence}
+}
+
+// asWritten is a figure as Copilot wrote it when it wrote a plain decimal,
+// trailing zeros and all, and otherwise, as with an exponent, the same value
+// written out in full.
+func asWritten(written string, quantity decimal.Decimal) string {
+	if _, err := decimal.Parse(written); err == nil {
+		return written
+	}
+	return quantity.String()
 }
 
 func allUnavailable(records []usageRecord) bool {

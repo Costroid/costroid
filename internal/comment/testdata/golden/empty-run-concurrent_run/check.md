@@ -14,7 +14,7 @@ This report shows no figures. Reason `concurrent_run`: another costroid run hold
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "empty_rows_file",

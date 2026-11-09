@@ -209,7 +209,7 @@ func TestRunNamesTheArgumentsItLacks(t *testing.T) {
 
 // TestAnIngestedAgentErrorKeepsItsObjectValid reads the execution file of a
 // claude-code-action run whose key was refused. The run names its reason and
-// class on stderr, and the object it leaves holds to result/v0.8: a reason
+// class on stderr, and the object it leaves holds to result/v0.9: a reason
 // whose class the object cannot carry is left out, never shown without it.
 func TestAnIngestedAgentErrorKeepsItsObjectValid(t *testing.T) {
 	clearCI(t)

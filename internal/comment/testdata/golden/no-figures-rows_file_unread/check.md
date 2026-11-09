@@ -14,7 +14,7 @@ The rows file could not be read, so this report shows no figures.
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "rows_unreadable",
   "reason": "rows_file_unread",

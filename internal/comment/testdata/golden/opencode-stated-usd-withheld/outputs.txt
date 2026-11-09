@@ -1,0 +1,12 @@
+cost=0.00153317
+currency=USD
+cost_basis=measured
+tokens_input_uncached=6
+tokens_cache_read=10532
+tokens_cache_write=10806
+tokens_output=153
+enforcement_grade=wrapper-watchdog
+catalog_version=0.3.0
+check_run_id=16873409921
+conclusion=neutral
+result={"schema":"costroid.result/0.9","conclusion":"neutral","state":"reported","agent_error":null,"agent_skipped":null,"head_sha":"9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d","ci_run":null,"rows_sha256":null,"rows_file_sha256":null,"amounts":"shown","rows":7,"run_identity":"unverified","figures":[{"currency":"USD","list_cost":"0.00153317","cost_basis":"measured","attribution_grade":"unattributed","enforcement_grade":"wrapper-watchdog","rows":7,"fallback_rows":0,"tokens":{"cache_read":"10532","cache_write_5m":"10806","input_uncached":"6","output":"153"}}],"figures_omitted":0,"cap":null,"data":{"agents":["opencode"],"models":["claude-haiku-5-5"],"models_omitted":0,"catalog_versions":["0.3.0"],"fallback_models":[],"fallback_models_omitted":0,"fallback_price_ids":[],"fallback_price_ids_omitted":0},"lifetime":null,"agent_stated":{"unit":"USD","quantity":"0.00153317","source":"opencode"},"recorded":null}

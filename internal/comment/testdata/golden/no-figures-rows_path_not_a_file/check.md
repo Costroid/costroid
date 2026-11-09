@@ -14,7 +14,7 @@ The rows path is not a regular file, so this report did not read it and shows no
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "rows_unreadable",
   "reason": "rows_path_not_a_file",

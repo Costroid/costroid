@@ -14,7 +14,7 @@ The agent did not run on this pull request: the workflow skipped its job, as the
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "agent_skipped",

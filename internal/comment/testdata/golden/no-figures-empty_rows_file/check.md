@@ -14,7 +14,7 @@ The rows file holds no rows, so this report shows no figures. Either the agent p
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "empty_rows_file",

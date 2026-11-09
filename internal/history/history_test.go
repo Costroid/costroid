@@ -65,7 +65,7 @@ func checkText(t *testing.T, figures ...comment.Figure) string {
 
 // withSchema rewrites the object's schema, as another release wrote it.
 func withSchema(text, schema string) string {
-	return strings.Replace(text, `"schema": "costroid.result/0.8"`, `"schema": "`+schema+`"`, 1)
+	return strings.Replace(text, `"schema": "costroid.result/0.9"`, `"schema": "`+schema+`"`, 1)
 }
 
 // withDigest writes a rows digest into the object.
@@ -302,23 +302,30 @@ func TestLifetimeLeavesOutARecordedRunsReport(t *testing.T) {
 	}
 }
 
-// TestLifetimeNeverAddsTheAgentsOwnFigure reads a result/v0.8 object that
-// states gh-aw's AI credits and adds up its USD figure alone.
+// TestLifetimeNeverAddsTheAgentsOwnFigure reads a result/v0.9 object that
+// states an agent's own figure and adds up its USD figure alone, OpenCode's
+// own price in USD included.
 func TestLifetimeNeverAddsTheAgentsOwnFigure(t *testing.T) {
 	text := checkText(t, figure("USD", "measured", "0.1"))
-	stated := strings.Replace(text, `"agent_stated": null`, `"agent_stated": {"unit": "AIC", "quantity": "1500", "source": "gh-aw"}`, 1)
-	if stated == text {
-		t.Fatal("the object states no agent_stated")
+	for _, own := range []string{
+		`{"unit": "AIC", "quantity": "1500", "source": "gh-aw"}`,
+		`{"unit": "USD", "quantity": "1500", "source": "opencode"}`,
+		`{"unit": "nano-AIU", "quantity": "1500", "source": "copilot"}`,
+	} {
+		stated := strings.Replace(text, `"agent_stated": null`, `"agent_stated": `+own, 1)
+		if stated == text {
+			t.Fatal("the object states no agent_stated")
+		}
+		report, err := history.Parse([]byte(strings.TrimSuffix(strings.TrimPrefix(stated, "```json\n"), "\n```")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		figures, err := history.Total([]history.Report{report})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertFigures(t, figures, want{"USD", "measured", "0.1", 1, true})
 	}
-	report, err := history.Parse([]byte(strings.TrimSuffix(strings.TrimPrefix(stated, "```json\n"), "\n```")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	figures, err := history.Total([]history.Report{report})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertFigures(t, figures, want{"USD", "measured", "0.1", 1, true})
 }
 
 func TestLifetimeNeverSumsCurrencies(t *testing.T) {
@@ -354,7 +361,7 @@ func TestLifetimeLeavesOutWhatItCannotAddUp(t *testing.T) {
 	posted(stub, secondCommit, text)
 	for _, unread := range []string{
 		withSchema(text, "costroid.result/0.2"),
-		withSchema(text, "costroid.result/0.9"),
+		withSchema(text, "costroid.result/0.10"),
 		strings.Replace(text, `"amounts": "shown"`, `"amounts": "withheld"`, 1),
 		strings.Replace(text, `"figures_omitted": 0`, `"figures_omitted": 1`, 1),
 		strings.Replace(text, `"currency": "USD"`, `"currency": "usd"`, 1),
