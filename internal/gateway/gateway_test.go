@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -401,13 +403,72 @@ func TestSpendWaitsWhileTheGatewayStillStoresIt(t *testing.T) {
 	}
 }
 
-func TestSpendStopsOnAFigureThatHasSettledElsewhere(t *testing.T) {
-	server := spendServer(t, "0.0175")
-	session := Session{Client: NewClient(server.URL), Key: "sk-x", Poll: time.Millisecond, Settle: time.Minute, Stable: 20 * time.Millisecond}
-	start := time.Now()
-	spend, err := session.Spend(context.Background(), decimal.MustParse("0.018"))
-	if err != nil || spend.String() != "0.0175" || time.Since(start) > 10*time.Second {
-		t.Fatalf("spend %s, %v, after %s", spend, err, time.Since(start))
+// write is a figure the gateway's store holds from a time after the first read.
+type write struct {
+	at    time.Duration
+	spend string
+}
+
+// writtenSpendServer answers each read with the last write made by then, as
+// LiteLLM's store answers while its batches land after the agent has ended.
+func writtenSpendServer(t *testing.T, writes ...write) *httptest.Server {
+	t.Helper()
+	var first sync.Once
+	var start time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		first.Do(func() { start = time.Now() })
+		spend := writes[0].spend
+		for _, written := range writes {
+			if time.Since(start) >= written.at {
+				spend = written.spend
+			}
+		}
+		w.Write([]byte(`{"info":{"spend":` + spend + `}}`))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// TestCloseWaitsForTheGatewaysSpendToSettle reads a store that holds a figure
+// for longer than Stable before the batch with the run's spend lands, as
+// LiteLLM's does for up to 15 seconds. A figure apart from the rows' is
+// answered only once a write has moved it and it has held, or once the whole
+// bound has passed, and one still moving then is answered as unsettled.
+func TestCloseWaitsForTheGatewaysSpendToSettle(t *testing.T) {
+	const settle, stable = time.Second, 100 * time.Millisecond
+	want := decimal.MustParse("0.018")
+	rising := make([]write, 0, 40)
+	for i := range 40 {
+		rising = append(rising, write{at: time.Duration(i) * 50 * time.Millisecond, spend: fmt.Sprintf("0.%03d", 20+i)})
+	}
+	for _, c := range []struct {
+		name     string
+		writes   []write
+		spend    string
+		settled  bool
+		earliest time.Duration
+		latest   time.Duration
+	}{
+		{"the rows' figure lands after a quiet spell", []write{{0, "0"}, {300 * time.Millisecond, "0.018"}}, "0.018", true, 300 * time.Millisecond, settle},
+		{"a figure apart lands and holds", []write{{0, "0.006"}, {300 * time.Millisecond, "0.0175"}}, "0.0175", true, 300*time.Millisecond + stable, settle},
+		{"a figure that never moves is read for the whole bound", []write{{0, "0.0175"}}, "0.0175", true, settle, 2 * settle},
+		{"a figure still moving at the bound", rising, "", false, settle, 2 * settle},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			server := writtenSpendServer(t, c.writes...)
+			session := Session{Client: NewClient(server.URL), Key: "sk-x", Poll: 5 * time.Millisecond, Settle: settle, Stable: stable}
+			start := time.Now()
+			spend, err := session.Spend(context.Background(), want)
+			took := time.Since(start)
+			switch {
+			case c.settled && (err != nil || spend.String() != c.spend):
+				t.Errorf("read USD %s, %v; want the settled USD %s", spend, err, c.spend)
+			case !c.settled && (err == nil || !strings.Contains(err.Error(), "may not have settled")):
+				t.Errorf("read USD %s, %v; want an error saying the figure may not have settled", spend, err)
+			case took < c.earliest || took > c.latest:
+				t.Errorf("answered after %s, want between %s and %s", took, c.earliest, c.latest)
+			}
+		})
 	}
 }
 

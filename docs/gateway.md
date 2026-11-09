@@ -102,13 +102,19 @@ When `COSTROID_INGEST_URL` is set, `costroid gateway mint` posts the key's id, t
 
 The rows' token counts come from the agent's job, so the ledger lets no budget pass on them alone. The gateway counts what passed through it, so its figure can stand behind the rows.
 
-When `COSTROID_INGEST_URL` is set, `costroid gateway close` reads the run's key by its alias from `GET /key/list` with `return_full_object=true`, before it deletes the key. It reads the key's id and its `spend`. LiteLLM writes spend to its store in batches, so close reads the figure again every 2 seconds until it has not moved for 12 seconds, for at most 30 seconds. After the delete, it posts the key's id, the repository, the run, the attempt and the figure in USD to the ledger's `/v1/credentials/{key}/spend`, under the closing job's OIDC token, for `COSTROID_INGEST_AUDIENCE`. A figure with more than 12 fractional digits is rounded up to 12. The recipe gives the closing job `id-token: write` and both variables, as it gives the minting job, and `costroid lint-recipes` allows `id-token: write` on a job that runs close or mint only when the job names an environment. [`docs/serve.md`](serve.md#the-gateways-count) says what the ledger checks.
+When `COSTROID_INGEST_URL` is set, `costroid gateway close` reads the run's key by its alias from `GET /key/list` with `return_full_object=true`, before it deletes the key. It reads the key's id and its `spend`. LiteLLM writes spend to its store in batches, every 10 to 15 seconds ([below](#the-gateway-holds-the-budget-in-its-own-prices)), so close reads the figure again every 2 seconds for up to 30 seconds. The figure counts as settled once a batch has moved it during the wait and it has then held for 12 seconds, or once it has not moved for the whole 30 seconds. A figure still moving when the 30 seconds end is attested as the last one read, and close warns that it may not have settled. The attestation has no field that says so, and the ledger takes the figure as the gateway's count:
+
+```text
+costroid: warning: gateway: the key's spend still moved in the last 12s of a 30s wait, so its last figure, USD <gateway's figure>, may not have settled. The ledger's spend attestation has no field to say so, and the ledger takes this figure as the gateway's count
+```
+
+After the delete, close posts the key's id, the repository, the run, the attempt and the figure in USD to the ledger's `/v1/credentials/{key}/spend`, under the closing job's OIDC token, for `COSTROID_INGEST_AUDIENCE`. A figure with more than 12 fractional digits is rounded up to 12. The recipe gives the closing job `id-token: write` and both variables, as it gives the minting job, and `costroid lint-recipes` allows `id-token: write` on a job that runs close or mint only when the job names an environment. [`docs/serve.md`](serve.md#the-gateways-count) says what the ledger checks.
 
 Close deletes the key even when it cannot read the figure, and then fails the step: the run's budget cannot pass on the gateway's count. A ledger that refuses the figure fails the step too. Without `COSTROID_INGEST_URL`, close reads nothing and attests nothing.
 
 `GET /key/list` sits in the same MIT-licensed `key_management_endpoints.py` as the routes above and checks for no Enterprise licence. Read on 2026-11-07 in the `ghcr.io/berriai/litellm:v1.108.1` image the e2e journey pins.
 
-Two runs of the e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob` were logged in full on 2026-11-07, against LiteLLM v1.108.1. In both, the gateway refused a request with "Current cost: 0.012", and close attested USD 0.012, the rows' total. In one of the two, the admin's `GET /key/info` for the key, read after the run and before close, answered a `spend` of `0`. No reason was traced. The wait is there for that.
+Two runs of the e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob` were logged in full on 2026-11-07, against LiteLLM v1.108.1. In both, the gateway refused a request with "Current cost: 0.012", and close attested USD 0.012, the rows' total. In one of the two, the admin's `GET /key/info` for the key, read after the run and before close, answered a `spend` of `0`: the batch that writes spend to LiteLLM's store, described [below](#the-gateway-holds-the-budget-in-its-own-prices), had not landed yet. The wait is there for that.
 
 The environment is what makes an attestation worth trusting. Any job that references `costroid-gateway` can attest, and on a pull request from a branch of this repository the workflow file is the pull request's own. The protection rules you set on the environment decide which runs reach it. With required reviewers, a person you named approves each run before it can mint or attest. Without a rule, anyone who can push a branch can attest a key for their own run.
 
@@ -136,11 +142,21 @@ costroid: warning: the rows, priced at the catalog, come to USD <rows' total> ag
 
 LiteLLM checks `max_budget` against its own count of the key's spend, priced by its own model prices. The rows are priced by the Costroid catalog. When the gateway prices a model lower than the catalog, a key lets through more catalog-priced spend than the run's budget.
 
-When the agent ends, `costroid run` reads the key's spend from `/key/info`. It waits up to 30 seconds for the figure to settle, because LiteLLM writes spend to its store every 10 seconds by default (`PROXY_BATCH_WRITE_AT` in [`litellm/constants.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/constants.py)). When the gateway's figure differs from the rows' total, the run warns and names both decimal strings:
+When the agent ends, `costroid run` reads the key's spend from `/key/info`, which reads LiteLLM's store. LiteLLM v1.108.1 queues a request's spend after it answers and writes the queue to its store in a batch every 10 to 15 seconds by default: `PROXY_BATCH_WRITE_AT`, 10 seconds, in [`litellm/constants.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/constants.py), plus a random 0 to 5 seconds drawn at startup, in `initialize_scheduled_background_jobs` in [`litellm/proxy/proxy_server.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/proxy/proxy_server.py). Until that batch lands, `/key/info` answers the figure from before the run's last requests: 0 when none of the key's spend has been written yet.
+
+So the run reads the figure every 2 seconds for up to 30 seconds, two batches' time. It stops as soon as the figure is the rows' total. A figure apart from the rows' total counts as settled once a batch has moved it during the wait and it has then held for 12 seconds, or once a figure that never moved has held for the whole 30 seconds. Then the run compares the two once. When the gateway's figure differs from the rows' total, the run warns and names both decimal strings:
 
 ```text
 costroid: warning: the gateway counted USD <gateway's figure> on the run's key, and the rows, priced at the catalog, come to USD <rows' total>. The gateway holds the budget in its own figure, and the rows keep theirs
 ```
+
+A figure still moving when the 30 seconds end is not compared. The run warns that it may not have settled, and sets nothing beside the rows:
+
+```text
+costroid: warning: the gateway's count of the key's spend could not be read, so it is not set beside the rows: gateway: the key's spend still moved in the last 12s of a 30s wait, so its last figure, USD <gateway's figure>, may not have settled
+```
+
+A gateway set to write its batches less often, with `proxy_batch_write_at` in `general_settings`, can hold a figure for longer than the wait, and the run then compares a figure that has not settled.
 
 LiteLLM sums spend in binary floating point, and its counter read `0.018000000000000002` for three requests of `0.006`. A float64 sum of n terms drifts by about n × 1.1 × 10⁻¹⁶ of the total. So the run reads the gateway's figure exactly, exponent forms such as `1.2e-05` included, and takes it as the rows' total when the two differ by at most 10⁻⁹ of the total. Past that, it warns and prints the gateway's figure as the decimal it read. The gateway's figure is never written to a row.
 
@@ -167,6 +183,8 @@ A provider's report never names a run's key. It names the key the gateway sends 
 ## When the gateway's store fails
 
 LiteLLM keeps spend in a database. With `allow_requests_on_db_unavailable: true` it keeps serving while the database is down: in the e2e journey, with its database stopped, LiteLLM v1.108.1 answered the next request with HTTP 200. `costroid run` asks the gateway's public `/health/readiness` before the agent starts, every two seconds while it runs, and after it ends. If any answer names a database that is not `connected`, or the gateway does not answer, the run's rows read `none`. An outage that starts and ends between two probes is not seen.
+
+LiteLLM serves a key in its cache without reading its store. It caches a key for `user_api_key_cache_ttl` seconds from the store read that loaded it, 60 by default, and a request that finds the key in the cache does not extend that: `in_memory_cache_ttl` and `user_api_key_cache_ttl` in [`litellm/proxy/proxy_server.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/proxy/proxy_server.py), `get_key_object` in [`litellm/proxy/auth/auth_checks.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/proxy/auth/auth_checks.py), and `set_cache` and `get_cache` in [`litellm/caching/in_memory_cache.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/caching/in_memory_cache.py), at v1.108.1. A key that has left the cache is read from the store. With the store down, that read lets the request through only when it fails with an error LiteLLM counts as a connection error. Any other store error, such as one raised while LiteLLM recreates its database client, answers HTTP 503: `handle_authentication_error` and `_as_proxy_exception` in [`litellm/proxy/auth/auth_exception_handler.py`](https://github.com/BerriAI/litellm/blob/v1.108.1/litellm/proxy/auth/auth_exception_handler.py). So fail-open is certain only for a key read within `user_api_key_cache_ttl` seconds before the request. A short lifetime sends more requests to the store during an outage, and some of them are refused. The e2e journey sets 600 seconds in [`e2e/testdata/litellm.yaml`](../e2e/testdata/litellm.yaml), longer than its store-down step.
 
 ## Keep the admin key and the sealing key behind an environment
 

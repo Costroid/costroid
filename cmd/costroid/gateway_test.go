@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -570,6 +572,77 @@ func TestCloseAttestsSpend(t *testing.T) {
 			t.Fatal("the key is still registered")
 		}
 	})
+}
+
+// TestCloseAttestsASettledSpend closes a key whose store holds 0 for longer
+// than Stable before the batch with the run's spend lands, as LiteLLM's does
+// for up to 15 seconds. Close attests the figure the batch wrote. A figure
+// still moving when the wait ends is attested as the last one read, with a
+// warning that names it and says it may not have settled.
+func TestCloseAttestsASettledSpend(t *testing.T) {
+	newGatewayJob(t)
+	w := newAttestWorld(t)
+	t.Setenv(ingestURLVariable, w.ledger.URL+"/ledger/v1/rows")
+	run := gateway.Binding{Repository: "github.com/acme/widgets", Run: gatewayRunID, Attempt: "1"}
+	for _, c := range []struct {
+		name    string
+		written func(since time.Duration, call int) string
+		want    string
+	}{
+		{"the batch lands after a quiet spell", func(since time.Duration, _ int) string {
+			if since < 300*time.Millisecond {
+				return "0"
+			}
+			return "0.018"
+		}, "0.018"},
+		{"a figure still moving when the wait ends", func(_ time.Duration, call int) string {
+			return fmt.Sprintf("0.%d1", call)
+		}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w.raw = nil
+			stub := gatewaytest.New(t, gatewayAdmin)
+			stub.Add(gatewaytest.Key{Key: "sk-a-run-key-of-sixteen-or-more", Alias: gatewayAlias})
+			var mu sync.Mutex
+			var start time.Time
+			written := map[string]bool{}
+			stub.BeforeList = func(call int) {
+				mu.Lock()
+				defer mu.Unlock()
+				if call == 1 {
+					start = time.Now()
+				}
+				figure := c.written(time.Since(start), call)
+				written[figure] = true
+				stub.SetSpend(gatewayAlias, figure)
+			}
+			counter := gateway.Counter{
+				Client: gateway.NewClient(stub.URL), AdminKey: gatewayAdmin, Run: run,
+				Poll: 5 * time.Millisecond, Stable: 100 * time.Millisecond, Settle: time.Second,
+			}
+			var stdout, stderr bytes.Buffer
+			if err := closeKey(context.Background(), counter, 0, w.ledger.Client(), &stdout, &stderr); err != nil {
+				t.Fatalf("%v: %s", err, stderr.String())
+			}
+			var body gateway.SpendAttestation
+			if err := json.Unmarshal(w.raw, &body); err != nil {
+				t.Fatalf("the ledger read no attestation: %v", err)
+			}
+			warned := strings.Contains(stderr.String(), "may not have settled")
+			if c.want != "" {
+				if body.Spend != c.want || warned {
+					t.Errorf("attested USD %s, want the settled USD %s, with no warning: %s", body.Spend, c.want, stderr.String())
+				}
+				return
+			}
+			mu.Lock()
+			read := written[body.Spend]
+			mu.Unlock()
+			if !read || !warned || !strings.Contains(stderr.String(), "its last figure, USD "+body.Spend+",") {
+				t.Errorf("attested USD %s, which the store wrote: %t; want it named in a warning that it may not have settled: %s", body.Spend, read, stderr.String())
+			}
+		})
+	}
 }
 
 func TestGatewayCloseRefusesWhatItCannotCloseSafely(t *testing.T) {

@@ -26,8 +26,9 @@ type Session struct {
 	// its spend settles.
 	Poll time.Duration
 	// Settle bounds the wait for the key's spend to reach the gateway's store,
-	// and Stable is how long an unchanged figure counts as settled. LiteLLM
-	// writes spend to its store in batches.
+	// and must outlast one of LiteLLM's batch writes. Stable is how long a
+	// figure that has moved must then hold to count as settled. settle says
+	// why.
 	Settle, Stable time.Duration
 }
 
@@ -89,37 +90,30 @@ func SameSpend(counted, total decimal.Decimal) bool {
 	return gap.Cmp(total.Mul(spendTolerance)) <= 0
 }
 
-// Spend reads what the gateway counted on the key, in its own prices. It waits
-// while the figure is not the same as want and is still moving, because the
-// gateway stores spend after the response.
+// Spend reads what the gateway counted on the key, in its own prices, once the
+// agent has ended and the figure has settled. It answers as soon as the figure
+// is the same as want, and otherwise waits as settle does. A figure still
+// moving when Settle passes is answered with an error wrapping ErrUnsettled.
 func (s Session) Spend(ctx context.Context, want decimal.Decimal) (decimal.Decimal, error) {
-	deadline := time.Now().Add(s.Settle)
-	var last decimal.Decimal
-	since := time.Now()
-	for {
-		info, err := s.Client.Info(ctx, s.Key, "")
-		if err != nil {
-			return decimal.Decimal{}, err
-		}
-		spend, err := decimal.ParseNumber(info.Spend.String())
-		if err != nil {
-			return decimal.Decimal{}, fmt.Errorf("gateway: the key's spend field reads %.40q, which is not a number", info.Spend.String())
-		}
-		if SameSpend(spend, want) {
-			return spend, nil
-		}
-		if spend.Cmp(last) != 0 {
-			last, since = spend, time.Now()
-		}
-		if time.Since(since) >= s.Stable || time.Now().After(deadline) {
-			return spend, nil
-		}
-		select {
-		case <-ctx.Done():
-			return spend, ctx.Err()
-		case <-time.After(s.Poll):
-		}
+	wait := settling{poll: s.Poll, stable: s.Stable, bound: s.Settle}
+	count, err := wait.settle(ctx, s.spend, func(count Count) bool { return SameSpend(count.Spend, want) })
+	if err != nil {
+		return decimal.Decimal{}, err
 	}
+	return count.Spend, nil
+}
+
+// spend reads the key's spend as the gateway's store holds it.
+func (s Session) spend(ctx context.Context) (Count, error) {
+	info, err := s.Client.Info(ctx, s.Key, "")
+	if err != nil {
+		return Count{}, err
+	}
+	spend, err := decimal.ParseNumber(info.Spend.String())
+	if err != nil {
+		return Count{}, fmt.Errorf("gateway: the key's spend field reads %.40q, which is not a number", info.Spend.String())
+	}
+	return Count{Spend: spend}, nil
 }
 
 // Inspect holds the key the gateway returned to what the run needs.
