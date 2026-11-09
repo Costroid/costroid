@@ -186,6 +186,8 @@ func AgentFor(argv []string) (adapter.Agent, error) {
 		return codex.Agent{}, nil
 	case "copilot":
 		return copilot.Agent{}, nil
+	case "opencode":
+		return opencode.Agent{}, nil
 	}
 	return nil, fmt.Errorf("run: no adapter for %q: costroid runs claude and codex", filepath.Base(argv[0]))
 }

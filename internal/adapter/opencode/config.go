@@ -288,3 +288,31 @@ func closesNext(rest string) bool {
 	}
 	return false
 }
+
+// oauthLogin says whether OpenCode's auth store holds an OAuth login for the
+// provider. OpenCode 1.19.4 reads the store from OPENCODE_AUTH_CONTENT when it
+// holds JSON, and otherwise from auth.json in its data directory
+// (packages/opencode/src/auth/index.ts). Only each entry's type is read; the
+// store's keys and tokens are never kept.
+func oauthLogin(provider string, env environment) bool {
+	data := []byte(env.getenv("OPENCODE_AUTH_CONTENT"))
+	if !json.Valid(data) {
+		base := env.getenv("XDG_DATA_HOME")
+		if base == "" {
+			base = filepath.Join(env.home, ".local", "share")
+		}
+		read, err := os.ReadFile(filepath.Join(base, "opencode", "auth.json"))
+		if err != nil {
+			return false
+		}
+		data = read
+	}
+	var store map[string]json.RawMessage
+	var entry struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(data, &store) != nil || json.Unmarshal(store[provider], &entry) != nil {
+		return false
+	}
+	return entry.Type == "oauth"
+}

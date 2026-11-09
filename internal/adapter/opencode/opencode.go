@@ -15,6 +15,8 @@ import (
 	"maps"
 	"math"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -75,8 +77,8 @@ func (Agent) Name() string {
 	return Name
 }
 
-// Plan adds --format json. It refuses a command that continues an earlier
-// session, and one whose model the catalog cannot price, since a run that
+// Plan adds --format json, and --title= when the command names no title. It
+// refuses a command whose model the catalog cannot price, since a run that
 // cannot be priced cannot be held to the budget.
 func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	subcommand := slices.Index(argv, "run")
@@ -90,15 +92,22 @@ func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	if _, err := resolveModel(args.model, localEnvironment()); err != nil {
 		return adapter.Plan{}, err
 	}
-	planned := slices.Clone(argv)
+	var added []string
 	if args.format == "" {
-		planned = slices.Insert(planned, subcommand+1, "--format", "json")
+		added = append(added, "--format", "json")
+	}
+	if !args.titled {
+		added = append(added, promptTitle)
 	}
 	return adapter.Plan{
-		Argv:        planned,
+		Argv:        slices.Insert(slices.Clone(argv), subcommand+1, added...),
 		Enforcement: adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog, Note: watchedNote, Watchdog: true},
 	}, nil
 }
+
+// promptTitle titles a new session from its prompt. OpenCode then sends no
+// request for a title, which its stream would not show.
+const promptTitle = "--title="
 
 // valueFlags are the run flags that take the next argument as their value.
 var valueFlags = []string{
@@ -107,14 +116,13 @@ var valueFlags = []string{
 	"-u", "--dir", "--port", "--variant", "--replay-limit",
 }
 
-// shortFlags is a group of one-letter flags, such as -cm.
-var shortFlags = regexp.MustCompile(`^-[A-Za-z]{2,}$`)
-
 // runArgs is what a run's arguments say that the plan and the reading need.
 type runArgs struct {
 	model  string
 	format string
 	titled bool
+	// promptTitled says the session is titled from its prompt.
+	promptTitled bool
 }
 
 // readArgs reads the arguments after run, up to "--". A value that starts
@@ -126,24 +134,17 @@ func readArgs(args []string) (runArgs, error) {
 		if arg == "--" {
 			break
 		}
-		if shortFlags.MatchString(arg) {
-			if strings.ContainsAny(arg, "cs") {
-				return runArgs{}, continued(arg)
-			}
-			continue
-		}
 		flag, value, inline := strings.Cut(arg, "=")
 		if !inline && slices.Contains(valueFlags, flag) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 			i++
 			value = args[i]
 		}
 		switch flag {
-		case "--continue", "-c", "--session", "-s":
-			return runArgs{}, continued(flag)
 		case "--model", "-m":
 			found.model = value
 		case "--title":
 			found.titled = true
+			found.promptTitled = value == ""
 		case "--format":
 			if value != "json" {
 				return runArgs{}, fmt.Errorf("opencode: --format %s hides the steps costroid reads; remove it", value)
@@ -154,11 +155,9 @@ func readArgs(args []string) (runArgs, error) {
 	return found, nil
 }
 
-func continued(flag string) error {
-	return fmt.Errorf("opencode: %s continues an earlier session, and costroid counts only a session the run starts; start a new session", flag)
-}
-
-// NewSession starts reading a run of the planned command.
+// NewSession starts reading a run of the planned command. It reads the
+// version from the command's own opencode, and the basis from the key the
+// provider runs on.
 func (Agent) NewSession(plan adapter.Plan) adapter.Session {
 	session := &Session{planned: plan.Enforcement, notify: make(chan struct{}, 1)}
 	subcommand := slices.Index(plan.Argv, "run")
@@ -171,7 +170,7 @@ func (Agent) NewSession(plan adapter.Plan) adapter.Session {
 		session.problem = err
 		return session
 	}
-	session.titled = args.titled
+	session.promptTitled = args.promptTitled
 	env := localEnvironment()
 	model, err := resolveModel(args.model, env)
 	if err != nil {
@@ -179,11 +178,39 @@ func (Agent) NewSession(plan adapter.Plan) adapter.Session {
 		return session
 	}
 	session.model = model
-	session.costBasis = focus.ListEquivalent
-	if env.getenv(providers[model.provider].keyVariable) != "" {
-		session.costBasis = focus.Measured
-	}
+	session.costBasis = costBasis(model.provider, env)
+	session.version = versionOf(plan.Argv[0])
 	return session
+}
+
+// costBasis is measured when the provider's key variable is set and
+// OpenCode's auth store holds no OAuth login for the provider, which OpenCode
+// would use in the key's place. Otherwise it is list-equivalent.
+func costBasis(provider string, env environment) focus.CostBasis {
+	if env.getenv(providers[provider].keyVariable) == "" || oauthLogin(provider, env) {
+		return focus.ListEquivalent
+	}
+	return focus.Measured
+}
+
+const versionTimeout = 10 * time.Second
+
+var versionPattern = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*`)
+
+// versionOf runs the command's own opencode with --version. A command that
+// starts OpenCode through a launcher, such as npx, has no version read,
+// because the launcher's own would answer.
+func versionOf(command string) string {
+	if filepath.Base(command) != Name {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, command, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return versionPattern.FindString(string(out))
 }
 
 // step is the part of a step_finish line this reader takes.
@@ -214,10 +241,11 @@ type line struct {
 // Session reads one OpenCode run. Feed and Tail run on separate goroutines,
 // so the lock covers everything below it.
 type Session struct {
-	planned   adapter.Enforcement
-	model     model
-	costBasis focus.CostBasis
-	titled    bool
+	planned      adapter.Enforcement
+	model        model
+	costBasis    focus.CostBasis
+	version      string
+	promptTitled bool
 	// problem is why the run cannot be read, found before it started.
 	problem error
 	// notify carries a signal to Tail each time a step settles.
@@ -227,7 +255,6 @@ type Session struct {
 	sessionID string
 	stepStart time.Time
 	stepOpen  bool
-	started   bool
 	steps     []adapter.Request
 	// unreadStep is why a step_finish line could not be taken. The line holds
 	// the run's figures, so the run's reading stops at Finish.
@@ -238,6 +265,9 @@ type Session struct {
 	// mismatched counts the steps whose total is not the sum of their parts.
 	mismatched int
 	tasks      int
+	// messages are the messages whose steps started in this run. A resumed
+	// session can print a tool part of an earlier message again.
+	messages   []string
 	skipped    int
 	otherIDs   int
 	agentError adapter.AgentError
@@ -271,20 +301,35 @@ func (s *Session) Feed(raw []byte, at time.Time) error {
 	when := timestamp(parsed.Timestamp, at)
 	switch kind {
 	case "step_start":
-		s.stepStart, s.stepOpen, s.started = when, true, true
+		s.stepStart, s.stepOpen = when, true
+		if message := messageOf(parsed.Part); message != "" {
+			s.messages = append(s.messages, message)
+		}
 	case "step_finish":
 		s.readStep(parsed.Part, when)
 	case "tool_use":
 		var tool struct {
-			Tool string `json:"tool"`
+			Tool      string `json:"tool"`
+			MessageID string `json:"messageID"`
 		}
-		if json.Unmarshal(parsed.Part, &tool) == nil && tool.Tool == taskTool {
+		if json.Unmarshal(parsed.Part, &tool) == nil && tool.Tool == taskTool && slices.Contains(s.messages, tool.MessageID) {
 			s.tasks++
 		}
 	case "error":
 		s.agentError = agentError(parsed.Error)
 	}
 	return nil
+}
+
+// messageOf is the message a part belongs to, or "" when it names none.
+func messageOf(part json.RawMessage) string {
+	var named struct {
+		MessageID string `json:"messageID"`
+	}
+	if json.Unmarshal(part, &named) != nil {
+		return ""
+	}
+	return named.MessageID
 }
 
 // jsonString reads a JSON string. Absent, null and any other value read as
@@ -449,12 +494,13 @@ func (s *Session) Finish() (adapter.Report, error) {
 		return adapter.Report{}, errors.New("opencode: the stream held no line that names a session. OpenCode did not start a session, or did not print its steps as JSON")
 	}
 	report := adapter.Report{
-		SessionID:   s.sessionID,
-		CostBasis:   s.costBasis,
-		CostSource:  costSource,
-		Requests:    slices.Clone(s.steps),
-		Enforcement: s.planned,
-		AgentError:  s.agentError,
+		SessionID:    s.sessionID,
+		AgentVersion: s.version,
+		CostBasis:    s.costBasis,
+		CostSource:   costSource,
+		Requests:     slices.Clone(s.steps),
+		Enforcement:  s.planned,
+		AgentError:   s.agentError,
 	}
 	if s.unstated == 0 && len(s.steps) > 0 {
 		report.AgentStated = &adapter.Stated{Unit: statedUnit, Quantity: s.stated.String(), Source: Name}
@@ -474,10 +520,6 @@ func (s *Session) reportUnrecorded(report *adapter.Report) {
 		report.Unrecorded++
 		report.Warnings = append(report.Warnings, "the run ended inside a step: OpenCode reports a step's tokens when it ends, so the step in flight is not counted and its tokens reach no row")
 	}
-	if s.started && !s.titled {
-		report.Unrecorded++
-		report.Warnings = append(report.Warnings, "OpenCode asked a model for the session's title in a request the stream does not report, so no row holds it; --title names the session and skips that request")
-	}
 	if s.tasks > 0 {
 		report.Unrecorded += s.tasks
 		report.Enforcement = adapter.Enforcement{Grade: adapter.GradeNone, Note: "none: the budget was not enforced: OpenCode's subagents spent outside the stream the watchdog reads"}
@@ -488,6 +530,9 @@ func (s *Session) reportUnrecorded(report *adapter.Report) {
 // notes are the warnings about how the run was read.
 func (s *Session) notes() []string {
 	var notes []string
+	if s.promptTitled {
+		notes = append(notes, "--title= titles the session from its prompt, so OpenCode sends no request for a title, which its stream would not show; costroid adds it when the command names no title")
+	}
 	if s.model.fromConfig {
 		notes = append(notes, fmt.Sprintf("the stream names no model, so every step reads %s/%s, the model in OpenCode's config; an agent's own model in that config would replace it, and --model names it for certain", s.model.provider, s.model.id))
 	}

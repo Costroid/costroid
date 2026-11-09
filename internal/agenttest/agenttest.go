@@ -11,7 +11,7 @@ import (
 
 // Names are the commands that start an agent, or start a package or script
 // that is one.
-var Names = []string{"bunx", "claude", "codex", "copilot", "node", "npx"}
+var Names = []string{"bunx", "claude", "codex", "copilot", "node", "npx", "opencode"}
 
 const (
 	// ExitCode is the status every stub exits with.

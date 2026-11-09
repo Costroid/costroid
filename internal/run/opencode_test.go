@@ -21,15 +21,16 @@ const (
 	openCodePause = 10 * time.Second
 )
 
-// fakeOpenCode writes a script that stands in for opencode run: it logs its
-// arguments, prints the recorded stream line by line, logs each step it
-// finishes and, with a pause, sleeps after each. It returns the script and its
-// log.
+// fakeOpenCode writes a script that stands in for opencode: it answers
+// --version with the recorded version, and for run it logs its arguments,
+// prints the recorded stream line by line, logs each step it finishes and,
+// with a pause, sleeps after each. It returns the script and its log.
 func fakeOpenCode(t *testing.T, pause time.Duration) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "steps")
 	script := `#!/bin/sh
+if [ "$1" = --version ]; then echo 1.19.4; exit 0; fi
 printf '%s\n' "$@" > "$FAKE_LOG.args"
 while IFS= read -r line; do
   printf '%s\n' "$line"
@@ -48,6 +49,8 @@ done < "$FAKE_STREAM"
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("OPENCODE_AUTH_CONTENT", "")
 	t.Chdir(t.TempDir())
 	return path, log
 }
@@ -104,14 +107,15 @@ func TestOpenCodeWatchdogStopsAtTheCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "run\n--format\njson\n--model\n" + openCodeModel + "\nwork\n"; string(args) != want {
+	if want := "run\n--format\njson\n--title=\n--model\n" + openCodeModel + "\nwork\n"; string(args) != want {
 		t.Errorf("the agent ran with %q, want %q", args, want)
 	}
 }
 
 func TestOpenCodeRecordedRunCostsWhatItStated(t *testing.T) {
 	agent, _ := fakeOpenCode(t, 0)
-	got := runAgentAs(t, "opencode", openCodeOptions([]string{agent}), "5")
+	// No --agent: the command's name picks the adapter.
+	got := runAgentAs(t, "", openCodeOptions([]string{agent}), "5")
 	if got.err != nil {
 		t.Fatal(got.err)
 	}
@@ -130,7 +134,7 @@ func TestOpenCodeRecordedRunCostsWhatItStated(t *testing.T) {
 		t.Errorf("%d rows, want 3 for the first step and 4 for the second", len(got.rows))
 	}
 	for _, row := range got.rows {
-		if tagOf(row, focus.TagAgent) != "opencode" || tagOf(row, focus.TagCostBasis) != "measured" || tagOf(row, focus.TagModel) != "claude-haiku-5-5" {
+		if tagOf(row, focus.TagAgent) != "opencode" || tagOf(row, focus.TagCostBasis) != "measured" || tagOf(row, focus.TagModel) != "claude-haiku-5-5" || tagOf(row, focus.TagAgentVersion) != "1.19.4" {
 			t.Errorf("tags %v", row["Tags"])
 		}
 	}

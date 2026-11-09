@@ -30,7 +30,8 @@ func isolate(t *testing.T) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	for _, name := range []string{"OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_DISABLE_PROJECT_CONFIG", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"} {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	for _, name := range []string{"OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_DISABLE_PROJECT_CONFIG", "OPENCODE_AUTH_CONTENT", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"} {
 		t.Setenv(name, "")
 	}
 	dir := t.TempDir()
@@ -125,8 +126,8 @@ func TestOpenCodeStepFinishRows(t *testing.T) {
 	if stated := report.AgentStated; stated == nil || *stated != (adapter.Stated{Unit: "USD", Quantity: "0.00153317", Source: Name}) {
 		t.Errorf("stated %+v, want OpenCode's two costs added, 0.0013544 and 0.00017877", stated)
 	}
-	if report.Unrecorded != 1 || len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "title") {
-		t.Errorf("unrecorded %d, warnings %q: the title request is the one the stream does not report", report.Unrecorded, report.Warnings)
+	if report.Unrecorded != 0 || len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "--title= titles the session") {
+		t.Errorf("unrecorded %d, warnings %q: the plan titled the session, so no request is missing", report.Unrecorded, report.Warnings)
 	}
 
 	t.Run("reasoning is output, and an openai write takes 30 minutes", func(t *testing.T) {
@@ -168,10 +169,10 @@ func TestOpenCodeStepFinishRows(t *testing.T) {
 
 	t.Run("subagents spend outside the stream", func(t *testing.T) {
 		s := session(t, "opencode", "run", "-m", recordedModel, "--title", "review", "work")
-		feed(t, s, `{"type":"step_start","sessionID":"ses_a","part":{}}
-{"type":"tool_use","sessionID":"ses_a","part":{"tool":"task","state":{"status":"completed"}}}
-{"type":"step_finish","sessionID":"ses_a","part":{"id":"prt_b","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.000006}}
-{"type":"step_start","sessionID":"ses_a","part":{}}`)
+		feed(t, s, `{"type":"step_start","sessionID":"ses_a","part":{"messageID":"msg_a"}}
+{"type":"tool_use","sessionID":"ses_a","part":{"tool":"task","messageID":"msg_a","state":{"status":"completed"}}}
+{"type":"step_finish","sessionID":"ses_a","part":{"id":"prt_b","messageID":"msg_a","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.000006}}
+{"type":"step_start","sessionID":"ses_a","part":{"messageID":"msg_b"}}`)
 		report, err := s.Finish()
 		if err != nil {
 			t.Fatal(err)
@@ -182,43 +183,38 @@ func TestOpenCodeStepFinishRows(t *testing.T) {
 	})
 }
 
-func TestOpenCodeRefusesContinueAndSession(t *testing.T) {
+// A continued session prints only the steps of this run: OpenCode subscribes
+// to the session's events after the run starts. A tool part of an earlier
+// message that OpenCode prints again, as pruning does, is not this run's.
+func TestOpenCodeContinuesASession(t *testing.T) {
 	isolate(t)
 	for _, args := range [][]string{
 		{"--continue"},
 		{"-c"},
-		{"--continue=true"},
 		{"--session", "ses_earlier"},
 		{"-s", "ses_earlier"},
-		{"--session=ses_earlier"},
-		{"--model", recordedModel, "-cs"},
-		{"--title", "-c", "work"},
+		{"--session=ses_earlier", "--fork"},
 	} {
 		argv := slices.Concat([]string{"opencode", "run", "--model", recordedModel}, args, []string{"work"})
-		if _, err := (Agent{}).Plan(argv, budget); err == nil || !strings.Contains(err.Error(), "continues an earlier session") {
-			t.Errorf("%q: %v", args, err)
-		}
-	}
-	for _, args := range [][]string{
-		{"work", "--", "--continue"},
-		{"say --continue"},
-		{"--fork=false", "work"},
-	} {
-		argv := slices.Concat([]string{"opencode", "run", "--model", recordedModel}, args)
 		if _, err := (Agent{}).Plan(argv, budget); err != nil {
 			t.Errorf("%q: %v", args, err)
 		}
 	}
-
-	plan, err := Agent{}.Plan([]string{"opencode", "run", "-m", recordedModel, "work"}, budget)
+	s := session(t, "opencode", "run", "--continue", "-m", recordedModel, "work")
+	feed(t, s, `{"type":"tool_use","sessionID":"ses_a","part":{"tool":"task","messageID":"msg_earlier","state":{"status":"completed"}}}
+{"type":"step_start","sessionID":"ses_a","part":{"messageID":"msg_now"}}
+{"type":"step_finish","sessionID":"ses_a","part":{"id":"prt_b","messageID":"msg_now","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.000006}}`)
+	report, err := s.Finish()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"opencode", "run", "--format", "json", "-m", recordedModel, "work"}; !slices.Equal(plan.Argv, want) {
-		t.Errorf("planned %q, want %q", plan.Argv, want)
+	if len(report.Requests) != 1 || report.Unrecorded != 0 || report.Enforcement.Grade != adapter.GradeWrapperWatchdog {
+		t.Errorf("%d requests, unrecorded %d, grade %s: an earlier message's subagent is not this run's", len(report.Requests), report.Unrecorded, report.Enforcement.Grade)
 	}
-	if plan, err := (Agent{}).Plan([]string{"opencode", "run", "--format=json", "-m", recordedModel, "work"}, budget); err != nil || slices.Index(plan.Argv[2:], "json") >= 0 {
-		t.Errorf("an explicit --format json: %q, %v", plan.Argv, err)
+
+	explicit := []string{"opencode", "run", "--format=json", "--title", "x", "-m", recordedModel, "work"}
+	if plan, err := (Agent{}).Plan(explicit, budget); err != nil || !slices.Equal(plan.Argv, explicit) {
+		t.Errorf("an explicit --format json and title: %q, %v", plan.Argv, err)
 	}
 	for _, argv := range [][]string{
 		{"opencode", "run", "--format", "default", "-m", recordedModel, "work"},
@@ -227,6 +223,115 @@ func TestOpenCodeRefusesContinueAndSession(t *testing.T) {
 		if _, err := (Agent{}).Plan(argv, budget); err == nil {
 			t.Errorf("%q was planned", argv)
 		}
+	}
+}
+
+func TestOpenCodePlanTitlesTheSession(t *testing.T) {
+	isolate(t)
+	plan, err := Agent{}.Plan([]string{"opencode", "run", "-m", recordedModel, "work"}, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"opencode", "run", "--format", "json", "--title=", "-m", recordedModel, "work"}; !slices.Equal(plan.Argv, want) {
+		t.Errorf("planned %q, want %q", plan.Argv, want)
+	}
+	for _, own := range [][]string{{"--title", "review"}, {"--title=review"}, {"--title="}} {
+		argv := slices.Concat([]string{"opencode", "run", "--format", "json"}, own, []string{"-m", recordedModel, "work"})
+		plan, err := Agent{}.Plan(argv, budget)
+		if err != nil || !slices.Equal(plan.Argv, argv) {
+			t.Errorf("the command's own %q: planned %q, %v", own, plan.Argv, err)
+		}
+	}
+	says := func(argv ...string) int {
+		t.Helper()
+		s := session(t, argv...)
+		feed(t, s, `{"type":"step_finish","sessionID":"ses_a","part":{"id":"prt_b","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.000006}}`)
+		report, err := s.Finish()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(slices.DeleteFunc(report.Warnings, func(w string) bool { return !strings.Contains(w, "--title= titles the session") }))
+	}
+	if got := says("opencode", "run", "-m", recordedModel, "work"); got != 1 {
+		t.Errorf("a planned title is stated %d times, want once", got)
+	}
+	if got := says("opencode", "run", "--title", "review", "-m", recordedModel, "work"); got != 0 {
+		t.Errorf("the command's own title is stated %d times, want none", got)
+	}
+}
+
+// fakeOpenCode writes an opencode that prints a version, and returns it.
+func fakeOpenCode(t *testing.T, output string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "opencode")
+	write(t, path, "#!/bin/sh\necho '"+output+"'\n")
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestOpenCodeReadsItsVersion(t *testing.T) {
+	isolate(t)
+	version := func(command string) string {
+		t.Helper()
+		s := session(t, command, "run", "-m", recordedModel, "work")
+		feed(t, s, `{"type":"step_finish","sessionID":"ses_a","part":{"id":"prt_b","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.000006}}`)
+		report, err := s.Finish()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return report.AgentVersion
+	}
+	if got := version(fakeOpenCode(t, recordedVersion)); got != recordedVersion {
+		t.Errorf("version %q, want %s", got, recordedVersion)
+	}
+	if got := version("opencode"); got != "" {
+		t.Errorf("the stub on PATH answered version %q", got)
+	}
+	if got := version(fakeOpenCode(t, "not a version")); got != "" {
+		t.Errorf("version %q from output that holds none", got)
+	}
+	if got := version("npx"); got != "" {
+		t.Errorf("a launcher's version %q was read as OpenCode's", got)
+	}
+}
+
+func TestOpenCodeBasisNeedsAKeyAndNoOAuth(t *testing.T) {
+	isolate(t)
+	store := filepath.Join(t.TempDir(), "opencode", "auth.json")
+	t.Setenv("XDG_DATA_HOME", filepath.Dir(filepath.Dir(store)))
+	t.Setenv("OPENCODE_AUTH_CONTENT", "")
+	basis := func() focus.CostBasis {
+		t.Helper()
+		return costBasis("anthropic", localEnvironment())
+	}
+	if got := basis(); got != focus.ListEquivalent {
+		t.Errorf("no key: %s", got)
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	if got := basis(); got != focus.Measured {
+		t.Errorf("a key and no store: %s", got)
+	}
+	write(t, store, `{"anthropic":{"type":"oauth","refresh":"r","access":"a","expires":1},"openai":{"type":"api","key":"k"}}`)
+	if got := basis(); got != focus.ListEquivalent {
+		t.Errorf("a key and an OAuth login for the provider: %s", got)
+	}
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	if got := costBasis("openai", localEnvironment()); got != focus.Measured {
+		t.Errorf("a key and an API key in the store: %s", got)
+	}
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"type":"oauth","refresh":"r","access":"a","expires":1}}`)
+	if got := basis(); got != focus.Measured {
+		t.Errorf("OPENCODE_AUTH_CONTENT replaces the file, and holds no login for anthropic: %s", got)
+	}
+	if got := costBasis("openai", localEnvironment()); got != focus.ListEquivalent {
+		t.Errorf("an OAuth login in OPENCODE_AUTH_CONTENT: %s", got)
+	}
+	s := session(t, "opencode", "run", "-m", "openai/gpt-5.6-sol", "work")
+	feed(t, s, `{"type":"step_finish","sessionID":"ses_a","part":{"id":"prt_b","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0.000006}}`)
+	if report, err := s.Finish(); err != nil || report.CostBasis != focus.ListEquivalent {
+		t.Errorf("the session's basis %s, %v", report.CostBasis, err)
 	}
 }
 

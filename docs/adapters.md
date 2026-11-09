@@ -213,7 +213,7 @@ What the recorded run showed, `testdata/1.0.103/byok/` (GitHub Actions run 42629
 
 ## OpenCode
 
-`costroid run --agent opencode -- opencode run ...` reads the stream OpenCode prints under `--format json`, which Costroid adds when the command does not. Each step is one model request, and OpenCode prints its `step_finish` line when the request ends, with the step's tokens and its own price for them (`packages/opencode/src/session/processor.ts` at [v1.19.4](https://github.com/anomalyco/opencode/tree/v1.19.4), read 2026-11-09).
+`costroid run -- opencode run ...` reads the stream OpenCode prints under `--format json`, which Costroid adds when the command does not. Through `npx` or another launcher, `--agent opencode` names the adapter. Each step is one model request, and OpenCode prints its `step_finish` line when the request ends, with the step's tokens and its own price for them (`packages/opencode/src/session/processor.ts` at [v1.19.4](https://github.com/anomalyco/opencode/tree/v1.19.4), read 2026-11-09).
 
 | Canonical class         | `step_finish` field                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -227,13 +227,15 @@ OpenCode takes the cache reads and writes out of the provider's input, and the r
 
 The stream names no model. The model comes from `--model provider/model`, then from the `model` key of OpenCode's config, read in OpenCode's own order: the global directory, `OPENCODE_CONFIG`, each `opencode.json` and `opencode.jsonc` from the repository's root down, each `.opencode` directory, `OPENCODE_CONFIG_DIR`, then `OPENCODE_CONFIG_CONTENT`. An agent's own model in that config would replace it, so a run whose model came from the config says so. A run with no model, or a model on a provider the catalog does not price, is refused before OpenCode starts. Costroid prices `anthropic` and `openai`.
 
-Rows read `measured` when the provider's key variable is set, `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and `list_equivalent` otherwise. A sign-in stored by `opencode auth login` is not read. Costroid does not run `opencode --version`, so the rows carry no `costroid/agent_version`.
+Rows read `measured` when the provider's key variable is set, `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and OpenCode's auth store holds no OAuth login for that provider, which OpenCode would use in the key's place. Otherwise they read `list_equivalent`. The store is `OPENCODE_AUTH_CONTENT` when it holds JSON, and otherwise `auth.json` in OpenCode's data directory, `$XDG_DATA_HOME/opencode` or `~/.local/share/opencode` (`packages/opencode/src/auth/index.ts` at v1.19.4). Costroid reads each entry's `type` and nothing else from it. Before the run, Costroid runs the command's own `opencode --version`, and the rows carry it as `costroid/agent_version`. A command that starts OpenCode through a launcher has no version read.
 
 OpenCode's `part.cost` is its own price for a step, from its own price list. Costroid adds the steps' costs as the agent's own figure for the run, in USD, and never puts it in a row. A run of OpenCode 1.19.4 on 2026-11-09, workflow run 42629412567, made two steps on `claude-haiku-5-5` with one read tool call. OpenCode stated USD 0.0013544 and 0.00017877, and the rows come to USD 0.00153317 at catalog 0.3.0's prices. `TestOpenCodeRecordedRunCostsWhatItStated` holds both figures.
 
-`costroid run` refuses `--continue`, `-c`, `--session` and `-s`, because a run counts only a session it starts. What the stream does not show:
+A run may continue a session with `--continue` or `--session`. OpenCode subscribes to the session's events once the run has picked the session, and prints a part only when it changes (`client.event.subscribe()` and the `message.part.updated` loop in `packages/opencode/src/cli/cmd/run.ts` at v1.19.4), so an earlier run's steps do not reach the stream or the rows. Pruning can print an earlier tool part again, so a `task` call counts only when its message started a step in this run.
 
-- A title. On a new session with no `--title`, OpenCode asks a model for the session's title in a request of its own (`ensureTitle` in `packages/opencode/src/session/prompt.ts`). The recorded run's log shows it, on `claude-haiku-5-5`. Its tokens reach no row, and the run says so. `--title` skips it, and the recipe passes one.
+What the stream does not show:
+
+- A title. On a new session whose title is the default, OpenCode asks a model for a title in a request of its own (`ensureTitle` in `packages/opencode/src/session/prompt.ts`). The recorded run's log shows it, on `claude-haiku-5-5`. When the command names no title, Costroid adds `--title=`, which OpenCode documents as "uses truncated prompt if no value provided", so that request is never sent, and the run says so once. A command's own `--title` is kept.
 - A subagent. The stream prints the parts of the run's own session alone (`packages/opencode/src/cli/cmd/run.ts`), and the `task` tool runs a subagent in a session of its own. Its steps reach no row and the watchdog cannot see them, so a run that called `task` reads `none` and counts the calls. The recipe denies `task`.
 - A step in flight. A run stopped inside a step loses that step's tokens, because OpenCode reports them when the step ends.
 
