@@ -281,6 +281,7 @@ const (
 	schemaV06 = "costroid.result/0.6"
 	schemaV07 = "costroid.result/0.7"
 	schemaV08 = "costroid.result/0.8"
+	schemaV09 = "costroid.result/0.9"
 )
 
 // readSchemas are the versions ParseResult reads.
@@ -344,8 +345,8 @@ var (
 		{opencode.Name, opencode.StatedUnit, "OpenCode stated USD %s for this run by its own prices, which Costroid never adds to its own figures."},
 		{copilot.Name, copilot.UnitNanoAIU, "Copilot CLI stated %s nano-AI units for this run, which Costroid never converts to dollars."},
 	}
-	// statedSince08 are the agents whose figures result/v0.9 added.
-	statedSince08 = []string{opencode.Name, copilot.Name}
+	// statedAddedIn09 are the agents whose figures result/v0.9 added.
+	statedAddedIn09 = []string{opencode.Name, copilot.Name}
 	// statedQuantity is result/v0.9's statedQuantity: every digit the agent
 	// wrote, as a decimal string.
 	statedQuantity = regexp.MustCompile(`^[0-9]{1,26}(\.[0-9]{1,32})?$`)
@@ -480,8 +481,8 @@ func addedValues(object string, block Block) []addedValue {
 	if block.RunReason == ArtifactRefused {
 		found = append(found, addedValue{"the run reason " + string(ArtifactRefused), schemaV06})
 	}
-	if block.AgentStated != nil && slices.Contains(statedSince08, block.AgentStated.Source) {
-		found = append(found, addedValue{"the agent_stated source " + string(Clean(block.AgentStated.Source)), schema})
+	if block.AgentStated != nil && slices.Contains(statedAddedIn09, block.AgentStated.Source) {
+		found = append(found, addedValue{"the agent_stated source " + string(Clean(block.AgentStated.Source)), schemaV09})
 	}
 	if block.Policy == nil {
 		return found

@@ -389,10 +389,11 @@ const (
 // estimates; a key written into the file is anyone's who reads it; and the
 // shell tool would run commands beside the key in the job's environment.
 func (l *linter) copilotRules(run agentRun) {
-	for _, name := range []string{copilotBaseURL, copilotType} {
-		if strings.TrimSpace(run.env[name]) == "" {
-			l.add(run.node, RuleAgentProvider, "%s must be set on the agent, so Copilot CLI runs on your provider's key, not on its own routing", name)
-		}
+	if strings.TrimSpace(run.env[copilotBaseURL]) == "" {
+		l.add(run.node, RuleAgentProvider, "%s must be set on the agent, so Copilot CLI runs on your provider's key, not on its own routing", copilotBaseURL)
+	}
+	if strings.TrimSpace(run.env[copilotType]) == "" {
+		l.add(run.node, RuleAgentProvider, "%s must be set on the agent, to name the provider %s serves", copilotType, copilotBaseURL)
 	}
 	keyed := slices.ContainsFunc([]string{copilotKey, copilotBearerToken}, func(name string) bool {
 		return oneSecret.MatchString(strings.TrimSpace(run.env[name]))
