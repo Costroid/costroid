@@ -317,7 +317,11 @@ func TestWebhookRouteRefusesGet(t *testing.T) {
 			t.Errorf("with no secret, %s answered %d", method, recorder.Code)
 		}
 	}
-	unserved.ProcessWebhooks(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if unserved.ProcessWebhooks(ctx); ctx.Err() != nil {
+		t.Error("with no secret, the worker waited for deliveries")
+	}
 }
 
 func TestServeSaysOnceWhetherTheWebhookRouteIsServed(t *testing.T) {
