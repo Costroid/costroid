@@ -33,9 +33,11 @@ func fakeOpenCode(t *testing.T, pause time.Duration) (string, string) {
 if [ "$1" = --version ]; then echo 1.19.4; exit 0; fi
 printf '%s\n' "$@" > "$FAKE_LOG.args"
 while IFS= read -r line; do
-  printf '%s\n' "$line"
+  # A step is logged before its line is printed: the watchdog can stop the
+  # agent as soon as it reads the line, before a later write would land.
   case $line in
-    *'"step_finish"'*) echo step >> "$FAKE_LOG"; sleep "$FAKE_PAUSE" ;;
+    *'"step_finish"'*) echo step >> "$FAKE_LOG"; printf '%s\n' "$line"; sleep "$FAKE_PAUSE" ;;
+    *) printf '%s\n' "$line" ;;
   esac
 done < "$FAKE_STREAM"
 `
