@@ -858,3 +858,144 @@ func TestDoctorNamesThePlatformTokenByItsSecret(t *testing.T) {
 		t.Errorf("doctor asked the platform without COSTROID_PLATFORM_URL in this shell:\n%s", stdout)
 	}
 }
+
+// withEnvironment adds lines to job of a workflow, after its runs-on: key.
+func withEnvironment(t *testing.T, source, job, lines string) string {
+	t.Helper()
+	start := strings.Index(source, "\n  "+job+":\n")
+	if start < 0 {
+		t.Fatalf("the workflow has no job %s", job)
+	}
+	const runsOn = "\n    runs-on: ubuntu-24.04\n"
+	at := strings.Index(source[start:], runsOn)
+	if at < 0 {
+		t.Fatalf("job %s has no runs-on: key", job)
+	}
+	at += start + len(runsOn)
+	return source[:at] + lines + source[at:]
+}
+
+// ranEnvironmentListing reports whether doctor asked gh for an environment's
+// secrets.
+func ranEnvironmentListing(host *fakeHost) bool {
+	return slices.ContainsFunc(host.ran, func(command string) bool { return strings.HasPrefix(command, "gh secret list --env") })
+}
+
+func TestDoctorReadsTheJobsEnvironmentSecrets(t *testing.T) {
+	recipe := pinnedRecipe(t, "github-claude-code.yml", "claude")
+	const (
+		inDemo    = "    environment: demo\n"
+		namedDemo = "    environment:\n      name: demo\n      url: https://demo.example\n"
+		repoLine  = "warn: gh secret list names no repository secret ANTHROPIC_API_KEY"
+	)
+	for name, check := range map[string]struct {
+		environment, repository string
+		// listing is what gh secret list --env demo prints, or "fail".
+		listing string
+		want    string
+	}{
+		"a string": {environment: inDemo, listing: "ANTHROPIC_API_KEY\t2026-11-09T08:00:00Z\n",
+			want: "ok: the environment demo has the secret ANTHROPIC_API_KEY"},
+		"a name": {environment: namedDemo, listing: "ANTHROPIC_API_KEY\t2026-11-09T08:00:00Z\n",
+			want: "ok: the environment demo has the secret ANTHROPIC_API_KEY"},
+		"through an alias": {environment: "    environment: *environment\n", listing: "ANTHROPIC_API_KEY\t2026-11-09T08:00:00Z\n",
+			want: "ok: the environment demo has the secret ANTHROPIC_API_KEY"},
+		"held by the repository": {environment: inDemo, repository: "ANTHROPIC_API_KEY\n", listing: "OTHER\n",
+			want: "ok: the repository has the secret ANTHROPIC_API_KEY"},
+		"held by neither": {environment: inDemo, listing: "OTHER\n",
+			want: "warn: gh secret list names no secret ANTHROPIC_API_KEY in the environment demo or the repository; an organization secret of that name is not listed here: gh secret set ANTHROPIC_API_KEY --env demo, unless the organization already holds it"},
+		"the listing fails": {environment: inDemo, listing: "fail",
+			want: "warn: gh secret list --env demo failed, so doctor did not check the secrets of the environment demo: gh secret list --env demo exited 1: not answered: run gh auth login, then doctor again"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := withEnvironment(t, recipe, "agent", check.environment)
+			source = withEnvironment(t, source, "ingest", check.environment)
+			if strings.Contains(check.environment, "*environment") {
+				source = "x-environment: &environment demo\n" + source
+			}
+			root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": source})
+			host := ghHost(check.repository, "COSTROID_PLATFORM_URL\thttps://app.costroid.com\t2026-11-01T09:00:00Z\n")
+			if check.listing != "fail" {
+				host.outputs["gh secret list --env demo"] = check.listing
+			}
+			code, stdout, stderr := runDoctor(t, root, host)
+			if code != 0 || lineWith(stdout, check.want) != check.want {
+				t.Errorf("exit %d, want 0 and %q:\n%s%s", code, check.want, stdout, stderr)
+			}
+			if got := lineWith(stdout, repoLine); got != "" {
+				t.Errorf("doctor sent a job of the environment demo to the repository's secrets: %q", got)
+			}
+			if lines := strings.Count(stdout, "--env demo failed"); check.listing == "fail" && lines != 1 {
+				t.Errorf("%d lines say the listing of demo failed, want 1 for its two secrets:\n%s", lines, stdout)
+			}
+			if listed := slices.DeleteFunc(slices.Clone(host.ran), func(command string) bool { return command != "gh secret list --env demo" }); len(listed) != 1 {
+				t.Errorf("doctor listed the environment demo %d times, want 1: %q", len(listed), host.ran)
+			}
+		})
+	}
+}
+
+func TestDoctorKeepsRepositorySecretLines(t *testing.T) {
+	recipe := pinnedRecipe(t, "github-claude-code.yml", "claude")
+	files := map[string]string{
+		".github/workflows/costroid.yml": recipe,
+		".github/workflows/codex.yml":    pinnedRecipe(t, "github-codex-action.yml", "codex-action"),
+	}
+	host := ghHost("ANTHROPIC_API_KEY\t2026-11-01T09:00:00Z\n", "")
+	_, stdout, stderr := runDoctor(t, doctorRepository(t, files), host)
+	want := "ok: the repository has the secret ANTHROPIC_API_KEY\n" +
+		"warn: gh secret list names no repository secret OPENAI_API_KEY; an organization or environment secret of that name is not listed here: gh secret set OPENAI_API_KEY, unless the organization or the environment already holds it\n"
+	if !strings.Contains(stdout, "\n"+want) {
+		t.Errorf("the repository's secret lines changed, want\n%s\nin:\n%s%s", want, stdout, stderr)
+	}
+	if ranEnvironmentListing(host) {
+		t.Errorf("doctor listed an environment no job names: %q", host.ran)
+	}
+
+	files[".github/workflows/costroid.yml"] = withEnvironment(t, recipe, "agent", "    environment: demo\n")
+	files[".github/workflows/claude.yml"] = existingReview
+	host = ghHost("", "")
+	host.outputs["gh secret list --env demo"] = "ANTHROPIC_API_KEY\t2026-11-09T08:00:00Z\n"
+	_, stdout, stderr = runDoctor(t, doctorRepository(t, files), host)
+	for _, want := range []string{
+		"ok: the environment demo has the secret ANTHROPIC_API_KEY",
+		"warn: gh secret list names no repository secret ANTHROPIC_API_KEY; an organization or environment secret of that name is not listed here: gh secret set ANTHROPIC_API_KEY, unless the organization or the environment already holds it",
+	} {
+		if lineWith(stdout, want) != want {
+			t.Errorf("a job of demo and a job of no environment both read the key, and no line %q:\n%s%s", want, stdout, stderr)
+		}
+	}
+}
+
+func TestDoctorSaysAnEnvironmentExpressionIsUnread(t *testing.T) {
+	recipe := pinnedRecipe(t, "github-claude-code.yml", "claude")
+	source := withEnvironment(t, recipe, "agent", "    environment: ${{ inputs.target }}\n")
+	source = withEnvironment(t, source, "ingest", "    environment:\n      name: ${{ inputs.target }}\n")
+	root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": source})
+	const said = "names an environment by the expression"
+	variables := "COSTROID_PLATFORM_URL\thttps://app.costroid.com\t2026-11-01T09:00:00Z\n"
+
+	host := ghHost("", variables)
+	code, stdout, stderr := runDoctor(t, root, host)
+	want := "warn: .github/workflows/costroid.yml names an environment by the expression ${{ inputs.target }}, which doctor does not resolve, so it did not list that environment's secrets: check that every environment it can name holds ANTHROPIC_API_KEY and COSTROID_PLATFORM_TOKEN"
+	if code != 0 || lineWith(stdout, want) != want {
+		t.Errorf("exit %d, want 0 and %q:\n%s%s", code, want, stdout, stderr)
+	}
+	if lines := strings.Count(stdout, said); lines != 1 {
+		t.Errorf("%d lines say the expression is unread, want 1 for its two jobs and two secrets:\n%s", lines, stdout)
+	}
+	if ranEnvironmentListing(host) {
+		t.Errorf("doctor guessed an environment from the expression: %q", host.ran)
+	}
+	for _, name := range []string{"ANTHROPIC_API_KEY", "COSTROID_PLATFORM_TOKEN"} {
+		if got := lineWith(stdout, "warn: gh secret list names no repository secret "+name); got != "" {
+			t.Errorf("doctor sent a job of an unresolved environment to the repository's secrets: %q", got)
+		}
+	}
+
+	host = ghHost("ANTHROPIC_API_KEY\nCOSTROID_PLATFORM_TOKEN\n", variables)
+	_, stdout, _ = runDoctor(t, root, host)
+	if strings.Contains(stdout, said) || lineWith(stdout, "ok: the repository has the secret ANTHROPIC_API_KEY") == "" {
+		t.Errorf("the repository holds both secrets, so the expression decides nothing:\n%s", stdout)
+	}
+}

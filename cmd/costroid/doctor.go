@@ -34,7 +34,8 @@ Costroid: this binary's release, costroid.yml, the workflows and their pins,
 the agents and keys on this machine, and the repository's secrets and
 variables. It prints one line per check: ok, warn or fail, the fact and, after
 warn or fail, the fix. It reads secret names through gh secret list when gh is
-on PATH, and it never prints a secret's value, prefix or length.
+on PATH, and those of the environment a job names through gh secret list
+--env. It never prints a secret's value, prefix or length.
 
 With COSTROID_PLATFORM_URL set in the shell, doctor asks Costroid Platform for
 the scopes of the integration token in COSTROID_PLATFORM_TOKEN and for the
@@ -519,7 +520,7 @@ func repositoryLines(ctx context.Context, root string, host doctorHost, flows []
 	if host.getenv(platformVariable) != "" || slices.Contains(variables, platformVariable) {
 		needed = append(needed, platformTokenVariable)
 	}
-	lines := secretLines(ctx, root, host, needed)
+	lines := secretLines(ctx, root, host, needed, secretReaders(flows))
 	lines = append(lines, variableLines(variables, err)...)
 	return append(lines, visibilityLines(ctx, root, host, flows)...)
 }
@@ -542,7 +543,10 @@ func secretsNeeded(flows []workflow) []string {
 	return names
 }
 
-func secretLines(ctx context.Context, root string, host doctorHost, needed []string) []finding {
+// secretLines say where each needed secret is held: in the environment a job
+// that reads it names, or in the repository. A secret no job of an
+// environment reads is looked for in the repository alone.
+func secretLines(ctx context.Context, root string, host doctorHost, needed []string, jobs []workflowJob) []finding {
 	if len(needed) == 0 {
 		return nil
 	}
@@ -550,15 +554,184 @@ func secretLines(ctx context.Context, root string, host doctorHost, needed []str
 	if err != nil {
 		return []finding{warn("gh secret list failed, so doctor did not check the repository's secrets: "+err.Error(), ghFix(err))}
 	}
+	environments := environmentSecrets{ctx: ctx, root: root, host: host, listed: map[string]environmentListing{}}
 	var lines []finding
-	for _, name := range needed {
-		if slices.Contains(have, name) {
-			lines = append(lines, ok("the repository has the secret %s", name))
-			continue
+	add := func(line finding) {
+		if !slices.Contains(lines, line) {
+			lines = append(lines, line)
 		}
-		lines = append(lines, warn("gh secret list names no repository secret "+name+"; an organization or environment secret of that name is not listed here", "gh secret set "+name+", unless the organization or the environment already holds it"))
+	}
+	var unread []unreadEnvironment
+	for _, name := range needed {
+		readers := slices.DeleteFunc(slices.Clone(jobs), func(job workflowJob) bool { return !slices.Contains(job.secrets, name) })
+		for _, job := range readers {
+			switch {
+			case job.environment == "":
+				continue
+			case job.expression && !slices.Contains(have, name):
+				unread = withUnread(unread, job, name)
+			case job.expression:
+				add(repositorySecretLine(have, name))
+			default:
+				add(environmentSecretLine(&environments, have, job.environment, name))
+			}
+		}
+		if len(readers) == 0 || slices.ContainsFunc(readers, func(job workflowJob) bool { return job.environment == "" }) {
+			add(repositorySecretLine(have, name))
+		}
+	}
+	for _, environment := range unread {
+		add(warn(environment.path+" names an environment by the expression "+environment.expression+", which doctor does not resolve, so it did not list that environment's secrets",
+			"check that every environment it can name holds "+joinNames(environment.secrets)))
 	}
 	return lines
+}
+
+// repositorySecretLine says whether the repository holds the secret name.
+func repositorySecretLine(have []string, name string) finding {
+	if slices.Contains(have, name) {
+		return ok("the repository has the secret %s", name)
+	}
+	return warn("gh secret list names no repository secret "+name+"; an organization or environment secret of that name is not listed here", "gh secret set "+name+", unless the organization or the environment already holds it")
+}
+
+// environmentSecretLine says whether a job of environment reaches the secret
+// name: from the environment, or else from the repository. A failed listing
+// of the environment is its own line.
+func environmentSecretLine(environments *environmentSecrets, have []string, environment, name string) finding {
+	held, err := environments.names(environment)
+	switch {
+	case err != nil:
+		return warn("gh secret list --env "+environment+" failed, so doctor did not check the secrets of the environment "+environment+": "+err.Error(), ghFix(err))
+	case slices.Contains(held, name):
+		return ok("the environment %s has the secret %s", environment, name)
+	case slices.Contains(have, name):
+		return repositorySecretLine(have, name)
+	}
+	return warn("gh secret list names no secret "+name+" in the environment "+environment+" or the repository; an organization secret of that name is not listed here", "gh secret set "+name+" --env "+environment+", unless the organization already holds it")
+}
+
+// environmentSecrets lists each environment's secrets through gh once.
+type environmentSecrets struct {
+	ctx    context.Context
+	root   string
+	host   doctorHost
+	listed map[string]environmentListing
+}
+
+type environmentListing struct {
+	names []string
+	err   error
+}
+
+func (e *environmentSecrets) names(environment string) ([]string, error) {
+	listing, found := e.listed[environment]
+	if !found {
+		listing.names, listing.err = ghNames(e.ctx, e.root, e.host, "secret", "list", "--env", environment)
+		e.listed[environment] = listing
+	}
+	return listing.names, listing.err
+}
+
+// unreadEnvironment is an environment a workflow names by an expression, with
+// the secrets its jobs read that the repository does not hold.
+type unreadEnvironment struct {
+	path, expression string
+	secrets          []string
+}
+
+func withUnread(unread []unreadEnvironment, job workflowJob, name string) []unreadEnvironment {
+	index := slices.IndexFunc(unread, func(environment unreadEnvironment) bool {
+		return environment.path == job.path && environment.expression == job.environment
+	})
+	if index < 0 {
+		return append(unread, unreadEnvironment{path: job.path, expression: job.environment, secrets: []string{name}})
+	}
+	if !slices.Contains(unread[index].secrets, name) {
+		unread[index].secrets = append(unread[index].secrets, name)
+	}
+	return unread
+}
+
+// workflowJob is one job of a workflow that runs Costroid or an agent: the
+// environment it names and the secrets it reads.
+type workflowJob struct {
+	path string
+	// environment is the environment's name as the job writes it, or empty.
+	environment string
+	// expression is set when that name is an expression doctor cannot resolve.
+	expression bool
+	// secrets lists the secrets the job reads, through the workflow's env too.
+	secrets []string
+}
+
+// secretReaders reads each job of the workflows that run Costroid or an agent,
+// through aliases and merge keys.
+func secretReaders(flows []workflow) []workflowJob {
+	var jobs []workflowJob
+	for _, flow := range flows {
+		if len(flow.costroid) == 0 && !flow.agent || flow.root == nil {
+			continue
+		}
+		inherited := referencedSecrets(recipelint.Field(flow.root, "env"))
+		all := recipelint.Field(flow.root, "jobs")
+		var named map[string]yaml.Node
+		if all == nil || all.Decode(&named) != nil {
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(named)) {
+			job := recipelint.Field(all, name)
+			environment := jobEnvironment(job)
+			secrets := slices.Clone(inherited)
+			for _, secret := range referencedSecrets(job) {
+				if !slices.Contains(secrets, secret) {
+					secrets = append(secrets, secret)
+				}
+			}
+			jobs = append(jobs, workflowJob{path: flow.path, environment: environment, expression: strings.Contains(environment, "${{"), secrets: secrets})
+		}
+	}
+	return jobs
+}
+
+// jobEnvironment is the environment a job names, as a string or as name:.
+func jobEnvironment(job *yaml.Node) string {
+	environment := recipelint.Field(job, "environment")
+	if environment != nil && environment.Kind == yaml.MappingNode {
+		environment = recipelint.Field(environment, "name")
+	}
+	if environment == nil || environment.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return strings.TrimSpace(environment.Value)
+}
+
+// referencedSecrets lists the secrets the scalars under node read, through
+// aliases.
+func referencedSecrets(node *yaml.Node) []string {
+	var names []string
+	seen := map[*yaml.Node]bool{}
+	var walk func(*yaml.Node)
+	walk = func(node *yaml.Node) {
+		if node == nil || seen[node] {
+			return
+		}
+		seen[node] = true
+		if node.Kind == yaml.AliasNode {
+			walk(node.Alias)
+			return
+		}
+		for _, match := range secretName.FindAllStringSubmatch(node.Value, -1) {
+			if !slices.Contains(names, match[1]) {
+				names = append(names, match[1])
+			}
+		}
+		for _, child := range node.Content {
+			walk(child)
+		}
+	}
+	walk(node)
+	return names
 }
 
 // variableLines judge the variables gh variable list named, or the error it
