@@ -318,7 +318,7 @@ A repositories event keeps its installation too, so an installation whose `creat
 
 ### The approve button
 
-A press of the check's `approve` button arrives as a `check_run` event with the action `requested_action`. [`docs/approval.md`](approval.md#the-approve-button) says which presses count. The service posts the check again as the App's installation. This release holds no App key, so a press that counts logs `this service holds no GitHub App key to post a check with` and posts nothing.
+A press of the check's `approve` button arrives as a `check_run` event with the action `requested_action`. [`docs/approval.md`](approval.md#the-approve-button) says which presses count. The service posts the check again as the App's installation, signing its token through the KMS key [`docs/github-app.md`](github-app.md) names, when `COSTROID_GITHUB_APP_ID` and `COSTROID_GITHUB_APP_KMS_KEY` are both set. Without them, a press that counts logs `this service holds no GitHub App key to post a check with` and posts nothing.
 
 ### Not yet observed
 
