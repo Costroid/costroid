@@ -81,7 +81,7 @@ jobs:
           allow-users: ""
       - name: Read what the run cost
         if: always() && steps.codex.outcome != 'skipped'
-        uses: Costroid/costroid/action@71f78608338cf638de738c3fd366049863696139 # v1.0.0-alpha.16
+        uses: Costroid/costroid/action@15787e4283f5b3be52b3c8fb714ca18075d7a6e2 # v1.0.0-alpha.17
         with:
           stage: read
           minimum-agent-version: 0.164.0-alpha.11.1
@@ -101,7 +101,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@71f78608338cf638de738c3fd366049863696139 # v1.0.0-alpha.16
+      - uses: Costroid/costroid/action@15787e4283f5b3be52b3c8fb714ca18075d7a6e2 # v1.0.0-alpha.17
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -123,7 +123,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@71f78608338cf638de738c3fd366049863696139 # v1.0.0-alpha.16
+      - uses: Costroid/costroid/action@15787e4283f5b3be52b3c8fb714ca18075d7a6e2 # v1.0.0-alpha.17
         with:
           stage: report
           agent-result: ${{ needs.agent.result }}

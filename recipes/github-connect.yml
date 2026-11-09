@@ -27,7 +27,7 @@ jobs:
       # The proof is the job's OIDC token, issued for the tenant's audience.
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@71f78608338cf638de738c3fd366049863696139 # v1.0.0-alpha.16
+      - uses: Costroid/costroid/action@15787e4283f5b3be52b3c8fb714ca18075d7a6e2 # v1.0.0-alpha.17
         with:
           stage: install
       - name: Bind the owner
