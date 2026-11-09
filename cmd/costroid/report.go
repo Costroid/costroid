@@ -797,7 +797,16 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, li
 		fmt.Fprintf(stderr, "costroid: comment not posted: %v\n", err)
 		return
 	}
-	fmt.Fprintf(stderr, "costroid: comment on pull request %d\n", pullRequest)
+	fmt.Fprintf(stderr, "costroid: comment on %s %d\n", requestNoun(host), pullRequest)
+}
+
+// requestNoun is what the host calls the change a comment goes on: GitLab's
+// merge request, GitHub's pull request.
+func requestNoun(host scm.Reporter) string {
+	if _, ok := host.(*scm.GitLab); ok {
+		return "merge request"
+	}
+	return "pull request"
 }
 
 // measuredReports counts the pull request's reports with a measured figure,

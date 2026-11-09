@@ -69,6 +69,19 @@ func TestGitLabReportPostsOneNoteWithTheSameComment(t *testing.T) {
 	}
 }
 
+// TestGitLabReportSaysMergeRequest holds the report's line on GitLab to
+// GitLab's own word for the change the note goes on.
+func TestGitLabReportSaysMergeRequest(t *testing.T) {
+	gitLabEnvironment(t)
+	code, _, stderr := execute(t, "report", "--rows", realRows, "--budget-usd", "5")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "costroid: comment on merge request ") || strings.Contains(stderr, "pull request") {
+		t.Errorf("stderr: %s", stderr)
+	}
+}
+
 func TestASecondGitLabReportUpdatesTheOneNote(t *testing.T) {
 	stub := gitLabEnvironment(t)
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")

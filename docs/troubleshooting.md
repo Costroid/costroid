@@ -243,7 +243,7 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
 | `costroid: check run <id>, conclusion <conclusion>` | The `costroid` check run was posted with the policy's conclusion: `success`, `neutral` or `failure` | None. [`docs/policy.md`](policy.md) says how each is reached |
-| `costroid: comment on pull request <number>` | The sticky comment was posted or edited | None |
+| `costroid: comment on pull request <number>`, or `merge request` on GitLab | The sticky comment was posted or edited | None |
 | `costroid: the verdict is <conclusion>, so the report exits <code>` | `--exit-on-verdict` on GitLab CI: `failure` exits 1 and fails the pipeline, `neutral` exits 3 and shows a warning, `success` exits 0. A report that could not reach GitLab has no verdict and exits 3 | For a 1, read the note's verdict. For a 3 you did not expect, read the lines above it. [`docs/gitlab.md`](gitlab.md) lists what concludes `neutral` |
 | `costroid: warning: --exit-on-verdict applies on GitLab CI only. On GitHub Actions the costroid check is the gate, so the report exits 0` | The flag was passed on GitHub Actions, where the `costroid` check concludes `failure` instead | Drop the flag, and require the check as [`docs/required-check.md`](required-check.md) says |
 | `costroid: report needs --rows` | No rows file was named | Pass `--rows` |
