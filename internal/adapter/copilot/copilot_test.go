@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -137,9 +138,25 @@ func recordedEvents(t *testing.T) []byte {
 	return data
 }
 
-// runSession reads a run as costroid run does: the planned command, the
-// stream fed line by line, and the session file under COPILOT_HOME.
+// runSession reads a run as costroid run does after the agent has ended: the
+// planned command, naming the recorded session, the stream fed line by line,
+// and the session file under COPILOT_HOME. No watch ran.
 func runSession(t *testing.T, events, stream []byte) (adapter.Report, error) {
+	t.Helper()
+	plan, err := copilot.Agent{}.Plan([]string{"copilot", "-p", "a prompt"}, decimal.MustParse("1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := slices.Index(plan.Argv, "--session-id")
+	if named < 0 {
+		t.Fatalf("the plan names no session: %q", plan.Argv)
+	}
+	plan.Argv[named+1] = recordedSession
+	return readPlanned(t, plan, events, stream)
+}
+
+// readPlanned reads a run of plan with events as the recorded session's file.
+func readPlanned(t *testing.T, plan adapter.Plan, events, stream []byte) (adapter.Report, error) {
 	t.Helper()
 	home := t.TempDir()
 	dir := filepath.Join(home, "session-state", recordedSession)
@@ -150,12 +167,7 @@ func runSession(t *testing.T, events, stream []byte) (adapter.Report, error) {
 		t.Fatal(err)
 	}
 	t.Setenv("COPILOT_HOME", home)
-	agent := copilot.Agent{}
-	plan, err := agent.Plan([]string{"copilot", "-p", "a prompt"}, decimal.MustParse("1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := agent.NewSession(plan)
+	session := copilot.Agent{}.NewSession(plan)
 	for _, raw := range bytes.Split(stream, []byte("\n")) {
 		if len(raw) == 0 {
 			continue
@@ -553,12 +565,17 @@ func TestCopilotInputIncludesTheCache(t *testing.T) {
 	}
 }
 
+// newSession is the form of the session id a plan names: a version 4 UUID.
+var newSession = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
 // TestCopilotPlanAddsJSONAndRefusesResume plans a prompt with the json
-// stream, keeps a json stream the command asks for, and refuses a command
-// that is not a prompt, another stream, and every flag that resumes a
-// session. A prompt that reads like a flag is the prompt's text.
+// stream and a new session of its own, watched, keeps a json stream the
+// command asks for, and refuses a command that is not a prompt, another
+// stream, and every flag that resumes a session. A prompt that reads like a
+// flag is the prompt's text. Two plans name two sessions.
 func TestCopilotPlanAddsJSONAndRefusesResume(t *testing.T) {
 	budget := decimal.MustParse("1")
+	var sessions []string
 	for _, planned := range []struct{ argv, want []string }{
 		{[]string{"copilot", "-p", "review"}, []string{"copilot", "--output-format", "json", "-p", "review"}},
 		{[]string{"copilot", "--prompt=review", "--output-format=json"}, []string{"copilot", "--prompt=review", "--output-format=json"}},
@@ -569,9 +586,18 @@ func TestCopilotPlanAddsJSONAndRefusesResume(t *testing.T) {
 			t.Errorf("%q: %v", planned.argv, err)
 			continue
 		}
-		if !slices.Equal(plan.Argv, planned.want) || plan.Enforcement.Grade != adapter.GradeNone {
+		if len(plan.Argv) < 3 || plan.Argv[1] != "--session-id" || !newSession.MatchString(plan.Argv[2]) {
+			t.Errorf("%q planned %q, which names no new session first", planned.argv, plan.Argv)
+			continue
+		}
+		sessions = append(sessions, plan.Argv[2])
+		rest := slices.Concat(plan.Argv[:1], plan.Argv[3:])
+		if !slices.Equal(rest, planned.want) || plan.Enforcement.Grade != adapter.GradeWrapperWatchdog || !plan.Enforcement.Watchdog {
 			t.Errorf("%q planned %q at %s", planned.argv, plan.Argv, plan.Enforcement.Grade)
 		}
+	}
+	if len(slices.Compact(slices.Sorted(slices.Values(sessions)))) != len(sessions) {
+		t.Errorf("two plans named one session: %q", sessions)
 	}
 	for _, refused := range [][]string{
 		{"copilot"},
@@ -590,12 +616,26 @@ func TestCopilotPlanAddsJSONAndRefusesResume(t *testing.T) {
 	}
 }
 
-// TestCopilotRunNeedsTheResultLine refuses a run whose stream names no
-// session, and one whose session file names another.
+// TestCopilotRunNeedsTheResultLine reads a run whose stream ended before
+// its result line from the session the plan named. With no session named, it
+// refuses such a run, and it refuses a session file that names another
+// session. A session file cut inside its last line, as a stopped run leaves
+// it, reads with a warning.
 func TestCopilotRunNeedsTheResultLine(t *testing.T) {
 	stream := readLines(t, "stream.jsonl")
-	if _, err := runSession(t, recordedEvents(t), encodeLines(t, stream[:len(stream)-1])); err == nil || !strings.Contains(err.Error(), "no result line naming the session") {
-		t.Errorf("a stream with no result line: %v", err)
+	cutStream := encodeLines(t, stream[:len(stream)-1])
+	if report, err := runSession(t, recordedEvents(t), cutStream); err != nil || len(report.Requests) != 3 {
+		t.Errorf("a stream with no result line, from the named session: %d requests, %v", len(report.Requests), err)
+	}
+	unnamed := adapter.Plan{Argv: []string{"copilot", "--output-format", "json", "-p", "a prompt"}}
+	if _, err := readPlanned(t, unnamed, recordedEvents(t), cutStream); err == nil || !strings.Contains(err.Error(), "no result line naming the session") {
+		t.Errorf("a stream with no result line and no session named: %v", err)
+	}
+	events := recordedEvents(t)
+	cut := append(slices.Clone(events), []byte(`{"type":"session.usage_record","data":{"usage":{"model":"claude-ha`)...)
+	report, err := runSession(t, cut, recordedStream(t))
+	if err != nil || len(report.Requests) != 3 || !slices.ContainsFunc(report.Warnings, func(w string) bool { return strings.HasPrefix(w, "the session file ends inside a line") }) {
+		t.Errorf("a file cut inside its last line read %d requests with %q: %v", len(report.Requests), report.Warnings, err)
 	}
 	other := editedEvents(t, func(events []line) {
 		object(t, ofType(events, "session.start")[0], "data")["sessionId"] = "00000000-0000-4000-8000-000000000002"

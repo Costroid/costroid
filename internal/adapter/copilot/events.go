@@ -122,16 +122,24 @@ type sessionFile struct {
 	version   string
 	records   []usageRecord
 	shutdowns []shutdown
+	// cut says the file ends inside a line, as a stopped run can leave it.
+	cut bool
 }
 
 // readSessionFile reads every line of events.jsonl. A line that is not JSON
-// refuses the file, since a usage record could be the line that was lost.
+// refuses the file, since a usage record could be the line that was lost. A
+// last line with no line feed that is not JSON was cut short when Copilot
+// CLI stopped, and is left unread.
 func readSessionFile(events io.Reader) (sessionFile, error) {
 	var file sessionFile
 	reader := bufio.NewReaderSize(events, 1<<20)
 	for number := 1; ; number++ {
 		line, err := reader.ReadBytes('\n')
 		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+			if errors.Is(err, io.EOF) && !json.Valid(trimmed) {
+				file.cut = true
+				return file, nil
+			}
 			if readErr := file.read(trimmed); readErr != nil {
 				return file, fmt.Errorf("line %d: %w", number, readErr)
 			}
@@ -219,7 +227,10 @@ func ReadEvents(events io.Reader, keyed bool) (adapter.Report, error) {
 		}
 		report.AgentStated, report.Warnings = stated(file.shutdowns[0], file.records)
 	} else {
-		report.Warnings = append(report.Warnings, "the session file holds no session.shutdown, so its usage records were not checked against Copilot's own totals, and Copilot stated no credits for the run")
+		report.Warnings = append(report.Warnings, "the session file holds no session.shutdown: the run ended before Copilot CLI closed the session, so its usage records were not checked against Copilot's own totals, a request in flight at the end reached no row, and Copilot stated no credits for the run")
+	}
+	if file.cut {
+		report.Warnings = append(report.Warnings, "the session file ends inside a line, as a stopped run leaves it; that line is not read, and a usage record in it reached no row")
 	}
 	requests, warnings, err := file.requests(keyed)
 	if err != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/adapter/codex"
+	"github.com/Costroid/costroid/internal/adapter/copilot"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -62,8 +63,9 @@ type Options struct {
 // installLines are the commands that install each agent at the version this
 // release's recipes install.
 var installLines = map[string]string{
-	"claude": "npm install --global @anthropic-ai/claude-code@2.1.316",
-	"codex":  "npm install --global @openai/codex@0.164.0-alpha.11.1",
+	"claude":  "npm install --global @anthropic-ai/claude-code@2.1.316",
+	"codex":   "npm install --global @openai/codex@0.164.0-alpha.11.1",
+	"copilot": "npm install --global @github/copilot@1.0.103",
 }
 
 // MissingAgentError is an agent command that is not on PATH.
@@ -179,6 +181,8 @@ func AgentFor(argv []string) (adapter.Agent, error) {
 		return claudecode.Agent{}, nil
 	case "codex":
 		return codex.Agent{}, nil
+	case "copilot":
+		return copilot.Agent{}, nil
 	}
 	return nil, fmt.Errorf("run: no adapter for %q: costroid runs claude and codex", filepath.Base(argv[0]))
 }

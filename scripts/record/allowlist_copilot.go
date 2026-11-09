@@ -111,11 +111,4 @@ var copilotIDs = map[string]*idKind{
 	"data.usage.providerCallId":             &requestIDs,
 }
 
-// copilotModelParent is the object session.shutdown keys by model name.
-const copilotModelParent = "modelMetrics"
-
-func init() {
-	modelKeyParents = append(modelKeyParents, copilotModelParent)
-}
-
 var copilotAllowlist = newAllowlist(slices.Concat(copilotStreamPaths, copilotEventPaths), nil, copilotIDs, nil)

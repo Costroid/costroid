@@ -340,7 +340,7 @@ var idPaths = map[string]*idKind{
 }
 
 // modelKeyParents hold one object per model, keyed by the model's name.
-var modelKeyParents = []string{"modelUsage", "model_usage_since_last_result"}
+var modelKeyParents = []string{"modelUsage", "model_usage_since_last_result", "modelMetrics"}
 
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,99}$`)
 

@@ -1,14 +1,15 @@
 // Package copilot reads `copilot -p --output-format json` runs of GitHub
 // Copilot CLI.
 //
-// The stream carries no token counts. Its result line names the session, and
-// the session's events.jsonl, which Copilot CLI writes under its home, holds
-// one session.usage_record per model request and one session.shutdown with
-// each model's totals. The rows come from the usage records, and the
-// shutdown's totals check them.
+// The stream carries no token counts. The session's events.jsonl, which
+// Copilot CLI writes under its home, holds one session.usage_record per model
+// request and one session.shutdown with each model's totals. The plan names
+// the session, so the budget is watched in that file during the run. The
+// rows come from the usage records, and the shutdown's totals check them.
 package copilot
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,10 +28,12 @@ import (
 // Name is the costroid/agent tag.
 const Name = "copilot"
 
-// unwatchedNote is the grade's note. Copilot CLI's own cap, --max-ai-credits,
-// counts its AI credits, which a run on the user's own provider key does not
-// spend.
-const unwatchedNote = "none: the budget was not enforced: Copilot CLI has no cap in tokens or dollars, and Costroid reads its session file only after the run"
+// watchedNote is the grade's note. Copilot CLI has no cap in tokens or
+// dollars: its own, --max-ai-credits, counts its AI credits.
+const watchedNote = "wrapper-watchdog: priced from Copilot CLI's session file during the run, with a stop at the cap that requests in flight can pass"
+
+// sessionFlag names the session a new run starts.
+const sessionFlag = "--session-id"
 
 // The flags that start a session apart from the prompt's own: each resumes a
 // session whose earlier spend the session file holds with this run's.
@@ -90,9 +93,10 @@ func flagsOf(argv []string) []flagArg {
 	return found
 }
 
-// Plan requires -p and adds --output-format json. Copilot CLI writes its
-// usage only to the session file, and only the json stream's result line
-// names the session.
+// Plan requires -p, adds --output-format json, whose result line names the
+// session, and names a new session with --session-id, so the run can watch
+// that session's file from its start. Copilot CLI writes its usage only to
+// that file.
 func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	if len(argv) == 0 {
 		return adapter.Plan{}, errors.New("copilot: no command")
@@ -111,12 +115,29 @@ func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	case flags[i].value != "json":
 		return adapter.Plan{}, fmt.Errorf("copilot: --output-format %s prints no result line naming the session; give json, or leave the flag out", flags[i].value)
 	}
-	return adapter.Plan{Argv: planned, Enforcement: adapter.Enforcement{Grade: adapter.GradeNone, Note: unwatchedNote}}, nil
+	planned = slices.Insert(planned, 1, sessionFlag, newSessionID())
+	return adapter.Plan{Argv: planned, Enforcement: adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog, Note: watchedNote, Watchdog: true}}, nil
+}
+
+// newSessionID is a random version 4 UUID, the form Copilot CLI's session
+// ids take.
+func newSessionID() string {
+	var id [16]byte
+	rand.Read(id[:])
+	id[6] = id[6]&0x0f | 0x40
+	id[8] = id[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:])
 }
 
 // NewSession starts reading a run of the planned command.
-func (Agent) NewSession(adapter.Plan) adapter.Session {
-	return &Session{home: homeDir(), keyed: providerKeyed(os.Getenv)}
+func (Agent) NewSession(plan adapter.Plan) adapter.Session {
+	session := &Session{home: homeDir(), keyed: providerKeyed(os.Getenv), planned: plan.Enforcement}
+	for _, flag := range flagsOf(plan.Argv) {
+		if flag.name == sessionFlag {
+			session.named = flag.value
+		}
+	}
+	return session
 }
 
 // providerKeyed says whether Copilot CLI's provider variables run it on the
@@ -146,18 +167,47 @@ func homeDir() string {
 	return filepath.Join(home, ".copilot")
 }
 
+// sessionPath is the session's events.jsonl under Copilot CLI's home.
+func sessionPath(home, session string) string {
+	return filepath.Join(home, "session-state", session, "events.jsonl")
+}
+
 // sessionWord is a session id this reader opens a directory by.
 var sessionWord = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,127}$`)
 
-// Session reads one Copilot CLI run.
+// Session reads one Copilot CLI run. Feed and Tail run on separate
+// goroutines, so the lock covers everything below it.
 type Session struct {
-	home  string
-	keyed bool
+	home    string
+	keyed   bool
+	planned adapter.Enforcement
+	// named is the session id the plan gave Copilot CLI.
+	named string
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// session is the id the stream's result line states.
 	session string
 	// skipped counts the stream lines that are not JSON objects with a type.
 	skipped int
+	// opened says the watch found the session file during the run.
+	opened bool
+	// problem is why the watch stopped holding the run to the budget.
+	problem string
+}
+
+// refuse keeps the first reason the watch could not hold the run.
+func (s *Session) refuse(problem string) {
+	if s.problem == "" {
+		s.problem = problem
+	}
+}
+
+// earned is the grade the run kept: the plan's, unless the watch failed.
+func (s *Session) earned() adapter.Enforcement {
+	if s.planned.Watchdog && s.problem != "" {
+		return adapter.Enforcement{Grade: adapter.GradeNone, Note: "none: the budget was not enforced: " + s.problem}
+	}
+	return s.planned
 }
 
 // Feed reads one stdout line. Only the result line is read: it names the
@@ -179,17 +229,27 @@ func (s *Session) Feed(line []byte, _ time.Time) error {
 	return nil
 }
 
-// Finish reads the session file the result line named.
+// Finish reads the session file of the session the result line names, or,
+// when a stop left no result line, of the session the plan named.
 func (s *Session) Finish() (adapter.Report, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.session == "" {
+	session := s.session
+	switch {
+	case session == "" && s.named != "":
+		session = s.named
+	case session == "":
 		return adapter.Report{}, errors.New("copilot: the stream held no result line naming the session: Copilot CLI did not finish the prompt, or it ran without --output-format json")
+	case s.named != "" && session != s.named:
+		s.refuse("Copilot CLI ran another session than the one --session-id named, so the watch read no file")
 	}
-	if !sessionWord.MatchString(s.session) {
-		return adapter.Report{}, errors.New("copilot: the result line's session id is not a plain word")
+	if s.planned.Watchdog && !s.opened {
+		s.refuse("the session file did not appear during the run")
 	}
-	file, err := os.Open(filepath.Join(s.home, "session-state", s.session, "events.jsonl"))
+	if !sessionWord.MatchString(session) {
+		return adapter.Report{}, errors.New("copilot: the session id is not a plain word")
+	}
+	file, err := os.Open(sessionPath(s.home, session))
 	if err != nil {
 		return adapter.Report{}, fmt.Errorf("copilot: open the session file: %w", err)
 	}
@@ -198,9 +258,10 @@ func (s *Session) Finish() (adapter.Report, error) {
 	if err != nil {
 		return adapter.Report{}, err
 	}
-	if report.SessionID != s.session {
-		return adapter.Report{}, errors.New("copilot: the session file's session.start names another session than the stream's result line")
+	if report.SessionID != session {
+		return adapter.Report{}, errors.New("copilot: the session file's session.start names another session than the run's")
 	}
+	report.Enforcement = s.earned()
 	if s.skipped > 0 {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("%s skipped: not a JSON object with a type", counted(s.skipped, "stream line")))
 	}

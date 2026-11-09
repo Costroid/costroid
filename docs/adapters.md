@@ -11,6 +11,8 @@ What each agent's stream carries, as recorded on November 1, 2026. The fixtures 
 | Codex       | `gateway-precheck` | Through the same gateway: Costroid gives Codex the gateway's address and provider on its command line, which override its configuration files. [`gateway.md`](gateway.md) has the design. |
 | Codex       | `wrapper-watchdog` | Costroid reads Codex's rollout file during the turn, prices each request as it settles and stops the process at the cap. Requests in flight can pass it.    |
 | Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a file whose shape the reader does not know, or a file that contradicts the stream. Nothing stops the run.  |
+| Copilot CLI | `wrapper-watchdog` | Costroid names a new session with `--session-id`, reads that session's file during the run, prices each request as its usage record lands and stops the process at the cap. Requests in flight can pass it. |
+| Copilot CLI | `none`             | The session file did not appear during the run, a line of it could not be read, or Copilot CLI ran another session than the one named. Nothing stops the run. |
 
 A recorded run with a 0.001 USD cap stopped mid-turn at 0.0283136 USD, 65 milliseconds after its first request settled. The tool the agent had started kept running, because Codex gives tools their own process group. A `none` run says why on every row. The recorded runs behind this table are below.
 
@@ -174,7 +176,7 @@ What the runs showed:
 
 ## Copilot CLI
 
-Copilot CLI's stream carries no token counts. The `result` line of `copilot -p --output-format json` names the session, and the session's file, `<COPILOT_HOME>/session-state/<session>/events.jsonl`, holds one `session.usage_record` per model request and one `session.shutdown` with each model's totals. `COPILOT_HOME` defaults to `~/.copilot`. Rows come from the usage records, one per request, with `costroid/cost_source` `agent_session_file`. The reader is pinned to the recorded release, 1.0.103, and a warning names any other. Neither `costroid run` nor `costroid ingest-run` reads Copilot CLI in this release.
+Copilot CLI's stream carries no token counts. The `result` line of `copilot -p --output-format json` names the session, and the session's file, `<COPILOT_HOME>/session-state/<session>/events.jsonl`, holds one `session.usage_record` per model request and one `session.shutdown` with each model's totals. `COPILOT_HOME` defaults to `~/.copilot`. Rows come from the usage records, one per request, with `costroid/cost_source` `agent_session_file`. The reader is pinned to the recorded release, 1.0.103, and a warning names any other. `costroid run` picks it by the command's name, `copilot`; `--agent` does not take it. `costroid ingest-run` does not read it.
 
 | Canonical class         | `session.usage_record` field                                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -190,19 +192,22 @@ The fields' meanings come from the session event types Copilot ships in `@github
 
 The usage records' sums for each model must equal that model's `modelMetrics` in `session.shutdown`, field by field, and their number its `requests.count`. Any difference refuses the run with the model and the field, and writes no row. A session file with more than one `session.shutdown` was resumed, and is refused. The plan refuses `--resume`, `--continue`, `--session-id` and `--connect`, and a command without `-p`.
 
+The plan adds `--output-format json` and `--session-id` with a new random UUID. `copilot --help` on 1.0.103 says `--session-id` will "Resume an existing session or task by ID, or set the UUID for a new session". So the run knows the session's file before Copilot CLI writes it, and reads it every 50 milliseconds while the agent runs. The recorded run did not pass `--session-id`; the watch is tested on a stand-in that writes the recorded file. A stop at the cap ends Copilot CLI before it prints its `result` line or writes `session.shutdown`. The rows then come from the named session's usage records, unchecked, and a warning says so and that a request in flight reached no row. A last line cut short is left unread, with a warning.
+
 Rows read `measured` when every usage record states `isByok` on a provider off the device: `byokKind` is not `local_managed` or `local_user`. A record that does not state `isByok` follows the provider variables: `COPILOT_PROVIDER_BASE_URL` with `COPILOT_PROVIDER_API_KEY`, `COPILOT_PROVIDER_API_KEY_COMMAND` or `COPILOT_PROVIDER_BEARER_TOKEN`. A request Copilot served on its own routing is priced at the list rate of the model's own provider, reads `list_equivalent`, and its row says so. A run with both reads `list_equivalent` with a warning. A request to a provider the catalog holds no sheet for writes no row, and a warning counts it.
 
 Copilot states two figures of its own: `totalNanoAiu`, in nano-AI units, and each model's `requests.cost`, which its types call a cost multiplier. Costroid states both as written on a warning line, and `totalNanoAiu` as the run's own figure in nano-AI units. It never converts them to dollars and never puts them in a row. On the user's own key both read 0, and every usage record's `aiCreditsStatus` reads `unavailable`, which Copilot's types define as "No AI-credit amount was reported for the observed calls. Numeric zero is not a zero-cost claim." The warning states the 0 and that definition.
 
 `codeChanges.filesModified`, in `session.shutdown` and on the `result` line, lists file paths. The reader never reads it, and the scrub drops it.
 
-The grade is `none`. Copilot CLI has no cap in tokens or dollars. Its `--max-ai-credits` caps its own credits, which read 0 on the recorded run on the user's own key.
+The grade is `wrapper-watchdog`, or `none` with the reason when the watch could not read the file. Copilot CLI has no cap in tokens or dollars of its own. Its `--max-ai-credits` caps its own credits, which read 0 on the recorded run on the user's own key.
 
 What the recorded run showed, `testdata/1.0.103/byok/` (GitHub Actions run 42629874786, 2026-11-09, `claude-haiku-5-5` on an Anthropic key, no GitHub sign-in):
 
 - `inputTokens` holds the request's cache reads and writes. The three requests read 21660 = 4 + 0 + 21656, 21764 = 2 + 21656 + 106 and 21960 = 2 + 21762 + 196, uncached plus read plus written. The session's 65384 input tokens are 8 uncached, 43418 read and 21958 written.
 - `--output-format json` printed no `assistant.usage` line. Its `model.call_finished` lines carry no counts, and Copilot's types say one stands for a logical dispatch, not an HTTP request.
 - The `result` line was printed 14 milliseconds before `session.shutdown` was written.
+- `--deny-tool='shell'` held. The model asked for Copilot CLI's `bash` tool once, and Copilot CLI refused it: the tool's `tool.execution_complete` reads `success` false, with the error code `denied` and the message "Permission to run this tool was denied due to the following rules: `shell`". The request that asked for the tool was still made and still counted. `shell` is the rule's name, as in `copilot --help`'s example `--deny-tool='shell(git push)'`; `bash` is the tool's. The raw run shows this; the fixture keeps no tool event's data.
 - The rows come to 0.00329423 USD at list, `measured`.
 
 ## claude-code-action
