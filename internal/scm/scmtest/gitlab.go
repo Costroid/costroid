@@ -31,8 +31,8 @@ type Note struct {
 }
 
 // GitLab is one project on a fake GitLab REST API v4. Its routes and answers
-// follow docs.gitlab.com as read on November 1, 2026, and no real instance
-// checked them.
+// follow docs.gitlab.com as read on November 1, 2026. e2e/gitlab runs the
+// same report on a self-managed GitLab CE; this fake stays for the fast tests.
 type GitLab struct {
 	Server *httptest.Server
 	// Fail maps "METHOD path-part" to a status the stub answers instead.
