@@ -313,6 +313,10 @@ func TestCopilotUsageRowsEqualShutdownMetrics(t *testing.T) {
 	}
 }
 
+// providerVariables are Copilot CLI's variables that name a provider and its
+// credential.
+var providerVariables = []string{"COPILOT_PROVIDER_BASE_URL", "COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_API_KEY_COMMAND", "COPILOT_PROVIDER_BEARER_TOKEN"}
+
 // TestCopilotByokReadsMeasured reads the recorded run as measured: every
 // usage record states isByok on a remote provider. A record that does not
 // state isByok follows the provider variables: a base URL and a key read
@@ -321,6 +325,9 @@ func TestCopilotUsageRowsEqualShutdownMetrics(t *testing.T) {
 // list_equivalent, and a run with both kinds reads list_equivalent with a
 // warning.
 func TestCopilotByokReadsMeasured(t *testing.T) {
+	for _, name := range providerVariables {
+		t.Setenv(name, "")
+	}
 	report, err := runSession(t, recordedEvents(t), recordedStream(t))
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +359,7 @@ func TestCopilotByokReadsMeasured(t *testing.T) {
 		{"no variable", nil, focus.ListEquivalent},
 	} {
 		t.Run(variables.name, func(t *testing.T) {
-			for _, name := range []string{"COPILOT_PROVIDER_BASE_URL", "COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_API_KEY_COMMAND", "COPILOT_PROVIDER_BEARER_TOKEN"} {
+			for _, name := range providerVariables {
 				t.Setenv(name, variables.set[name])
 			}
 			report, err := runSession(t, unstated, recordedStream(t))
