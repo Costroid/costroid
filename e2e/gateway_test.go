@@ -711,7 +711,7 @@ func recordAStoreFailureAsNone(t *testing.T, stack *gatewayStack, job *gatewayJo
 		t.Fatalf("costroid run: %v\n%s", err, output.String())
 	}
 	if status := job.outcome().AfterPause; status != http.StatusOK {
-		t.Errorf("with its store down the gateway answered %d, %s after mint, and the journey needs a gateway that fails open; LiteLLM serves a key without its store only while the key is in its cache, for user_api_key_cache_ttl in testdata/litellm.yaml", status, resumed)
+		t.Errorf("with its store down the gateway answered %d, %s after mint, and the journey needs a gateway that fails open; LiteLLM is sure to only for a key still in its cache, which holds a key for user_api_key_cache_ttl in testdata/litellm.yaml", status, resumed)
 	}
 	t.Logf("the agent resumed with the store down %s after mint", resumed)
 	for _, row := range job.readRows() {
