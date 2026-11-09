@@ -1,0 +1,13 @@
+# The project's pipeline: Costroid's recipe as it ships, with two jobs changed.
+# The test has no network, no agent and no key, so the install step uses the
+# binary built from this checkout, and the agent's job hands on recorded rows.
+include:
+  - local: costroid-gitlab-ci.yml
+
+.costroid-install:
+  before_script:
+    - costroid version
+
+costroid:claude:
+  script:
+    - cp recorded-rows.jsonl costroid-rows.jsonl

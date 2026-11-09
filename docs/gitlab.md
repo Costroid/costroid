@@ -55,4 +55,18 @@ GitHub's `costroid` check concludes `failure` on its own, so `--exit-on-verdict`
 
 ## Tested so far
 
-The exit codes and the template's rules have run against a stub of GitLab's API, not a real GitLab instance. Unverified: that a failed job in the `.post` stage fails the pipeline and blocks the merge. GitLab's page says "If any job fails, the pipeline is marked as `failed`" ([CI/CD YAML syntax](https://docs.gitlab.com/ci/yaml/), read 2026-11-07), and does not name `.post`.
+On 2026-11-09 the template ran end to end on a self-managed GitLab CE 19.5.1 (the image `gitlab/gitlab-ce:19.5.1-ce.0`, pushed 2026-10-21) with GitLab Runner 19.5.1 (`gitlab/gitlab-runner:ubuntu-v19.5.1`, pushed 2026-10-22), both in Docker. `go test -tags gitlab ./e2e/gitlab` runs it again in about 5 minutes. The report's token and the gate were set as this page and [`docs/recipes.md`](recipes.md#give-the-report-a-token) say, with a project access token of the Reporter role, and **Pipelines must succeed** was on. The base branch's `costroid.yml` set `run_budget_usd: "0.01"` and `enforce: true`, and the merge request carried the label `costroid-agent`.
+
+- The report's job ran in `.post`, posted one note, and exited 1 on the recorded run's USD 0.0391529. The pipeline failed, and GitLab refused the merge.
+- A second push ran the pipeline again. The report edited its note and added none.
+- After the base budget was raised to USD 1, a third push ran it again. The report concluded neutral and exited 3. The job failed with `allow_failure` set, which GitLab shows as a warning, the pipeline passed, and the merge request merged.
+
+That run did not cover:
+
+- The install step. The containers had no network, so the jobs ran a binary built from the checkout. The download from GitHub and the cosign check did not run.
+- An agent. The agent's job copied recorded rows, `cmd/costroid/demo/rows.jsonl`, instead of running Claude Code or Codex.
+- The Docker executor and the template's `image`. The runner used the shell executor.
+- HTTPS. The instance answered at `http://127.0.0.1`, a loopback address, the only kind the report sends its token to over plain HTTP.
+- gitlab.com: its shared runners, its Free tier's token rules, and the namespace id the comment's account link names there.
+- Premium and Ultimate features: protected environments and merged results pipelines.
+- The `costroid:ingest` and `costroid:connect` jobs, which need Costroid Platform, and a fork's merge request.
