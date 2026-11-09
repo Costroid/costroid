@@ -190,7 +190,7 @@ func TestRegistryEntriesAreWhole(t *testing.T) {
 			t.Errorf("%s names the allowlist file %q: %v", entry.name, entry.allowlistFile, err)
 		}
 	}
-	if _, err := agentFor("cursor"); err == nil || err.Error() != `agent "cursor" is not one of claude-code, codex, gh-aw, claude-agent-sdk, codex-sdk or copilot` {
+	if _, err := agentFor("cursor"); err == nil || err.Error() != `agent "cursor" is not one of claude-code, codex, gh-aw, claude-agent-sdk, codex-sdk, copilot or opencode` {
 		t.Errorf("an unknown agent: %v", err)
 	}
 }

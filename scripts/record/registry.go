@@ -132,6 +132,19 @@ var agents = []*agentEntry{
 		version: copilotVersion,
 		total:   copilotTotal,
 	},
+	{
+		name:          agentOpenCode,
+		title:         "OpenCode",
+		adapter:       "opencode",
+		collect:       collectOpenCode,
+		allowlist:     openCodeAllowlist,
+		allowlistFile: "allowlist_opencode.go",
+		recognizes: func(line *value) bool {
+			return line.fieldText("type") == "step_finish" && line.field("part").fieldText("type") == "step-finish"
+		},
+		version: openCodeVersion,
+		total:   openCodeTotal,
+	},
 }
 
 // agentFor is the entry named name.
